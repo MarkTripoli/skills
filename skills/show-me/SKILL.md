@@ -1,32 +1,133 @@
 ---
 name: show-me
-description: Run for /show-me requests. Explain the current topic visually with compact diagrams or a focused HTML artifact.
+description: Help the user understand the current topic visually with concise diagrams, code-shape sketches, and focused HTML artifacts.
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
 
-# Show Me
+Help the user understand the current topic of conversation visually. Skip the preamble and keep prose brief. Pick the smallest view that makes the key point clear.
 
-Explain topic through smallest useful visual. Place visual next to point it explains. Use for explanation, not implementation.
+- Show logic or an algorithm as pseudocode:
 
-First, locate the task directory and read `task.md` per the conventions when the request belongs to a task; a question about the current conversation alone needs no task directory. If user named artifact with `@...`, read fully. If about current conversation only, use context and avoid opening unrelated task files.
+```text
+on(save)
+  if content is unchanged
+    return cached result
+  write new content
+  return fresh result
+```
 
-## Choose smallest visual
+- Show runtime control flow as a call tree:
 
-Pseudocode for algorithms. Call tree for runtime order. Component tree for UI and state. File tree for ownership. Mermaid when relationships or flow matter. `diff` only when before/after is the point; when most of the shape is new, show the complete target block instead.
+```text
+submitForm
+  createSession
+    persistPrompt
+    launchAgent
+  navigateToSession
+```
 
-## HTML artifact
+- Show UI structure as a component tree, including state and module boundaries that matter:
 
-Create HTML when text diagrams insufficient: UI layout, state comparison, dense map, or concept needing responsive rendering.
+```tsx
+<SessionPage> (apps/example/src/routes/session.tsx)
+  useSessionEvents()
+  <SessionToolbar>
+    <RunSkillButton> (packages/ui)
+```
 
-Read `references/show_me_template.md` for structure. Keep self-contained, focused, responsive, safe. Match product's colors, typography, spacing, components when known. Use real labels and data when task materials provide them. Save the file as `show-me-<2-4-word-kebab>.html` (or `.md` when the visual is text only) in the task directory, or in the current directory when there is no task directory, and link it with a relative Markdown link.
+- Show file responsibility or a broad refactor as a shallow file tree:
 
-## Rules
+```text
+src/
+├── commands/       # parses user actions
+├── sessions/       # owns session state
+└── transport/      # sends API requests
+```
 
-No artifact when inline diagram answers. No unrelated artifacts. No essay before visual. No decorative diagrams. No invented styles when design system available. No implementation plans unless asked. No staging, committing, modifying source.
+- Show component interaction, control flow, or data flow with Mermaid:
 
-## Final response
+```mermaid
+sequenceDiagram
+    participant User
+    participant UI
+    participant Daemon
+    User->>UI: choose command
+    UI->>Daemon: send expanded prompt
+    Daemon-->>UI: stream result
+```
 
-If saved artifact, read `references/show_me_final_answer.md`, use that template only, fill `{artifact_link}` with a relative Markdown link to the saved file (`[show-me-<description>.html](.agents/tasks/<slug>/show-me-<description>.html)`, or the path relative to the current directory when there is no task directory), end with exactly one fenced `text` block containing `/show-me`. If no artifact, answer with visual and no next-step command.
+- Use `diff` when the point is what changes and the surrounding shape already exists. Match the diff shape to the topic.
 
-If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it.
+For a component change:
+
+```diff
+ <SessionPage>
+   useSessionEvents()
+   <SessionToolbar>
++    <RunSkillButton />
+   <SessionTimeline>
++    <SkillResultCard />
+```
+
+For a file-layout change:
+
+```diff
+ src/
+ ├── commands/
++│   └── show-me.ts       # expands the slash command
+ ├── sessions/
+-└── transport.ts
++└── transport/
++    ├── client.ts
++    └── stream.ts
+```
+
+For a call-tree or call-stack change:
+
+```diff
+ submitForm
+   createSession
+     persistPrompt
++    expandSkillMention
+     launchAgent
+-  navigateToSession
++  navigateToSession
++    subscribeToEvents
+```
+
+For a state or control-flow change:
+
+```diff
+ on(save)
+-  write content
++  if content is unchanged
++    return cached result
++  write new content
++  invalidate cache
+```
+
+- Show the whole block when most of it is new, when omitted context would hide ownership or order, or when the user needs a copyable target shape:
+
+```ts
+function expandSkill(command: string): string {
+  const skillName = command.slice(1)
+  return `use the ${skillName} skill`
+}
+```
+
+- For a visual UI, layout, state comparison, or concept too dense for Mermaid, write one focused HTML file — a diagram, an infographic, or a short slide deck, whichever fits the point. Match the product's colors, type, spacing, and components; use real labels and data; support desktop and mobile. Save it as `show-me-{description}.html` in the task directory, or in the current directory when there is no task directory. Then open it for the user:
+
+```
+Bash(open path/to/show-me-{description}.html)
+```
+
+### guidance
+
+Place each visual next to the short text it supports. Keep only the calls, files, props, states, and boundaries needed to answer the user's current question or the options to resolve the current discussion point.
+
+You may use one of these, you may use several, it is unlikely you will use all of them. Use your judgement and don't overwhelm the user.
+
+### final response
+
+If you saved an HTML file, reply with `references/show_me_final_answer.md`, filling `{artifact_link}` with a relative Markdown link to it. Otherwise answer with the visual and no next-step command. If the invoking prompt named a reply file, write the complete reply to it verbatim after printing it.
