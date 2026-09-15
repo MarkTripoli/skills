@@ -1,5 +1,6 @@
 {
   "name": "run-task-status",
+  "kind": "smoke",
   "workflow": "lean",
   "slug": "verbose-flag",
   "request": "Add a --verbose flag to the CLI so that src/index.js prints each file path it counts to stderr when the flag is present.",

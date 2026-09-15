@@ -14,7 +14,7 @@ The collection is tested at three depths. The first two cost no tokens and run i
 
 The workflow has two halves. The state machine (which command comes next, whether the last phase was a gate, which backend to use, what the status report says) is pure logic over files in `.agents/tasks/<slug>/`. The phase work (research, planning, implementation) needs a model.
 
-The state machine lives in code: `skills/run-task/scripts/workflow.mjs`, a dependency-free Node module that ships inside the `run-task` skill so an installed copy is self-contained. `run-task` calls it (`next`, `status`, `create-task`) instead of reasoning through the phase table, the simulator drives it, the eval harness grades with it, and a runtime plugin can import it. `scripts/validate.mjs` checks that its `PHASES` table and the human-readable table in `workflows/delivery.md` agree, so the two cannot drift.
+The state machine lives in code: `skills/run-task/scripts/workflow.mjs`, a dependency-free Node module that ships inside the `run-task` skill so an installed copy is self-contained. `run-task` calls it (`next`, `status`, `create-task`) instead of reasoning through the phase table, the simulator drives it, the eval harness grades with it, and a runtime plugin can import it. `scripts/validate.mjs` checks that its `PHASES` table and the human-readable table in `workflows/delivery.md` agree on every column: artifact type, gate, interactive, the set of skills each phase can hand off to (evaluated over every workflow type, worktree state, remaining-phase state, and review status), and the chain rows themselves, which are regenerated from the module for a plain repository and compared with the document.
 
 Only the phase work needs tokens, and only the eval layer spends them.
 
@@ -26,26 +26,29 @@ Run it on a generated runtime tree with `node scripts/validate.mjs --root dist/<
 
 ## Simulation
 
-`scripts/simulate.mjs` is a fake agent. Given a phase, it writes the artifact from the skill's real template (frontmatter kept, placeholders filled with fixture text) and the reply from the skill's real answer template (variant chosen the way the skill would choose it), then validates both. The chain runner loops `nextCommand` from `workflow.mjs`, runs the fake phase, and asserts that the fence the template produced is the command the table predicted. That single assertion, repeated across a whole chain, is what proves the wiring: templates, table, worktree probe, and reply parser agree.
+`scripts/simulate.mjs` is a fake agent. Given a phase, it writes the artifact from the skill's real template (frontmatter kept, placeholders filled with fixture text) and the reply from the skill's real answer template, then validates both. The chain runner loops `nextCommand` from `workflow.mjs`, runs the fake phase, and asserts that the full command in the fence the template produced, skill and `@file` argument, is the command the table predicted. That single assertion, repeated across a whole chain, is what proves the wiring: templates, table, worktree probe, and reply parser agree.
+
+Be precise about what that does and does not cover. The fake agent's decisions (which answer variant to use, what `{artifact_arg}` names, which boxes the parent ticks) are the rules from `shared/CONVENTIONS.md` and the skills, re-implemented in JavaScript. The simulation proves that those rules, the templates, and the module are consistent with each other. It does not read `SKILL.md` prose, so a skill whose text contradicted the conventions would still simulate green. When a decision rule changes in a skill, the simulator must change with it, and the eval layer is the only thing that tests the prose against a real agent.
 
 Scenarios:
 
 ```sh
-npm run simulate -- full          # research-questions through pull request, plan with two phases
-npm run simulate -- lean          # workspace disabled: outline hands straight to implement-outline
+npm run simulate -- full          # plain repository: research-questions through pull request, one implementation run completes both plan phases
+npm run simulate -- lean          # plain repository: outline -> setup-worktree -> implement-outline, once per step
 npm run simulate -- prd           # fixture is a git worktree: plan hands straight to implement-plan
+npm run simulate -- interrupted   # implementation stops after every phase and re-enters with /implement-plan @<plan>
 npm run simulate -- oneshot
-npm run simulate -- review-loop   # review-code findings -> fix-code-review -> review-code clean -> describe-pr
-npm run simulate -- iterate       # changes requested at the plan gate; iterate-plan re-presents the gate
+npm run simulate -- review-loop   # user runs /review-code after implementation: findings -> fix-code-review -> clean -> describe-pr
+npm run simulate -- iterate       # changes requested at the plan gate; iterate-plan edits in place and re-presents the gate
 npm run simulate -- epic          # epic plan -> child task directories -> each child's start command
-npm run simulate -- recovery      # replies/ deleted mid-chain; next command derived from artifacts alone
+npm run simulate -- recovery      # replies/ deleted at several points; next command derived from artifacts alone
 ```
 
-Each prints one line per step (`NN  <skill>  -> <next command>  [gate]`) and exits 1 on any validation issue. `--keep` leaves the temp fixture on disk so you can open the files. `node scripts/simulate.mjs phase <skill> <task dir>` runs one fake phase against a real task directory, which is how the eval harness tests itself without a model.
+The fake implementation run follows `implement-plan/SKILL.md`: it completes every remaining phase in order, writes one receipt per phase, and replies once, unless a phase is `human-gated: true` or the scenario asks to stop after each phase. Each scenario prints one line per step (`NN  <skill>  -> <next command>  [gate]`) and exits 1 on any validation issue, including a reply whose `@<file>` argument names the receipt where the conventions require the plan. `--keep` leaves the temp fixture on disk so you can open the files. `node scripts/simulate.mjs phase <skill> <task dir> [@<artifact>] [--reply <file>] [--feedback "<text>"]` runs one fake phase against a real task directory, which is how the eval harness tests itself without a model.
 
 `tests/workflow.test.mjs` covers the module directly (reply parsing and validation, plan checkbox accounting, artifact listing, next-command decisions including loop ends, backend choice, status report shape, task creation, worktree probe). `tests/simulate.test.mjs` runs every scenario above and asserts the observed skill sequence and gate positions against the chains in `workflows/delivery.md`.
 
-What simulation cannot tell you: whether a model following `create-plan` writes a good plan. It proves the contract around the model, not the model.
+What simulation cannot tell you: whether a model following `create-plan` writes a good plan, or whether the skill text leads a model to the template it should use. It proves the contract around the model, not the model and not the prose.
 
 ## Evaluation
 
@@ -60,7 +63,20 @@ npm run eval -- --driver codex --case plan-from-outline --k 1
 
 Drivers run the runtimes headless: `omp -p --mode json`, `claude -p --output-format json`, `codex exec --json`. Each run gets a fresh fixture under the OS temp directory and the same file-form prompt `run-task` uses (`Read and follow <skill path>/SKILL.md ... write your complete final reply verbatim to <reply path>`), so an eval measures exactly what the orchestrator would get. Nothing is installed into your home directory.
 
-Graders are code and rule graders only (the taxonomy is in the `eval-harness` skill): the reply file exists and passes `validateReply` with the expected next skill; the artifact of the expected type exists and passes `validateArtifact`; the phase wrote nothing outside the gitignored task directory; no banned tokens; optional regexes the reply must match. A model grader is deliberately absent: a phase whose output a rule cannot check is a phase whose contract is too loose, and that is a finding for the skill text, not for a judge.
+Graders are code and rule graders only (the taxonomy is in the `eval-harness` skill):
+
+- `reply-file`: the phase wrote its reply to the path the prompt named.
+- `reply-shape`: `validateReply` with the expected next skill (fence, fresh-session sentence, no placeholders).
+- `reply-links`: the fence's `@<file>` and the reply's artifact link name files that exist; for plan cases the fence file is the produced plan.
+- `artifact`: an artifact of the expected type exists (or, for iterate cases, the seeded one changed) and passes `validateArtifact`.
+- `artifact-content`: the body has no template placeholders left, every section the template requires has content, and case-specific regexes tied to the fixture and the request match, so an artifact that ignores `task.md` fails.
+- `scope`: the working tree is clean outside the task directory, `HEAD` did not move, and the stash list did not change, so a phase that edits and commits source files fails.
+- `banned`: no host tokens.
+- `reply-contains`: optional regexes the reply must match.
+
+A model grader is deliberately absent: a phase whose output a rule cannot check is a phase whose contract is too loose, and that is a finding for the skill text, not for a judge. Every grader was checked against a lazy agent (empty body, verbatim template, unrelated task, commit-and-clean, dangling fence argument); each of those fails a named grader.
+
+Results carry provenance (skills commit and dirty flag, driver version, model when the runtime reports it, exact argv, prompt) so runs can be compared across skill edits and models. Drivers run with the runtime's home configuration isolated where the runtime offers flags for it; `eval/README.md` lists what each driver isolates.
 
 Cases live in `eval/cases/*.json`; `eval/README.md` documents the schema. Results are written to `eval/results/` (gitignored). Start with `k >= 3`; a single green run proves nothing about an agent.
 

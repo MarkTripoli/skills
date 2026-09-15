@@ -13,6 +13,7 @@
   "command": "create-research-questions",
   "expect": {
     "artifactType": "research-questions",
+    "artifactContains": ["src/index\\.js", "verbose"],
     "nextSkill": "create-research",
     "gate": false
   }

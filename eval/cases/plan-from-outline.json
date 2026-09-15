@@ -18,7 +18,9 @@
   "command": "create-plan",
   "expect": {
     "artifactType": "plan",
+    "artifactContains": ["src/index\\.js", "verbose"],
     "nextSkill": "setup-worktree",
+    "fenceArgIsArtifact": true,
     "gate": true
   }
 }
