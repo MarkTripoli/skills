@@ -156,7 +156,7 @@ function fillTemplate(input) {
     .replaceAll("{artifact_link}", "[01-artifact.md](.agents/tasks/task-slug/01-artifact.md)")
     .replaceAll("{summary}", "Saved the requested artifact.")
     .replaceAll("{artifact_file}", "01-artifact.md")
-    .replaceAll("{artifact_arg}", " @01-artifact.md")
+    .replaceAll("{plan_file}", "01-plan.md")
     .replaceAll("{implementation_command}", "/implement-plan")
     .replaceAll("{first_child_command}", "/create-research-questions")
     .replaceAll("{child_slug}", "child-slug")
@@ -167,11 +167,10 @@ function fillTemplate(input) {
     .replaceAll("{next_phase}", "2");
 }
 
+// Research answers carry `{next_command}`, filled per workflow type by the skill; render one per type.
 function renderWorkflowVariant(input, workflow) {
-  const match = new RegExp(`For \`${workflow}\`:\\s*\`\`\`text\\n([\\s\\S]*?)\`\`\``).exec(input);
-  if (!match) return null;
-  const [head] = input.split("<!-- workflow-variants -->");
-  return `${head.trimEnd()}\n\n\`\`\`text\n${match[1].trim()}\n\`\`\`\n`;
+  if (!input.includes("{next_command}")) return null;
+  return input.replaceAll("{next_command}", `/${RESEARCH_VARIANTS[workflow]}`);
 }
 
 // 1. Layout.

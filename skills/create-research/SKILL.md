@@ -41,7 +41,7 @@ Beyond `task.md`, do not read `ticket.md`, design artifacts, plans, or PR descri
 
 7. **Optional second pass**. Inspect Open Questions. If one targeted pass could answer remaining factual gaps, start children once more (do this at most once). Merge findings into sections. Remove answered questions.
 
-8. **Final answer**. Read references/research_final_answer.md and respond using that template only. Fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-type-slug.md](.agents/tasks/<slug>/NN-type-slug.md)`. The last lines must be one fenced `text` block copied from the template, not an inline command. Never repeat the current command `/create-research` as the next step. Choose the variant matching `workflow` in `task.md`: `full` -> `/create-design-discussion`, `lean` -> `/create-structure-outline`, `prd` -> `/create-prd`; delete the instruction line and the other variants.
+8. **Final answer**. Read references/research_final_answer.md and respond using that template only. Fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-type-slug.md](.agents/tasks/<slug>/NN-type-slug.md)`. The last lines must be one fenced `text` block copied from the template, not an inline command. Never repeat the current command `/create-research` as the next step. Fill `{next_command}` from `workflow` in `task.md`: `/create-design-discussion` for `full`, `/create-structure-outline` for `lean`, `/create-prd` for `prd`.
 
 9. **Follow-up**. If the user asks follow-up questions after the artifact exists, update the same document in place.
 

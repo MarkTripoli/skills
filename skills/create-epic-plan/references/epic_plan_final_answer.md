@@ -12,5 +12,5 @@ Running the next command records approval of the epic plan and creates the child
 Start the next phase in a new session, or hand the task to `/run-task`; continuing in this session carries this phase's context into the next one.
 
 ```text
-/start-epic-delivery{artifact_arg}
+/start-epic-delivery @{artifact_file}
 ```

@@ -8,5 +8,5 @@ Start the next phase in a new session, or hand the task to `/run-task`; continui
 Continue with:
 
 ```text
-/setup-worktree{artifact_arg}
+/setup-worktree
 ```

@@ -82,7 +82,9 @@ function fillArtifact(template, { type, slug, request = "", front = {}, body = (
     .split("\n")
     .map((line) => line.replace(/^([A-Za-z_][\w-]*):\s*"?\[[^\]]*\]"?\s*$/, "$1: fixture").replace(/^task: eng-xxxx-description$/, `task: ${slug}`))
     .join("\n");
-  const grounded = request ? fillBody(rest).replace(/^(# .*\n)/m, `$1\nRequest: ${request.replace(/\s+/g, " ").trim()}\n`) : fillBody(rest);
+  const requestLine = request ? `Request: ${request.replace(/\s+/g, " ").trim()}` : null;
+  const filled = fillBody(rest);
+  const grounded = !requestLine ? filled : /^# .*\n/m.test(filled) ? filled.replace(/^(# .*\n)/m, `$1\n${requestLine}\n`) : `${filled.trimEnd()}\n\n${requestLine}\n`;
   return `---\n${filledRaw}\n---\n${body(grounded)}`;
 }
 
@@ -168,15 +170,14 @@ function waves(children) {
 
 // Answer filling --------------------------------------------------------------------------------
 
+// Research answers carry `{next_command}`; the skill fills it from `workflow` in task.md.
+const RESEARCH_NEXT = { full: "/create-design-discussion", lean: "/create-structure-outline", prd: "/create-prd" };
+
 function pruneVariants(text, workflow) {
-  if (!text.includes("<!-- workflow-variants -->")) return text;
-  const match = new RegExp(`For \`${workflow}\`:\\s*\`\`\`text\\n([\\s\\S]*?)\`\`\``).exec(text);
-  if (!match) throw new Error(`research answer has no variant for workflow ${workflow}`);
-  const head = text
-    .split("<!-- workflow-variants -->")[0]
-    .replace(/^Choose the variant matching[^\n]*\n\n?/m, "")
-    .trimEnd();
-  return `${head}\n\n\`\`\`text\n${match[1].trim()}\n\`\`\`\n`;
+  if (!text.includes("{next_command}")) return text;
+  const next = RESEARCH_NEXT[workflow];
+  if (!next) throw new Error(`research answer has no next command for workflow ${workflow}`);
+  return text.replaceAll("{next_command}", next);
 }
 
 export function fillAnswer(template, vars) {
@@ -253,19 +254,18 @@ export function fakePhase(skill, taskDir, { scenario = {}, skillsDir = DEFAULT_S
   const baseVars = (file) => ({
     artifact_link: link(slug, file),
     artifact_file: file,
-    artifact_arg: ` @${file}`,
     summary: wf.parseFrontmatter(fs.readFileSync(path.join(taskDir, file), "utf8")).data.summary,
     review_check: REVIEW_CHECK,
     known_limits: KNOWN_LIMITS,
   });
-  const reply = (file, vars) => pruneVariants(fillAnswer(answerTemplate(skill, file, skillsDir), vars), task.workflow);
+  const reply = (file, vars) => fillAnswer(pruneVariants(answerTemplate(skill, file, skillsDir), task.workflow), vars);
   const planPhases = scenario.planPhases ?? 2;
   const implementationCommand = task.workflow === "lean" ? "/implement-outline" : "/implement-plan";
-  // Conventions, Answer template placeholders: setup-worktree, the implementation skills, configure-workspaces,
-  // and ci-commit fill `{artifact_arg}` with the plan or outline being implemented, empty when none exists.
-  const planArg = () => {
+  // Conventions, Answer template placeholders: setup-worktree and the implementation skills fill `{plan_file}`
+  // with the plan or outline being implemented.
+  const planFile = () => {
     const plan = findArtifact(artifacts, PLAN_TYPE[task.workflow], null);
-    return plan ? ` @${plan.name}` : "";
+    return plan ? plan.name : "";
   };
 
   // Iterations edit the newest artifact of the type in place and never take a new number.
@@ -314,7 +314,7 @@ export function fakePhase(skill, taskDir, { scenario = {}, skillsDir = DEFAULT_S
     }
     case "setup-worktree": {
       const file = create();
-      return finish(file, type, reply("worktree_final_answer.md", { ...baseVars(file), implementation_command: implementationCommand, artifact_arg: planArg() }));
+      return finish(file, type, reply("worktree_final_answer.md", { ...baseVars(file), implementation_command: implementationCommand, plan_file: planFile() }));
     }
     // Mirrors implement-plan steps 6 and 7: every phase advances on green checks and the run only stops
     // early at a `human-gated: true` phase (or when the scenario interrupts after each phase). One receipt
@@ -339,10 +339,10 @@ export function fakePhase(skill, taskDir, { scenario = {}, skillsDir = DEFAULT_S
         n = remaining[0];
       }
       if (remaining.length) {
-        const vars = { ...baseVars(file), artifact_arg: ` @${plan.name}`, completed_phase: String(n), next_phase: String(remaining[0]), implementation_command: implementationCommand };
+        const vars = { ...baseVars(file), plan_file: plan.name, completed_phase: String(n), next_phase: String(remaining[0]), implementation_command: implementationCommand };
         return finish(file, type, reply("implementation_phase_final_answer.md", vars));
       }
-      return finish(file, type, reply("implementation_final_answer.md", { ...baseVars(file), artifact_arg: ` @${plan.name}` }));
+      return finish(file, type, reply("implementation_final_answer.md", { ...baseVars(file), plan_file: plan.name }));
     }
     case "review-code": {
       const statuses = scenario.codeReview ?? ["clean"];
@@ -365,9 +365,9 @@ export function fakePhase(skill, taskDir, { scenario = {}, skillsDir = DEFAULT_S
       return finish(file, type, reply(status === "approved" ? "pr_review_approved_answer.md" : "pr_review_pending_answer.md", baseVars(file)));
     }
     case "ci-commit":
-      return single("commit_final_answer.md", { artifact_arg: planArg() });
+      return single("commit_final_answer.md");
     case "configure-workspaces":
-      return single("workspace_final_answer.md", { artifact_arg: planArg() });
+      return single("workspace_final_answer.md");
     case "review-artifact-comments":
       return single("comments_final_answer.md");
     case "show-me":

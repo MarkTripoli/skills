@@ -52,11 +52,11 @@ You run one task's workflow phase by phase. Each phase executes in a fresh conte
 
 4. **Run the phase**. Compute `NN` as the count of files in `replies/` plus one, two digits, and `<skill>` as the command name without the slash. The prompt is identical for every backend. When the skills directory is known, use the file form, which works in any agent that can read a file:
 
-   `Read and follow <skills dir>/<skill>/SKILL.md, the installed skill for <command>, for task directory <absolute task dir>. When finished, also write your complete final reply verbatim to <absolute task dir>/replies/<NN>-<skill>.md.`
+   `Read and follow <skills dir>/<skill>/SKILL.md, the installed skill for <command>, for task directory <absolute task dir>. When finished, also write your complete final reply (the message you print last, filled from the answer template, not the artifact) verbatim to <absolute task dir>/replies/<NN>-<skill>.md.`
 
    Otherwise use the command form:
 
-   `<command> for task directory <absolute task dir>. When finished, also write your complete final reply verbatim to <absolute task dir>/replies/<NN>-<skill>.md.`
+   `<command> for task directory <absolute task dir>. When finished, also write your complete final reply (the message you print last, filled from the answer template, not the artifact) verbatim to <absolute task dir>/replies/<NN>-<skill>.md.`
 
    A command that carries `@<file>` keeps it in both forms.
 

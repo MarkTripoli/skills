@@ -55,7 +55,7 @@ export const PHASES = {
   "iterate-plan": { type: "plan", gate: true, interactive: true, next: planNext("implement-plan") },
   "create-epic-plan": { type: "epic-plan", gate: true, interactive: false, next: ({ artifact }) => `/start-epic-delivery @${artifact}` },
   "start-epic-delivery": { type: "epic-delivery", gate: true, interactive: false, next: () => null },
-  "configure-workspaces": { type: "workspace-config", gate: true, interactive: true, next: ({ planFile }) => `/setup-worktree${planFile ? ` @${planFile}` : ""}` },
+  "configure-workspaces": { type: "workspace-config", gate: true, interactive: true, next: () => "/setup-worktree" },
   "setup-worktree": {
     type: "worktree-setup",
     gate: false,
@@ -378,6 +378,15 @@ function phaseContext(skill, task, artifacts, taskDir, projectRoot) {
     probe: worktreeProbe(projectRoot),
     taskDir,
   };
+}
+
+// The command a phase's reply must name once its artifact is on disk, from the table alone. Used by the
+// simulator and the eval harness to check a reply against the table rather than trusting the reply.
+export function predictNext(skill, taskDir, { projectRoot = projectRootOf(taskDir) } = {}) {
+  const phase = PHASES[skill];
+  if (!phase) return null;
+  const task = readTask(taskDir);
+  return phase.next(phaseContext(skill, task, listArtifacts(taskDir, task.slug), taskDir, projectRoot));
 }
 
 // Returns { command, skill, arg, inline, source, pendingGate, gateArtifact, interactive, done, reason, lastSkill }.

@@ -8,5 +8,5 @@ Start the next phase in a new session, or hand the task to `/run-task`; continui
 Continue with:
 
 ```text
-{implementation_command}{artifact_arg}
+{implementation_command} @{plan_file}
 ```

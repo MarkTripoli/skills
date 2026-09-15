@@ -77,10 +77,11 @@ The sentence before the fence is always: "Start the next phase in a new session,
 Answer templates under `references/` use these placeholders; fill every one before printing.
 
 - `{artifact_link}`: relative Markdown link to the file this phase saved, `[NN-type-slug.md](.agents/tasks/<slug>/NN-type-slug.md)`; `none` when nothing was saved.
-- `{artifact_file}`: that file's name.
+- `{artifact_file}`: that file's name only, for example `04-plan-verbose-cli-flag.md`. Templates write `@{artifact_file}` in commands; the `@` is already there, so fill nothing but the name, never a path.
 - `{summary}`: the saved artifact's frontmatter `summary`.
 - `{review_check}` and `{known_limits}`: one line per item of the artifact's `### Verify` and `### Known limits` lists.
-- `{artifact_arg}`: ` @<file>` (leading space) naming the artifact the next command needs. That is the file this phase saved, except in `setup-worktree`, `implement-plan`, `implement-outline`, `iterate-implementation`, `configure-workspaces`, and `ci-commit` replies, where it names the plan or structure outline being implemented (the newest artifact of type `plan` or `structure-outline`), never the receipt. Empty when the next command takes no file.
+- `{plan_file}`: the name of the plan or structure outline being implemented, the newest artifact of type `plan` or `structure-outline`; used by `setup-worktree` and the implementation skills, which hand off to the plan rather than to their own receipt. Same rule: name only, the template carries the `@`.
+- `{next_command}`: in research replies, `/create-design-discussion` for `full`, `/create-structure-outline` for `lean`, `/create-prd` for `prd`.
 - `{implementation_command}`: `/implement-outline` for `lean`, `/implement-plan` for `full` and `prd`.
 - `{completed_phase}` and `{next_phase}`: phase numbers in implementation replies.
 - `{child_slug}`, `{child_start_command}`, `{first_child_command}`: epic delivery; see `start-epic-delivery`.
@@ -139,7 +140,7 @@ Interactive phases (every `iterate-*` skill, `create-prd`, `create-tdd`, `review
 
 ## Reply files
 
-When the invoking prompt names a reply path (`.agents/tasks/<slug>/replies/NN-<skill>.md`), the skill writes its complete final reply there verbatim after printing it. `NN` is the phase-run sequence (`01`, `02`, ...), independent of artifact numbers. The file's existence signals completion; its `text` fence is the next command.
+When the invoking prompt names a reply path (`.agents/tasks/<slug>/replies/NN-<skill>.md`), the skill writes its complete final reply there verbatim after printing it. The final reply is the text filled from the skill's answer template (`references/*_answer.md`), the message the user reads last; it is never the artifact, and it ends with the command fence. `NN` is the phase-run sequence (`01`, `02`, ...), independent of artifact numbers. The file's existence signals completion; its `text` fence is the next command.
 
 ## Execution backends
 
