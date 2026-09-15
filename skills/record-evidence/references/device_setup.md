@@ -69,7 +69,6 @@ Notes: `simctl recordVideo` writes the file only when it stops, and like `screen
 - macOS: grant Screen Recording to the terminal or agent host app (System Settings, Privacy & Security). `doctor` lists screen indexes; `--screen-index N` picks one. Retina captures are large; `stop --max-height 1440` downsizes the render.
 - Linux X11 / XWayland: `DISPLAY` set (and `XAUTHORITY` when recording over SSH into a desktop session, usually `~/.Xauthority`); `xdpyinfo` or `xrandr` supplies the screen size, or pass `--geometry WxH`. Verified on Ubuntu 22.04 with Xorg and a static ffmpeg build in `~/bin` (no root needed).
 - Linux Wayland: `wf-recorder` on `PATH` and a wlr-screencopy compositor (Sway, Hyprland, river, Wayfire, labwc, dwl, niri). GNOME and KDE Wayland are not capturable this way. `doctor` names the missing piece. Known limits: wf-recorder does not build against ffmpeg 9 (checked September 2026), and a compositor with no connected monitor (`hyprctl -j monitors` prints `[]`) has nothing to capture; in both cases capture X11 windows through XWayland or record the browser with Playwright.
-- Windows: any ffmpeg build (`gdigrab`). Not exercised; written from ffmpeg's documentation.
 
 `--geometry WxH --offset X,Y` crops to a region on every grabber; prefer maximizing the window and recording the whole screen.
 
@@ -77,7 +76,7 @@ Notes: `simctl recordVideo` writes the file only when it stops, and like `screen
 
 Playwright is installed beside the script, inside the evidence directory (never committed), so the project's dependencies stay untouched. `npx --package=playwright node record.mjs` does not work: Node resolves `import "playwright"` from the script's own `node_modules`, not from the npx cache.
 
-Start the session first so its clock is running, then create the Playwright context immediately; the video's zero is taken as the moment `start` returned (adjust with `stop --video-offset S` when the frame check shows drift, or `--align end` when the video ended exactly at `stop`).
+Start the session first so its clock is running. Playwright begins recording when the page is created, so the script writes that moment to `<session>/video-started-at` and `stop` aligns the annotations to it (without the file, `stop` assumes the video began when `start` returned; `--video-offset S` or `--align end` adjust by hand).
 
 ```bash
 mkdir -p <dir>/web && cd <dir>/web
@@ -92,6 +91,7 @@ Minimal `record.mjs` that annotates through the recorder as it goes (verified ag
 ```js
 import { chromium } from "playwright";
 import { execFileSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 
 const [session] = process.argv.slice(2);
 const EVIDENCE = process.env.EVIDENCE; // path to evidence.py
@@ -100,6 +100,7 @@ const note = (...args) => execFileSync("python3", [EVIDENCE, ...args, session], 
 const browser = await chromium.launch(); // add { args: ["--no-sandbox"] } in containers that report "No usable sandbox"
 const context = await browser.newContext({ recordVideo: { dir: new URL("./video/", import.meta.url).pathname, size: { width: 1280, height: 720 } }, viewport: { width: 1280, height: 720 } });
 const page = await context.newPage();
+writeFileSync(`${session}/video-started-at`, String(Date.now() / 1000)); // recordVideo starts with the page
 
 note("narrate", "--message", "We open the settings page and switch the theme to dark. It should apply without a reload.");
 await page.goto("http://localhost:3000/settings");

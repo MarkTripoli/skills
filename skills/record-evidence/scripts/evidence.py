@@ -7,8 +7,8 @@ Needs Python 3.8+, ffmpeg and ffprobe. Text overlays need Pillow (preferred) or
 ImageMagick; without either the video is still finalized and the report lists the
 annotations. Nothing here depends on ffmpeg text filters (libass, drawtext).
 
-Commands: doctor, devices, boot, start, annotate, narrate, stop, render, frames, compose.
-Every command prints one JSON object on stdout; diagnostics go to stderr.
+Commands: doctor, devices, boot, start, annotate, narrate, stop, render, frames, pair, compose.
+Every command prints one JSON value on stdout; diagnostics go to stderr.
 """
 
 import argparse
@@ -25,9 +25,7 @@ import time
 from pathlib import Path
 
 VERSION = "1.0"
-IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
-IS_LINUX = sys.platform.startswith("linux")
 
 MAX_ANNOTATION = 80
 MAX_NARRATION = 280
@@ -143,18 +141,9 @@ def process_alive(pid, marker=None):
     """Return (alive, marker_matches). marker is a substring expected in the command line."""
     if not pid:
         return False, False
-    if IS_WIN:
-        res = run(
-            ["powershell", "-NoProfile", "-Command",
-             "(Get-CimInstance Win32_Process -Filter \"ProcessId=%d\").CommandLine" % pid],
-            timeout=15,
-        )
-        cmdline = res.stdout.strip()
-        alive = res.returncode == 0 and bool(cmdline)
-    else:
-        res = run(["ps", "-p", str(pid), "-o", "command="], timeout=10)
-        cmdline = res.stdout.strip()
-        alive = res.returncode == 0 and bool(cmdline)
+    res = run(["ps", "-p", str(pid), "-o", "command="], timeout=10)
+    cmdline = res.stdout.strip()
+    alive = res.returncode == 0 and bool(cmdline)
     return alive, (alive and (marker is None or marker in cmdline))
 
 
@@ -175,7 +164,7 @@ def adb_path():
         return found
     root = sdk_root()
     if root:
-        cand = root / "platform-tools" / ("adb.exe" if IS_WIN else "adb")
+        cand = root / "platform-tools" / "adb"
         if cand.exists():
             return str(cand)
     return None
@@ -187,7 +176,7 @@ def emulator_path():
         return found
     root = sdk_root()
     if root:
-        cand = root / "emulator" / ("emulator.exe" if IS_WIN else "emulator")
+        cand = root / "emulator" / "emulator"
         if cand.exists():
             return str(cand)
     return None
@@ -352,8 +341,6 @@ FONT_CANDIDATES = {
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
         "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-        "C:/Windows/Fonts/segoeui.ttf",
-        "C:/Windows/Fonts/arial.ttf",
     ],
     "bold": [
         "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
@@ -365,8 +352,6 @@ FONT_CANDIDATES = {
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
         "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
         "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
-        "C:/Windows/Fonts/segoeuib.ttf",
-        "C:/Windows/Fonts/arialbd.ttf",
     ],
 }
 
@@ -1184,8 +1169,6 @@ def screen_capture_info(tc):
         screens = mac_screens(tc)
         info.update({"grabber": "avfoundation", "screens": screens, "available": bool(screens),
                      "note": "needs Screen Recording permission for the terminal or agent host app"})
-    elif IS_WIN:
-        info.update({"grabber": "gdigrab", "available": bool(tc.ffmpeg)})
     else:
         display = os.environ.get("DISPLAY")
         wayland = os.environ.get("WAYLAND_DISPLAY")
@@ -1271,11 +1254,7 @@ def cmd_devices(args):
 
 def spawn_detached(cmd, log_path, cwd=None, env=None):
     log = open(log_path, "ab")
-    kwargs = {"stdin": subprocess.DEVNULL, "stdout": log, "stderr": log, "cwd": cwd, "env": env}
-    if IS_WIN:
-        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
-    else:
-        kwargs["start_new_session"] = True
+    kwargs = {"stdin": subprocess.DEVNULL, "stdout": log, "stderr": log, "cwd": cwd, "env": env, "start_new_session": True}
     proc = subprocess.Popen(cmd, **kwargs)
     log.close()
     return proc
@@ -1424,12 +1403,6 @@ def capture_plan(sess, sp):
             cmd = [tc.ffmpeg, "-hide_banner", "-loglevel", "warning", "-f", "avfoundation", "-framerate", framerate,
                    "-capture_cursor", "1", "-i", "%s:none" % index, "-vf", ",".join(vf), *tc.capture_encoder_args(), *common_out]
             return {"kind": "ffmpeg", "cmd": cmd, "files": [str(cap / "raw.ts")], "target": "screen %s" % index}
-        if IS_WIN:
-            cmd = [tc.ffmpeg, "-hide_banner", "-loglevel", "warning", "-f", "gdigrab", "-framerate", framerate]
-            if geometry:
-                cmd += ["-offset_x", str(offset[0]), "-offset_y", str(offset[1]), "-video_size", "%dx%d" % geometry]
-            cmd += ["-i", "desktop", "-vf", even_scale, *tc.capture_encoder_args(), *common_out]
-            return {"kind": "ffmpeg", "cmd": cmd, "files": [str(cap / "raw.ts")], "target": "desktop"}
         grabber = opts.get("grabber") or info["options"][0]["grabber"]
         if grabber == "x11grab":
             display = opts.get("display") or os.environ.get("DISPLAY")
@@ -1490,8 +1463,8 @@ def cmd_start(args):
         die("session already exists: %s (pick another --output)" % session_dir)
     session_dir.mkdir(parents=True, exist_ok=True)
     source = pick_source(tc, args.source, args.target)
-    if args.layout not in ("auto", "overlay", "panel"):
-        die("--layout must be auto, overlay, or panel")
+    if args.layout not in ("auto", "overlay", "panel", "dashboard"):
+        die("--layout must be auto, overlay, panel, or dashboard")
     sess = {
         "version": VERSION,
         "name": args.name or session_dir.name,
@@ -1577,10 +1550,7 @@ def graceful_stop(child, kind):
             return
     elif kind == "sigint":
         try:
-            if IS_WIN:
-                child.send_signal(signal.CTRL_BREAK_EVENT)
-            else:
-                child.send_signal(signal.SIGINT)
+            child.send_signal(signal.SIGINT)
         except (OSError, ValueError):
             pass
         if wait_exit(child, 30):
@@ -1602,8 +1572,6 @@ def cmd_supervise(args):
     if plan.get("env"):
         env.update(plan["env"])
     popen_kwargs = {"stdout": log, "stderr": log, "env": env}
-    if IS_WIN:
-        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
 
     def record_child(child, started_at):
         write_json(sp["recorder"], {"supervisor_pid": os.getpid(), "child_pid": child.pid, "cmd": plan["cmd"],
@@ -1849,7 +1817,8 @@ def render_video(tc, raster, inputs, out_path, cfg, filter_prefix, overlay_dir, 
     return frames, None, cmd
 
 
-def finalize_session(sess, sp, opts, exit_info, warnings, video_override=None, video_offset=0.0, align="start", caveats=None):
+def finalize_session(sess, sp, opts, exit_info, warnings, video_override=None, video_offset=0.0, align="start", caveats=None,
+                     video_started_at=None):
     tc = Toolchain()
     raster, overlay_info = overlay_backend(opts.get("font"))
     events = read_events(sp)
@@ -1888,7 +1857,21 @@ def finalize_session(sess, sp, opts, exit_info, warnings, video_override=None, v
     extend = 0.0
     offset_source = "import"
     if sess["source"] == "external":
-        offset = (wall - dur) if align == "end" else float(video_offset or 0.0)
+        marker_file = sp["dir"] / "video-started-at"
+        started_marker = None
+        if video_started_at:
+            started_marker = float(video_started_at)
+        elif marker_file.exists():
+            try:
+                started_marker = float(marker_file.read_text().strip())
+            except ValueError:
+                warnings.append("video-started-at file is not a number; ignored")
+        if started_marker:
+            offset = started_marker - sess["started_at"]
+            offset_source = "video-started-at"
+        else:
+            offset = (wall - dur) if align == "end" else float(video_offset or 0.0)
+            offset_source = "align-end" if align == "end" else "video-offset"
     else:
         sparse = exit_info.get("sparse", sess.get("recorder") in ("adb screenrecord", "simctl recordVideo"))
         first_bytes_offset = (first_byte_at - sess["started_at"]) if first_byte_at and first_byte_at < stopped_at - 0.5 else None
@@ -1931,28 +1914,37 @@ def finalize_session(sess, sp, opts, exit_info, warnings, video_override=None, v
     layout = opts.get("layout") or sess["options"].get("layout") or "auto"
     if layout == "auto":
         layout = "panel" if h > w else "overlay"
+    if layout not in ("overlay", "panel", "dashboard"):
+        die("--layout must be auto, overlay, panel, or dashboard")
     card = float(opts["card_seconds"]) if opts.get("cards", True) and raster is not None else 0.0
-    if layout == "panel":
-        panel_w = even(max(640, w * 0.75))
-        canvas = (w + panel_w, h)
-        panel_rect = (w, 0, panel_w, h)
-    else:
-        panel_w = 0
-        canvas = (w, h)
-        panel_rect = None
     prepared = prepare_events(events, offset, effective_dur, card)
     narration = [e for e in prepared if e["type"] == "narration"] if opts.get("narration", True) else []
     pane_events = [e for e in prepared if e["type"] != "narration"]
     tests = judge_tests(pane_events)
+    header_h = footer_h = 0
+    slots = None
+    panel_rect = None
+    if layout == "panel":
+        panel_w = even(max(640, w * 0.75))
+        canvas = (w + panel_w, h)
+        panel_rect = (w, 0, panel_w, h)
+    elif layout == "dashboard":
+        # Header and footer bands hold the chips and narration; the video is never covered.
+        header_h, footer_h, slots, _ = dashboard_geometry(raster, [(w, h)], [pane_events], narration)
+        canvas = (w, header_h + h + footer_h)
+    else:
+        canvas = (w, h)
     cfg = {
-        "mode": layout,
+        "mode": "panel" if layout == "panel" else "overlay",
         "canvas": canvas,
-        "scale": h / 1080.0,
-        "panes": [{"rect": (0, 0, w, h), "label": sess.get("label"), "events": pane_events, "tests": tests}],
+        "scale": OverlayRenderer.pane_scale(w, h),
+        "slots": slots,
+        "panes": [{"rect": (0, header_h, w, h), "label": sess.get("label") or sess["title"], "events": pane_events, "tests": tests}],
         "narration": narration,
-        "narration_pos": "panel" if layout == "panel" else "top",
+        "narration_pos": "panel" if layout == "panel" else ("bottom" if layout == "dashboard" else "top"),
         "panel_rect": panel_rect,
-        "header_h": 0,
+        "header_h": header_h,
+        "footer_h": footer_h,
         "card": card,
         "dur": effective_dur,
         "title": sess["title"],
@@ -1964,7 +1956,7 @@ def finalize_session(sess, sp, opts, exit_info, warnings, video_override=None, v
     # `fps` between the pads: a tpad stop after a tpad start otherwise loses its padding (EOF pts not shifted).
     if card or extend:
         chain += ",tpad=start_duration=%.3f:start_mode=clone,fps=%d,tpad=stop_duration=%.3f:stop_mode=clone" % (card, FPS, card + extend)
-    chain += ",pad=%d:%d:0:0:color=%s[base]" % (canvas[0], canvas[1], PAD_COLOR)
+    chain += ",pad=%d:%d:0:%d:color=%s[base]" % (canvas[0], canvas[1], header_h, PAD_COLOR)
     frames, error, cmd = render_video(tc, raster, inputs, sp["video"], cfg, chain, sp["overlay"], opts, warnings)
     if error:
         sess["status"] = STATUS_FAILED
@@ -2011,7 +2003,7 @@ def finalize_session(sess, sp, opts, exit_info, warnings, video_override=None, v
     write_report(sp["report"], manifest, caveats)
     sess["status"] = STATUS_FINALIZED if verified else STATUS_FAILED
     sess["render_options"] = opts
-    sess["import"] = {"video_offset": float(video_offset or 0.0), "align": align}
+    sess["import"] = {"video_offset": float(video_offset or 0.0), "align": align, "video_started_at": video_started_at}
     write_json(sp["session"], sess)
     return manifest
 
@@ -2086,7 +2078,8 @@ def cmd_stop(args):
     exit_info, warnings = ensure_recorder_stopped(sess, sp, args)
     opts = render_opts_from_args(args)
     manifest = finalize_session(sess, sp, opts, exit_info, warnings, video_override=args.video,
-                                video_offset=args.video_offset, align=args.align, caveats=args.caveats)
+                                video_offset=args.video_offset, align=args.align, caveats=args.caveats,
+                                video_started_at=args.video_started_at)
     emit({"session": str(sp["dir"]), "verified": manifest["verified"], "video": manifest["video"],
           "report": str(sp["report"]), "manifest": str(sp["manifest"]), "duration": manifest["video_probe"]["duration"],
           "tests": manifest["test_tally"], "assertions": manifest["assertion_tally"], "warnings": warnings,
@@ -2106,7 +2099,7 @@ def cmd_render(args):
     opts = render_opts_from_args(args)
     imported = sess.get("import") or {}
     manifest = finalize_session(sess, sp, opts, exit_info, [], video_offset=imported.get("video_offset", 0.0),
-                                align=imported.get("align", "start"))
+                                align=imported.get("align", "start"), video_started_at=imported.get("video_started_at"))
     emit({"session": str(sp["dir"]), "verified": manifest["verified"], "video": manifest["video"], "layout": manifest["render"]["layout"],
           "overlay_frames": manifest["render"]["overlay_frames"], "warnings": manifest["warnings"]})
 
@@ -2150,7 +2143,148 @@ def cmd_frames(args):
     emit({"frames": written, "dir": str(out_dir)})
 
 
+# --------------------------------------------------------------------------- commands: pair
+
+
+def resolve_moment(manifest, spec):
+    """`@N` selects the Nth test event (setup/test_start/assertion) in time order; a number is seconds."""
+    events = [e for e in manifest["events"] if e["type"] != "narration"] if manifest["kind"] == "session" else []
+    if spec.startswith("@"):
+        idx = int(spec[1:])
+        if not 1 <= idx <= len(events):
+            die("%s is out of range: the session has %d test events" % (spec, len(events)))
+        ev = events[idx - 1]
+        return ev["adjusted_t"], "%s: %s" % (ev["type"].replace("_", " "), ev["message"])
+    return float(spec), None
+
+
+def grab_raw_frame(tc, manifest, t, out_path):
+    files = manifest["raw"]["files"]
+    inputs = input_args_for(files, Path(out_path).with_suffix(".segments.txt"))
+    t = min(max(0.0, t), max(0.0, manifest["raw"]["duration"] - 0.05))
+    res = run([tc.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-ss", "%.3f" % t, *inputs, "-frames:v", "1", str(out_path)], timeout=300)
+    if res.returncode != 0 or not Path(out_path).exists():
+        die("could not extract a frame at %.2fs" % t, detail=res.stderr.strip()[-500:])
+    Path(str(Path(out_path).with_suffix(".segments.txt"))).unlink(missing_ok=True)
+
+
+def cmd_pair(args):
+    tc = Toolchain()
+    raster, _ = overlay_backend(args.font)
+    out = Path(args.out).resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    work = out.parent / (out.stem + ".pair-tmp")
+    work.mkdir(exist_ok=True)
+    sides = []
+    for name, spec, file_arg in (("before", args.before, args.before_file), ("after", args.after, args.after_file)):
+        if file_arg:
+            sides.append((Path(file_arg).resolve(), None))
+        elif spec:
+            if not args.session:
+                die("--%s needs a session (or use --%s-file)" % (name, name))
+            manifest = read_json(Path(args.session) / "manifest.json")
+            if not manifest or manifest.get("kind") != "session":
+                die("not a finalized session: %s" % args.session)
+            t, note = resolve_moment(manifest, spec)
+            frame = work / ("%s.png" % name)
+            grab_raw_frame(tc, manifest, t, frame)
+            sides.append((frame, note))
+        else:
+            die("give --%s (seconds or @N) or --%s-file" % (name, name))
+    infos = [ffprobe_video(tc, p) for p, _ in sides]
+    if not all(infos):
+        die("could not read the input images")
+    H = even(args.height)
+    widths = [even(i["width"] * H / i["height"]) for i in infos]
+    gap = 8
+    W = sum(widths) + gap
+    labels = [s.strip() for s in args.labels.split(",")] if args.labels else ["BEFORE", "AFTER"]
+    if len(labels) != 2:
+        die("--labels needs two comma-separated labels")
+    header_h = footer_h = 0
+    overlay_png = None
+    if raster is not None:
+        painter = Painter(raster)
+        s = max(H / 1080.0, W / 2000.0)
+        pad = int(16 * s)
+        header_h = even(pad * 2 + 30 * s * 1.5)
+        caption = args.caption
+        notes = [n for _, n in sides if n]
+        caption_block = None
+        if caption or notes:
+            parts = []
+            if caption:
+                parts.append((caption, 26 * s, C_TEXT, False))
+            for label, (_, note) in zip(labels, sides):
+                if note:
+                    parts.append(("%s  ·  %s" % (label, note), 20 * s, C_MUTED, False))
+            caption_block = painter.layout(parts, W - 2 * pad, 0, gap=int(6 * s))
+            footer_h = even(caption_block["h"] + 2 * pad)
+        fr = raster.frame(W, H + header_h + footer_h)
+        x = 0
+        for label, w in zip(labels, widths):
+            size = 30 * s
+            tw = raster.measure(label, size, True)
+            fr.text(x + (w - tw) / 2, pad + (header_h - 2 * pad - size) / 2, label, size, C_TEXT, True)
+            x += w + gap
+        fr.rect(widths[0], header_h, gap, H, C_DIVIDER)
+        if caption_block:
+            painter.paint(fr, caption_block, pad, H + header_h + pad)
+        overlay_png = work / "overlay.png"
+        fr.save(overlay_png)
+    graph = "[0:v]scale=%d:%d,setsar=1[a];[1:v]scale=%d:%d,setsar=1[b];[a]pad=%d:%d:0:0:color=%s[ap];[ap][b]hstack=inputs=2,pad=%d:%d:0:%d:color=%s[base]" % (
+        widths[0], H, widths[1], H, widths[0] + gap, H, PAD_COLOR, W, H + header_h + footer_h, header_h, PAD_COLOR)
+    cmd = [tc.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(sides[0][0]), "-i", str(sides[1][0])]
+    if overlay_png:
+        cmd += ["-i", str(overlay_png)]
+        graph += ";[base][2:v]overlay=0:0:format=rgb[v]"
+    else:
+        graph += ";[base]copy[v]"
+    cmd += ["-filter_complex", graph, "-map", "[v]", "-frames:v", "1", str(out)]
+    res = run(cmd, timeout=300)
+    if res.returncode != 0:
+        die("ffmpeg failed to build the pair", detail=res.stderr.strip()[-800:], command=cmd)
+    shutil.rmtree(work, ignore_errors=True)
+    emit({"pair": str(out), "size": [W, H + header_h + footer_h], "labels": labels,
+          "sides": [{"label": l, "source": str(p), "note": n} for l, (p, n) in zip(labels, sides)]})
+
+
 # --------------------------------------------------------------------------- commands: compose
+
+
+def dashboard_geometry(raster, sizes, pane_events, narration, direction="h"):
+    """Header and footer bands sized for the longest content across panes.
+
+    Returns (header_h, footer_h, slots, scale). Header: label, test chip, toast, tally rows; footer: narration.
+    """
+    s = min(OverlayRenderer.pane_scale(pw, ph) for pw, ph in sizes)
+    if raster is None:
+        return 0, 0, None, s
+    painter = Painter(raster)
+    pad, gap = int(16 * s), int(8 * s)
+    label_h = int(30 * s * 1.5)
+    chip_h = toast_h = 0
+    for (pw, ph), events in zip(sizes, pane_events):
+        inner_w = pw - 2 * pad
+        for ev in events:
+            if ev["type"] == "test_start":
+                block = painter.layout([("TEST 0/0", 19 * s, C_TEST, True), (ev["message"], 24 * s, C_TEXT, False)], inner_w, int(14 * s), gap=int(4 * s))
+                chip_h = max(chip_h, block["h"])
+            elif ev["type"] in ("assertion", "setup"):
+                g = painter.measure_pill_line(RESULT_LABELS[ev.get("result") or "setup"], ev["message"], 24 * s, inner_w, pad=int(12 * s))
+                toast_h = max(toast_h, int(g["h"]))
+    tally_h = int(21 * s * 1.32 + 8 * s)
+    header_h = even(pad + label_h + chip_h + gap + toast_h + gap + tally_h + pad)
+    narration_size = 28 * s
+    footer_h = 0
+    if narration:
+        canvas_w = sum(pw for pw, _ in sizes) if direction == "h" else max(pw for pw, _ in sizes)
+        tallest = max(painter.layout(OverlayRenderer.narration_parts(g.get("lines") or [g["message"]], narration_size),
+                                     canvas_w - 2 * pad, int(16 * s), accent=int(10 * s))["h"] for g in narration)
+        footer_h = even(pad + tallest + pad)
+    slots = {"pad": pad, "gap": gap, "label_h": label_h, "chip_h": chip_h, "toast_h": toast_h, "tally_h": tally_h,
+             "narration_size": narration_size}
+    return header_h, footer_h, slots, s
 
 
 def cmd_compose(args):
@@ -2231,34 +2365,7 @@ def cmd_compose(args):
             group["message"] = "  /  ".join(group["lines"])
             for key in ("panes", "texts", "entries"):
                 group.pop(key)
-    # Dashboard geometry: header rows sized for the longest content, footer for the longest narration.
-    s = min(OverlayRenderer.pane_scale(pw, ph) for pw, ph in sizes)
-    header_h = footer_h = 0
-    slots = None
-    if raster is not None:
-        painter = Painter(raster)
-        pad, gap = int(16 * s), int(8 * s)
-        label_h = int(30 * s * 1.5)
-        chip_h = toast_h = 0
-        for (pw, ph), events in zip(sizes, pane_events):
-            inner_w = pw - 2 * pad
-            for ev in events:
-                if ev["type"] == "test_start":
-                    block = painter.layout([("TEST 0/0", 19 * s, C_TEST, True), (ev["message"], 24 * s, C_TEXT, False)], inner_w, int(14 * s), gap=int(4 * s))
-                    chip_h = max(chip_h, block["h"])
-                elif ev["type"] in ("assertion", "setup"):
-                    g = painter.measure_pill_line(RESULT_LABELS[ev.get("result") or "setup"], ev["message"], 24 * s, inner_w, pad=int(12 * s))
-                    toast_h = max(toast_h, int(g["h"]))
-        tally_h = int(21 * s * 1.32 + 8 * s)
-        header_h = even(pad + label_h + chip_h + gap + toast_h + gap + tally_h + pad)
-        narration_size = 28 * s
-        if narration:
-            canvas_w = sum(pw for pw, _ in sizes) if args.direction == "h" else max(pw for pw, _ in sizes)
-            tallest = max(painter.layout(OverlayRenderer.narration_parts(g["lines"], narration_size), canvas_w - 2 * pad, int(16 * s), accent=int(10 * s))["h"]
-                          for g in narration)
-            footer_h = even(pad + tallest + pad)
-        slots = {"pad": pad, "gap": gap, "label_h": label_h, "chip_h": chip_h, "toast_h": toast_h, "tally_h": tally_h,
-                 "narration_size": narration_size}
+    header_h, footer_h, slots, s = dashboard_geometry(raster, sizes, pane_events, narration, args.direction)
     panes = []
     x, y = 0, 0
     for (pw, ph), m, label, delta, events in zip(sizes, manifests, labels, deltas, pane_events):
@@ -2362,7 +2469,7 @@ def cmd_compose(args):
 
 
 def add_render_options(parser):
-    parser.add_argument("--layout", default=None, help="overlay, panel, or auto (portrait video gets a side panel)")
+    parser.add_argument("--layout", default=None, help="overlay (chips on the video), panel (side panel, default for portrait), dashboard (header and footer bands), or auto")
     parser.add_argument("--no-narration", action="store_true", help="leave narration out of the overlay")
     parser.add_argument("--no-cards", action="store_true", help="skip the title and summary cards")
     parser.add_argument("--card-seconds", type=float, default=DEFAULT_CARD_SECONDS)
@@ -2413,7 +2520,7 @@ def build_parser():
     s.add_argument("--output-name", default=None, help="wf-recorder output name (Wayland)")
     s.add_argument("--grabber", default=None, choices=["x11grab", "wf-recorder"], help="Linux: force a grabber")
     s.add_argument("--framerate", type=int, default=FPS)
-    s.add_argument("--layout", default="auto", help="default overlay layout for this session: auto, overlay, panel")
+    s.add_argument("--layout", default="auto", help="default overlay layout for this session: auto, overlay, panel, dashboard")
     s.add_argument("--no-scrcpy", action="store_true", help="android: use adb screenrecord even if scrcpy exists")
     s.add_argument("--start-timeout", type=float, default=30.0)
     s.add_argument("--settle", type=float, default=1.5, help="seconds to wait before confirming the recorder stays up")
@@ -2439,6 +2546,8 @@ def build_parser():
     st.add_argument("--video", default=None, help="external source: the recorded browser video to import")
     st.add_argument("--video-offset", type=float, default=0.0, help="external: seconds the video started after `start`")
     st.add_argument("--align", default="start", choices=["start", "end"], help="external: align the video to session start or stop")
+    st.add_argument("--video-started-at", type=float, default=None,
+                    help="external: epoch seconds when the video began (the recording script can also write it to <session>/video-started-at)")
     st.add_argument("--caveats", default=None, help="text for the Caveats section of report.md")
     st.add_argument("--timeout", type=float, default=90.0, help="seconds to wait for the recorder to flush")
     st.add_argument("--accept-untracked-recorder", action="store_true")
@@ -2457,6 +2566,19 @@ def build_parser():
     f.add_argument("--delay", type=float, default=0.6, help="seconds after the annotation to grab (lets the overlay appear)")
     f.add_argument("--out", default=None)
     f.set_defaults(func=cmd_frames)
+
+    pr = sub.add_parser("pair", help="build a labeled before/after image from session frames or PNG files")
+    pr.add_argument("session", nargs="?", help="finalized session whose raw capture supplies the frames")
+    pr.add_argument("--before", default=None, help="seconds into the capture, or @N for the Nth test event")
+    pr.add_argument("--after", default=None, help="seconds into the capture, or @N for the Nth test event")
+    pr.add_argument("--before-file", default=None, help="PNG to use instead of a session frame")
+    pr.add_argument("--after-file", default=None, help="PNG to use instead of a session frame")
+    pr.add_argument("--out", required=True, help="output PNG")
+    pr.add_argument("--labels", default=None, help="two comma-separated labels (default BEFORE,AFTER)")
+    pr.add_argument("--caption", default=None, help="one line under the pair saying what changed")
+    pr.add_argument("--height", type=int, default=720)
+    pr.add_argument("--font", default=None)
+    pr.set_defaults(func=cmd_pair)
 
     c = sub.add_parser("compose", help="stack finalized sessions side by side with a shared narration track")
     c.add_argument("--output", required=True, help="directory for composite.mp4, report.md, manifest.json")

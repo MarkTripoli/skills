@@ -38,13 +38,14 @@ Each session directory ends up with `evidence.mp4` (overlay burned in), `report.
 | `stop SESSION [--caveats TEXT] [--video FILE]` | Stops the recorder, corrects timestamps, burns the overlay, writes `report.md` and `manifest.json`, prints `"verified": true`. |
 | `render SESSION [--layout overlay\|panel] [--no-narration] [--no-cards]` | Re-renders from the raw capture with other overlay options. |
 | `frames SESSION` | Extracts one PNG per test event into `frames/` for review. |
+| `pair [SESSION] --before @N\|SECONDS --after @N\|SECONDS --out pair.png [--caption TEXT]` | Builds a labeled before/after image from two moments of the raw capture (`@N` is the Nth test event) or from two PNGs (`--before-file`, `--after-file`). |
 | `compose --output DIR SESSION... [--label L]... [--direction h\|v] [--no-align] [--caveats TEXT]` | Stacks finalized sessions side by side, aligned by wall clock, with one shared narration track and merged results. |
 
 Sources (`--source auto` picks the first available in this order):
 
 | Source | Captures | Needs |
 |---|---|---|
-| `screen` | The desktop: macOS `avfoundation` (Screen Recording permission for the terminal or agent host), Linux `x11grab` (`DISPLAY`) or `wf-recorder` (`WAYLAND_DISPLAY`, wlroots compositor), Windows `gdigrab`. `--geometry WxH --offset X,Y` crops. | ffmpeg |
+| `screen` | The desktop: macOS `avfoundation` (Screen Recording permission for the terminal or agent host), Linux `x11grab` (`DISPLAY`) or `wf-recorder` (`WAYLAND_DISPLAY`, wlroots compositor). `--geometry WxH --offset X,Y` crops. | ffmpeg |
 | `android` | One emulator or device (`--target <serial>`; optional when exactly one is connected). Uses `scrcpy --no-playback --record` when installed, otherwise `adb shell screenrecord` in 180 s segments. Works with `emulator -no-window`. | adb; scrcpy optional |
 | `ios` | One booted simulator (`--target <name or udid>`; optional when exactly one is booted) through `xcrun simctl io recordVideo`. Works without Simulator.app open. | macOS, Xcode tools |
 | `external` | No recorder. You record with Playwright (or any tool) and import the file at `stop --video path.webm`. | the browser tool |
@@ -134,7 +135,7 @@ Panes align by wall clock (a pane that started later shows a dark hold first); `
 
 The recording rule holds unchanged; only the input mechanism differs.
 
-- **Desktop with a display**: use `cua-driver` (macOS, Windows, Linux) as the actuator: `cua-driver doctor`, then per interaction `launch_app` or `get_window_state` (accessibility tree plus screenshot), act via `element_token`, `verify_state` for the postcondition; each `verify_state` maps to one `assertion`. Keep the bundled recorder for the video when `doctor` shows a screen source; otherwise `cua-driver recording start <dir>` / `stop` writes `<dir>/recording.mp4` (verify it exists; on Windows and Linux it needs ffmpeg).
+- **Desktop with a display**: use `cua-driver` (macOS, Linux) as the actuator: `cua-driver doctor`, then per interaction `launch_app` or `get_window_state` (accessibility tree plus screenshot), act via `element_token`, `verify_state` for the postcondition; each `verify_state` maps to one `assertion`. Keep the bundled recorder for the video when `doctor` shows a screen source; otherwise `cua-driver recording start <dir>` / `stop` writes `<dir>/recording.mp4` (verify it exists; on Linux it needs ffmpeg).
 - **Android**: `adb shell input ...` and `adb exec-out screencap -p` for looking, or Maestro flows.
 - **iOS simulator**: Maestro (`maestro test flow.yaml`), `idb ui tap`, or the app's own UI tests; `xcrun simctl io <udid> screenshot` for looking.
 - **Browser**: Playwright with `recordVideo`, imported through the `external` source.
@@ -148,7 +149,7 @@ Emulators and simulators run headless and record fine: `boot ... --headless` the
 - **API / performance**: a scripted probe with measured numbers (request counts per phase, latency before and after) saved as `probe-output.txt`.
 - **Rendering / canvas / shader**: rendered frames plus pixel assertions (diff values), reviewed by eye and saved as PNGs.
 - **Agent behavior**: the transcript excerpt showing the tool call and its response.
-- **Bug fixes**: reproduce and capture the failure before writing the fix; that capture is the "before" half of the before/after pair.
+- **Bug fixes**: reproduce and capture the failure before writing the fix; that capture is the "before" half. `pair --before-file failure.png --after-file fixed.png --caption "..."` produces the labeled pair; inside one recording, `pair SESSION --before @1 --after @3` uses the frames at those test events.
 
 ## Guardrails
 
