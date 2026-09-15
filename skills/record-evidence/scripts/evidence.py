@@ -219,9 +219,11 @@ class Toolchain:
                     self.filters.add(parts[1])
             res = run([self.ffmpeg, "-hide_banner", "-demuxers"], timeout=20)
             for line in res.stdout.splitlines():
-                parts = line.split()
-                if len(parts) >= 2 and parts[0].startswith("D"):
-                    self.demuxers.add(parts[1])
+                # " D   name" or " D d name": the first four columns are flags, the name follows.
+                if len(line) > 5 and "D" in line[:4] and line[0] == " ":
+                    rest = line[4:].split()
+                    if rest and rest[0] not in ("=",):
+                        self.demuxers.add(rest[0])
 
     @property
     def ready(self):
@@ -241,7 +243,7 @@ class Toolchain:
         enc = self.encoder
         if enc == "libx264":
             if quality == "capture":
-                return ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "18", "-pix_fmt", "yuv420p"]
+                return ["-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-crf", "18", "-pix_fmt", "yuv420p"]
             return ["-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-pix_fmt", "yuv420p"]
         if enc == "h264_videotoolbox":
             return ["-c:v", "h264_videotoolbox", "-b:v", "12M" if quality == "capture" else "8M", "-pix_fmt", "yuv420p"]
@@ -376,8 +378,18 @@ def find_fonts(preferred=None):
             die("font not found: %s" % preferred)
         return preferred, preferred
     regular = next((p for p in FONT_CANDIDATES["regular"] if Path(p).exists()), None)
-    bold = next((p for p in FONT_CANDIDATES["bold"] if Path(p).exists()), None) or regular
-    return regular, bold
+    bold = next((p for p in FONT_CANDIDATES["bold"] if Path(p).exists()), None)
+    if regular is None and which("fc-match"):
+        # Ask fontconfig (Linux distributions place fonts in many different directories).
+        for key, pattern in (("regular", "sans-serif"), ("bold", "sans-serif:bold")):
+            res = run(["fc-match", "-f", "%{file}", pattern], timeout=20)
+            path = res.stdout.strip()
+            if res.returncode == 0 and path and Path(path).exists() and path.lower().endswith((".ttf", ".otf", ".ttc")):
+                if key == "regular":
+                    regular = path
+                else:
+                    bold = path
+    return regular, bold or regular
 
 
 class PillowRaster:
@@ -1185,8 +1197,15 @@ def screen_capture_info(tc):
             options.append({"grabber": "wf-recorder", "display": wayland,
                             "note": "needs a wlr-screencopy compositor (Sway, Hyprland, river, ...); GNOME and KDE are not supported"})
         info.update({"options": options, "available": bool(options)})
+        notes = []
         if display and "x11grab" not in tc.demuxers:
-            info["note"] = "ffmpeg lacks x11grab"
+            notes.append("ffmpeg lacks x11grab")
+        if wayland and not wf:
+            notes.append("WAYLAND_DISPLAY is set but wf-recorder is not installed; only XWayland (X11) windows can be captured through x11grab")
+        if display and wayland:
+            notes.append("DISPLAY %s is XWayland: x11grab sees only X11 windows, not the Wayland desktop" % display)
+        if notes:
+            info["note"] = "; ".join(notes)
     return info
 
 
@@ -1381,7 +1400,9 @@ def capture_plan(sess, sp):
     offset = parse_offset(opts.get("offset"))
     framerate = str(opts.get("framerate") or FPS)
     even_scale = "scale=trunc(iw/2)*2:trunc(ih/2)*2"
-    common_out = ["-f", "mpegts", str(cap / "raw.ts")]
+    # Flush every packet: the first bytes on disk are the timing reference, and a 32 KB output
+    # buffer would otherwise delay them by seconds on a static, low-bitrate screen.
+    common_out = ["-flush_packets", "1", "-f", "mpegts", str(cap / "raw.ts")]
 
     if source == "test":
         size = "%dx%d" % geometry if geometry else "1280x720"
@@ -1446,13 +1467,13 @@ def capture_plan(sess, sp):
         if geometry:
             cmd += ["--size", "%dx%d" % geometry]
         return {"kind": "adb-segments", "cmd": cmd, "adb": adb, "serial": serial, "files": [], "target": serial,
-                "recorder": "adb screenrecord"}
+                "recorder": "adb screenrecord", "sparse": True}
 
     if source == "ios":
         dev = resolve_ios(sess.get("target"), need_booted=True)
         cmd = ["xcrun", "simctl", "io", dev["udid"], "recordVideo", "--codec", "h264", "--force", str(cap / "raw.mp4")]
         return {"kind": "sigint", "cmd": cmd, "files": [str(cap / "raw.mp4")], "target": "%s (%s)" % (dev["name"], dev["udid"]),
-                "recorder": "simctl recordVideo", "start_marker": "Recording started"}
+                "recorder": "simctl recordVideo", "start_marker": "Recording started", "sparse": True}
 
     if source == "external":
         return {"kind": "none", "cmd": None, "files": []}
@@ -1576,7 +1597,7 @@ def cmd_supervise(args):
     plan = capture_plan(sess, sp)
     log = open(sp["capture_log"], "ab")
     result = {"supervisor_pid": os.getpid(), "files": [], "unexpected": False, "error": None, "segments": 0,
-              "first_byte_at": None, "stopped_at": None}
+              "first_byte_at": None, "stopped_at": None, "sparse": bool(plan.get("sparse"))}
     env = dict(os.environ)
     if plan.get("env"):
         env.update(plan["env"])
@@ -1865,19 +1886,27 @@ def finalize_session(sess, sp, opts, exit_info, warnings, video_override=None, v
     first_byte_at = exit_info.get("first_byte_at")
     wall = stopped_at - sess["started_at"]
     extend = 0.0
+    offset_source = "import"
     if sess["source"] == "external":
         offset = (wall - dur) if align == "end" else float(video_offset or 0.0)
     else:
-        # Video zero = when the recorder began writing frames. Encoders buffer roughly a tenth of a second.
-        if first_byte_at and first_byte_at < stopped_at - 0.5:
-            offset = max(0.0, first_byte_at - sess["started_at"] - 0.15)
+        sparse = exit_info.get("sparse", sess.get("recorder") in ("adb screenrecord", "simctl recordVideo"))
+        first_bytes_offset = (first_byte_at - sess["started_at"]) if first_byte_at and first_byte_at < stopped_at - 0.5 else None
+        latency = wall - dur
+        offset_source = "first_bytes" if sparse and first_bytes_offset is not None else "wall_clock"
+        if sparse:
+            # screenrecord and simctl emit frames only while the display changes, so the file is shorter
+            # than the recording window. Video zero comes from the first bytes (or the recorder's own
+            # "started" line), and the static tail is restored by holding the last frame.
+            offset = max(0.0, first_bytes_offset - 0.15) if first_bytes_offset is not None else (max(0.0, latency) if -2.0 <= latency < 15 else 0.0)
         else:
-            latency = wall - dur
+            # Continuous recorders run at a fixed rate up to the stop, so the start offset is the wall
+            # clock window minus the footage; the first bytes cap it (they cannot precede the first frame).
             offset = max(0.0, latency) if -2.0 <= latency < 15 else 0.0
-            if offset == 0.0 and abs(latency) >= 2.0:
+            if latency >= 15:
                 warnings.append("wall clock (%.1fs) and video (%.1fs) differ by %.1fs; timestamps not corrected" % (wall, dur, latency))
-        # Some recorders (adb screenrecord) emit frames only when the display changes, so a static
-        # ending shortens the file. Hold the last frame until the real stop time.
+            if first_bytes_offset is not None:
+                offset = min(offset, max(0.0, first_bytes_offset))
         missing = (wall - offset) - dur
         if 0.3 < missing <= 60:
             extend = missing
@@ -1964,7 +1993,7 @@ def finalize_session(sess, sp, opts, exit_info, warnings, video_override=None, v
         "wall_seconds": round(wall, 3),
         "raw": {"files": files, "duration": round(dur, 3), "effective_duration": round(effective_dur, 3),
                 "width": probe["width"], "height": probe["height"], "codec": probe["codec"]},
-        "timing": {"offset_applied": round(offset, 3), "offset_source": "first_bytes" if (first_byte_at and sess["source"] != "external") else "wall_clock",
+        "timing": {"offset_applied": round(offset, 3), "offset_source": offset_source,
                    "tail_hold": round(extend, 3), "card_seconds": card, "toast_seconds": float(opts["toast_seconds"])},
         "render": {"layout": layout, "canvas": list(canvas), "overlay_backend": overlay_info.get("backend"),
                    "font": overlay_info.get("font"), "overlay_frames": frames, "narration": bool(opts.get("narration", True))},

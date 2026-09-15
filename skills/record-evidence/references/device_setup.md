@@ -67,9 +67,9 @@ Notes: `simctl recordVideo` writes the file only when it stops, and like `screen
 ## Desktop screen
 
 - macOS: grant Screen Recording to the terminal or agent host app (System Settings, Privacy & Security). `doctor` lists screen indexes; `--screen-index N` picks one. Retina captures are large; `stop --max-height 1440` downsizes the render.
-- Linux X11 / XWayland: `DISPLAY` set; `xdpyinfo` or `xrandr` supplies the screen size, or pass `--geometry WxH`.
-- Linux Wayland: `wf-recorder` on `PATH` and a wlr-screencopy compositor (Sway, Hyprland, river, Wayfire, labwc, dwl, niri). GNOME and KDE Wayland are not capturable this way; use X11 through XWayland for X11 apps, or record the browser with Playwright instead.
-- Windows: any ffmpeg build (`gdigrab`).
+- Linux X11 / XWayland: `DISPLAY` set (and `XAUTHORITY` when recording over SSH into a desktop session, usually `~/.Xauthority`); `xdpyinfo` or `xrandr` supplies the screen size, or pass `--geometry WxH`. Verified on Ubuntu 22.04 with Xorg and a static ffmpeg build in `~/bin` (no root needed).
+- Linux Wayland: `wf-recorder` on `PATH` and a wlr-screencopy compositor (Sway, Hyprland, river, Wayfire, labwc, dwl, niri). GNOME and KDE Wayland are not capturable this way. `doctor` names the missing piece. Known limits: wf-recorder does not build against ffmpeg 9 (checked September 2026), and a compositor with no connected monitor (`hyprctl -j monitors` prints `[]`) has nothing to capture; in both cases capture X11 windows through XWayland or record the browser with Playwright.
+- Windows: any ffmpeg build (`gdigrab`). Not exercised; written from ffmpeg's documentation.
 
 `--geometry WxH --offset X,Y` crops to a region on every grabber; prefer maximizing the window and recording the whole screen.
 
