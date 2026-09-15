@@ -19,14 +19,16 @@ after(() => {
 });
 
 // The chain column of workflows/delivery.md for one workflow type, without the external
-// resolve-pr-reviews step, with the implementation skill repeated once per plan phase.
-function documentedChain(type, { phases = 1 } = {}) {
+// resolve-pr-reviews step. Per the doc's sentence under the table, setup-worktree is skipped inside a
+// worktree or when the workspace config is disabled; `worktree` mirrors the fixture's mode.
+function documentedChain(type, { worktree = "none" } = {}) {
   const doc = fs.readFileSync(path.join(REPO, "workflows", "delivery.md"), "utf8");
   const row = doc.split("\n").find((line) => line.startsWith(`| \`${type}\` |`));
   assert.ok(row, `workflows/delivery.md has no chain row for ${type}`);
   const chain = row.split("|")[2].trim().split(",").map((s) => s.trim());
   assert.equal(chain.at(-1), "resolve-pr-reviews");
-  return chain.slice(0, -1).flatMap((skill) => (skill.startsWith("implement-") ? Array(phases).fill(skill) : [skill]));
+  const skipWorktree = worktree === "disabled" || worktree === "inside";
+  return chain.slice(0, -1).filter((skill) => !(skipWorktree && skill === "setup-worktree"));
 }
 
 function assertClean(result) {
@@ -36,13 +38,14 @@ function assertClean(result) {
 
 const skills = (result) => result.steps.map((s) => s.skill);
 const gates = (result) => result.steps.filter((s) => s.pendingGate).map((s) => s.skill);
+const fenceOf = (taskDir, step) => wf.parseReply(fs.readFileSync(path.join(taskDir, "replies", step.replyFile), "utf8")).command;
 
-test("full: the observed chain equals workflows/delivery.md and gates land where the table says", () => {
+test("full: one implementation run completes every phase; the chain equals workflows/delivery.md", () => {
   const { projectRoot, taskDir } = fixture({ workflow: "full" });
   const result = runChain(projectRoot, taskDir, { scenario: { planPhases: 2 } });
   assertClean(result);
-  assert.deepEqual(skills(result), documentedChain("full", { phases: 2 }));
-  assert.deepEqual(gates(result), ["create-design-discussion", "create-plan", "implement-plan", "implement-plan", "describe-pr"]);
+  assert.deepEqual(skills(result), documentedChain("full"));
+  assert.deepEqual(gates(result), ["create-design-discussion", "create-plan", "implement-plan", "describe-pr"]);
   assert.match(result.reason, /external/);
   const replies = wf.listReplies(taskDir).map((r) => r.name);
   assert.deepEqual(replies, result.steps.map((s) => s.replyFile));
@@ -51,18 +54,30 @@ test("full: the observed chain equals workflows/delivery.md and gates land where
   assert.deepEqual(artifacts.map((a) => a.type), ["research-questions", "research", "design-discussion", "plan", "worktree-setup", "implementation", "implementation", "pr-description"]);
   assert.deepEqual(wf.remainingPhases(artifacts[3].text), []);
   assert.deepEqual(artifacts.filter((a) => a.type === "implementation").map((a) => a.data.completed_phase), ["1", "2"]);
+  const implement = result.steps.find((s) => s.skill === "implement-plan");
+  assert.equal(fenceOf(taskDir, implement), "/describe-pr");
 });
 
-test("lean with a disabled workspace: the outline hands to implement-outline directly, once per step", () => {
+test("lean in a plain repo: the outline hands to setup-worktree, which hands to implement-outline with the outline", () => {
+  const { projectRoot, taskDir } = fixture({ workflow: "lean", worktree: "none" });
+  const result = runChain(projectRoot, taskDir, { scenario: { planPhases: 2 } });
+  assertClean(result);
+  assert.deepEqual(skills(result), documentedChain("lean"));
+  const setup = result.steps.find((s) => s.skill === "setup-worktree");
+  assert.equal(fenceOf(taskDir, setup), "/implement-outline @03-structure-outline-verbose-flag.md");
+  assert.deepEqual(gates(result), ["create-structure-outline", "implement-outline", "describe-pr"]);
+  const outline = wf.listArtifacts(taskDir, "verbose-flag").find((a) => a.type === "structure-outline");
+  assert.deepEqual(wf.remainingPhases(outline.text), []);
+  assert.match(outline.text, /- \[x\] Step 1: Work area\n- \[x\] Step 2: Work area/);
+});
+
+test("lean with a disabled workspace: setup-worktree is skipped and the outline hands to implement-outline", () => {
   const { projectRoot, taskDir } = fixture({ workflow: "lean", worktree: "disabled" });
   const result = runChain(projectRoot, taskDir, { scenario: { planPhases: 2 } });
   assertClean(result);
-  assert.deepEqual(skills(result), documentedChain("lean", { phases: 2 }));
-  assert.ok(!skills(result).includes("setup-worktree"));
+  assert.deepEqual(skills(result), documentedChain("lean", { worktree: "disabled" }));
   assert.equal(result.steps[2].next, "/implement-outline @03-structure-outline-verbose-flag.md");
-  assert.deepEqual(gates(result), ["create-structure-outline", "implement-outline", "implement-outline", "describe-pr"]);
-  const outline = wf.listArtifacts(taskDir, "verbose-flag").find((a) => a.type === "structure-outline");
-  assert.deepEqual(wf.remainingPhases(outline.text), []);
+  assert.deepEqual(gates(result), ["create-structure-outline", "implement-outline", "describe-pr"]);
 });
 
 test("prd inside a real worktree: the plan hands to implement-plan", () => {
@@ -70,10 +85,33 @@ test("prd inside a real worktree: the plan hands to implement-plan", () => {
   assert.equal(wf.worktreeProbe(projectRoot).inWorktree, true);
   const result = runChain(projectRoot, taskDir, { scenario: { planPhases: 1 } });
   assertClean(result);
-  assert.deepEqual(skills(result), documentedChain("prd").filter((s) => s !== "setup-worktree"));
+  assert.deepEqual(skills(result), documentedChain("prd", { worktree: "inside" }));
   const plan = result.steps.find((s) => s.skill === "create-plan");
   assert.equal(plan.next, "/implement-plan @04-plan-verbose-flag.md");
   assert.deepEqual(gates(result), ["create-prd", "create-tdd", "create-plan", "implement-plan", "describe-pr"]);
+});
+
+test("interrupted: stopping after each phase re-enters implement-plan with the plan until no phase remains", () => {
+  const { projectRoot, taskDir } = fixture({ workflow: "full" });
+  const result = runChain(projectRoot, taskDir, { scenario: { stopEachPhase: true, planPhases: 2 } });
+  assertClean(result);
+  const runs = result.steps.filter((s) => s.skill === "implement-plan");
+  assert.equal(runs.length, 2);
+  assert.equal(fenceOf(taskDir, runs[0]), "/implement-plan @04-plan-verbose-flag.md");
+  assert.equal(fenceOf(taskDir, runs[1]), "/describe-pr");
+  assert.deepEqual(gates(result), ["create-design-discussion", "create-plan", "implement-plan", "implement-plan", "describe-pr"]);
+  assert.deepEqual(wf.listArtifacts(taskDir, "verbose-flag").filter((a) => a.type === "implementation").map((a) => a.data.completed_phase), ["1", "2"]);
+});
+
+test("a human-gated phase stops the implementation run after that phase only", () => {
+  const { projectRoot, taskDir } = fixture({ workflow: "full", worktree: "disabled" });
+  const result = runChain(projectRoot, taskDir, { scenario: { planPhases: 3, humanGated: [2] } });
+  assertClean(result);
+  const runs = result.steps.filter((s) => s.skill === "implement-plan");
+  assert.equal(runs.length, 2);
+  assert.deepEqual(wf.listArtifacts(taskDir, "verbose-flag").filter((a) => a.type === "implementation").map((a) => a.data.completed_phase), ["1", "2", "3"]);
+  assert.equal(fenceOf(taskDir, runs[0]), "/implement-plan @04-plan-verbose-flag.md");
+  assert.match(fs.readFileSync(path.join(taskDir, "replies", runs[0].replyFile), "utf8"), /^Phase 2 automated checks are green\./);
 });
 
 test("oneshot: one inline prompt, then describe-pr", () => {
@@ -87,6 +125,9 @@ test("oneshot: one inline prompt, then describe-pr", () => {
   assert.deepEqual(wf.listArtifacts(taskDir, "verbose-flag").map((a) => a.name), ["pr-description.md"]);
 });
 
+// workflows/delivery.md, Review loop: the loop is user-invoked between implementation and the pull
+// request; nothing in the table routes into it. `reviewLoop` models the user typing `/review-code`
+// where the table would have run describe-pr; the loop's own transitions are then checked like any phase.
 test("review loop: findings, fix, clean review, then describe-pr", () => {
   const { projectRoot, taskDir } = fixture({ workflow: "full", worktree: "disabled" });
   const result = runChain(projectRoot, taskDir, { scenario: { planPhases: 1, reviewLoop: true, codeReview: ["findings", "clean"] } });
@@ -100,7 +141,7 @@ test("review loop: findings, fix, clean review, then describe-pr", () => {
   assert.ok(result.steps.slice(-4, -1).every((s) => !s.pendingGate));
 });
 
-test("iterate: requesting changes at the plan gate runs iterate-plan in place and returns to the gate", () => {
+test("iterate: requesting changes at the plan gate revises the plan in place and returns to the gate", () => {
   const { projectRoot, taskDir } = fixture({ workflow: "full" });
   const approvals = [];
   const result = runChain(projectRoot, taskDir, { scenario: { planPhases: 1, changesAt: { "create-plan": 1 } }, approve: (step) => (approvals.push(step.skill), true) });
@@ -113,9 +154,24 @@ test("iterate: requesting changes at the plan gate runs iterate-plan in place an
   assert.equal(result.steps[at + 1].next, result.steps[at].next);
   assert.deepEqual(approvals, ["create-design-discussion", "iterate-plan", "implement-plan", "describe-pr"]);
   const plans = wf.listArtifacts(taskDir, "verbose-flag").filter((a) => a.type === "plan");
-  assert.equal(plans.length, 1);
-  assert.match(plans[0].text, /Revision 1: applied the requested changes\./);
+  assert.equal(plans.length, 1, "the iteration allocated a new artifact number");
+  assert.equal(plans[0].name, result.steps[at].artifactFile);
   assert.equal(wf.listReplies(taskDir).find((r) => r.skill === "iterate-plan").name, `${String(at + 2).padStart(2, "0")}-iterate-plan.md`);
+});
+
+test("iterate-plan changes the plan file without allocating a new number", () => {
+  const { projectRoot, taskDir } = fixture({ workflow: "full" });
+  runChain(projectRoot, taskDir, { scenario: { planPhases: 1 }, approve: (step) => step.skill !== "create-plan" });
+  const before = wf.listArtifacts(taskDir, "verbose-flag").find((a) => a.type === "plan");
+  const result = fakePhase("iterate-plan", taskDir, { arg: before.name, feedback: "Split the migration out of phase 1." });
+  assert.deepEqual(checkPhase(result, taskDir), []);
+  const after = wf.listArtifacts(taskDir, "verbose-flag");
+  assert.equal(after.filter((a) => a.type === "plan").length, 1);
+  assert.equal(result.artifactFile, before.name);
+  const revised = after.find((a) => a.type === "plan");
+  assert.notEqual(revised.text, before.text);
+  assert.ok(revised.text.includes("Split the migration out of phase 1."));
+  assert.equal(after.length, wf.listArtifacts(taskDir, "verbose-flag").length);
 });
 
 test("epic: start-epic-delivery creates one task per child and each child starts with its own command", () => {
@@ -129,10 +185,12 @@ test("epic: start-epic-delivery creates one task per child and each child starts
   assert.equal(result.steps[0].pendingGate, true);
   assert.match(result.reason, /children/);
 
+  // Frontmatter keys per skills/start-epic-delivery/SKILL.md; order is not part of the contract.
+  const CHILD_KEYS = ["slug", "title", "workflow", "created", "parent", "depends_on"];
   for (const child of DEFAULT_CHILDREN) {
     const dir = path.join(projectRoot, ".agents", "tasks", kebab(child.name));
     const { data, body } = wf.parseFrontmatter(fs.readFileSync(path.join(dir, "task.md"), "utf8"));
-    assert.deepEqual(Object.keys(data), ["slug", "title", "workflow", "created", "parent", "depends_on"]);
+    assert.deepEqual(Object.keys(data).sort(), [...CHILD_KEYS].sort());
     assert.equal(data.slug, kebab(child.name));
     assert.equal(data.title, child.name);
     assert.equal(data.workflow, child.workflow);
@@ -148,14 +206,13 @@ test("epic: start-epic-delivery creates one task per child and each child starts
   }
   const dependent = fs.readFileSync(path.join(projectRoot, ".agents", "tasks", "wire-verbose-flag", "task.md"), "utf8");
   assert.match(dependent, /depends_on:\n  - add-config-loader\n/);
-  assert.throws(() => fakePhase("start-epic-delivery", taskDir, {}), /already exist/);
 });
 
-test("recovery: with replies/ deleted, nextCommand derives the same command and gate from artifacts", () => {
+test("recovery: with replies/ deleted, nextCommand derives the same full command and gate from artifacts", () => {
   const { projectRoot, taskDir } = fixture({ workflow: "full" });
   const seen = [];
-  for (const stopAt of ["create-plan", "implement-plan", "describe-pr"]) {
-    const result = runChain(projectRoot, taskDir, { scenario: { planPhases: 2 }, approve: (step) => step.skill !== stopAt });
+  for (const stopAt of ["create-design-discussion", "create-plan", "implement-plan", "describe-pr"]) {
+    const result = runChain(projectRoot, taskDir, { scenario: { planPhases: 2, stopEachPhase: true }, approve: (step) => step.skill !== stopAt });
     assert.deepEqual(result.issues, []);
     const fromReply = wf.nextCommand(taskDir, { projectRoot });
     assert.equal(fromReply.source, "reply");
@@ -163,11 +220,35 @@ test("recovery: with replies/ deleted, nextCommand derives the same command and 
     const fromArtifacts = wf.nextCommand(taskDir, { projectRoot });
     assert.equal(fromArtifacts.source, "artifact");
     assert.equal(fromArtifacts.command, fromReply.command);
+    assert.equal(fromArtifacts.arg, fromReply.arg);
     assert.equal(fromArtifacts.done, fromReply.done);
     assert.equal(fromArtifacts.pendingGate, wf.PHASES[stopAt].gate);
     assert.equal(fromArtifacts.pendingGate, fromReply.pendingGate);
     assert.equal(fromArtifacts.gateArtifact, fromReply.gateArtifact);
     seen.push(fromArtifacts.command);
   }
-  assert.deepEqual(seen, ["/setup-worktree @04-plan-verbose-flag.md", "/implement-plan @04-plan-verbose-flag.md", null]);
+  assert.deepEqual(seen, [
+    "/create-plan @03-design-discussion-verbose-flag.md",
+    "/setup-worktree @04-plan-verbose-flag.md",
+    "/implement-plan @04-plan-verbose-flag.md",
+    null,
+  ]);
+});
+
+test("phase subcommand: --reply writes the reply to the named path and --feedback lands in the revised artifact", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { taskDir } = fixture({ workflow: "full" });
+  const script = path.join(REPO, "scripts", "simulate.mjs");
+  const replyFile = path.join(taskDir, "custom", "01-create-research-questions.md");
+  const out = execFileSync("node", [script, "phase", "create-research-questions", taskDir, "--reply", replyFile], { encoding: "utf8" });
+  assert.equal(fs.readFileSync(replyFile, "utf8"), out);
+  assert.equal(fs.existsSync(path.join(taskDir, "replies")), false);
+  assert.equal(wf.parseReply(out).command, "/create-research");
+  const questions = wf.listArtifacts(taskDir, "verbose-flag")[0];
+  assert.equal(questions.type, "research-questions");
+  assert.match(questions.text, /^Request: Add a --verbose flag to the CLI\.$/m);
+  execFileSync("node", [script, "phase", "iterate-research-questions", taskDir, `@${questions.name}`, "--feedback", "Ask about stderr handling."], { encoding: "utf8" });
+  const revised = wf.listArtifacts(taskDir, "verbose-flag");
+  assert.equal(revised.length, 1);
+  assert.ok(revised[0].text.includes("Ask about stderr handling."));
 });

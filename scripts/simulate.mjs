@@ -4,8 +4,8 @@
 // until the loop ends, validating every artifact and reply against workflow.mjs on the way.
 //
 // CLI:
-//   node scripts/simulate.mjs <full|lean|prd|oneshot|epic|review-loop|iterate|recovery> [--json] [--keep]
-//   node scripts/simulate.mjs phase <skill> <task dir> [@<artifact>]
+//   node scripts/simulate.mjs <full|lean|prd|oneshot|epic|review-loop|iterate|recovery|interrupted> [--json] [--keep]
+//   node scripts/simulate.mjs phase <skill> <task dir> [@<artifact>] [--reply <file>] [--feedback "<text>"]
 // Exit 0 when every check passes; 1 with one issue per line otherwise.
 
 import fs from "node:fs";
@@ -69,18 +69,39 @@ function summaryFor(type, slug) {
 }
 
 // Fills one artifact template: frontmatter `type` and `summary` (added when the template has none),
-// extra frontmatter keys, bracket placeholders in the body, then the caller's body transform.
-function fillArtifact(template, { type, slug, front = {}, body = (b) => b }) {
+// extra frontmatter keys, bracket placeholders in the body, a `Request:` line grounding the artifact in
+// task.md right after the title heading, then the caller's body transform.
+function fillArtifact(template, { type, slug, request = "", front = {}, body = (b) => b }) {
   let text = wf.parseFrontmatter(template).raw === null ? `---\ntype: ${type}\nsummary: ""\n---\n\n${template}` : template;
   text = setFront(text, "type", type);
   text = setFront(text, "summary", JSON.stringify(summaryFor(type, slug)));
   for (const [key, value] of Object.entries(front)) text = setFront(text, key, value);
   const { raw, body: rest } = wf.parseFrontmatter(text);
-  return `---\n${raw}\n---\n${body(fillBody(rest))}`;
+  // Frontmatter placeholders such as `repo: [repository name]` or `task: eng-xxxx-description` get fixture values.
+  const filledRaw = raw
+    .split("\n")
+    .map((line) => line.replace(/^([A-Za-z_][\w-]*):\s*"?\[[^\]]*\]"?\s*$/, "$1: fixture").replace(/^task: eng-xxxx-description$/, `task: ${slug}`))
+    .join("\n");
+  const grounded = request ? fillBody(rest).replace(/^(# .*\n)/m, `$1\nRequest: ${request.replace(/\s+/g, " ").trim()}\n`) : fillBody(rest);
+  return `---\n${filledRaw}\n---\n${body(grounded)}`;
+}
+
+// Flips `human-gated: false` to `true` inside the sections of the listed phases or steps.
+function markHumanGated(body, phases) {
+  if (!phases?.length) return body;
+  const wanted = new Set(phases.map(Number));
+  let current = null;
+  return body
+    .split("\n")
+    .map((line) => {
+      if (/^## /.test(line)) current = Number(/^## (?:Phase|Step) (\d+)\b/.exec(line)?.[1] ?? NaN);
+      return wanted.has(current) ? line.replace(/^human-gated: false$/, "human-gated: true") : line;
+    })
+    .join("\n");
 }
 
 // Expands the `## Phase 1` block of the plan template into `count` phases.
-function expandPlanPhases(body, count) {
+function expandPlanPhases(body, count, humanGated) {
   const start = body.indexOf("## Phase 1");
   const second = body.indexOf("## Phase 2");
   const review = body.indexOf("## Human Review");
@@ -88,12 +109,12 @@ function expandPlanPhases(body, count) {
   const block = body.slice(start, second);
   const phases = [];
   for (let n = 1; n <= count; n++) phases.push(block.replaceAll("Phase 1", `Phase ${n}`).replaceAll("#### 1.1", `#### ${n}.1`));
-  return body.slice(0, start) + phases.join("") + body.slice(review);
+  return markHumanGated(body.slice(0, start) + phases.join("") + body.slice(review), humanGated);
 }
 
 // Expands `## Step 1` and the `## Phase Checklist` of the outline template into `count` steps.
 // Runs after fillBody, so the template brackets are already gone.
-function expandOutlineSteps(body, count) {
+function expandOutlineSteps(body, count, humanGated) {
   const checklist = Array.from({ length: count }, (_, i) => `- [ ] Step ${i + 1}: Work area`).join("\n");
   const text = body.replace(/(## Phase Checklist\n\n)[\s\S]*?(\n\n---)/, `$1${checklist}$2`);
   const start = text.indexOf("## Step 1");
@@ -103,7 +124,17 @@ function expandOutlineSteps(body, count) {
   const block = text.slice(start, second);
   const steps = [];
   for (let n = 1; n <= count; n++) steps.push(block.replaceAll("Step 1", `Step ${n}`));
-  return text.slice(0, start) + steps.join("") + text.slice(tail);
+  return markHumanGated(text.slice(0, start) + steps.join("") + text.slice(tail), humanGated);
+}
+
+// True when phase or step n of a plan or outline carries `human-gated: true` in its own section.
+function phaseIsHumanGated(text, n) {
+  let current = null;
+  for (const line of text.split(/\r?\n/)) {
+    if (/^## /.test(line)) current = Number(/^## (?:Phase|Step) (\d+)\b/.exec(line)?.[1] ?? NaN);
+    else if (current === n && /^human-gated: true$/.test(line)) return true;
+  }
+  return false;
 }
 
 export function kebab(text) {
@@ -191,15 +222,15 @@ function counterKey(scenario, key) {
   return n;
 }
 
-export function fakePhase(skill, taskDir, { scenario = {}, skillsDir = DEFAULT_SKILLS_DIR, arg = null } = {}) {
+// `replyFile` overrides the default `replies/NN-<skill>.md`; `feedback` is the text an iteration applies.
+export function fakePhase(skill, taskDir, { scenario = {}, skillsDir = DEFAULT_SKILLS_DIR, arg = null, replyFile = null, feedback = null } = {}) {
   taskDir = path.resolve(taskDir);
   const task = wf.readTask(taskDir);
   const slug = task.slug;
   const projectRoot = wf.projectRootOf(taskDir);
   const artifacts = wf.listArtifacts(taskDir, slug);
   const probe = wf.worktreeProbe(projectRoot);
-  const nn = String(wf.nextArtifactNumber(taskDir, slug)).padStart(2, "0");
-  const replyFile = wf.replyPath(taskDir, wf.nextReplyNumber(taskDir), skill);
+  replyFile = replyFile ? path.resolve(replyFile) : wf.replyPath(taskDir, wf.nextReplyNumber(taskDir), skill);
   const finish = (artifactFile, artifactType, reply) => {
     fs.mkdirSync(path.dirname(replyFile), { recursive: true });
     fs.writeFileSync(replyFile, reply);
@@ -229,16 +260,27 @@ export function fakePhase(skill, taskDir, { scenario = {}, skillsDir = DEFAULT_S
   });
   const reply = (file, vars) => pruneVariants(fillAnswer(answerTemplate(skill, file, skillsDir), vars), task.workflow);
   const planPhases = scenario.planPhases ?? 2;
+  const implementationCommand = task.workflow === "lean" ? "/implement-outline" : "/implement-plan";
+  // Conventions, Answer template placeholders: setup-worktree, the implementation skills, configure-workspaces,
+  // and ci-commit fill `{artifact_arg}` with the plan or outline being implemented, empty when none exists.
+  const planArg = () => {
+    const plan = findArtifact(artifacts, PLAN_TYPE[task.workflow], null);
+    return plan ? ` @${plan.name}` : "";
+  };
 
   // Iterations edit the newest artifact of the type in place and never take a new number.
   const revise = () => {
     const own = findArtifact(artifacts, type, arg);
     const revision = counterKey(scenario, `revise:${own.name}`) + 1;
-    fs.writeFileSync(own.file, `${own.text.trimEnd()}\n- Revision ${revision}: applied the requested changes.\n`);
+    fs.writeFileSync(own.file, `${own.text.trimEnd()}\n- Revision ${revision}: ${feedback ?? "applied the requested changes."}\n`);
     return own.name;
   };
-  const create = (front = {}, body = (b) => b, name = `${nn}-${type}-${slug}.md`) =>
-    write(name, fillArtifact(artifactTemplate(templateSkill ?? skill, skillsDir), { type, slug, front: { task: slug, ...front }, body }));
+  // The artifact number is taken at write time, so one run can save several receipts in order.
+  const create = (front = {}, body = (b) => b, name = null) =>
+    write(
+      name ?? `${String(wf.nextArtifactNumber(taskDir, slug)).padStart(2, "0")}-${type}-${slug}.md`,
+      fillArtifact(artifactTemplate(templateSkill ?? skill, skillsDir), { type, slug, request: task.body, front: { task: slug, ...front }, body }),
+    );
 
   switch (skill) {
     case "create-research-questions":
@@ -260,39 +302,47 @@ export function fakePhase(skill, taskDir, { scenario = {}, skillsDir = DEFAULT_S
       return single("tdd_final_answer.md");
     case "create-plan":
     case "iterate-plan": {
-      const file = templateSkill ? create({}, (b) => expandPlanPhases(b, planPhases)) : revise();
+      const file = templateSkill ? create({}, (b) => expandPlanPhases(b, planPhases, scenario.humanGated)) : revise();
       const answer = probe.inWorktree ? "plan_in_worktree_answer.md" : probe.disabled ? "plan_disabled_answer.md" : "plan_final_answer.md";
       return finish(file, type, reply(answer, baseVars(file)));
     }
     case "create-structure-outline":
     case "iterate-structure-outline": {
-      const file = templateSkill ? create({}, (b) => expandOutlineSteps(b, planPhases)) : revise();
+      const file = templateSkill ? create({}, (b) => expandOutlineSteps(b, planPhases, scenario.humanGated)) : revise();
       const answer = probe.inWorktree || probe.disabled ? "structure_outline_final_answer.md" : "structure_outline_setup_answer.md";
       return finish(file, type, reply(answer, baseVars(file)));
     }
     case "setup-worktree": {
-      const plan = findArtifact(artifacts, PLAN_TYPE[task.workflow], arg);
       const file = create();
-      const vars = { ...baseVars(file), implementation_command: task.workflow === "lean" ? "/implement-outline" : "/implement-plan", artifact_arg: plan ? ` @${plan.name}` : "" };
-      return finish(file, type, reply("worktree_final_answer.md", vars));
+      return finish(file, type, reply("worktree_final_answer.md", { ...baseVars(file), implementation_command: implementationCommand, artifact_arg: planArg() }));
     }
+    // Mirrors implement-plan steps 6 and 7: every phase advances on green checks and the run only stops
+    // early at a `human-gated: true` phase (or when the scenario interrupts after each phase). One receipt
+    // per completed phase. iterate-implementation applies feedback to one phase and stops there.
     case "implement-plan":
     case "implement-outline":
     case "iterate-implementation": {
       const plan = findArtifact(artifacts, PLAN_TYPE[task.workflow], arg);
       if (!plan) throw new Error(`${skill}: no ${PLAN_TYPE[task.workflow]} artifact in ${taskDir}`);
-      const before = wf.remainingPhases(plan.text);
-      const n = before[0] ?? Math.max(1, ...plan.text.split("\n").map((l) => Number(/^## Phase (\d+)\b/.exec(l)?.[1] ?? 0)));
-      const ticked = wf.completePhase(plan.text, n);
-      fs.writeFileSync(plan.file, ticked);
-      const remaining = wf.remainingPhases(ticked);
-      const file = create({ completed_phase: String(n) });
-      const implementationCommand = task.workflow === "lean" ? "/implement-outline" : "/implement-plan";
+      const onePhase = skill === "iterate-implementation" || scenario.stopEachPhase === true;
+      let text = plan.text;
+      let remaining = wf.remainingPhases(text);
+      const lastPhase = Math.max(1, ...text.split("\n").map((l) => Number(/^## (?:Phase|Step) (\d+)\b/.exec(l)?.[1] ?? 0)));
+      let n = remaining[0] ?? lastPhase;
+      let file;
+      for (;;) {
+        text = wf.completePhase(text, n);
+        fs.writeFileSync(plan.file, text);
+        remaining = wf.remainingPhases(text);
+        file = create({ completed_phase: String(n) });
+        if (!remaining.length || onePhase || phaseIsHumanGated(text, n)) break;
+        n = remaining[0];
+      }
       if (remaining.length) {
         const vars = { ...baseVars(file), artifact_arg: ` @${plan.name}`, completed_phase: String(n), next_phase: String(remaining[0]), implementation_command: implementationCommand };
         return finish(file, type, reply("implementation_phase_final_answer.md", vars));
       }
-      return finish(file, type, reply("implementation_final_answer.md", baseVars(file)));
+      return finish(file, type, reply("implementation_final_answer.md", { ...baseVars(file), artifact_arg: ` @${plan.name}` }));
     }
     case "review-code": {
       const statuses = scenario.codeReview ?? ["clean"];
@@ -315,9 +365,9 @@ export function fakePhase(skill, taskDir, { scenario = {}, skillsDir = DEFAULT_S
       return finish(file, type, reply(status === "approved" ? "pr_review_approved_answer.md" : "pr_review_pending_answer.md", baseVars(file)));
     }
     case "ci-commit":
-      return single("commit_final_answer.md");
+      return single("commit_final_answer.md", { artifact_arg: planArg() });
     case "configure-workspaces":
-      return single("workspace_final_answer.md");
+      return single("workspace_final_answer.md", { artifact_arg: planArg() });
     case "review-artifact-comments":
       return single("comments_final_answer.md");
     case "show-me":
@@ -360,14 +410,18 @@ export function fakePhase(skill, taskDir, { scenario = {}, skillsDir = DEFAULT_S
       throw new Error(`fakePhase does not handle ${skill}`);
   }
 
-  function single(answer) {
+  function single(answer, vars = {}) {
     const file = templateSkill ? create() : revise();
-    return finish(file, type, reply(answer, baseVars(file)));
+    return finish(file, type, reply(answer, { ...baseVars(file), ...vars }));
   }
 }
 
 // Validation of one produced phase against the table -------------------------------------------
 
+const PLAN_ARG_SKILLS = new Set(["setup-worktree", "implement-plan", "implement-outline", "iterate-implementation", "configure-workspaces", "ci-commit"]);
+
+// Validates the artifact and the reply, then compares the reply's whole fence line (skill and `@file`)
+// with the command PHASES[skill].next predicts from the task directory after the phase ran.
 export function checkPhase(result, taskDir, { knownSkills = null } = {}) {
   const issues = [];
   taskDir = path.resolve(taskDir);
@@ -377,14 +431,16 @@ export function checkPhase(result, taskDir, { knownSkills = null } = {}) {
     const text = fs.readFileSync(path.join(taskDir, result.artifactFile), "utf8");
     for (const issue of wf.validateArtifact(text, { type: result.artifactType })) issues.push(`${result.artifactFile}: ${issue}`);
   }
-  let expectSkill = null;
-  if (result.skill === "oneshot") expectSkill = "describe-pr";
+  const replyName = path.basename(result.replyFile);
+  for (const issue of wf.validateReply(result.reply, { knownSkills })) issues.push(`${replyName}: ${issue}`);
+  const parsed = wf.parseReply(result.reply);
+  let predicted;
+  if (result.skill === "oneshot") predicted = "/describe-pr";
   else {
     const phase = wf.PHASES[result.skill];
     const own = [...artifacts].reverse().find((a) => a.type === phase.type) ?? null;
-    const planType = PLAN_TYPE[task.workflow];
-    const plan = [...artifacts].reverse().find((a) => a.type === planType) ?? null;
-    const predicted = phase.next({
+    const plan = [...artifacts].reverse().find((a) => a.type === PLAN_TYPE[task.workflow]) ?? null;
+    predicted = phase.next({
       workflow: task.workflow,
       artifact: own?.name ?? null,
       status: own?.status ?? "",
@@ -393,13 +449,20 @@ export function checkPhase(result, taskDir, { knownSkills = null } = {}) {
       probe: wf.worktreeProbe(wf.projectRootOf(taskDir)),
       taskDir,
     });
-    expectSkill = predicted ? (wf.parseCommand(predicted)?.skill ?? null) : null;
-    const parsed = wf.parseReply(result.reply);
-    if (!predicted && parsed.skill && parsed.skill !== "show-me" && result.skill !== "start-epic-delivery") {
-      issues.push(`${path.basename(result.replyFile)}: table predicts no next command but the reply names /${parsed.skill}`);
+  }
+  if (predicted) {
+    if (parsed.command !== predicted) issues.push(`${replyName}: fence is "${parsed.command ?? parsed.fence?.body.trim() ?? ""}", table predicts "${predicted}"`);
+  } else if (parsed.skill && parsed.skill !== "show-me" && result.skill !== "start-epic-delivery") {
+    issues.push(`${replyName}: table predicts no next command but the reply names /${parsed.skill}`);
+  }
+  // Conventions, Answer template placeholders: in these replies every `/<skill> @<file>` names the plan or
+  // structure outline being implemented, never the receipt this phase saved.
+  if (PLAN_ARG_SKILLS.has(result.skill)) {
+    const plan = [...artifacts].reverse().find((a) => a.type === PLAN_TYPE[task.workflow]) ?? null;
+    for (const [, command, file] of result.reply.matchAll(/(\/[a-z0-9-]+) @([^\s`]+)/g)) {
+      if (file !== plan?.name) issues.push(`${replyName}: "${command} @${file}" must name the ${PLAN_TYPE[task.workflow]} (${plan?.name ?? "none exists"}), not ${file}`);
     }
   }
-  for (const issue of wf.validateReply(result.reply, { expectSkill, knownSkills })) issues.push(`${path.basename(result.replyFile)}: ${issue}`);
   return issues;
 }
 
@@ -464,6 +527,9 @@ export function runChain(projectRoot, taskDir, { scenario = {}, approve = () => 
     let next = wf.nextCommand(taskDir, { projectRoot });
     if (next.done) return { steps, issues, done: true, reason: next.reason };
     let { command, skill, arg } = next;
+    // workflows/delivery.md, Review loop: nothing in the table routes into review-code; the user invokes it
+    // between implementation and the pull request. The injection models the user typing `/review-code`
+    // where the table would have run describe-pr.
     if (scenario.reviewLoop && skill === "describe-pr" && !inserted) {
       inserted = true;
       command = "/review-code";
@@ -498,13 +564,17 @@ export function runChain(projectRoot, taskDir, { scenario = {}, approve = () => 
 
 export const SCENARIOS = {
   full: { workflow: "full" },
-  lean: { workflow: "lean", worktree: "disabled" },
+  lean: { workflow: "lean" },
   prd: { workflow: "prd", worktree: "inside" },
   oneshot: { workflow: "oneshot" },
   epic: { workflow: "full", start: "create-epic-plan" },
+  // The review loop is user-invoked after implementation (workflows/delivery.md, Review loop); runChain
+  // injects `/review-code` where the table would run describe-pr.
   "review-loop": { workflow: "full", worktree: "disabled", reviewLoop: true, codeReview: ["findings", "clean"] },
   iterate: { workflow: "full", changesAt: { "create-plan": 1 } },
   recovery: { workflow: "full", recoverAfter: "create-plan" },
+  // The interrupted path: the implementation run stops after every phase and re-enters with the plan.
+  interrupted: { workflow: "full", stopEachPhase: true, planPhases: 2 },
 };
 
 export function runScenario(name) {
@@ -546,18 +616,27 @@ export function formatSteps(steps) {
 // CLI --------------------------------------------------------------------------------------------
 
 function main(argv) {
-  const flags = new Set(argv.filter((a) => a.startsWith("--")));
-  const positional = argv.filter((a) => !a.startsWith("--"));
-  const [cmd, ...rest] = positional;
+  const flags = new Set();
+  const options = {};
+  const positional = [];
   try {
+    for (let i = 0; i < argv.length; i++) {
+      const a = argv[i];
+      if (a === "--reply" || a === "--feedback") {
+        if (i + 1 >= argv.length) throw new Error(`${a} needs a value`);
+        options[a.slice(2)] = argv[++i];
+      } else if (a.startsWith("--")) flags.add(a);
+      else positional.push(a);
+    }
+    const [cmd, ...rest] = positional;
     if (cmd === "phase") {
       const [skill, taskDir, arg] = rest;
-      if (!skill || !taskDir) throw new Error("usage: simulate.mjs phase <skill> <task dir> [@<artifact>]");
-      const result = fakePhase(skill, taskDir, { arg: arg ?? null });
+      if (!skill || !taskDir) throw new Error('usage: simulate.mjs phase <skill> <task dir> [@<artifact>] [--reply <file>] [--feedback "<text>"]');
+      const result = fakePhase(skill, taskDir, { arg: arg ?? null, replyFile: options.reply ?? null, feedback: options.feedback ?? null });
       process.stdout.write(result.reply.endsWith("\n") ? result.reply : `${result.reply}\n`);
       return 0;
     }
-    if (!cmd || !SCENARIOS[cmd]) throw new Error(`usage: simulate.mjs <${Object.keys(SCENARIOS).join("|")}> [--json] [--keep] | phase <skill> <task dir>`);
+    if (!cmd || !SCENARIOS[cmd]) throw new Error(`usage: simulate.mjs <${Object.keys(SCENARIOS).join("|")}> [--json] [--keep] | phase <skill> <task dir> [@<artifact>] [--reply <file>] [--feedback "<text>"]`);
     const result = runScenario(cmd);
     const ok = result.done && result.issues.length === 0;
     if (flags.has("--json")) {
