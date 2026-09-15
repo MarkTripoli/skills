@@ -1,3 +1,8 @@
+---
+type: workspace-config
+summary: "[One or two sentences: which repositories the workspace covers and whether task worktrees are enabled.]"
+---
+
 # Workspace Configuration Receipt
 
 Write `.agents/workspace.json` with this schema after the user accepts the proposal.

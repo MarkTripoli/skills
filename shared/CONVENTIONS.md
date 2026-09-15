@@ -72,6 +72,19 @@ The final answer ends with exactly one fenced `text` block containing exactly on
 
 The sentence before the fence is always: "Start the next phase in a new session, or hand the task to `/run-task`; continuing in this session carries this phase's context into the next one." Terminal replies whose fence names `/show-me` omit it, because no phase follows.
 
+## Answer template placeholders
+
+Answer templates under `references/` use these placeholders; fill every one before printing.
+
+- `{artifact_link}`: relative Markdown link to the file this phase saved, `[NN-type-slug.md](.agents/tasks/<slug>/NN-type-slug.md)`; `none` when nothing was saved.
+- `{artifact_file}`: that file's name.
+- `{summary}`: the saved artifact's frontmatter `summary`.
+- `{review_check}` and `{known_limits}`: one line per item of the artifact's `### Verify` and `### Known limits` lists.
+- `{artifact_arg}`: ` @<file>` (leading space) naming the artifact the next command needs. That is the file this phase saved, except in `setup-worktree`, `implement-plan`, `implement-outline`, `iterate-implementation`, `configure-workspaces`, and `ci-commit` replies, where it names the plan or structure outline being implemented (the newest artifact of type `plan` or `structure-outline`), never the receipt. Empty when the next command takes no file.
+- `{implementation_command}`: `/implement-outline` for `lean`, `/implement-plan` for `full` and `prd`.
+- `{completed_phase}` and `{next_phase}`: phase numbers in implementation replies.
+- `{child_slug}`, `{child_start_command}`, `{first_child_command}`: epic delivery; see `start-epic-delivery`.
+
 ## Commits
 
 Exclude `.agents/tasks/` from commits unless the user asks to include it. Stage explicit paths only; never `git add -A` or `git add .`.

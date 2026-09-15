@@ -1,3 +1,8 @@
+---
+type: commit
+summary: "[One or two sentences: what the commits contain and what was intentionally left unstaged.]"
+---
+
 # Commit Receipt
 
 ## Task

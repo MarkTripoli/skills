@@ -25,7 +25,7 @@ You turn an approved epic plan into one task directory per child and tell the us
 
 7. **Write the receipt**. Take the next artifact number and write `NN-epic-delivery-<epic slug>.md` from `references/epic_delivery_template.md`: the children created with their paths, the waves, and the Human Review section.
 
-8. **Final answer**. Read `references/epic_delivery_final_answer.md` and respond using that template only. Fill `{artifact_link}` with a relative Markdown link to the receipt. List each wave-1 child with its start command: `/create-research-questions` for `full`, `lean`, and `prd`; for `oneshot`, the child prompt itself. End with one fenced `text` block containing the first wave-1 child's start command, or `/run-task @.agents/tasks/<first wave-1 slug>` when the user asked to drive children with the orchestrator.
+8. **Final answer**. Read `references/epic_delivery_final_answer.md` and respond using that template only. Fill `{artifact_link}` with a relative Markdown link to the receipt. List each wave-1 child with its start command, which always names the child's task directory so the phase cannot pick another task: `/create-research-questions @.agents/tasks/<child slug>` for `full` and `lean`, `/create-research @.agents/tasks/<child slug>` for `prd`, and `/run-task @.agents/tasks/<child slug>` for `oneshot` (the orchestrator runs the child's prompt inline; a bare prompt is not a valid handoff). End with one fenced `text` block containing the first wave-1 child's start command.
 
 9. If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it.
 

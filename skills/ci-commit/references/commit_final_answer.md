@@ -8,5 +8,5 @@ Start the next phase in a new session, or hand the task to `/run-task`; continui
 The implementation commit step is complete. Continue with:
 
 ```text
-/describe-pr{artifact_arg}
+/describe-pr
 ```

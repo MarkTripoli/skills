@@ -1,3 +1,8 @@
+---
+type: worktree-setup
+summary: "[One or two sentences: the worktree path, the branch, and the command the next phase runs from that path.]"
+---
+
 # Workspace Setup Receipt
 
 ## Worktree

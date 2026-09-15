@@ -51,7 +51,7 @@ A task moves from request to merged pull request through phases. Each phase is o
 | show-me | show-me | none | no | no |
 | run-task | none | drives the table above | n/a | n/a |
 
-Artifact type is the frontmatter `type` of the artifact the skill writes; receipts without frontmatter use the name segment between `NN-` and the slug (`worktree-setup`, `commit`, `workspace-config`, `pr-description`).
+Artifact type is the frontmatter `type` of the artifact the skill writes. `describe-pr` writes an unnumbered `pr-description.md` without frontmatter, because the file is published verbatim as the pull request body; its type is `pr-description`. A file with no frontmatter otherwise takes its type from the name segment between `NN-` and the slug.
 
 ## Human gates
 
