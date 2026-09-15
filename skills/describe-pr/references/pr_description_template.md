@@ -1,0 +1,47 @@
+Ticket: [{TICKET_ID}]({TICKET_URL}) | Task: `{TASK_SLUG}` | Walkthrough: [{PR_WALKTHROUGH_URL}]({PR_WALKTHROUGH_URL})
+
+## Purpose
+
+{One sentence explaining the problem addressed and the capability this PR adds.}
+
+## Special things to note
+
+- {Name up to three items a reviewer should not miss, such as migrations, constraints, tradeoffs, or unusual choices. Write "None." if nothing needs special attention.}
+
+## Change outline
+
+{Use the smallest set of structural views needed to explain the implementation. Omit unused view types.}
+
+{Short lead-in for a data shape, API contract, or schema change.}
+
+```diff
+{Focused diff or complete target shape.}
+```
+
+{Short lead-in for changed code responsibilities.}
+
+```text
+{Shallow file tree or ownership sketch.}
+```
+
+{Short lead-in for runtime behavior.}
+
+```diff
+{Pseudocode, control flow, call tree, data flow, or component tree.}
+```
+
+{End with the one detail a reviewer needs before reading the diff.}
+
+## Human Review
+
+### Review targets
+
+- {Pull request behavior, risk, and changed files the human should inspect.}
+
+### Verify
+
+- [ ] {Exact review or hosted-check confirmation required before the next review round.}
+
+### Known limits
+
+- {Known limit, or `None.`}

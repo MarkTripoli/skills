@@ -1,0 +1,14 @@
+{
+  "name": "skills",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Portable agent skills for research, design, planning, implementation, and pull request delivery",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node scripts/validate.mjs",
+    "build": "node scripts/build-runtimes.mjs"
+  }
+}
