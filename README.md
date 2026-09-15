@@ -2,6 +2,8 @@
 
 A collection of portable agent skills. Each skill is one directory with a `SKILL.md` that any skill-aware coding agent can load; the skills need nothing but a file system, git, and the agent's own tools. Most of them form a delivery workflow that takes a task from request to merged pull request in fresh-context phases with human gates; the rest are utilities and the child-worker roles the phases delegate to. The collection is organized so unrelated skills and other workflows can be added beside it.
 
+New here? Read [Getting started](docs/getting-started.md), then [Context management](docs/context-management.md) for why every phase runs in its own session and how to do that on your runtime.
+
 ## Install
 
 Portable (any runtime that scans `~/.agents/skills/<name>/SKILL.md`, including Codex and Oh My Pi):
@@ -25,11 +27,21 @@ Runtime-specific trees add the runtime's invocation and worker notes to every sk
 
 - A task lives in `.agents/tasks/<slug>/` with a `task.md` and numbered artifacts. The contract is [shared/CONVENTIONS.md](shared/CONVENTIONS.md); the prose rules are [shared/WRITING.md](shared/WRITING.md).
 - The chains (`full`, `lean`, `prd`, `oneshot`), the phase table, the human gates, and the review loop are in [workflows/delivery.md](workflows/delivery.md).
-- Every phase ends with one fenced command naming the next phase. Paste it into a new session, or let `/run-task` do it.
+- Every phase ends with one fenced command naming the next phase. Run it in a new session, or let `/run-task` do it.
 
 ## Context management
 
-Each phase runs in a fresh context and reads only `task.md` plus the artifacts it selects, so no session carries the whole task history. `/run-task @.agents/tasks/<slug>` drives a task through its chain: it starts each phase in a fresh context, relays only the phase's final reply, and stops at human gates. Backends, in order: a [Herdr](https://github.com/herdr) pane when `HERDR_ENV=1` and `herdr` is installed (the phase runs visibly beside your session), the runtime's subagent tool, or manual (it prints the command for you to run in a new session). Phase replies are also written to `.agents/tasks/<slug>/replies/NN-<skill>.md`, which is how the orchestrator knows a phase finished and what comes next.
+Each phase runs in a fresh context and reads only `task.md` plus the artifacts it selects, so no session carries the whole task history; the artifacts on disk are the memory between phases. `/run-task @.agents/tasks/<slug>` drives a task through its chain: it starts each phase in a fresh context, relays only the phase's final reply, and stops at human gates. Backends, in order: a [Herdr](https://github.com/herdr) pane when `HERDR_ENV=1` and `herdr` is installed (the phase runs visibly beside your session and can ask you questions), the runtime's subagent tool, or manual (it prints the prompt for you to run in a new session). `/run-task @<task dir> --status` reports where a task stands. Phase replies are also written to `.agents/tasks/<slug>/replies/NN-<skill>.md`, which is how the orchestrator knows a phase finished and what comes next.
+
+Every reply tells you to start the next phase in a new session. That sentence, the read budget for a phase, and the signs of a degraded context are in the conventions; the per-runtime commands (`/clear`, `/new`, `/context`, `/status`) and what to do when a session degrades are in [docs/context-management.md](docs/context-management.md).
+
+## Docs
+
+- [docs/getting-started.md](docs/getting-started.md): install, first task by hand and with `/run-task`, gates, feedback, worktrees, epics.
+- [docs/context-management.md](docs/context-management.md): the phase model, fresh contexts per runtime, recognizing a degraded context, what a runtime plugin could add.
+- [workflows/delivery.md](workflows/delivery.md): workflow types, phase table, gates, review loop.
+- [shared/CONVENTIONS.md](shared/CONVENTIONS.md) and [shared/WRITING.md](shared/WRITING.md): the contract every skill follows.
+- [runtimes/](runtimes/): per-runtime invocation notes and install steps.
 
 ## Skills
 

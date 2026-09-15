@@ -71,4 +71,4 @@ Gates stop at design-discussion, design-prd, design-tdd, structure-outline, plan
 - `show-me`: a focused diagram, code-shape sketch, or HTML artifact for the current explanation.
 - `configure-workspaces`: write `.agents/workspace.json` and `.agents/workspace.local.json`, which `setup-worktree` uses to create task worktrees.
 - `review-artifact-comments`: apply the user's feedback to an artifact one item at a time, then hand off to `iterate-implementation`.
-- `run-task`: drive a task through this table one fresh-context phase at a time; see the README's Context management section.
+- `run-task`: drive a task through this table one fresh-context phase at a time; see [docs/context-management.md](../docs/context-management.md).
