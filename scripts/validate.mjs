@@ -247,6 +247,9 @@ const inventoryFiles = Object.keys(ANSWER_INVENTORY).sort();
 for (const file of answerFiles) if (!ANSWER_INVENTORY[file]) fail(`skills/${file}`, 0, "answer template missing from the declared inventory");
 for (const file of inventoryFiles) if (!answerFiles.includes(file)) fail(`skills/${file}`, 0, "declared answer template does not exist");
 
+const FRESH_SESSION_SENTENCE =
+  "Start the next phase in a new session, or hand the task to `/run-task`; continuing in this session carries this phase's context into the next one.";
+
 function checkHandoff(content, expectedSkill, label) {
   const blocks = fences(content);
   if (blocks.length !== 1) return fail(label, 0, `expected exactly one fenced block, found ${blocks.length}`);
@@ -258,6 +261,12 @@ function checkHandoff(content, expectedSkill, label) {
   if (!skillSet.has(match[1])) fail(label, 0, `fence names unknown skill "${match[1]}"`);
   if (match[1] !== expectedSkill) fail(label, 0, `fence names "${match[1]}", expected "${expectedSkill}"`);
   if (content.slice(block.end).trim() !== "") fail(label, 0, "nothing may follow the command fence");
+  const sentences = content.split(FRESH_SESSION_SENTENCE).length - 1;
+  if (expectedSkill === "show-me") {
+    if (sentences !== 0) fail(label, 0, "terminal replies must not carry the fresh-session sentence");
+  } else if (sentences !== 1) {
+    fail(label, 0, `must carry the fresh-session sentence exactly once before the fence (found ${sentences})`);
+  }
 }
 
 for (const [file, expected] of Object.entries(ANSWER_INVENTORY)) {

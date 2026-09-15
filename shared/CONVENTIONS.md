@@ -59,6 +59,8 @@ Known limits:
 
 Reply with the changes you want, or run `/iterate-<phase> @NN-type-slug.md`. Running the next command records approval.
 
+Start the next phase in a new session, or hand the task to `/run-task`; continuing in this session carries this phase's context into the next one.
+
 ```text
 /<next-skill> @NN-type-slug.md
 ```
@@ -67,6 +69,8 @@ Reply with the changes you want, or run `/iterate-<phase> @NN-type-slug.md`. Run
 ## Handoff
 
 The final answer ends with exactly one fenced `text` block containing exactly one line: `/<skill-name>`, optionally followed by ` @<artifact file>`. Nothing follows the fence. Codex users type `$<skill-name>` instead of `/<skill-name>`; the fence still shows `/`.
+
+The sentence before the fence is always: "Start the next phase in a new session, or hand the task to `/run-task`; continuing in this session carries this phase's context into the next one." Terminal replies whose fence names `/show-me` omit it, because no phase follows.
 
 ## Commits
 
@@ -108,9 +112,17 @@ Used by `create-plan`, `iterate-plan`, `create-structure-outline`, and `iterate-
    - a workspace config is present with `disabled: true`: the disabled answer template; check out branch `<slug>` first when it does not exist;
    - otherwise, including when no config file exists: the answer template that hands off to `/setup-worktree`, which writes a default `.agents/workspace.json` when none exists.
 
-## Phase isolation
+## Phase isolation and context budget
 
 A phase skill reads only `task.md` and the artifacts it selects. It never relies on earlier conversation. Each phase is meant to run in a fresh context, started by `run-task` or by the user opening a new session and pasting the handoff command.
+
+The artifact is the memory between phases; the conversation is not. Everything the next phase needs is in the task directory before the reply is printed. A compaction summary is not a substitute: it drops the exact file paths, checks, and limits the artifact keeps.
+
+Read budget for one phase, in this order: `task.md` frontmatter and body; the selected primary artifacts, completely; `summary` only from other artifacts; repository files through child workers where the skill provides them, and directly only the files the phase must edit or cite. Never paste a worker's full message into an artifact or reply; extract facts with `path:line` pointers.
+
+Signs that the context has degraded: re-reading a file already read this session, contradicting the artifact or `task.md`, dropping a constraint the user stated, repeating a question the user answered, or losing track of which numbered step is running. On the first sign: save the artifact in its current state, print the reply with the handoff fence, and stop. The next session resumes from the file with `/iterate-<phase> @<file>` or the next command.
+
+Interactive phases (every `iterate-*` skill, `create-prd`, `create-tdd`, `review-artifact-comments`) accumulate the whole exchange in one window. Save the artifact after every accepted change so nothing is lost when the session ends. After about ten rounds of feedback, say so and suggest continuing from the saved file in a new session with the matching `/iterate-*` command.
 
 ## Reply files
 
@@ -124,4 +136,4 @@ When the invoking prompt names a reply path (`.agents/tasks/<slug>/replies/NN-<s
 2. The runtime's subagent tool.
 3. Manual: print the command and the task path; the user runs it in a new session and re-runs `/run-task`.
 
-Interactive phases need a human in the loop: every `iterate-*` skill, `create-prd`, `create-tdd`, and `review-artifact-comments`. Run them in Herdr when available, otherwise inline in the current session with the sentence "Running this phase inline; context will grow." Never run an interactive phase in a subagent.
+Interactive phases need a human in the loop: every `iterate-*` skill, `create-prd`, `create-tdd`, and `review-artifact-comments`. Run them in Herdr when available, otherwise inline in the current session with the sentence "Running this phase inline; context will grow." Never run an interactive phase in a subagent. After an inline phase, the orchestrator's session holds that phase's whole exchange: it stops and asks the user to continue with `/run-task @<task dir>` in a new session.

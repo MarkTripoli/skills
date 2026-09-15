@@ -11,6 +11,8 @@ Deferred human evidence (recorded, not executed):
 
 Implementation continues to Phase {next_phase}. This command re-enters the skill with the same target if the run is interrupted.
 
+Start the next phase in a new session, or hand the task to `/run-task`; continuing in this session carries this phase's context into the next one.
+
 ```text
 {implementation_command}{artifact_arg}
 ```
