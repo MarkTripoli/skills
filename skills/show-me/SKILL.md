@@ -116,7 +116,7 @@ function expandSkill(command: string): string {
 }
 ```
 
-- For a visual UI, layout, state comparison, or concept too dense for Mermaid, write one focused HTML file — a diagram, an infographic, or a short slide deck, whichever fits the point. Match the product's colors, type, spacing, and components; use real labels and data; support desktop and mobile. Save it as `show-me-{description}.html` in the task directory, or in the current directory when there is no task directory. Then open it for the user:
+- For a visual UI, layout, state comparison, or concept too dense for Mermaid, write one focused HTML file, a diagram, an infographic, or a short slide deck, whichever fits the point. Match the product's colors, type, spacing, and components; use real labels and data; support desktop and mobile. Save it as `show-me-{description}.html` in the task directory, or in the current directory when there is no task directory. Then open it for the user:
 
 ```
 Bash(open path/to/show-me-{description}.html)
