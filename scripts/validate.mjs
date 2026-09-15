@@ -366,19 +366,40 @@ if (!fs.existsSync(workflowFile)) {
   }
 }
 
-// 11. The phase table and the deterministic module agree (skill, artifact type, gate, interactive).
+// 11. The phase table and the deterministic module agree: skill, artifact type, gate, interactive, and the
+// set of skills each phase's next() can hand off to over the whole decision space. The workflow-type
+// chain rows must equal the commands the module produces for a plain repository.
 const workflowModule = path.join(root, "skills", "run-task", "scripts", "workflow.mjs");
 if (!fs.existsSync(workflowModule)) {
   fail("skills/run-task/scripts/workflow.mjs", 0, "run-task must ship its deterministic workflow module");
 } else if (fs.existsSync(workflowFile)) {
-  const { PHASES } = await import(workflowModule);
-  const rows = read(workflowFile)
+  const { PHASES, TYPES, START_COMMAND, parseCommand } = await import(workflowModule);
+  const doc = read(workflowFile);
+  const rows = doc
     .split("\n")
     .filter((line) => /^\| [a-z0-9-]+ \| /.test(line) && !line.startsWith("| Skill |"))
     .map((line) => line.split("|").map((cell) => cell.trim()).slice(1, -1))
     .filter((cells) => cells.length === 5);
+  const contexts = [];
+  for (const workflow of TYPES) {
+    for (const probe of [{ inWorktree: false, disabled: false }, { inWorktree: false, disabled: true }, { inWorktree: true, disabled: false }]) {
+      for (const remaining of [[1], []]) {
+        for (const status of ["", "findings", "clean", "blocked", "pending", "approved"]) {
+          contexts.push({ workflow, probe, remaining, status, artifact: "NN-type-slug.md", planFile: "NN-plan-slug.md" });
+        }
+      }
+    }
+  }
+  const reachable = (skill) => {
+    const out = new Set();
+    for (const ctx of contexts) {
+      const command = PHASES[skill].next(ctx);
+      if (command) out.add(parseCommand(command)?.skill ?? command);
+    }
+    return out;
+  };
   const tabled = new Set();
-  for (const [skill, type, , gate, interactive] of rows) {
+  for (const [skill, type, nextCell, gate, interactive] of rows) {
     tabled.add(skill);
     if (skill === "run-task") continue;
     const phase = PHASES[skill];
@@ -389,8 +410,41 @@ if (!fs.existsSync(workflowModule)) {
     if (phase.type !== type) fail("workflows/delivery.md", 0, `"${skill}" artifact type is "${type}" in the table and "${phase.type}" in workflow.mjs`);
     if (phase.gate !== (gate === "yes")) fail("workflows/delivery.md", 0, `"${skill}" human gate is "${gate}" in the table and ${phase.gate} in workflow.mjs`);
     if (phase.interactive !== (interactive === "yes")) fail("workflows/delivery.md", 0, `"${skill}" interactive is "${interactive}" in the table and ${phase.interactive} in workflow.mjs`);
+    const named = new Set([...nextCell.matchAll(/\/([a-z0-9]+(?:-[a-z0-9]+)*)/g)].map((m) => m[1]));
+    const coded = reachable(skill);
+    const sortedNamed = [...named].sort().join(", ");
+    const sortedCoded = [...coded].sort().join(", ");
+    if (sortedNamed !== sortedCoded) {
+      fail("workflows/delivery.md", 0, `"${skill}" next command names [${sortedNamed}] in the table but workflow.mjs can hand off to [${sortedCoded}]`);
+    }
   }
   for (const skill of Object.keys(PHASES)) if (!tabled.has(skill)) fail("workflows/delivery.md", 0, `workflow.mjs PHASES has "${skill}" but the phase table does not`);
+
+  // Chain rows: simulate the module for a plain repository (no workspace config, not a worktree) and a
+  // plan with one phase, up to the external pull request review.
+  for (const workflow of TYPES) {
+    if (workflow === "oneshot") continue;
+    const row = doc.split("\n").find((line) => line.startsWith(`| \`${workflow}\` |`));
+    if (!row) {
+      fail("workflows/delivery.md", 0, `no chain row for workflow type ${workflow}`);
+      continue;
+    }
+    const documented = row.split("|")[2].trim().split(",").map((s) => s.trim());
+    const chain = [];
+    let skill = parseCommand(START_COMMAND[workflow]).skill;
+    const seen = new Set();
+    while (skill && !seen.has(skill)) {
+      chain.push(skill);
+      seen.add(skill);
+      const command = PHASES[skill].next({ workflow, probe: { inWorktree: false, disabled: false }, remaining: [], status: "clean", artifact: "a.md", planFile: "p.md" });
+      skill = command ? parseCommand(command)?.skill ?? null : null;
+    }
+    if (chain.at(-1) === "resolve-pr-reviews") chain.pop();
+    chain.push("resolve-pr-reviews");
+    if (chain.join(",") !== documented.join(",")) {
+      fail("workflows/delivery.md", 0, `chain for ${workflow} is documented as [${documented.join(", ")}] but workflow.mjs produces [${chain.join(", ")}]`);
+    }
+  }
 }
 
 report();

@@ -43,19 +43,19 @@ export const PHASES = {
   "iterate-research-questions": { type: "research-questions", gate: false, interactive: true, next: () => "/create-research" },
   "create-research": { type: "research", gate: false, interactive: false, next: ({ workflow }) => RESEARCH_NEXT[workflow] ?? null },
   "iterate-research": { type: "research", gate: false, interactive: true, next: ({ workflow }) => RESEARCH_NEXT[workflow] ?? null },
-  "create-design-discussion": { type: "design-discussion", gate: true, interactive: false, next: () => "/create-plan" },
-  "iterate-design-discussion": { type: "design-discussion", gate: true, interactive: true, next: () => "/create-plan" },
-  "create-prd": { type: "design-prd", gate: true, interactive: true, next: () => "/create-tdd" },
-  "iterate-prd": { type: "design-prd", gate: true, interactive: true, next: () => "/create-tdd" },
-  "create-tdd": { type: "design-tdd", gate: true, interactive: true, next: () => "/create-plan" },
-  "iterate-tdd": { type: "design-tdd", gate: true, interactive: true, next: () => "/create-plan" },
+  "create-design-discussion": { type: "design-discussion", gate: true, interactive: false, next: ({ artifact }) => `/create-plan @${artifact}` },
+  "iterate-design-discussion": { type: "design-discussion", gate: true, interactive: true, next: ({ artifact }) => `/create-plan @${artifact}` },
+  "create-prd": { type: "design-prd", gate: true, interactive: true, next: ({ artifact }) => `/create-tdd @${artifact}` },
+  "iterate-prd": { type: "design-prd", gate: true, interactive: true, next: ({ artifact }) => `/create-tdd @${artifact}` },
+  "create-tdd": { type: "design-tdd", gate: true, interactive: true, next: ({ artifact }) => `/create-plan @${artifact}` },
+  "iterate-tdd": { type: "design-tdd", gate: true, interactive: true, next: ({ artifact }) => `/create-plan @${artifact}` },
   "create-structure-outline": { type: "structure-outline", gate: true, interactive: false, next: planNext("implement-outline") },
   "iterate-structure-outline": { type: "structure-outline", gate: true, interactive: true, next: planNext("implement-outline") },
   "create-plan": { type: "plan", gate: true, interactive: false, next: planNext("implement-plan") },
   "iterate-plan": { type: "plan", gate: true, interactive: true, next: planNext("implement-plan") },
   "create-epic-plan": { type: "epic-plan", gate: true, interactive: false, next: ({ artifact }) => `/start-epic-delivery @${artifact}` },
   "start-epic-delivery": { type: "epic-delivery", gate: true, interactive: false, next: () => null },
-  "configure-workspaces": { type: "workspace-config", gate: true, interactive: true, next: () => "/setup-worktree" },
+  "configure-workspaces": { type: "workspace-config", gate: true, interactive: true, next: ({ planFile }) => `/setup-worktree${planFile ? ` @${planFile}` : ""}` },
   "setup-worktree": {
     type: "worktree-setup",
     gate: false,
@@ -74,7 +74,7 @@ export const PHASES = {
     type: "code-review",
     gate: false,
     interactive: false,
-    next: ({ status }) => (status === "clean" ? "/describe-pr" : status === "findings" ? "/fix-code-review" : null),
+    next: ({ status, artifact }) => (status === "clean" ? "/describe-pr" : status === "findings" ? `/fix-code-review @${artifact}` : null),
   },
   "fix-code-review": { type: "code-review-fixes", gate: false, interactive: false, next: () => "/review-code" },
   "describe-pr": { type: "pr-description", gate: true, interactive: false, next: () => "/resolve-pr-reviews" },
@@ -257,6 +257,10 @@ export function validateArtifact(text, { type = null, gate = null } = {}) {
   if (type && data.type !== type) issues.push(`frontmatter type is "${data.type}", expected "${type}"`);
   if (!data.summary) issues.push("frontmatter lacks `summary`");
   else if (/^\[/.test(data.summary)) issues.push("summary still holds the template placeholder");
+  for (const [key, value] of Object.entries(data)) {
+    if (key !== "summary" && /^\[[^\],]*\s[^\],]*\]$/.test(value)) issues.push(`frontmatter ${key} still holds the template placeholder ${value}`);
+  }
+  if (data.task === "eng-xxxx-description") issues.push("frontmatter task still holds the template id");
   const expectGate = gate ?? (data.type ? Object.values(PHASES).some((p) => p.type === data.type && p.gate) : false);
   if (expectGate && data.type !== "worktree-setup" && data.type !== "workspace-config") {
     for (const heading of HUMAN_REVIEW_HEADINGS) {
@@ -309,17 +313,20 @@ export function remainingPhases(text) {
   return [...remaining].sort((a, b) => a - b);
 }
 
-// Ticks every unchecked box inside phase section n; returns the new text. Without phase headings the
-// whole body outside `## Human Review` is phase 1, matching remainingPhases.
+// Ticks every unchecked box inside phase section n and the section's entry in a top-level checklist
+// (`- [ ] Step n:` or `- [ ] Phase n:` outside any phase section), as the implementation skills do after
+// the phase commit. Without phase headings the whole body outside `## Human Review` is phase 1.
 export function completePhase(text, n) {
   const lines = text.split(/\r?\n/);
   const hasPhases = lines.some((line) => PHASE_HEADING.test(line));
+  const checklistEntry = new RegExp(`^(\\s*- )\\[ \\](\\s+(?:Step|Phase) ${n}\\b)`);
   let inPhase = !hasPhases && n === 1;
   for (let i = 0; i < lines.length; i++) {
     if (/^## /.test(lines[i])) {
       const h = PHASE_HEADING.exec(lines[i]);
       inPhase = hasPhases ? h !== null && Number(h[1]) === n : n === 1 && !/^## Human Review\b/.test(lines[i]);
     } else if (inPhase) lines[i] = lines[i].replace(/^(\s*- )\[ \]/, "$1[x]");
+    else if (hasPhases) lines[i] = lines[i].replace(checklistEntry, "$1[x]$2");
   }
   return lines.join("\n");
 }
@@ -390,7 +397,6 @@ export function nextCommand(taskDir, { projectRoot = projectRootOf(taskDir) } = 
       skill,
       arg: parsed?.arg ?? null,
       interactive: skill ? (PHASES[skill]?.interactive ?? false) : false,
-      nextGate: skill ? (PHASES[skill]?.gate ?? false) : false,
     };
   };
 

@@ -9,7 +9,7 @@ A task moves from request to merged pull request through phases. Each phase is o
 | Type | Chain | Use when |
 |---|---|---|
 | `full` | create-research-questions, create-research, create-design-discussion, create-plan, setup-worktree, implement-plan, describe-pr, resolve-pr-reviews | The change needs research and a design decision before planning. Default. |
-| `lean` | create-research-questions, create-research, create-structure-outline, implement-outline, describe-pr, resolve-pr-reviews | The change is bounded; a phased outline is enough structure. |
+| `lean` | create-research-questions, create-research, create-structure-outline, setup-worktree, implement-outline, describe-pr, resolve-pr-reviews | The change is bounded; a phased outline is enough structure. |
 | `prd` | create-research, create-prd, create-tdd, create-plan, setup-worktree, implement-plan, describe-pr, resolve-pr-reviews | Product and technical decisions need interactive sessions with the user. |
 | `oneshot` | one session: implement, verify, commit, then describe-pr, resolve-pr-reviews | The request is a fully specified change; no artifacts are required before implementing. |
 
@@ -41,7 +41,7 @@ A task moves from request to merged pull request through phases. Each phase is o
 | setup-worktree | worktree-setup | /implement-plan (`full`, `prd`) or /implement-outline (`lean`) | no | no |
 | implement-plan | implementation | /implement-plan between phases, then /describe-pr | yes | no |
 | implement-outline | implementation | /implement-outline between phases, then /describe-pr | yes | no |
-| iterate-implementation | implementation | the source implementation command between phases, then /describe-pr | yes | yes |
+| iterate-implementation | implementation | /implement-plan or /implement-outline between phases, then /describe-pr | yes | yes |
 | review-code | code-review | /fix-code-review while findings remain, otherwise /describe-pr | no | no |
 | fix-code-review | code-review-fixes | /review-code | no | no |
 | describe-pr | pr-description | /resolve-pr-reviews | yes | no |
