@@ -75,15 +75,19 @@ Notes: `simctl recordVideo` writes the file only when it stops, and like `screen
 
 ## Browser without a display (Playwright, imported as `external`)
 
+Playwright is installed beside the script, inside the evidence directory (never committed), so the project's dependencies stay untouched. `npx --package=playwright node record.mjs` does not work: Node resolves `import "playwright"` from the script's own `node_modules`, not from the npx cache.
+
 Start the session first so its clock is running, then create the Playwright context immediately; the video's zero is taken as the moment `start` returned (adjust with `stop --video-offset S` when the frame check shows drift, or `--align end` when the video ended exactly at `stop`).
 
 ```bash
-SESSION=$(python3 $EVIDENCE start --output <dir>/web --source external --label "Chromium" --title "..." | python3 -c 'import json,sys;print(json.load(sys.stdin)["session"])')
-EVIDENCE=$EVIDENCE npx --yes --package=playwright node record.mjs "$SESSION"
-python3 $EVIDENCE stop "$SESSION" --video <dir>/web/video/*.webm --caveats "..."
+mkdir -p <dir>/web && cd <dir>/web
+npm init -y >/dev/null && npm install --no-audit --no-fund playwright && npx playwright install chromium
+SESSION=$(python3 $EVIDENCE start --output <dir>/web/session --source external --label "Chromium" --title "..." | python3 -c 'import json,sys;print(json.load(sys.stdin)["session"])')
+EVIDENCE=$EVIDENCE node record.mjs "$SESSION"
+python3 $EVIDENCE stop "$SESSION" --video video/*.webm --caveats "..."
 ```
 
-Plain `npx playwright node record.mjs` fails; `--package=playwright` is what puts the module on the path. Minimal `record.mjs` that annotates through the recorder as it goes:
+Minimal `record.mjs` that annotates through the recorder as it goes (verified against a local page):
 
 ```js
 import { chromium } from "playwright";

@@ -35,7 +35,8 @@ DEFAULT_CARD_SECONDS = 4.0
 DEFAULT_TOAST_SECONDS = 5.0
 FPS = 30
 PAD_COLOR = "0x101014"
-SEGMENT_LIMIT = 180  # adb screenrecord hard limit per invocation, seconds
+# adb screenrecord refuses more than 180 s per invocation; EVIDENCE_SEGMENT_SECONDS lowers it for tests.
+SEGMENT_LIMIT = min(180, max(3, int(os.environ.get("EVIDENCE_SEGMENT_SECONDS", "180"))))
 
 STATUS_RECORDING = "recording"
 STATUS_FINALIZED = "finalized"
@@ -506,19 +507,25 @@ class MagickFrame:
 
 
 def overlay_backend(font=None):
-    """Return (raster or None, description dict)."""
+    """Return (raster or None, description dict). EVIDENCE_OVERLAY_BACKEND=pillow|imagemagick|none forces one."""
     regular, bold = find_fonts(font)
     info = {"font": regular, "bold_font": bold}
-    try:
-        raster = PillowRaster(regular, bold)
-        info["backend"] = "pillow"
-        return raster, info
-    except ImportError:
-        pass
-    exe = which("magick") or which("convert")
-    if exe:
-        info["backend"] = "imagemagick"
-        return MagickRaster(exe, regular, bold), info
+    forced = os.environ.get("EVIDENCE_OVERLAY_BACKEND")
+    if forced in (None, "pillow"):
+        try:
+            raster = PillowRaster(regular, bold)
+            info["backend"] = "pillow"
+            return raster, info
+        except ImportError:
+            if forced:
+                die("EVIDENCE_OVERLAY_BACKEND=pillow but Pillow is not importable")
+    if forced in (None, "imagemagick"):
+        exe = which("magick") or which("convert")
+        if exe:
+            info["backend"] = "imagemagick"
+            return MagickRaster(exe, regular, bold), info
+        if forced:
+            die("EVIDENCE_OVERLAY_BACKEND=imagemagick but neither magick nor convert is on PATH")
     info["backend"] = None
     info["hint"] = "install Pillow (python3 -m pip install pillow) or ImageMagick for text overlays"
     return None, info
@@ -785,18 +792,22 @@ class OverlayRenderer:
     def paint_chrome(self, fr):
         cfg = self.cfg
         if cfg.get("header_h"):
+            # Each pane owns the header band directly above it (rect.y - header_h).
             s = cfg["scale"]
             slots = cfg["slots"]
+            hh = cfg["header_h"]
             for pane in cfg["panes"]:
                 x, y, w, h = pane["rect"]
+                top = y - hh
                 label = pane.get("label") or ""
                 size = 30 * s
                 tw = self.p.r.measure(label, size, True)
-                fr.text(x + (w - tw) / 2, slots["pad"] + (slots["label_h"] - size) / 2 - size * 0.1, label, size, C_TEXT, True)
-            for pane in cfg["panes"][1:]:
-                x, y, w, h = pane["rect"]
-                fr.rect(x - 2, 0, 4, cfg["canvas"][1] - cfg.get("footer_h", 0), C_DIVIDER)
-            fr.rect(0, cfg["header_h"] - 2, cfg["canvas"][0], 2, C_DIVIDER)
+                fr.text(x + (w - tw) / 2, top + slots["pad"] + (slots["label_h"] - size) / 2 - size * 0.1, label, size, C_TEXT, True)
+                fr.rect(x, y - 2, w, 2, C_DIVIDER)
+                if x > 0:
+                    fr.rect(x - 2, top, 4, hh + h, C_DIVIDER)
+                if top > 0:
+                    fr.rect(x, top, w, 2, C_DIVIDER)
             if cfg.get("footer_h"):
                 fr.rect(0, cfg["canvas"][1] - cfg["footer_h"], cfg["canvas"][0], 2, C_DIVIDER)
         if cfg["mode"] == "panel":
@@ -804,13 +815,12 @@ class OverlayRenderer:
             fr.rect(px, py, 3, ph, C_DIVIDER)
 
     def card_rect(self):
-        """Center the cards over the video area (not the panel, header, or footer)."""
+        """Center the cards over the video area (not the panel or footer)."""
         cfg = self.cfg
         if cfg["mode"] == "panel":
             return cfg["panes"][0]["rect"]
         W, H = cfg["canvas"]
-        top = cfg.get("header_h", 0)
-        return (0, top, W, H - top - cfg.get("footer_h", 0))
+        return (0, 0, W, H - cfg.get("footer_h", 0))
 
     def paint_title_card(self, fr):
         cfg = self.cfg
@@ -918,7 +928,7 @@ class OverlayRenderer:
             x, y, w, h = pane["rect"]
             inner_x = x + slots["pad"]
             inner_w = w - 2 * slots["pad"]
-            top = slots["pad"] + slots["label_h"]
+            top = y - cfg["header_h"] + slots["pad"] + slots["label_h"]
             if pstate["test"]:
                 idx, total, msg = pstate["test"]
                 block = self.p.layout([("TEST %d/%d" % (idx, total), 19 * s, C_TEST, True), (msg, 24 * s, C_TEXT, False)],
@@ -1876,7 +1886,7 @@ def finalize_session(sess, sp, opts, exit_info, warnings, video_override=None, v
             warnings.append("video is %.1fs shorter than the recording window; the tail was not captured" % missing)
     effective_dur = dur + extend
     if exit_info.get("segments", 0) > 1:
-        warnings.append("android capture used %d adb screenrecord segments; expect a short gap at each boundary" % exit_info["segments"])
+        warnings.append("android capture used %d adb screenrecord segments; about half a second is missing at each boundary, so later annotations may land up to that much late" % exit_info["segments"])
     if exit_info.get("unexpected"):
         warnings.append("recorder ended on its own: %s" % exit_info.get("error"))
     if sess["source"] == "test":
@@ -2096,7 +2106,10 @@ def cmd_frames(args):
     duration = (manifest.get("video_probe") or {}).get("duration") or 0
     written = []
     for idx, (label, ev) in enumerate(events, 1):
-        t = min(ev["video_t"] + args.delay, max(0.0, duration - 0.1))
+        # Stay inside the content: the summary card starts at card + content length.
+        timing = manifest.get("timing") or {}
+        content_end = timing.get("card_seconds", 0) + (timing.get("content_seconds") or (manifest.get("raw") or {}).get("effective_duration") or duration)
+        t = max(ev["video_t"], min(ev["video_t"] + args.delay, content_end - 0.1, max(0.0, duration - 0.1)))
         name = "%02d-%s-%s%s.png" % (idx, ev["type"].replace("_", "-"), slug(ev["message"], 48),
                                     ("-" + ev["result"]) if ev.get("result") else "")
         path = out_dir / name
@@ -2218,16 +2231,16 @@ def cmd_compose(args):
         slots = {"pad": pad, "gap": gap, "label_h": label_h, "chip_h": chip_h, "toast_h": toast_h, "tally_h": tally_h,
                  "narration_size": narration_size}
     panes = []
-    x, y = 0, header_h
+    x, y = 0, 0
     for (pw, ph), m, label, delta, events in zip(sizes, manifests, labels, deltas, pane_events):
         tests = judge_tests(events)
-        panes.append({"rect": (x, y, pw, ph), "label": label, "events": events, "tests": tests, "source": m["source"],
+        panes.append({"rect": (x, y + header_h, pw, ph), "label": label, "events": events, "tests": tests, "source": m["source"],
                       "target": m.get("target"), "started_at_iso": m["started_at_iso"], "duration": m["raw"]["duration"],
                       "delta": round(delta, 3), "session": m["session"]})
         if args.direction == "h":
             x += pw
         else:
-            y += ph
+            y += header_h + ph
     if args.direction == "h":
         canvas = (x, header_h + max(ph for _, ph in sizes) + footer_h)
     else:
@@ -2269,13 +2282,14 @@ def cmd_compose(args):
         trailing = content - (delta + m["raw"]["duration"])
         if trailing > 0.02:
             chain += ",tpad=stop_duration=%.3f:stop_mode=clone" % trailing
-        chain += "[p%d]" % idx
+        # Each pane carries its own header band so vertical stacks keep a band above every pane.
+        chain += ",pad=%d:%d:0:%d:color=%s[p%d]" % (pw, ph + header_h, header_h, PAD_COLOR, idx)
         chains.append(chain)
     stack = "hstack" if args.direction == "h" else "vstack"
     graph = ";".join(chains) + ";" + "".join("[p%d]" % i for i in range(len(manifests))) + "%s=inputs=%d" % (stack, len(manifests))
     if card:
         graph += ",tpad=start_duration=%.3f:start_mode=clone,fps=%d,tpad=stop_duration=%.3f:stop_mode=clone" % (card, FPS, card)
-    graph += ",pad=%d:%d:0:%d:color=%s[base]" % (canvas[0], canvas[1], header_h, PAD_COLOR)
+    graph += ",pad=%d:%d:0:0:color=%s[base]" % (canvas[0], canvas[1], PAD_COLOR)
     video = out_dir / "composite.mp4"
     frames, error, cmd = render_video(tc, raster, inputs, video, cfg, graph, out_dir / "overlay", opts, warnings)
     if error:
