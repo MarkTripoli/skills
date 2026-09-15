@@ -28,7 +28,7 @@ Run it on a generated runtime tree with `node scripts/validate.mjs --root dist/<
 
 `scripts/simulate.mjs` is a fake agent. Given a phase, it writes the artifact from the skill's real template (frontmatter kept, placeholders filled with fixture text) and the reply from the skill's real answer template, then validates both. The chain runner loops `nextCommand` from `workflow.mjs`, runs the fake phase, and asserts that the full command in the fence the template produced, skill and `@file` argument, is the command the table predicted. That single assertion, repeated across a whole chain, is what proves the wiring: templates, table, worktree probe, and reply parser agree.
 
-Be precise about what that does and does not cover. The fake agent's decisions (which answer variant to use, what `{artifact_arg}` names, which boxes the parent ticks) are the rules from `shared/CONVENTIONS.md` and the skills, re-implemented in JavaScript. The simulation proves that those rules, the templates, and the module are consistent with each other. It does not read `SKILL.md` prose, so a skill whose text contradicted the conventions would still simulate green. When a decision rule changes in a skill, the simulator must change with it, and the eval layer is the only thing that tests the prose against a real agent.
+Be precise about what that does and does not cover. The fake agent's decisions (which answer variant to use, what `{plan_file}` names, which boxes the parent ticks) are the rules from `shared/CONVENTIONS.md` and the skills, re-implemented in JavaScript. The simulation proves that those rules, the templates, and the module are consistent with each other. It does not read `SKILL.md` prose, so a skill whose text contradicted the conventions would still simulate green. When a decision rule changes in a skill, the simulator must change with it, and the eval layer is the only thing that tests the prose against a real agent.
 
 Scenarios:
 
@@ -59,9 +59,14 @@ npm run eval -- --driver fake --k 2                              # harness self-
 npm run eval -- --driver omp --case research-questions-lean --k 3
 npm run eval -- --driver claude --k 3
 npm run eval -- --driver codex --case plan-from-outline --k 1
+npm run eval -- --driver omp --chain lean --model anthropic/claude-haiku-4-5 --keep   # whole workflow, one fresh process per phase
 ```
 
-Drivers run the runtimes headless: `omp -p --mode json`, `claude -p --output-format json`, `codex exec --json`. Each run gets a fresh fixture under the OS temp directory and the same file-form prompt `run-task` uses (`Read and follow <skill path>/SKILL.md ... write your complete final reply verbatim to <reply path>`), so an eval measures exactly what the orchestrator would get. Nothing is installed into your home directory.
+Drivers run the runtimes headless: `omp -p --mode json`, `claude -p --output-format json`, `codex exec --json`. Each run gets a fresh fixture under the OS temp directory and the same file-form prompt `run-task` uses (`Read and follow <skill path>/SKILL.md ... write your complete final reply ... verbatim to <reply path>`), so an eval measures exactly what the orchestrator would get. Nothing is installed into your home directory, and each driver passes the runtime's flags that disable home-directory skills, extensions, and rules.
+
+`--model <spec>` picks the model and records it in the results. Run routine evals on a cheap model (`anthropic/claude-haiku-4-5` costs a few cents per phase); a phase that a cheap model fails and a stronger model passes is a model finding, a phase that both fail the same way is a template or skill-text finding. Both kinds have happened: the `{next_command}` and `@{artifact_file}` placeholder shapes exist because two models in four runs each mangled the earlier free-form handoff argument.
+
+`--chain <workflow>` runs the whole workflow instead of a single phase: `nextCommand` picks each phase, a **fresh agent process** runs it, every phase is graded, human gates are auto-approved (test mode, recorded as such), and the chain continues while the reply is still usable so one run measures every phase. The per-phase record carries duration, tokens, cost, model, and the runtime's session id, which is the evidence that each phase ran in its own context.
 
 Graders are code and rule graders only (the taxonomy is in the `eval-harness` skill):
 

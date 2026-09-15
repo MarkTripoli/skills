@@ -1,0 +1,14 @@
+{
+  "slug": "verbose-flag",
+  "request": "Add a --verbose flag to the CLI in src/index.js that prints each command to stderr before running it. Keep the default output unchanged when the flag is absent.",
+  "artifactContains": ["verbose"],
+  "fixture": {
+    "files": {
+      "package.json": "{\n  \"name\": \"fixture-cli\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"bin\": { \"fixture-cli\": \"src/index.js\" },\n  \"scripts\": { \"test\": \"node --test test/\" }\n}\n",
+      "src/index.js": "#!/usr/bin/env node\n// Minimal CLI: runs the named command and prints its result.\nimport { commands } from \"./commands.js\";\n\nexport function run(argv) {\n  const [name, ...rest] = argv;\n  const command = commands[name];\n  if (!command) {\n    process.stderr.write(`unknown command: ${name ?? \"(none)\"}\\n`);\n    return 1;\n  }\n  const result = command(rest);\n  process.stdout.write(`${result}\\n`);\n  return 0;\n}\n\nif (import.meta.url === `file://${process.argv[1]}`) {\n  process.exit(run(process.argv.slice(2)));\n}\n",
+      "src/commands.js": "export const commands = {\n  greet: ([name = \"world\"]) => `hello ${name}`,\n  add: ([a, b]) => String(Number(a) + Number(b)),\n  echo: (args) => args.join(\" \"),\n};\n",
+      "test/run.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { run } from \"../src/index.js\";\n\ntest(\"greet prints hello\", () => {\n  let out = \"\";\n  const write = process.stdout.write;\n  process.stdout.write = (s) => { out += s; return true; };\n  try {\n    assert.equal(run([\"greet\", \"tester\"]), 0);\n  } finally {\n    process.stdout.write = write;\n  }\n  assert.equal(out, \"hello tester\\n\");\n});\n\ntest(\"unknown command exits 1\", () => {\n  const write = process.stderr.write;\n  process.stderr.write = () => true;\n  try {\n    assert.equal(run([\"nope\"]), 1);\n  } finally {\n    process.stderr.write = write;\n  }\n});\n",
+      ".agents/workspace.json": "{\n  \"disabled\": true,\n  \"repos\": [{ \"path\": \".\", \"primary\": true }]\n}\n"
+    }
+  }
+}

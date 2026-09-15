@@ -7,7 +7,8 @@ The harness has no dependencies beyond Node 20 and the runtimes it drives. Grade
 ## Running
 
 ```sh
-node scripts/eval.mjs --driver <omp|claude|codex|fake> [--case <name>...] [--k 3] [--json] [--keep] [--timeout <seconds>]
+node scripts/eval.mjs --driver <omp|claude|codex|fake> [--case <name>...] [--k 3] [--model <spec>] [--json] [--keep] [--timeout <seconds>]
+node scripts/eval.mjs --driver <driver> --chain <full|lean|prd|oneshot> [--model <spec>] [--strict] [--max-phases 12] [--json] [--keep]
 ```
 
 | Flag | Meaning |
@@ -15,6 +16,10 @@ node scripts/eval.mjs --driver <omp|claude|codex|fake> [--case <name>...] [--k 3
 | `--driver` | Which runtime executes the phase (required). |
 | `--case <name>` | Run only `eval/cases/<name>.json`; repeatable. Default: every case. |
 | `--k <n>` | Runs per case (default 3). |
+| `--model <spec>` | Model passed to the runtime (`omp --model`, `claude --model`, `codex -m`), recorded as `driver.model`. Use a cheap model for routine runs, for example `anthropic/claude-haiku-4-5` with `omp`. |
+| `--chain <type>` | Run a whole workflow instead of cases; see Chains below. |
+| `--strict` | Chain mode: stop at the first failed phase instead of continuing while the reply is still usable. |
+| `--max-phases <n>` | Chain mode: safety cap on phases (default 12). |
 | `--json` | Print the full result object instead of the Markdown report. |
 | `--keep` | Keep the fixtures under the system temp directory and record their paths. |
 | `--timeout <seconds>` | Per-run limit (default 1200). A run that hits it is killed with its process tree and recorded as a failure with reason `timeout`. |
@@ -40,7 +45,7 @@ Read and follow <repo>/skills/<skill>/SKILL.md, the installed skill for /<skill>
 
 | Driver | Command | Reply source when the reply file is missing | Tokens, cost, model |
 |---|---|---|---|
-| `omp` | `omp -p --mode json --no-title <isolation> "<prompt>"` | Text of the last assistant `message_end` event, else the last assistant message in `agent_end` | Sum over assistant `message_end` events of `message.usage.input` plus `cacheRead` and `cacheWrite`, and `.output`; cost from `usage.cost.total`; model from the first event carrying a `model` string |
+| `omp` | `omp -p --mode json --no-title --auto-approve [--model <spec>] <isolation> "<prompt>"` (`--auto-approve` because print mode has no UI for approval prompts; the fixture is a throwaway repository) | Text of the last assistant `message_end` event, else the last assistant message in `agent_end` | Sum over assistant `message_end` events of `message.usage.input` plus `cacheRead` and `cacheWrite`, and `.output`; cost from `usage.cost.total`; model from the first event carrying a `model` string |
 | `claude` | `claude -p "<prompt>" --output-format json --permission-mode acceptEdits <isolation> --allowedTools Read Write Edit Glob Grep Skill "Bash(git:*)" "Bash(ls:*)" "Bash(mkdir:*)" "Bash(cat:*)"` | Top-level `result` | Top-level `usage` (input plus cache tokens, output) and `total_cost_usd`; model from `result.model`, else the first key of `modelUsage` |
 | `codex` | `codex exec -C <fixture> -s workspace-write --skip-git-repo-check <isolation> --json -o <tmp file> "<prompt>"` | The `-o` last-message file (its temp directory is always removed) | `usage.input_tokens` and `.output_tokens` from `turn.completed` events, else any event carrying those keys; no cost; model from `thread.started` or `turn.started`, else any event |
 | `fake` | Parses skill, task directory, `@<arg>`, reply path, and feedback back out of the prompt text, then runs `node scripts/simulate.mjs phase <skill> <task dir> [@<arg>] --reply <reply file> [--feedback "<text>"]`; for a `run-task ... --status` prompt, `node skills/run-task/scripts/workflow.mjs status <task dir>` | stdout | none; model `fake` |
@@ -66,6 +71,24 @@ Real drivers spend tokens on every run. Start with one case and `--k 1`:
 
 ```sh
 node scripts/eval.mjs --driver omp --case research-questions-lean --k 1
+```
+
+## Chains
+
+`--chain <type>` runs the whole workflow the way `run-task` does, with the eval's fixture and graders: build the fixture from `eval/chains/<type>.json` (`slug`, `request`, `fixture.files`, `artifactContains`), then loop `nextCommand` from `workflow.mjs`, run the phase in a **fresh agent process**, grade it, and continue until the pull request handoff. Each phase is graded like a case whose expectations come from the phase table: artifact type, next skill, gate. Two chain-specific rules:
+
+- Human gates are auto-approved and marked `autoApproved` in the results. This is test mode; a real user reviews the artifact there.
+- `implement-*`, `oneshot`, `ci-commit`, and `fix-code-review` may edit and commit the repository (`allowCommits`, `allowedWrites: ["**"]`); `setup-worktree` may write under `.agents/`; every other phase must leave the repository untouched.
+
+A phase that fails a grader but still ends with the predicted fence lets the chain continue, so one run measures every phase; the failure is recorded and the chain reports `FAIL`. A reply the module cannot follow (no fence, wrong command) stops the chain, exactly as `run-task` would stop. `--strict` stops at the first failure.
+
+The additional `fence-command` grader compares the reply's whole fence line with the command the table predicts (`predictNext`), including the `@<file>` argument. Each phase record carries the runtime's session id when the driver reports one, so a chain result shows one session per phase.
+
+The shipped chain fixture `eval/chains/lean.json` is a small Node CLI with tests and a `.agents/workspace.json` that has `disabled: true`, so no git worktree is created outside the temp fixture.
+
+```sh
+node scripts/eval.mjs --driver fake --chain lean                                        # no tokens
+node scripts/eval.mjs --driver omp --chain lean --model anthropic/claude-haiku-4-5 --keep
 ```
 
 ## What a run does

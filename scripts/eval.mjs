@@ -4,7 +4,11 @@
 // reports pass@k (at least one of k runs passed) and pass^k (all k runs passed).
 //
 // Usage:
-//   node scripts/eval.mjs --driver <omp|claude|codex|fake> [--case <name>...] [--k 3] [--json] [--keep] [--timeout <seconds>]
+//   node scripts/eval.mjs --driver <omp|claude|codex|fake> [--case <name>...] [--k 3] [--model <spec>] [--json] [--keep] [--timeout <seconds>]
+//   node scripts/eval.mjs --driver <driver> --chain <full|lean|prd|oneshot> [--model <spec>] [--json] [--keep]
+//
+// --chain runs a whole workflow: one fresh agent process per phase, each phase graded like a case,
+// human gates auto-approved (test mode; a real user reviews there), until the pull request handoff.
 //
 // Cases live in eval/cases/<name>.json (schema in eval/README.md). Every invocation writes
 // eval/results/<ISO timestamp>-<driver>.json; --json also prints that object to stdout.
@@ -15,10 +19,11 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { PHASES, createTask, listArtifacts, nextReplyNumber, parseFrontmatter, parseReply, readTask, replyPath, validateArtifact, validateReply } from "../skills/run-task/scripts/workflow.mjs";
+import { PHASES, TYPES, createTask, listArtifacts, nextCommand, nextReplyNumber, parseCommand, parseFrontmatter, parseReply, predictNext, readTask, replyPath, validateArtifact, validateReply } from "../skills/run-task/scripts/workflow.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const casesDir = path.join(repoRoot, "eval", "cases");
+const chainsDir = path.join(repoRoot, "eval", "chains");
 const resultsDir = path.join(repoRoot, "eval", "results");
 const workflowScript = path.join(repoRoot, "skills", "run-task", "scripts", "workflow.mjs");
 const simulateScript = path.join(repoRoot, "scripts", "simulate.mjs");
@@ -81,7 +86,7 @@ function installSignalHandlers() {
 // Arguments ------------------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const opts = { driver: null, cases: [], k: 3, json: false, keep: false, timeoutMs: DEFAULT_TIMEOUT_MS };
+  const opts = { driver: null, cases: [], k: 3, json: false, keep: false, timeoutMs: DEFAULT_TIMEOUT_MS, model: null, chain: null, maxPhases: 12, strict: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const value = () => {
@@ -102,6 +107,18 @@ function parseArgs(argv) {
       case "--timeout":
         opts.timeoutMs = Number(value()) * 1000;
         break;
+      case "--model":
+        opts.model = value();
+        break;
+      case "--chain":
+        opts.chain = value();
+        break;
+      case "--max-phases":
+        opts.maxPhases = Number(value());
+        break;
+      case "--strict":
+        opts.strict = true;
+        break;
       case "--json":
         opts.json = true;
         break;
@@ -115,6 +132,8 @@ function parseArgs(argv) {
   if (!DRIVERS.includes(opts.driver)) throw new UsageError(`--driver must be one of ${DRIVERS.join(", ")}`);
   if (!Number.isInteger(opts.k) || opts.k < 1) throw new UsageError("--k must be a positive integer");
   if (!Number.isFinite(opts.timeoutMs) || opts.timeoutMs <= 0) throw new UsageError("--timeout must be a positive number of seconds");
+  if (opts.chain !== null && !TYPES.includes(opts.chain)) throw new UsageError(`--chain must be one of ${TYPES.join(", ")}`);
+  if (!Number.isInteger(opts.maxPhases) || opts.maxPhases < 1) throw new UsageError("--max-phases must be a positive integer");
   return opts;
 }
 
@@ -168,8 +187,13 @@ function git(cwd, ...args) {
   return execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] }).toString();
 }
 
-function gitState(root) {
-  return { head: git(root, "rev-parse", "HEAD").trim(), stash: git(root, "stash", "list").trim() };
+function gitState(root, taskDir = null) {
+  const state = { head: git(root, "rev-parse", "HEAD").trim(), stash: git(root, "stash", "list").trim(), maxArtifact: null };
+  if (taskDir) {
+    const numbers = listArtifacts(taskDir, readTask(taskDir).slug).map((a) => a.nn).filter((nn) => nn !== null);
+    state.maxArtifact = numbers.length ? Math.max(...numbers) : 0;
+  }
+  return state;
 }
 
 function buildFixture(c) {
@@ -191,7 +215,7 @@ function buildFixture(c) {
   }
   git(root, "add", "-A");
   git(root, "-c", "user.name=eval", "-c", "user.email=eval@example.invalid", "commit", "-q", "-m", "fixture", "--no-gpg-sign");
-  return { root, taskDir, before: gitState(root) };
+  return { root, taskDir, before: gitState(root, taskDir) };
 }
 
 function composePrompt(c, taskDir) {
@@ -201,7 +225,7 @@ function composePrompt(c, taskDir) {
   const replyFile = replyPath(taskDir, nn, skill);
   let prompt;
   if (c.prompt) prompt = c.prompt.replaceAll("{repo}", repoRoot).replaceAll("{taskDir}", taskDir).replaceAll("{skill}", skill).replaceAll("{replyFile}", replyFile);
-  else prompt = `Read and follow ${repoRoot}/skills/${skill}/SKILL.md, the installed skill for /${skill}${argText}, for task directory ${taskDir}. When finished, also write your complete final reply verbatim to ${replyFile}.`;
+  else prompt = `Read and follow ${repoRoot}/skills/${skill}/SKILL.md, the installed skill for /${skill}${argText}, for task directory ${taskDir}. When finished, also write your complete final reply (the message you print last, filled from the answer template, not the artifact) verbatim to ${replyFile}.`;
   if (c.feedback) prompt += `\n\nFeedback: ${c.feedback.replace(/\s+/g, " ").trim()}`;
   return { prompt, replyFile };
 }
@@ -312,6 +336,12 @@ function firstModel(objects) {
   return null;
 }
 
+// First string value under any of the given keys, in stream order.
+function firstKey(objects, keys) {
+  for (const obj of objects) for (const node of walk(obj)) for (const key of keys) if (typeof node[key] === "string" && node[key]) return node[key];
+  return null;
+}
+
 const TOKEN_KEYS = [
   ["input", "output"],
   ["inputTokens", "outputTokens"],
@@ -377,8 +407,9 @@ const drivers = {
     version: () => probe("omp", ["--version"]),
     // --profile would also isolate auth, so the run would have no credentials; these keep auth and drop discovery.
     isolation: () => supportedFlags("omp", ["--help"], ["--no-skills", "--no-extensions", "--no-rules", "--no-session"]),
-    async run({ prompt }, { timeoutMs, cwd, isolation }) {
-      const args = ["-p", "--mode", "json", "--no-title", ...isolation, prompt];
+    // --auto-approve: print mode has no UI to answer approval prompts; the fixture is a throwaway temp repo.
+    async run({ prompt }, { timeoutMs, cwd, isolation, model }) {
+      const args = ["-p", "--mode", "json", "--no-title", "--auto-approve", ...(model ? ["--model", model] : []), ...isolation, prompt];
       const r = await runProcess("omp", args, { cwd, timeoutMs });
       const events = jsonLines(r.stdout);
       // One message_end per assistant API call; other event types repeat the same usage block.
@@ -395,7 +426,8 @@ const drivers = {
         const agentEnd = events.find((e) => e.type === "agent_end" && Array.isArray(e.messages));
         if (agentEnd) for (const m of agentEnd.messages) lastMessage = assistantText(m) ?? lastMessage;
       }
-      return { ...r, lastMessage, tokens, costUsd, model: firstModel(events), argv: ["omp", ...args] };
+      const sessionId = firstKey(events, ["sessionId", "session_id", "sessionID"]);
+      return { ...r, lastMessage, tokens, costUsd, model: firstModel(events), sessionId, argv: ["omp", ...args] };
     },
   },
 
@@ -403,7 +435,7 @@ const drivers = {
     binary: "claude",
     version: () => probe("claude", ["--version"]),
     isolation: () => supportedFlags("claude", ["--help"], ["--safe-mode", "--no-session-persistence"]),
-    async run({ prompt }, { timeoutMs, cwd, isolation }) {
+    async run({ prompt }, { timeoutMs, cwd, isolation, model }) {
       const args = [
         "-p",
         prompt,
@@ -411,6 +443,7 @@ const drivers = {
         "json",
         "--permission-mode",
         "acceptEdits",
+        ...(model ? ["--model", model] : []),
         ...isolation,
         "--allowedTools",
         "Read",
@@ -435,8 +468,8 @@ const drivers = {
         : null;
       const costUsd = typeof result?.total_cost_usd === "number" ? result.total_cost_usd : null;
       const lastMessage = typeof result?.result === "string" ? result.result : null;
-      const model = typeof result?.model === "string" ? result.model : result?.modelUsage && typeof result.modelUsage === "object" ? (Object.keys(result.modelUsage)[0] ?? null) : null;
-      return { ...r, lastMessage, tokens, costUsd, model, argv: ["claude", ...args] };
+      const reportedModel = typeof result?.model === "string" ? result.model : result?.modelUsage && typeof result.modelUsage === "object" ? (Object.keys(result.modelUsage)[0] ?? null) : null;
+      return { ...r, lastMessage, tokens, costUsd, model: reportedModel ?? model ?? null, argv: ["claude", ...args] };
     },
   },
 
@@ -444,11 +477,11 @@ const drivers = {
     binary: "codex",
     version: () => probe("codex", ["--version"]),
     isolation: () => supportedFlags("codex", ["exec", "--help"], ["--ignore-user-config", "--ignore-rules", "--ephemeral"]),
-    async run({ prompt }, { timeoutMs, cwd, isolation }) {
+    async run({ prompt }, { timeoutMs, cwd, isolation, model }) {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "skills-eval-codex-"));
       live.tempDirs.add(tempDir);
       const lastFile = path.join(tempDir, "last-message.md");
-      const args = ["exec", "-C", cwd, "-s", "workspace-write", "--skip-git-repo-check", ...isolation, "--json", "-o", lastFile, prompt];
+      const args = ["exec", "-C", cwd, "-s", "workspace-write", "--skip-git-repo-check", ...(model ? ["-m", model] : []), ...isolation, "--json", "-o", lastFile, prompt];
       try {
         const r = await runProcess("codex", args, { cwd, timeoutMs });
         const events = jsonLines(r.stdout);
@@ -505,6 +538,22 @@ function h2Sections(body) {
   return sections;
 }
 
+// Heading identity for section matching: case, punctuation, a trailing plural, and the phase/step
+// synonym do not count. Later phases read artifacts whole, so `## Research Questions` satisfies a
+// template's `## Research Question` and `## Phase 1:` satisfies an outline's `## Step 1:`, which
+// workflow.mjs treats alike.
+function headingKey(heading) {
+  return heading
+    .replace(/^#+\s*/, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .trim()
+    .split(/\s+/)
+    .map((w) => w.replace(/s$/, ""))
+    .map((w) => (w === "step" ? "phase" : w))
+    .join(" ");
+}
+
 const OPTIONAL_SECTION = /Include only when|Omit this section|Repeat (?:this|the same) structure/i;
 
 // Required `## ` headings of the artifact template of the skill that creates `type` (an iterate
@@ -535,24 +584,32 @@ const PLACEHOLDER_PATTERNS = [
   [/\{[A-Z][A-Z_]+\}/g, "unfilled token"],
 ];
 
+// Code fences and inline code are real content (array literals, shell brackets), so the placeholder
+// scan runs on prose only.
+function proseOnly(body) {
+  return body.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?\n\1[ \t]*$/gm, "").replace(/`[^`\n]*`/g, "");
+}
+
 function artifactContentIssues(text, { skill, type, contains }) {
   const issues = [];
   const body = parseFrontmatter(text).body;
+  const prose = proseOnly(body);
   const placeholders = new Set();
   for (const [re, label, accept] of PLACEHOLDER_PATTERNS) {
-    for (const m of body.matchAll(re)) if (!accept || accept(m)) placeholders.add(`${label} ${m[0].slice(0, 40)}`);
+    for (const m of prose.matchAll(re)) if (!accept || accept(m)) placeholders.add(`${label} ${m[0].slice(0, 40)}`);
   }
   if (placeholders.size) issues.push(`body still holds ${[...placeholders].slice(0, 4).join(", ")}${placeholders.size > 4 ? `, ${placeholders.size - 4} more` : ""}`);
   const required = requiredSections(skill, type);
   if (required) {
     const sections = h2Sections(body);
     for (const { heading, prefix } of required) {
-      const found = sections.find((s) => (prefix ? s.heading.startsWith(prefix) : s.heading === heading));
+      const found = sections.find((s) => (prefix ? headingKey(s.heading).startsWith(headingKey(prefix)) : headingKey(s.heading) === headingKey(heading)));
       if (!found) issues.push(`missing section ${prefix ?? heading}`);
       else if (!found.lines.some((l) => l.trim() && !/^#/.test(l) && l.trim() !== "---")) issues.push(`section ${found.heading} has no content`);
     }
   }
-  for (const pattern of contains) if (!new RegExp(pattern, "m").test(body)) issues.push(`body does not match /${pattern}/`);
+  // The summary is part of the artifact's content (later phases read it alone), so case regexes see the whole file.
+  for (const pattern of contains) if (!new RegExp(pattern, "m").test(text)) issues.push(`artifact does not match /${pattern}/`);
   return issues;
 }
 
@@ -615,6 +672,10 @@ function grade(c, { root, taskDir, replyFile, result, before }) {
     } else {
       artifact = found.artifact;
       const issues = validateArtifact(artifact.text, { type: c.expect.artifactType, gate: c.expect.gate });
+      // Numbering: a new artifact takes the next number after everything that existed before the run.
+      if (c.expect.artifactMode === "created" && artifact.nn !== null && typeof before.maxArtifact === "number" && artifact.nn <= before.maxArtifact) {
+        issues.push(`numbered ${String(artifact.nn).padStart(2, "0")} but ${String(before.maxArtifact).padStart(2, "0")} already existed; the next number was ${String(before.maxArtifact + 1).padStart(2, "0")}`);
+      }
       add("artifact", issues.length ? "FAIL" : "PASS", issues.length ? `${artifact.name}: ${issues.join("; ")}` : `${artifact.name} (${c.expect.artifactMode})`);
       const content = artifactContentIssues(artifact.text, { skill: c.command, type: c.expect.artifactType, contains: c.expect.artifactContains });
       add("artifact-content", content.length ? "FAIL" : "PASS", content.length ? `${artifact.name}: ${content.join("; ")}` : `${artifact.name}: sections filled, no placeholders${c.expect.artifactContains.length ? `, matches ${c.expect.artifactContains.map((p) => `/${p}/`).join(" ")}` : ""}`);
@@ -656,7 +717,7 @@ function grade(c, { root, taskDir, replyFile, result, before }) {
   const after = gitState(root);
   const scopeIssues = [];
   if (stray.length) scopeIssues.push(`writes outside the task directory: ${stray.join(", ")}`);
-  if (after.head !== before.head) scopeIssues.push(`HEAD moved from ${before.head.slice(0, 12)} to ${after.head.slice(0, 12)} (the phase committed)`);
+  if (after.head !== before.head && !c.expect.allowCommits) scopeIssues.push(`HEAD moved from ${before.head.slice(0, 12)} to ${after.head.slice(0, 12)} (the phase committed)`);
   if (after.stash !== before.stash) scopeIssues.push("the stash list changed");
   add("scope", scopeIssues.length ? "FAIL" : "PASS", scopeIssues.length ? scopeIssues.join("; ") : "working tree clean outside .agents/tasks/, HEAD and stash unchanged");
 
@@ -691,7 +752,7 @@ function clip(text) {
 async function runOnce(c, opts, runIndex, driver) {
   const { root, taskDir, before } = buildFixture(c);
   const { prompt, replyFile } = composePrompt(c, taskDir);
-  const result = await driver.run({ prompt, taskDir, skill: c.command, root }, { timeoutMs: opts.timeoutMs, cwd: root, isolation: driver.isolationFlags });
+  const result = await driver.run({ prompt, taskDir, skill: c.command, root }, { timeoutMs: opts.timeoutMs, cwd: root, isolation: driver.isolationFlags, model: opts.model });
   const graded = grade(c, { root, taskDir, replyFile, result, before });
   const reason = result.timedOut ? "timeout" : result.spawnError ? `spawn error: ${result.spawnError}` : graded.pass ? "" : graded.failed.join(", ");
   const stdout = clip(result.stdout);
@@ -709,6 +770,7 @@ async function runOnce(c, opts, runIndex, driver) {
     tokens: result.tokens,
     costUsd: result.costUsd,
     model: result.model ?? null,
+    sessionId: result.sessionId ?? null,
     argv: result.argv ?? [],
     fixture: opts.keep ? root : null,
     prompt,
@@ -720,6 +782,170 @@ async function runOnce(c, opts, runIndex, driver) {
   if (!opts.keep) fs.rmSync(root, { recursive: true, force: true });
   live.fixtures.delete(root);
   return record;
+}
+
+// Chain mode ------------------------------------------------------------------------------------
+
+// Phases that legitimately change the repository and commit; every other phase must leave it untouched.
+const REPO_WRITING_SKILLS = new Set(["implement-plan", "implement-outline", "iterate-implementation", "oneshot", "ci-commit", "fix-code-review"]);
+
+function loadChain(workflow) {
+  const file = path.join(chainsDir, `${workflow}.json`);
+  if (!fs.existsSync(file)) throw new UsageError(`no chain fixture eval/chains/${workflow}.json`);
+  const c = JSON.parse(fs.readFileSync(file, "utf8"));
+  return {
+    name: `chain-${workflow}`,
+    workflow,
+    slug: c.slug ?? "demo",
+    request: c.request ?? `Chain eval for ${workflow}`,
+    fixture: c.fixture ?? { files: {} },
+    artifacts: {},
+    replies: {},
+    artifactContains: c.artifactContains ?? [],
+  };
+}
+
+// One phase of a chain graded like a case: the expected artifact type and next skill come from the
+// table, the fence is compared with the full predicted command, and repository-writing phases may commit.
+function chainPhaseCase(chain, next, skill) {
+  const phase = PHASES[skill] ?? null;
+  return {
+    ...chain,
+    kind: "phase",
+    command: skill,
+    arg: next.arg ? `@${next.arg}` : null,
+    feedback: null,
+    prompt: null,
+    expect: {
+      artifactType: phase?.type ?? null,
+      artifactMode: "created",
+      artifactContains: phase ? chain.artifactContains : [],
+      nextSkill: null,
+      fenceArgIsArtifact: false,
+      gate: phase?.gate ?? false,
+      replyContains: [],
+      allowedWrites: REPO_WRITING_SKILLS.has(skill) ? ["**"] : skill === "setup-worktree" ? [".agents/**"] : [],
+      allowCommits: REPO_WRITING_SKILLS.has(skill),
+      replyFile: true,
+    },
+  };
+}
+
+async function runChain(chain, opts, driver) {
+  const { root, taskDir } = buildFixture(chain);
+  const phases = [];
+  let done = false;
+  let reason = "";
+  let pass = true;
+  for (let n = 1; n <= opts.maxPhases; n++) {
+    const next = nextCommand(taskDir);
+    if (next.done) {
+      done = true;
+      reason = next.reason;
+      break;
+    }
+    const skill = next.inline ? "oneshot" : next.skill;
+    const c = chainPhaseCase(chain, next, skill);
+    const before = gitState(root, taskDir);
+    const nn = String(nextReplyNumber(taskDir)).padStart(2, "0");
+    const replyFile = replyPath(taskDir, nn, skill);
+    const prompt = next.inline
+      ? `Read ${repoRoot}/shared/CONVENTIONS.md, then: ${next.command} The task directory is ${taskDir}. When finished, also write your complete final reply (the message you print last, filled from the answer template, not the artifact) verbatim to ${replyFile}.`
+      : composePrompt(c, taskDir).prompt;
+    const result = await driver.run({ prompt, taskDir, skill, root }, { timeoutMs: opts.timeoutMs, cwd: root, isolation: driver.isolationFlags, model: opts.model });
+    // Expected handoff from the table, computed after the phase wrote its artifact.
+    const predicted = next.inline ? "/describe-pr" : predictNext(skill, taskDir);
+    c.expect.nextSkill = predicted ? parseCommand(predicted)?.skill ?? null : null;
+    c.expect.fenceArgIsArtifact = Boolean(predicted && parseCommand(predicted)?.arg && ["create-plan", "iterate-plan", "create-structure-outline", "iterate-structure-outline", "create-design-discussion", "iterate-design-discussion", "create-prd", "iterate-prd", "create-tdd", "iterate-tdd", "create-epic-plan"].includes(skill));
+    const graded = grade(c, { root, taskDir, replyFile, result, before });
+    const fence = graded.reply ? parseReply(graded.reply).command : null;
+    if (predicted && fence !== predicted) {
+      graded.graders.push({ name: "fence-command", status: "FAIL", message: `fence is ${fence ? `"${fence}"` : "missing"}, table predicts "${predicted}"` });
+      graded.failed.push("fence-command");
+      graded.pass = false;
+    } else if (predicted) graded.graders.push({ name: "fence-command", status: "PASS", message: predicted });
+    const stdout = clip(result.stdout);
+    const record = {
+      phase: n,
+      skill,
+      command: next.command,
+      pass: graded.pass && !result.timedOut,
+      failed: graded.failed,
+      graders: graded.graders,
+      warnings: graded.warnings,
+      artifact: graded.artifact,
+      predicted,
+      fence,
+      gate: c.expect.gate,
+      autoApproved: c.expect.gate,
+      durationMs: result.durationMs,
+      tokens: result.tokens,
+      costUsd: result.costUsd,
+      model: result.model ?? null,
+      sessionId: result.sessionId ?? null,
+      exitCode: result.exitCode,
+      argv: result.argv ?? [],
+      prompt,
+      replyFile: path.relative(root, replyFile),
+      reply: graded.reply,
+      stdout: stdout.text,
+      outputTruncated: stdout.truncated,
+    };
+    phases.push(record);
+    // A failed phase whose fence still names the predicted command lets the chain continue, so one run
+    // measures every phase; the failure is recorded. --strict stops at the first failure. A reply the
+    // module cannot follow (no fence, wrong command) always stops the chain, as run-task would.
+    if (!record.pass) {
+      pass = false;
+      const usable = predicted !== null && fence === predicted;
+      if (opts.strict || !usable) {
+        reason = `phase ${n} (${skill}) failed: ${graded.failed.join(", ")}${usable ? "" : "; the reply cannot be followed"}`;
+        break;
+      }
+      process.stderr.write(`[chain] ${skill} failed ${graded.failed.join(", ")}; fence usable, continuing\n`);
+    } else if (record.gate) process.stderr.write(`[chain] gate after ${skill} auto-approved (test mode)\n`);
+    else process.stderr.write(`[chain] ${skill} -> ${fence}\n`);
+  }
+  if (!done && !reason && phases.length >= opts.maxPhases) reason = `stopped after ${opts.maxPhases} phases (--max-phases)`;
+  if (done && !pass) reason = `${reason ? `${reason}; ` : ""}chain completed with ${phases.filter((p) => !p.pass).length} failed phase(s)`;
+  const sum = (key) => phases.reduce((a, p) => a + (typeof p[key] === "number" ? p[key] : 0), 0);
+  const tokens = phases.some((p) => p.tokens) ? phases.reduce((a, p) => ({ input: a.input + (p.tokens?.input ?? 0), output: a.output + (p.tokens?.output ?? 0) }), { input: 0, output: 0 }) : null;
+  const record = {
+    workflow: chain.workflow,
+    pass: pass && done,
+    done,
+    reason,
+    phases,
+    totals: { phases: phases.length, durationMs: sum("durationMs"), tokens, costUsd: phases.some((p) => typeof p.costUsd === "number") ? sum("costUsd") : null },
+    fixture: opts.keep ? root : null,
+    taskDir: opts.keep ? taskDir : null,
+  };
+  if (!opts.keep) fs.rmSync(root, { recursive: true, force: true });
+  live.fixtures.delete(root);
+  return record;
+}
+
+function renderChainReport(report) {
+  const chain = report.chain;
+  const lines = [
+    `# Chain eval: ${chain.workflow}, driver ${report.driver.name}${report.driver.version ? ` ${report.driver.version}` : ""}${report.driver.model ? `, model ${report.driver.model}` : ""}`,
+    "",
+    `Skills ${report.skills.commit ? report.skills.commit.slice(0, 12) : "n/a"}${report.skills.dirty ? " (dirty)" : ""}, node ${report.node}, isolation ${report.driver.isolation.length ? report.driver.isolation.join(" ") : "none"}. One fresh process per phase; gates auto-approved (test mode).`,
+    "",
+    "| Phase | Skill | Result | Fence | Gate | Duration | Tokens | Cost | Model | Session |",
+    "|---|---|---|---|---|---|---|---|---|---|",
+  ];
+  for (const p of chain.phases) {
+    lines.push(`| ${p.phase} | ${p.skill} | ${p.pass ? "PASS" : `FAIL (${p.failed.join(", ")})`} | ${p.fence ?? "-"} | ${p.gate ? "yes, auto-approved" : "no"} | ${fmtDuration(p.durationMs)} | ${fmtTokens(p.tokens)} | ${fmtCost(p.costUsd)} | ${p.model ?? "n/a"} | ${p.sessionId ? p.sessionId.slice(0, 12) : "n/a"} |`);
+  }
+  for (const p of chain.phases) {
+    for (const g of p.graders.filter((g) => g.status === "FAIL")) lines.push(`- phase ${p.phase} ${g.name}: ${g.message}`);
+    for (const w of p.warnings) lines.push(`- phase ${p.phase} warning: ${w}`);
+  }
+  lines.push("", `${chain.pass ? "PASS" : "FAIL"}: ${chain.reason}. ${chain.totals.phases} phases, ${fmtDuration(chain.totals.durationMs)}, ${fmtTokens(chain.totals.tokens)}, ${fmtCost(chain.totals.costUsd)}.`);
+  if (chain.fixture) lines.push(`Fixture kept: ${chain.fixture}`);
+  lines.push(`Results: ${path.relative(repoRoot, report.resultsFile)}`);
+  return lines.join("\n");
 }
 
 function summarize(runs) {
@@ -782,20 +1008,23 @@ function renderReport(report) {
 
 // Main ------------------------------------------------------------------------------------------
 
-const USAGE = `usage: node scripts/eval.mjs --driver <${DRIVERS.join("|")}> [--case <name>...] [--k 3] [--json] [--keep] [--timeout <seconds>]`;
+const USAGE = `usage: node scripts/eval.mjs --driver <${DRIVERS.join("|")}> [--case <name>...] [--k 3] [--model <spec>] [--json] [--keep] [--timeout <seconds>]
+       node scripts/eval.mjs --driver <driver> --chain <${TYPES.join("|")}> [--model <spec>] [--max-phases 12] [--json] [--keep]`;
 
 async function main(argv) {
   let opts;
-  let cases;
+  let cases = [];
+  let chain = null;
   try {
     opts = parseArgs(argv);
-    cases = loadCases(opts.cases);
+    if (opts.chain) chain = loadChain(opts.chain);
+    else cases = loadCases(opts.cases);
   } catch (error) {
     if (!(error instanceof UsageError)) throw error;
     process.stderr.write(`${error.message}\n${USAGE}\n`);
     return 2;
   }
-  if (opts.driver === "fake" && !fs.existsSync(simulateScript) && cases.some((c) => c.command !== "run-task")) {
+  if (opts.driver === "fake" && !fs.existsSync(simulateScript) && (chain || cases.some((c) => c.command !== "run-task"))) {
     process.stderr.write(`${path.relative(repoRoot, simulateScript)} is missing; the fake driver needs it for every skill except run-task\n`);
     return 2;
   }
@@ -805,27 +1034,32 @@ async function main(argv) {
   driver.isolationFlags = driver.isolation();
   const startedAt = new Date();
   const report = {
-    driver: { name: opts.driver, binary: driver.binary, version: driver.version(), isolation: driver.isolationFlags },
+    driver: { name: opts.driver, binary: driver.binary, version: driver.version(), model: opts.model, isolation: driver.isolationFlags },
     skills: skillsProvenance(),
     node: process.version,
     platform: `${process.platform} ${os.release()} ${process.arch}`,
-    k: opts.k,
+    k: chain ? 1 : opts.k,
     timeoutMs: opts.timeoutMs,
     startedAt: startedAt.toISOString(),
     finishedAt: null,
     cases: [],
+    chain: null,
     resultsFile: null,
   };
-  for (const c of cases) {
-    const runs = [];
-    for (let i = 1; i <= opts.k; i++) runs.push(await runOnce(c, opts, i, driver));
-    report.cases.push({ name: c.name, kind: c.kind, command: c.command, arg: c.arg, workflow: c.workflow, expect: c.expect, runs, summary: summarize(runs) });
+  if (chain) report.chain = await runChain(chain, opts, driver);
+  else {
+    for (const c of cases) {
+      const runs = [];
+      for (let i = 1; i <= opts.k; i++) runs.push(await runOnce(c, opts, i, driver));
+      report.cases.push({ name: c.name, kind: c.kind, command: c.command, arg: c.arg, workflow: c.workflow, expect: c.expect, runs, summary: summarize(runs) });
+    }
   }
   report.finishedAt = new Date().toISOString();
   fs.mkdirSync(resultsDir, { recursive: true });
-  report.resultsFile = path.join(resultsDir, `${startedAt.toISOString().replaceAll(":", "-")}-${opts.driver}.json`);
+  report.resultsFile = path.join(resultsDir, `${startedAt.toISOString().replaceAll(":", "-")}-${opts.driver}${chain ? `-chain-${chain.workflow}` : ""}.json`);
   fs.writeFileSync(report.resultsFile, `${JSON.stringify(report, null, 2)}\n`);
-  process.stdout.write(`${opts.json ? JSON.stringify(report, null, 2) : renderReport(report)}\n`);
+  process.stdout.write(`${opts.json ? JSON.stringify(report, null, 2) : chain ? renderChainReport(report) : renderReport(report)}\n`);
+  if (chain) return report.chain.pass ? 0 : 1;
   return report.cases.every((c) => c.summary.passPowK === 1) ? 0 : 1;
 }
 
