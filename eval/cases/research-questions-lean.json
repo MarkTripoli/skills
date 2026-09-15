@@ -1,0 +1,19 @@
+{
+  "name": "research-questions-lean",
+  "workflow": "lean",
+  "slug": "verbose-flag",
+  "request": "Add a --verbose flag to the CLI so that src/index.js prints each file path it counts to stderr when the flag is present.",
+  "fixture": {
+    "files": {
+      "src/index.js": "#!/usr/bin/env node\nconst fs = require(\"node:fs\");\nconst path = require(\"node:path\");\nfunction listFiles(dir) {\n  const out = [];\n  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {\n    const full = path.join(dir, entry.name);\n    if (entry.isDirectory()) out.push(...listFiles(full));\n    else out.push(full);\n  }\n  return out;\n}\n\nfunction main(argv) {\n  const dir = argv[0] || \".\";\n  const files = listFiles(dir);\n  process.stdout.write(`${files.length} files\\n`);\n}\n\nmain(process.argv.slice(2));\n",
+      "package.json": "{\n  \"name\": \"count-files\",\n  \"version\": \"0.1.0\",\n  \"bin\": { \"count-files\": \"src/index.js\" }\n}\n",
+      "README.md": "# count-files\n\nCounts the files under a directory.\n\n```sh\nnode src/index.js .\n```\n"
+    }
+  },
+  "command": "create-research-questions",
+  "expect": {
+    "artifactType": "research-questions",
+    "nextSkill": "create-research",
+    "gate": false
+  }
+}

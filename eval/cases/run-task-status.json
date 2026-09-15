@@ -1,0 +1,33 @@
+{
+  "name": "run-task-status",
+  "workflow": "lean",
+  "slug": "verbose-flag",
+  "request": "Add a --verbose flag to the CLI so that src/index.js prints each file path it counts to stderr when the flag is present.",
+  "fixture": {
+    "files": {
+      "src/index.js": "#!/usr/bin/env node\nconst fs = require(\"node:fs\");\nconst path = require(\"node:path\");\nfunction listFiles(dir) {\n  const out = [];\n  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {\n    const full = path.join(dir, entry.name);\n    if (entry.isDirectory()) out.push(...listFiles(full));\n    else out.push(full);\n  }\n  return out;\n}\n\nfunction main(argv) {\n  const dir = argv[0] || \".\";\n  const files = listFiles(dir);\n  process.stdout.write(`${files.length} files\\n`);\n}\n\nmain(process.argv.slice(2));\n",
+      "package.json": "{\n  \"name\": \"count-files\",\n  \"version\": \"0.1.0\",\n  \"bin\": { \"count-files\": \"src/index.js\" }\n}\n",
+      "README.md": "# count-files\n\nCounts the files under a directory.\n\n```sh\nnode src/index.js .\n```\n"
+    }
+  },
+  "artifacts": {
+    "01-research-questions-verbose-flag.md": "---\ntype: research-questions\nsummary: \"Fixes the research scope for adding a --verbose flag to the count-files CLI: how src/index.js parses arguments and walks directories today, where output is written, and whether any tests or documentation cover the CLI. The research phase answers these questions against the current repository.\"\nstatus: complete\n---\n\n# Research Questions\n\n## Research Goal\n\nUnderstand how the count-files CLI in src/index.js reads its arguments, walks the target directory, and writes output today.\n\n## Questions\n\n1. How does src/index.js parse process.argv today, and what happens when more than one argument is passed?\n2. Where does the CLI write output, and does anything already write to stderr?\n3. What tests, scripts, or documentation cover the CLI, and how is it invoked in README.md and package.json?\n\n## Key Context Pointers\n\n- Filepaths / directories: src/index.js, package.json, README.md\n- Commands / endpoints / schemas: node src/index.js .\n\n## Research Boundaries\n\n- Focus on current repository behavior, existing tests, existing conventions, and current external documentation when needed.\n- Do not answer what should be built.\n- Do not propose a design or implementation.\n"
+  },
+  "replies": {
+    "01-create-research-questions.md": "Artifact saved: [01-research-questions-verbose-flag.md](.agents/tasks/verbose-flag/01-research-questions-verbose-flag.md)\n\nSummary:\nFixes the research scope for adding a --verbose flag to the count-files CLI: how src/index.js parses arguments and walks directories today, where output is written, and whether any tests or documentation cover the CLI. The research phase answers these questions against the current repository.\n\nThese questions are the query plan for the research phase. They are not questions for you to answer manually.\n\nStart the next phase in a new session, or hand the task to `/run-task`; continuing in this session carries this phase's context into the next one.\n\nTo continue, start the research session with:\n\n```text\n/create-research\n```\n"
+  },
+  "command": "run-task",
+  "arg": "--status",
+  "prompt": "Read and follow {repo}/skills/run-task/SKILL.md with arguments `@{taskDir} --status`; print the status report and stop.",
+  "expect": {
+    "artifactType": null,
+    "nextSkill": null,
+    "gate": false,
+    "replyFile": false,
+    "replyContains": [
+      "^Task: ",
+      "^Next: /create-research",
+      "^Context: "
+    ]
+  }
+}

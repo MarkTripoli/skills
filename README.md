@@ -21,7 +21,7 @@ Runtime-specific trees add the runtime's invocation and worker notes to every sk
 | Codex | `npm run build -- --runtime codex` | copy per [runtimes/codex.md](runtimes/codex.md) |
 | Oh My Pi | `npm run build -- --runtime oh-my-pi` | copy per [runtimes/oh-my-pi.md](runtimes/oh-my-pi.md) |
 
-`npm test` validates the collection; `npm run build` writes `dist/<runtime>/` (ignored by git). Both use Node 20 or newer and no dependencies.
+`npm test` validates the collection and runs the token-free simulation of every workflow chain; `npm run eval -- --driver <omp|claude|codex>` measures real agents against the same contract (see [docs/testing.md](docs/testing.md)); `npm run build` writes `dist/<runtime>/` (ignored by git). All use Node 20 or newer and no dependencies.
 
 ## How the workflow runs
 
@@ -39,6 +39,7 @@ Every reply tells you to start the next phase in a new session. That sentence, t
 
 - [docs/getting-started.md](docs/getting-started.md): install, first task by hand and with `/run-task`, gates, feedback, worktrees, epics.
 - [docs/context-management.md](docs/context-management.md): the phase model, fresh contexts per runtime, recognizing a degraded context, what a runtime plugin could add.
+- [docs/testing.md](docs/testing.md): static validation, token-free simulation of every chain, and the eval harness for real agents.
 - [workflows/delivery.md](workflows/delivery.md): workflow types, phase table, gates, review loop.
 - [shared/CONVENTIONS.md](shared/CONVENTIONS.md) and [shared/WRITING.md](shared/WRITING.md): the contract every skill follows.
 - [runtimes/](runtimes/): per-runtime invocation notes and install steps.
