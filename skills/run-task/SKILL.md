@@ -20,12 +20,22 @@ You run one task's workflow phase by phase. Each phase executes in a fresh conte
 
 ## Steps
 
-1. **Resolve the task**. Apply the argument rules above. Read only the frontmatter of `task.md`. Record the absolute task directory and the project root: the directory that contains `.agents/tasks/`. Every command below runs from the project root. Also record the installed skills directory: the parent of this skill's own directory, which the runtime shows when it loads this file. When that path is not visible, leave it unset.
+1. **Resolve the task**. Apply the argument rules above. Read only the frontmatter of `task.md`. Record the absolute task directory and the project root: the directory that contains `.agents/tasks/`. Every command below runs from the project root. Also record this skill's own directory, which the runtime shows when it loads this file, and the installed skills directory, its parent. When that path is not visible, leave both unset.
+
+   This skill ships `scripts/workflow.mjs`, a dependency-free Node script that computes everything in step 2 from the task directory. When `node` is available and this skill's directory is known, run it and use its output instead of reasoning through the rules yourself:
+
+   ```bash
+   node <skill dir>/scripts/workflow.mjs next <task dir> --json
+   node <skill dir>/scripts/workflow.mjs status <task dir> --herdr-kind <kind>
+   node <skill dir>/scripts/workflow.mjs create-task <project root> --workflow <type> "<request>"
+   ```
+
+   `next` prints `command`, `skill`, `pendingGate`, `gateArtifact`, `interactive`, `inline`, and `done` with a `reason`. `status` prints the report shown below. `create-task` writes `task.md` per the conventions. When the script is unavailable, apply the rules in step 2 by hand; they describe the same decisions.
 
 2. **Pick the next command**. Ensure `<task dir>/replies/` exists. Then:
-   - A reply file exists: read the newest one; its final `text` fence line is the next command. A reply with no fence, or a fence naming `/resolve-pr-reviews`, ends the loop: say so and stop.
+   - A reply file exists: read the newest one; its final `text` fence line is the next command. A reply with no fence, a fence naming `/resolve-pr-reviews` (pull request review is external), a fence naming `/show-me`, or a reply written by `start-epic-delivery` (each child runs as its own task) ends the loop: say so and stop.
    - No reply file and no artifact in the task directory: `full` and `lean` start with `/create-research-questions`; `prd` starts with `/create-research`; `oneshot` runs this inline prompt as the command: "Complete the task in `task.md` end to end: implement, run the narrowest checks that prove it, commit with explicit paths, then reply per the conventions with `/describe-pr`."
-   - No reply file but artifacts exist (the user ran phases by hand): take the newest artifact's type (frontmatter `type`, else the name segment between `NN-` and the slug), look it up in the workflow table, and use that row's next command. When the row is a human gate, present the gate first (step 5) instead of running the next phase.
+   - No reply file but artifacts exist (the user ran phases by hand): take the newest artifact's type (frontmatter `type`, else the name segment between `NN-` and the slug; `pr-description.md` counts as type `pr-description`), look it up in the workflow table, and use that row's next command. When the row is a human gate, present the gate first (step 5) instead of running the next phase.
 
    With `--status`, print this report and stop:
 
@@ -33,7 +43,7 @@ You run one task's workflow phase by phase. Each phase executes in a fresh conte
    Task: <slug> (<workflow>) at <task dir>
    Artifacts: <NN-type, ...> or none
    Replies: <count> (last: <NN-skill> or none)
-   Next: <command>; <"human gate: review before continuing" | "runs without a gate" | "loop ends">
+   Next: <command>; <"human gate: review <artifact> before continuing" | "runs without a gate" | "loop ends: <reason>">
    Backend: <backend that step 3 would choose> (<reason>)
    Context: run the next command in a new session or with /run-task @<task dir>; do not continue in a session that already ran a phase.
    ```

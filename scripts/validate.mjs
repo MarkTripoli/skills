@@ -122,7 +122,7 @@ const BANNED_TOKENS = [
   /artifact_directive/i,
 ];
 
-const SKIP_DIRS = new Set([".git", "node_modules", "dist"]);
+const SKIP_DIRS = new Set([".git", "node_modules", "dist", "results"]);
 const SKIP_FILES = new Set(["scripts/validate.mjs", ".skill-lock.json"]);
 
 const failures = [];
@@ -364,6 +364,33 @@ if (!fs.existsSync(workflowFile)) {
   if (!/^\| Skill \| Artifact type \| Next command \| Human gate \| Interactive \|$/m.test(content)) {
     fail("workflows/delivery.md", 0, "phase table must have the columns Skill, Artifact type, Next command, Human gate, Interactive");
   }
+}
+
+// 11. The phase table and the deterministic module agree (skill, artifact type, gate, interactive).
+const workflowModule = path.join(root, "skills", "run-task", "scripts", "workflow.mjs");
+if (!fs.existsSync(workflowModule)) {
+  fail("skills/run-task/scripts/workflow.mjs", 0, "run-task must ship its deterministic workflow module");
+} else if (fs.existsSync(workflowFile)) {
+  const { PHASES } = await import(workflowModule);
+  const rows = read(workflowFile)
+    .split("\n")
+    .filter((line) => /^\| [a-z0-9-]+ \| /.test(line) && !line.startsWith("| Skill |"))
+    .map((line) => line.split("|").map((cell) => cell.trim()).slice(1, -1))
+    .filter((cells) => cells.length === 5);
+  const tabled = new Set();
+  for (const [skill, type, , gate, interactive] of rows) {
+    tabled.add(skill);
+    if (skill === "run-task") continue;
+    const phase = PHASES[skill];
+    if (!phase) {
+      fail("workflows/delivery.md", 0, `phase table row "${skill}" has no entry in workflow.mjs PHASES`);
+      continue;
+    }
+    if (phase.type !== type) fail("workflows/delivery.md", 0, `"${skill}" artifact type is "${type}" in the table and "${phase.type}" in workflow.mjs`);
+    if (phase.gate !== (gate === "yes")) fail("workflows/delivery.md", 0, `"${skill}" human gate is "${gate}" in the table and ${phase.gate} in workflow.mjs`);
+    if (phase.interactive !== (interactive === "yes")) fail("workflows/delivery.md", 0, `"${skill}" interactive is "${interactive}" in the table and ${phase.interactive} in workflow.mjs`);
+  }
+  for (const skill of Object.keys(PHASES)) if (!tabled.has(skill)) fail("workflows/delivery.md", 0, `workflow.mjs PHASES has "${skill}" but the phase table does not`);
 }
 
 report();
