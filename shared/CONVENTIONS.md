@@ -72,6 +72,25 @@ The final answer ends with exactly one fenced `text` block containing exactly on
 
 Exclude `.agents/tasks/` from commits unless the user asks to include it. Stage explicit paths only; never `git add -A` or `git add .`.
 
+Every commit message follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
+
+```text
+<type>(<scope>)!: <description>
+
+[body]
+
+[footer]
+```
+
+- `type` is one of `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `build`, `ci`, `chore`, `style`, `revert`.
+- `scope` is optional: the module, package, or area touched, in kebab-case. Omit the parentheses when the change has no single area.
+- `!` marks a breaking change; the footer then carries `BREAKING CHANGE: <what breaks and the migration>`.
+- `description` is imperative, lower-case first letter, no trailing period, whole subject line at most 72 characters.
+- The body says why, not what the diff shows. Footers reference issues (`Refs: #123`, `Closes: #123`).
+- One type per commit: a `feat` and its `test` may share a commit; a `feat` and an unrelated `fix` never do.
+
+Validate the subject before committing: it must match `^(feat|fix|refactor|perf|test|docs|build|ci|chore|style|revert)(\([a-z0-9][a-z0-9-]*\))?!?: [a-z0-9][^\n]*[^.\n]$` and be at most 72 characters. A subject that fails is rewritten, never committed.
+
 ## Child workers
 
 For a role `agent-<role>`, start a worker whose first instruction is to read and follow `skills/agent-<role>/SKILL.md` (or the installed skill of that name), give it the assignment text, wait for it, and read its final message. Verify its claims against the repository before using them.

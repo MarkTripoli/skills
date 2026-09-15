@@ -11,7 +11,7 @@
 
 ## Commits
 - hash:
-- subject:
+- subject (Conventional Commits, validated):
 - files:
 
 ## Verification

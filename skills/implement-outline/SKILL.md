@@ -68,7 +68,7 @@ If automated checks failed, report the failure and either fix it or ask for dire
 
 ### 3. Commit and continue
 
-When every automated validation checkbox in the phase is checked with a recorded passing result, create a focused commit and start the next phase without waiting. Do not commit `.agents/tasks/`. Use explicit `git add <path>` commands. `/ci-commit` stays the manual fallback for work outside this flow.
+When every automated validation checkbox in the phase is checked with a recorded passing result, create a focused commit with a Conventional Commits subject (conventions, Commits section) and start the next phase without waiting. Do not commit `.agents/tasks/`. Use explicit `git add <path>` commands. `/ci-commit` stays the manual fallback for work outside this flow.
 
 ### 4. Repeat for the next phase
 
@@ -116,7 +116,7 @@ Take the next artifact number before creating a new `NN-implementation-*.md` rec
 When all outline phases are complete, automated checks pass, and any phase with `human-gated: true` received its recorded confirmation:
 
 1. Save any changed task artifacts in the task directory.
-2. Commit all remaining repository work before the PR handoff. Use the `/ci-commit` conventions: inspect the diff, stage explicit files, exclude `.agents/tasks/` unless the user specifically asks for it, and write a focused message.
+2. Commit all remaining repository work before the PR handoff. Use the `/ci-commit` conventions: inspect the diff, stage explicit files, exclude `.agents/tasks/` unless the user specifically asks for it, and write a validated Conventional Commits message.
 3. Read `references/implementation_final_answer.md`.
 4. Respond using that template only. Fill `{artifact_link}` with a relative Markdown link to the receipt, `[NN-implementation-slug.md](.agents/tasks/<slug>/NN-implementation-slug.md)`, and keep the single fenced `text` command for `/describe-pr` last.
 5. If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it. The same applies to a reply that stops at a `human-gated` phase.
