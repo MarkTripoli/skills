@@ -24,6 +24,12 @@ Runtime-specific trees add the runtime's invocation and worker notes to every sk
 
 `npm test` validates the collection and runs the token-free simulation of every workflow chain; `npm run eval -- --driver <omp|claude|codex>` measures real agents against the same contract (see [docs/testing.md](docs/testing.md)); `npm run build` writes `dist/<runtime>/` (ignored by git). All use Node 20 or newer and no dependencies.
 
+## Commits and releases
+
+Every commit subject follows the Commits section of [shared/CONVENTIONS.md](shared/CONVENTIONS.md). `npm install` (no dependencies; its `prepare` step sets `core.hooksPath` to `.githooks/`) installs a `commit-msg` hook that rejects a subject that breaks the rule; the `Commits` workflow runs the same check, `node scripts/check-commits.mjs <base>..<head> --title <pr title>`, on every pull request and merge queue entry, so a commit that bypasses the hook still cannot merge. Merge commits and `fixup!`/`squash!` markers are exempt; `git revert`'s default message is not, so write it as `revert: <description>`.
+
+Versions follow [Semantic Versioning](https://semver.org/) and are derived from those subjects by [release-please](https://github.com/googleapis/release-please): on every push to `main`, the `Release` workflow opens or updates a release pull request that bumps `package.json`, writes `CHANGELOG.md`, and, when merged, tags `v<version>` and publishes a GitHub release. `fix` bumps the patch version; `feat` bumps the minor; a `!` or `BREAKING CHANGE:` footer bumps the minor while the version is below 1.0.0 (`bump-minor-pre-major` in `release-please-config.json`) and the major after that. Install a fixed version with `git clone --branch v<version> https://github.com/MarkTripoli/skills.git`.
+
 ## How the workflow runs
 
 - A task lives in `.agents/tasks/<slug>/` with a `task.md` and numbered artifacts. The contract is [shared/CONVENTIONS.md](shared/CONVENTIONS.md); the prose rules are [shared/WRITING.md](shared/WRITING.md).

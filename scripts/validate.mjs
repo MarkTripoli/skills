@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { scanSkills } from "./lib/layout.mjs";
+import { SUBJECT_PATTERN, MAX_SUBJECT_LENGTH } from "./check-commits.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -448,6 +449,18 @@ if (!fs.existsSync(workflowModule)) {
       fail("workflows/delivery.md", 0, `chain for ${workflow} is documented as [${documented.join(", ")}] but workflow.mjs produces [${chain.join(", ")}]`);
     }
   }
+}
+
+// 12. The commit subject rule the conventions document is the rule the commit-msg hook and CI enforce.
+const conventionsFile = path.join(repoRoot, "shared", "CONVENTIONS.md");
+const conventionsLines = read(conventionsFile).split("\n");
+const ruleIndex = conventionsLines.findIndex((line) => /^Validate the subject before committing: it must match `/.test(line));
+const rule = ruleIndex === -1 ? null : /must match `([^`]+)` and be at most (\d+) characters/.exec(conventionsLines[ruleIndex]);
+if (!rule) {
+  fail("shared/CONVENTIONS.md", 0, "missing the commit subject validation sentence (regex and length)");
+} else {
+  if (rule[1] !== SUBJECT_PATTERN.source) fail("shared/CONVENTIONS.md", ruleIndex + 1, `documented subject regex differs from scripts/check-commits.mjs: ${SUBJECT_PATTERN.source}`);
+  if (Number(rule[2]) !== MAX_SUBJECT_LENGTH) fail("shared/CONVENTIONS.md", ruleIndex + 1, `documented subject limit ${rule[2]} differs from scripts/check-commits.mjs: ${MAX_SUBJECT_LENGTH}`);
 }
 
 report();
