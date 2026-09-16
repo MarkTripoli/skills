@@ -8,7 +8,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as wf from "../skills/delivery/run-task/scripts/workflow.mjs";
 import { makeFixture, fakePhase } from "../scripts/simulate.mjs";
-import { createExtension, parseArgs, readPhaseLog, resolveSkills, findSkillDir } from "../runtimes/oh-my-pi/run-task/index.js";
+import { parseArgs, readPhaseLog, findSkillDir } from "../skills/delivery/run-task/scripts/plugin.mjs";
+import { createExtension, loadPlugin } from "../runtimes/oh-my-pi/run-task/index.js";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -126,7 +127,7 @@ test("lean chain: one new session per phase, file-form prompts, approvals at eve
 
   assert.deepEqual(skillsOf(h), ["create-research-questions", "create-research", "create-structure-outline", "setup-worktree", "implement-outline", "describe-pr"]);
   assert.equal(h.sessions, 6, "each phase opened a new session");
-  const skillPath = path.join(findSkillDir(resolveSkills(projectRoot).root, "create-research-questions"), "SKILL.md");
+  const skillPath = path.join(findSkillDir((await loadPlugin(projectRoot)).root, "create-research-questions"), "SKILL.md");
   assert.ok(h.prompts[0].startsWith(`Read and follow ${skillPath}, the installed skill for /create-research-questions, for task directory ${taskDir}.`), h.prompts[0]);
   assert.match(h.prompts[0], /verbatim to .*replies\/01-create-research-questions\.md\.$/);
   assert.match(h.prompts[2], /for \/create-structure-outline, for task directory/);
@@ -269,7 +270,7 @@ test("/run-task stop ends the loop after the running phase; a second run while a
   await h.run(`@${taskDir}`);
   await waitFor(() => h.prompts.length === 1, { what: "the first phase" });
   await h.run(`@${taskDir}`);
-  assert.match(h.notices.at(-1).message, /verbose-flag is running \(phase 1 create-research-questions\); \/run-task stop first/);
+  assert.match(h.notices.at(-1).message, /verbose-flag is running \(phase 01 create-research-questions\); \/run-task stop first/);
   await h.run("stop");
   release();
   await h.finished();
@@ -296,7 +297,7 @@ test("free text creates the task with the workflow it names; --status reports wi
   assert.equal(status.customType, "run-task.status");
   assert.match(status.content, /^Task: quiet-flag-cli-lean \(lean\)/);
   assert.match(status.content, /Next: \/create-research; runs without a gate/);
-  assert.match(status.content, /Backend: session \(this Oh My Pi extension opens a new session per phase\)/);
+  assert.match(status.content, /Backend: session \(the Oh My Pi extension opens a new session per phase\)/);
 });
 
 test("task_status tool reports every task under .agents/tasks/ when no directory is given", async () => {
@@ -312,23 +313,23 @@ test("task_status tool reports every task under .agents/tasks/ when no directory
 });
 
 test("parseArgs: flags, task dir, request with workflow detection, stop, and errors", () => {
-  const T = wf.TYPES;
-  assert.deepEqual(parseArgs("@.agents/tasks/x --step --with review-code,record-evidence --model anthropic/claude-haiku-4-5", T), { action: "run", taskDir: ".agents/tasks/x", request: null, workflow: null, step: true, with: ["review-code", "record-evidence"], model: "anthropic/claude-haiku-4-5", errors: [] });
-  assert.equal(parseArgs("Ship the prd for onboarding", T).workflow, "prd");
-  assert.equal(parseArgs("Ship onboarding --workflow lean", T).workflow, "lean");
-  assert.equal(parseArgs("Ship onboarding", T).workflow, "full");
-  assert.equal(parseArgs("stop", T).action, "stop");
-  assert.equal(parseArgs("  ", T).action, "run");
-  assert.equal(parseArgs("@x --status", T).action, "status");
-  assert.equal(parseArgs("Add a --quiet flag", T).request, "Add a --quiet flag", "unknown --tokens belong to the request");
-  assert.deepEqual(parseArgs("@x --backend herdr", T).errors, ["give either @<task dir> or a request, not both"]);
-  assert.deepEqual(parseArgs("@x do it", T).errors, ["give either @<task dir> or a request, not both"]);
-  assert.deepEqual(parseArgs("x --workflow big", T).errors, ['workflow "big" is not one of full, lean, prd, oneshot']);
-  assert.deepEqual(parseArgs("@x --with", T).errors, ["--with needs a value"]);
+  assert.deepEqual(parseArgs("@.agents/tasks/x --step --with review-code,record-evidence --model anthropic/claude-haiku-4-5"), { action: "run", taskDir: ".agents/tasks/x", request: null, workflow: null, step: true, with: ["review-code", "record-evidence"], model: "anthropic/claude-haiku-4-5", flags: new Set(), errors: [] });
+  assert.equal(parseArgs("Ship the prd for onboarding").workflow, "prd");
+  assert.equal(parseArgs("Ship onboarding --workflow lean").workflow, "lean");
+  assert.equal(parseArgs("Ship onboarding").workflow, "full");
+  assert.equal(parseArgs("stop").action, "stop");
+  assert.equal(parseArgs("  ").action, "run");
+  assert.equal(parseArgs("@x --status").action, "status");
+  assert.equal(parseArgs("Add a --quiet flag").request, "Add a --quiet flag", "unknown --tokens belong to the request");
+  assert.deepEqual([...parseArgs("@x --continue", { extraFlags: ["--continue"] }).flags], ["--continue"]);
+  assert.deepEqual(parseArgs("@x --backend herdr").errors, ["give either @<task dir> or a request, not both"]);
+  assert.deepEqual(parseArgs("x --workflow big").errors, ['workflow "big" is not one of full, lean, prd, oneshot']);
+  assert.deepEqual(parseArgs("@x --with").errors, ["--with needs a value"]);
 });
 
-test("resolveSkills finds the checkout's skills tree from the extension's own location", () => {
-  const found = resolveSkills("/nonexistent");
+test("loadPlugin finds the checkout's skills tree from the extension's own location", async () => {
+  const found = await loadPlugin("/nonexistent");
   assert.equal(found.root, path.join(REPO, "skills"));
   assert.equal(found.runTaskDir, path.join(REPO, "skills", "delivery", "run-task"));
+  assert.equal(typeof found.plugin.planPhase, "function");
 });

@@ -17,7 +17,7 @@ Herdr agent kind: `omp`.
 
 ## Extension
 
-`runtimes/oh-my-pi/run-task/index.js` is an Oh My Pi extension that registers the `/run-task` command and a `task_status` tool. It loads `scripts/workflow.mjs` from the installed `run-task` skill (it looks in the checkout, the built tree, `<project>/.agents/skills/`, `~/.agents/skills/`, and the agent directory's `skills/`), so the skills stay the single source of truth and the extension spends no tokens of its own.
+`runtimes/oh-my-pi/run-task/index.js` is an Oh My Pi extension that registers the `/run-task` command and a `task_status` tool. It loads `scripts/plugin.mjs` and `scripts/workflow.mjs` from the installed `run-task` skill (it looks in the checkout, the built tree, `<project>/.agents/skills/`, `~/.agents/skills/`, and the agent directory's `skills/`), so the skills stay the single source of truth and the extension spends no tokens of its own. The Pi extension in `runtimes/pi/run-task/` is the same wiring for Pi's lifecycle.
 
 `/run-task @<task dir>`, `/run-task <request>`, or `/run-task` alone (which lists the tasks under `.agents/tasks/`) runs the task's chain:
 
