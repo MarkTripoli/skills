@@ -12,7 +12,7 @@ Herdr agent kind: `omp`.
 1. Build the tree: `npm run build -- --runtime oh-my-pi` (writes `dist/oh-my-pi/`).
 2. Skills: `cp -R dist/oh-my-pi/skills/* ~/.agents/skills/` (Oh My Pi reads this directory for every project).
 3. Workers: `cp dist/oh-my-pi/agents/*.md ~/.omp/agent/agents/` for every project, or `cp dist/oh-my-pi/agents/*.md <repo>/.omp/agents/` for one project. Project agents win over user agents with the same name.
-4. Extension (optional): `cp -R dist/oh-my-pi/extensions/run-task ~/.omp/agent/extensions/run-task`, or add the checkout's `runtimes/oh-my-pi/run-task` to `extensions:` in `~/.omp/agent/config.yml`. It replaces the `run-task` skill's orchestrator session with a slash command that runs each phase in a new session of the TUI; see below.
+4. Extension (optional). From a checkout, add its directory to `extensions:` in `~/.omp/agent/config.yml` (`- ~/Development/skills/runtimes/oh-my-pi/run-task`); loaded that way it uses the checkout's `skills/` and needs no other install. Or copy the built one: `mkdir -p ~/.omp/agent/extensions && cp -R dist/oh-my-pi/extensions/run-task ~/.omp/agent/extensions/run-task`; the copy needs the skills from step 2. It replaces the `run-task` skill's orchestrator session with a slash command that runs each phase in a new session of the TUI; see below.
 5. Start a new session; `/agents` lists the workers and `/` lists the skills and, with the extension, the `/run-task` command.
 
 ## Extension
