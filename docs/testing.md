@@ -1,112 +1,103 @@
-# Testing and evaluation
+# Testing
 
-The collection is tested at three depths. The first two cost no tokens and run in seconds; the third runs real agents and is measured, not asserted.
+The collection is checked at three depths. None spends tokens.
 
-| Layer | Command | Tokens | Answers |
-|---|---|---|---|
-| Static validation | `npm run validate` | none | Are the files well formed: frontmatter, shared links, templates, fences, banned words, and does the phase table match the code? |
-| Simulation | `npm run simulate -- <scenario>` and `node --test tests/` | none | Does the workflow wiring hold end to end: does every reply's fence name the command the table predicts, do gates stop where the table says, does recovery from artifacts alone work? |
-| Evaluation | `npm run eval -- --driver <omp\|claude\|codex>` | yes | Does a real agent, following a skill, produce the artifact and reply the contract requires, how often (pass@k), and at what cost? |
+| Layer | Command | Answers |
+|---|---|---|
+| Skill validation | `node scripts/validate.mjs` | Are the skill files well formed: layout, frontmatter, shared links, referenced templates, handoff fences, the fresh-session sentence, banned words, phase-table coverage? |
+| Pack checks | `node scripts/build-packs.mjs --check`, then `archon workflow test <pack>` | Is the generated OMP flavor current, and does each pack's DAG route as its fixtures declare, without an agent? |
+| Unit tests | `node --test tests/` | Do the installer, the commit-subject rule, the pack generator, and the deterministic pack nodes behave? |
 
-`npm test` runs the first two.
+`npm test` runs the validator, the plugin manifest check (`node scripts/sync-plugin.mjs --check`), and the unit tests.
 
 ## What is deterministic and what is not
 
-The workflow has two halves. The state machine (which command comes next, whether the last phase was a gate, which backend to use, what the status report says) is pure logic over files in `.agents/tasks/<slug>/`. The phase work (research, planning, implementation) needs a model.
+The workflow has two halves. The control flow (which node runs next, where the run pauses, when a loop ends) is Archon's DAG over the YAML in `.archon/workflows/delivery/`; every routing decision reads a gate decision, the `gates` node's flags, a JSON field the node prompt requires (`status` from `review-code` and `reproduce-bug`, `attempt` from `attempt-count`), or the plan file's checkboxes (`until_bash` in `delivery-implement`). The phase work (research, planning, implementation) needs a model.
 
-The state machine lives in code: `skills/delivery/run-task/scripts/workflow.mjs`, a dependency-free Node module that ships inside the `run-task` skill so an installed copy is self-contained. `run-task` calls it (`next`, `status`, `create-task`) instead of reasoning through the phase table, the simulator drives it, the eval harness grades with it, and a runtime plugin can import it. `scripts/validate.mjs` checks that its `PHASES` table and the human-readable table in `workflows/delivery.md` agree on every column: artifact type, gate, interactive, the set of skills each phase can hand off to (evaluated over every workflow type, worktree state, remaining-phase state, and review status), and the chain rows themselves, which are regenerated from the module for a plain repository and compared with the document.
+Only the phase work needs tokens, and nothing here runs it.
 
-Only the phase work needs tokens, and only the eval layer spends them.
+## Skill validation
 
-## Static validation
-
-`scripts/validate.mjs` checks, in order: the `skills/` layout and count; frontmatter keys and names; the shared-document links on line 6; every `references/` file a skill mentions exists; every answer template ends with one `text` fence naming an existing skill and carries the fresh-session sentence exactly once (terminal `/show-me` replies excepted); human-review templates have the four review headings; implementation templates declare `type` and `completed_phase`; human-gate answers carry `{artifact_link}`, a `Check:` line, and the approval sentence; banned host tokens are absent from every file; `workflows/delivery.md` mentions every skill; the phase table matches `workflow.mjs`; and the commit subject regex and length limit written in `shared/CONVENTIONS.md` equal the ones `scripts/check-commits.mjs` enforces in the `commit-msg` hook and the `Commits` workflow (`tests/commits.test.mjs` covers the checker and the hook).
+`scripts/validate.mjs` checks, in order: the `skills/` layout and count; frontmatter keys and names; the shared-document links on line 6; every `references/` file a skill mentions exists; every answer template ends with one `text` fence naming an existing skill and carries the fresh-session sentence exactly once (terminal `/show-me` replies excepted); human-review templates have the four review headings; implementation templates declare `type` and `completed_phase`; human-gate answers carry `{artifact_link}`, a `Check:` line, and the approval sentence; banned host tokens are absent from every file; `workflows/delivery.md` mentions every delivery skill and has the phase table; and the commit subject regex and length limit written in `shared/CONVENTIONS.md` are the ones `scripts/check-commits.mjs` enforces. Exit 1 with one `file:line: message` per failure.
 
 Run it on a generated runtime tree with `node scripts/validate.mjs --root dist/<runtime>`.
 
-## Simulation
+## Pack checks
 
-`scripts/simulate.mjs` is a fake agent. Given a phase, it writes the artifact from the skill's real template (frontmatter kept, placeholders filled with fixture text) and the reply from the skill's real answer template, then validates both. The chain runner loops `nextCommand` from `workflow.mjs`, runs the fake phase, and asserts that the full command in the fence the template produced, skill and `@file` argument, is the command the table predicted. That single assertion, repeated across a whole chain, is what proves the wiring: templates, table, worktree probe, and reply parser agree.
+`.archon/workflows/delivery-omp/` is generated from `.archon/workflows/delivery/` by `scripts/build-packs.mjs`, which rewrites every `prompt:` node into a `bash:` node running `omp -p`. `node scripts/build-packs.mjs --check` exits 1 when the generated tree differs from what the generator would write; run `node scripts/build-packs.mjs` after editing a native pack and commit both trees.
 
-Be precise about what that does and does not cover. The fake agent's decisions (which answer variant to use, what `{plan_file}` names, which boxes the parent ticks) are the rules from `shared/CONVENTIONS.md` and the skills, re-implemented in JavaScript. The simulation proves that those rules, the templates, and the module are consistent with each other. It does not read `SKILL.md` prose, so a skill whose text contradicted the conventions would still simulate green. When a decision rule changes in a skill, the simulator must change with it, and the eval layer is the only thing that tests the prose against a real agent.
+### Fixtures declare how a pack routes
 
-Scenarios:
+Each pack and block carries `fixtures/<name>.stubs.yaml` next to its YAML. A fixture is a dry run with declared node outputs and a declared outcome:
 
-```sh
-npm run simulate -- full          # plain repository: research-questions through pull request, one implementation run completes both plan phases
-npm run simulate -- lean          # plain repository: outline -> setup-worktree -> implement-outline, once per step
-npm run simulate -- prd           # fixture is a git worktree: plan hands straight to implement-plan
-npm run simulate -- interrupted   # implementation stops after every phase and re-enters with /implement-plan @<plan>
-npm run simulate -- oneshot
-npm run simulate -- review-loop   # user runs /review-loop after implementation: it drives review-code/fix-code-review passes internally until clean, then describe-pr
-npm run simulate -- review-loop-capped # two findings-only reviews with --max-depth 1: the loop stops capped, no describe-pr
-npm run simulate -- with-evidence   # task.md with: [record-evidence]: implementation -> record-evidence -> describe-pr
-npm run simulate -- evidence-failed # failed recording -> iterate-implementation -> record-evidence again -> describe-pr
-npm run simulate -- iterate       # changes requested at the plan gate; iterate-plan edits in place and re-presents the gate
-npm run simulate -- epic          # epic plan -> child task directories -> each child's start command
-npm run simulate -- recovery      # replies/ deleted at several points; next command derived from artifacts alone
+```yaml
+# .archon/workflows/delivery/bugfix/fixtures/not-reproduced.stubs.yaml
+task__create: '{"task_dir":".agents/tasks/fixture"}'
+gates: '{"reproduce":"false","pr":"false"}'
+attempt-auto: '{"status":"not-reproduced","summary":"needs the failing config file","artifact":"01-reproduction-fixture.md"}'
+attempt-count: '{"status":"not-reproduced","attempt":4}'
+fixture:
+  expect: cancelled
+  inputs: { gates: none }
+  reached: [attempt-auto, attempt-count, reproduce-auto, not-reproduced]
+exec-code: false
 ```
 
-The fake implementation run follows `implement-plan/SKILL.md`: it completes every remaining phase in order, writes one receipt per phase, and replies once, unless a phase is `human-gated: true` or the scenario asks to stop after each phase. Each scenario prints one line per step (`NN  <skill>  -> <next command>  [gate]`) and exits 1 on any validation issue, including a reply whose `@<file>` argument names the receipt where the conventions require the plan. `--keep` leaves the temp fixture on disk so you can open the files. `node scripts/simulate.mjs phase <skill> <task dir> [@<artifact>] [--reply <file>] [--feedback "<text>"]` runs one fake phase against a real task directory, which is how the eval harness tests itself without a model.
+- Every key other than `fixture` and `exec-code` is `node-id: stub output`. Included node ids are namespaced `<alias>__<node>` (`task__create`, `design__once`, `implement__phases-auto`); loop body ids are not (`implement-phase-auto`, `attempt-count`). Confirm an id with a `--json` dry-run trace before writing it.
+- `fixture.expect` is `completed`, `failed`, `paused`, or `cancelled`; `fixture.reached` lists node ids that must have run; `fixture.inputs` supplies workflow inputs; `fixture.fail-node` makes one node fail. Archon 0.10.1 ignores `resolved-text-contains`; do not rely on it.
+- `exec-code: true` executes the pack's `bash:` nodes for real (`delivery-task`, `gates`, the `*-done` joins) in a scratch worktree of `HEAD`; `false` needs a stub for each of them. `until_bash` is never executed in a dry run: a loop is assumed complete after one iteration, so a fixture exercises a body once, never the exit condition. `$LOOP_PREV.*` stays literal.
 
-`tests/workflow.test.mjs` covers the module directly (reply parsing and validation, plan checkbox accounting, artifact listing, next-command decisions including loop ends, backend choice, status report shape, task creation, worktree probe). `tests/simulate.test.mjs` runs every scenario above and asserts the observed skill sequence and gate positions against the chains in `workflows/delivery.md`.
-
-What simulation cannot tell you: whether a model following `create-plan` writes a good plan, or whether the skill text leads a model to the template it should use. It proves the contract around the model, not the model and not the prose.
-
-## Evaluation
-
-`scripts/eval.mjs` runs one phase with a real agent against a small fixture, grades the result with the same deterministic checks the simulator uses, repeats `k` times, and reports pass@k (at least one success in k runs) and pass^k (all k succeed), with wall time and token counts when the runtime reports them.
+Run them from the checkout:
 
 ```sh
-npm run eval -- --driver fake --k 2                              # harness self-test, no tokens
-npm run eval -- --driver omp --case research-questions-lean --k 3
-npm run eval -- --driver claude --k 3
-npm run eval -- --driver codex --case plan-from-outline --k 1
-npm run eval -- --driver omp --chain lean --model anthropic/claude-haiku-4-5 --keep   # whole workflow, one fresh process per phase
+archon workflow test delivery-bugfix   # one pack
+archon workflow test delivery          # every fixture in the delivery folder
 ```
 
-Drivers run the runtimes headless: `omp -p --mode json`, `claude -p --output-format json`, `codex exec --json`. Each run gets a fresh fixture under the OS temp directory and the same file-form prompt `run-task` uses (`Read and follow <skill path>/SKILL.md ... write your complete final reply ... verbatim to <reply path>`), so an eval measures exactly what the orchestrator would get. Nothing is installed into your home directory, and each driver passes the runtime's flags that disable home-directory skills, extensions, and rules.
+`archon workflow test` never creates a run or contacts a provider. Installed packs carry their fixtures, so the same command works from any project against `~/.archon/workflows/`. The generator copies every fixture into the OMP flavor (node ids are identical), so `archon workflow test delivery-omp` runs the same 29. The fixtures in the tree (29):
 
-`--model <spec>` picks the model and records it in the results. Run routine evals on a cheap model (`anthropic/claude-haiku-4-5` costs a few cents per phase); a phase that a cheap model fails and a stronger model passes is a model finding, a phase that both fail the same way is a template or skill-text finding. Both kinds have happened: the `{next_command}` and `@{artifact_file}` placeholder shapes exist because two models in four runs each mangled the earlier free-form handoff argument.
+| Workflow | Fixtures |
+|---|---|
+| `delivery-task` | `create` (exec-code: slug, `task.md`, commit in the scratch worktree), `missing-task-dir` (exec-code; a `task_dir` without `task.md` fails) |
+| `delivery-research` | `run` |
+| `delivery-gate-phase` | `gated` (`cycle` pauses), `unattended` (`once`) |
+| `delivery-implement` | `gated`, `unattended`, `review-each-phase` |
+| `delivery-review` | `clean`, `findings`, `blocked` (cancels) |
+| `delivery-full` | `gated`, `unattended`, `review-each-phase`, `review-findings`, `review-blocked` |
+| `delivery-lean`, `delivery-prd`, `delivery-oneshot`, `delivery-epic` | `gated`, `unattended` |
+| `delivery-bugfix` | `gated`, `unattended`, `reproduced` (exec-code), `not-reproduced` (cancels after the fourth attempt) |
+| `delivery-resolve-reviews` | `round` |
 
-`--chain <workflow>` runs the whole workflow instead of a single phase: `nextCommand` picks each phase, a **fresh agent process** runs it, every phase is graded, human gates are auto-approved (test mode, recorded as such), and the chain continues while the reply is still usable so one run measures every phase. The per-phase record carries duration, tokens, cost, model, and the runtime's session id, which is the evidence that each phase ran in its own context.
+### A raw dry run
 
-Graders are code and rule graders only (the taxonomy is in the `eval-harness` skill):
+`archon workflow run <pack> --dry-run --json` prints one trace document: each node as completed, stubbed, skipped, failed, or paused, with its resolved prompt text. `--default-stubs` fills every prompt node with a schema-valid placeholder; `--stubs <file>` supplies chosen outputs (`--stubs-init <file>` writes the scaffold); `--pause-at-gates` stops at the first approval node instead of auto-approving. Use it to find node ids and check resolved prompts; put the routing claim in a fixture.
 
-- `reply-file`: the phase wrote its reply to the path the prompt named.
-- `reply-shape`: `validateReply` with the expected next skill (fence, fresh-session sentence, no placeholders).
-- `reply-links`: the fence's `@<file>` and the reply's artifact link name files that exist; for plan cases the fence file is the produced plan.
-- `artifact`: an artifact of the expected type exists (or, for iterate cases, the seeded one changed) and passes `validateArtifact`.
-- `artifact-content`: the body has no template placeholders left, every section the template requires has content, and case-specific regexes tied to the fixture and the request match, so an artifact that ignores `task.md` fails.
-- `scope`: the working tree is clean outside the task directory, `HEAD` did not move, and the stash list did not change, so a phase that edits and commits source files fails.
-- `banned`: no host tokens.
-- `reply-contains`: optional regexes the reply must match.
+`--dry-run --exec-code` runs the deterministic nodes in the current directory: `delivery-task` creates `.agents/tasks/<slug>/` and commits it on the current branch. Run it only in a scratch repository (`git init` in `mktemp -d`, copy the packs to `<scratch>/.archon/workflows/delivery/`, `--cwd <scratch>`), never in a checkout you care about. Included bash nodes do not receive `INPUTS_*` in that mode, so `delivery-task` writes `workflow: full`; see the Archon notes in [workflows/delivery.md](../workflows/delivery.md#archon-notes).
 
-A model grader is deliberately absent: a phase whose output a rule cannot check is a phase whose contract is too loose, and that is a finding for the skill text, not for a judge. Every grader was checked against a lazy agent (empty body, verbatim template, unrelated task, commit-and-clean, dangling fence argument); each of those fails a named grader.
+Archon resolves a workflow name by exact, then case-insensitive, suffix, and substring match: a native pack that fails to load runs its `-omp` twin without a warning. Read the resolved workflow name in the `--json` output.
 
-Results carry provenance (skills commit and dirty flag, driver version, model when the runtime reports it, exact argv, prompt) so runs can be compared across skill edits and models. Drivers run with the runtime's home configuration isolated where the runtime offers flags for it; `eval/README.md` lists what each driver isolates.
+## Unit tests
 
-Cases live in `eval/cases/*.json`; `eval/README.md` documents the schema. Results are written to `eval/results/` (gitignored). Start with `k >= 3`; a single green run proves nothing about an agent.
+- `tests/install.test.mjs`: runtime detection, the destination map (including `CLAUDE_CONFIG_DIR` and `CODEX_HOME`), the plan's handling of the shared `~/.agents/skills/` directory, the managed block in `config.toml`, and a full install followed by an uninstall into a temporary home directory that must end with only the files it started with.
+- `tests/commits.test.mjs`: the Conventional Commits subject rule shared by the `commit-msg` hook, `scripts/check-commits.mjs`, and the conventions document.
+- `tests/packs.test.mjs`:
+  - the generator: refs hoisted into shell variables, inputs read from `INPUTS_*`, the workflow and its includes renamed, the flavor note appended, the committed `delivery-omp/` tree byte-identical to a fresh build;
+  - the generated bash executed under `/bin/bash` 3.2 with a fake `omp` on `PATH`, including a prompt with an unpaired apostrophe, checking the flags (`-p --auto-approve --no-session --max-time=45m`) and the expanded prompt `omp` receives;
+  - the task node's bash body run with `ARGUMENTS` and `INPUTS_*` in a temporary git repository: slugs per the conventions, `task.md` fields, the `docs(task): open <slug>` commit, removal of a stale `.agents/tasks/` ignore line, reuse of an existing `task_dir`, failure on a bogus one;
+  - the `until_bash` checkbox awk from `delivery-implement` against the plan and outline templates: open boxes under `## Phase N` or `## Step N` keep the loop running, boxes under `## Human Review` do not;
+  - with an Archon 0.10+ on `PATH`: every pack loads without `parseWarnings`, resolves to its own name, and dry-runs in a scratch repository, with `--input gates=none` (both twins' unattended branches run and the final join executes, no pause), `delivery-full` with `--input gates=plan --pause-at-gates` (pauses once, at the plan gate), and `--input gates=bogus` (fails at node `gates` naming the valid set);
+  - `archon workflow test delivery --cwd <scratch> --json --quiet`: every fixture ran, no unused or missing stub, the scratch repository keeps only its initial commit (exec-code fixtures commit in Archon's worktree), and a fixture with a wrong `expect` exits 1;
+  - a real Archon run (no `--dry-run`) of the OMP flavor under a scratch `HOME`, with a fake `omp` that plays the skills: `delivery-lean-omp --input gates=none` runs seven fresh sessions, every node (included or not) reads the skills directory with `~` expanded, the review node's prompt carries its schema, a fenced answer with prose around it is filtered to the JSON object, `until_bash` ends the implementation loop after the two real steps, and the branch ends with one `docs(task)` commit per phase and nothing uncommitted; `delivery-bugfix-omp --input gates=none` with a reproduction that never succeeds makes four attempts, each seeing the previous answer through `$LOOP_PREV`, commits each artifact, and cancels naming the count; `delivery-lean-omp --input gates=outline` exits at the gate, `archon workflow reject <id> --detach "<text>"` re-runs the phase with that text in the prompt, and `archon workflow approve <id> --detach` finishes the run unattended. Archon's database and workspace registry are created under the scratch `HOME` and discarded.
 
-Treat eval results as measurements to compare across skill edits, models, and runtimes, not as a gate: they cost tokens and depend on account state.
+## What stays manual
+
+- A run against a real provider: whether the skills, read by a live model, produce the artifacts and the JSON-only answers the packs expect. The fake `omp` proves the plumbing, not the model.
+- Real `omp -p` output was checked once by hand: stdout holds only the answer, wrapped in a ` ```json ` fence, which the generated filter strips; stderr holds progress text. Re-check after an Oh My Pi upgrade with `omp -p --auto-approve --no-session "Reply with exactly {\"ok\":true}"`.
 
 ## Adding a skill to the workflow
 
-1. Add the `PHASES` entry in `skills/delivery/run-task/scripts/workflow.mjs` (artifact type, gate, interactive, `next(ctx)`).
-2. Add the matching row in `workflows/delivery.md`; `npm run validate` fails until both agree.
-3. Add the artifact template and answer template under `references/`; the simulator's template mapping picks them up by the skill's type.
-4. Extend the relevant simulation scenario so the new phase appears in an observed chain.
-5. Optionally add an eval case.
-
-## The runtime extensions
-
-`runtimes/oh-my-pi/run-task/index.js` and `runtimes/pi/run-task/index.js` are the runtime plugins: each registers `/run-task` and the `task_status` tool and imports `scripts/plugin.mjs` (which imports `workflow.mjs`) from the installed `run-task` skill at startup. Both run each phase in a new session of the TUI, wait for the reply file, record `getContextUsage()` in `replies/phases.jsonl`, and show a dialog at gates. They differ in lifecycle: Oh My Pi keeps one extension instance across sessions, so its run is a loop in memory; Pi replaces the extension runtime per session, so its run lives in `replies/run.json` and advances from the `agent_settled` handler of each new instance. [runtimes/oh-my-pi.md](../runtimes/oh-my-pi.md) and [runtimes/pi.md](../runtimes/pi.md) describe the install and behavior.
-
-They are tested at two levels:
-
-- `tests/oh-my-pi-extension.test.mjs` and `tests/pi-extension.test.mjs` load each extension with a fake host: the fake `pi` records the command, tool, and event registrations; the fake `ctx` scripts dialog answers; `sendUserMessage` hands each phase prompt to the simulator's fake agent, which writes the artifact and reply file. The Pi host replaces the extension instance on `newSession({ withSession })` the way Pi does and makes the old instance's objects throw, so a stale reference fails the test. The tests drive the lean chain through approvals, a stop and re-invocation, request-changes with feedback, another command at a gate, `--step`, `--model`, a phase that prints a valid reply without writing the file, a phase that stops to ask a question, `/run-task stop`, and (Pi) resuming after a restart. No tokens and no runtime binary.
-- A live check runs the same command through the runtime's RPC mode with the extension loaded and answers the `extension_ui_request` frames; RPC mode uses the same command context as the TUI (`newSession`, `getContextUsage`, dialogs), so the frames and `phases.jsonl` show exactly what the TUI would do. For Oh My Pi that ran on a real model; for Pi, an isolated agent directory (`PI_CODING_AGENT_DIR`) whose only provider is a local fake OpenAI-compatible server that plays the phases with the simulator, so the runtime's session replacement and settle events are exercised for free. Neither check is part of `npm test`.
-
-## The installer
-
-`scripts/install.mjs` (also the package's `bin`, so `npx github:MarkTripoli/skills` runs it) builds each selected runtime into a temporary directory with `scripts/lib/build.mjs` and copies skills, worker definitions, and extensions to the runtime's directories. `tests/install.test.mjs` checks runtime detection, the destination map (including `CLAUDE_CONFIG_DIR` and `CODEX_HOME`), the plan's handling of the shared `~/.agents/skills/` directory, the managed block in `config.toml`, and a full install followed by an uninstall into a temporary home directory that must end with only the files it started with.
+1. Add `skills/delivery/<name>/SKILL.md` with its `references/` templates; the validator checks the frontmatter, line 6, and the answer template's fence.
+2. Add the row in the phase table of `workflows/delivery.md` (skill, artifact type, human gate, runs in).
+3. When a pack should run it, add a `prompt: |` node with `context: fresh` to the pack under `.archon/workflows/delivery/` (or compose an existing block), following the Pack source conventions in [workflows/delivery.md](../workflows/delivery.md#pack-source); then `node scripts/build-packs.mjs`.
+4. Dry-run the pack with `--json` for the new node's id and resolved prompt, then add or extend a fixture that reaches it and run `archon workflow test <pack>`.
+5. `npm test`.

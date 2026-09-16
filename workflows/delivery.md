@@ -1,97 +1,224 @@
 # Delivery workflow
 
-A task moves from request to merged pull request through phases. Each phase is one skill, runs in a fresh context, reads only `task.md` and the artifacts it selects, writes one artifact into `.agents/tasks/<slug>/`, and ends with one command fence naming the next phase. Human gates stop the chain until the user approves by running the next command. The file and reply contracts are in [shared/CONVENTIONS.md](../shared/CONVENTIONS.md).
+A task moves from request to pull request through [Archon](https://archon.diy) workflow packs. One run, `archon workflow run delivery-<type> --branch <name> "<request>"`, drives the whole chain: the `delivery-task` block creates `.agents/tasks/<slug>/task.md` and commits it, every AI node runs a skill in a fresh session (`context: fresh`), each skill writes one artifact into the task directory, a join node commits the artifacts after each phase, and approval nodes stop the run until a human decides. The artifacts are the only memory between nodes and travel with the branch. The file and reply contracts are in [shared/CONVENTIONS.md](../shared/CONVENTIONS.md).
 
-## Workflow types
+Pack source: `.archon/workflows/delivery/` (native: Claude Code, Codex, Pi through `prompt:` nodes) and `.archon/workflows/delivery-omp/` (generated; every prompt runs `omp -p`). See [Two flavors](#two-flavors).
 
-`workflow` in `task.md` selects the chain.
+## Packs
 
-| Type | Chain | Use when |
+`workflow` in `task.md` records the pack that created the task. Chains list the skills in order; "gate" marks an approval node. The Gates column lists the names the `gates` input accepts; see [Gates](#gates).
+
+| Pack | Chain | Gates | Use when |
+|---|---|---|---|
+| `delivery-full` | create-research-questions, create-research, create-design-discussion (gate), create-plan (gate), implement-plan per phase (gate after each), review loop, describe-pr (gate) | `design`, `plan`, `phases`, `pr` | Competing approaches, cross-module impact, migrations, a new or changed interface others depend on, or the user asks for a design review. |
+| `delivery-lean` | create-research-questions, create-research, create-structure-outline (gate), implement-outline per step (gate after each), review loop, describe-pr (gate) | `outline`, `phases`, `pr` | The shape is clear but several files and an ordering are involved. |
+| `delivery-prd` | create-research (questions derived from `task.md`), create-prd (gate), create-tdd (gate), create-plan (gate), implement-plan per phase (gate after each), review loop, describe-pr (gate) | `prd`, `tdd`, `plan`, `phases`, `pr` | The requirement itself is open: what it should do, for whom, edge behavior; product-facing work; stakeholders beyond the requester. |
+| `delivery-oneshot` | one session implements, verifies, and commits per the `ci-commit` conventions; review loop; describe-pr (gate) | `pr` | A small change with a stated expected behavior, a way to verify it, no design choice, a small footprint. |
+| `delivery-bugfix` | reproduce-bug (gate), one session fixes from the reproduction artifact and commits, review loop, describe-pr (gate) | `reproduce`, `pr` | Observed behavior differs from expected behavior and a reproduction is possible. Nothing is edited until the bug is reproduced. |
+| `delivery-epic` | create-epic-plan (gate), start-epic-delivery | `plan` | Several independently mergeable deliverables, work for more than one person, or more than about eight plan phases. Run with `--branch epic-<slug>`; the parent run ends after printing the child start commands. |
+| `delivery-resolve-reviews` | resolve-pr-reviews, one round | none | Reviewers left comments on a pull request a delivery run opened. Start it with `--adopt <run-id>` of that run (or `--branch <pr branch>`) so it works in the adopted worktree, pass `--input task_dir=<task dir>`, and run it again when reviewers respond. |
+
+`delivery-full`, `delivery-lean`, and `delivery-prd` accept `--input review_each_phase=true`, which adds one review-code, fix-code-review pass after every implementation phase. All packs accept `--input skills_dir=<dir>` (default `~/.agents/skills`), the directory holding one `<skill>/SKILL.md` per installed skill, and `--input task_dir=<dir>` to reuse an existing task directory (an epic child, or one created by hand) instead of creating one. `delivery-task` expands a leading `~` in `skills_dir` (Archon passes inputs through verbatim and not every agent's file tool expands one), warns on stderr when the directory is missing, and returns it as `$task.output.skills_dir`, which every later node reads.
+
+## Blocks
+
+Packs compose five blocks with `include:`. None runs on its own.
+
+| Block | Construct | Inputs | Does |
+|---|---|---|---|
+| `delivery-task` | one `bash:` node, returns `{task_dir}` | `workflow`, `task_dir` | Slug from the request's first line (two to four kebab-case words, stop words dropped, `-2`, `-3` suffix when the directory exists), writes `task.md` with `slug`, `title`, `workflow`, `created`, and the request as body, then commits it as `docs(task): open <slug>`; see [Task directory on the branch](#task-directory-on-the-branch). A non-empty `task_dir` is returned as is and nothing is written. The request arrives as `$ARGUMENTS`. |
+| `delivery-research` | two `prompt:` nodes | `skills_dir`, `task_dir` | create-research-questions, then create-research. |
+| `delivery-gate-phase` | `cycle`: a `loop_group` (`max_iterations: 100`) of `prompt:` and `approval:` under `when: "$INPUTS.gate == 'true'"`; `once`: one `prompt:` under `when: "$INPUTS.gate != 'true'"` | `skills_dir`, `task_dir`, `skill`, `iterate`, `label`, `gate` | Gated: the first pass runs `skill`; the gate asks to review `label`; every rejection runs `iterate` with the reviewer's text (`$LOOP_PREV.gate.output.text`) and gates again; `until_bash` exits when the decision is `approve`. Unattended: `skill` runs once. |
+| `delivery-implement` | `phases`: a `loop_group` (`max_iterations: 16`) of `prompt:`, optional review pass, `approval:`, under `when: "$INPUTS.gate == 'true'"`; `phases-auto`: the same body without the approval, under the complementary `when:` | `skills_dir`, `task_dir`, `skill` (`implement-plan` or `implement-outline`), `review`, `gate` | One plan phase per iteration; see [Implementation loop](#implementation-loop). |
+| `delivery-review` | `loop_group` (`max_iterations: 4`) of `prompt:` (JSON output), `cancel:`, `prompt:` | `skills_dir`, `task_dir` | review-code, fix-code-review until clean; see [Review until clean](#review-until-clean). |
+
+## Gates
+
+A gate is an `approval:` node with two decisions, `approve` and `reject` (labelled "Request changes"). The pack reads the decision as `$gate.output.decision` and the text as `$gate.output.text`. On `reject`, the text becomes the feedback the iterate skill applies to the newest artifact it owns (`iterate-plan`, `iterate-prd`, `describe-pr` again for the pull request description, `iterate-implementation` after an implementation phase); the gate then reopens. On `approve`, the loop's `until_bash` passes and the chain continues. Pull request approval stays external: `delivery-resolve-reviews` runs one round per invocation.
+
+### The `gates` input picks which pauses happen
+
+Every pack except `delivery-resolve-reviews` declares a `gates` input, read by a top-level `bash:` node `gates` that runs right after `task`:
+
+- `all` (default): every gate pauses.
+- `none`: no gate pauses; the run is unattended.
+- a comma list, for example `--input gates=plan,pr`: only the named gates pause. Whitespace around names is dropped.
+- an unknown name fails the run at node `gates` with the message `gates: unknown gate "<name>"; use all, none, or a comma-separated subset of: <names>`.
+
+The node prints `{"design":"true","plan":"false",...}` and each include receives its flag as `gate: $gates.output.<name>`. Gates are fixed for the life of a run; see [Steering a run](#steering-a-run).
+
+| Gate | Packs | Reviews |
 |---|---|---|
-| `full` | create-research-questions, create-research, create-design-discussion, create-plan, setup-worktree, implement-plan, describe-pr, resolve-pr-reviews | The change needs research and a design decision before planning. Default. |
-| `lean` | create-research-questions, create-research, create-structure-outline, setup-worktree, implement-outline, describe-pr, resolve-pr-reviews | The change is bounded; a phased outline is enough structure. |
-| `prd` | create-research, create-prd, create-tdd, create-plan, setup-worktree, implement-plan, describe-pr, resolve-pr-reviews | Product and technical decisions need interactive sessions with the user. |
-| `oneshot` | one session: implement, verify, commit, then describe-pr, resolve-pr-reviews | The request is a fully specified change; no artifacts are required before implementing. |
+| `design` | full | the design discussion (`create-design-discussion`, revised by `iterate-design-discussion`) |
+| `outline` | lean | the structure outline (`create-structure-outline`, `iterate-structure-outline`) |
+| `prd` | prd | the product requirements document (`create-prd`, `iterate-prd`) |
+| `tdd` | prd | the technical design document (`create-tdd`, `iterate-tdd`) |
+| `plan` | full, prd, epic | the plan (`create-plan`, `iterate-plan`); in `delivery-epic` the epic plan (`create-epic-plan` on both passes) |
+| `phases` | full, lean, prd | every implementation phase's receipt, the newest `NN-implementation-*.md` (`implement-plan` or `implement-outline`, `iterate-implementation` on reject) |
+| `reproduce` | bugfix | the reproduction artifact and its `status` (`reproduce-bug` on every pass) |
+| `pr` | full, lean, prd, oneshot, bugfix | the pull request description (`describe-pr` on both passes) |
 
-`setup-worktree` is skipped when the project already runs inside a worktree or `.agents/workspace.json` has `disabled: true`; the plan and outline skills detect this with the conventions' Worktree probe and hand off straight to the implementation skill.
+A gated loop allows 100 rounds (`max_iterations: 100` on `cycle` and on the bugfix `reproduce` loop): a paused gate costs nothing, so the cap only guards against a runaway loop. The implementation loop keeps `max_iterations: 16` in both modes because each iteration is a plan phase.
 
-### Choosing a type
+### What replaces the human when a gate is off
 
-`/start-task <request>` picks the type for you, or asks up to three questions when the request leaves it open, then creates the task and hands off to `/run-task @<task dir>`. Its routes, first match wins:
-
-| Route | When | Result |
+| Gate off | Node | Behavior |
 |---|---|---|
-| direct | a question, or a single edit whose location and content are already known | no task; ask for the change in the session |
-| `oneshot` | a bug fix or small change with a stated expected behavior and a way to verify it, no design choice | one session implements and commits, then `describe-pr` |
-| `lean` | the shape is clear but several files and an ordering are involved | the lean chain |
-| `full` | competing approaches, cross-module impact, migrations, changed interfaces | the full chain |
-| `prd` | the requirement itself is open, or the work is product-facing | the prd chain |
-| epic | several independently mergeable deliverables, or more than about eight plan phases | a parent task and `/create-epic-plan` |
+| `design`, `outline`, `prd`, `tdd`, `plan`, `pr` | `delivery-gate-phase` `once` | The create skill runs once; no revision pass. |
+| `phases` | `delivery-implement` `phases-auto` | Phases run back to back, one fresh session each, until the newest plan or outline has no unchecked box under a `## Phase N` or `## Step N` heading; sixteen iterations fail the node. `review=true` still runs the per-phase review pass. |
+| `reproduce` | `delivery-bugfix` `reproduce-auto`, `not-reproduced` | Up to four reproduction attempts, each a fresh session reading the previous artifact's `## Missing` list. A `status` of `reproduced` moves on to `fix`; after the fourth `not-reproduced` a `cancel:` node ends the run with "Bug not reproduced after 4 attempt(s); supply what the newest reproduction artifact's `## Missing` list names, then run the workflow again." |
+| any | `delivery-review` | Unchanged: review-code, fix-code-review until `clean` or four rounds; `blocked` cancels the run. This loop never had a gate. |
 
-A type named in the request wins over the table. A request that names a code review or video proof gets `with: [review-loop]`, `with: [record-evidence]`, or both; `with: [review-loop]` accepts an optional `--max-depth <n>` (or `max_depth: <n>` in `task.md`) to cap the loop's iterations.
+To see what an unattended run decided: `archon workflow get <run-id> --json` lists every node's state and output (`--verbose` adds the per-node summary); `git log --grep 'docs(task)'` on the branch shows one commit per phase with the artifacts it added; the code-review artifacts (`NN-code-review-*.md`) record each review round's findings and the `status` the loop routed on.
+
+## Review until clean
+
+`delivery-review` runs `review-code` in a fresh session; the node prompt asks for a JSON-only final answer `{status, artifact, summary}` after the code-review artifact is saved, `status` copied from the artifact's frontmatter (`clean`, `findings`, or `blocked`). Then:
+
+- `clean`: `until_bash` (`test "$status" = clean`) ends the loop.
+- `findings`: `fix-code-review` runs against the named artifact, advisories included, and the loop repeats.
+- `blocked`: a `cancel:` node stops the run with the message "Review blocked; resolve the blocker recorded in the newest code-review artifact, then run the workflow again."
+
+Four passes with findings still open fail the node. Every pack runs this block after implementation.
+
+## Implementation loop
+
+`delivery-implement` runs one iteration per plan phase. With `gate=true` the `phases` loop runs. Its `implement-phase` prompt reads the previous gate's decision: empty or `approve` runs `skill` (implement the first incomplete phase of the newest plan or outline, tick its boxes, write its receipt, commit with explicit paths, stop); `reject` runs `iterate-implementation` with the reviewer's text and does not start the next phase. With `review=true`, `review-phase` (review-code, JSON answer) and `fix-phase` (fix-code-review, when `status == 'findings'`) run once between the implementation and the gate; the gate's `trigger_rule: none_failed_min_one_success` lets it fire whether or not those optional nodes ran.
+
+`until_bash` ends the loop when the decision is `approve` and the newest `??-plan-*.md` or `??-structure-outline-*.md` in the task directory has no unchecked `- [ ]` box under any `## Phase N` or `## Step N` heading (boxes under other headings, such as `## Human Review`, do not count). Approve with phases remaining starts the next phase; sixteen iterations fail the node.
+
+With `gate=false` the `phases-auto` loop runs instead: body `implement-phase-auto`, `review-phase-auto`, `fix-phase-auto`, no approval, and an `until_bash` that is the checkbox test alone. The body is duplicated because Archon cannot share a loop body between two `loop_group`s.
+
+## Bugfix chain
+
+With the `reproduce` gate on, `delivery-bugfix` puts `reproduce-bug` and its gate in one `loop_group` (`reproduce`, `max_iterations: 100`). The `attempt` node answers with JSON `{status, summary, artifact}`, `status` copied from the reproduction artifact (`reproduced` or `not-reproduced`). The gate message shows the status and summary. `until_bash` passes only when the decision is `approve` and the status is `reproduced`, so the same gate serves two purposes:
+
+- reproduced: approve to move on to the fix; reject with text to correct the reproduction.
+- not reproduced: the gate is the escalation. Either decision with text re-runs `reproduce-bug`, which treats the text as new information (steps, data, environment) and revises the artifact in place; abandon the run when nothing more is known.
+
+With the gate off, `reproduce-auto` (`max_iterations: 4`) runs `attempt-auto` and then `attempt-count`, a `bash:` node that commits the attempt's artifact (`docs(task): reproduce artifacts`) and prints `{status, attempt}`; `until_bash` stops on `reproduced` or on the fourth attempt. `not-reproduced` is a `cancel:` node under `when: "$reproduce-auto.output.status != 'reproduced'"`; the artifacts it points at are already on the branch. The `reproduce-done` join depends on all three and fires with `trigger_rule: none_failed_min_one_success`.
+
+`fix` is a plain prompt, not a skill: read `task.md` and the newest reproduction artifact, follow its `## Fix` steps, make the reproduction pass, run the narrowest checks, commit the code per the `ci-commit` conventions, keep the reproduction as a regression test when it is one. Then the review loop and the pull request gate.
+
+## Steering a run
+
+The loop, from a git checkout of the project:
+
+```sh
+archon workflow run delivery-full --branch verbose-flag "Add a --verbose flag ..."
+# runs in the foreground, prints "Workflow paused" and the run id, and exits at the first gate
+archon workflow approve <run-id> --detach
+archon workflow reject <run-id> --detach "<what should change>"
+archon workflow wait <run-id>
+# blocks until the next gate or the end of the run; then approve or reject again
+```
+
+- Always pass `--branch <name>` for code changes; without it Archon names the branch `archon/task-<hash>`. The run works in a worktree of that branch, which Archon cuts from the remote's base branch: the checkout needs a git remote (`origin`) whose base branch exists, or `--no-worktree` to work in the live checkout.
+- `approve` and `reject` without `--detach` run the continuation in the foreground through every AI node until the next gate. With `--detach` a background child continues and the command returns at once; `archon workflow wait <run-id>` blocks until the run pauses or ends (`--timeout <seconds>` gives up earlier). `respond <run-id> <decision> [text]` is the general form; `approve` and `reject` are its sugar. The web UI and chat adapters offer the same two decisions.
+- A fresh launch of an interactive pack refuses `--detach`; the packs declare `interactive: true`. `--detach` is accepted on `approve`, `reject`, `respond`, and `resume`.
+- `--quiet` hides the JSON log lines on stdout; `--json` on `get`, `wait`, `runs`, `approve`, `reject` prints machine-readable output.
+- Gates are fixed per run: `--input` and `--resume` are mutually exclusive, so `gates` cannot change mid-run. To go unattended from a gate onward, approve the remaining gates as they come. To add gates, start a new run with `--input task_dir=.agents/tasks/<slug> --input gates=<names>` on the same `--branch`; the run reuses the task directory and its committed artifacts.
+- Continue after a failure: `archon workflow resume <run-id>` (or `archon workflow run delivery-<type> --resume` for the most recent failed or paused run of that pack in this directory) skips completed nodes and re-runs the failed one against the task directory as it stands.
+- Dead run: `archon workflow abandon <run-id>` marks it cancelled without stopping host work. `archon workflow cancel <run-id>` stops a detached continuation only.
+- Find a run: `archon workflow runs` lists recent runs, `archon workflow status` only running and paused ones, `archon workflow get <run-id>` one run.
+- Pick a pack: name it, or give the request to Archon's router (`archon chat`, Slack, the web UI), which matches the "Use when / NOT for" lines in each pack description.
+
+## Task directory on the branch
+
+`.agents/tasks/` is committed history; nothing in the collection ignores it.
+
+- `delivery-task` commits `task.md` as `docs(task): open <slug>` on the run's branch. When `git check-ignore -q` reports `task.md` ignored, the node removes an exact `.agents/tasks/` line from the project `.gitignore` (added by earlier versions of this collection), stages that edit in the same commit, and exits 1 with an instruction when the path is still ignored. Outside a git work tree nothing is committed. A reused `task_dir` is not touched.
+- Every `*-done` join runs `git add -A .agents/tasks` and commits `docs(task): <phase> artifacts` when the index changed; `<phase>` is `research`, `design`, `outline`, `prd`, `tdd`, `plan`, `implement`, `review`, `reproduce`, `pr`, or `review-round`. `delivery-epic` commits `docs(task): open epic children` after `start`.
+- `pr-done` (after every `pr` include) and `round-done` (`delivery-resolve-reviews`) also `git push -q` when the branch has an upstream, because `describe-pr` and `resolve-pr-reviews` push before the join lands their artifact.
+- The `fix` and `implement` prompts (bugfix, oneshot) and every skill commit code with explicit paths and never mix artifact files in; a skill run by hand commits its artifact as `docs(task): <artifact type> artifact`.
+
+Why: an Archon run works in a disposable worktree, so an uncommitted task directory would vanish with it. On the branch, the artifacts reach the pull request, where a reviewer can open the plan and the review receipts, and `delivery-resolve-reviews --adopt <run-id>` finds them in the adopted worktree. `record-evidence` writes `evidence/.gitignore` (`*`) before its first recording so videos stay out of the artifact commits.
+
+## Two flavors
+
+| Flavor | Directory | AI node | Providers |
+|---|---|---|---|
+| native | `.archon/workflows/delivery/` | `prompt:` | Claude Code, Codex, Pi, whatever Archon runs |
+| `-omp` | `.archon/workflows/delivery-omp/` | `bash:` running `omp -p --auto-approve --no-session --max-time=45m "$prompt"` | Oh My Pi, which Archon has no provider for |
+
+The installer writes the native flavor for Claude Code, Codex, Pi, or portable targets and the `-omp` flavor for the `oh-my-pi` target, so Archon's router (which lists every discovered workflow, blocks included, and reads their "Use when / NOT for" lines) shows one set of packs on a one-runtime machine. Archon has no field that hides a block from the router; `recommendedWorkflows` in `.archon/config.yaml` pins the packs you use in the web UI.
+
+The OMP flavor is generated: `node scripts/build-packs.mjs` rewrites every native file into `<pack>-omp` with the same DAG (inputs, gates, loops, includes, and deterministic nodes unchanged), `$INPUTS.x` read from `INPUTS_<UPPER>` environment variables, and `$node.output` refs hoisted into shell variables. The prompt is read with `{ prompt=$(cat); } <<DELIVERY_PROMPT`, a heredoc feeding a brace group: bash 3.2 (macOS `/bin/bash`) scans a heredoc nested in `$(...)` for quotes, so an unpaired apostrophe in a prompt would fail to parse there. `node scripts/build-packs.mjs --check` exits 1 when the generated tree is stale. Never edit `delivery-omp/` by hand.
+
+What the flavor loses: a `bash:` node has no per-node cost, retry, or idle timeout, so `--max-time=45m` is the only bound on a stuck session. Archon ignores `output_format` on a `bash:` node, so the generator moves a prompt node's schema into the prompt text (the same "respond with only a JSON object" instruction Archon appends for AI nodes) and drops the field; nothing validates the stdout of `omp -p`. A non-JSON answer surfaces one node later, when `$review-code.output.status` or `$attempt-auto.output.status` is read and fails the run, so `omp -p` must print only the final answer on stdout. A native Oh My Pi provider in Archon is the fix; the flavor is a stopgap.
 
 ## Phase table
 
-`run-task` uses this table to find the next command from the newest artifact and to decide where to stop. "Interactive" phases need the user in the loop for the whole session and never run in a subagent.
+Artifact type is the frontmatter `type` of the artifact the skill writes. "Human gate" says whether an approval node follows the skill in the packs when its gate is on. "Runs in" names the pack or block whose node invokes the skill; "by hand" means no pack invokes it.
 
-| Skill | Artifact type | Next command | Human gate | Interactive |
-|---|---|---|---|---|
-| create-research-questions | research-questions | /create-research | no | no |
-| iterate-research-questions | research-questions | /create-research | no | yes |
-| create-research | research | /create-design-discussion (`full`), /create-structure-outline (`lean`), /create-prd (`prd`) | no | no |
-| iterate-research | research | /create-design-discussion (`full`), /create-structure-outline (`lean`), /create-prd (`prd`) | no | yes |
-| create-design-discussion | design-discussion | /create-plan | yes | no |
-| iterate-design-discussion | design-discussion | /create-plan | yes | yes |
-| create-prd | design-prd | /create-tdd | yes | yes |
-| iterate-prd | design-prd | /create-tdd | yes | yes |
-| create-tdd | design-tdd | /create-plan | yes | yes |
-| iterate-tdd | design-tdd | /create-plan | yes | yes |
-| create-structure-outline | structure-outline | /implement-outline, or /setup-worktree per the Worktree probe | yes | no |
-| iterate-structure-outline | structure-outline | /implement-outline, or /setup-worktree per the Worktree probe | yes | yes |
-| create-plan | plan | /setup-worktree, or /implement-plan per the Worktree probe | yes | no |
-| iterate-plan | plan | /setup-worktree, or /implement-plan per the Worktree probe | yes | yes |
-| create-epic-plan | epic-plan | /start-epic-delivery | yes | no |
-| start-epic-delivery | epic-delivery | one start command per wave-1 child | yes | no |
-| configure-workspaces | workspace-config | /setup-worktree | yes | yes |
-| setup-worktree | worktree-setup | /implement-plan (`full`, `prd`) or /implement-outline (`lean`) | no | no |
-| implement-plan | implementation | /implement-plan between phases, then /describe-pr | yes | no |
-| implement-outline | implementation | /implement-outline between phases, then /describe-pr | yes | no |
-| iterate-implementation | implementation | /implement-plan or /implement-outline between phases, then /describe-pr | yes | yes |
-| review-loop | review-loop | /describe-pr on a clean review; stops and reports on the depth cap or a blocked gate | no | no |
-| review-code | code-review | /fix-code-review while findings remain, otherwise /describe-pr | no | no |
-| fix-code-review | code-review-fixes | /review-code | no | no |
-| record-evidence | evidence | /describe-pr when every test passed or is untested, /iterate-implementation when one failed | no | no |
-| describe-pr | pr-description | /resolve-pr-reviews | yes | no |
-| resolve-pr-reviews | pr-review | /resolve-pr-reviews until the pull request is approved | yes | no |
-| ci-commit | commit | /describe-pr | no | no |
-| review-artifact-comments | comment-review | /iterate-implementation | no | yes |
-| show-me | show-me | none | no | no |
-| run-task | none | drives the table above | n/a | n/a |
+| Skill | Artifact type | Human gate | Runs in |
+|---|---|---|---|
+| create-research-questions | research-questions | no | `delivery-research` (full, lean) |
+| iterate-research-questions | research-questions | no | by hand |
+| create-research | research | no | `delivery-research` (full, lean); `delivery-prd` `research` node |
+| iterate-research | research | no | by hand |
+| create-design-discussion | design-discussion | yes | `delivery-gate-phase` in `delivery-full` |
+| iterate-design-discussion | design-discussion | yes | `delivery-gate-phase` in `delivery-full`, on reject |
+| create-prd | design-prd | yes | `delivery-gate-phase` in `delivery-prd` |
+| iterate-prd | design-prd | yes | `delivery-gate-phase` in `delivery-prd`, on reject |
+| create-tdd | design-tdd | yes | `delivery-gate-phase` in `delivery-prd` |
+| iterate-tdd | design-tdd | yes | `delivery-gate-phase` in `delivery-prd`, on reject |
+| create-structure-outline | structure-outline | yes | `delivery-gate-phase` in `delivery-lean` |
+| iterate-structure-outline | structure-outline | yes | `delivery-gate-phase` in `delivery-lean`, on reject |
+| create-plan | plan | yes | `delivery-gate-phase` in `delivery-full`, `delivery-prd` |
+| iterate-plan | plan | yes | `delivery-gate-phase` in `delivery-full`, `delivery-prd`, on reject |
+| create-epic-plan | epic-plan | yes | `delivery-gate-phase` in `delivery-epic` (first pass and every revision) |
+| start-epic-delivery | epic-delivery | no | `delivery-epic` `start` node; the run ends, children start by hand |
+| implement-plan | implementation | yes | `delivery-implement` `phases` (gated) or `phases-auto` in `delivery-full`, `delivery-prd` |
+| implement-outline | implementation | yes | `delivery-implement` `phases` (gated) or `phases-auto` in `delivery-lean` |
+| iterate-implementation | implementation | yes | `delivery-implement` `phases`, on reject |
+| review-code | code-review | no | `delivery-review`; `delivery-implement` `review-phase` and `review-phase-auto` with `review_each_phase=true` |
+| fix-code-review | code-review-fixes | no | `delivery-review`; `delivery-implement` `fix-phase` and `fix-phase-auto` |
+| reproduce-bug | reproduction | yes | `delivery-bugfix` `reproduce` loop (gated) or `reproduce-auto` (up to four attempts, then cancel) |
+| record-evidence | evidence | no | by hand |
+| describe-pr | pr-description | yes | `delivery-gate-phase` `pr` in every pack except `delivery-epic` and `delivery-resolve-reviews`; also the iterate skill of that gate |
+| resolve-pr-reviews | pr-review | no | `delivery-resolve-reviews` |
+| ci-commit | commit | no | by hand; the `delivery-oneshot` and `delivery-bugfix` commit prompts follow its conventions |
+| review-artifact-comments | comment-review | no | by hand |
+| show-me | show-me | no | by hand |
 
-Artifact type is the frontmatter `type` of the artifact the skill writes. `describe-pr` writes an unnumbered `pr-description.md` without frontmatter, because the file is published verbatim as the pull request body; its type is `pr-description`. A file with no frontmatter otherwise takes its type from the name segment between `NN-` and the slug.
+`describe-pr` writes an unnumbered `pr-description.md` without frontmatter, because the file is published verbatim as the pull request body. A file with no frontmatter otherwise takes its type from the name segment between `NN-` and the slug.
 
-## Human gates
+## Running skills by hand
 
-Gates stop at design-discussion, design-prd, design-tdd, structure-outline, plan, epic-plan, epic-delivery, workspace-config, implementation, pr-description, and pr-review. The gate reply links the artifact, copies its `### Verify` checks, and names the iteration skill; running the next command records approval. Pull request approval stays external: `resolve-pr-reviews` repeats until reviewers approve.
-
-## Optional phases
-
-Two phases run only when the user asks for them, between implementation and the pull request: `review-loop` (the bounded review→fix loop below) and `record-evidence` (narrated video proof of the implemented behavior). Insert one by answering the implementation gate with its command (`/review-loop` or `/record-evidence`), by listing it once in `task.md` (`with: [review-loop, record-evidence]`), or with `/run-task --with <skill,...>`. `run-task` then runs each requested phase whose artifact does not exist yet before `describe-pr`, in that order. `review-loop` hands back to `describe-pr` on a clean review, and stops and reports on the depth cap or a blocked gate; `record-evidence` hands back to `describe-pr` on success, failing evidence hands to `iterate-implementation`.
-
-## Review loop
-
-`review-loop` drives `review-code` and `fix-code-review` through fresh contexts, pass after pass, until the loop ends: `review-code` reviews the diff against the merge target and writes a `code-review` artifact; with findings, `fix-code-review` repairs them, writes `code-review-fixes`, and hands back to `review-code`; `review-loop` counts the pass and repeats. The loop ends on a clean review (hands off to `describe-pr`), an optional `--max-depth <n>` cap reached with findings still open (stops and reports the remaining findings), or a blocked review (stops). `--max-depth <n>` on `run-task` or `max_depth` in `task.md` sets the cap; absent, the loop is endless. `review-code` and `fix-code-review` remain the loop's workers and stay independently runnable. Run `review-loop` between implementation and the pull request when the change is large or the reviewer is a different person.
+Every skill still works in a plain agent session without Archon: `/<skill> @<artifact or task dir>` (Codex: `$<skill>`). A skill given no task directory creates one from the request and commits `task.md` as `docs(task): open <slug>`. Each reply ends with the sentence "Start the next phase in a new session; continuing in this session carries this phase's context into the next one." and one fenced `text` command naming the next skill; paste that command into a new session. Under Archon the fence is ignored: the engine already knows the next node. Skills that no pack invokes (`iterate-research*`, `record-evidence`, `ci-commit`, `review-artifact-comments`, `show-me`) run this way only.
 
 ## Epics
 
-`create-epic-plan` splits a large request into children with their own `workflow` and dependencies. `start-epic-delivery` creates one task directory per child and lists the wave-1 start commands. Each child then runs its own chain, one fresh context per phase, with `/run-task @.agents/tasks/<child slug>` or by hand.
+Start the parent on its own branch: `archon workflow run delivery-epic --branch epic-<slug> "<request>"`. `create-epic-plan` splits the request into children with their own `workflow` and dependencies. `start-epic-delivery` reads the epic branch (`git rev-parse --abbrev-ref HEAD`; it refuses `main`, `master`, or a detached `HEAD` and asks for `--branch epic-<slug>`), creates one task directory per child (with `parent` and `depends_on` in its `task.md`), commits them as `docs(task): open epic children`, and prints one start command per wave-1 child:
 
-## Utilities
+```sh
+archon workflow run delivery-<child workflow> --base <epic branch> --input task_dir=.agents/tasks/<child slug> "<child prompt>"
+```
 
-- `ci-commit`: commit implementation work with explicit paths, excluding `.agents/tasks/`, and hand off to `describe-pr`.
-- `start-task`: route a request to a workflow type, `direct`, or an epic; create the task; hand off (see Choosing a type).
-- `show-me`: a focused diagram, code-shape sketch, or HTML artifact for the current explanation.
-- `record-evidence`: record narrated, annotated video proof of behavior on a screen, Android emulator, iOS simulator, or headless browser; compose devices side by side; the report and video are attached to the PR by hand, typically between implementation and `describe-pr`.
-- `configure-workspaces`: write `.agents/workspace.json` and `.agents/workspace.local.json`, which `setup-worktree` uses to create task worktrees.
-- `review-artifact-comments`: apply the user's feedback to an artifact one item at a time, then hand off to `iterate-implementation`.
-- `run-task`: drive a task through this table one fresh-context phase at a time; see [docs/context-management.md](../docs/context-management.md).
+Run it from the project root on the epic branch. `--base` cuts the child's worktree from the epic branch, which holds the child's `task.md`, and makes the epic branch the target of the child's pull request. `task_dir` makes the child run reuse that directory instead of creating a second one. Each child is its own run; children in a later wave start after every dependency's pull request has merged into the epic branch. The parent does not fan the children out as sub-runs: a child with gates would pause with nobody watching, which Archon refuses for a background dispatch.
+
+## Archon notes
+
+Engine behavior, verified against Archon 0.10.1, that the packs work around:
+
+1. A `loop_group` that is the entry node of an include whose `depends_on` names another include never runs its body: the body inherits the unexpanded include alias. Packs place a plain `bash:` join node (`research-done`, `plan-done`, `review-done`, ...) between consecutive includes; the join doubles as the artifact commit. An entry node inside the block does not help, because the body inherits the block's boundary, not its sibling's.
+2. A skipped node's output is unreadable, so a block cannot branch on `gate` inside one node. `delivery-gate-phase`, `delivery-implement`, and the bugfix reproduction each carry two top-level twins under complementary `when:` conditions (`cycle`/`once`, `phases`/`phases-auto`, `reproduce`/`reproduce-auto`).
+3. A join that depends on a twin pair needs `trigger_rule: none_failed_min_one_success`; with the default rule the skipped twin skips the join, the rest of the DAG is skipped, and the run reports `completed` having done nothing after the gate.
+4. A `loop_group` nested inside a `loop_group` body does not run, and a loop body cannot be shared between two `loop_group`s through an include. Per-phase review in `delivery-implement` is one review-code, fix-code-review pass, not a nested loop; the twin loops duplicate their bodies.
+5. A `cancel:` node cannot read a loop body node's output or the output of a failed `loop_group`. `reproduce-auto` ends on the fourth failure through `attempt-count` instead of `max_iterations`, so `not-reproduced` can read `$reproduce-auto.output.status`.
+6. `interactive: true` stays on `delivery-gate-phase` and `delivery-implement`: the loader requires it on any file with a pause node (#2738). When a pack includes them, the include-expander logs `droppedFields: ["interactive"]` on stdout in non-JSON mode; the line is expected, and `--json` output and `parseWarnings` are clean.
+7. `$INPUTS.x` is not substituted into `bash:` bodies for literal-bound inputs. Bash nodes read `INPUTS_<UPPER_SNAKE>` environment variables instead (`INPUTS_GATES`, `INPUTS_WORKFLOW`, `INPUTS_TASK_DIR`). A real run delivers them to included bash nodes too (an include's `with:` values arrive as `INPUTS_*`); `--dry-run --exec-code` delivers them only to top-level bash nodes, so `delivery-task` then defaults to `workflow: full`. `until_bash` receives the `$INPUTS.x` macro but not the environment variables, and a dry run never executes it: a loop is assumed complete after one iteration.
+8. `archon workflow run <name>` resolves the name by exact match, then case-insensitive, suffix, and substring match. A native pack that fails to load silently runs its `-omp` twin; check the resolved name in `archon workflow get <run-id> --json` (tests assert on it).
+9. An include alias shadows a body node of the same id when `$id.output` refs are rewired. Block body ids differ from every alias packs use; see [Pack source](#pack-source).
+10. `output_format` on a `bash:` node is ignored (log line `bash_node_ai_fields_ignored`); stdout that parses as a JSON object still serves `$node.output.field`. Deterministic nodes keep the field as documentation of what they print; the generator moves a prompt node's schema into the OMP prompt text.
+
+### Pack source
+
+`scripts/build-packs.mjs` rewrites the native YAML line by line, so the source follows these conventions:
+
+- Every AI node is `prompt: |` (a literal block scalar), with `context: fresh`.
+- One workflow per `<pack>/<workflow>/<name>.yaml` directory; the generator writes `<pack>-omp/<workflow>/<name>-omp.yaml`, appends an "Oh My Pi flavor" line to the description, and copies `fixtures/*.stubs.yaml` verbatim (node ids are the same in both flavors, so `archon workflow test delivery-omp` runs the native fixtures). Fixtures live in `<pack>/<workflow>/fixtures/<name>.stubs.yaml`; see [docs/testing.md](../docs/testing.md).
+- Runtime refs in prompts are `$node.output`, `$node.output.field`, or `$LOOP_PREV.node.output[.field]`; inputs are `$INPUTS.name`.
+- A body node whose output a pack or block reads by id has an id distinct from every include alias packs use (`task`, `research`, `design`, `outline`, `prd`, `tdd`, `plan`, `implement`, `review`, `pr`). Body ids: `create`, `cycle`, `once`, `phase`, `gate`, `phases`, `phases-auto`, `implement-phase`, `implement-phase-auto`, `review-phase`, `review-phase-auto`, `fix-phase`, `fix-phase-auto`, `loop`, `review-code`, `review-blocked`, `fix-review`, and in `delivery-bugfix` `reproduce`, `reproduce-auto`, `attempt`, `attempt-auto`, `attempt-count`, `not-reproduced`. The `delivery-research` node `research` shares its alias's name; it is the block's `returns` and nothing reads it by id.
+- `output_format` on a prompt node states the JSON the skill's final answer must match and sits right after the `prompt: |` block; the requirement lives in the prompt, not in the skill, and the generator appends it to the OMP prompt.
