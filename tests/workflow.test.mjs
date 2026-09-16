@@ -369,6 +369,16 @@ describe("nextCommand", () => {
     assert.match(pr.reason, /external/);
   });
 
+  test("artifact-only recovery: review-loop statuses", () => {
+    const loopStatus = (s) => wf.nextCommand(project({ artifacts: { "01-review-loop-verbose-flag.md": artifact("review-loop", `status: ${s}\n`) } }).taskDir);
+    assert.equal(loopStatus("clean").command, "/describe-pr");
+    for (const s of ["capped", "blocked"]) {
+      const next = loopStatus(s);
+      assert.equal(next.done, true, s);
+      assert.match(next.reason, /nothing runs automatically/, s);
+    }
+  });
+
   test("interactive flag follows the table for the next skill", () => {
     const { taskDir } = project({ replies: [["01-create-plan.md", reply("/iterate-plan @01-plan-verbose-flag.md")]] });
     assert.equal(wf.nextCommand(taskDir).interactive, true);

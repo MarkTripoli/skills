@@ -150,19 +150,35 @@ test("evidence-failed: a failed recording hands to iterate-implementation, then 
 });
 
 // workflows/delivery.md, Review loop: the loop is user-invoked between implementation and the pull
-// request; nothing in the table routes into it. `reviewLoop` models the user typing `/review-code`
-// where the table would have run describe-pr; the loop's own transitions are then checked like any phase.
+// request; nothing in the table routes into it. `reviewLoop` models the user typing `/review-loop`
+// where the table would have run describe-pr; review-loop's fakePhase case models the internal
+// review-code/fix-code-review passes as artifacts, so the chain sees one review-loop step.
 test("review loop: findings, fix, clean review, then describe-pr", () => {
   const { projectRoot, taskDir } = fixture({ workflow: "full", worktree: "disabled" });
   const result = runChain(projectRoot, taskDir, { scenario: { planPhases: 1, reviewLoop: true, codeReview: ["findings", "clean"] } });
   assertClean(result);
-  const tail = skills(result).slice(-4);
-  assert.deepEqual(tail, ["review-code", "fix-code-review", "review-code", "describe-pr"]);
-  const reviews = wf.listArtifacts(taskDir, "verbose-flag").filter((a) => a.type === "code-review");
+  const tail = skills(result).slice(-2);
+  assert.deepEqual(tail, ["review-loop", "describe-pr"]);
+  const artifacts = wf.listArtifacts(taskDir, "verbose-flag");
+  const reviews = artifacts.filter((a) => a.type === "code-review");
   assert.deepEqual(reviews.map((a) => a.status), ["findings", "clean"]);
-  assert.equal(result.steps.at(-4).next, `/fix-code-review @${reviews[0].name}`);
+  assert.equal(artifacts.filter((a) => a.type === "code-review-fixes").length, 1);
+  const loopArtifact = artifacts.find((a) => a.type === "review-loop");
+  assert.equal(loopArtifact.status, "clean");
   assert.equal(result.steps.at(-2).next, "/describe-pr");
-  assert.ok(result.steps.slice(-4, -1).every((s) => !s.pendingGate));
+  assert.equal(result.steps.at(-1).next, null);
+  assert.ok(!result.steps.at(-2).pendingGate);
+});
+
+test("review-loop-capped: two findings-only reviews with maxDepth 1 stop the loop without describe-pr", () => {
+  const { projectRoot, taskDir } = fixture({ workflow: "full", worktree: "disabled" });
+  const result = runChain(projectRoot, taskDir, { scenario: { planPhases: 1, reviewLoop: true, codeReview: ["findings", "findings"], maxDepth: 1 } });
+  assertClean(result);
+  assert.deepEqual(skills(result).slice(-1), ["review-loop"]);
+  assert.ok(!skills(result).includes("describe-pr"));
+  const loopArtifact = wf.listArtifacts(taskDir, "verbose-flag").find((a) => a.type === "review-loop");
+  assert.equal(loopArtifact.status, "capped");
+  assert.equal(result.steps.at(-1).next, null);
 });
 
 test("iterate: requesting changes at the plan gate revises the plan in place and returns to the gate", () => {

@@ -38,7 +38,8 @@ npm run simulate -- lean          # plain repository: outline -> setup-worktree 
 npm run simulate -- prd           # fixture is a git worktree: plan hands straight to implement-plan
 npm run simulate -- interrupted   # implementation stops after every phase and re-enters with /implement-plan @<plan>
 npm run simulate -- oneshot
-npm run simulate -- review-loop   # user runs /review-code after implementation: findings -> fix-code-review -> clean -> describe-pr
+npm run simulate -- review-loop   # user runs /review-loop after implementation: it drives review-code/fix-code-review passes internally until clean, then describe-pr
+npm run simulate -- review-loop-capped # two findings-only reviews with --max-depth 1: the loop stops capped, no describe-pr
 npm run simulate -- with-evidence   # task.md with: [record-evidence]: implementation -> record-evidence -> describe-pr
 npm run simulate -- evidence-failed # failed recording -> iterate-implementation -> record-evidence again -> describe-pr
 npm run simulate -- iterate       # changes requested at the plan gate; iterate-plan edits in place and re-presents the gate
