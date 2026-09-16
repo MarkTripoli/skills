@@ -1,0 +1,9 @@
+{
+  "repos": [{ "localPath": ".", "description": "Portable agent skills collection", "primary": true }],
+  "disabled": false,
+  "sourceRef": "HEAD",
+  "branchTemplate": "{{ TASKSLUG }}",
+  "pathTemplate": "~/Development/{{ REPOBASENAME }}-{{ TASKSLUG }}",
+  "setupCommand": "",
+  "copyGlobs": [".agents/workspace.local.json", "CLAUDE.local.md", ".env*", ".claude/settings.local.json"]
+}
