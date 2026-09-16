@@ -1,0 +1,8 @@
+# Findings run `fix-review` before the loop ends.
+review-code: '{"status":"findings","artifact":"05-code-review-fixture.md","summary":"two findings"}'
+fix-review: "findings fixed"
+fixture:
+  expect: completed
+  inputs: { task_dir: .agents/tasks/fixture }
+  reached: [review-code, fix-review, loop]
+exec-code: false

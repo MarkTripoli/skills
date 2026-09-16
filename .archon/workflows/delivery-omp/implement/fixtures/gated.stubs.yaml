@@ -1,0 +1,7 @@
+# gate=true: the `phases` loop runs a phase and its approval gate; the per-phase review stays off.
+implement-phase: "phase implemented"
+fixture:
+  expect: completed
+  inputs: { task_dir: .agents/tasks/fixture, gate: "true" }
+  reached: [implement-phase, phases]
+exec-code: false

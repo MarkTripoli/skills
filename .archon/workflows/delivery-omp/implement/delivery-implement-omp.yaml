@@ -1,0 +1,193 @@
+name: delivery-implement-omp
+description: |
+  Implement a plan or structure outline one phase per fresh session until no phase has an unchecked
+  box left. With gate=true the run pauses for human review after every phase; "request changes" at a
+  pause runs iterate-implementation with the reviewer's text before the next phase. With gate=false
+  the phases run back to back. With review=true a review pass runs after every phase, before the
+  pause. Composed by the delivery packs.
+  NOT for: running on its own.
+  Oh My Pi flavor: every AI phase runs in `omp -p`; deterministic nodes, gates, and loops are unchanged.
+
+# The loader requires this on any file with a pause node (#2738); the include-expander's
+# `droppedFields: ["interactive"]` log when a pack includes this block is expected.
+interactive: true
+
+inputs:
+  skills_dir:
+    default: ~/.agents/skills
+  task_dir:
+    required: true
+  skill:
+    default: implement-plan
+    description: implement-plan for plans, implement-outline for structure outlines.
+  review:
+    default: "false"
+    description: Set to true to run a review pass after every implementation phase.
+  gate:
+    required: true
+    description: "\"true\" pauses for human review after every phase; anything else runs the phases unattended."
+
+nodes:
+  # Gated branch. The completion channel is approval plus the plan itself: exit 0 once the reviewer
+  # approved and no `## Phase N` / `## Step N` section of the newest plan or outline holds an unchecked
+  # box (boxes under `## Human Review` do not count). Approve with phases remaining continues with the
+  # next phase. The unattended twin below duplicates the body: Archon 0.10 cannot share a loop body
+  # between two loop_groups.
+  - id: phases
+    when: "$INPUTS.gate == 'true'"
+    loop_group:
+      fresh_context: true
+      max_iterations: 16
+      until_bash: |
+        decision=$gate.output.decision
+        test "$decision" = approve || exit 1
+        plan=$(ls -1 $INPUTS.task_dir/??-plan-*.md $INPUTS.task_dir/??-structure-outline-*.md 2>/dev/null | sort | tail -1)
+        test -n "$plan" || exit 1
+        awk '
+          /^[[:space:]]*```/ { infence = !infence; next }
+          infence { next }
+          /^## (Phase|Step) [0-9]+/ { inphase = 1; next }
+          /^## / { inphase = 0; next }
+          inphase && /^[[:space:]]*- \[ \]/ { open = 1 }
+          END { exit open ? 1 : 0 }
+        ' "$plan"
+      nodes:
+        - id: implement-phase
+          bash: |
+            set -eu
+            v1=$LOOP_PREV.gate.output.decision
+            v2=$LOOP_PREV.gate.output.text
+            { prompt=$(cat); } <<DELIVERY_PROMPT
+            Reviewer decision and feedback from the previous pass (both empty on the first pass):
+            decision: ${v1}
+            feedback: ${v2}
+
+            When the decision above is empty or approve, read and follow ${INPUTS_SKILLS_DIR}/${INPUTS_SKILL}/SKILL.md, the installed \`${INPUTS_SKILL}\` skill, for task directory ${INPUTS_TASK_DIR}: implement the first incomplete phase of the newest plan or outline, tick its boxes, write its receipt, commit with explicit paths, and stop after that one phase.
+            When the decision is reject, read and follow ${INPUTS_SKILLS_DIR}/iterate-implementation/SKILL.md, the installed \`iterate-implementation\` skill, for task directory ${INPUTS_TASK_DIR}, applying the feedback to the implemented work; do not start the next phase.
+
+            The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
+            DELIVERY_PROMPT
+            omp -p --auto-approve --no-session --max-time=45m "$prompt"
+
+        # One review pass per phase when asked (not a nested loop: Archon 0.10 does not run the body of a
+        # loop_group nested in a loop_group body). The pack's final review loop still runs until clean.
+        - id: review-phase
+          depends_on: [implement-phase]
+          when: "$INPUTS.review == 'true'"
+          bash: |
+            set -eu
+            { prompt=$(cat); } <<DELIVERY_PROMPT
+            Read and follow ${INPUTS_SKILLS_DIR}/review-code/SKILL.md, the installed \`review-code\` skill, for task directory ${INPUTS_TASK_DIR}. Review the diff of the implementation phase just completed against the merge target.
+
+            The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. After saving the code-review artifact, answer with only the JSON object below, where status is the artifact's frontmatter \`status\` and artifact is its file name.
+
+            CRITICAL: Respond with ONLY a JSON object matching this schema (JSON Schema, written as YAML). No prose before or after it.
+            type: object
+            properties:
+              status: { type: string, enum: [clean, findings, blocked] }
+              artifact: { type: string }
+              summary: { type: string }
+            required: [status, artifact, summary]
+            DELIVERY_PROMPT
+            answer=$(omp -p --auto-approve --no-session --max-time=45m "$prompt")
+            printf '%s\n' "$answer" | awk '
+              /^[[:space:]]*```/ { next }
+              { n++; line[n] = $0 }
+              !start && /^[[:space:]]*\{/ { start = n }
+              /\}[[:space:]]*$/ { end = n }
+              END { if (!start || end < start) { start = 1; end = n }; for (i = start; i <= end; i++) print line[i] }
+            '
+
+        - id: fix-phase
+          depends_on: [review-phase]
+          when: "$review-phase.output.status == 'findings'"
+          bash: |
+            set -eu
+            v1=$review-phase.output.artifact
+            { prompt=$(cat); } <<DELIVERY_PROMPT
+            Read and follow ${INPUTS_SKILLS_DIR}/fix-code-review/SKILL.md, the installed \`fix-code-review\` skill, for task directory ${INPUTS_TASK_DIR}, fixing every finding in the code-review artifact ${v1}. Advisories included.
+
+            The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
+            DELIVERY_PROMPT
+            omp -p --auto-approve --no-session --max-time=45m "$prompt"
+
+        - id: gate
+          depends_on: [implement-phase, review-phase, fix-phase]
+          trigger_rule: none_failed_min_one_success
+          approval:
+            message: >-
+              Implementation phase done; its receipt is the newest implementation artifact in
+              $INPUTS.task_dir. Approve to continue with the next phase (or to finish when none remains),
+              or request changes with what should change before the next phase.
+            decisions:
+              - { id: approve, label: Approve }
+              - { id: reject, label: Request changes }
+
+  # Unattended branch: the same body without the pause; the plan's boxes are the only completion
+  # channel.
+  - id: phases-auto
+    when: "$INPUTS.gate != 'true'"
+    loop_group:
+      fresh_context: true
+      max_iterations: 16
+      until_bash: |
+        plan=$(ls -1 $INPUTS.task_dir/??-plan-*.md $INPUTS.task_dir/??-structure-outline-*.md 2>/dev/null | sort | tail -1)
+        test -n "$plan" || exit 1
+        awk '
+          /^[[:space:]]*```/ { infence = !infence; next }
+          infence { next }
+          /^## (Phase|Step) [0-9]+/ { inphase = 1; next }
+          /^## / { inphase = 0; next }
+          inphase && /^[[:space:]]*- \[ \]/ { open = 1 }
+          END { exit open ? 1 : 0 }
+        ' "$plan"
+      nodes:
+        - id: implement-phase-auto
+          bash: |
+            set -eu
+            { prompt=$(cat); } <<DELIVERY_PROMPT
+            Read and follow ${INPUTS_SKILLS_DIR}/${INPUTS_SKILL}/SKILL.md, the installed \`${INPUTS_SKILL}\` skill, for task directory ${INPUTS_TASK_DIR}: implement the first incomplete phase of the newest plan or outline, tick its boxes, write its receipt, commit with explicit paths, and stop after that one phase.
+
+            The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
+            DELIVERY_PROMPT
+            omp -p --auto-approve --no-session --max-time=45m "$prompt"
+
+        - id: review-phase-auto
+          depends_on: [implement-phase-auto]
+          when: "$INPUTS.review == 'true'"
+          bash: |
+            set -eu
+            { prompt=$(cat); } <<DELIVERY_PROMPT
+            Read and follow ${INPUTS_SKILLS_DIR}/review-code/SKILL.md, the installed \`review-code\` skill, for task directory ${INPUTS_TASK_DIR}. Review the diff of the implementation phase just completed against the merge target.
+
+            The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. After saving the code-review artifact, answer with only the JSON object below, where status is the artifact's frontmatter \`status\` and artifact is its file name.
+
+            CRITICAL: Respond with ONLY a JSON object matching this schema (JSON Schema, written as YAML). No prose before or after it.
+            type: object
+            properties:
+              status: { type: string, enum: [clean, findings, blocked] }
+              artifact: { type: string }
+              summary: { type: string }
+            required: [status, artifact, summary]
+            DELIVERY_PROMPT
+            answer=$(omp -p --auto-approve --no-session --max-time=45m "$prompt")
+            printf '%s\n' "$answer" | awk '
+              /^[[:space:]]*```/ { next }
+              { n++; line[n] = $0 }
+              !start && /^[[:space:]]*\{/ { start = n }
+              /\}[[:space:]]*$/ { end = n }
+              END { if (!start || end < start) { start = 1; end = n }; for (i = start; i <= end; i++) print line[i] }
+            '
+
+        - id: fix-phase-auto
+          depends_on: [review-phase-auto]
+          when: "$review-phase-auto.output.status == 'findings'"
+          bash: |
+            set -eu
+            v1=$review-phase-auto.output.artifact
+            { prompt=$(cat); } <<DELIVERY_PROMPT
+            Read and follow ${INPUTS_SKILLS_DIR}/fix-code-review/SKILL.md, the installed \`fix-code-review\` skill, for task directory ${INPUTS_TASK_DIR}, fixing every finding in the code-review artifact ${v1}. Advisories included.
+
+            The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
+            DELIVERY_PROMPT
+            omp -p --auto-approve --no-session --max-time=45m "$prompt"

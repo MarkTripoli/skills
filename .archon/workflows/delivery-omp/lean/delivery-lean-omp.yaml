@@ -1,0 +1,150 @@
+name: delivery-lean-omp
+description: |
+  Take a bounded change with a clear shape from request to pull request: research questions,
+  research, structure outline (gate), implementation one step per fresh session (gate after each),
+  review loop until clean, pull request description (gate). No design discussion; the outline is the
+  plan. Every phase runs in a fresh session and reads only the task directory; artifacts are
+  committed on the branch. The `gates` input picks which pauses happen: `--input gates=none` runs
+  unattended, `--input gates=outline,pr` pauses only there.
+
+  Use when: the shape is clear but several files and an ordering are involved, for example "add a --json flag
+  across the CLI", "wire the new setting through config, CLI, and docs".
+  NOT for: competing designs or changed interfaces (delivery-full), a bug with a reproduction
+  (delivery-bugfix), an open requirement (delivery-prd), or a fully specified small change
+  (delivery-oneshot).
+  Oh My Pi flavor: every AI phase runs in `omp -p`; deterministic nodes, gates, and loops are unchanged.
+
+interactive: true
+
+inputs:
+  skills_dir:
+    default: ~/.agents/skills
+    description: Directory holding the installed skills, one `<name>/SKILL.md` each.
+  task_dir:
+    default: ""
+    description: Reuse this existing task directory (an epic child, or one created by hand) instead of creating one.
+  review_each_phase:
+    default: "false"
+    description: Set to true to run a review pass after every implementation step, not only at the end.
+  gates:
+    default: all
+    description: "Human gates to keep: `all`, `none`, or a comma-separated subset of outline, phases, pr."
+
+# `*-done` nodes commit the phase's artifacts and keep loop bodies runnable between includes; see
+# delivery-full for why.
+nodes:
+  - id: task
+    include: delivery-task-omp
+    with:
+      skills_dir: $INPUTS.skills_dir
+      workflow: lean
+      task_dir: $INPUTS.task_dir
+
+  - id: gates
+    depends_on: [task]
+    bash: |
+      set -eu
+      names="outline phases pr"
+      requested=$(printf '%s' "${INPUTS_GATES:-all}" | tr -d ' ')
+      case "$requested" in
+        all|'') on="$names" ;;
+        none) on="" ;;
+        *)
+          on=""
+          for g in $(printf '%s' "$requested" | tr ',' ' '); do
+            case " $names " in
+              *" $g "*) on="$on $g" ;;
+              *) printf 'gates: unknown gate "%s"; use all, none, or a comma-separated subset of: %s\n' "$g" "$names" >&2; exit 1 ;;
+            esac
+          done ;;
+      esac
+      out=""
+      for name in $names; do
+        case " $on " in *" $name "*) v=true ;; *) v=false ;; esac
+        out="$out${out:+,}\"$name\":\"$v\""
+      done
+      printf '{%s}\n' "$out"
+    output_format:
+      type: object
+      properties:
+        outline: { type: string }
+        phases: { type: string }
+        pr: { type: string }
+      required: [outline, phases, pr]
+
+  - id: research
+    include: delivery-research-omp
+    depends_on: [task, gates]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+
+  - id: research-done
+    depends_on: [research]
+    bash: |
+      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): research artifacts")
+
+  - id: outline
+    include: delivery-gate-phase-omp
+    depends_on: [research-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: create-structure-outline
+      iterate: iterate-structure-outline
+      label: the structure outline
+      gate: $gates.output.outline
+
+  - id: outline-done
+    depends_on: [outline]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): outline artifacts")
+
+  - id: implement
+    include: delivery-implement-omp
+    depends_on: [outline-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: implement-outline
+      review: $INPUTS.review_each_phase
+      gate: $gates.output.phases
+
+  - id: implement-done
+    depends_on: [implement]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): implement artifacts")
+
+  - id: review
+    include: delivery-review-omp
+    depends_on: [implement-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+
+  - id: review-done
+    depends_on: [review]
+    bash: |
+      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): review artifacts")
+
+  - id: pr
+    include: delivery-gate-phase-omp
+    depends_on: [review-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: describe-pr
+      iterate: describe-pr
+      label: the pull request description
+      gate: $gates.output.pr
+
+  # describe-pr pushes before this join runs, so the join pushes its own commit when the branch has an
+  # upstream.
+  - id: pr-done
+    depends_on: [pr]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): pr artifacts")
+      if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then git push -q; fi

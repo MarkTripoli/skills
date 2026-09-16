@@ -1,0 +1,9 @@
+# gate=false, review=true: the per-phase review runs after the phase and its findings are fixed.
+implement-phase-auto: "phase implemented"
+review-phase-auto: '{"status":"findings","artifact":"05-code-review-fixture.md","summary":"one finding"}'
+fix-phase-auto: "finding fixed"
+fixture:
+  expect: completed
+  inputs: { task_dir: .agents/tasks/fixture, gate: "false", review: "true" }
+  reached: [implement-phase-auto, review-phase-auto, fix-phase-auto, phases-auto]
+exec-code: false

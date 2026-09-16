@@ -1,0 +1,7 @@
+# gate=false: the `phases-auto` loop runs a phase with no gate.
+implement-phase-auto: "phase implemented"
+fixture:
+  expect: completed
+  inputs: { task_dir: .agents/tasks/fixture, gate: "false" }
+  reached: [implement-phase-auto, phases-auto]
+exec-code: false

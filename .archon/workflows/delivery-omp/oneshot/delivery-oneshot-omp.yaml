@@ -1,0 +1,109 @@
+name: delivery-oneshot-omp
+description: |
+  Implement a fully specified small change in one fresh session, review the diff until clean, and
+  write the pull request description (gate). No research, no plan: task.md is the whole
+  specification. Artifacts are committed on the branch. The `gates` input picks whether the pull
+  request pause happens: `--input gates=none` runs unattended.
+
+  Use when: a small change with a stated expected behavior, a way to verify it, no design choice,
+  and a small footprint, for example "rename the flag", "add the missing null check and a test", "bump the
+  timeout and document it".
+  NOT for: a bug you have not reproduced (delivery-bugfix), several files with an ordering
+  (delivery-lean), or anything with a design choice (delivery-full).
+  Oh My Pi flavor: every AI phase runs in `omp -p`; deterministic nodes, gates, and loops are unchanged.
+
+interactive: true
+
+inputs:
+  skills_dir:
+    default: ~/.agents/skills
+    description: Directory holding the installed skills, one `<name>/SKILL.md` each.
+  task_dir:
+    default: ""
+    description: Reuse this existing task directory (an epic child, or one created by hand) instead of creating one.
+  gates:
+    default: all
+    description: "Human gates to keep: `all`, `none`, or `pr` (the only gate)."
+
+# `*-done` nodes commit the phase's artifacts and keep loop bodies runnable between includes; see
+# delivery-full for why.
+nodes:
+  - id: task
+    include: delivery-task-omp
+    with:
+      skills_dir: $INPUTS.skills_dir
+      workflow: oneshot
+      task_dir: $INPUTS.task_dir
+
+  - id: gates
+    depends_on: [task]
+    bash: |
+      set -eu
+      names="pr"
+      requested=$(printf '%s' "${INPUTS_GATES:-all}" | tr -d ' ')
+      case "$requested" in
+        all|'') on="$names" ;;
+        none) on="" ;;
+        *)
+          on=""
+          for g in $(printf '%s' "$requested" | tr ',' ' '); do
+            case " $names " in
+              *" $g "*) on="$on $g" ;;
+              *) printf 'gates: unknown gate "%s"; use all, none, or a comma-separated subset of: %s\n' "$g" "$names" >&2; exit 1 ;;
+            esac
+          done ;;
+      esac
+      out=""
+      for name in $names; do
+        case " $on " in *" $name "*) v=true ;; *) v=false ;; esac
+        out="$out${out:+,}\"$name\":\"$v\""
+      done
+      printf '{%s}\n' "$out"
+    output_format:
+      type: object
+      properties:
+        pr: { type: string }
+      required: [pr]
+
+  - id: implement
+    depends_on: [task, gates]
+    bash: |
+      set -eu
+      v1=$task.output.task_dir
+      v2=$task.output.skills_dir
+      { prompt=$(cat); } <<DELIVERY_PROMPT
+      Complete the task in ${v1}/task.md end to end: implement it, run the narrowest checks that prove it, and commit the code with explicit paths (never \`git add -A\`); anything you write under ${v1} goes in its own \`docs(task): implement artifacts\` commit. Follow the commit conventions in ${v2}/ci-commit/SKILL.md for the message. Do not open a pull request. End with a short summary of what changed and how it was verified.
+      DELIVERY_PROMPT
+      omp -p --auto-approve --no-session --max-time=45m "$prompt"
+
+  - id: review
+    include: delivery-review-omp
+    depends_on: [implement]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+
+  - id: review-done
+    depends_on: [review]
+    bash: |
+      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): review artifacts")
+
+  - id: pr
+    include: delivery-gate-phase-omp
+    depends_on: [review-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: describe-pr
+      iterate: describe-pr
+      label: the pull request description
+      gate: $gates.output.pr
+
+  # describe-pr pushes before this join runs, so the join pushes its own commit when the branch has an
+  # upstream.
+  - id: pr-done
+    depends_on: [pr]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): pr artifacts")
+      if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then git push -q; fi

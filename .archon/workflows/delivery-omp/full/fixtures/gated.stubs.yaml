@@ -1,0 +1,19 @@
+# Default gates: every gate-phase include takes its gated `cycle` branch, the implement include its
+# gated `phases` loop, and every join runs. The `once`/`phases-auto` twins are skipped.
+task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills"}'
+gates: '{"design":"true","plan":"true","phases":"true","pr":"true"}'
+research__questions: "research questions saved"
+research__research: "research saved"
+phase: "artifact saved"
+implement-phase: "phase implemented"
+review-code: '{"status":"clean","artifact":"05-code-review-fixture.md","summary":"clean"}'
+research-done: ""
+design-done: ""
+plan-done: ""
+implement-done: ""
+review-done: ""
+pr-done: ""
+fixture:
+  expect: completed
+  reached: [gates, research-done, design__cycle, design-done, plan__cycle, plan-done, implement__phases, implement-phase, implement-done, review__loop, review-done, pr__cycle, pr-done]
+exec-code: false

@@ -1,0 +1,170 @@
+name: delivery-full-omp
+description: |
+  Take a change that needs research and a design decision from request to pull request: research
+  questions, research, design discussion (gate), plan (gate), implementation one phase per fresh
+  session (gate after each), review loop until clean, pull request description (gate). Every phase
+  runs in a fresh session and reads only the task directory; artifacts are the memory and are
+  committed on the branch. The `gates` input picks which pauses happen: `--input gates=none` runs
+  unattended, `--input gates=plan,pr` pauses only there.
+
+  Use when: competing approaches, cross-module impact, migrations, a new or changed interface others
+  depend on, or the user asks for a design review, for example "design and build X", "add an API for Y".
+  NOT for: a bug with a reproduction (delivery-bugfix), a bounded change with a clear shape
+  (delivery-lean), an open requirement (delivery-prd), or a fully specified small change
+  (delivery-oneshot).
+  Oh My Pi flavor: every AI phase runs in `omp -p`; deterministic nodes, gates, and loops are unchanged.
+
+interactive: true
+
+inputs:
+  skills_dir:
+    default: ~/.agents/skills
+    description: Directory holding the installed skills, one `<name>/SKILL.md` each.
+  task_dir:
+    default: ""
+    description: Reuse this existing task directory (an epic child, or one created by hand) instead of creating one.
+  review_each_phase:
+    default: "false"
+    description: Set to true to run the review loop after every implementation phase, not only at the end.
+  gates:
+    default: all
+    description: "Human gates to keep: `all`, `none`, or a comma-separated subset of design, plan, phases, pr."
+
+# The `*-done` nodes do two jobs: they commit the phase's artifacts, and they keep every loop body
+# runnable (Archon 0.10 drops a loop_group's body when the group belongs to an include whose dependency
+# is another include). A join after a gated include needs `none_failed_min_one_success`: one of the
+# include's two branches is always skipped. See workflows/delivery.md, Archon notes.
+nodes:
+  - id: task
+    include: delivery-task-omp
+    with:
+      skills_dir: $INPUTS.skills_dir
+      workflow: full
+      task_dir: $INPUTS.task_dir
+
+  - id: gates
+    depends_on: [task]
+    bash: |
+      set -eu
+      names="design plan phases pr"
+      requested=$(printf '%s' "${INPUTS_GATES:-all}" | tr -d ' ')
+      case "$requested" in
+        all|'') on="$names" ;;
+        none) on="" ;;
+        *)
+          on=""
+          for g in $(printf '%s' "$requested" | tr ',' ' '); do
+            case " $names " in
+              *" $g "*) on="$on $g" ;;
+              *) printf 'gates: unknown gate "%s"; use all, none, or a comma-separated subset of: %s\n' "$g" "$names" >&2; exit 1 ;;
+            esac
+          done ;;
+      esac
+      out=""
+      for name in $names; do
+        case " $on " in *" $name "*) v=true ;; *) v=false ;; esac
+        out="$out${out:+,}\"$name\":\"$v\""
+      done
+      printf '{%s}\n' "$out"
+    output_format:
+      type: object
+      properties:
+        design: { type: string }
+        plan: { type: string }
+        phases: { type: string }
+        pr: { type: string }
+      required: [design, plan, phases, pr]
+
+  - id: research
+    include: delivery-research-omp
+    depends_on: [task, gates]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+
+  - id: research-done
+    depends_on: [research]
+    bash: |
+      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): research artifacts")
+
+  - id: design
+    include: delivery-gate-phase-omp
+    depends_on: [research-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: create-design-discussion
+      iterate: iterate-design-discussion
+      label: the design discussion
+      gate: $gates.output.design
+
+  - id: design-done
+    depends_on: [design]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): design artifacts")
+
+  - id: plan
+    include: delivery-gate-phase-omp
+    depends_on: [design-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: create-plan
+      iterate: iterate-plan
+      label: the plan
+      gate: $gates.output.plan
+
+  - id: plan-done
+    depends_on: [plan]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): plan artifacts")
+
+  - id: implement
+    include: delivery-implement-omp
+    depends_on: [plan-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: implement-plan
+      review: $INPUTS.review_each_phase
+      gate: $gates.output.phases
+
+  - id: implement-done
+    depends_on: [implement]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): implement artifacts")
+
+  - id: review
+    include: delivery-review-omp
+    depends_on: [implement-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+
+  - id: review-done
+    depends_on: [review]
+    bash: |
+      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): review artifacts")
+
+  - id: pr
+    include: delivery-gate-phase-omp
+    depends_on: [review-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: describe-pr
+      iterate: describe-pr
+      label: the pull request description
+      gate: $gates.output.pr
+
+  # describe-pr pushes before this join runs, so the join pushes its own commit when the branch has an
+  # upstream.
+  - id: pr-done
+    depends_on: [pr]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): pr artifacts")
+      if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then git push -q; fi

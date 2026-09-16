@@ -1,0 +1,7 @@
+# A blocked review cancels the run.
+review-code: '{"status":"blocked","artifact":"05-code-review-fixture.md","summary":"cannot build"}'
+fixture:
+  expect: cancelled
+  inputs: { task_dir: .agents/tasks/fixture }
+  reached: [review-code, review-blocked]
+exec-code: false
