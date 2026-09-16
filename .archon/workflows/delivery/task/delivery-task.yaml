@@ -38,7 +38,8 @@ nodes:
         printf '{"task_dir":"%s","skills_dir":"%s"}\n' "${existing%/}" "$skills_dir"
         exit 0
       fi
-      request=$(printf '%s' "$ARGUMENTS" | sed -e 's/\r$//')
+      request=$(printf '%s' "${ARGUMENTS:-}" | sed -e 's/\r$//')
+      [ -n "$(printf '%s' "$request" | tr -d '[:space:]')" ] || printf 'warning: no request text (the slug falls back to "task"); pass the request as the run message or --input task_dir=<existing task directory>\n' >&2
       first=$(printf '%s\n' "$request" | sed -n '1p')
       slug=$(printf '%s' "$first" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9 -]/ /g' -e 's/-/ /g' \
         | tr -s ' ' '\n' | sed '/^$/d' | grep -v -x -E 'a|an|the|to|of|for|in|on|and|or|with|that|this|add|make|create|please|fix|bug' \

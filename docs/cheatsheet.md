@@ -50,7 +50,7 @@ Gates are fixed per run (`--input` and `--resume` are mutually exclusive); to ad
 
 ## Where things go
 
-`.agents/tasks/<slug>/` is committed on the run's branch: `task.md` as `docs(task): open <slug>`, each phase's artifacts as `docs(task): <phase> artifacts` (`research`, `design`, `outline`, `prd`, `tdd`, `plan`, `implement`, `review`, `reproduce`, `pr`, `review-round`).
+`.agents/tasks/<slug>/` is committed on the run's branch: `task.md` as `docs(task): open <slug>`, each phase's artifacts as `docs(task): <phase> artifacts` (`research`, `design`, `outline`, `prd`, `tdd`, `plan`, `implement`, `review`, `reproduce`, `fix`, `pr`, `review-round`).
 
 Slug: the request's first line, lower-cased, punctuation and hyphens to spaces, stop words dropped (`a an the to of for in on and or with that this add make create please fix bug`), first four words, `-2` when the directory exists: "Missing config file: the CLI exits 0; ..." gives `missing-config-file-cli`, "Add a plugin system for output formatters" gives `plugin-system-output-formatters`.
 

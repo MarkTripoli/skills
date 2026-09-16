@@ -40,5 +40,5 @@ nodes:
   - id: round-done
     depends_on: [round]
     bash: |
-      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): review-round artifacts")
+      git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): review-round artifacts" -- .agents/tasks)
       if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then git push -q; fi

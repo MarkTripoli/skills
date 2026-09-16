@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync } from "node:child_process";
 import { bashForPrompt, build, convert, listNative, NATIVE_DIR, OMP_DIR } from "../scripts/build-packs.mjs";
 
-const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 // The first archon on PATH that is 0.10 or later; the dry-run tests skip without one.
 function archonBinary() {
@@ -34,7 +35,9 @@ test("bashForPrompt: refs are hoisted unquoted, inputs read from INPUTS_* env, e
   const body = lines.slice(4, -2).join("\n");
   assert.ok(body.includes("${v1} and ${v2}"));
   assert.ok(body.includes("\\`${INPUTS_SKILLS_DIR}/${INPUTS_SKILL}/SKILL.md\\`"), "inputs come from the environment, backticks are escaped");
-  assert.ok(body.includes("${INPUTS_TASK_DIR}; user: $LOOP_USER_INPUT; cost \\$5; a \\\\ backslash"));
+  assert.ok(body.includes("${INPUTS_TASK_DIR}; user: ${LOOP_USER_INPUT:-}; cost \\$5; a \\\\ backslash"), "engine variables default to empty under set -u");
+  assert.throws(() => bashForPrompt(["fine", "DELIVERY_PROMPT", "fine"]), /close the heredoc early/);
+  assert.throws(() => convert(["nodes:", "  - id: b", "    prompt: |", "      Do it.", "    depends_on: [a]", "    output_format:", "      type: object", ""].join("\n")), /output_format must directly follow the prompt block/);
   assert.equal(lines.at(-1), 'omp -p --auto-approve --no-session --max-time=45m "$prompt"');
   // The heredoc opens and closes with the same marker and nothing in the prompt can close it early.
   assert.equal(lines[3], "{ prompt=$(cat); } <<DELIVERY_PROMPT");
@@ -268,7 +271,13 @@ function fixture() {
   return dir;
 }
 
-const ARCHON_ENV = { ...process.env, DO_NOT_TRACK: "1" };
+// Every Archon invocation runs under a scratch HOME, so its database, config, and workspace registry
+// never touch the developer's ~/.archon; the directory goes when the process exits.
+const ARCHON_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "skills-archon-home-"));
+// exec-code fixtures commit inside Archon's own scratch worktree, where only $HOME/.gitconfig supplies an identity.
+fs.writeFileSync(path.join(ARCHON_HOME, ".gitconfig"), "[user]\n\tname = T\n\temail = t@example.com\n[commit]\n\tgpgsign = false\n");
+process.on("exit", () => fs.rmSync(ARCHON_HOME, { recursive: true, force: true }));
+const ARCHON_ENV = { ...process.env, DO_NOT_TRACK: "1", HOME: ARCHON_HOME };
 
 function dryRun(cwd, name, message, extra = []) {
   const result = spawnSync(ARCHON, ["workflow", "run", name, "--cwd", cwd, "--dry-run", "--exec-code", "--default-stubs", "--json", ...extra, message], {
@@ -323,7 +332,7 @@ test("archon: every pack loads without warnings and dry-runs gated and unattende
     const full = dryRun(cwd, "delivery-full", "Add a --verbose flag to the CLI that prints each command");
     assert.equal(full.workflow, "delivery-full");
     assert.equal(full.outcome, "completed");
-    assert.equal(full.trace.find((t) => t.nodeId === "task__create").output, `{"task_dir":".agents/tasks/verbose-flag-cli-prints","skills_dir":"${os.homedir()}/.agents/skills"}`, "the default skills_dir is expanded from ~");
+    assert.equal(full.trace.find((t) => t.nodeId === "task__create").output, `{"task_dir":".agents/tasks/verbose-flag-cli-prints","skills_dir":"${ARCHON_HOME}/.agents/skills"}`, "the default skills_dir is expanded from ~");
     // The dry run delivers no INPUTS_* to the included task node, so `workflow:` is its default here; the
     // task-node tests above prove the field. The trace proves slug, title, body and the commit.
     assert.match(fs.readFileSync(path.join(cwd, ".agents", "tasks", "verbose-flag-cli-prints", "task.md"), "utf8"), /^---\nslug: verbose-flag-cli-prints\ntitle: Add a --verbose flag to the CLI that prints each command\nworkflow: [a-z]+\ncreated: \d{4}-\d{2}-\d{2}\n---\nAdd a --verbose flag/);

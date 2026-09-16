@@ -35,7 +35,7 @@ nodes:
       v1=$task.output.skills_dir
       v2=$task.output.task_dir
       { prompt=$(cat); } <<DELIVERY_PROMPT
-      Read and follow ${v1}/resolve-pr-reviews/SKILL.md, the installed \`resolve-pr-reviews\` skill, for task directory ${v2}. Request context: $ARGUMENTS
+      Read and follow ${v1}/resolve-pr-reviews/SKILL.md, the installed \`resolve-pr-reviews\` skill, for task directory ${v2}. Request context: ${ARGUMENTS:-}
 
       Nothing runs after this phase except a commit of the task directory; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
       DELIVERY_PROMPT
@@ -46,5 +46,5 @@ nodes:
   - id: round-done
     depends_on: [round]
     bash: |
-      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): review-round artifacts")
+      git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): review-round artifacts" -- .agents/tasks)
       if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then git push -q; fi

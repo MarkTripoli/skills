@@ -155,7 +155,7 @@ nodes:
             prev=$LOOP_PREV.attempt-count.output.attempt
             case "$prev" in ''|*[!0-9]*) prev=0 ;; esac
             status=$attempt-auto.output.status
-            git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): reproduce artifacts")
+            git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): reproduce artifacts" -- .agents/tasks)
             printf '{"status":"%s","attempt":%s}\n' "$status" "$((prev + 1))"
           output_format:
             type: object
@@ -173,7 +173,7 @@ nodes:
     depends_on: [reproduce, reproduce-auto, not-reproduced]
     trigger_rule: none_failed_min_one_success
     bash: |
-      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): reproduce artifacts")
+      git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): reproduce artifacts" -- .agents/tasks)
 
   - id: fix
     context: fresh
@@ -191,7 +191,7 @@ nodes:
   - id: review-done
     depends_on: [review]
     bash: |
-      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): review artifacts")
+      git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): review artifacts" -- .agents/tasks)
 
   - id: pr
     include: delivery-gate-phase
@@ -210,5 +210,5 @@ nodes:
     depends_on: [pr]
     trigger_rule: none_failed_min_one_success
     bash: |
-      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): pr artifacts")
+      git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): pr artifacts" -- .agents/tasks)
       if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then git push -q; fi

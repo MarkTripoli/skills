@@ -56,6 +56,8 @@ const JSON_FILTER = [
   "'",
 ];
 export function bashForPrompt(promptLines, schemaLines = []) {
+  const marker = promptLines.find((l) => l.trim() === HEREDOC);
+  if (marker !== undefined) throw new Error(`a prompt line reads "${HEREDOC}", which would close the heredoc early`);
   if (schemaLines.length) {
     promptLines = [...promptLines, "", "CRITICAL: Respond with ONLY a JSON object matching this schema (JSON Schema, written as YAML). No prose before or after it.", ...schemaLines];
   }
@@ -70,9 +72,11 @@ export function bashForPrompt(promptLines, schemaLines = []) {
     .replace(/`/g, "\\`")
     .replace(RUNTIME_REF, (ref) => `\u0000${nameFor(ref)}\u0000`)
     .replace(INPUT_REF, (_, name) => `\u0000INPUTS_${name.toUpperCase()}\u0000`)
-    // Any other dollar is literal text, except the engine's environment variables for user text.
-    .replace(/\$(?!LOOP_USER_INPUT\b|ARGUMENTS\b|USER_MESSAGE\b)/g, "\\$")
-    .replace(/\u0000([A-Za-z_0-9]+)\u0000/g, "$${$1}");
+    // Any other dollar is literal text, except the engine's environment variables for user text, which
+    // default to empty so `set -u` tolerates a run without a message.
+    .replace(/\$(LOOP_USER_INPUT|ARGUMENTS|USER_MESSAGE)\b/g, "\u0000$1:-\u0000")
+    .replace(/\$/g, "\\$")
+    .replace(/\u0000([A-Za-z_0-9:-]+)\u0000/g, "$${$1}");
   const assignments = [...vars.entries()].map(([ref, name]) => `${name}=${ref}`);
   const run = schemaLines.length ? [`answer=$(${OMP_COMMAND} "$prompt")`, ...JSON_FILTER] : [`${OMP_COMMAND} "$prompt"`];
   return ["set -eu", ...assignments, `{ prompt=$(cat); } <<${HEREDOC}`, ...body.split("\n"), HEREDOC, ...run];
@@ -137,7 +141,8 @@ export function convert(source) {
         j++;
       }
       while (promptLines.length && promptLines.at(-1) === "") promptLines.pop();
-      // An `output_format:` block right after the prompt moves into the prompt text.
+      // An `output_format:` block right after the prompt moves into the prompt text. Anywhere else in the
+      // node it would be dropped silently, so that is an error.
       const schemaLines = [];
       if (j < lines.length && lines[j] === `${prompt[1]}output_format:`) {
         let k = j + 1;
@@ -146,6 +151,12 @@ export function convert(source) {
           k++;
         }
         j = k;
+      } else {
+        const nodeStart = /^(\s*)- id: /.exec(lines[i - 1] ?? "") ? i - 1 : lines.slice(0, i).findLastIndex((l) => new RegExp(`^${" ".repeat(Math.max(keyIndent - 2, 0))}- id: `).test(l));
+        let k = j;
+        while (k < lines.length && !new RegExp(`^${" ".repeat(Math.max(keyIndent - 2, 0))}- id: `).test(lines[k]) && (lines[k].trim() === "" || indentOf(lines[k]) >= keyIndent)) k++;
+        const node = lines.slice(nodeStart, k);
+        if (node.some((l) => l === `${prompt[1]}output_format:`)) throw new Error(`${lines[nodeStart].trim()}: output_format must directly follow the prompt block so the generator can move it into the prompt`);
       }
       out.push(`${prompt[1]}bash: |`);
       for (const b of bashForPrompt(promptLines, schemaLines)) out.push(b === "" ? "" : `${" ".repeat(bodyIndent)}${b}`);

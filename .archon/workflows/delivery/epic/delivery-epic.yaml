@@ -80,7 +80,7 @@ nodes:
     depends_on: [plan]
     trigger_rule: none_failed_min_one_success
     bash: |
-      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): plan artifacts")
+      git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): plan artifacts" -- .agents/tasks)
 
   - id: start
     context: fresh
@@ -94,4 +94,4 @@ nodes:
   - id: start-done
     depends_on: [start]
     bash: |
-      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): open epic children")
+      git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): open epic children" -- .agents/tasks)

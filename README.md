@@ -22,10 +22,10 @@ npx github:MarkTripoli/skills
 
 | Flag or argument | Effect |
 |---|---|
-| `oh-my-pi pi`, `all`, `portable` | Pick targets; `portable` writes only the plain `~/.agents/skills/` copy |
+| `oh-my-pi pi`, `all`, `portable` | Pick targets; `portable` writes the plain `~/.agents/skills/` copy and the native packs |
 | `--project` | Install into the current repository instead of `~` |
 | `--dry-run`, `--yes` | Preview only; skip the confirmation |
-| `--uninstall` | Remove exactly what it wrote (Codex config block is marker-tracked) |
+| `--uninstall` | Remove what it wrote for the named targets (Codex config block is marker-tracked); the packs and the shared `~/.agents/skills/` copy go only with `all` or no target |
 
 | Runtime | Skills | Workers |
 |---|---|---|

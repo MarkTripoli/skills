@@ -84,7 +84,7 @@ nodes:
   - id: research-done
     depends_on: [research]
     bash: |
-      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): research artifacts")
+      git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): research artifacts" -- .agents/tasks)
 
   - id: design
     include: delivery-gate-phase
@@ -101,7 +101,7 @@ nodes:
     depends_on: [design]
     trigger_rule: none_failed_min_one_success
     bash: |
-      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): design artifacts")
+      git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): design artifacts" -- .agents/tasks)
 
   - id: plan
     include: delivery-gate-phase
@@ -118,7 +118,7 @@ nodes:
     depends_on: [plan]
     trigger_rule: none_failed_min_one_success
     bash: |
-      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): plan artifacts")
+      git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): plan artifacts" -- .agents/tasks)
 
   - id: implement
     include: delivery-implement
@@ -134,7 +134,7 @@ nodes:
     depends_on: [implement]
     trigger_rule: none_failed_min_one_success
     bash: |
-      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): implement artifacts")
+      git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): implement artifacts" -- .agents/tasks)
 
   - id: review
     include: delivery-review
@@ -146,7 +146,7 @@ nodes:
   - id: review-done
     depends_on: [review]
     bash: |
-      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): review artifacts")
+      git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): review artifacts" -- .agents/tasks)
 
   - id: pr
     include: delivery-gate-phase
@@ -165,5 +165,5 @@ nodes:
     depends_on: [pr]
     trigger_rule: none_failed_min_one_success
     bash: |
-      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): pr artifacts")
+      git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): pr artifacts" -- .agents/tasks)
       if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then git push -q; fi
