@@ -15,6 +15,21 @@ A task moves from request to merged pull request through phases. Each phase is o
 
 `setup-worktree` is skipped when the project already runs inside a worktree or `.agents/workspace.json` has `disabled: true`; the plan and outline skills detect this with the conventions' Worktree probe and hand off straight to the implementation skill.
 
+### Choosing a type
+
+`/start-task <request>` picks the type for you, or asks up to three questions when the request leaves it open, then creates the task and hands off to `/run-task @<task dir>`. Its routes, first match wins:
+
+| Route | When | Result |
+|---|---|---|
+| direct | a question, or a single edit whose location and content are already known | no task; ask for the change in the session |
+| `oneshot` | a bug fix or small change with a stated expected behavior and a way to verify it, no design choice | one session implements and commits, then `describe-pr` |
+| `lean` | the shape is clear but several files and an ordering are involved | the lean chain |
+| `full` | competing approaches, cross-module impact, migrations, changed interfaces | the full chain |
+| `prd` | the requirement itself is open, or the work is product-facing | the prd chain |
+| epic | several independently mergeable deliverables, or more than about eight plan phases | a parent task and `/create-epic-plan` |
+
+A type named in the request wins over the table. A request that names a code review or video proof gets `with: [review-code]`, `with: [record-evidence]`, or both.
+
 ## Phase table
 
 `run-task` uses this table to find the next command from the newest artifact and to decide where to stop. "Interactive" phases need the user in the loop for the whole session and never run in a subagent.
@@ -73,6 +88,7 @@ Two phases run only when the user asks for them, between implementation and the 
 ## Utilities
 
 - `ci-commit`: commit implementation work with explicit paths, excluding `.agents/tasks/`, and hand off to `describe-pr`.
+- `start-task`: route a request to a workflow type, `direct`, or an epic; create the task; hand off (see Choosing a type).
 - `show-me`: a focused diagram, code-shape sketch, or HTML artifact for the current explanation.
 - `record-evidence`: record narrated, annotated video proof of behavior on a screen, Android emulator, iOS simulator, or headless browser; compose devices side by side; the report and video are attached to the PR by hand, typically between implementation and `describe-pr`.
 - `configure-workspaces`: write `.agents/workspace.json` and `.agents/workspace.local.json`, which `setup-worktree` uses to create task worktrees.

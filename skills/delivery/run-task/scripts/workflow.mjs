@@ -9,7 +9,7 @@
 //   node workflow.mjs check-reply <file> [--expect <skill>] [--json]
 //   node workflow.mjs check-artifact <file> [--type <type>] [--json]
 //   node workflow.mjs probe [<project root>] [--json]
-//   node workflow.mjs create-task <project root> --workflow <type> "<request>"
+//   node workflow.mjs create-task <project root> --workflow <type> [--with <skill,...>] [--slug <slug>] "<request>"
 // Exit 0 on success; 1 with one issue per line on validation failure or usage error.
 
 import fs from "node:fs";
@@ -553,12 +553,17 @@ export function slugify(text, max = 4) {
   return picked.join("-") || "task";
 }
 
-export function createTask(projectRoot, { request, workflow = "full", slug = slugify(request), title = request.split(/\r?\n/)[0].slice(0, 120), created = new Date().toISOString().slice(0, 10) }) {
+// `with` lists optional phases (OPTIONAL_PHASES) written to task.md as `with: [a, b]`.
+export function createTask(projectRoot, { request, workflow = "full", with: withPhases = [], slug = slugify(request), title = request.split(/\r?\n/)[0].slice(0, 120), created = new Date().toISOString().slice(0, 10) }) {
   if (!TYPES.includes(workflow)) throw new Error(`workflow "${workflow}" is not one of ${TYPES.join(", ")}`);
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) throw new Error(`slug "${slug}" must be kebab-case`);
+  const unknown = withPhases.filter((s) => !OPTIONAL_PHASES.includes(s));
+  if (unknown.length) throw new Error(`optional phase "${unknown[0]}" is not one of ${OPTIONAL_PHASES.join(", ")}`);
   const taskDir = path.join(projectRoot, ".agents", "tasks", slug);
   if (fs.existsSync(path.join(taskDir, "task.md"))) throw new Error(`${taskDir}/task.md already exists`);
   fs.mkdirSync(taskDir, { recursive: true });
-  fs.writeFileSync(path.join(taskDir, "task.md"), `---\nslug: ${slug}\ntitle: ${title}\nworkflow: ${workflow}\ncreated: ${created}\n---\n${request.trim()}\n`);
+  const withLine = withPhases.length ? `with: [${withPhases.join(", ")}]\n` : "";
+  fs.writeFileSync(path.join(taskDir, "task.md"), `---\nslug: ${slug}\ntitle: ${title}\nworkflow: ${workflow}\ncreated: ${created}\n${withLine}---\n${request.trim()}\n`);
   const gitignore = path.join(projectRoot, ".gitignore");
   let gitignoreUpdated = false;
   if (fs.existsSync(gitignore)) {
@@ -629,8 +634,8 @@ function main(argv) {
       }
       case "create-task": {
         const request = positional[2];
-        if (!target || !request) throw new Error('usage: create-task <project root> --workflow <type> "<request>"');
-        const result = createTask(target, { request, workflow: typeof flags.workflow === "string" ? flags.workflow : "full" });
+        if (!target || !request) throw new Error('usage: create-task <project root> --workflow <type> [--with <skill,...>] [--slug <slug>] "<request>"');
+        const result = createTask(target, { request, workflow: typeof flags.workflow === "string" ? flags.workflow : "full", with: parseList(flags.with), ...(typeof flags.slug === "string" ? { slug: flags.slug } : {}) });
         out(json ? result : `${result.taskDir}${result.gitignoreUpdated ? "\n.gitignore: added .agents/tasks/" : ""}`);
         return 0;
       }

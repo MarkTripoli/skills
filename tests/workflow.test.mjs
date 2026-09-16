@@ -465,6 +465,14 @@ describe("createTask and slugify", () => {
     assert.equal(result.gitignoreUpdated, false);
     assert.equal(fs.existsSync(path.join(root, ".gitignore")), false);
   });
+
+  test("records optional phases that run-task reads back, and rejects unknown ones", () => {
+    const root = tmpdir();
+    const { taskDir } = wf.createTask(root, { request: "Add dark mode with a recorded demo", workflow: "lean", with: ["record-evidence", "review-code"] });
+    assert.deepEqual(wf.readTask(taskDir).with, ["record-evidence", "review-code"]);
+    assert.deepEqual(wf.nextCommand(taskDir).optional, ["review-code", "record-evidence"], "run-task orders optional phases as the workflow defines");
+    assert.throws(() => wf.createTask(root, { request: "Another one", with: ["polish"] }), /optional phase "polish" is not one of review-code, record-evidence/);
+  });
 });
 
 describe("worktreeProbe", () => {

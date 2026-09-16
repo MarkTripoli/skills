@@ -16,7 +16,7 @@ const rootIndex = args.indexOf("--root");
 const root = rootIndex === -1 ? repoRoot : path.resolve(args[rootIndex + 1] ?? "");
 const generated = root !== repoRoot;
 
-const EXPECTED_SKILL_COUNT = 37;
+const EXPECTED_SKILL_COUNT = 38;
 const SHARED_LINKS = {
   "shared/WRITING.md": "https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md",
   "shared/CONVENTIONS.md": "https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md",
@@ -78,7 +78,14 @@ const ANSWER_INVENTORY = {
   "setup-worktree/references/worktree_final_answer.md": "implement-plan",
   "show-me/references/show_me_final_answer.md": "show-me",
   "start-epic-delivery/references/epic_delivery_final_answer.md": "create-research-questions",
+  "start-task/references/route_direct_answer.md": "start-task",
+  "start-task/references/route_epic_answer.md": "create-epic-plan",
+  "start-task/references/route_task_answer.md": "run-task",
 };
+
+// Replies that end an exchange instead of handing to a phase: no fresh-session sentence. Every reply whose
+// fence names show-me is terminal by convention; these are terminal although their fence names another skill.
+const TERMINAL_ANSWERS = new Set(["start-task/references/route_direct_answer.md"]);
 
 const HUMAN_REVIEW_TEMPLATES = [
   "create-design-discussion/references/design_discussion_template.md",
@@ -170,7 +177,12 @@ function fillTemplate(input) {
     .replaceAll("{review_check}", "Review the named behavior and evidence.")
     .replaceAll("{known_limits}", "None.")
     .replaceAll("{completed_phase}", "1")
-    .replaceAll("{next_phase}", "2");
+    .replaceAll("{next_phase}", "2")
+    .replaceAll("{task_dir}", ".agents/tasks/task-slug")
+    .replaceAll("{workflow}", "lean")
+    .replaceAll("{reason}", "The shape is clear and it touches several files.")
+    .replaceAll("{with_note}", "")
+    .replaceAll("{first_command}", "/create-research-questions");
 }
 
 // Research answers carry `{next_command}`, filled per workflow type by the skill; render one per type.
@@ -247,7 +259,7 @@ for (const file of inventoryFiles) if (!answerFiles.includes(file)) fail(rel(ski
 const FRESH_SESSION_SENTENCE =
   "Start the next phase in a new session, or hand the task to `/run-task`; continuing in this session carries this phase's context into the next one.";
 
-function checkHandoff(content, expectedSkill, label) {
+function checkHandoff(content, expectedSkill, label, { terminal = expectedSkill === "show-me" } = {}) {
   const blocks = fences(content);
   if (blocks.length !== 1) return fail(label, 0, `expected exactly one fenced block, found ${blocks.length}`);
   const [block] = blocks;
@@ -259,7 +271,7 @@ function checkHandoff(content, expectedSkill, label) {
   if (match[1] !== expectedSkill) fail(label, 0, `fence names "${match[1]}", expected "${expectedSkill}"`);
   if (content.slice(block.end).trim() !== "") fail(label, 0, "nothing may follow the command fence");
   const sentences = content.split(FRESH_SESSION_SENTENCE).length - 1;
-  if (expectedSkill === "show-me") {
+  if (terminal) {
     if (sentences !== 0) fail(label, 0, "terminal replies must not carry the fresh-session sentence");
   } else if (sentences !== 1) {
     fail(label, 0, `must carry the fresh-session sentence exactly once before the fence (found ${sentences})`);
@@ -280,7 +292,7 @@ for (const [file, expected] of Object.entries(ANSWER_INVENTORY)) {
       checkHandoff(rendered, skill, `${rel(skillFile(file))} (${workflow})`);
     }
   } else {
-    checkHandoff(raw, expected, rel(skillFile(file)));
+    checkHandoff(raw, expected, rel(skillFile(file)), { terminal: expected === "show-me" || TERMINAL_ANSWERS.has(file) });
   }
 }
 
