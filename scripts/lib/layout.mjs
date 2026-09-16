@@ -1,7 +1,7 @@
 // Skill layout of this repository. A skill is a directory holding SKILL.md, either directly under
 // skills/ (a standalone skill) or one level deeper under a group directory (skills/<group>/<name>/)
 // that holds nothing but skills. Installs flatten to <install dir>/<name>/, so names are unique.
-// Repository tooling only; the installed run-task module never needs this.
+// Repository tooling only; nothing installed needs this.
 
 import fs from "node:fs";
 import path from "node:path";
