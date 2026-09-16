@@ -7,6 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { scanSkills } from "./lib/layout.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -174,26 +175,19 @@ function renderWorkflowVariant(input, workflow) {
   return input.replaceAll("{next_command}", `/${RESEARCH_VARIANTS[workflow]}`);
 }
 
-// 1. Layout.
+// 1. Layout: skills/<name>/ or skills/<group>/<name>/, names unique across groups.
 const skillsDir = path.join(root, "skills");
-if (!fs.existsSync(skillsDir)) {
-  fail(rel(skillsDir), 0, "missing skills/ directory");
-  report();
-}
-const skillEntries = fs.readdirSync(skillsDir, { withFileTypes: true });
-const skillNames = [];
-for (const entry of skillEntries) {
-  if (!entry.isDirectory()) {
-    fail(rel(path.join(skillsDir, entry.name)), 0, "skills/ must contain only skill directories");
-    continue;
-  }
-  if (!fs.existsSync(path.join(skillsDir, entry.name, "SKILL.md"))) {
-    fail(rel(path.join(skillsDir, entry.name)), 0, "missing SKILL.md");
-    continue;
-  }
-  skillNames.push(entry.name);
-}
-skillNames.sort();
+const layout = scanSkills(skillsDir);
+for (const problem of layout.problems) fail(rel(problem.path), 0, problem.message);
+if (!fs.existsSync(skillsDir)) report();
+const skillNames = layout.skills.map((s) => s.name);
+// Skill name -> directory; skill-relative paths (`<name>/references/x.md`) resolve through this map.
+const skillDirs = new Map(layout.skills.map((s) => [s.name, s.dir]));
+const skillFile = (skillRelative) => {
+  const [name, ...rest] = skillRelative.split("/");
+  const dir = skillDirs.get(name);
+  return dir ? path.join(dir, ...rest) : path.join(skillsDir, skillRelative);
+};
 if (skillNames.length !== EXPECTED_SKILL_COUNT) {
   fail("skills", 0, `expected ${EXPECTED_SKILL_COUNT} skills, found ${skillNames.length}`);
 }
@@ -201,7 +195,7 @@ const skillSet = new Set(skillNames);
 
 // 2-4. Frontmatter, shared links, reference files.
 for (const name of skillNames) {
-  const file = path.join(skillsDir, name, "SKILL.md");
+  const file = path.join(skillDirs.get(name), "SKILL.md");
   const content = read(file);
   const lines = content.split("\n");
   const fm = /^---\n([\s\S]*?)\n---\n/.exec(content);
@@ -230,7 +224,7 @@ for (const name of skillNames) {
 
   for (const match of content.matchAll(/references\/([A-Za-z0-9_.-]+)/g)) {
     const fileName = match[1].replace(/\.+$/, "");
-    const referenced = path.join(skillsDir, name, "references", fileName);
+    const referenced = path.join(skillDirs.get(name), "references", fileName);
     if (!fs.existsSync(referenced)) {
       const line = content.slice(0, match.index).split("\n").length;
       fail(rel(file), line, `references/${fileName} does not exist`);
@@ -238,14 +232,13 @@ for (const name of skillNames) {
   }
 }
 
-// 5. Answer templates.
-const answerFiles = listFiles(skillsDir)
-  .filter((file) => file.endsWith("answer.md"))
-  .map((file) => path.relative(skillsDir, file))
+// 5. Answer templates, keyed by skill-relative path (`<name>/references/<file>`).
+const answerFiles = layout.skills
+  .flatMap((s) => listFiles(s.dir).filter((file) => file.endsWith("answer.md")).map((file) => `${s.name}/${path.relative(s.dir, file)}`))
   .sort();
 const inventoryFiles = Object.keys(ANSWER_INVENTORY).sort();
-for (const file of answerFiles) if (!ANSWER_INVENTORY[file]) fail(`skills/${file}`, 0, "answer template missing from the declared inventory");
-for (const file of inventoryFiles) if (!answerFiles.includes(file)) fail(`skills/${file}`, 0, "declared answer template does not exist");
+for (const file of answerFiles) if (!ANSWER_INVENTORY[file]) fail(rel(skillFile(file)), 0, "answer template missing from the declared inventory");
+for (const file of inventoryFiles) if (!answerFiles.includes(file)) fail(rel(skillFile(file)), 0, "declared answer template does not exist");
 
 const FRESH_SESSION_SENTENCE =
   "Start the next phase in a new session, or hand the task to `/run-task`; continuing in this session carries this phase's context into the next one.";
@@ -270,40 +263,40 @@ function checkHandoff(content, expectedSkill, label) {
 }
 
 for (const [file, expected] of Object.entries(ANSWER_INVENTORY)) {
-  const full = path.join(skillsDir, file);
+  const full = skillFile(file);
   if (!fs.existsSync(full)) continue;
   const raw = fillTemplate(read(full));
   if (typeof expected === "object") {
     for (const [workflow, skill] of Object.entries(expected)) {
       const rendered = renderWorkflowVariant(raw, workflow);
       if (!rendered) {
-        fail(`skills/${file}`, 0, `missing workflow variant for ${workflow}`);
+        fail(rel(skillFile(file)), 0, `missing workflow variant for ${workflow}`);
         continue;
       }
-      checkHandoff(rendered, skill, `skills/${file} (${workflow})`);
+      checkHandoff(rendered, skill, `${rel(skillFile(file))} (${workflow})`);
     }
   } else {
-    checkHandoff(raw, expected, `skills/${file}`);
+    checkHandoff(raw, expected, rel(skillFile(file)));
   }
 }
 
 // 6. Human-review artifact templates.
 for (const file of HUMAN_REVIEW_TEMPLATES) {
-  const full = path.join(skillsDir, file);
+  const full = skillFile(file);
   if (!fs.existsSync(full)) {
-    fail(`skills/${file}`, 0, "human-review template missing");
+    fail(rel(skillFile(file)), 0, "human-review template missing");
     continue;
   }
   const content = read(full);
   for (const heading of ["## Human Review", "### Review targets", "### Verify", "### Known limits"]) {
     const count = content.split(`\n${heading}\n`).length - 1;
-    if (count !== 1) fail(`skills/${file}`, 0, `must contain exactly one "${heading}" heading (found ${count})`);
+    if (count !== 1) fail(rel(skillFile(file)), 0, `must contain exactly one "${heading}" heading (found ${count})`);
   }
 }
 
 // 7. Implementation templates.
 for (const skill of IMPLEMENTATION_SKILLS) {
-  const full = path.join(skillsDir, skill, "references", "implementation_template.md");
+  const full = skillFile(`${skill}/references/implementation_template.md`);
   if (!fs.existsSync(full)) continue;
   const content = read(full);
   const fm = /^---\n([\s\S]*?)\n---/.exec(content)?.[1] ?? "";
@@ -313,24 +306,24 @@ for (const skill of IMPLEMENTATION_SKILLS) {
 
 // 8. Human-gate and phase answers.
 for (const file of HUMAN_GATE_ANSWERS) {
-  const full = path.join(skillsDir, file);
+  const full = skillFile(file);
   if (!fs.existsSync(full)) continue;
   const content = read(full);
   const links = content.split("{artifact_link}").length - 1;
-  if (links !== 1) fail(`skills/${file}`, 0, `must contain {artifact_link} exactly once (found ${links})`);
-  if (!/^Check:$/m.test(content)) fail(`skills/${file}`, 0, "must contain a `Check:` line");
-  if (!/approval/.test(content)) fail(`skills/${file}`, 0, "must state that running the next command records approval");
-  if (!/reply with (the )?changes|\/iterate-/i.test(content)) fail(`skills/${file}`, 0, "must explain how to request changes");
+  if (links !== 1) fail(rel(skillFile(file)), 0, `must contain {artifact_link} exactly once (found ${links})`);
+  if (!/^Check:$/m.test(content)) fail(rel(skillFile(file)), 0, "must contain a `Check:` line");
+  if (!/approval/.test(content)) fail(rel(skillFile(file)), 0, "must state that running the next command records approval");
+  if (!/reply with (the )?changes|\/iterate-/i.test(content)) fail(rel(skillFile(file)), 0, "must explain how to request changes");
 }
 for (const file of PHASE_ANSWERS) {
-  const full = path.join(skillsDir, file);
+  const full = skillFile(file);
   if (!fs.existsSync(full)) continue;
   const content = read(full);
   const links = content.split("{artifact_link}").length - 1;
-  if (links !== 1) fail(`skills/${file}`, 0, `must contain {artifact_link} exactly once (found ${links})`);
-  if (!/^Check:$/m.test(content)) fail(`skills/${file}`, 0, "must contain a `Check:` line");
-  if (!/Deferred human evidence \(recorded, not executed\):/.test(content)) fail(`skills/${file}`, 0, "must record deferred human evidence");
-  if (/[Aa]pproved/.test(content)) fail(`skills/${file}`, 0, "phase answers must not carry approval wording");
+  if (links !== 1) fail(rel(skillFile(file)), 0, `must contain {artifact_link} exactly once (found ${links})`);
+  if (!/^Check:$/m.test(content)) fail(rel(skillFile(file)), 0, "must contain a `Check:` line");
+  if (!/Deferred human evidence \(recorded, not executed\):/.test(content)) fail(rel(skillFile(file)), 0, "must record deferred human evidence");
+  if (/[Aa]pproved/.test(content)) fail(rel(skillFile(file)), 0, "phase answers must not carry approval wording");
 }
 
 // 9. Banned tokens.
@@ -357,9 +350,16 @@ if (!fs.existsSync(workflowFile)) {
   fail("workflows/delivery.md", 0, "missing workflow document");
 } else {
   const content = read(workflowFile);
-  for (const name of skillNames) {
-    if (name.startsWith("agent-")) continue;
-    if (!content.includes(name)) fail("workflows/delivery.md", 0, `does not mention skill "${name}"`);
+  // Every skill in a group belongs to that group's workflow document; standalone skills need no mention.
+  for (const skill of layout.skills) {
+    if (skill.group !== "delivery" || skill.name.startsWith("agent-")) continue;
+    if (!content.includes(skill.name)) fail("workflows/delivery.md", 0, `does not mention skill "${skill.name}"`);
+  }
+  for (const skill of layout.skills) {
+    if (!skill.group || skill.group === "delivery") continue;
+    const doc = path.join(repoRoot, "workflows", `${skill.group}.md`);
+    if (!fs.existsSync(doc)) fail(`workflows/${skill.group}.md`, 0, `group skills/${skill.group}/ needs a workflow document`);
+    else if (!read(doc).includes(skill.name)) fail(`workflows/${skill.group}.md`, 0, `does not mention skill "${skill.name}"`);
   }
   if (!/^\| Skill \| Artifact type \| Next command \| Human gate \| Interactive \|$/m.test(content)) {
     fail("workflows/delivery.md", 0, "phase table must have the columns Skill, Artifact type, Next command, Human gate, Interactive");
@@ -369,9 +369,9 @@ if (!fs.existsSync(workflowFile)) {
 // 11. The phase table and the deterministic module agree: skill, artifact type, gate, interactive, and the
 // set of skills each phase's next() can hand off to over the whole decision space. The workflow-type
 // chain rows must equal the commands the module produces for a plain repository.
-const workflowModule = path.join(root, "skills", "run-task", "scripts", "workflow.mjs");
+const workflowModule = path.join(skillDirs.get("run-task") ?? path.join(skillsDir, "run-task"), "scripts", "workflow.mjs");
 if (!fs.existsSync(workflowModule)) {
-  fail("skills/run-task/scripts/workflow.mjs", 0, "run-task must ship its deterministic workflow module");
+  fail("skills/delivery/run-task/scripts/workflow.mjs", 0, "run-task must ship its deterministic workflow module");
 } else if (fs.existsSync(workflowFile)) {
   const { PHASES, TYPES, START_COMMAND, parseCommand } = await import(workflowModule);
   const doc = read(workflowFile);

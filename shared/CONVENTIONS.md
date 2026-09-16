@@ -111,7 +111,7 @@ Validate the subject before committing: it must match `^(feat|fix|refactor|perf|
 
 ## Child workers
 
-For a role `agent-<role>`, start a worker whose first instruction is to read and follow `skills/agent-<role>/SKILL.md` (or the installed skill of that name), give it the assignment text, wait for it, and read its final message. Verify its claims against the repository before using them.
+For a role `agent-<role>`, start a worker whose first instruction is to read and follow the installed `agent-<role>` skill's `SKILL.md` (in a checkout of the collection, `skills/delivery/agent-<role>/SKILL.md`), give it the assignment text, wait for it, and read its final message. Verify its claims against the repository before using them.
 
 The runtime section in an installed skill names the exact mechanism. When no subagent mechanism exists, perform the role inline and say so in the reply.
 

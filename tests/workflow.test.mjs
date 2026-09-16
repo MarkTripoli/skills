@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import * as wf from "../skills/run-task/scripts/workflow.mjs";
+import * as wf from "../skills/delivery/run-task/scripts/workflow.mjs";
 
 const { FRESH_SESSION_SENTENCE: FRESH } = wf;
 

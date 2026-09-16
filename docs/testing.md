@@ -14,7 +14,7 @@ The collection is tested at three depths. The first two cost no tokens and run i
 
 The workflow has two halves. The state machine (which command comes next, whether the last phase was a gate, which backend to use, what the status report says) is pure logic over files in `.agents/tasks/<slug>/`. The phase work (research, planning, implementation) needs a model.
 
-The state machine lives in code: `skills/run-task/scripts/workflow.mjs`, a dependency-free Node module that ships inside the `run-task` skill so an installed copy is self-contained. `run-task` calls it (`next`, `status`, `create-task`) instead of reasoning through the phase table, the simulator drives it, the eval harness grades with it, and a runtime plugin can import it. `scripts/validate.mjs` checks that its `PHASES` table and the human-readable table in `workflows/delivery.md` agree on every column: artifact type, gate, interactive, the set of skills each phase can hand off to (evaluated over every workflow type, worktree state, remaining-phase state, and review status), and the chain rows themselves, which are regenerated from the module for a plain repository and compared with the document.
+The state machine lives in code: `skills/delivery/run-task/scripts/workflow.mjs`, a dependency-free Node module that ships inside the `run-task` skill so an installed copy is self-contained. `run-task` calls it (`next`, `status`, `create-task`) instead of reasoning through the phase table, the simulator drives it, the eval harness grades with it, and a runtime plugin can import it. `scripts/validate.mjs` checks that its `PHASES` table and the human-readable table in `workflows/delivery.md` agree on every column: artifact type, gate, interactive, the set of skills each phase can hand off to (evaluated over every workflow type, worktree state, remaining-phase state, and review status), and the chain rows themselves, which are regenerated from the module for a plain repository and compared with the document.
 
 Only the phase work needs tokens, and only the eval layer spends them.
 
@@ -89,7 +89,7 @@ Treat eval results as measurements to compare across skill edits, models, and ru
 
 ## Adding a skill to the workflow
 
-1. Add the `PHASES` entry in `skills/run-task/scripts/workflow.mjs` (artifact type, gate, interactive, `next(ctx)`).
+1. Add the `PHASES` entry in `skills/delivery/run-task/scripts/workflow.mjs` (artifact type, gate, interactive, `next(ctx)`).
 2. Add the matching row in `workflows/delivery.md`; `npm run validate` fails until both agree.
 3. Add the artifact template and answer template under `references/`; the simulator's template mapping picks them up by the skill's type.
 4. Extend the relevant simulation scenario so the new phase appears in an observed chain.

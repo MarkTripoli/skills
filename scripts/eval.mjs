@@ -19,13 +19,23 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { PHASES, TYPES, createTask, listArtifacts, nextCommand, nextReplyNumber, parseCommand, parseFrontmatter, parseReply, predictNext, readTask, replyPath, validateArtifact, validateReply } from "../skills/run-task/scripts/workflow.mjs";
+import { PHASES, TYPES, createTask, listArtifacts, nextCommand, nextReplyNumber, parseCommand, parseFrontmatter, parseReply, predictNext, readTask, replyPath, validateArtifact, validateReply } from "../skills/delivery/run-task/scripts/workflow.mjs";
+import { skillDir } from "./lib/layout.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const casesDir = path.join(repoRoot, "eval", "cases");
 const chainsDir = path.join(repoRoot, "eval", "chains");
 const resultsDir = path.join(repoRoot, "eval", "results");
-const workflowScript = path.join(repoRoot, "skills", "run-task", "scripts", "workflow.mjs");
+const skillsRoot = path.join(repoRoot, "skills");
+const workflowScript = path.join(skillDir(skillsRoot, "run-task"), "scripts", "workflow.mjs");
+
+function findSkillDirSafe(name) {
+  try {
+    return skillDir(skillsRoot, name);
+  } catch {
+    return null;
+  }
+}
 const simulateScript = path.join(repoRoot, "scripts", "simulate.mjs");
 
 const DRIVERS = ["omp", "claude", "codex", "fake"];
@@ -224,8 +234,9 @@ function composePrompt(c, taskDir) {
   const nn = String(nextReplyNumber(taskDir)).padStart(2, "0");
   const replyFile = replyPath(taskDir, nn, skill);
   let prompt;
-  if (c.prompt) prompt = c.prompt.replaceAll("{repo}", repoRoot).replaceAll("{taskDir}", taskDir).replaceAll("{skill}", skill).replaceAll("{replyFile}", replyFile);
-  else prompt = `Read and follow ${repoRoot}/skills/${skill}/SKILL.md, the installed skill for /${skill}${argText}, for task directory ${taskDir}. When finished, also write your complete final reply (the message you print last, filled from the answer template, not the artifact) verbatim to ${replyFile}.`;
+  const skillPath = path.join(skillDir(skillsRoot, skill), "SKILL.md");
+  if (c.prompt) prompt = c.prompt.replaceAll("{repo}", repoRoot).replaceAll("{skillPath}", skillPath).replaceAll("{taskDir}", taskDir).replaceAll("{skill}", skill).replaceAll("{replyFile}", replyFile);
+  else prompt = `Read and follow ${skillPath}, the installed skill for /${skill}${argText}, for task directory ${taskDir}. When finished, also write your complete final reply (the message you print last, filled from the answer template, not the artifact) verbatim to ${replyFile}.`;
   if (c.feedback) prompt += `\n\nFeedback: ${c.feedback.replace(/\s+/g, " ").trim()}`;
   return { prompt, replyFile };
 }
@@ -233,7 +244,7 @@ function composePrompt(c, taskDir) {
 // The fake driver reads the prompt back the way an agent would, so a prompt that names the wrong
 // skill, task directory, argument, or reply file fails the run instead of being papered over.
 function parsePrompt(prompt) {
-  const skill = /\/skills\/([a-z0-9]+(?:-[a-z0-9]+)*)\/SKILL\.md/.exec(prompt)?.[1] ?? null;
+  const skill = /\/([a-z0-9]+(?:-[a-z0-9]+)*)\/SKILL\.md/.exec(prompt)?.[1] ?? null;
   const parsed = { skill, taskDir: null, arg: null, flags: [], replyFile: null, feedback: /^Feedback: (.+)$/m.exec(prompt)?.[1] ?? null };
   const inline = /for \/[a-z0-9-]+((?: (?:@|--)\S+)*), for task directory/.exec(prompt)?.[1];
   const quoted = /with arguments `([^`]*)`/.exec(prompt)?.[1];
@@ -562,8 +573,9 @@ const OPTIONAL_SECTION = /Include only when|Omit this section|Repeat (?:this|the
 // line says it may be omitted or repeated is optional. Null when no artifact template exists.
 function requiredSections(skill, type) {
   const creator = skill.startsWith("iterate-") ? (Object.entries(PHASES).find(([name, p]) => p.type === type && !name.startsWith("iterate-"))?.[0] ?? skill) : skill;
-  const dir = path.join(repoRoot, "skills", creator, "references");
-  if (!fs.existsSync(dir)) return null;
+  const creatorDir = findSkillDirSafe(creator);
+  const dir = creatorDir ? path.join(creatorDir, "references") : null;
+  if (!dir || !fs.existsSync(dir)) return null;
   const files = fs.readdirSync(dir).filter((f) => f.endsWith("_template.md"));
   const texts = files.map((f) => fs.readFileSync(path.join(dir, f), "utf8"));
   let index = texts.findIndex((t) => parseFrontmatter(t).data.type === type);

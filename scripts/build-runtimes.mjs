@@ -8,6 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { scanSkills } from "./lib/layout.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -96,17 +97,19 @@ fs.mkdirSync(path.join(dest, "skills"), { recursive: true });
 fs.mkdirSync(path.join(dest, "agents"), { recursive: true });
 
 const skillsDir = path.join(repoRoot, "skills");
-const skillNames = fs
-  .readdirSync(skillsDir, { withFileTypes: true })
-  .filter((entry) => entry.isDirectory())
-  .map((entry) => entry.name)
-  .sort();
+const layout = scanSkills(skillsDir);
+if (layout.problems.length) {
+  for (const problem of layout.problems) console.error(`${path.relative(repoRoot, problem.path)}: ${problem.message}`);
+  process.exit(1);
+}
+const skillNames = layout.skills.map((s) => s.name);
+const sourceOf = new Map(layout.skills.map((s) => [s.name, s.dir]));
 
 const snippet = [];
 let workers = 0;
 
 for (const name of skillNames) {
-  const source = path.join(skillsDir, name);
+  const source = sourceOf.get(name);
   const target = path.join(dest, "skills", name);
   fs.cpSync(source, target, { recursive: true, filter: (src) => path.basename(src) !== ".DS_Store" });
 

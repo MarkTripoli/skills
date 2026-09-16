@@ -48,7 +48,6 @@ A task moves from request to merged pull request through phases. Each phase is o
 | resolve-pr-reviews | pr-review | /resolve-pr-reviews until the pull request is approved | yes | no |
 | ci-commit | commit | /describe-pr | no | no |
 | review-artifact-comments | comment-review | /iterate-implementation | no | yes |
-| record-evidence | none (writes `evidence/<session>/report.md`) | none | no | no |
 | show-me | show-me | none | no | no |
 | run-task | none | drives the table above | n/a | n/a |
 

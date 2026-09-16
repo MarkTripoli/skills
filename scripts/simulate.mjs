@@ -13,7 +13,8 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import * as wf from "../skills/run-task/scripts/workflow.mjs";
+import * as wf from "../skills/delivery/run-task/scripts/workflow.mjs";
+import { scanSkills, skillDir } from "./lib/layout.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const DEFAULT_SKILLS_DIR = path.join(REPO_ROOT, "skills");
@@ -30,7 +31,7 @@ export const DEFAULT_CHILDREN = [
 // Template helpers -----------------------------------------------------------------------------
 
 function referencesDir(skill, skillsDir) {
-  const dir = path.join(skillsDir, skill, "references");
+  const dir = path.join(skillDir(skillsDir, skill), "references");
   if (!fs.existsSync(dir)) throw new Error(`${skill}: no references directory under ${skillsDir}`);
   return dir;
 }
@@ -518,7 +519,7 @@ function iterateSkillFor(skill) {
 
 export function runChain(projectRoot, taskDir, { scenario = {}, approve = () => true, maxSteps = 40, skillsDir = DEFAULT_SKILLS_DIR } = {}) {
   taskDir = path.resolve(taskDir);
-  const knownSkills = new Set(fs.readdirSync(skillsDir).filter((n) => fs.existsSync(path.join(skillsDir, n, "SKILL.md"))));
+  const knownSkills = new Set(scanSkills(skillsDir).skills.map((s) => s.name));
   const steps = [];
   const issues = [];
   const changesLeft = { ...(scenario.changesAt ?? {}) };

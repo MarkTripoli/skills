@@ -19,7 +19,7 @@
   },
   "command": "run-task",
   "arg": "--status",
-  "prompt": "Read and follow {repo}/skills/run-task/SKILL.md with arguments `@{taskDir} --status`; print the status report and stop.",
+  "prompt": "Read and follow {skillPath} with arguments `@{taskDir} --status`; print the status report and stop.",
   "expect": {
     "artifactType": null,
     "nextSkill": null,

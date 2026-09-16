@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import * as wf from "../skills/run-task/scripts/workflow.mjs";
+import * as wf from "../skills/delivery/run-task/scripts/workflow.mjs";
 import { makeFixture, runChain, fakePhase, checkPhase, kebab, DEFAULT_CHILDREN } from "../scripts/simulate.mjs";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -185,7 +185,7 @@ test("epic: start-epic-delivery creates one task per child and each child starts
   assert.equal(result.steps[0].pendingGate, true);
   assert.match(result.reason, /children/);
 
-  // Frontmatter keys per skills/start-epic-delivery/SKILL.md; order is not part of the contract.
+  // Frontmatter keys per skills/delivery/start-epic-delivery/SKILL.md; order is not part of the contract.
   const CHILD_KEYS = ["slug", "title", "workflow", "created", "parent", "depends_on"];
   for (const child of DEFAULT_CHILDREN) {
     const dir = path.join(projectRoot, ".agents", "tasks", kebab(child.name));

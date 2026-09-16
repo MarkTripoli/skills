@@ -10,7 +10,8 @@ Portable (any runtime that scans `~/.agents/skills/<name>/SKILL.md`, including C
 
 ```sh
 git clone https://github.com/MarkTripoli/skills.git
-cp -R skills/skills/* ~/.agents/skills/
+cp -R skills/skills/delivery/* ~/.agents/skills/
+cp -R skills/skills/show-me ~/.agents/skills/
 ```
 
 Runtime-specific trees add the runtime's invocation and worker notes to every skill and generate the worker definitions:
@@ -45,6 +46,8 @@ Every reply tells you to start the next phase in a new session. That sentence, t
 - [runtimes/](runtimes/): per-runtime invocation notes and install steps.
 
 ## Skills
+
+The delivery workflow skills live under `skills/delivery/`; `show-me` is a standalone skill at `skills/show-me/`.
 
 | Skill | Purpose | Role |
 |---|---|---|
@@ -88,7 +91,7 @@ Every reply tells you to start the next phase in a new session. That sentence, t
 
 ## Adding skills
 
-Add `skills/<name>/SKILL.md` with frontmatter `name` (equal to the directory) and `description`, link the two shared documents on line 6 like the existing skills, keep templates under `references/`, and run `npm test`. A skill that belongs to a workflow gets a row in that workflow's document under `workflows/`; a skill that belongs to no workflow needs nothing else.
+Add `skills/<group>/<name>/SKILL.md` (a skill that belongs to a workflow goes in that workflow's group, `skills/delivery/` today) or `skills/<name>/SKILL.md` for a standalone skill, with frontmatter `name` (equal to the directory) and `description`, link the two shared documents on line 6 like the existing skills, keep templates under `references/`, and run `npm test`. A skill that belongs to a workflow gets a row in that workflow's document under `workflows/`; a skill that belongs to no workflow needs nothing else. Skill names stay unique across groups because every install copies skills into one flat directory.
 
 ## License
 
