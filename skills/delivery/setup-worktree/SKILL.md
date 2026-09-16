@@ -18,7 +18,7 @@ Read workspace config:
 .agents/workspace.local.json
 ```
 
-Local overrides shared. If the effective root config has `disabled: true`, do not continue with setup unless the user explicitly asks you to override it. Disabled: check branch suitable (check out branch `<slug>` first when it does not exist), handoff to `/implement-outline` (`lean`) or `/implement-plan` (`full`, `prd`).
+Local overrides shared. If the effective root config has `disabled: true`, create no worktree. Being invoked is not an override: neither the `/setup-worktree` command, nor a handoff fence from a plan or outline, nor `run-task` running this skill counts as a request to override; only a message in this session that says so in words (for example `override disabled` or `create the worktree anyway`) does. Disabled: check the branch is suitable (check out branch `<slug>`, creating it when it does not exist), write the receipt with `worktree path: none (disabled)`, and hand off to `/implement-outline` (`lean`) or `/implement-plan` (`full`, `prd`) for the current checkout.
 
 Check if already in a task worktree:
 
