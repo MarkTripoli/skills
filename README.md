@@ -11,7 +11,7 @@ Portable (any runtime that scans `~/.agents/skills/<name>/SKILL.md`, including C
 ```sh
 git clone https://github.com/MarkTripoli/skills.git
 cp -R skills/skills/delivery/* ~/.agents/skills/
-cp -R skills/skills/show-me ~/.agents/skills/
+cp -R skills/skills/show-me skills/skills/record-evidence ~/.agents/skills/
 ```
 
 Runtime-specific trees add the runtime's invocation and worker notes to every skill and generate the worker definitions:
@@ -47,7 +47,7 @@ Every reply tells you to start the next phase in a new session. That sentence, t
 
 ## Skills
 
-The delivery workflow skills live under `skills/delivery/`; `show-me` is a standalone skill at `skills/show-me/`.
+The delivery workflow skills live under `skills/delivery/`; `show-me` and `record-evidence` are standalone skills at `skills/<name>/`.
 
 | Skill | Purpose | Role |
 |---|---|---|
