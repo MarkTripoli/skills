@@ -18,6 +18,8 @@ summary: "State which findings were fixed, declined, or remain blocked and which
 
 ## Finding Dispositions
 
+CR entries are the review's critical/major-severity findings; ADV entries are the rest (minor/trivial/info).
+
 ### CR-001
 
 - disposition: fixed | declined | blocked

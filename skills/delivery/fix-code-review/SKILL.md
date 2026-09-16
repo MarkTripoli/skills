@@ -17,9 +17,9 @@ Locate the task directory and read `task.md` per the conventions (create one fro
 
 Resolve the merge target as the review did: the base of the existing pull request (`gh pr view --json baseRefName` on GitHub, `glab mr view` on GitLab), else the repository default branch. Compare artifact base/head SHAs with current state (`git status --short --branch`, `git diff --name-status <base>...HEAD`). Preserve unrelated changes. If base moved or edits invalidate scope, record drift; re-check findings.
 
-Per Critical/Required finding: reproduce/prove failure, trace callers, mark `fixed`/`declined`/`blocked`. Decline only with concrete evidence.
+Per critical/major-severity finding: reproduce/prove failure, trace callers, mark `fixed`/`declined`/`blocked`. Decline only with concrete evidence.
 
-Optional/Nit/FYI not mandatory. Address when in scope and reduces risk/complexity without displacing required work; else left advisory. Ask before deleting uncertain code.
+minor/trivial/info not mandatory. Address when in scope and reduces risk/complexity without displacing required work; else left advisory. Ask before deleting uncertain code.
 
 ## Fix
 

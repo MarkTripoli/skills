@@ -70,8 +70,13 @@ summary: "State the reviewed scope, the highest-risk result, and what the next p
 
 ## Critical and Required Findings
 
-### CR-001 [Critical | Required] Short title
+Gate: critical- or major-severity findings only.
 
+### CR-001 Short title
+
+- type: Nitpick | Potential issue | Refactor suggestion
+- severity: critical | major
+- category: Functional correctness | Security and privacy | Data integrity and integration | Performance and scalability | Stability and availability | Maintainability and code quality
 - location: `path:line`
 - failure mode:
 - evidence or reproduction:
@@ -81,8 +86,11 @@ Use `None.` only after the complete pinned scope has been reviewed and every sus
 
 ## Advisories
 
-### ADV-001 [Optional | Nit | FYI] Short title
+### ADV-001 Short title
 
+- type: Nitpick | Potential issue | Refactor suggestion
+- severity: minor | trivial | info
+- category: Functional correctness | Security and privacy | Data integrity and integration | Performance and scalability | Stability and availability | Maintainability and code quality
 - location: `path:line`
 - evidence:
 - suggestion:

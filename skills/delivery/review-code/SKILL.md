@@ -35,16 +35,15 @@ Interfaces: accessibility, keyboard/pointer, responsive, manual/screenshot evide
 
 ## Health and severity
 
-Clean: improves health, satisfies task, follows conventions, no Critical/Required. Do not block on preference/perfection/non-blocking.
+Clean: improves health, satisfies task, follows conventions, no critical- or major-severity findings. Do not block on preference/perfection/non-blocking.
 
-Classify:
-- **Critical:** blocker with reachable security/data-loss/broken-functionality.
-- **Required:** concrete defect, missing regression, structural regression from change.
-- **Optional:** worthwhile, not required.
-- **Nit:** minor preference tooling misses.
-- **FYI:** context only.
+Classify each finding on three axes (CodeRabbit vocabulary; no live integration):
+- Type: Nitpick (optional polish) | Potential issue (possible defect) | Refactor suggestion (structural improvement).
+- Severity: critical | major | minor | trivial | info (guidance, not a problem).
+- Category: Functional correctness | Security and privacy | Data integrity and integration | Performance and scalability | Stability and availability | Maintainability and code quality.
 
-Critical/Required set `findings`. Optional/Nit/FYI are Advisories, do not prevent `clean`.
+Gate on Severity: critical or major set `findings`. minor, trivial, and info are Advisories and do not prevent `clean`.
+Migration from the old scale: Critical -> critical; Required -> major; Optional -> minor; Nit -> trivial (Type Nitpick); FYI -> info.
 
 Lead with highest-leverage. Prefer proven to weak. Structural: name smallest fix (collapse branches, separate orchestration/policy, move to owner, reuse helper, explicit boundary, delete pass-through, extract module).
 
@@ -52,9 +51,9 @@ Size: ~100 easy, ~300 coherent, ~1000 check split. Signals. Require split when b
 
 Dependencies: verify stack insufficient, check lockfile/maintenance/license/security/changelog. One upgrade unless coupled.
 
-Identify newly orphaned code explicitly. Orphaned: task-caused dead = Required. No deletion of uncertain pre-existing without direction.
+Identify newly orphaned code explicitly. Orphaned: task-caused dead = major severity. No deletion of uncertain pre-existing without direction.
 
-Report evidence-backed from change. Critical/Required: id, file:line, failure, evidence, fix. Advisories: location, evidence, suggestion. No praise, enforced nits, speculation, pre-existing.
+Report evidence-backed from change. Critical/major severity: id, file:line, failure, evidence, fix. Advisories: location, evidence, suggestion. No praise, enforced nits, speculation, pre-existing.
 
 Run read-only checks to confirm/reject. No edits.
 
