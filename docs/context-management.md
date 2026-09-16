@@ -50,7 +50,7 @@ Worker isolation depends on the install. The portable tree names no subagent mec
 
 ## Getting a fresh context on each runtime
 
-Nothing here requires changing the runtime. Skills are Markdown files the runtime already loads; fresh contexts come from features every runtime already has. Oh My Pi additionally has an extension that does the new-session-by-hand row for you (last row, and [below](#oh-my-pi-specifics)); it is optional.
+Nothing here requires changing the runtime. Skills are Markdown files the runtime already loads; fresh contexts come from features every runtime already has. Oh My Pi and Pi additionally have an extension that does the new-session-by-hand row for you (last row, and [below](#oh-my-pi-specifics)); it is optional.
 
 | Way | Isolation | Can ask you questions | You can watch it | Needs |
 |---|---|---|---|---|
@@ -58,9 +58,9 @@ Nothing here requires changing the runtime. Skills are Markdown files the runtim
 | `/run-task`, subagent backend | complete | no | no | the runtime's subagent tool |
 | `/run-task`, Herdr backend | complete | yes | yes, in its pane | Herdr running, skills built for the runtime |
 | `/run-task`, manual backend | complete | yes | yes | nothing; it prints the prompt for you to paste |
-| `/run-task`, Oh My Pi extension | complete | yes | yes, it is your session | the extension installed |
+| `/run-task`, Oh My Pi or Pi extension | complete | yes | yes, it is your session | the extension installed |
 
-Interactive phases (every `iterate-*` skill, `create-prd`, `create-tdd`, `review-artifact-comments`) need you in the loop for the whole phase, so they never run in a subagent. `/run-task` puts them in a Herdr pane when it can and otherwise runs them inline in its own session, tells you so, and afterwards asks you to continue from a new session. With the Oh My Pi extension every phase runs in a new session of your own TUI, so an interactive phase simply asks you there.
+Interactive phases (every `iterate-*` skill, `create-prd`, `create-tdd`, `review-artifact-comments`) need you in the loop for the whole phase, so they never run in a subagent. `/run-task` puts them in a Herdr pane when it can and otherwise runs them inline in its own session, tells you so, and afterwards asks you to continue from a new session. With the Oh My Pi or Pi extension every phase runs in a new session of your own TUI, so an interactive phase simply asks you there.
 
 ### Runtime cheat sheet
 
@@ -69,6 +69,7 @@ Interactive phases (every `iterate-*` skill, `create-prd`, `create-tdd`, `review
 | Claude Code | `/clear` | `/context` | `/compact`; automatic near the limit | `Task` tool; a subagent cannot talk to you |
 | Codex | `/new` | `/status` (or `/statusline` for a live footer) | `/compact`; automatic near the limit | multi-agent spawn tool; agents cannot talk to you |
 | Oh My Pi | `/new` (or `/clear` to reset in place) | footer shows context % | `/compact`; automatic near the limit | `task` tool; a subagent cannot talk to you |
+| Pi | `/new` | footer shows context % | `/compact`; automatic near the limit | none built in; phases perform worker roles inline unless a subagent extension is installed |
 
 Do not use compaction as the way to move between phases. A compacted session keeps a summary; the next phase needs the artifact. When a phase is done, start a new session and run the fenced command, or let `/run-task` do it.
 
@@ -89,6 +90,12 @@ Do not use compaction as the way to move between phases. A compacted session kee
 - Skills install as `~/.agents/skills/<name>/SKILL.md`. Workers install as `~/.omp/agent/agents/agent-<role>.md` (or `<repo>/.omp/agents/`) and are called with the `task` tool.
 - `/new` between phases. Herdr integration uses the `omp` agent kind.
 - The `run-task` extension (`runtimes/oh-my-pi/run-task/`, install per [runtimes/oh-my-pi.md](../runtimes/oh-my-pi.md)) replaces the by-hand `/new` and paste: `/run-task @<task dir>` opens a new session per phase, sends the phase prompt, waits for the reply file, records the session's context usage in `replies/phases.jsonl`, and stops at gates with an approve, request-changes, other-command, or stop dialog. The orchestrator is code, so it holds no context at all; the `/run-task` skill remains the portable fallback.
+
+### Pi specifics
+
+- Skills install as `~/.agents/skills/<name>/SKILL.md`, which Pi reads natively; `~/.pi/agent/skills/` also works. Pi has no worker tool, so the Pi notes tell each phase to perform worker roles inline.
+- `/new` between phases.
+- The `run-task` extension (`runtimes/pi/run-task/`, install per [runtimes/pi.md](../runtimes/pi.md)) does what the Oh My Pi one does. Pi replaces the extension runtime with each new session, so the run's state lives in `replies/run.json` in the task directory and each phase is completed by the instance that owns its session (on `agent_settled`), which then re-dispatches `/run-task --continue` to open the next one. A side effect worth having: quitting Pi mid-run loses nothing; `/run-task @<task dir>` picks the run up from the files.
 
 ## Recognizing a degraded context
 
@@ -118,14 +125,14 @@ Never fix a degraded phase with `/compact`. The artifact survives a new session;
 
 ## What a runtime plugin adds
 
-The portable layer is the contract: task directories, artifacts, reply files, handoff fences. A plugin for a specific runtime reads that same state and removes the manual steps without changing how the skills work. The Oh My Pi extension in `runtimes/oh-my-pi/run-task/` does this today:
+The portable layer is the contract: task directories, artifacts, reply files, handoff fences. A plugin for a specific runtime reads that same state and removes the manual steps without changing how the skills work. The Oh My Pi and Pi extensions in `runtimes/oh-my-pi/run-task/` and `runtimes/pi/run-task/` do this today, both as thin wiring over `scripts/plugin.mjs` in the `run-task` skill:
 
 - **Automatic fresh sessions**: each phase runs in a new session with the same prompt `/run-task` would give a subagent, so the by-hand workflow becomes one command.
 - **Context meter per phase**: `replies/phases.jsonl` records the tokens and percentage of the window each phase session used, with its model, duration, and session file; a phase that ends above roughly half the window is the same warning sign as before, now measured.
 - **Gates as dialogs**: the gate reply stays in the phase session; a dialog offers approve, request changes (runs the `iterate-*` skill with your feedback), run another command (`/review-code`, `/record-evidence`), or stop. Running `/run-task` again after a stop records the approval, as with the skill.
 - **Status derived from files**: `/run-task` alone lists the tasks under `.agents/tasks/` with their next command and gate state; `/run-task @<task dir> --status` prints the same report the skill prints; the `task_status` tool gives it to the model.
 
-A Claude Code or Codex plugin would add the same four things from the same `workflow.mjs`; until one exists, those runtimes use the `/run-task` skill with its Herdr, subagent, and manual backends. None of this becomes a requirement: a project that only has the skill files installed keeps working with the by-hand workflow described in [Getting started](getting-started.md).
+A Claude Code or Codex plugin would add the same four things from the same `plugin.mjs`; until one exists, those runtimes use the `/run-task` skill with its Herdr, subagent, and manual backends. None of this becomes a requirement: a project that only has the skill files installed keeps working with the by-hand workflow described in [Getting started](getting-started.md).
 
 ## For skill authors
 

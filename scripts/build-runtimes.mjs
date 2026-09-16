@@ -20,7 +20,9 @@ function option(name) {
 }
 
 const runtime = option("--runtime");
-const RUNTIMES = ["claude-code", "codex", "oh-my-pi"];
+const RUNTIMES = ["claude-code", "codex", "oh-my-pi", "pi"];
+// Worker definition format per runtime; pi has no worker mechanism, so its tree carries none.
+const WORKER_FORMAT = { "claude-code": "md", "oh-my-pi": "md", codex: "toml" };
 if (!runtime || !RUNTIMES.includes(runtime)) {
   console.error(`usage: node scripts/build-runtimes.mjs --runtime <${RUNTIMES.join("|")}> [--dest <dir>]`);
   process.exit(1);
@@ -95,7 +97,7 @@ function tomlMultiline(value) {
 
 fs.rmSync(dest, { recursive: true, force: true });
 fs.mkdirSync(path.join(dest, "skills"), { recursive: true });
-fs.mkdirSync(path.join(dest, "agents"), { recursive: true });
+if (WORKER_FORMAT[runtime]) fs.mkdirSync(path.join(dest, "agents"), { recursive: true });
 
 const skillsDir = path.join(repoRoot, "skills");
 const layout = scanSkills(skillsDir);
@@ -131,10 +133,10 @@ for (const name of skillNames) {
     fs.writeFileSync(path.join(target, "agents", "openai.yaml"), yaml);
   }
 
-  if (!name.startsWith("agent-")) continue;
+  if (!name.startsWith("agent-") || !WORKER_FORMAT[runtime]) continue;
   workers += 1;
   const body = skill.body.trim();
-  if (runtime === "claude-code" || runtime === "oh-my-pi") {
+  if (WORKER_FORMAT[runtime] === "md") {
     const agent = ["---", `name: ${name}`, `description: ${skill.description}`, "---", "", body, ""].join("\n");
     fs.writeFileSync(path.join(dest, "agents", `${name}.md`), agent);
   } else {

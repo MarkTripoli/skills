@@ -15,7 +15,7 @@ Every phase runs in its own session. A phase reads `task.md` and the artifacts i
 | By hand | each phase command yourself | you opening a new session each time | learning the workflow, small tasks |
 | `/run-task` | `/run-task @<task dir>` once per gate | subagents (or a manual prompt) | most tasks |
 | `/run-task` with Herdr | the same | one terminal pane per phase, visible beside you | tasks where you want to watch or answer questions mid-phase |
-| `/run-task` on Oh My Pi with the extension | the same | a new session of your own TUI per phase | Oh My Pi users; the orchestrator is code and spends no tokens |
+| `/run-task` on Oh My Pi or Pi with the extension | the same | a new session of your own TUI per phase | Oh My Pi and Pi users; the orchestrator is code and spends no tokens |
 
 All four produce the same files, so you can switch modes at any point.
 
@@ -89,9 +89,9 @@ All four produce the same files, so you can switch modes at any point.
 
 When [Herdr](https://github.com/herdr) is running (`HERDR_ENV=1`) and the skills were built for your runtime, `/run-task` opens a pane beside your session for each phase, starts an agent of your runtime in it, and waits for the phase's reply file. You can watch the phase work and answer its questions in the pane. Interactive phases (`iterate-*`, `create-prd`, `create-tdd`, `review-artifact-comments`) run there instead of inline, so the orchestrator's session stays small even during long reviews. The orchestrator never closes a pane; close it yourself when the phase is done.
 
-## Walkthrough: with the Oh My Pi extension
+## Walkthrough: with the Oh My Pi or Pi extension
 
-With the extension installed (see [runtimes/oh-my-pi.md](../runtimes/oh-my-pi.md)), `/run-task @<task dir>` is a slash command instead of a skill. It opens a new session for each phase and sends the phase prompt there, so you watch the phase in your own TUI and answer its questions when it asks; a status line names the running phase and the reply file that ends it. At a gate a dialog offers to approve, request changes (it asks what should change and runs the `iterate-*` skill with your text in a new session), run another command such as `/review-code`, or stop. `/run-task` with no argument lists the tasks under `.agents/tasks/`; `/run-task stop` ends a run after the phase in progress; `replies/phases.jsonl` records how much of the context window each phase used. Stopping and resuming works as with the skill: `/run-task @<task dir>` continues, and running it records the approval.
+With the extension installed (see [runtimes/oh-my-pi.md](../runtimes/oh-my-pi.md) or [runtimes/pi.md](../runtimes/pi.md)), `/run-task @<task dir>` is a slash command instead of a skill. It opens a new session for each phase and sends the phase prompt there, so you watch the phase in your own TUI and answer its questions when it asks; a status line names the running phase and the reply file that ends it. At a gate a dialog offers to approve, request changes (it asks what should change and runs the `iterate-*` skill with your text in a new session), run another command such as `/review-code`, or stop. `/run-task` with no argument lists the tasks under `.agents/tasks/`; `/run-task stop` ends a run after the phase in progress; `replies/phases.jsonl` records how much of the context window each phase used. Stopping and resuming works as with the skill: `/run-task @<task dir>` continues, and running it records the approval. On Pi the run also survives quitting: the state is in `replies/run.json`, and `/run-task @<task dir>` in a new Pi picks it up.
 
 ## What the task directory holds
 
