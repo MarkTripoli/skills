@@ -48,6 +48,7 @@ A task moves from request to merged pull request through phases. Each phase is o
 | resolve-pr-reviews | pr-review | /resolve-pr-reviews until the pull request is approved | yes | no |
 | ci-commit | commit | /describe-pr | no | no |
 | review-artifact-comments | comment-review | /iterate-implementation | no | yes |
+| record-evidence | none (writes `evidence/<session>/report.md`) | none | no | no |
 | show-me | show-me | none | no | no |
 | run-task | none | drives the table above | n/a | n/a |
 
@@ -69,6 +70,7 @@ Gates stop at design-discussion, design-prd, design-tdd, structure-outline, plan
 
 - `ci-commit`: commit implementation work with explicit paths, excluding `.agents/tasks/`, and hand off to `describe-pr`.
 - `show-me`: a focused diagram, code-shape sketch, or HTML artifact for the current explanation.
+- `record-evidence`: record narrated, annotated video proof of behavior on a screen, Android emulator, iOS simulator, or headless browser; compose devices side by side; the report and video are attached to the PR by hand, typically between implementation and `describe-pr`.
 - `configure-workspaces`: write `.agents/workspace.json` and `.agents/workspace.local.json`, which `setup-worktree` uses to create task worktrees.
 - `review-artifact-comments`: apply the user's feedback to an artifact one item at a time, then hand off to `iterate-implementation`.
 - `run-task`: drive a task through this table one fresh-context phase at a time; see [docs/context-management.md](../docs/context-management.md).

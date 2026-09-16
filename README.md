@@ -76,6 +76,7 @@ Every reply tells you to start the next phase in a new session. That sentence, t
 | describe-pr | Write and publish the pull request description | phase |
 | resolve-pr-reviews | Work through pull request review threads | phase |
 | review-artifact-comments | Apply feedback to an artifact one item at a time | utility |
+| record-evidence | Record narrated, annotated video proof on screens, emulators, simulators, or headless browsers; compose devices side by side | utility |
 | show-me | Explain the current topic with a focused visual | utility |
 | agent-codebase-locator | Find files, directories, tests, and entry points | worker |
 | agent-codebase-analyzer | Explain how a narrow area of code behaves now | worker |
