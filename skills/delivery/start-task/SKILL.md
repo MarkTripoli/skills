@@ -30,7 +30,7 @@ The entry point when you know what you want but not which chain fits. Given a re
    | `prd` | The requirement itself is open: what it should do, for whom, how it should behave at the edges. Product-facing work, or stakeholders beyond the requester. | research, PRD (interactive, gate), TDD (interactive, gate), plan (gate), worktree, implementation (gate), pull request. |
    | `epic` | Several independently mergeable deliverables, a change that would need more than about eight plan phases, or work for more than one person. | `create-epic-plan` splits it into child tasks, each with its own type; `start-epic-delivery` starts the first wave. |
 
-   Explicit words override the table: a named type wins; `quick`, `just do it`, or `direct` mean `direct` when the edit is known and `oneshot` otherwise. A request that mentions a code review or video proof adds `with: [review-code]`, `with: [record-evidence]`, or both to the task (not for `direct` or `epic`).
+   Explicit words override the table: a named type wins; `quick`, `just do it`, or `direct` mean `direct` when the edit is known and `oneshot` otherwise. A request that mentions a code review or video proof adds `with: [review-loop]`, `with: [record-evidence]`, or both to the task (not for `direct` or `epic`).
 
 3. **Ask only what decides the route**, at most three questions, in one message, each with the answer that would pick each route, for example:
    - "Is the expected behavior fully known, or should we write it down first?" (known: `oneshot` or `lean`; not known: `prd`)

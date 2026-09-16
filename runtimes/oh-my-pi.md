@@ -24,9 +24,9 @@ Herdr agent kind: `omp`.
 `/run-task @<task dir>`, `/run-task <request>`, or `/run-task` alone (which lists the tasks under `.agents/tasks/`) runs the task's chain:
 
 - Each phase opens a new session (`/new`) and receives the same file-form prompt the `run-task` skill uses. You watch the phase live, and an interactive phase can ask you questions in that session; the run continues when the phase's reply file appears under `replies/`.
-- A human gate shows a dialog: approve (runs the next command), request changes (asks for the feedback, then runs the matching `iterate-*` skill with it), run another command instead (for `/review-code` or `/record-evidence`), or stop. Stopping leaves the task on disk; `/run-task @<task dir>` later continues, and running it records the approval, exactly as with the skill.
+- A human gate shows a dialog: approve (runs the next command), request changes (asks for the feedback, then runs the matching `iterate-*` skill with it), run another command instead (for `/review-loop` or `/record-evidence`), or stop. Stopping leaves the task on disk; `/run-task @<task dir>` later continues, and running it records the approval, exactly as with the skill.
 - After every phase it appends one line to `replies/phases.jsonl`: skill, command, timing, model, the session's context tokens and percentage, whether the phase or the extension wrote the reply file, and the session file. That is the per-phase context meter.
-- Flags: `--step` (stop after every phase), `--status` (report and stop), `--with review-code,record-evidence`, `--model <spec>` (model for the phase sessions), `--workflow <type>` for a new task. `/run-task stop` ends a run after the phase in progress.
+- Flags: `--step` (stop after every phase), `--status` (report and stop), `--with review-loop,record-evidence`, `--max-depth <n>` (caps `review-loop`'s iterations), `--model <spec>` (model for the phase sessions), `--workflow <type>` for a new task. `/run-task stop` ends a run after the phase in progress.
 
 The `task_status` tool returns the same status report to the model, for a session that is asked where a task stands.
 

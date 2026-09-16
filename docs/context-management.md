@@ -129,7 +129,7 @@ The portable layer is the contract: task directories, artifacts, reply files, ha
 
 - **Automatic fresh sessions**: each phase runs in a new session with the same prompt `/run-task` would give a subagent, so the by-hand workflow becomes one command.
 - **Context meter per phase**: `replies/phases.jsonl` records the tokens and percentage of the window each phase session used, with its model, duration, and session file; a phase that ends above roughly half the window is the same warning sign as before, now measured.
-- **Gates as dialogs**: the gate reply stays in the phase session; a dialog offers approve, request changes (runs the `iterate-*` skill with your feedback), run another command (`/review-code`, `/record-evidence`), or stop. Running `/run-task` again after a stop records the approval, as with the skill.
+- **Gates as dialogs**: the gate reply stays in the phase session; a dialog offers approve, request changes (runs the `iterate-*` skill with your feedback), run another command (`/review-loop`, `/record-evidence`), or stop. Running `/run-task` again after a stop records the approval, as with the skill.
 - **Status derived from files**: `/run-task` alone lists the tasks under `.agents/tasks/` with their next command and gate state; `/run-task @<task dir> --status` prints the same report the skill prints; the `task_status` tool gives it to the model.
 
 A Claude Code or Codex plugin would add the same four things from the same `plugin.mjs`; until one exists, those runtimes use the `/run-task` skill with its Herdr, subagent, and manual backends. None of this becomes a requirement: a project that only has the skill files installed keeps working with the by-hand workflow described in [Getting started](getting-started.md).

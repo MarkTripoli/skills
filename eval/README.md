@@ -19,7 +19,7 @@ node scripts/eval.mjs --driver <driver> --chain <full|lean|prd|oneshot> [--model
 | `--model <spec>` | Model passed to the runtime (`omp --model`, `claude --model`, `codex -m`), recorded as `driver.model`. Use a cheap model for routine runs, for example `anthropic/claude-haiku-4-5` with `omp`. |
 | `--chain <type>` | Run a whole workflow instead of cases; see Chains below. |
 | `--strict` | Chain mode: stop at the first failed phase instead of continuing while the reply is still usable. |
-| `--with <skill,...>` | Chain mode: optional phases to insert before `describe-pr` (`review-code`, `record-evidence`), merged with the chain fixture's `with` list. |
+| `--with <skill,...>` | Chain mode: optional phases to insert before `describe-pr` (`review-loop`, `record-evidence`), merged with the chain fixture's `with` list. |
 | `--max-phases <n>` | Chain mode: safety cap on phases (default 12). |
 | `--json` | Print the full result object instead of the Markdown report. |
 | `--keep` | Keep the fixtures under the system temp directory and record their paths. |

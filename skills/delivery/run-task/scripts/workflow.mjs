@@ -70,6 +70,12 @@ export const PHASES = {
     interactive: true,
     next: ({ workflow, remaining, planFile }) => implementationNext(workflow === "lean" ? "implement-outline" : "implement-plan")({ remaining, planFile }),
   },
+  "review-loop": {
+    type: "review-loop",
+    gate: false,
+    interactive: false,
+    next: ({ status }) => (status === "clean" ? "/describe-pr" : null),
+  },
   "review-code": {
     type: "code-review",
     gate: false,
@@ -161,9 +167,10 @@ export function parseMaxDepth(v) {
   return /^[1-9]\d*$/.test(String(v)) ? Number(v) : null;
 }
 
-// Optional phases a task may insert before describe-pr, in the order they run. Each is inserted once,
-// when no artifact of its type exists yet; review-code's own loop (fix-code-review) then runs as usual.
-export const OPTIONAL_PHASES = ["review-code", "record-evidence"];
+// Optional phases a task may insert before describe-pr, in the order they run. Each is inserted once; the
+// review loop's own artifact is done only when it reports `clean` (`capped`/`blocked` are terminal statuses
+// review-loop's own `next()` already stops on, without reaching describe-pr).
+export const OPTIONAL_PHASES = ["review-loop", "record-evidence"];
 
 const ARTIFACT_NAME = /^(\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*?)-(.+)\.md$/;
 
@@ -240,11 +247,13 @@ export function fences(text) {
   return out;
 }
 
-const COMMAND_LINE = /^\/([a-z0-9]+(?:-[a-z0-9]+)*)(?: @(\S+))?$/;
+// `--max-depth <n>` only ever appears on the command that starts `review-loop` (threaded by `insertOptional`);
+// no phase's reply fence carries it.
+const COMMAND_LINE = /^\/([a-z0-9]+(?:-[a-z0-9]+)*)(?: @(\S+))?(?: --max-depth (\d+))?$/;
 
 export function parseCommand(line) {
   const m = COMMAND_LINE.exec(line.trim());
-  return m ? { command: line.trim(), skill: m[1], arg: m[2] ?? null } : null;
+  return m ? { command: line.trim(), skill: m[1], arg: m[2] ?? null, maxDepth: m[3] ? Number(m[3]) : null } : null;
 }
 
 export function parseReply(text) {
@@ -446,10 +455,15 @@ export function nextCommand(taskDir, { projectRoot = projectRootOf(taskDir), wit
   const insertOptional = (command) => {
     if (parseCommand(command)?.skill !== "describe-pr") return command;
     for (const skill of optional) {
-      // Done means the newest artifact of the phase's type exists and did not fail; a failed recording or a
-      // review with findings is repeated after the fix it triggered.
+      // Done means the newest artifact of the phase's type exists and did not fail; a failed recording is
+      // repeated after the fix it triggered. review-loop's own artifact is done only once it reports `clean`;
+      // review-loop's `next()` already stops the chain on `capped`/`blocked` before this is ever consulted.
       const newest = [...artifacts].reverse().find((a) => a.type === PHASES[skill].type);
-      if (!newest || newest.status === "failed" || newest.status === "findings") return `/${skill}`;
+      const notDone = skill === "review-loop" ? !newest || newest.status !== "clean" : !newest || newest.status === "failed" || newest.status === "findings";
+      if (notDone) {
+        const maxDepthFlag = skill === "review-loop" && task.maxDepth != null ? ` --max-depth ${task.maxDepth}` : "";
+        return `/${skill}${maxDepthFlag}`;
+      }
     }
     return command;
   };

@@ -17,7 +17,7 @@ You run one task's workflow phase by phase. Each phase executes in a fresh conte
 - `--backend herdr|subagent|manual`: force a backend.
 - `--step`: stop after every phase, not only at human gates.
 - `--status`: report where the task stands and what runs next, then stop without running anything.
-- `--with <skill,...>`: optional phases to insert before `describe-pr`: `review-code`, `record-evidence`, or both. `task.md` may declare the same once as `with: [review-code, record-evidence]`; the two lists merge.
+- `--with <skill,...>`: optional phases to insert before `describe-pr`: `review-loop`, `record-evidence`, or both. `task.md` may declare the same once as `with: [review-loop, record-evidence]`; the two lists merge.
 - `--max-depth <n>`: bound the review loop's iterations to a positive integer `n`. `task.md` may declare the same as `max_depth: <n>`; the flag wins when both are present. Endless (no cap) when absent.
 
 ## Steps
@@ -39,7 +39,7 @@ You run one task's workflow phase by phase. Each phase executes in a fresh conte
    - A newest reply from a human-gate phase is not a reason to stop at the start of this invocation: the user reviewed it before running `/run-task` again, and running the next command is how approval is recorded. Run that command. Only a gate reached by a phase that ran in this session stops (step 5).
    - No reply file and no artifact in the task directory: `full` and `lean` start with `/create-research-questions`; `prd` starts with `/create-research`; `oneshot` runs this inline prompt as the command: "Complete the task in `task.md` end to end: implement, run the narrowest checks that prove it, commit with explicit paths, then reply per the conventions with `/describe-pr`."
    - No reply file but artifacts exist (the user ran phases by hand): take the newest artifact's type (frontmatter `type`, else the name segment between `NN-` and the slug; `pr-description.md` counts as type `pr-description`), look it up in the workflow table, and use that row's next command. The same approval rule applies: a gate artifact that already exists was reviewed before this invocation, so run the next command.
-   - Optional phases: when the command found above is `/describe-pr` and `--with` or `task.md` names an optional phase whose artifact type (`code-review` for `review-code`, `evidence` for `record-evidence`) does not exist in the task directory yet, run that phase instead, `review-code` before `record-evidence`. Their own replies hand back to `/describe-pr` (or, for failing evidence and review findings, into their fix loops).
+   - Optional phases: when the command found above is `/describe-pr` and `--with` or `task.md` names an optional phase whose artifact type (`review-loop` for `review-loop`, `evidence` for `record-evidence`) does not exist in the task directory yet, run that phase instead, `review-loop` before `record-evidence`. Their own replies hand back to `/describe-pr` (or, for failing evidence and review findings, into their fix loops).
 
    With `--status`, print this report and stop:
 
@@ -70,7 +70,7 @@ You run one task's workflow phase by phase. Each phase executes in a fresh conte
 
 5. **Relay**. Print the reply file content verbatim; it already ends with the handoff fence. Then:
    - The phase ran inline in this session: stop, and say "This session now holds the phase's exchange; continue with `/run-task @<task dir>` in a new session."
-   - The phase is a human gate in the workflow table, or `--step` was given: stop. The user's next message either approves (any message that does not request changes; continue at step 2), requests changes (run the matching `/iterate-*` command with `@<artifact file>` as an interactive phase, then relay again), or names a command (`/review-code`, `/record-evidence`, or another `/<skill>` line, optionally with `@<file>`): run that command as the next phase in place of the table's default, then continue. This is how an optional phase is inserted after the implementation gate without changing `task.md`.
+   - The phase is a human gate in the workflow table, or `--step` was given: stop. The user's next message either approves (any message that does not request changes; continue at step 2), requests changes (run the matching `/iterate-*` command with `@<artifact file>` as an interactive phase, then relay again), or names a command (`/review-loop`, `/record-evidence`, or another `/<skill>` line, optionally with `@<file>`): run that command as the next phase in place of the table's default, then continue. This is how an optional phase is inserted after the implementation gate without changing `task.md`.
    - Otherwise continue at step 2.
 
 ## Rules

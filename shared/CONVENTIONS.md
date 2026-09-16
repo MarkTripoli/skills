@@ -12,7 +12,7 @@ A task lives in `.agents/tasks/<slug>/` under the project root. `<slug>` is two 
 
 `workflow` is one of `full`, `lean`, `prd`, `oneshot`; the default is `full`. The chains are in [workflows/delivery.md](../workflows/delivery.md).
 
-Optional key `with`: a list of optional phases to insert before `describe-pr`, for example `with: [review-code, record-evidence]`. `run-task` merges it with its `--with` option; the phases and their order are in [workflows/delivery.md](../workflows/delivery.md), Optional phases.
+Optional key `with`: a list of optional phases to insert before `describe-pr`, for example `with: [review-loop, record-evidence]`. `run-task` merges it with its `--with` option; the phases and their order are in [workflows/delivery.md](../workflows/delivery.md), Optional phases.
 
 Optional key `max_depth`: a positive integer bounding the review loop's iterations; `run-task`'s `--max-depth` overrides it; absent means endless.
 

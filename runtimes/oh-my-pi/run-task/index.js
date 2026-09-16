@@ -139,7 +139,7 @@ export function createExtension({ pollMs = 1000 } = {}) {
           }
         } else if (parsed.request) {
           try {
-            const created = wf.createTask(ctx.cwd, { request: parsed.request, workflow: parsed.workflow });
+            const created = wf.createTask(ctx.cwd, { request: parsed.request, workflow: parsed.workflow, maxDepth: parsed.maxDepth });
             taskDir = created.taskDir;
             ctx.ui.notify(`run-task: created ${plugin.relative(ctx.cwd, taskDir)}/task.md (${parsed.workflow})${created.gitignoreUpdated ? "; added .agents/tasks/ to .gitignore" : ""}`, "info");
           } catch (error) {
