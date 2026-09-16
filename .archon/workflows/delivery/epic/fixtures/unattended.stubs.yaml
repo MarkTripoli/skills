@@ -1,12 +1,15 @@
 # `gates=none`: the epic plan runs once and the run ends at `start-done`.
 task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills"}'
 gates: '{"plan":"false"}'
+research__questions: "research questions saved"
+research__research: "research saved"
 plan__once: "epic plan saved"
 start: "children started"
+research-done: ""
 plan-done: ""
 start-done: ""
 fixture:
   expect: completed
   inputs: { gates: none }
-  reached: [plan__once, plan-done, start, start-done]
+  reached: [research__questions, research__research, research-done, plan__once, plan-done, start, start-done]
 exec-code: false

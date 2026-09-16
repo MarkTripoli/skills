@@ -1,4 +1,4 @@
-# Default gates: the gated `reproduce` loop runs (attempt, then the approval gate), the fix follows
+# Default gates: the gated `reproduce` loop runs (a reproduction session, then the approval gate), the fix follows
 # `reproduce-done`, the pull request description is gated.
 task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills"}'
 gates: '{"reproduce":"true","pr":"true"}'

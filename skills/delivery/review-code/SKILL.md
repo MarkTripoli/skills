@@ -15,7 +15,7 @@ Locate the task directory and read `task.md` per the conventions (create one fro
 
 ## Pin scope
 
-Determine merge target: the base of the existing pull request (`gh pr view --json baseRefName` on GitHub, `glab mr view` on GitLab), else the repository default branch. Record base branch, merge-base SHA, HEAD SHA, staged/unstaged changes, untracked task files, commits after merge base: `git status --short --branch`, `git diff --name-status <base>...HEAD`, `git diff <base>...HEAD`. Review committed/working-tree changes against merge base. Task artifacts under `.agents/tasks/` and unrelated changes are not review subjects. Stop if base unresolved. Empty or incomplete scope is not clean.
+Determine merge target: the base of the existing pull request (`gh pr view --json baseRefName` on GitHub, `glab mr view` on GitLab), else `base:` from `task.md` when present, else the repository default branch. Record base branch, merge-base SHA, HEAD SHA, staged/unstaged changes, untracked task files, commits after merge base: `git status --short --branch`, `git diff --name-status <base>...HEAD`, `git diff <base>...HEAD`. Review committed/working-tree changes against merge base. Task artifacts under `.agents/tasks/` and unrelated changes are not review subjects. Stop if base unresolved. Empty or incomplete scope is not clean.
 
 ## Requirements and tests
 

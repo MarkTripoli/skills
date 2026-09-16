@@ -20,6 +20,25 @@ after(() => {
   for (const dir of temps) fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test("install removes retired skill and extension paths", () => {
+  const home = tmpdir("skills-install-retired-");
+  fs.mkdirSync(path.join(home, ".claude", "skills", "run-task"), { recursive: true });
+  fs.writeFileSync(path.join(home, ".claude", "skills", "run-task", "SKILL.md"), "retired\n");
+  fs.mkdirSync(path.join(home, ".omp", "agent", "extensions", "run-task"), { recursive: true });
+  fs.writeFileSync(path.join(home, ".omp", "agent", "extensions", "run-task", "x"), "retired\n");
+  const work = tmpdir();
+  const built = new Map();
+  for (const target of ["claude-code", "oh-my-pi"]) {
+    buildRuntime(target, path.join(work, target));
+    built.set(target, path.join(work, target));
+  }
+  const planned = plan({ targets: ["claude-code", "oh-my-pi"], project: false, packs: false, cwd: home, home, env });
+  assert.ok(planned.steps.some((s) => s.kind === "retired"));
+  apply(planned, { built, uninstall: false, home });
+  assert.equal(fs.existsSync(path.join(home, ".claude", "skills", "run-task")), false);
+  assert.equal(fs.existsSync(path.join(home, ".omp", "agent", "extensions", "run-task")), false);
+});
+
 const env = { PATH: "" };
 
 // The first archon on PATH that is 0.10 or later; the installed-packs listing is skipped without one.
@@ -58,10 +77,10 @@ test("destinations follow each runtime's directories and honor CLAUDE_CONFIG_DIR
 test("plan: codex and portable share ~/.agents/skills, so the portable copy is skipped with a note; project scope drops codex workers", () => {
   const home = "/h";
   const both = plan({ targets: ["codex", "portable"], project: false, packs: false, cwd: "/p", home, env });
-  assert.deepEqual(both.steps.map((s) => `${s.target}:${s.kind}`), ["codex:skills", "codex:agents", "codex:config"]);
+  assert.deepEqual(both.steps.filter((s) => s.kind !== "retired").map((s) => `${s.target}:${s.kind}`), ["codex:skills", "codex:agents", "codex:config"]);
   assert.match(both.notes[0], /portable: skills directory ~\/.agents\/skills is already written by codex/);
   const project = plan({ targets: ["codex", "oh-my-pi"], project: true, packs: false, cwd: "/p", home, env });
-  assert.deepEqual(project.steps.map((s) => `${s.target}:${s.kind}`), ["codex:skills", "oh-my-pi:skills", "oh-my-pi:agents"]);
+  assert.deepEqual(project.steps.filter((s) => s.kind !== "retired").map((s) => `${s.target}:${s.kind}`), ["codex:skills", "oh-my-pi:skills", "oh-my-pi:agents"]);
   assert.match(project.notes[0], /codex: worker definitions .* user-level/);
   assert.equal(project.steps[0].names.length, scanSkills(path.join(REPO, "skills")).skills.length);
 });
@@ -69,7 +88,7 @@ test("plan: codex and portable share ~/.agents/skills, so the portable copy is s
 test("plan: packs add the ~/.agents/skills copy they read unless a target already writes it, then the two pack directories", () => {
   const home = "/h";
   const claude = plan({ targets: ["claude-code"], project: false, packs: true, cwd: "/p", home, env });
-  assert.deepEqual(claude.steps.map((s) => `${s.target}:${s.kind}:${s.to}`), [
+  assert.deepEqual(claude.steps.filter((s) => s.kind !== "retired").map((s) => `${s.target}:${s.kind}:${s.to}`), [
     "claude-code:skills:/h/.claude/skills",
     "claude-code:agents:/h/.claude/agents",
     "packs:skills:/h/.agents/skills",
@@ -78,13 +97,17 @@ test("plan: packs add the ~/.agents/skills copy they read unless a target alread
   const codex = plan({ targets: ["codex"], project: false, packs: true, cwd: "/p", home, env });
   assert.deepEqual(codex.steps.filter((s) => s.target === "packs").map((s) => s.kind), ["packs"], "codex already writes ~/.agents/skills");
   const project = plan({ targets: ["pi"], project: true, packs: true, cwd: "/p", home, env });
-  assert.equal(project.steps.at(-1).to, "/p/.archon/workflows");
-  assert.deepEqual(project.steps.at(-1).names, ["delivery"], "a Pi install gets the native flavor only");
+  const projectPacks = project.steps.find((s) => s.kind === "packs");
+  assert.equal(projectPacks.to, "/p/.archon/workflows");
+  assert.deepEqual(projectPacks.names, ["delivery"], "a Pi install gets the native flavor only");
   assert.deepEqual(packFlavors(["oh-my-pi"]), ["delivery-omp"]);
   assert.deepEqual(packFlavors(["claude-code", "oh-my-pi"]), PACKS);
   assert.deepEqual(packFlavors(["portable"]), ["delivery"], "no runtime on PATH still installs the native packs for Archon");
   assert.match(project.notes.at(-1), /project-scoped packs still read skills from ~\/.agents\/skills/);
   assert.equal(packDestination({ project: false, home }), "/h/.archon/workflows");
+  const self = plan({ targets: ["portable"], project: true, packs: true, cwd: REPO, home, env });
+  assert.equal(self.steps.some((s) => s.kind === "packs"), false);
+  assert.ok(self.notes.includes("packs: this checkout already holds the packs; nothing to copy"));
 });
 
 test("updateConfigBlock appends once, replaces in place, and removes cleanly", () => {
@@ -131,6 +154,12 @@ test("apply installs every target into a home directory and uninstall leaves onl
     fs.readFileSync(path.join(REPO, ".archon", "workflows", "delivery", "full", "delivery-full.yaml"), "utf8"),
   );
   assert.ok(fs.existsSync(path.join(home, ".archon", "workflows", "delivery-omp", "full", "delivery-full-omp.yaml")));
+  const partial = plan({ targets: ["codex"], project: false, packs: false, uninstall: true, cwd: home, home, env });
+  assert.equal(partial.steps.some((s) => s.kind === "skills" && s.to === path.join(home, ".agents", "skills")), false);
+  assert.ok(partial.notes.includes("packs: kept, so the ~/.agents/skills copy they read stays too"));
+  apply(partial, { built, uninstall: true, home });
+  assert.ok(fs.existsSync(path.join(home, ".agents", "skills", "create-plan", "SKILL.md")), "partial uninstall keeps the packs' skills");
+  assert.ok(fs.existsSync(path.join(home, ".archon", "workflows", "delivery", "full", "delivery-full.yaml")), "partial uninstall keeps the packs");
   if (ARCHON) {
     // Archon reads ~/.archon/workflows from HOME and needs a git repository as cwd.
     const project = tmpdir("skills-install-project-");
@@ -143,6 +172,15 @@ test("apply installs every target into a home directory and uninstall leaves onl
   } else {
     console.log("# no archon 0.10+ on PATH: skipping the installed-packs listing");
   }
+
+  const ompOnly = plan({ targets: ["oh-my-pi"], project: false, packs: true, cwd: home, home, env });
+  const ompWork = tmpdir();
+  buildRuntime("oh-my-pi", path.join(ompWork, "oh-my-pi"));
+  fs.mkdirSync(path.join(ompWork, "packs", "skills"), { recursive: true });
+  for (const skill of scanSkills(path.join(REPO, "skills")).skills) fs.cpSync(skill.dir, path.join(ompWork, "packs", "skills", skill.name), { recursive: true });
+  const ompBuilt = new Map([["oh-my-pi", path.join(ompWork, "oh-my-pi")], ["packs", path.join(ompWork, "packs")]]);
+  apply(ompOnly, { built: ompBuilt, uninstall: false, home });
+  assert.deepEqual(fs.readdirSync(path.join(home, ".archon", "workflows")).sort(), ["delivery-omp", "mine"]);
 
   apply(planned, { built, uninstall: true, home });
   assert.deepEqual(fs.readdirSync(path.join(home, ".claude", "skills")), ["mine"]);

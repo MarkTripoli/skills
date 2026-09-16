@@ -15,5 +15,5 @@ Start the next phase in a new session; continuing in this session carries this p
 Apply the `## Fix` steps and make the reproduction pass, commit with explicit paths, then run the review:
 
 ```text
-/review-code
+/fix-bug
 ```

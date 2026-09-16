@@ -4,7 +4,7 @@ Map for working on this repository: building skills, packs, and their docs. Usin
 
 ## What lives here
 
-- `skills/delivery/<name>/` is one delivery phase each: `create-*` and `iterate-*` write and revise an artifact, `implement-*` build from it, `review-code` and `fix-code-review` review until clean, `reproduce-bug`, `describe-pr`, `resolve-pr-reviews`, `ci-commit`, `record-evidence`, `create-epic-plan` and `start-epic-delivery`. `SKILL.md` holds the steps; `references/` holds the artifact template and the answer template the phase ends with.
+- `skills/delivery/<name>/` is one delivery phase each: `create-*` and `iterate-*` write and revise an artifact, `implement-*` build from it, `reproduce-bug` and `fix-bug` reproduce and fix defects, `review-code` and `fix-code-review` review until clean, `describe-pr`, `resolve-pr-reviews`, `ci-commit`, `record-evidence`, `create-epic-plan` and `start-epic-delivery`. `SKILL.md` holds the steps; `references/` holds the artifact template and the answer template the phase ends with.
 - `skills/delivery/agent-*/` are worker roles a phase dispatches (locate, analyze, find patterns, implement, review, research). `scripts/sync-plugin.mjs` regenerates `agents/` from them; the installer builds the per-runtime forms.
 - `skills/<name>/` (`show-me`) are standalone skills outside the workflow.
 - `.archon/workflows/delivery/` holds the Archon blocks and packs that chain the phases, each with `fixtures/` dry-run cases. `delivery-omp/` is generated from it by `scripts/build-packs.mjs` and never edited.

@@ -10,14 +10,14 @@ archon setup                                   # provider: Claude Code, Codex, o
 npx github:MarkTripoli/skills                  # skills per runtime, ~/.agents/skills, packs in ~/.archon/workflows/
 ```
 
-`--project` installs into the current repository, `--no-packs` skips the packs, `--dry-run` prints the plan and stops.
+`--project` installs into the current repository but still writes the `~/.agents/skills` copy the packs read; install prunes the other managed flavor and retired paths. `--no-packs` skips the packs, `--dry-run` prints the plan and stops.
 
 ## Pick a pack
 
 | Pack | When | Gates | Start |
 |---|---|---|---|
 | `delivery-oneshot` | small, fully specified, no design choice | `pr` | `archon workflow run delivery-oneshot --branch verbose-flag "Add a --verbose flag to the CLI"` |
-| `delivery-bugfix` | observed differs from expected; nothing is edited before it reproduces | `reproduce`, `pr` | `archon workflow run delivery-bugfix --branch config-exit-code "Missing config file: the CLI exits 0; it should exit 2 and name the file"` |
+| `delivery-bugfix` | observed differs from expected; no product code is edited before it reproduces | `reproduce`, `pr` | `archon workflow run delivery-bugfix --branch config-exit-code "Missing config file: the CLI exits 0; it should exit 2 and name the file"` |
 | `delivery-lean` | shape is clear; several files and an ordering | `outline`, `phases`, `pr` | `archon workflow run delivery-lean --branch split-loader "Split the config loader into parser and validator modules"` |
 | `delivery-full` | competing approaches, cross-module impact, a shared interface | `design`, `plan`, `phases`, `pr` | `archon workflow run delivery-full --branch plugin-formatters "Add a plugin system for output formatters"` |
 | `delivery-prd` | the requirement itself is open; product-facing | `prd`, `tdd`, `plan`, `phases`, `pr` | `archon workflow run delivery-prd --branch csv-export "Export reports as CSV from the dashboard"` |
@@ -44,7 +44,7 @@ archon workflow abandon <run-id>                                  # dead run; `r
 `--input gates=all` (default) | `none` | `plan,pr` (comma list of the pack's names; an unknown name fails the run at node `gates`). With a gate off:
 - `design`, `outline`, `prd`, `tdd`, `plan`, `pr`: the create skill runs once, no revision pass.
 - `phases`: phases run back to back until the newest plan or outline has no `- [ ]` under a `## Phase N` or `## Step N` heading; 16 iterations fail the node.
-- `reproduce`: up to 4 reproduction attempts, then the run cancels pointing at the artifact's `## Missing` list. The review loop (every pack, never gated) runs review-code, fix-code-review until `clean`, at most 4 rounds; `blocked` cancels the run.
+- `reproduce`: up to 4 reproduction sessions, then the run cancels pointing at the artifact's `## Missing` list. The review loop (every pack, never gated) runs review-code, fix-code-review until `clean`, at most 4 rounds; `blocked` cancels the run.
 
 Gates are fixed per run (`--input` and `--resume` are mutually exclusive); to add gates, start a new run on the same `--branch` with `--input task_dir=.agents/tasks/<slug> --input gates=<names>`.
 
@@ -61,11 +61,11 @@ Artifacts are `NN-<type>-<slug>.md` (`04-plan-plugin-system-output-formatters.md
 ```sh
 archon workflow run delivery-epic --branch epic-build-billing-module "Build the billing module"   # .agents/tasks/build-billing-module/, gate: plan
 archon workflow approve <run-id> --detach   # start-epic-delivery creates one task dir per child, commits `docs(task): open epic children`, prints:
-archon workflow run delivery-<child workflow> --base epic-build-billing-module --input task_dir=.agents/tasks/<child slug> "<child prompt>"
+archon workflow run delivery-<child workflow> --base epic-build-billing-module --input task_dir=.agents/tasks/<child slug> '<child prompt>'
 archon workflow run delivery-resolve-reviews --adopt <run-id> --input task_dir=.agents/tasks/<slug> "address the review comments"   # one review round
 ```
 
-Run each child command from the project root on the epic branch; a later wave starts after its dependencies merge into that branch. `--adopt` reuses the worktree and branch of the run that opened the pull request (`--branch <pr branch>` also works); run it again when reviewers respond.
+Run each child command from the project root on the epic branch; write prompt apostrophes as ` '\'' `, and a later wave starts after its dependencies merge into that branch. `--base` is the child's pull request target unless its existing pull request or `task.md` `base:` says otherwise. `--adopt` reuses the worktree and branch of the run that opened the pull request (`--branch <pr branch>` also works); run it again when reviewers respond.
 
 ## Oh My Pi
 

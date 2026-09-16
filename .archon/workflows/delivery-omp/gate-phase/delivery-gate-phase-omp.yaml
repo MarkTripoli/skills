@@ -50,13 +50,15 @@ nodes:
         - id: phase
           bash: |
             set -eu
-            v1=$LOOP_PREV.gate.output.text
+            v1=$LOOP_PREV.gate.output.decision
+            v2=$LOOP_PREV.gate.output.text
             { prompt=$(cat); } <<DELIVERY_PROMPT
-            Reviewer feedback from the previous pass (empty on the first pass):
-            ${v1}
+            Reviewer decision and feedback from the previous pass (both empty on the first pass):
+            decision: ${v1}
+            feedback: ${v2}
 
-            When the feedback above is empty, read and follow ${INPUTS_SKILLS_DIR}/${INPUTS_SKILL}/SKILL.md, the installed \`${INPUTS_SKILL}\` skill, for task directory ${INPUTS_TASK_DIR}.
-            Otherwise, read and follow ${INPUTS_SKILLS_DIR}/${INPUTS_ITERATE}/SKILL.md, the installed \`${INPUTS_ITERATE}\` skill, for task directory ${INPUTS_TASK_DIR}, applying that feedback to the newest artifact the skill owns.
+            When the decision above is empty, read and follow ${INPUTS_SKILLS_DIR}/${INPUTS_SKILL}/SKILL.md, the installed \`${INPUTS_SKILL}\` skill, for task directory ${INPUTS_TASK_DIR}.
+            When the decision is reject, read and follow ${INPUTS_SKILLS_DIR}/${INPUTS_ITERATE}/SKILL.md, the installed \`${INPUTS_ITERATE}\` skill, for task directory ${INPUTS_TASK_DIR}, applying the feedback (which may be empty) to the newest artifact the skill owns.
 
             The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
             DELIVERY_PROMPT

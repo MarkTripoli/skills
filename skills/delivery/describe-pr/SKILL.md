@@ -37,7 +37,7 @@ git diff --name-status <base>...HEAD
 git diff <base>...HEAD
 ```
 
-On GitLab, `glab mr view` replaces the `gh pr view` line. `<base>` is `baseRefName` from the pull request when one exists, else the repository default branch (`git symbolic-ref --short refs/remotes/origin/HEAD`).
+On GitLab, `glab mr view` replaces the `gh pr view` line. `<base>` is the existing pull request's base, else `base:` from `task.md` when present, else the repository default branch (`git symbolic-ref --short refs/remotes/origin/HEAD`).
 
 If no PR exists, inspect branch status and committed changes. Commit and push only when required: code commits stage explicit code paths; uncommitted task artifacts go in their own `docs(task): <artifact type> artifact` commit per the conventions' Commits section. Then create the pull request with `gh pr create` or `glab mr create`. With neither CLI, print the branch and base for a manual pull request.
 
@@ -70,8 +70,8 @@ Write `.agents/tasks/<task-slug>/pr-description.md` (no task dir: `.agents/tasks
 
 Save the file. When not run by the workflow engine, commit it with `git add <path>` as `docs(task): pr-description artifact` and push before publishing. Publish:
 
-1. `gh` on PATH, GitHub PR: `gh pr edit <number> --body-file <path>` (new PR: `gh pr create --body-file <path>`).
-2. `glab` on PATH, GitLab MR: `glab mr update <number> --description "$(cat <path>)"` (new MR: `glab mr create --description "$(cat <path>)"`).
+1. `gh` on PATH, GitHub PR: `gh pr edit <number> --body-file <path>` (new PR: `gh pr create --base <base> --body-file <path>`).
+2. `glab` on PATH, GitLab MR: `glab mr update <number> --description "$(cat <path>)"` (new MR: `glab mr create --target-branch <base> --description "$(cat <path>)"`).
 3. Otherwise: print the branch, base, and description path for a manual pull request.
 
 Confirm URL, title, number, base, head.

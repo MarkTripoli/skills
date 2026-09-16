@@ -45,10 +45,10 @@ nodes:
         awk '
           /^[[:space:]]*```/ { infence = !infence; next }
           infence { next }
-          /^## (Phase|Step) [0-9]+/ { inphase = 1; next }
+          /^## (Phase|Step) [0-9]+/ { seen = 1; inphase = 1; next }
           /^## / { inphase = 0; next }
           inphase && /^[[:space:]]*- \[ \]/ { open = 1 }
-          END { exit open ? 1 : 0 }
+          END { exit (seen && !open) ? 0 : 1 }
         ' "$plan"
       nodes:
         - id: implement-phase
@@ -115,10 +115,10 @@ nodes:
         awk '
           /^[[:space:]]*```/ { infence = !infence; next }
           infence { next }
-          /^## (Phase|Step) [0-9]+/ { inphase = 1; next }
+          /^## (Phase|Step) [0-9]+/ { seen = 1; inphase = 1; next }
           /^## / { inphase = 0; next }
           inphase && /^[[:space:]]*- \[ \]/ { open = 1 }
-          END { exit open ? 1 : 0 }
+          END { exit (seen && !open) ? 0 : 1 }
         ' "$plan"
       nodes:
         - id: implement-phase-auto

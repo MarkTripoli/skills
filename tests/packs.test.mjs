@@ -160,7 +160,10 @@ test("task node: slugs follow the conventions, task.md carries the workflow, an 
     const created = runTaskNode(cwd, { ARGUMENTS: "Please make the dashboard load faster for admins\nDetails on line two", INPUTS_WORKFLOW: "lean" });
     assert.equal(created.out, `{"task_dir":".agents/tasks/dashboard-load-faster-admins","skills_dir":"${SKILLS}"}`);
     const taskMd = fs.readFileSync(path.join(cwd, ".agents/tasks/dashboard-load-faster-admins/task.md"), "utf8");
-    assert.match(taskMd, /^---\nslug: dashboard-load-faster-admins\ntitle: Please make the dashboard load faster for admins\nworkflow: lean\ncreated: \d{4}-\d{2}-\d{2}\n---\nPlease make the dashboard load faster for admins\nDetails on line two\n$/);
+    assert.match(taskMd, /^---\nslug: dashboard-load-faster-admins\ntitle: "Please make the dashboard load faster for admins"\nworkflow: lean\ncreated: \d{4}-\d{2}-\d{2}\n---\nPlease make the dashboard load faster for admins\nDetails on line two\n$/);
+    const quoted = runTaskNode(cwd, { ARGUMENTS: 'Fix CLI: reject missing "config" #12', INPUTS_WORKFLOW: "bugfix" });
+    const quotedTaskMd = fs.readFileSync(path.join(cwd, quoted.out.match(/task_dir":"([^"]+)/)?.[1] ?? "" , "task.md"), "utf8");
+    assert.match(quotedTaskMd, /^---\nslug: [a-z0-9-]+\ntitle: "Fix CLI: reject missing \\"config\\" #12"\nworkflow: bugfix\ncreated: \d{4}-\d{2}-\d{2}\n---/);
     assert.equal(fs.readFileSync(path.join(cwd, ".gitignore"), "utf8"), "node_modules/", "outside a git work tree nothing else is touched");
     // A one-word request falls back to the raw words; a repeated request gets a numbered directory.
     assert.equal(runTaskNode(cwd, { ARGUMENTS: "Fix the bug", INPUTS_WORKFLOW: "bugfix" }).out, `{"task_dir":".agents/tasks/fix-the-bug","skills_dir":"${SKILLS}"}`);
@@ -208,7 +211,7 @@ test("task node: in a git work tree task.md is committed, an exact `.agents/task
   try {
     const failed = runTaskNode(other, { ARGUMENTS: "Add a --verbose flag", INPUTS_WORKFLOW: "full" });
     assert.equal(failed.code, 1);
-    assert.match(failed.err, /^\.agents\/tasks\/verbose-flag\/task\.md is ignored by git; remove the rule that ignores \.agents\/tasks\//);
+    assert.match(failed.err, /\.agents\/tasks\/verbose-flag\/task\.md is ignored by git; remove the rule that ignores \.agents\/tasks\//);
     assert.equal(fs.readFileSync(path.join(other, ".gitignore"), "utf8"), ".agents/\n", "a rule the node does not own is left alone");
     assert.equal(git(other, "log", "--format=%s"), "init");
   } finally {
@@ -335,7 +338,7 @@ test("archon: every pack loads without warnings and dry-runs gated and unattende
     assert.equal(full.trace.find((t) => t.nodeId === "task__create").output, `{"task_dir":".agents/tasks/verbose-flag-cli-prints","skills_dir":"${ARCHON_HOME}/.agents/skills"}`, "the default skills_dir is expanded from ~");
     // The dry run delivers no INPUTS_* to the included task node, so `workflow:` is its default here; the
     // task-node tests above prove the field. The trace proves slug, title, body and the commit.
-    assert.match(fs.readFileSync(path.join(cwd, ".agents", "tasks", "verbose-flag-cli-prints", "task.md"), "utf8"), /^---\nslug: verbose-flag-cli-prints\ntitle: Add a --verbose flag to the CLI that prints each command\nworkflow: [a-z]+\ncreated: \d{4}-\d{2}-\d{2}\n---\nAdd a --verbose flag/);
+    assert.match(fs.readFileSync(path.join(cwd, ".agents", "tasks", "verbose-flag-cli-prints", "task.md"), "utf8"), /^---\nslug: verbose-flag-cli-prints\ntitle: "Add a --verbose flag to the CLI that prints each command"\nworkflow: [a-z]+\ncreated: \d{4}-\d{2}-\d{2}\n---\nAdd a --verbose flag/);
     assert.equal(git(cwd, "log", "-1", "--format=%s"), "docs(task): open verbose-flag-cli-prints");
     assert.equal(fs.readFileSync(path.join(cwd, ".gitignore"), "utf8"), "node_modules/\n", ".gitignore is left alone when it does not ignore the task directory");
     // Every gate's body ran (the include-alias workaround holds) and the per-phase review stayed off.
@@ -438,7 +441,13 @@ const FAKE_OMP = String.raw`#!/bin/bash
 for prompt in "$@"; do :; done
 printf '=== CALL\n%s\n' "$prompt" >> "$FAKE_OMP_LOG"
 task=$(printf '%s' "$prompt" | grep -o 'task directory [^ ,]*' | head -1 | awk '{print $3}' | sed 's/[.:]$//')
+# The reject branch first: a gated phase's prompt names both the create and the iterate skill.
 case "$prompt" in
+  *"decision: reject"*)
+    f="$task/03-structure-outline-x.md"
+    feedback=$(printf '%s\n' "$prompt" | sed -n 's/^feedback: //p' | tail -1)
+    printf '\nFeedback: %s\n' "$feedback" >> "$f"
+    echo revised ;;
   *create-research-questions/SKILL.md*) printf 'q\n' > "$task/01-research-questions-x.md"; echo saved ;;
   *create-research/SKILL.md*) printf 'r\n' > "$task/02-research-x.md"; echo saved ;;
   *create-structure-outline/SKILL.md*) printf '## Step 1: a\n\n- [ ] one\n\n## Step 2: b\n\n- [ ] two\n\n## Human Review\n\n- [ ] stays open\n' > "$task/03-structure-outline-x.md"; echo saved ;;
@@ -474,6 +483,8 @@ test("archon: a real run of the omp flavor with a fake omp proves what dry runs 
     fs.cpSync(path.join(REPO, ".archon", "workflows", "delivery-omp"), path.join(cwd, ".archon", "workflows", "delivery-omp"), { recursive: true });
     fs.mkdirSync(path.join(cwd, "bin"));
     fs.writeFileSync(path.join(cwd, "bin", "omp"), FAKE_OMP, { mode: 0o755 });
+    fs.mkdirSync(path.join(cwd, ".agents/tasks/other"), { recursive: true });
+    fs.writeFileSync(path.join(cwd, ".agents/tasks/other/note.md"), "leave me\n");
 
     const lean = realRun(cwd, home, "delivery-lean-omp", "Add a --verbose flag to the CLI that prints each command", {}, ["--input", "gates=none"]);
     assert.equal(lean.code, 0, lean.out);
@@ -493,18 +504,19 @@ test("archon: a real run of the omp flavor with a fake omp proves what dry runs 
       "docs(task): open verbose-flag-cli-prints",
       "init",
     ]);
-    assert.equal(git(cwd, "status", "--porcelain", "--", ".agents"), "", "no artifact left uncommitted");
+    assert.equal(git(cwd, "status", "--porcelain", "--", ".agents/tasks/verbose-flag-cli-prints"), "", "no run artifact left uncommitted");
     assert.equal(fs.readFileSync(path.join(cwd, ".gitignore"), "utf8"), "node_modules/\n");
+    assert.notEqual(git(cwd, "status", "--porcelain", "--", ".agents/tasks/other"), "", "another task directory stays untracked");
 
-    // Unattended bugfix that never reproduces: four fresh attempts, each seeing the previous status
+    // Unattended bugfix that never reproduces: four fresh sessions, each seeing the previous status
     // through $LOOP_PREV, each committed, then the run cancels with the count.
     const bug = realRun(cwd, home, "delivery-bugfix-omp", "The CLI exits 0 when the config file is missing", { FAKE_REPRO: "not-reproduced" }, ["--input", "gates=none"]);
     assert.notEqual(bug.code, 0);
-    assert.match(bug.out, /Bug not reproduced after 4 attempt\(s\)/);
+    assert.match(bug.out, /Bug not reproduced after 4 reproduction session\(s\)/);
     assert.equal(bug.calls.length, 4);
-    assert.match(bug.calls[0], /\nstatus: \n/, "first attempt: $LOOP_PREV is empty");
-    assert.match(bug.calls[1], /\nstatus: not-reproduced\nsummary: attempt 1\n/, "second attempt sees the first attempt's answer through $LOOP_PREV");
-    assert.equal(git(cwd, "log", "--format=%s", "-5").split("\n").filter((s) => s === "docs(task): reproduce artifacts").length, 4, "each attempt's artifact is committed before the cancel");
+    assert.match(bug.calls[0], /\nstatus: \n/, "first session: $LOOP_PREV is empty");
+    assert.match(bug.calls[1], /\nstatus: not-reproduced\nsummary: attempt 1\n/, "second session sees the first session's answer through $LOOP_PREV");
+    assert.equal(git(cwd, "log", "--format=%s", "-5").split("\n").filter((s) => s === "docs(task): reproduce artifacts").length, 4, "each session's artifact is committed before the cancel");
     assert.ok(fs.existsSync(path.join(home, ".archon", "archon.db")), "the run used the scratch HOME, not the real one");
 
     // A gated outline: the run exits at the gate; a detached reject re-runs the phase with the
@@ -522,7 +534,10 @@ test("archon: a real run of the omp flavor with a fake omp proves what dry runs 
     assert.equal(waited.status, 0, waited.stderr);
     let calls = fs.readFileSync(path.join(cwd, "omp.log"), "utf8").split("=== CALL\n").slice(1);
     assert.equal(calls.length, 1, "reject re-runs the phase once");
-    assert.match(calls[0], /Reviewer feedback from the previous pass \(empty on the first pass\):\nSplit step 1 in two\n[\s\S]*Otherwise, read and follow \S+\/iterate-structure-outline\/SKILL\.md/, "the reviewer's text reaches the revision prompt verbatim, which names the iterate skill");
+    assert.match(calls[0], /decision: reject\nfeedback: Split step 1 in two\n[\s\S]*When the decision is reject, read and follow \S+\/iterate-structure-outline\/SKILL\.md/, "the reject decision and text reach the revision prompt, which names the iterate skill");
+    const revisedOutline = fs.readFileSync(path.join(cwd, ".agents/tasks/quiet-flag-cli/03-structure-outline-x.md"), "utf8");
+    assert.match(revisedOutline, /## Step 1: a[\s\S]*- \[ \] one[\s\S]*## Step 2: b[\s\S]*- \[ \] two/);
+    assert.match(revisedOutline, /Feedback: Split step 1 in two/);
     const approved = steer(["workflow", "approve", runId, "--detach"]);
     assert.equal(approved.status, 0, approved.stderr);
     assert.equal(steer(["workflow", "wait", runId, "--timeout", "90"]).status, 0);

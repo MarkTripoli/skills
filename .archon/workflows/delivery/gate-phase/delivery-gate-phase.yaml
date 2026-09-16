@@ -49,11 +49,12 @@ nodes:
         - id: phase
           context: fresh
           prompt: |
-            Reviewer feedback from the previous pass (empty on the first pass):
-            $LOOP_PREV.gate.output.text
+            Reviewer decision and feedback from the previous pass (both empty on the first pass):
+            decision: $LOOP_PREV.gate.output.decision
+            feedback: $LOOP_PREV.gate.output.text
 
-            When the feedback above is empty, read and follow $INPUTS.skills_dir/$INPUTS.skill/SKILL.md, the installed `$INPUTS.skill` skill, for task directory $INPUTS.task_dir.
-            Otherwise, read and follow $INPUTS.skills_dir/$INPUTS.iterate/SKILL.md, the installed `$INPUTS.iterate` skill, for task directory $INPUTS.task_dir, applying that feedback to the newest artifact the skill owns.
+            When the decision above is empty, read and follow $INPUTS.skills_dir/$INPUTS.skill/SKILL.md, the installed `$INPUTS.skill` skill, for task directory $INPUTS.task_dir.
+            When the decision is reject, read and follow $INPUTS.skills_dir/$INPUTS.iterate/SKILL.md, the installed `$INPUTS.iterate` skill, for task directory $INPUTS.task_dir, applying the feedback (which may be empty) to the newest artifact the skill owns.
 
             The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
 

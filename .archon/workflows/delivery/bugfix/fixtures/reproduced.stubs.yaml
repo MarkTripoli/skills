@@ -1,5 +1,5 @@
 # `gates=none` with the deterministic nodes executed in Archon's scratch worktree: the real `gates`
-# node reads the input, `task__create` commits task.md there, `attempt-count` reads the attempt's
+# node reads the input, `task__create` commits task.md there, `attempt-count` reads the session's
 # status, `not-reproduced` stays skipped, and every join commits. Only the AI nodes are stubbed.
 attempt-auto: '{"status":"reproduced","summary":"exit code 0 on a missing config","artifact":"01-reproduction-fixture.md"}'
 fix: "bug fixed and committed"

@@ -17,7 +17,7 @@ const rootIndex = args.indexOf("--root");
 const root = rootIndex === -1 ? repoRoot : path.resolve(args[rootIndex + 1] ?? "");
 const generated = root !== repoRoot;
 
-const EXPECTED_SKILL_COUNT = 35;
+const EXPECTED_SKILL_COUNT = 36;
 const SHARED_LINKS = {
   "shared/WRITING.md": "https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md",
   "shared/CONVENTIONS.md": "https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md",
@@ -44,6 +44,7 @@ const ANSWER_INVENTORY = {
   "create-tdd/references/tdd_system_review_answer.md": "iterate-tdd",
   "describe-pr/references/pr_description_final_answer.md": "resolve-pr-reviews",
   "fix-code-review/references/code_review_fixes_answer.md": "review-code",
+  "fix-bug/references/fix_answer.md": "review-code",
   "implement-outline/references/implementation_final_answer.md": "describe-pr",
   "implement-outline/references/implementation_phase_final_answer.md": "implement-outline",
   "implement-plan/references/implementation_final_answer.md": "describe-pr",
@@ -64,7 +65,7 @@ const ANSWER_INVENTORY = {
   "record-evidence/references/evidence_final_answer.md": "describe-pr",
   "record-evidence/references/evidence_standalone_answer.md": "show-me",
   "reproduce-bug/references/reproduction_not_reproduced_answer.md": "show-me",
-  "reproduce-bug/references/reproduction_reproduced_answer.md": "review-code",
+  "reproduce-bug/references/reproduction_reproduced_answer.md": "fix-bug",
   "resolve-pr-reviews/references/pr_review_approved_answer.md": "show-me",
   "resolve-pr-reviews/references/pr_review_pending_answer.md": "resolve-pr-reviews",
   "review-artifact-comments/references/comments_final_answer.md": "iterate-implementation",
@@ -123,7 +124,7 @@ const BANNED_TOKENS = [
   /artifact_directive/i,
 ];
 
-const SKIP_DIRS = new Set([".git", "node_modules", "dist", "results"]);
+const SKIP_DIRS = new Set([".git", "node_modules", "dist", "results", ".cache"]);
 const SKIP_FILES = new Set(["scripts/validate.mjs", ".skill-lock.json"]);
 
 const failures = [];
@@ -134,11 +135,13 @@ const read = (file) => fs.readFileSync(file, "utf8");
 function listFiles(dir) {
   const out = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (!SKIP_DIRS.has(entry.name)) out.push(...listFiles(path.join(dir, entry.name)));
-    } else {
-      out.push(path.join(dir, entry.name));
+      if (!SKIP_DIRS.has(entry.name)) out.push(...listFiles(full));
+    } else if (entry.isFile()) {
+      out.push(full);
     }
+    // Symlinks, sockets, and anything a tool is writing while we walk are not the collection's files.
   }
   return out;
 }
@@ -161,7 +164,7 @@ function fillTemplate(input) {
     .replaceAll("{implementation_command}", "/implement-plan")
     .replaceAll("{report_link}", "[report.md](.agents/tasks/task-slug/evidence/screen/report.md)")
     .replaceAll("{child_slug}", "child-slug")
-    .replaceAll("{child_start_command}", 'archon workflow run delivery-lean --base epic-slug --input task_dir=.agents/tasks/child-slug "Child prompt"')
+    .replaceAll("{child_start_command}", "archon workflow run delivery-lean --base epic-slug --input task_dir=.agents/tasks/child-slug 'Child prompt'")
     .replaceAll("{review_check}", "Review the named behavior and evidence.")
     .replaceAll("{known_limits}", "None.")
     .replaceAll("{needed}", "The exact input file that triggers the crash.")

@@ -14,8 +14,8 @@ Pack source: `.archon/workflows/delivery/` (native: Claude Code, Codex, Pi throu
 | `delivery-lean` | create-research-questions, create-research, create-structure-outline (gate), implement-outline per step (gate after each), review loop, describe-pr (gate) | `outline`, `phases`, `pr` | The shape is clear but several files and an ordering are involved. |
 | `delivery-prd` | create-research (questions derived from `task.md`), create-prd (gate), create-tdd (gate), create-plan (gate), implement-plan per phase (gate after each), review loop, describe-pr (gate) | `prd`, `tdd`, `plan`, `phases`, `pr` | The requirement itself is open: what it should do, for whom, edge behavior; product-facing work; stakeholders beyond the requester. |
 | `delivery-oneshot` | one session implements, verifies, and commits per the `ci-commit` conventions; review loop; describe-pr (gate) | `pr` | A small change with a stated expected behavior, a way to verify it, no design choice, a small footprint. |
-| `delivery-bugfix` | reproduce-bug (gate), one session fixes from the reproduction artifact and commits, review loop, describe-pr (gate) | `reproduce`, `pr` | Observed behavior differs from expected behavior and a reproduction is possible. Nothing is edited until the bug is reproduced. |
-| `delivery-epic` | create-epic-plan (gate), start-epic-delivery | `plan` | Several independently mergeable deliverables, work for more than one person, or more than about eight plan phases. Run with `--branch epic-<slug>`; the parent run ends after printing the child start commands. |
+| `delivery-bugfix` | reproduce-bug (gate), fix-bug, review loop, describe-pr (gate) | `reproduce`, `pr` | Observed behavior differs from expected behavior and a reproduction is possible. No product code is edited before the bug reproduces. |
+| `delivery-epic` | research, create-epic-plan (gate), start-epic-delivery | `plan` | Several independently mergeable deliverables, work for more than one person, or more than about eight plan phases. Run with `--branch epic-<slug>`; the parent run ends after printing the child start commands. |
 | `delivery-resolve-reviews` | resolve-pr-reviews, one round | none | Reviewers left comments on a pull request a delivery run opened. Start it with `--adopt <run-id>` of that run (or `--branch <pr branch>`) so it works in the adopted worktree, pass `--input task_dir=<task dir>`, and run it again when reviewers respond. |
 
 `delivery-full`, `delivery-lean`, and `delivery-prd` accept `--input review_each_phase=true`, which adds one review-code, fix-code-review pass after every implementation phase. All packs accept `--input skills_dir=<dir>` (default `~/.agents/skills`), the directory holding one `<skill>/SKILL.md` per installed skill, and `--input task_dir=<dir>` to reuse an existing task directory (an epic child, or one created by hand) instead of creating one. `delivery-task` expands a leading `~` in `skills_dir` (Archon passes inputs through verbatim and not every agent's file tool expands one), warns on stderr when the directory is missing, and returns it as `$task.output.skills_dir`, which every later node reads.
@@ -66,7 +66,7 @@ A gated loop allows 100 rounds (`max_iterations: 100` on `cycle` and on the bugf
 |---|---|---|
 | `design`, `outline`, `prd`, `tdd`, `plan`, `pr` | `delivery-gate-phase` `once` | The create skill runs once; no revision pass. |
 | `phases` | `delivery-implement` `phases-auto` | Phases run back to back, one fresh session each, until the newest plan or outline has no unchecked box under a `## Phase N` or `## Step N` heading; sixteen iterations fail the node. `review=true` still runs the per-phase review pass. |
-| `reproduce` | `delivery-bugfix` `reproduce-auto`, `not-reproduced` | Up to four reproduction attempts, each a fresh session reading the previous artifact's `## Missing` list. A `status` of `reproduced` moves on to `fix`; after the fourth `not-reproduced` a `cancel:` node ends the run with "Bug not reproduced after 4 attempt(s); supply what the newest reproduction artifact's `## Missing` list names, then run the workflow again." |
+| `reproduce` | `delivery-bugfix` `reproduce-auto`, `not-reproduced` | Up to four reproduction sessions, each a fresh session reading the previous artifact's `## Missing` list. A `status` of `reproduced` moves on to `fix`; after the fourth `not-reproduced` a `cancel:` node ends the run with "Bug not reproduced after 4 reproduction session(s); supply what the newest reproduction artifact's `## Missing` list names, then run the workflow again." |
 | any | `delivery-review` | Unchanged: review-code, fix-code-review until `clean` or four rounds; `blocked` cancels the run. This loop never had a gate. |
 
 To see what an unattended run decided: `archon workflow get <run-id> --json` lists every node's state and output (`--verbose` adds the per-node summary); `git log --grep 'docs(task)'` on the branch shows one commit per phase with the artifacts it added; the code-review artifacts (`NN-code-review-*.md`) record each review round's findings and the `status` the loop routed on.
@@ -96,9 +96,9 @@ With the `reproduce` gate on, `delivery-bugfix` puts `reproduce-bug` and its gat
 - reproduced: approve to move on to the fix; reject with text to correct the reproduction.
 - not reproduced: the gate is the escalation. Either decision with text re-runs `reproduce-bug`, which treats the text as new information (steps, data, environment) and revises the artifact in place; abandon the run when nothing more is known.
 
-With the gate off, `reproduce-auto` (`max_iterations: 4`) runs `attempt-auto` and then `attempt-count`, a `bash:` node that commits the attempt's artifact (`docs(task): reproduce artifacts`) and prints `{status, attempt}`; `until_bash` stops on `reproduced` or on the fourth attempt. `not-reproduced` is a `cancel:` node under `when: "$reproduce-auto.output.status != 'reproduced'"`; the artifacts it points at are already on the branch. The `reproduce-done` join depends on all three and fires with `trigger_rule: none_failed_min_one_success`.
+With the gate off, `reproduce-auto` (`max_iterations: 4`) runs `attempt-auto` and then `attempt-count`, a `bash:` node that commits the session's artifact (`docs(task): reproduce artifacts`) and prints `{status, attempt}`; `until_bash` stops on `reproduced` or on the fourth session. `not-reproduced` is a `cancel:` node under `when: "$reproduce-auto.output.status != 'reproduced'"`; the artifacts it points at are already on the branch. The `reproduce-done` join depends on all three and fires with `trigger_rule: none_failed_min_one_success`.
 
-`fix` is a plain prompt, not a skill: read `task.md` and the newest reproduction artifact, follow its `## Fix` steps, make the reproduction pass, run the narrowest checks, commit the code per the `ci-commit` conventions, keep the reproduction as a regression test when it is one. Then the review loop and the pull request gate.
+`fix-bug` reads `task.md` and the newest reproduction artifact, follows its `## Fix` steps, makes the reproduction pass, runs the narrowest checks, commits the code per the `ci-commit` conventions, and keeps the reproduction as a regression test when it is one. Then the review loop and the pull request gate.
 
 ## Steering a run
 
@@ -128,7 +128,7 @@ archon workflow wait <run-id>
 `.agents/tasks/` is committed history; nothing in the collection ignores it.
 
 - `delivery-task` commits `task.md` as `docs(task): open <slug>` on the run's branch. When `git check-ignore -q` reports `task.md` ignored, the node removes an exact `.agents/tasks/` line from the project `.gitignore` (added by earlier versions of this collection), stages that edit in the same commit, and exits 1 with an instruction when the path is still ignored. Outside a git work tree nothing is committed. A reused `task_dir` is not touched.
-- Every `*-done` join runs `git add -A .agents/tasks` and commits `docs(task): <phase> artifacts` when that directory changed (the commit is scoped to `.agents/tasks`, so code an AI phase left staged stays out of it); `<phase>` is `research`, `design`, `outline`, `prd`, `tdd`, `plan`, `implement`, `review`, `reproduce`, `pr`, or `review-round`. The bugfix `fix` session commits its own task-directory writes as `docs(task): fix artifacts`; `delivery-epic` commits `docs(task): open epic children` after `start`.
+- Every `*-done` join stages and commits only the run's task directory as `docs(task): <phase> artifacts`; code an AI phase left staged stays out of it. `<phase>` is `research`, `design`, `outline`, `prd`, `tdd`, `plan`, `implement`, `review`, `reproduce`, `pr`, or `review-round`. The bugfix `fix-bug` session commits its own task-directory writes as `docs(task): fix artifacts`; `delivery-epic` commits `docs(task): open epic children` after `start`.
 - `pr-done` (after every `pr` include) and `round-done` (`delivery-resolve-reviews`) also `git push -q` when the branch has an upstream, because `describe-pr` and `resolve-pr-reviews` push before the join lands their artifact.
 - The `fix` and `implement` prompts (bugfix, oneshot) and every skill commit code with explicit paths and never mix artifact files in; a skill run by hand commits its artifact as `docs(task): <artifact type> artifact`.
 
@@ -174,7 +174,8 @@ Artifact type is the frontmatter `type` of the artifact the skill writes. "Human
 | iterate-implementation | implementation | yes | `delivery-implement` `phases`, on reject |
 | review-code | code-review | no | `delivery-review`; `delivery-implement` `review-phase` and `review-phase-auto` with `review_each_phase=true` |
 | fix-code-review | code-review-fixes | no | `delivery-review`; `delivery-implement` `fix-phase` and `fix-phase-auto` |
-| reproduce-bug | reproduction | yes | `delivery-bugfix` `reproduce` loop (gated) or `reproduce-auto` (up to four attempts, then cancel) |
+| reproduce-bug | reproduction | yes | `delivery-bugfix` `reproduce` loop (gated) or `reproduce-auto` (up to four reproduction sessions, then cancel) |
+| fix-bug | fix | no | `delivery-bugfix` |
 | record-evidence | evidence | no | by hand |
 | describe-pr | pr-description | yes | `delivery-gate-phase` `pr` in every pack except `delivery-epic` and `delivery-resolve-reviews`; also the iterate skill of that gate |
 | resolve-pr-reviews | pr-review | no | `delivery-resolve-reviews` |
@@ -190,13 +191,13 @@ Every skill still works in a plain agent session without Archon: `/<skill> @<art
 
 ## Epics
 
-Start the parent on its own branch: `archon workflow run delivery-epic --branch epic-<slug> "<request>"`. `create-epic-plan` splits the request into children with their own `workflow` and dependencies. `start-epic-delivery` reads the epic branch (`git rev-parse --abbrev-ref HEAD`; it refuses `main`, `master`, or a detached `HEAD` and asks for `--branch epic-<slug>`), creates one task directory per child (with `parent` and `depends_on` in its `task.md`), commits them as `docs(task): open epic children`, and prints one start command per wave-1 child:
+Start the parent on its own branch: `archon workflow run delivery-epic --branch epic-<slug> "<request>"`. `delivery-epic` researches the request before `create-epic-plan` splits it into children with their own `workflow` and dependencies. `start-epic-delivery` reads the epic branch (`git rev-parse --abbrev-ref HEAD`; it refuses `main`, `master`, or a detached `HEAD` and asks for `--branch epic-<slug>`), creates one task directory per child (with `parent`, `base`, and `depends_on` in its `task.md`), commits them as `docs(task): open epic children`, and prints one start command per wave-1 child:
 
 ```sh
-archon workflow run delivery-<child workflow> --base <epic branch> --input task_dir=.agents/tasks/<child slug> "<child prompt>"
+archon workflow run delivery-<child workflow> --base <epic branch> --input task_dir=.agents/tasks/<child slug> '<child prompt>'
 ```
 
-Run it from the project root on the epic branch. `--base` cuts the child's worktree from the epic branch, which holds the child's `task.md`, and makes the epic branch the target of the child's pull request. `task_dir` makes the child run reuse that directory instead of creating a second one. Each child is its own run; children in a later wave start after every dependency's pull request has merged into the epic branch. The parent does not fan the children out as sub-runs: a child with gates would pause with nobody watching, which Archon refuses for a background dispatch.
+Run it from the project root on the epic branch. The child command uses shell single quotes, writing each prompt apostrophe as ` '\'' `; `--base` cuts the child's worktree from the epic branch, which holds the child's `task.md`, and makes the epic branch the target of the child's pull request. `task_dir` makes the child run reuse that directory instead of creating a second one. Each child is its own run; children in a later wave start after every dependency's pull request has merged into the epic branch. The parent does not fan the children out as sub-runs: a child with gates would pause with nobody watching, which Archon refuses for a background dispatch.
 
 ## Archon notes
 

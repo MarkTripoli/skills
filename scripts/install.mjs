@@ -91,6 +91,10 @@ export function destinations(target, { project, cwd = process.cwd(), home = os.h
 // The native flavor serves the runtimes Archon drives itself; the `-omp` flavor serves Oh My Pi. Only the flavors
 // the chosen targets need are installed, so the router lists one set of packs on a one-runtime machine.
 export const PACKS = ["delivery", "delivery-omp"];
+export const RETIRED = {
+  skills: ["run-task", "start-task", "review-loop", "setup-worktree", "configure-workspaces"],
+  extension: "run-task",
+};
 export function packFlavors(targets) {
   const flavors = [];
   if (targets.some((t) => ["claude-code", "codex", "pi", "portable"].includes(t))) flavors.push("delivery");
@@ -104,7 +108,7 @@ export function packDestination({ project, cwd = process.cwd(), home = os.homedi
 
 // One install plan: the file operations for every target, computed before anything is written.
 export function plan(options) {
-  const { targets, project, packs, cwd, home, env } = options;
+  const { targets, project, packs, uninstall = false, cwd, home, env } = options;
   const { skills } = scanSkills(path.join(repoRoot, "skills"));
   const names = skills.map((s) => s.name);
   const steps = [];
@@ -135,8 +139,27 @@ export function plan(options) {
       skillDirsClaimed.set(portable.skills, "packs");
       steps.push({ target: "packs", kind: "skills", from: "canonical, read by the packs", to: portable.skills, names });
     }
-    steps.push({ target: "packs", kind: "packs", to: packDestination({ project, cwd, home }), names: packFlavors(targets) });
+    const to = packDestination({ project, cwd, home });
+    if (path.resolve(to) === path.join(repoRoot, ".archon", "workflows")) notes.push("packs: this checkout already holds the packs; nothing to copy");
+    else steps.push({ target: "packs", kind: "packs", to, names: packFlavors(targets) });
     if (project) notes.push("packs: project-scoped packs still read skills from ~/.agents/skills; pass --input skills_dir=<dir> to a run to read from elsewhere");
+  }
+  if (uninstall && !packs) {
+    const portable = destinations("portable", { project: false, cwd, home, env }).skills;
+    const kept = steps.filter((step) => step.kind !== "skills" || path.resolve(step.to) !== path.resolve(portable));
+    if (kept.length !== steps.length) steps.splice(0, steps.length, ...kept);
+    notes.push("packs: kept, so the ~/.agents/skills copy they read stays too");
+  }
+  if (!uninstall) {
+    const skillDestinations = [...new Set(steps.filter((step) => step.kind === "skills").map((step) => step.to))];
+    const paths = skillDestinations.flatMap((to) => RETIRED.skills.map((name) => path.join(to, name)));
+    for (const target of targets) {
+      if (target !== "oh-my-pi" && target !== "pi") continue;
+      const root = project ? cwd : home;
+      const extension = target === "oh-my-pi" ? ".omp" : ".pi";
+      paths.push(path.join(root, extension, project ? "extensions" : path.join("agent", "extensions"), RETIRED.extension));
+    }
+    if (paths.length) steps.push({ target: "retired", kind: "retired", paths: [...new Set(paths)] });
   }
   if (targets.includes("codex") && !project && (targets.includes("pi") || targets.includes("oh-my-pi"))) {
     notes.push("Pi and Oh My Pi also read ~/.agents/skills, where the Codex copy lives; their own skill directories are installed too, so a skill may appear twice by name in those runtimes");
@@ -158,6 +181,8 @@ function describe(step, home) {
       return `${step.target}: [agents.*] block -> ${short(step.to, home)}`;
     case "packs":
       return `packs: Archon workflows ${step.names.join(", ")} -> ${short(step.to, home)}/<pack>/`;
+    case "retired":
+      return `remove ${step.paths.length} retired paths`;
     default:
       return JSON.stringify(step);
   }
@@ -226,12 +251,20 @@ export function apply(planned, { built, uninstall, home }) {
         break;
       }
       case "packs": {
+        if (!uninstall) {
+          for (const name of PACKS.filter((name) => !step.names.includes(name))) fs.rmSync(path.join(step.to, name), { recursive: true, force: true });
+        }
         for (const name of step.names) {
           const to = path.join(step.to, name);
           if (uninstall) fs.rmSync(to, { recursive: true, force: true });
           else copyDir(path.join(repoRoot, ".archon", "workflows", name), to);
         }
         done.push(`${uninstall ? "removed" : "wrote"} Archon packs ${step.names.join(", ")} under ${short(step.to, home)}`);
+        break;
+      }
+      case "retired": {
+        if (!uninstall) for (const to of step.paths) fs.rmSync(to, { recursive: true, force: true });
+        done.push(`removed ${step.paths.length} retired paths`);
         break;
       }
       default:
@@ -272,8 +305,7 @@ async function main(argv) {
   // Uninstalling one named runtime leaves the packs and the ~/.agents/skills copy they read in place; every
   // detected runtime, or `all`, removes them too.
   const packs = args.packs && (!args.uninstall || !args.targets.length || args.all);
-  const planned = plan({ targets, project: args.project, packs, cwd, home, env: process.env });
-  if (args.uninstall && args.packs && !packs) planned.notes.push("packs: kept; `--uninstall all` removes the Archon packs and the ~/.agents/skills copy they read");
+  const planned = plan({ targets, project: args.project, packs, uninstall: args.uninstall, cwd, home, env: process.env });
 
   console.log(`skills ${version} from ${repoRoot}`);
   console.log(`${args.uninstall ? "Uninstall" : "Install"} for ${targets.join(", ")}${detected}, ${args.project ? `project scope (${cwd})` : "home directory"}:`);

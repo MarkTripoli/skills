@@ -4,9 +4,9 @@ description: |
   (gate: confirm the reproduction, or supply what is missing when it could not be reproduced), fix it
   in one fresh session so the reproduction passes, review the diff until clean, write the pull
   request description (gate). No research phase, no plan artifact: the reproduction artifact is the
-  plan. Nothing is edited until the bug is reproduced. Artifacts are committed on the branch. The
+  plan. No product code is edited until the bug is reproduced. Artifacts are committed on the branch. The
   `gates` input picks which pauses happen: `--input gates=none` runs unattended and cancels the run
-  when four attempts fail to reproduce the bug, `--input gates=pr` pauses only there.
+  when four reproduction sessions fail to reproduce the bug, `--input gates=pr` pauses only there.
 
   Use when: observed behavior differs from expected behavior and a reproduction is possible in
   principle, for example "fix the crash when X", "the CLI prints the wrong exit code for Y", an issue that
@@ -69,7 +69,7 @@ nodes:
         pr: { type: string }
       required: [reproduce, pr]
 
-  # Gated reproduction. Reproduced: approve fixes it, request changes corrects the reproduction.
+  # Gated reproduction. Reproduced: approve fixes it, request changes corrects the reproduction session's artifact.
   # Not reproduced: the gate is the escalation: reply with the missing information (either decision,
   # with your text) to retry, or abandon the run. The loop only ends on approve of a reproduced bug;
   # every retry is a human decision, so the cap is only a guard against a runaway loop.
@@ -93,12 +93,12 @@ nodes:
             v4=$task.output.skills_dir
             v5=$task.output.task_dir
             { prompt=$(cat); } <<DELIVERY_PROMPT
-            Previous attempt (both empty on the first attempt):
+            Previous reproduction session (both empty on the first session):
             status: ${v1}
             reviewer decision: ${v2}
             reviewer text: ${v3}
 
-            Read and follow ${v4}/reproduce-bug/SKILL.md, the installed \`reproduce-bug\` skill, for task directory ${v5}. On a later attempt, treat the reviewer text as new information or as a correction to the existing reproduction artifact, and revise that artifact in place.
+            Read and follow ${v4}/reproduce-bug/SKILL.md, the installed \`reproduce-bug\` skill, for task directory ${v5}. In a later session, treat the reviewer text as new information or as a correction to the existing reproduction artifact, and revise that artifact in place.
 
             The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. After saving the reproduction artifact, answer with only the JSON object below: status from the artifact's frontmatter, summary its frontmatter summary, artifact its file name.
 
@@ -131,8 +131,8 @@ nodes:
               - { id: approve, label: Approve }
               - { id: reject, label: Request changes }
 
-  # Unattended reproduction: up to four attempts, each a fresh session, until one reproduces the bug.
-  # A body cannot be shared between loop_groups, so the attempt is duplicated without the gate. The
+  # Unattended reproduction: up to four fresh reproduction sessions, until one reproduces the bug.
+  # A body cannot be shared between loop_groups, so the reproduction session is duplicated without the gate. The
   # `attempt-count` node ends the loop on the fourth failure instead of letting max_iterations fail
   # it: a failed loop_group's output is unreadable, and `not-reproduced` needs the status.
   - id: reproduce-auto
@@ -154,11 +154,11 @@ nodes:
             v3=$task.output.skills_dir
             v4=$task.output.task_dir
             { prompt=$(cat); } <<DELIVERY_PROMPT
-            Previous attempt (both empty on the first attempt):
+            Previous reproduction session (both empty on the first session):
             status: ${v1}
             summary: ${v2}
 
-            Read and follow ${v3}/reproduce-bug/SKILL.md, the installed \`reproduce-bug\` skill, for task directory ${v4}. On a later attempt, read the existing reproduction artifact's \`## Missing\` list, try a different way to obtain or infer what it names, and revise that artifact in place.
+            Read and follow ${v3}/reproduce-bug/SKILL.md, the installed \`reproduce-bug\` skill, for task directory ${v4}. In a later session, read the existing reproduction artifact's \`## Missing\` list, try a different way to obtain or infer what it names, and revise that artifact in place.
 
             The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. After saving the reproduction artifact, answer with only the JSON object below: status from the artifact's frontmatter, summary its frontmatter summary, artifact its file name.
 
@@ -182,12 +182,16 @@ nodes:
         - id: attempt-count
           depends_on: [attempt-auto]
           # `$LOOP_PREV` is empty on the first iteration and stays literal in a dry run; both count as 0.
-          # Each attempt's artifact is committed here, so a cancel after the last attempt loses nothing.
+          # Each session's artifact is committed here, so a cancel after the last session loses nothing.
           bash: |
+            set -eu
+            LOOP_PREV=${LOOP_PREV:-}
             prev=$LOOP_PREV.attempt-count.output.attempt
             case "$prev" in ''|*[!0-9]*) prev=0 ;; esac
             status=$attempt-auto.output.status
-            git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): reproduce artifacts" -- .agents/tasks)
+            dir=$task.output.task_dir
+            git add -A -- "$dir"
+            git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): reproduce artifacts" -- "$dir"
             printf '{"status":"%s","attempt":%s}\n' "$status" "$((prev + 1))"
           output_format:
             type: object
@@ -197,7 +201,7 @@ nodes:
             required: [status, attempt]
 
   - id: not-reproduced
-    cancel: "Bug not reproduced after $reproduce-auto.output.attempt attempt(s); supply what the newest reproduction artifact's `## Missing` list names, then run the workflow again."
+    cancel: "Bug not reproduced after $reproduce-auto.output.attempt reproduction session(s); supply what the newest reproduction artifact's `## Missing` list names, then run the workflow again."
     depends_on: [reproduce-auto]
     when: "$reproduce-auto.output.status != 'reproduced'"
 
@@ -205,16 +209,19 @@ nodes:
     depends_on: [reproduce, reproduce-auto, not-reproduced]
     trigger_rule: none_failed_min_one_success
     bash: |
-      git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): reproduce artifacts" -- .agents/tasks)
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): reproduce artifacts" -- "$dir"
 
   - id: fix
     depends_on: [reproduce-done]
     bash: |
       set -eu
-      v1=$task.output.task_dir
-      v2=$task.output.skills_dir
+      v1=$task.output.skills_dir
+      v2=$task.output.task_dir
       { prompt=$(cat); } <<DELIVERY_PROMPT
-      Fix the bug recorded in the newest reproduction artifact in ${v1}: read task.md and that artifact completely, follow its \`## Fix\` steps, make its reproduction pass (the failing test or command it names), run the narrowest checks that prove nothing else broke, and commit the code with explicit paths (never \`git add -A\`); anything you write under ${v1} goes in its own \`docs(task): fix artifacts\` commit. Follow the commit conventions in ${v2}/ci-commit/SKILL.md for the message. Keep the reproduction as a regression test when it is one. Do not open a pull request. End with a short summary: what caused the bug, what changed, how it was verified.
+      Read and follow ${v1}/fix-bug/SKILL.md, the installed \`fix-bug\` skill, for task directory ${v2}. The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
       DELIVERY_PROMPT
       omp -p --auto-approve --no-session --max-time=45m "$prompt"
 
@@ -228,7 +235,10 @@ nodes:
   - id: review-done
     depends_on: [review]
     bash: |
-      git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): review artifacts" -- .agents/tasks)
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): review artifacts" -- "$dir"
 
   - id: pr
     include: delivery-gate-phase-omp
@@ -247,5 +257,8 @@ nodes:
     depends_on: [pr]
     trigger_rule: none_failed_min_one_success
     bash: |
-      git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): pr artifacts" -- .agents/tasks)
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): pr artifacts" -- "$dir"
       if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then git push -q; fi

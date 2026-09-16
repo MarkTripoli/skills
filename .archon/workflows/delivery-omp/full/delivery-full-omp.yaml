@@ -85,7 +85,10 @@ nodes:
   - id: research-done
     depends_on: [research]
     bash: |
-      git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): research artifacts" -- .agents/tasks)
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): research artifacts" -- "$dir"
 
   - id: design
     include: delivery-gate-phase-omp
@@ -102,7 +105,10 @@ nodes:
     depends_on: [design]
     trigger_rule: none_failed_min_one_success
     bash: |
-      git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): design artifacts" -- .agents/tasks)
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): design artifacts" -- "$dir"
 
   - id: plan
     include: delivery-gate-phase-omp
@@ -119,7 +125,10 @@ nodes:
     depends_on: [plan]
     trigger_rule: none_failed_min_one_success
     bash: |
-      git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): plan artifacts" -- .agents/tasks)
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): plan artifacts" -- "$dir"
 
   - id: implement
     include: delivery-implement-omp
@@ -135,7 +144,10 @@ nodes:
     depends_on: [implement]
     trigger_rule: none_failed_min_one_success
     bash: |
-      git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): implement artifacts" -- .agents/tasks)
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): implement artifacts" -- "$dir"
 
   - id: review
     include: delivery-review-omp
@@ -147,7 +159,10 @@ nodes:
   - id: review-done
     depends_on: [review]
     bash: |
-      git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): review artifacts" -- .agents/tasks)
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): review artifacts" -- "$dir"
 
   - id: pr
     include: delivery-gate-phase-omp
@@ -166,5 +181,8 @@ nodes:
     depends_on: [pr]
     trigger_rule: none_failed_min_one_success
     bash: |
-      git add -A .agents/tasks && (git diff --cached --quiet -- .agents/tasks || git commit -q -m "docs(task): pr artifacts" -- .agents/tasks)
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): pr artifacts" -- "$dir"
       if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then git push -q; fi

@@ -35,7 +35,9 @@ nodes:
       existing="${INPUTS_TASK_DIR:-}"
       if [ -n "$existing" ]; then
         [ -f "$existing/task.md" ] || { printf 'task_dir %s has no task.md\n' "$existing" >&2; exit 1; }
-        printf '{"task_dir":"%s","skills_dir":"%s"}\n' "${existing%/}" "$skills_dir"
+        existing_json=$(printf '%s' "${existing%/}" | sed 's/\\/\\\\/g; s/"/\\"/g')
+        skills_json=$(printf '%s' "$skills_dir" | sed 's/\\/\\\\/g; s/"/\\"/g')
+        printf '{"task_dir":"%s","skills_dir":"%s"}\n' "$existing_json" "$skills_json"
         exit 0
       fi
       request=$(printf '%s' "${ARGUMENTS:-}" | sed -e 's/\r$//')
@@ -52,10 +54,10 @@ nodes:
       n=2
       while [ -e "$dir/task.md" ]; do dir=.agents/tasks/$slug-$n; n=$((n+1)); done
       mkdir -p "$dir"
-      title=$(printf '%s' "$first" | cut -c1-120)
+      title=$(printf '%s' "$first" | cut -c1-120 | sed 's/\\/\\\\/g; s/"/\\"/g')
       workflow="${INPUTS_WORKFLOW:-full}"
       {
-        printf -- '---\nslug: %s\ntitle: %s\nworkflow: %s\ncreated: %s\n---\n' "${dir#.agents/tasks/}" "$title" "$workflow" "$(date +%Y-%m-%d)"
+        printf -- '---\nslug: %s\ntitle: "%s"\nworkflow: %s\ncreated: %s\n---\n' "${dir#.agents/tasks/}" "$title" "$workflow" "$(date +%Y-%m-%d)"
         printf '%s\n' "$request"
       } > "$dir/task.md"
       if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -73,7 +75,9 @@ nodes:
         git add -- $paths
         git commit -q -m "docs(task): open ${dir#.agents/tasks/}" -- $paths
       fi
-      printf '{"task_dir":"%s","skills_dir":"%s"}\n' "$dir" "$skills_dir"
+      dir_json=$(printf '%s' "$dir" | sed 's/\\/\\\\/g; s/"/\\"/g')
+      skills_json=$(printf '%s' "$skills_dir" | sed 's/\\/\\\\/g; s/"/\\"/g')
+      printf '{"task_dir":"%s","skills_dir":"%s"}\n' "$dir_json" "$skills_json"
     output_format:
       type: object
       properties:

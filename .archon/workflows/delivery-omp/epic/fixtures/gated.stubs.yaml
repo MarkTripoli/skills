@@ -1,11 +1,14 @@
 # Default gate: the epic plan takes the gated `cycle` branch, then the children are started.
 task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills"}'
 gates: '{"plan":"true"}'
+research__questions: "research questions saved"
+research__research: "research saved"
 phase: "epic plan saved"
 start: "children started"
+research-done: ""
 plan-done: ""
 start-done: ""
 fixture:
   expect: completed
-  reached: [gates, plan__cycle, plan-done, start, start-done]
+  reached: [gates, research__questions, research__research, research-done, plan__cycle, plan-done, start, start-done]
 exec-code: false

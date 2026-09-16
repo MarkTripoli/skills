@@ -29,6 +29,7 @@
     "./skills/delivery/create-structure-outline",
     "./skills/delivery/create-tdd",
     "./skills/delivery/describe-pr",
+    "./skills/delivery/fix-bug",
     "./skills/delivery/fix-code-review",
     "./skills/delivery/implement-outline",
     "./skills/delivery/implement-plan",

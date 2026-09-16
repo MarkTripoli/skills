@@ -6,7 +6,7 @@ This guide takes one request from idea to pull request with the delivery packs, 
 
 1. Install Archon 0.10 or later: `curl -fsSL https://archon.diy/install | bash`.
 2. `archon setup` picks the provider (Claude Code, Codex, or Pi) and its credentials; `archon doctor` confirms the binaries and `gh` auth. Oh My Pi users skip the provider and use the `-omp` packs.
-3. Install the skills and packs: `npx github:MarkTripoli/skills` (see the [README install section](../README.md#install)). It writes the portable skills to `~/.agents/skills/`, the packs' `skills_dir` default, and the packs to `~/.archon/workflows/`.
+3. Install the skills and packs: `npx github:MarkTripoli/skills` (see the [README install section](../README.md#install)). It writes the portable skills to `~/.agents/skills/`, the packs' `skills_dir` default, and the packs to `~/.archon/workflows/`; `--project` puts packs in the current repository but still writes the `~/.agents/skills` copy they read.
 4. From a git checkout of the project you want to change, check the packs are visible:
 
    ```sh
@@ -103,9 +103,9 @@ Task directory: `.agents/tasks/missing-config-file-cli/`. `reproduce-bug` runs f
 - Reproduced: approve to fix; reject with text to correct the reproduction.
 - Not reproduced: the gate is the escalation. Approve or reject with the missing information (steps, data, environment) and `reproduce-bug` tries again with it, revising the artifact in place; abandon the run when nothing more is known. The loop ends only on approve of a reproduced bug.
 
-With `--input gates=none` the pack tries up to four reproductions on its own, each reading the previous artifact's `## Missing` list, then cancels the run with a pointer to that list when none reproduced the bug.
+With `--input gates=none` the pack tries up to four reproduction sessions on its own, each reading the previous artifact's `## Missing` list, then cancels the run with a pointer to that list when none reproduced the bug.
 
-The fix node reads the artifact's `## Fix` steps, makes the reproduction pass, keeps it as a regression test when it is one, and commits. Then the review loop and the pull request gate.
+The `fix-bug` node reads the artifact's `## Fix` steps, makes the reproduction pass, keeps it as a regression test when it is one, and commits. Then the review loop and the pull request gate.
 
 ## An epic
 
@@ -116,10 +116,10 @@ archon workflow run delivery-epic --branch epic-build-billing-module "Build the 
 Task directory: `.agents/tasks/build-billing-module/`. `create-epic-plan` writes the plan and gates (`plan`); `start-epic-delivery` creates one task directory per child, commits them as `docs(task): open epic children` on the epic branch, and prints one start command per wave-1 child:
 
 ```sh
-archon workflow run delivery-<child workflow> --base epic-build-billing-module --input task_dir=.agents/tasks/<child slug> "<child prompt>"
+archon workflow run delivery-<child workflow> --base epic-build-billing-module --input task_dir=.agents/tasks/<child slug> '<child prompt>'
 ```
 
-The parent run ends there. Run each child command from the project root on the epic branch: `--base` cuts the child's worktree from the epic branch and targets the child's pull request at it. Later waves start after their dependencies have merged into the epic branch. The skill refuses to run on `main`, `master`, or a detached `HEAD`.
+The parent run ends there. Run each child command from the project root on the epic branch; write prompt apostrophes as ` '\'' `, and `--base` cuts the child's worktree from the epic branch and targets the child's pull request at it. An existing pull request wins as the target, then `task.md` `base:`, then the repository default branch. Later waves start after their dependencies have merged into the epic branch. The skill refuses to run on `main`, `master`, or a detached `HEAD`.
 
 ## Where things land
 

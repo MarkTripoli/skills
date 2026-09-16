@@ -14,7 +14,7 @@ New here: [docs/getting-started.md](docs/getting-started.md), then [docs/context
 
 ## Install
 
-Detects the agents on your `PATH`, shows what it will write, asks, then installs skills and worker definitions per runtime, a portable skills copy in `~/.agents/skills/` (the packs' `skills_dir` default), and the packs in `~/.archon/workflows/`: the native `delivery/` flavor for Claude Code, Codex, or Pi, the `delivery-omp/` flavor when Oh My Pi is a target, both when both are. Archon's router lists every installed workflow, so a one-runtime machine sees one set of packs.
+Detects the agents on your `PATH`, shows what it will write, asks, then installs skills and worker definitions per runtime, a portable skills copy in `~/.agents/skills/` (the packs' `skills_dir` default), and the packs in `~/.archon/workflows/`: the native `delivery/` flavor for Claude Code, Codex, or Pi, the `delivery-omp/` flavor when Oh My Pi is a target, both when both are. With `--project`, packs go in the current repository but still read the `~/.agents/skills` copy. Install prunes the other managed flavor and retired paths. Archon's router lists every installed workflow, so a one-runtime machine sees one set of packs.
 
 ```sh
 npx github:MarkTripoli/skills
@@ -23,9 +23,9 @@ npx github:MarkTripoli/skills
 | Flag or argument | Effect |
 |---|---|
 | `oh-my-pi pi`, `all`, `portable` | Pick targets; `portable` writes the plain `~/.agents/skills/` copy and the native packs |
-| `--project` | Install into the current repository instead of `~` |
+| `--project` | Install into the current repository; packs still read `~/.agents/skills` |
 | `--dry-run`, `--yes` | Preview only; skip the confirmation |
-| `--uninstall` | Remove what it wrote for the named targets (Codex config block is marker-tracked); the packs and the shared `~/.agents/skills/` copy go only with `all` or no target |
+| `--uninstall` | Remove what it wrote for the named targets (Codex config block is marker-tracked); a named runtime keeps the packs and the shared `~/.agents/skills/` copy they read |
 
 | Runtime | Skills | Workers |
 |---|---|---|
@@ -60,8 +60,8 @@ flowchart LR
     P2 --> PR([pull request])
 ```
 
-- A task is `.agents/tasks/<slug>/task.md` plus numbered artifacts, committed on the run's branch (`docs(task): open <slug>`, then `docs(task): <phase> artifacts` after each phase). Contract: [shared/CONVENTIONS.md](shared/CONVENTIONS.md); prose rules: [shared/WRITING.md](shared/WRITING.md).
-- Packs (`delivery-full`, `delivery-lean`, `delivery-prd`, `delivery-oneshot`, `delivery-bugfix`, `delivery-epic`, `delivery-resolve-reviews`), blocks, gates, review loop, and phase table: [workflows/delivery.md](workflows/delivery.md).
+- A task is `.agents/tasks/<slug>/task.md` plus numbered artifacts, committed on the run's branch (`docs(task): open <slug>`, then `docs(task): <phase> artifacts` after each phase; joins stage only that run's task directory). Contract: [shared/CONVENTIONS.md](shared/CONVENTIONS.md); prose rules: [shared/WRITING.md](shared/WRITING.md).
+- Packs (`delivery-full`, `delivery-lean`, `delivery-prd`, `delivery-oneshot`, `delivery-bugfix`, `delivery-epic`, `delivery-resolve-reviews`), blocks, gates, review loop, and phase table: [workflows/delivery.md](workflows/delivery.md). The epic pack researches before its plan; the bugfix chain is `reproduce-bug`, `fix-bug`, review, then `describe-pr`.
 - Every AI node is `context: fresh`: it reads only `task.md` and the artifacts it selects and writes one artifact. Disk artifacts are the only memory between nodes.
 - Start a run with `archon workflow run delivery-<type> --branch <name> "<request>"`. It exits at each gate; `archon workflow approve <run-id> --detach` continues, `archon workflow reject <run-id> --detach "<text>"` runs the matching `iterate-*` skill with that text and gates again, `archon workflow wait <run-id>` blocks until the next decision. The web UI and chat adapters offer the same two decisions. `--input gates=none` runs unattended; `--input gates=plan,pr` keeps only those pauses.
 - Two flavors: native (`prompt:` nodes; Claude Code, Codex, Pi) and `-omp` (generated; every prompt runs `omp -p --auto-approve --no-session --max-time=45m`).
@@ -75,7 +75,7 @@ Delivery skills live in `skills/delivery/`; `show-me` is standalone in `skills/s
 | Research | `create-research-questions`, `create-research`, and `iterate-*` for each |
 | Design | `create-design-discussion`, `create-prd`, `create-tdd`, and `iterate-*` for each |
 | Planning | `create-structure-outline`, `create-plan`, `create-epic-plan`, `start-epic-delivery`, and `iterate-*` for outline and plan |
-| Implementation | `implement-plan`, `implement-outline`, `iterate-implementation`, `reproduce-bug` |
+| Implementation | `implement-plan`, `implement-outline`, `iterate-implementation`, `reproduce-bug`, `fix-bug` |
 | Review | `review-code`, `fix-code-review` |
 | Pull request | `describe-pr`, `resolve-pr-reviews`, `record-evidence` (video proof, by hand) |
 | Utilities | `ci-commit`, `review-artifact-comments`, `show-me` |

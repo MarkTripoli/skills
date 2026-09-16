@@ -8,7 +8,7 @@ A task lives in `.agents/tasks/<slug>/` under the project root. `<slug>` is two 
 
 ## task.md
 
-`task.md` is the only required file in a task directory. Frontmatter keys: `slug`, `title`, `workflow`, `created` (ISO date). The body is the user's request verbatim.
+`task.md` is the only required file in a task directory. Frontmatter keys: `slug`, `title`, `workflow`, `created` (ISO date); epic children also carry `parent`, `base`, and `depends_on`. The body is the user's request verbatim.
 
 `workflow` is one of `full`, `lean`, `prd`, `oneshot`, `bugfix`, `epic`; the default is `full`. It records the delivery pack that created the task; the chains are in [workflows/delivery.md](../workflows/delivery.md).
 
@@ -96,14 +96,16 @@ Answer templates under `references/` use these placeholders; fill every one befo
 - `{next_command}`: in research replies, `/create-design-discussion` for `full`, `/create-structure-outline` for `lean`, `/create-prd` for `prd`.
 - `{implementation_command}`: `/implement-outline` for `lean`, `/implement-plan` otherwise; used by the plan, outline, and `iterate-implementation` replies.
 - `{completed_phase}` and `{next_phase}`: phase numbers in implementation replies.
-- `{child_slug}`, `{child_start_command}`: epic delivery; see `start-epic-delivery`. `{child_start_command}` is `archon workflow run delivery-<workflow> --base <epic branch> --input task_dir=.agents/tasks/<child slug> "<child prompt>"`, run from the project root on the epic branch; it appears in the reply body, and the fence is terminal (`/show-me`).
+- `{child_slug}`, `{child_start_command}`: epic delivery; see `start-epic-delivery`. `{child_start_command}` is `archon workflow run delivery-<workflow> --base <epic branch> --input task_dir=.agents/tasks/<child slug> '<child prompt>'`, with every `'` in the prompt written as `'\''`, run from the project root on the epic branch; it appears in the reply body, and the fence is terminal (`/show-me`).
 - `{needed}`: one line per item of the reproduction artifact's `## Missing` list (`reproduce-bug`).
 
 ## Commits
 
+Pull request target resolution is the existing pull request base, then `task.md` `base:`, then the repository default branch.
+
 `.agents/tasks/` is committed history. An Archon run works in a disposable worktree; the branch carries the task's memory, so `task.md` and every artifact travel with the code to the pull request, where a reviewer can open them, and to `delivery-resolve-reviews`, which adopts the run's branch and reads them.
 
-Artifacts under `.agents/tasks/` are committed on the task branch. Under Archon the pack's join node after each phase runs `git add -A .agents/tasks` and commits as `docs(task): <phase> artifacts`, where `<phase>` is `research`, `design`, `prd`, `tdd`, `plan`, `outline`, `implement`, `review`, `reproduce`, `fix`, `pr`, or `review-round`. A skill that is not run by the workflow engine commits its own artifact with an explicit `git add <path>` as `docs(task): <artifact type> artifact`, for example `docs(task): plan artifact`. Code commits stage explicit code paths and never mix artifact files in. Never `git add -A` or `git add .` for code.
+Artifacts under `.agents/tasks/` are committed on the task branch. Under Archon the pack's join node after each phase stages only the run's task directory and commits as `docs(task): <phase> artifacts`, where `<phase>` is `research`, `design`, `prd`, `tdd`, `plan`, `outline`, `implement`, `review`, `reproduce`, `fix`, `pr`, or `review-round`. A skill that is not run by the workflow engine commits its own artifact with an explicit `git add <path>` as `docs(task): <artifact type> artifact`, for example `docs(task): plan artifact`. Code commits stage explicit code paths and never mix artifact files in. Never `git add -A` or `git add .` for code.
 
 Every commit message follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
 
