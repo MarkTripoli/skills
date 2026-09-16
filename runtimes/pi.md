@@ -8,6 +8,8 @@ Reply files: when a prompt names a reply path under `.agents/tasks/<slug>/replie
 
 ## Install
 
+`npx github:MarkTripoli/skills pi` performs these steps (add `--project` for one repository, `--dry-run` to look first); by hand:
+
 1. Skills: Pi reads `~/.agents/skills/` and `<project>/.agents/skills/` natively, so the portable install is enough: `cp -R skills/delivery/* skills/show-me ~/.agents/skills/` from a checkout. For the Pi notes inserted into every skill, build `npm run build -- --runtime pi` and copy `dist/pi/skills/*` to `~/.pi/agent/skills/` instead.
 2. Workers: none are generated; the notes above tell each phase to perform worker roles inline.
 3. Extension (optional). From a checkout, add its directory to `"extensions"` in `~/.pi/agent/settings.json` (`"~/Development/skills/runtimes/pi/run-task"`); loaded that way it uses the checkout's `skills/` and needs no other install. Or copy it: `mkdir -p ~/.pi/agent/extensions && cp -R runtimes/pi/run-task ~/.pi/agent/extensions/run-task`; the copy needs the skills from step 1. See below.

@@ -1,14 +1,17 @@
 {
-  "name": "skills",
+  "name": "@marktripoli/skills",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "Portable agent skills for research, design, planning, implementation, and pull request delivery",
+  "bin": {
+    "skills-install": "scripts/install.mjs"
+  },
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "prepare": "git config core.hooksPath .githooks",
+    "prepare": "node scripts/prepare.mjs",
     "test": "node scripts/validate.mjs && node --test tests/",
     "validate": "node scripts/validate.mjs",
     "check-commits": "node scripts/check-commits.mjs",

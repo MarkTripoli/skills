@@ -9,6 +9,8 @@ Herdr agent kind: `claude`.
 
 ## Install
 
+`npx github:MarkTripoli/skills claude-code` performs these steps (add `--project` for one repository, `--dry-run` to look first); by hand:
+
 1. Build the tree: `npm run build -- --runtime claude-code` (writes `dist/claude-code/`).
 2. Skills: `cp -R dist/claude-code/skills/* ~/.claude/skills/` for every project, or `cp -R dist/claude-code/skills/* <repo>/.claude/skills/` for one project.
 3. Workers: `cp dist/claude-code/agents/*.md ~/.claude/agents/` (or `<repo>/.claude/agents/`). Claude Code lists them under `/agents`.

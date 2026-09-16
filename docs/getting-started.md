@@ -114,7 +114,7 @@ Artifacts are the memory between phases. Each has frontmatter with `type` and `s
 
 ## Choosing a workflow type
 
-`workflow` in `task.md` selects the chain. Set it when you create the task, or name it in the request you give `/run-task`.
+`workflow` in `task.md` selects the chain. Set it when you create the task, name it in the request you give `/run-task`, or let `/start-task <request>` choose: it reads the request, picks `oneshot` for a verifiable bug fix, `lean` or `full` for features by how much design they need, `prd` when the requirement itself is open, an epic when there are several deliverables, or no workflow at all for an edit you can just ask for; when the request leaves two routes open it asks up to three questions first. It creates the task and hands off to `/run-task @<task dir>`.
 
 | Type | Use when | First command |
 |---|---|---|

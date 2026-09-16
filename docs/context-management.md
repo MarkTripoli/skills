@@ -87,7 +87,7 @@ Do not use compaction as the way to move between phases. A compacted session kee
 
 ### Oh My Pi specifics
 
-- Skills install as `~/.agents/skills/<name>/SKILL.md`. Workers install as `~/.omp/agent/agents/agent-<role>.md` (or `<repo>/.omp/agents/`) and are called with the `task` tool.
+- Skills install as `~/.omp/agent/skills/<name>/SKILL.md` (or `~/.agents/skills/`). Workers install as `~/.omp/agent/agents/agent-<role>.md` (or `<repo>/.omp/agents/`) and are called with the `task` tool.
 - `/new` between phases. Herdr integration uses the `omp` agent kind.
 - The `run-task` extension (`runtimes/oh-my-pi/run-task/`, install per [runtimes/oh-my-pi.md](../runtimes/oh-my-pi.md)) replaces the by-hand `/new` and paste: `/run-task @<task dir>` opens a new session per phase, sends the phase prompt, waits for the reply file, records the session's context usage in `replies/phases.jsonl`, and stops at gates with an approve, request-changes, other-command, or stop dialog. The orchestrator is code, so it holds no context at all; the `/run-task` skill remains the portable fallback.
 

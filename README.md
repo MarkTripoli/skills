@@ -6,24 +6,26 @@ New here? Read [Getting started](docs/getting-started.md), then [Context managem
 
 ## Install
 
-Portable (any runtime that scans `~/.agents/skills/<name>/SKILL.md`, including Codex and Oh My Pi):
+One command, no clone. It finds the coding agents on your `PATH` (Claude Code, Codex, Oh My Pi, Pi), shows what it will write, asks, and installs the skills with each runtime's notes, the worker definitions, and the `/run-task` extension where the runtime has one:
 
 ```sh
-git clone https://github.com/MarkTripoli/skills.git
-cp -R skills/skills/delivery/* ~/.agents/skills/
-cp -R skills/skills/show-me ~/.agents/skills/
+npx github:MarkTripoli/skills
 ```
 
-Runtime-specific trees add the runtime's invocation and worker notes to every skill and generate the worker definitions:
+Variants: name the targets (`npx github:MarkTripoli/skills oh-my-pi pi`, `all`, or `portable` for a plain `~/.agents/skills/` copy), `--project` to install into the current repository instead of your home directory, `--dry-run` to look first, `--yes` to skip the question, `--uninstall` to remove exactly what it wrote (it tracks its block in `~/.codex/config.toml` with markers). Node 20 or newer is the only requirement. From a checkout the same command is `node scripts/install.mjs`.
 
-| Runtime | Build | Then |
-|---|---|---|
-| Claude Code | `npm run build -- --runtime claude-code` | copy per [runtimes/claude-code.md](runtimes/claude-code.md) |
-| Codex | `npm run build -- --runtime codex` | copy per [runtimes/codex.md](runtimes/codex.md) |
-| Oh My Pi | `npm run build -- --runtime oh-my-pi` | copy per [runtimes/oh-my-pi.md](runtimes/oh-my-pi.md); optional `/run-task` extension that runs each phase in a new session of the TUI |
-| Pi | `npm run build -- --runtime pi` (optional; Pi reads `~/.agents/skills/` as is) | copy per [runtimes/pi.md](runtimes/pi.md); optional `/run-task` extension, same behavior |
+Skills only, through the [skills.sh](https://skills.sh/MarkTripoli/skills) installer that many collections use: `npx skills@latest add MarkTripoli/skills`. It lets you pick skills and agents and writes plain skill files you can edit; it does not install the worker definitions or the extensions, so `/run-task` then uses its subagent and manual backends.
 
-`npm test` validates the collection and runs the token-free simulation of every workflow chain; `npm run eval -- --driver <omp|claude|codex>` measures real agents against the same contract (see [docs/testing.md](docs/testing.md)); `npm run build` writes `dist/<runtime>/` (ignored by git). All use Node 20 or newer and no dependencies.
+By hand: `npm run build -- --runtime <claude-code|codex|oh-my-pi|pi>` writes `dist/<runtime>/`, and each adapter under [runtimes/](runtimes/) lists where its files go. Where the files land:
+
+| Runtime | Skills | Workers | Extension |
+|---|---|---|---|
+| Claude Code | `~/.claude/skills/` | `~/.claude/agents/` | none yet |
+| Codex | `~/.agents/skills/` | `~/.codex/agents/` plus a block in `~/.codex/config.toml` | none yet |
+| Oh My Pi | `~/.omp/agent/skills/` | `~/.omp/agent/agents/` | `~/.omp/agent/extensions/run-task/` |
+| Pi | `~/.pi/agent/skills/` | none (phases perform worker roles inline) | `~/.pi/agent/extensions/run-task/` |
+
+`npm test` validates the collection and runs the token-free simulation of every workflow chain; `npm run eval -- --driver <omp|claude|codex>` measures real agents against the same contract (see [docs/testing.md](docs/testing.md)). Everything uses Node 20 or newer and no dependencies.
 
 ## Commits and releases
 
@@ -34,7 +36,7 @@ Versions follow [Semantic Versioning](https://semver.org/) and are derived from 
 ## How the workflow runs
 
 - A task lives in `.agents/tasks/<slug>/` with a `task.md` and numbered artifacts. The contract is [shared/CONVENTIONS.md](shared/CONVENTIONS.md); the prose rules are [shared/WRITING.md](shared/WRITING.md).
-- The chains (`full`, `lean`, `prd`, `oneshot`), the phase table, the human gates, and the review loop are in [workflows/delivery.md](workflows/delivery.md).
+- The chains (`full`, `lean`, `prd`, `oneshot`), the phase table, the human gates, and the review loop are in [workflows/delivery.md](workflows/delivery.md). Not sure which chain a request needs? `/start-task <request>` picks one (or none, for a change you can just ask for), asks up to three questions when it cannot tell, creates the task, and hands off to `/run-task`.
 - Every phase ends with one fenced command naming the next phase. Run it in a new session, or let `/run-task` do it.
 
 ## Context management
@@ -60,6 +62,7 @@ The delivery workflow skills live under `skills/delivery/`; `show-me` is a stand
 
 | Skill | Purpose | Role |
 |---|---|---|
+| start-task | Route a request to the workflow type that fits it, or to none, and create the task | entry point |
 | run-task | Drive a task through its workflow one fresh-context phase at a time | orchestrator |
 | create-research-questions | Draft the query plan for the research phase | phase |
 | iterate-research-questions | Revise the research questions from feedback | phase |
