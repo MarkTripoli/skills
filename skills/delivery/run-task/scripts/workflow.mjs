@@ -100,6 +100,23 @@ export function skillForArtifactType(type, workflow) {
   return null;
 }
 
+// The iterate-* skill that revises a phase's artifact from feedback, or null when the type has none.
+export function iterateSkillFor(skill) {
+  const type = PHASES[skill]?.type;
+  if (!type) return null;
+  for (const [name, phase] of Object.entries(PHASES)) if (phase.type === type && name.startsWith("iterate-")) return name;
+  return null;
+}
+
+// The prompt run-task gives a phase, identical for every backend. `command` is `/<skill>[ @<file>]` or the
+// oneshot prompt; `skillPath` is the installed SKILL.md (null selects the command form).
+export function phasePrompt({ command, skillPath = null, taskDir, replyFile, feedback = null }) {
+  const head = skillPath ? `Read and follow ${skillPath}, the installed skill for ${command},` : `${command}`;
+  let prompt = `${head} for task directory ${taskDir}. When finished, also write your complete final reply (the message you print last, filled from the answer template, not the artifact) verbatim to ${replyFile}.`;
+  if (feedback) prompt += `\n\nFeedback: ${feedback.replace(/\s+/g, " ").trim()}`;
+  return prompt;
+}
+
 export const START_COMMAND = { full: "/create-research-questions", lean: "/create-research-questions", prd: "/create-research" };
 
 // Files and parsing -------------------------------------------------------------------------
@@ -496,7 +513,8 @@ export function chooseBackend({ env = process.env, herdrKind = null, interactive
   return { backend: "manual", reason: `${whyNotHerdr} and no subagent tool` };
 }
 
-export function statusReport(taskDir, { env = process.env, herdrKind = null, forced = null, projectRoot = projectRootOf(taskDir), with: withPhases = [] } = {}) {
+// `backend: { backend, reason }` replaces the conventions' backend choice when a runtime plugin runs the phases itself.
+export function statusReport(taskDir, { env = process.env, herdrKind = null, forced = null, backend: fixedBackend = null, projectRoot = projectRootOf(taskDir), with: withPhases = [] } = {}) {
   const next = nextCommand(taskDir, { projectRoot, with: withPhases });
   const { task, artifacts, replies } = next;
   const artifactList = artifacts.length ? artifacts.map((a) => (a.nn === null ? a.type : `${String(a.nn).padStart(2, "0")}-${a.type}`)).join(", ") : "none";
@@ -509,7 +527,7 @@ export function statusReport(taskDir, { env = process.env, herdrKind = null, for
     const gate = next.pendingGate ? `human gate: review ${next.gateArtifact ?? "the newest artifact"} before continuing` : "runs without a gate";
     nextLine = `Next: ${shown}; ${gate}`;
   }
-  const backend = next.done ? null : chooseBackend({ env, herdrKind, interactive: next.interactive, forced });
+  const backend = next.done ? null : fixedBackend ?? chooseBackend({ env, herdrKind, interactive: next.interactive, forced });
   const lines = [
     `Task: ${task.slug} (${task.workflow}) at ${path.resolve(taskDir)}`,
     `Artifacts: ${artifactList}`,

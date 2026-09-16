@@ -19,7 +19,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { PHASES, TYPES, createTask, listArtifacts, nextCommand, nextReplyNumber, parseCommand, parseFrontmatter, parseReply, predictNext, readTask, replyPath, validateArtifact, validateReply } from "../skills/delivery/run-task/scripts/workflow.mjs";
+import { PHASES, TYPES, createTask, listArtifacts, nextCommand, nextReplyNumber, parseCommand, parseFrontmatter, parseReply, phasePrompt, predictNext, readTask, replyPath, validateArtifact, validateReply } from "../skills/delivery/run-task/scripts/workflow.mjs";
 import { skillDir } from "./lib/layout.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -236,11 +236,10 @@ function composePrompt(c, taskDir) {
   const argText = c.arg ? ` ${c.arg.startsWith("@") || c.arg.startsWith("-") ? c.arg : `@${c.arg}`}` : "";
   const nn = String(nextReplyNumber(taskDir)).padStart(2, "0");
   const replyFile = replyPath(taskDir, nn, skill);
-  let prompt;
   const skillPath = path.join(skillDir(skillsRoot, skill), "SKILL.md");
-  if (c.prompt) prompt = c.prompt.replaceAll("{repo}", repoRoot).replaceAll("{skillPath}", skillPath).replaceAll("{taskDir}", taskDir).replaceAll("{skill}", skill).replaceAll("{replyFile}", replyFile);
-  else prompt = `Read and follow ${skillPath}, the installed skill for /${skill}${argText}, for task directory ${taskDir}. When finished, also write your complete final reply (the message you print last, filled from the answer template, not the artifact) verbatim to ${replyFile}.`;
-  if (c.feedback) prompt += `\n\nFeedback: ${c.feedback.replace(/\s+/g, " ").trim()}`;
+  const prompt = c.prompt
+    ? c.prompt.replaceAll("{repo}", repoRoot).replaceAll("{skillPath}", skillPath).replaceAll("{taskDir}", taskDir).replaceAll("{skill}", skill).replaceAll("{replyFile}", replyFile) + (c.feedback ? `\n\nFeedback: ${c.feedback.replace(/\s+/g, " ").trim()}` : "")
+    : phasePrompt({ command: `/${skill}${argText}`, skillPath, taskDir, replyFile, feedback: c.feedback });
   return { prompt, replyFile };
 }
 
@@ -257,7 +256,7 @@ function parsePrompt(prompt) {
     else if (token.startsWith("@")) parsed.arg = token;
   }
   parsed.taskDir = /for task directory (\S+?)\.?(?:\s|$)/.exec(prompt)?.[1] ?? parsed.taskDir;
-  parsed.replyFile = /reply verbatim to (\S+?)\.?(?:\s|$)/.exec(prompt)?.[1] ?? null;
+  parsed.replyFile = /verbatim to (\S+?)\.?(?:\s|$)/.exec(prompt)?.[1] ?? null;
   return parsed;
 }
 

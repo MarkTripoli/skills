@@ -517,13 +517,7 @@ export function makeFixture({ workflow = "full", worktree = "none", slug = "verb
 
 // Chain runner -----------------------------------------------------------------------------------
 
-const ITERATE_FOR = { "implement-plan": "iterate-implementation", "implement-outline": "iterate-implementation" };
-
-function iterateSkillFor(skill) {
-  if (ITERATE_FOR[skill]) return ITERATE_FOR[skill];
-  if (skill.startsWith("create-") && wf.PHASES[`iterate-${skill.slice(7)}`]) return `iterate-${skill.slice(7)}`;
-  return null;
-}
+const iterateSkillFor = wf.iterateSkillFor;
 
 export function runChain(projectRoot, taskDir, { scenario = {}, approve = () => true, maxSteps = 40, skillsDir = DEFAULT_SKILLS_DIR } = {}) {
   taskDir = path.resolve(taskDir);
