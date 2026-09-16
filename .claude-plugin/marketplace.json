@@ -1,0 +1,23 @@
+{
+  "name": "marktripoli",
+  "owner": {
+    "name": "Mark Tripoli",
+    "url": "https://github.com/MarkTripoli"
+  },
+  "description": "Mark Tripoli's agent skills: a delivery workflow with fresh-context phases and human gates, as an installable Claude Code plugin.",
+  "plugins": [
+    {
+      "name": "marktripoli-skills",
+      "source": "./",
+      "description": "Research, design, plan, implement, and pull request skills that run one phase per session and stop at human gates, plus the worker roles they delegate to.",
+      "category": "engineering",
+      "keywords": [
+        "workflow",
+        "skills",
+        "planning",
+        "implementation",
+        "code-review"
+      ]
+    }
+  ]
+}
