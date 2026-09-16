@@ -128,6 +128,10 @@ The chains and the phase table are in [workflows/delivery.md](../workflows/deliv
 
 Feedback is your message text or a file you name. There are no comment identifiers to manage.
 
+## Optional phases
+
+Two phases run only when you ask: `review-code` (a review loop against the merge target) and `record-evidence` (narrated video proof of the implemented behavior, attached to the pull request). Insert one at the implementation gate by answering `/run-task` with the command itself, put it in `task.md` once (`with: [record-evidence]`), or pass `/run-task @<task dir> --with review-code,record-evidence`. They run between implementation and `describe-pr`; a failed recording hands to `iterate-implementation` instead of the pull request.
+
 ## Worktrees
 
 `create-plan` and `create-structure-outline` end by handing off to `/setup-worktree`, which creates a git worktree for the task from `.agents/workspace.json` (a default is written when the file is missing) and hands off to the implementation skill. To implement in the current checkout instead, run `/configure-workspaces` once and set `disabled: true`, or run the phases from inside an existing worktree; the plan skills detect both and skip the worktree step.

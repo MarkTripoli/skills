@@ -4,8 +4,8 @@
 // installed copy of the run-task skill carries it unchanged and a runtime plugin can import it.
 //
 // CLI:
-//   node workflow.mjs next <task dir> [--json] [--herdr-kind <kind>] [--backend <b>]
-//   node workflow.mjs status <task dir> [--herdr-kind <kind>] [--backend <b>]
+//   node workflow.mjs next <task dir> [--json] [--with <skill,...>]
+//   node workflow.mjs status <task dir> [--herdr-kind <kind>] [--backend <b>] [--with <skill,...>]
 //   node workflow.mjs check-reply <file> [--expect <skill>] [--json]
 //   node workflow.mjs check-artifact <file> [--type <type>] [--json]
 //   node workflow.mjs probe [<project root>] [--json]
@@ -77,6 +77,12 @@ export const PHASES = {
     next: ({ status, artifact }) => (status === "clean" ? "/describe-pr" : status === "findings" ? `/fix-code-review @${artifact}` : null),
   },
   "fix-code-review": { type: "code-review-fixes", gate: false, interactive: false, next: () => "/review-code" },
+  "record-evidence": {
+    type: "evidence",
+    gate: false,
+    interactive: false,
+    next: ({ status, planFile }) => (status === "failed" ? `/iterate-implementation${planFile ? ` @${planFile}` : ""}` : "/describe-pr"),
+  },
   "describe-pr": { type: "pr-description", gate: true, interactive: false, next: () => "/resolve-pr-reviews" },
   "resolve-pr-reviews": { type: "pr-review", gate: true, interactive: false, next: ({ status }) => (status === "approved" ? null : "/resolve-pr-reviews") },
   "ci-commit": { type: "commit", gate: false, interactive: false, next: () => "/describe-pr" },
@@ -118,8 +124,22 @@ export function readTask(taskDir) {
   const { data, body } = parseFrontmatter(fs.readFileSync(file, "utf8"));
   const workflow = data.workflow || "full";
   if (!TYPES.includes(workflow)) throw new Error(`${file}: workflow "${workflow}" is not one of ${TYPES.join(", ")}`);
-  return { file, slug: data.slug || path.basename(taskDir), title: data.title || "", workflow, created: data.created || "", body: body.trim() };
+  return { file, slug: data.slug || path.basename(taskDir), title: data.title || "", workflow, created: data.created || "", with: parseList(data.with), body: body.trim() };
 }
+
+// `with: [a, b]`, `with: a, b`, or a single name; unknown values are kept so the caller can report them.
+export function parseList(value) {
+  if (!value) return [];
+  return String(value)
+    .replace(/^\[|\]$/g, "")
+    .split(",")
+    .map((s) => s.trim().replace(/^["']|["']$/g, ""))
+    .filter(Boolean);
+}
+
+// Optional phases a task may insert before describe-pr, in the order they run. Each is inserted once,
+// when no artifact of its type exists yet; review-code's own loop (fix-code-review) then runs as usual.
+export const OPTIONAL_PHASES = ["review-code", "record-evidence"];
 
 const ARTIFACT_NAME = /^(\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*?)-(.+)\.md$/;
 
@@ -390,11 +410,25 @@ export function predictNext(skill, taskDir, { projectRoot = projectRootOf(taskDi
 }
 
 // Returns { command, skill, arg, inline, source, pendingGate, gateArtifact, interactive, done, reason, lastSkill }.
-export function nextCommand(taskDir, { projectRoot = projectRootOf(taskDir) } = {}) {
+// `with` lists optional phases to insert before describe-pr (merged with task.md `with:`).
+export function nextCommand(taskDir, { projectRoot = projectRootOf(taskDir), with: withPhases = [] } = {}) {
   const task = readTask(taskDir);
   const artifacts = listArtifacts(taskDir, task.slug);
   const replies = listReplies(taskDir);
-  const base = { task, artifacts, replies, lastSkill: null, pendingGate: false, gateArtifact: null, inline: false, done: false, reason: "", arg: null };
+  const optional = OPTIONAL_PHASES.filter((s) => withPhases.includes(s) || task.with.includes(s));
+  const base = { task, artifacts, replies, lastSkill: null, pendingGate: false, gateArtifact: null, inline: false, done: false, reason: "", arg: null, optional };
+
+  // Before describe-pr, run each requested optional phase that has not produced its artifact yet.
+  const insertOptional = (command) => {
+    if (parseCommand(command)?.skill !== "describe-pr") return command;
+    for (const skill of optional) {
+      // Done means the newest artifact of the phase's type exists and did not fail; a failed recording or a
+      // review with findings is repeated after the fix it triggered.
+      const newest = [...artifacts].reverse().find((a) => a.type === PHASES[skill].type);
+      if (!newest || newest.status === "failed" || newest.status === "findings") return `/${skill}`;
+    }
+    return command;
+  };
 
   const finish = (command, extra) => {
     const parsed = command ? parseCommand(command) : null;
@@ -419,7 +453,7 @@ export function nextCommand(taskDir, { projectRoot = projectRootOf(taskDir) } = 
     if (last.skill === "start-epic-delivery") return finish(null, { ...gateInfo, done: true, reason: "epic children run as their own tasks with /run-task @<child dir>", source: "reply" });
     if (parsed.skill === "resolve-pr-reviews") return finish(null, { ...gateInfo, done: true, reason: "pull request review is external; run /resolve-pr-reviews when reviewers respond", source: "reply" });
     if (parsed.skill === "show-me") return finish(null, { ...gateInfo, done: true, reason: `reply ${last.name} ends the chain`, source: "reply" });
-    return finish(parsed.command, { ...gateInfo, source: "reply" });
+    return finish(insertOptional(parsed.command), { ...gateInfo, source: "reply" });
   }
 
   if (artifacts.length === 0) {
@@ -435,7 +469,7 @@ export function nextCommand(taskDir, { projectRoot = projectRootOf(taskDir) } = 
   const gateInfo = { lastSkill: skill, pendingGate: phase.gate, gateArtifact: phase.gate ? newest.name : null, source: "artifact" };
   if (!command) return finish(null, { ...gateInfo, done: true, reason: `after ${newest.name} nothing runs automatically` });
   if (parseCommand(command)?.skill === "resolve-pr-reviews") return finish(null, { ...gateInfo, done: true, reason: "pull request review is external; run /resolve-pr-reviews when reviewers respond" });
-  return finish(command, gateInfo);
+  return finish(insertOptional(command), gateInfo);
 }
 
 // Backend and status -------------------------------------------------------------------------
@@ -462,8 +496,8 @@ export function chooseBackend({ env = process.env, herdrKind = null, interactive
   return { backend: "manual", reason: `${whyNotHerdr} and no subagent tool` };
 }
 
-export function statusReport(taskDir, { env = process.env, herdrKind = null, forced = null, projectRoot = projectRootOf(taskDir) } = {}) {
-  const next = nextCommand(taskDir, { projectRoot });
+export function statusReport(taskDir, { env = process.env, herdrKind = null, forced = null, projectRoot = projectRootOf(taskDir), with: withPhases = [] } = {}) {
+  const next = nextCommand(taskDir, { projectRoot, with: withPhases });
   const { task, artifacts, replies } = next;
   const artifactList = artifacts.length ? artifacts.map((a) => (a.nn === null ? a.type : `${String(a.nn).padStart(2, "0")}-${a.type}`)).join(", ") : "none";
   const lastReply = replies.at(-1);
@@ -482,6 +516,7 @@ export function statusReport(taskDir, { env = process.env, herdrKind = null, for
     `Replies: ${repliesLine}`,
     nextLine,
     backend ? `Backend: ${backend.backend} (${backend.reason})` : "Backend: none",
+    ...(next.optional.length ? [`Optional phases: ${next.optional.join(", ")} before describe-pr`] : []),
     `Context: run the next command in a new session or with /run-task @${path.resolve(taskDir)}; do not continue in a session that already ran a phase.`,
   ];
   return lines.join("\n");
@@ -546,7 +581,7 @@ function main(argv) {
     switch (cmd) {
       case "next": {
         if (!target) throw new Error("usage: next <task dir>");
-        const next = nextCommand(target);
+        const next = nextCommand(target, { with: parseList(flags.with) });
         const { task, artifacts, replies, ...rest } = next;
         if (json) out({ ...rest, workflow: task.workflow, slug: task.slug, artifacts: artifacts.map((a) => a.name), replies: replies.map((r) => r.name) });
         else out(next.done ? `done: ${next.reason}` : `${next.command}${next.pendingGate ? `\ngate: review ${next.gateArtifact ?? "the newest artifact"} before continuing` : ""}`);
@@ -554,7 +589,7 @@ function main(argv) {
       }
       case "status": {
         if (!target) throw new Error("usage: status <task dir>");
-        out(statusReport(target, { herdrKind: typeof flags["herdr-kind"] === "string" ? flags["herdr-kind"] : null, forced: typeof flags.backend === "string" ? flags.backend : null }));
+        out(statusReport(target, { herdrKind: typeof flags["herdr-kind"] === "string" ? flags["herdr-kind"] : null, forced: typeof flags.backend === "string" ? flags.backend : null, with: parseList(flags.with) }));
         return 0;
       }
       case "check-reply": {

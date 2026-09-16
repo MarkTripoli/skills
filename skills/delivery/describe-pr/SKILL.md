@@ -43,7 +43,7 @@ If no PR exists, inspect branch status and committed changes. Commit and push on
 
 ### 3. Gather context
 
-Read `task.md` or `ticket.md`, explanatory artifacts: plan, outline, PRD/TDD, design, receipts, @file inputs.
+Read `task.md` or `ticket.md`, explanatory artifacts: plan, outline, PRD/TDD, design, receipts, @file inputs. When the task directory holds an `evidence` artifact (newest `NN-evidence-*.md`), read it: its sessions, results table, caveats, and where the video was posted go into the description.
 
 Read full diff plus surrounding code.
 
@@ -57,6 +57,7 @@ Template exactly:
 
 - `Why the change`: one sentence.
 - `Special things to note`: one to three bullets. `- None.` when no warnings, migrations, constraints, omissions, surprises.
+- `Evidence` (only when an `evidence` artifact exists): the result line, one bullet per recorded surface linking its `report.md`, and the video location; a failed test is never described as passing.
 - `Change outline`: compact structural view from `references/show-me.md`. Views that help: data shape, endpoint contract, pseudocode, file tree, component tree, call/control/data flow. `diff` for changes, full shape for new. Focus on files, calls, fields, components, boundaries.
 
 Do not include walkthrough artifacts in the PR body unless asked. When requested, create a separate HTML artifact from `references/pr_walkthrough_example.html`, fill it with real diff nodes, write it under the task directory, and save it.

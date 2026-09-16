@@ -8,6 +8,13 @@ Ticket: [{TICKET_ID}]({TICKET_URL}) | Task: `{TASK_SLUG}` | Walkthrough: [{PR_WA
 
 - {Name up to three items a reviewer should not miss, such as migrations, constraints, tradeoffs, or unusual choices. Write "None." if nothing needs special attention.}
 
+## Evidence
+
+Omit this section when the task has no `evidence` artifact.
+
+- {Result line from the evidence receipt: tests passed, failed, untested; revision tested.}
+- {One bullet per recorded surface: label, link to its `report.md`, where the video is posted.}
+
 ## Change outline
 
 {Use the smallest set of structural views needed to explain the implementation. Omit unused view types.}

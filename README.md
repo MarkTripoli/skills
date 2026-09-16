@@ -11,7 +11,7 @@ Portable (any runtime that scans `~/.agents/skills/<name>/SKILL.md`, including C
 ```sh
 git clone https://github.com/MarkTripoli/skills.git
 cp -R skills/skills/delivery/* ~/.agents/skills/
-cp -R skills/skills/show-me skills/skills/record-evidence ~/.agents/skills/
+cp -R skills/skills/show-me ~/.agents/skills/
 ```
 
 Runtime-specific trees add the runtime's invocation and worker notes to every skill and generate the worker definitions:
@@ -47,7 +47,7 @@ Every reply tells you to start the next phase in a new session. That sentence, t
 
 ## Skills
 
-The delivery workflow skills live under `skills/delivery/`; `show-me` and `record-evidence` are standalone skills at `skills/<name>/`.
+The delivery workflow skills live under `skills/delivery/`; `show-me` is a standalone skill at `skills/show-me/`.
 
 | Skill | Purpose | Role |
 |---|---|---|
@@ -73,13 +73,13 @@ The delivery workflow skills live under `skills/delivery/`; `show-me` and `recor
 | implement-plan | Implement the plan phase by phase through child workers | phase |
 | implement-outline | Implement the outline phase by phase through child workers | phase |
 | iterate-implementation | Apply feedback to an implementation | phase |
-| review-code | Review the diff against the merge target | phase |
-| fix-code-review | Repair validated review findings | phase |
+| review-code | Review the diff against the merge target | phase (optional) |
+| fix-code-review | Repair validated review findings | phase (optional) |
 | ci-commit | Commit implementation work with explicit paths | utility |
 | describe-pr | Write and publish the pull request description | phase |
 | resolve-pr-reviews | Work through pull request review threads | phase |
 | review-artifact-comments | Apply feedback to an artifact one item at a time | utility |
-| record-evidence | Record narrated, annotated video proof on screens, emulators, simulators, or headless browsers; compose devices side by side | utility |
+| record-evidence | Record narrated, annotated video proof on screens, emulators, simulators, or headless browsers; compose devices side by side | phase (optional) |
 | show-me | Explain the current topic with a focused visual | utility |
 | agent-codebase-locator | Find files, directories, tests, and entry points | worker |
 | agent-codebase-analyzer | Explain how a narrow area of code behaves now | worker |

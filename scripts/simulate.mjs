@@ -4,7 +4,7 @@
 // until the loop ends, validating every artifact and reply against workflow.mjs on the way.
 //
 // CLI:
-//   node scripts/simulate.mjs <full|lean|prd|oneshot|epic|review-loop|iterate|recovery|interrupted> [--json] [--keep]
+//   node scripts/simulate.mjs <full|lean|prd|oneshot|epic|review-loop|with-evidence|evidence-failed|iterate|recovery|interrupted> [--json] [--keep]
 //   node scripts/simulate.mjs phase <skill> <task dir> [@<artifact>] [--reply <file>] [--feedback "<text>"]
 // Exit 0 when every check passes; 1 with one issue per line otherwise.
 
@@ -355,6 +355,14 @@ export function fakePhase(skill, taskDir, { scenario = {}, skillsDir = DEFAULT_S
     }
     case "fix-code-review":
       return single("code_review_fixes_answer.md");
+    case "record-evidence": {
+      const statuses = scenario.evidence ?? ["passed"];
+      const status = statuses[Math.min(counterKey(scenario, "evidence"), statuses.length - 1)];
+      const file = create({ status });
+      const reportLink = `[report.md](.agents/tasks/${slug}/evidence/screen/report.md)`;
+      if (status === "failed") return finish(file, type, reply("evidence_failed_answer.md", { ...baseVars(file), report_link: reportLink, plan_file: planFile() }));
+      return finish(file, type, reply("evidence_final_answer.md", { ...baseVars(file), report_link: reportLink }));
+    }
     case "describe-pr": {
       const file = create({}, (b) => b, "pr-description.md");
       return finish(file, type, reply("pr_description_final_answer.md", baseVars(file)));
@@ -525,7 +533,7 @@ export function runChain(projectRoot, taskDir, { scenario = {}, approve = () => 
   const changesLeft = { ...(scenario.changesAt ?? {}) };
   let inserted = false;
   for (let i = 0; i < maxSteps; i++) {
-    let next = wf.nextCommand(taskDir, { projectRoot });
+    let next = wf.nextCommand(taskDir, { projectRoot, with: scenario.with ?? [] });
     if (next.done) return { steps, issues, done: true, reason: next.reason };
     let { command, skill, arg } = next;
     // workflows/delivery.md, Review loop: nothing in the table routes into review-code; the user invokes it
@@ -539,7 +547,7 @@ export function runChain(projectRoot, taskDir, { scenario = {}, approve = () => 
     }
     const result = fakePhase(skill, taskDir, { scenario, skillsDir, arg });
     issues.push(...checkPhase(result, taskDir, { knownSkills }));
-    const after = wf.nextCommand(taskDir, { projectRoot });
+    const after = wf.nextCommand(taskDir, { projectRoot, with: scenario.with ?? [] });
     const step = { skill, command, artifactFile: result.artifactFile, replyFile: path.basename(result.replyFile), pendingGate: after.pendingGate, next: after.done ? null : after.command };
     steps.push(step);
     if (issues.length) return { steps, issues, done: false, reason: "validation failed" };
@@ -550,7 +558,7 @@ export function runChain(projectRoot, taskDir, { scenario = {}, approve = () => 
         if (!iterateSkill) return { steps, issues: [`no iterate skill for ${skill}`], done: false, reason: "validation failed" };
         const iter = fakePhase(iterateSkill, taskDir, { scenario, skillsDir, arg: after.gateArtifact });
         issues.push(...checkPhase(iter, taskDir, { knownSkills }));
-        const again = wf.nextCommand(taskDir, { projectRoot });
+        const again = wf.nextCommand(taskDir, { projectRoot, with: scenario.with ?? [] });
         if (!again.pendingGate) issues.push(`${iterateSkill} did not return to the ${skill} gate`);
         steps.push({ skill: iterateSkill, command: `/${iterateSkill} @${after.gateArtifact}`, artifactFile: iter.artifactFile, replyFile: path.basename(iter.replyFile), pendingGate: again.pendingGate, next: again.done ? null : again.command });
         if (issues.length) return { steps, issues, done: false, reason: "validation failed" };
@@ -572,6 +580,10 @@ export const SCENARIOS = {
   // The review loop is user-invoked after implementation (workflows/delivery.md, Review loop); runChain
   // injects `/review-code` where the table would run describe-pr.
   "review-loop": { workflow: "full", worktree: "disabled", reviewLoop: true, codeReview: ["findings", "clean"] },
+  // Optional phases declared up front: run-task inserts record-evidence before describe-pr (workflows/delivery.md,
+  // Optional phases). `evidence` lists the receipt status per run; a failed recording hands to iterate-implementation.
+  "with-evidence": { workflow: "lean", worktree: "disabled", with: ["record-evidence"], evidence: ["passed"] },
+  "evidence-failed": { workflow: "lean", worktree: "disabled", with: ["record-evidence"], evidence: ["failed", "passed"] },
   iterate: { workflow: "full", changesAt: { "create-plan": 1 } },
   recovery: { workflow: "full", recoverAfter: "create-plan" },
   // The interrupted path: the implementation run stops after every phase and re-enters with the plan.

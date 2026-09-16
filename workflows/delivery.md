@@ -44,6 +44,7 @@ A task moves from request to merged pull request through phases. Each phase is o
 | iterate-implementation | implementation | /implement-plan or /implement-outline between phases, then /describe-pr | yes | yes |
 | review-code | code-review | /fix-code-review while findings remain, otherwise /describe-pr | no | no |
 | fix-code-review | code-review-fixes | /review-code | no | no |
+| record-evidence | evidence | /describe-pr when every test passed or is untested, /iterate-implementation when one failed | no | no |
 | describe-pr | pr-description | /resolve-pr-reviews | yes | no |
 | resolve-pr-reviews | pr-review | /resolve-pr-reviews until the pull request is approved | yes | no |
 | ci-commit | commit | /describe-pr | no | no |
@@ -56,6 +57,10 @@ Artifact type is the frontmatter `type` of the artifact the skill writes. `descr
 ## Human gates
 
 Gates stop at design-discussion, design-prd, design-tdd, structure-outline, plan, epic-plan, epic-delivery, workspace-config, implementation, pr-description, and pr-review. The gate reply links the artifact, copies its `### Verify` checks, and names the iteration skill; running the next command records approval. Pull request approval stays external: `resolve-pr-reviews` repeats until reviewers approve.
+
+## Optional phases
+
+Two phases run only when the user asks for them, between implementation and the pull request: `review-code` (the review loop below) and `record-evidence` (narrated video proof of the implemented behavior). Insert one by answering the implementation gate with its command (`/review-code` or `/record-evidence`), by listing it once in `task.md` (`with: [review-code, record-evidence]`), or with `/run-task --with <skill,...>`. `run-task` then runs each requested phase whose artifact does not exist yet before `describe-pr`, in that order. Both hand back to `describe-pr` on success; failing evidence hands to `iterate-implementation`.
 
 ## Review loop
 

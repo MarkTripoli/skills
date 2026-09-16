@@ -125,6 +125,30 @@ test("oneshot: one inline prompt, then describe-pr", () => {
   assert.deepEqual(wf.listArtifacts(taskDir, "verbose-flag").map((a) => a.name), ["pr-description.md"]);
 });
 
+// workflows/delivery.md, Optional phases: with `with: [record-evidence]` run-task inserts the recording before
+// describe-pr; a failed recording hands to iterate-implementation and is recorded again after the fix.
+test("with-evidence: record-evidence runs once before describe-pr and hands off to it", () => {
+  const { projectRoot, taskDir } = fixture({ workflow: "lean", worktree: "disabled" });
+  const result = runChain(projectRoot, taskDir, { scenario: { planPhases: 1, with: ["record-evidence"], evidence: ["passed"] } });
+  assertClean(result);
+  assert.deepEqual(skills(result), ["create-research-questions", "create-research", "create-structure-outline", "implement-outline", "record-evidence", "describe-pr"]);
+  const evidence = result.steps.find((s) => s.skill === "record-evidence");
+  assert.equal(evidence.next, "/describe-pr");
+  assert.equal(evidence.pendingGate, false);
+  const receipt = wf.listArtifacts(taskDir, "verbose-flag").find((a) => a.type === "evidence");
+  assert.equal(receipt.status, "passed");
+});
+
+test("evidence-failed: a failed recording hands to iterate-implementation, then records again", () => {
+  const { projectRoot, taskDir } = fixture({ workflow: "lean", worktree: "disabled" });
+  const result = runChain(projectRoot, taskDir, { scenario: { planPhases: 1, with: ["record-evidence"], evidence: ["failed", "passed"] } });
+  assertClean(result);
+  assert.deepEqual(skills(result).slice(3), ["implement-outline", "record-evidence", "iterate-implementation", "record-evidence", "describe-pr"]);
+  const [failed, passed] = result.steps.filter((s) => s.skill === "record-evidence");
+  assert.equal(failed.next, "/iterate-implementation @03-structure-outline-verbose-flag.md");
+  assert.equal(passed.next, "/describe-pr");
+});
+
 // workflows/delivery.md, Review loop: the loop is user-invoked between implementation and the pull
 // request; nothing in the table routes into it. `reviewLoop` models the user typing `/review-code`
 // where the table would have run describe-pr; the loop's own transitions are then checked like any phase.

@@ -96,7 +96,7 @@ function installSignalHandlers() {
 // Arguments ------------------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const opts = { driver: null, cases: [], k: 3, json: false, keep: false, timeoutMs: DEFAULT_TIMEOUT_MS, model: null, chain: null, maxPhases: 12, strict: false };
+  const opts = { driver: null, cases: [], k: 3, json: false, keep: false, timeoutMs: DEFAULT_TIMEOUT_MS, model: null, chain: null, maxPhases: 12, strict: false, with: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const value = () => {
@@ -128,6 +128,9 @@ function parseArgs(argv) {
         break;
       case "--strict":
         opts.strict = true;
+        break;
+      case "--with":
+        opts.with.push(...value().split(",").map((s) => s.trim()).filter(Boolean));
         break;
       case "--json":
         opts.json = true;
@@ -800,6 +803,7 @@ async function runOnce(c, opts, runIndex, driver) {
 
 // Phases that legitimately change the repository and commit; every other phase must leave it untouched.
 const REPO_WRITING_SKILLS = new Set(["implement-plan", "implement-outline", "iterate-implementation", "oneshot", "ci-commit", "fix-code-review"]);
+// record-evidence writes recordings under the task directory only; its receipt is a task artifact.
 
 function loadChain(workflow) {
   const file = path.join(chainsDir, `${workflow}.json`);
@@ -814,6 +818,7 @@ function loadChain(workflow) {
     artifacts: {},
     replies: {},
     artifactContains: c.artifactContains ?? [],
+    with: c.with ?? [],
   };
 }
 
@@ -850,7 +855,7 @@ async function runChain(chain, opts, driver) {
   let reason = "";
   let pass = true;
   for (let n = 1; n <= opts.maxPhases; n++) {
-    const next = nextCommand(taskDir);
+    const next = nextCommand(taskDir, { with: chain.with });
     if (next.done) {
       done = true;
       reason = next.reason;
@@ -1021,7 +1026,7 @@ function renderReport(report) {
 // Main ------------------------------------------------------------------------------------------
 
 const USAGE = `usage: node scripts/eval.mjs --driver <${DRIVERS.join("|")}> [--case <name>...] [--k 3] [--model <spec>] [--json] [--keep] [--timeout <seconds>]
-       node scripts/eval.mjs --driver <driver> --chain <${TYPES.join("|")}> [--model <spec>] [--max-phases 12] [--json] [--keep]`;
+       node scripts/eval.mjs --driver <driver> --chain <${TYPES.join("|")}> [--model <spec>] [--with <skill,...>] [--strict] [--max-phases 12] [--json] [--keep]`;
 
 async function main(argv) {
   let opts;
@@ -1029,7 +1034,10 @@ async function main(argv) {
   let chain = null;
   try {
     opts = parseArgs(argv);
-    if (opts.chain) chain = loadChain(opts.chain);
+    if (opts.chain) {
+      chain = loadChain(opts.chain);
+      chain.with = [...new Set([...chain.with, ...opts.with])];
+    }
     else cases = loadCases(opts.cases);
   } catch (error) {
     if (!(error instanceof UsageError)) throw error;

@@ -65,7 +65,9 @@ const ANSWER_INVENTORY = {
   "iterate-structure-outline/references/structure_outline_setup_answer.md": "setup-worktree",
   "iterate-tdd/references/tdd_final_answer.md": "create-plan",
   "iterate-tdd/references/tdd_review_answer.md": "iterate-tdd",
-  "record-evidence/references/evidence_final_answer.md": "show-me",
+  "record-evidence/references/evidence_failed_answer.md": "iterate-implementation",
+  "record-evidence/references/evidence_final_answer.md": "describe-pr",
+  "record-evidence/references/evidence_standalone_answer.md": "show-me",
   "resolve-pr-reviews/references/pr_review_approved_answer.md": "show-me",
   "resolve-pr-reviews/references/pr_review_pending_answer.md": "resolve-pr-reviews",
   "review-artifact-comments/references/comments_final_answer.md": "iterate-implementation",
@@ -159,6 +161,7 @@ function fillTemplate(input) {
     .replaceAll("{summary}", "Saved the requested artifact.")
     .replaceAll("{artifact_file}", "01-artifact.md")
     .replaceAll("{plan_file}", "01-plan.md")
+    .replaceAll("{report_link}", "[report.md](.agents/tasks/task-slug/evidence/screen/report.md)")
     .replaceAll("{implementation_command}", "/implement-plan")
     .replaceAll("{first_child_command}", "/create-research-questions")
     .replaceAll("{child_slug}", "child-slug")
@@ -384,7 +387,7 @@ if (!fs.existsSync(workflowModule)) {
   for (const workflow of TYPES) {
     for (const probe of [{ inWorktree: false, disabled: false }, { inWorktree: false, disabled: true }, { inWorktree: true, disabled: false }]) {
       for (const remaining of [[1], []]) {
-        for (const status of ["", "findings", "clean", "blocked", "pending", "approved"]) {
+        for (const status of ["", "findings", "clean", "blocked", "pending", "approved", "passed", "untested", "failed"]) {
           contexts.push({ workflow, probe, remaining, status, artifact: "NN-type-slug.md", planFile: "NN-plan-slug.md" });
         }
       }

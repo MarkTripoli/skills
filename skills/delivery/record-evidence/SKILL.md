@@ -9,6 +9,8 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 Record proof of behavior, narrate it, and attach it to the PR and tracker issue instead of claiming it in prose.
 
+Inside a task this is an optional phase of the delivery workflow: it runs after implementation and before `describe-pr`, when the user inserts it (`/record-evidence` at the implementation gate, `with: [record-evidence]` in `task.md`, or `/run-task --with record-evidence`). Passed or untested evidence hands off to `/describe-pr`; a failed test hands off to `/iterate-implementation` with the plan, because failing evidence is feedback, not a pull request. Outside a task the skill stands alone and no phase follows.
+
 The recording is the capture of you testing the app live: start the recorder, then drive the app yourself through each test target while adding narration and Jest-style assertions that the recorder timestamps and burns into the video. Every action in the video is the test being performed; a recording that does not show that live session is not evidence.
 
 ## Inputs
@@ -19,7 +21,7 @@ The recording is the capture of you testing the app live: start the recorder, th
 
 ## Where evidence lives
 
-Inside a task: `.agents/tasks/<slug>/evidence/<session-name>/` (one directory per recorded surface, plus `composite/` for a side-by-side). Outside a task: `.artifacts/evidence/<session-name>/`; append `.artifacts/` to `.gitignore` when the file exists and lacks it. Evidence is uploaded, never committed.
+Inside a task: `.agents/tasks/<slug>/evidence/<session-name>/` (one directory per recorded surface, plus `composite/` for a side-by-side), and a numbered receipt `NN-evidence-<slug>.md` in the task directory written from `references/evidence_template.md`, which is how later phases and `run-task` see that this phase ran. Outside a task: `.artifacts/evidence/<session-name>/`; append `.artifacts/` to `.gitignore` when the file exists and lacks it. Recordings are uploaded, never committed; the receipt is a task artifact like any other.
 
 Each session directory ends up with `evidence.mp4` (overlay burned in), `report.md`, `manifest.json`, `capture/` (raw footage), `frames/` (review stills), and `events.jsonl`.
 
@@ -61,7 +63,7 @@ Timing: video zero is the recorder's real start (first bytes written, or its own
 
 ### 0. Locate the task
 
-Locate the task directory and read `task.md` per the conventions when the request belongs to a task; a standalone request needs none. Note the revision under test: `git rev-parse HEAD`, `git branch --show-current`, or the deployment URL.
+Locate the task directory and read `task.md` per the conventions when the request belongs to a task; a standalone request needs none. In a task, the test targets come from the newest `implementation` artifact's summary and the plan or structure outline it implemented (the newest artifact of type `plan` or `structure-outline`), unless the user named other targets. Note the revision under test: `git rev-parse HEAD`, `git branch --show-current`, or the deployment URL.
 
 ### 1. Check the toolchain
 
@@ -127,6 +129,7 @@ Panes align by wall clock (a pane that started later shows a dark hold first); `
 ### 7. Post the evidence
 
 - `report.md` is the report: result line, revision, environment, capture details, per-test table with timestamps, narration transcript, notes, caveats. Extend it rather than rewriting it.
+- In a task, take the next artifact number and write `NN-evidence-<slug>.md` from `references/evidence_template.md`: set `status` to the worst result across every test (`passed`, `untested`, `failed`), fill `summary`, list every session's `report.md` and video path, copy the per-test table, the caveats, and where the video was posted. Save the file.
 - Post the video and the result summary as a PR comment, or in the PR description when it is your PR. `gh pr comment` cannot attach a local video: upload `evidence.mp4` (or `composite.mp4`) through the PR comment box in an authenticated browser, or upload it to a host and link it. Reopen the comment and confirm the video plays before claiming it is posted.
 - Attach the same video to the tracker issue with a one-line result.
 - Send the report and recording to the requester.
@@ -168,6 +171,12 @@ Emulators and simulators run headless and record fine: `boot ... --headless` the
 
 ## Final response
 
-Read `references/evidence_final_answer.md` and use that template only. `{artifact_link}` is a Markdown link to `report.md` of the session (or the composite), relative to the task directory's repository root, or to the current directory when there is no task directory. `{summary}` states the result line and any failed or untested test. End with exactly one fenced `text` block containing `/show-me`; no phase advances from this utility.
+Choose the template by situation and use it only:
+
+- In a task, every test passed or untested: `references/evidence_final_answer.md`, which hands off to `/describe-pr`.
+- In a task, any test failed: `references/evidence_failed_answer.md`, which hands off to `/iterate-implementation @{plan_file}`; `{plan_file}` is the name of the plan or structure outline being implemented.
+- No task: `references/evidence_standalone_answer.md`, which ends with `/show-me` because no phase follows.
+
+`{artifact_link}` is a relative Markdown link to the receipt, `[NN-evidence-slug.md](.agents/tasks/<slug>/NN-evidence-slug.md)`. `{report_link}` is a relative Markdown link to `report.md` of the session (or the composite), relative to the repository root, or to the current directory when there is no task directory. `{summary}` is the receipt's `summary`.
 
 If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it.

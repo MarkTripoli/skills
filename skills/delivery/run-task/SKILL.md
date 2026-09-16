@@ -17,6 +17,7 @@ You run one task's workflow phase by phase. Each phase executes in a fresh conte
 - `--backend herdr|subagent|manual`: force a backend.
 - `--step`: stop after every phase, not only at human gates.
 - `--status`: report where the task stands and what runs next, then stop without running anything.
+- `--with <skill,...>`: optional phases to insert before `describe-pr`: `review-code`, `record-evidence`, or both. `task.md` may declare the same once as `with: [review-code, record-evidence]`; the two lists merge.
 
 ## Steps
 
@@ -25,8 +26,8 @@ You run one task's workflow phase by phase. Each phase executes in a fresh conte
    This skill ships `scripts/workflow.mjs`, a dependency-free Node script that computes everything in step 2 from the task directory. When `node` is available and this skill's directory is known, run it and use its output instead of reasoning through the rules yourself:
 
    ```bash
-   node <skill dir>/scripts/workflow.mjs next <task dir> --json
-   node <skill dir>/scripts/workflow.mjs status <task dir> --herdr-kind <kind>
+   node <skill dir>/scripts/workflow.mjs next <task dir> --json [--with <skill,...>]
+   node <skill dir>/scripts/workflow.mjs status <task dir> --herdr-kind <kind> [--with <skill,...>]
    node <skill dir>/scripts/workflow.mjs create-task <project root> --workflow <type> "<request>"
    ```
 
@@ -36,6 +37,7 @@ You run one task's workflow phase by phase. Each phase executes in a fresh conte
    - A reply file exists: read the newest one; its final `text` fence line is the next command. A reply with no fence, a fence naming `/resolve-pr-reviews` (pull request review is external), a fence naming `/show-me`, or a reply written by `start-epic-delivery` (each child runs as its own task) ends the loop: say so and stop.
    - No reply file and no artifact in the task directory: `full` and `lean` start with `/create-research-questions`; `prd` starts with `/create-research`; `oneshot` runs this inline prompt as the command: "Complete the task in `task.md` end to end: implement, run the narrowest checks that prove it, commit with explicit paths, then reply per the conventions with `/describe-pr`."
    - No reply file but artifacts exist (the user ran phases by hand): take the newest artifact's type (frontmatter `type`, else the name segment between `NN-` and the slug; `pr-description.md` counts as type `pr-description`), look it up in the workflow table, and use that row's next command. When the row is a human gate, present the gate first (step 5) instead of running the next phase.
+   - Optional phases: when the command found above is `/describe-pr` and `--with` or `task.md` names an optional phase whose artifact type (`code-review` for `review-code`, `evidence` for `record-evidence`) does not exist in the task directory yet, run that phase instead, `review-code` before `record-evidence`. Their own replies hand back to `/describe-pr` (or, for failing evidence and review findings, into their fix loops).
 
    With `--status`, print this report and stop:
 
@@ -66,7 +68,7 @@ You run one task's workflow phase by phase. Each phase executes in a fresh conte
 
 5. **Relay**. Print the reply file content verbatim; it already ends with the handoff fence. Then:
    - The phase ran inline in this session: stop, and say "This session now holds the phase's exchange; continue with `/run-task @<task dir>` in a new session."
-   - The phase is a human gate in the workflow table, or `--step` was given: stop. The user's next message either approves (any message that does not request changes; continue at step 2) or requests changes (run the matching `/iterate-*` command with `@<artifact file>` as an interactive phase, then relay again).
+   - The phase is a human gate in the workflow table, or `--step` was given: stop. The user's next message either approves (any message that does not request changes; continue at step 2), requests changes (run the matching `/iterate-*` command with `@<artifact file>` as an interactive phase, then relay again), or names a command (`/review-code`, `/record-evidence`, or another `/<skill>` line, optionally with `@<file>`): run that command as the next phase in place of the table's default, then continue. This is how an optional phase is inserted after the implementation gate without changing `task.md`.
    - Otherwise continue at step 2.
 
 ## Rules

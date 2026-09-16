@@ -39,6 +39,8 @@ npm run simulate -- prd           # fixture is a git worktree: plan hands straig
 npm run simulate -- interrupted   # implementation stops after every phase and re-enters with /implement-plan @<plan>
 npm run simulate -- oneshot
 npm run simulate -- review-loop   # user runs /review-code after implementation: findings -> fix-code-review -> clean -> describe-pr
+npm run simulate -- with-evidence   # task.md with: [record-evidence]: implementation -> record-evidence -> describe-pr
+npm run simulate -- evidence-failed # failed recording -> iterate-implementation -> record-evidence again -> describe-pr
 npm run simulate -- iterate       # changes requested at the plan gate; iterate-plan edits in place and re-presents the gate
 npm run simulate -- epic          # epic plan -> child task directories -> each child's start command
 npm run simulate -- recovery      # replies/ deleted at several points; next command derived from artifacts alone

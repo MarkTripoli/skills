@@ -39,11 +39,12 @@ function repo() {
 }
 
 // Builds a project with a task directory and optional artifacts/replies; returns { root, taskDir }.
-function project({ workflow = "full", slug = "verbose-flag", artifacts = {}, replies = [] } = {}) {
+function project({ workflow = "full", slug = "verbose-flag", artifacts = {}, replies = [], withPhases = null } = {}) {
   const root = tmpdir();
   const taskDir = path.join(root, ".agents", "tasks", slug);
   fs.mkdirSync(taskDir, { recursive: true });
-  fs.writeFileSync(path.join(taskDir, "task.md"), `---\nslug: ${slug}\ntitle: T\nworkflow: ${workflow}\ncreated: 2026-01-01\n---\nDo it.\n`);
+  const withLine = withPhases ? `with: [${withPhases.join(", ")}]\n` : "";
+  fs.writeFileSync(path.join(taskDir, "task.md"), `---\nslug: ${slug}\ntitle: T\nworkflow: ${workflow}\n${withLine}created: 2026-01-01\n---\nDo it.\n`);
   for (const [name, text] of Object.entries(artifacts)) fs.writeFileSync(path.join(taskDir, name), text);
   if (replies.length) fs.mkdirSync(path.join(taskDir, "replies"));
   replies.forEach(([name, text]) => fs.writeFileSync(path.join(taskDir, "replies", name), text));
@@ -318,6 +319,40 @@ describe("nextCommand", () => {
     assert.equal(wf.nextCommand(halfway.taskDir).command, "/implement-outline @01-structure-outline-verbose-flag.md");
   });
 
+
+  test("optional phases: inserted once before describe-pr, repeated after a failure, from task.md or the with option", () => {
+    const implemented = {
+      "01-plan-verbose-flag.md": wf.completePhase(wf.completePhase(PLAN, 1), 2),
+      "02-implementation-verbose-flag.md": artifact("implementation", "completed_phase: 2\n"),
+    };
+    // No request: straight to describe-pr.
+    assert.equal(wf.nextCommand(project({ artifacts: implemented }).taskDir).command, "/describe-pr");
+    // Requested through the option: record-evidence first, then describe-pr once its receipt exists.
+    const viaOption = project({ artifacts: implemented });
+    assert.equal(wf.nextCommand(viaOption.taskDir, { with: ["record-evidence"] }).command, "/record-evidence");
+    fs.writeFileSync(path.join(viaOption.taskDir, "03-evidence-verbose-flag.md"), artifact("evidence", "status: passed\n"));
+    assert.equal(wf.nextCommand(viaOption.taskDir, { with: ["record-evidence"] }).command, "/describe-pr");
+    // Requested in task.md; both optional phases, review-code first; a failed recording repeats after the fix.
+    const viaTask = project({ artifacts: implemented, withPhases: ["record-evidence", "review-code"] });
+    assert.equal(wf.readTask(viaTask.taskDir).with.join(","), "record-evidence,review-code");
+    assert.equal(wf.nextCommand(viaTask.taskDir).command, "/review-code");
+    fs.writeFileSync(path.join(viaTask.taskDir, "03-code-review-verbose-flag.md"), artifact("code-review", "status: clean\n"));
+    assert.equal(wf.nextCommand(viaTask.taskDir).command, "/record-evidence");
+    fs.writeFileSync(path.join(viaTask.taskDir, "04-evidence-verbose-flag.md"), artifact("evidence", "status: failed\n"));
+    assert.equal(wf.nextCommand(viaTask.taskDir).command, "/iterate-implementation @01-plan-verbose-flag.md");
+    fs.writeFileSync(path.join(viaTask.taskDir, "05-implementation-verbose-flag.md"), artifact("implementation", "completed_phase: 2\n"));
+    assert.equal(wf.nextCommand(viaTask.taskDir).command, "/record-evidence");
+    fs.writeFileSync(path.join(viaTask.taskDir, "06-evidence-verbose-flag.md"), artifact("evidence", "status: passed\n"));
+    assert.equal(wf.nextCommand(viaTask.taskDir).command, "/describe-pr");
+    assert.match(wf.statusReport(viaTask.taskDir, { env: {} }), /^Optional phases: review-code, record-evidence before describe-pr$/m);
+  });
+
+  test("parseList accepts YAML-style lists, comma lists, and single values", () => {
+    assert.deepEqual(wf.parseList("[review-code, record-evidence]"), ["review-code", "record-evidence"]);
+    assert.deepEqual(wf.parseList("record-evidence"), ["record-evidence"]);
+    assert.deepEqual(wf.parseList('"a", b'), ["a", "b"]);
+    assert.deepEqual(wf.parseList(undefined), []);
+  });
   test("artifact-only recovery: code-review statuses and pr-description", () => {
     const status = (s) => wf.nextCommand(project({ artifacts: { "01-code-review-verbose-flag.md": artifact("code-review", `status: ${s}\n`) } }).taskDir);
     assert.equal(status("findings").command, "/fix-code-review @01-code-review-verbose-flag.md");

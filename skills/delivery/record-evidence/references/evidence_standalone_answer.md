@@ -1,4 +1,4 @@
-Evidence saved: {artifact_link}
+Evidence saved: {report_link}
 
 Summary:
 {summary}
@@ -11,7 +11,7 @@ Caveats:
 
 Posted to: <PR comment link, tracker issue, or "requester only">
 
-No phase advances from this recording. Attach the video wherever the task is tracked, then continue the task's own workflow:
+This recording belongs to no task, so no phase follows. Attach the video wherever the work is tracked.
 
 ```text
 /show-me
