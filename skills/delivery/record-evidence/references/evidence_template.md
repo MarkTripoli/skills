@@ -18,6 +18,7 @@ summary: "[One or two sentences: the result line (tests passed, failed, untested
 
 - [Label]: `evidence/<session>/report.md`, `evidence/<session>/evidence.mp4`
 - composite: `evidence/composite/report.md`, `evidence/composite/composite.mp4` (when several surfaces were composed)
+- [Label, no video]: `evidence/<session>/report.md`, the numbered captures, and the probe or capture script that reproduces them (when nothing could record video)
 
 ## Results
 
