@@ -141,7 +141,7 @@ export function readTask(taskDir) {
   const { data, body } = parseFrontmatter(fs.readFileSync(file, "utf8"));
   const workflow = data.workflow || "full";
   if (!TYPES.includes(workflow)) throw new Error(`${file}: workflow "${workflow}" is not one of ${TYPES.join(", ")}`);
-  return { file, slug: data.slug || path.basename(taskDir), title: data.title || "", workflow, created: data.created || "", with: parseList(data.with), body: body.trim() };
+  return { file, slug: data.slug || path.basename(taskDir), title: data.title || "", workflow, created: data.created || "", with: parseList(data.with), maxDepth: parseMaxDepth(data.max_depth), body: body.trim() };
 }
 
 // `with: [a, b]`, `with: a, b`, or a single name; unknown values are kept so the caller can report them.
@@ -152,6 +152,13 @@ export function parseList(value) {
     .split(",")
     .map((s) => s.trim().replace(/^["']|["']$/g, ""))
     .filter(Boolean);
+}
+
+// A positive integer bounding the review loop's iterations, or `null` when absent or unparsable
+// (unknown values are ignored, consistent with `parseList`'s lenient handling).
+export function parseMaxDepth(v) {
+  if (v == null || v === "") return null;
+  return /^[1-9]\d*$/.test(String(v)) ? Number(v) : null;
 }
 
 // Optional phases a task may insert before describe-pr, in the order they run. Each is inserted once,
@@ -554,7 +561,7 @@ export function slugify(text, max = 4) {
 }
 
 // `with` lists optional phases (OPTIONAL_PHASES) written to task.md as `with: [a, b]`.
-export function createTask(projectRoot, { request, workflow = "full", with: withPhases = [], slug = slugify(request), title = request.split(/\r?\n/)[0].slice(0, 120), created = new Date().toISOString().slice(0, 10) }) {
+export function createTask(projectRoot, { request, workflow = "full", with: withPhases = [], maxDepth = null, slug = slugify(request), title = request.split(/\r?\n/)[0].slice(0, 120), created = new Date().toISOString().slice(0, 10) }) {
   if (!TYPES.includes(workflow)) throw new Error(`workflow "${workflow}" is not one of ${TYPES.join(", ")}`);
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) throw new Error(`slug "${slug}" must be kebab-case`);
   const unknown = withPhases.filter((s) => !OPTIONAL_PHASES.includes(s));
@@ -563,7 +570,8 @@ export function createTask(projectRoot, { request, workflow = "full", with: with
   if (fs.existsSync(path.join(taskDir, "task.md"))) throw new Error(`${taskDir}/task.md already exists`);
   fs.mkdirSync(taskDir, { recursive: true });
   const withLine = withPhases.length ? `with: [${withPhases.join(", ")}]\n` : "";
-  fs.writeFileSync(path.join(taskDir, "task.md"), `---\nslug: ${slug}\ntitle: ${title}\nworkflow: ${workflow}\ncreated: ${created}\n${withLine}---\n${request.trim()}\n`);
+  const maxDepthLine = maxDepth != null ? `max_depth: ${maxDepth}\n` : "";
+  fs.writeFileSync(path.join(taskDir, "task.md"), `---\nslug: ${slug}\ntitle: ${title}\nworkflow: ${workflow}\ncreated: ${created}\n${withLine}${maxDepthLine}---\n${request.trim()}\n`);
   const gitignore = path.join(projectRoot, ".gitignore");
   let gitignoreUpdated = false;
   if (fs.existsSync(gitignore)) {
@@ -634,8 +642,8 @@ function main(argv) {
       }
       case "create-task": {
         const request = positional[2];
-        if (!target || !request) throw new Error('usage: create-task <project root> --workflow <type> [--with <skill,...>] [--slug <slug>] "<request>"');
-        const result = createTask(target, { request, workflow: typeof flags.workflow === "string" ? flags.workflow : "full", with: parseList(flags.with), ...(typeof flags.slug === "string" ? { slug: flags.slug } : {}) });
+        if (!target || !request) throw new Error('usage: create-task <project root> --workflow <type> [--with <skill,...>] [--max-depth <n>] [--slug <slug>] "<request>"');
+        const result = createTask(target, { request, workflow: typeof flags.workflow === "string" ? flags.workflow : "full", with: parseList(flags.with), maxDepth: parseMaxDepth(flags["max-depth"]), ...(typeof flags.slug === "string" ? { slug: flags.slug } : {}) });
         out(json ? result : `${result.taskDir}${result.gitignoreUpdated ? "\n.gitignore: added .agents/tasks/" : ""}`);
         return 0;
       }

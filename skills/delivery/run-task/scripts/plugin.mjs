@@ -44,7 +44,7 @@ export function resolveSkills(candidates) {
 
 // Arguments ----------------------------------------------------------------------------------
 
-export const FLAGS = ["--step", "--status", "--with <skill,...>", "--model <spec>", "--workflow <type>"];
+export const FLAGS = ["--step", "--status", "--with <skill,...>", "--model <spec>", "--workflow <type>", "--max-depth <n>"];
 
 // `/run-task` argument forms: `@<task dir>`, free text (a new task), `stop`, and the flags in FLAGS. Other
 // `--tokens` belong to the request (a task may well mention a CLI flag). `extraFlags` names boolean flags a
@@ -52,7 +52,7 @@ export const FLAGS = ["--step", "--status", "--with <skill,...>", "--model <spec
 // the text, else `full`.
 export function parseArgs(text, { extraFlags = [] } = {}) {
   const types = wf.TYPES;
-  const out = { action: "run", taskDir: null, request: null, workflow: null, step: false, with: [], model: null, flags: new Set(), errors: [] };
+  const out = { action: "run", taskDir: null, request: null, workflow: null, step: false, with: [], model: null, maxDepth: null, flags: new Set(), errors: [] };
   const words = [];
   const tokens = text.trim().split(/\s+/).filter(Boolean);
   for (let i = 0; i < tokens.length; i++) {
@@ -60,12 +60,15 @@ export function parseArgs(text, { extraFlags = [] } = {}) {
     if (token === "--step") out.step = true;
     else if (token === "--status") out.action = "status";
     else if (extraFlags.includes(token)) out.flags.add(token);
-    else if (token === "--with" || token === "--model" || token === "--workflow") {
+    else if (token === "--with" || token === "--model" || token === "--workflow" || token === "--max-depth") {
       const value = tokens[++i];
       if (!value || value.startsWith("--")) out.errors.push(`${token} needs a value`);
       else if (token === "--with") out.with.push(...value.split(",").map((s) => s.trim()).filter(Boolean));
       else if (token === "--model") out.model = value;
-      else out.workflow = value;
+      else if (token === "--max-depth") {
+        if (!/^[1-9]\d*$/.test(value)) out.errors.push(`--max-depth needs a positive integer, got "${value}"`);
+        else out.maxDepth = Number(value);
+      } else out.workflow = value;
     } else if (token.startsWith("@") && token.length > 1 && !out.taskDir) out.taskDir = token.slice(1);
     else words.push(token);
   }

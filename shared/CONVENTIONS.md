@@ -14,6 +14,8 @@ A task lives in `.agents/tasks/<slug>/` under the project root. `<slug>` is two 
 
 Optional key `with`: a list of optional phases to insert before `describe-pr`, for example `with: [review-code, record-evidence]`. `run-task` merges it with its `--with` option; the phases and their order are in [workflows/delivery.md](../workflows/delivery.md), Optional phases.
 
+Optional key `max_depth`: a positive integer bounding the review loop's iterations; `run-task`'s `--max-depth` overrides it; absent means endless.
+
 A skill that is given no task directory and finds none whose `task.md` matches the request creates one: pick a slug, write `task.md` from the user's message, append `.agents/tasks/` to the project `.gitignore` when that file exists and lacks the line, and report both paths in the reply.
 
 Example:

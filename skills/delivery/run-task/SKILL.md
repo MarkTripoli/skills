@@ -18,6 +18,7 @@ You run one task's workflow phase by phase. Each phase executes in a fresh conte
 - `--step`: stop after every phase, not only at human gates.
 - `--status`: report where the task stands and what runs next, then stop without running anything.
 - `--with <skill,...>`: optional phases to insert before `describe-pr`: `review-code`, `record-evidence`, or both. `task.md` may declare the same once as `with: [review-code, record-evidence]`; the two lists merge.
+- `--max-depth <n>`: bound the review loop's iterations to a positive integer `n`. `task.md` may declare the same as `max_depth: <n>`; the flag wins when both are present. Endless (no cap) when absent.
 
 ## Steps
 
@@ -28,7 +29,7 @@ You run one task's workflow phase by phase. Each phase executes in a fresh conte
    ```bash
    node <skill dir>/scripts/workflow.mjs next <task dir> --json [--with <skill,...>]
    node <skill dir>/scripts/workflow.mjs status <task dir> --herdr-kind <kind> [--with <skill,...>]
-   node <skill dir>/scripts/workflow.mjs create-task <project root> --workflow <type> "<request>"
+   node <skill dir>/scripts/workflow.mjs create-task <project root> --workflow <type> [--max-depth <n>] "<request>"
    ```
 
    `next` prints `command`, `skill`, `pendingGate`, `gateArtifact`, `interactive`, `inline`, and `done` with a `reason`. `status` prints the report shown below. `create-task` writes `task.md` per the conventions. When the script is unavailable, apply the rules in step 2 by hand; they describe the same decisions.

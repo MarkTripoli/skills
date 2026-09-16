@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import * as wf from "../skills/delivery/run-task/scripts/workflow.mjs";
+import { parseArgs } from "../skills/delivery/run-task/scripts/plugin.mjs";
 
 const { FRESH_SESSION_SENTENCE: FRESH } = wf;
 
@@ -450,6 +451,7 @@ describe("createTask and slugify", () => {
     assert.equal(task.title, "Add a --verbose flag to the CLI");
     assert.equal(task.created, "2026-01-02");
     assert.equal(task.body, "Add a --verbose flag to the CLI");
+    assert.equal(task.maxDepth, null, "task.md without max_depth reads back null");
     assert.equal(fs.readFileSync(path.join(root, ".gitignore"), "utf8"), "node_modules/\n.agents/tasks/\n");
 
     const second = wf.createTask(root, { request: "Second request here", workflow: "full" });
@@ -472,6 +474,18 @@ describe("createTask and slugify", () => {
     assert.deepEqual(wf.readTask(taskDir).with, ["record-evidence", "review-code"]);
     assert.deepEqual(wf.nextCommand(taskDir).optional, ["review-code", "record-evidence"], "run-task orders optional phases as the workflow defines");
     assert.throws(() => wf.createTask(root, { request: "Another one", with: ["polish"] }), /optional phase "polish" is not one of review-code, record-evidence/);
+  });
+
+  test("round-trips max_depth through createTask and readTask", () => {
+    const root = tmpdir();
+    const { taskDir } = wf.createTask(root, { request: "Bound the review loop", workflow: "lean", maxDepth: 3 });
+    assert.equal(wf.readTask(taskDir).maxDepth, 3);
+  });
+
+  test("parseArgs: --max-depth yields a positive integer, or pushes an error", () => {
+    assert.equal(parseArgs("--max-depth 3").maxDepth, 3);
+    assert.deepEqual(parseArgs("--max-depth 0").errors, ['--max-depth needs a positive integer, got "0"']);
+    assert.deepEqual(parseArgs("--max-depth x").errors, ['--max-depth needs a positive integer, got "x"']);
   });
 });
 
