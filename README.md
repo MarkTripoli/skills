@@ -94,8 +94,9 @@ The delivery workflow skills live under `skills/delivery/`; `show-me` is a stand
 | implement-plan | Implement the plan phase by phase through child workers | phase |
 | implement-outline | Implement the outline phase by phase through child workers | phase |
 | iterate-implementation | Apply feedback to an implementation | phase |
-| review-code | Review the diff against the merge target | phase (optional) |
-| fix-code-review | Repair validated review findings | phase (optional) |
+| review-code | Review the diff against the merge target | phase (loop worker) |
+| fix-code-review | Repair validated review findings | phase (loop worker) |
+| review-loop | Drive review and fix in a bounded loop | phase (optional) |
 | ci-commit | Commit implementation work with explicit paths | utility |
 | describe-pr | Write and publish the pull request description | phase |
 | resolve-pr-reviews | Work through pull request review threads | phase |

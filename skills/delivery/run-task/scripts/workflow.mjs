@@ -70,6 +70,12 @@ export const PHASES = {
     interactive: true,
     next: ({ workflow, remaining, planFile }) => implementationNext(workflow === "lean" ? "implement-outline" : "implement-plan")({ remaining, planFile }),
   },
+  "review-loop": {
+    type: "review-loop",
+    gate: false,
+    interactive: false,
+    next: ({ status }) => (status === "clean" ? "/describe-pr" : null),
+  },
   "review-code": {
     type: "code-review",
     gate: false,
@@ -141,7 +147,7 @@ export function readTask(taskDir) {
   const { data, body } = parseFrontmatter(fs.readFileSync(file, "utf8"));
   const workflow = data.workflow || "full";
   if (!TYPES.includes(workflow)) throw new Error(`${file}: workflow "${workflow}" is not one of ${TYPES.join(", ")}`);
-  return { file, slug: data.slug || path.basename(taskDir), title: data.title || "", workflow, created: data.created || "", with: parseList(data.with), body: body.trim() };
+  return { file, slug: data.slug || path.basename(taskDir), title: data.title || "", workflow, created: data.created || "", with: parseList(data.with), maxDepth: parseMaxDepth(data.max_depth), body: body.trim() };
 }
 
 // `with: [a, b]`, `with: a, b`, or a single name; unknown values are kept so the caller can report them.
@@ -154,9 +160,17 @@ export function parseList(value) {
     .filter(Boolean);
 }
 
-// Optional phases a task may insert before describe-pr, in the order they run. Each is inserted once,
-// when no artifact of its type exists yet; review-code's own loop (fix-code-review) then runs as usual.
-export const OPTIONAL_PHASES = ["review-code", "record-evidence"];
+// A positive integer bounding the review loop's iterations, or `null` when absent or unparsable
+// (unknown values are ignored, consistent with `parseList`'s lenient handling).
+export function parseMaxDepth(v) {
+  if (v == null || v === "") return null;
+  return /^[1-9]\d*$/.test(String(v)) ? Number(v) : null;
+}
+
+// Optional phases a task may insert before describe-pr, in the order they run. Each is inserted once; the
+// review loop's own artifact is done only when it reports `clean` (`capped`/`blocked` are terminal statuses
+// review-loop's own `next()` already stops on, without reaching describe-pr).
+export const OPTIONAL_PHASES = ["review-loop", "record-evidence"];
 
 const ARTIFACT_NAME = /^(\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*?)-(.+)\.md$/;
 
@@ -233,11 +247,13 @@ export function fences(text) {
   return out;
 }
 
-const COMMAND_LINE = /^\/([a-z0-9]+(?:-[a-z0-9]+)*)(?: @(\S+))?$/;
+// `--max-depth <n>` only ever appears on the command that starts `review-loop` (threaded by `insertOptional`);
+// no phase's reply fence carries it.
+const COMMAND_LINE = /^\/([a-z0-9]+(?:-[a-z0-9]+)*)(?: @(\S+))?(?: --max-depth (\d+))?$/;
 
 export function parseCommand(line) {
   const m = COMMAND_LINE.exec(line.trim());
-  return m ? { command: line.trim(), skill: m[1], arg: m[2] ?? null } : null;
+  return m ? { command: line.trim(), skill: m[1], arg: m[2] ?? null, maxDepth: m[3] ? Number(m[3]) : null } : null;
 }
 
 export function parseReply(text) {
@@ -439,10 +455,15 @@ export function nextCommand(taskDir, { projectRoot = projectRootOf(taskDir), wit
   const insertOptional = (command) => {
     if (parseCommand(command)?.skill !== "describe-pr") return command;
     for (const skill of optional) {
-      // Done means the newest artifact of the phase's type exists and did not fail; a failed recording or a
-      // review with findings is repeated after the fix it triggered.
+      // Done means the newest artifact of the phase's type exists and did not fail; a failed recording is
+      // repeated after the fix it triggered. review-loop's own artifact is done only once it reports `clean`;
+      // review-loop's `next()` already stops the chain on `capped`/`blocked` before this is ever consulted.
       const newest = [...artifacts].reverse().find((a) => a.type === PHASES[skill].type);
-      if (!newest || newest.status === "failed" || newest.status === "findings") return `/${skill}`;
+      const notDone = skill === "review-loop" ? !newest || newest.status !== "clean" : !newest || newest.status === "failed" || newest.status === "findings";
+      if (notDone) {
+        const maxDepthFlag = skill === "review-loop" && task.maxDepth != null ? ` --max-depth ${task.maxDepth}` : "";
+        return `/${skill}${maxDepthFlag}`;
+      }
     }
     return command;
   };
@@ -554,7 +575,7 @@ export function slugify(text, max = 4) {
 }
 
 // `with` lists optional phases (OPTIONAL_PHASES) written to task.md as `with: [a, b]`.
-export function createTask(projectRoot, { request, workflow = "full", with: withPhases = [], slug = slugify(request), title = request.split(/\r?\n/)[0].slice(0, 120), created = new Date().toISOString().slice(0, 10) }) {
+export function createTask(projectRoot, { request, workflow = "full", with: withPhases = [], maxDepth = null, slug = slugify(request), title = request.split(/\r?\n/)[0].slice(0, 120), created = new Date().toISOString().slice(0, 10) }) {
   if (!TYPES.includes(workflow)) throw new Error(`workflow "${workflow}" is not one of ${TYPES.join(", ")}`);
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) throw new Error(`slug "${slug}" must be kebab-case`);
   const unknown = withPhases.filter((s) => !OPTIONAL_PHASES.includes(s));
@@ -563,7 +584,8 @@ export function createTask(projectRoot, { request, workflow = "full", with: with
   if (fs.existsSync(path.join(taskDir, "task.md"))) throw new Error(`${taskDir}/task.md already exists`);
   fs.mkdirSync(taskDir, { recursive: true });
   const withLine = withPhases.length ? `with: [${withPhases.join(", ")}]\n` : "";
-  fs.writeFileSync(path.join(taskDir, "task.md"), `---\nslug: ${slug}\ntitle: ${title}\nworkflow: ${workflow}\ncreated: ${created}\n${withLine}---\n${request.trim()}\n`);
+  const maxDepthLine = maxDepth != null ? `max_depth: ${maxDepth}\n` : "";
+  fs.writeFileSync(path.join(taskDir, "task.md"), `---\nslug: ${slug}\ntitle: ${title}\nworkflow: ${workflow}\ncreated: ${created}\n${withLine}${maxDepthLine}---\n${request.trim()}\n`);
   const gitignore = path.join(projectRoot, ".gitignore");
   let gitignoreUpdated = false;
   if (fs.existsSync(gitignore)) {
@@ -634,8 +656,8 @@ function main(argv) {
       }
       case "create-task": {
         const request = positional[2];
-        if (!target || !request) throw new Error('usage: create-task <project root> --workflow <type> [--with <skill,...>] [--slug <slug>] "<request>"');
-        const result = createTask(target, { request, workflow: typeof flags.workflow === "string" ? flags.workflow : "full", with: parseList(flags.with), ...(typeof flags.slug === "string" ? { slug: flags.slug } : {}) });
+        if (!target || !request) throw new Error('usage: create-task <project root> --workflow <type> [--with <skill,...>] [--max-depth <n>] [--slug <slug>] "<request>"');
+        const result = createTask(target, { request, workflow: typeof flags.workflow === "string" ? flags.workflow : "full", with: parseList(flags.with), maxDepth: parseMaxDepth(flags["max-depth"]), ...(typeof flags.slug === "string" ? { slug: flags.slug } : {}) });
         out(json ? result : `${result.taskDir}${result.gitignoreUpdated ? "\n.gitignore: added .agents/tasks/" : ""}`);
         return 0;
       }

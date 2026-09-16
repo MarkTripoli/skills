@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import * as wf from "../skills/delivery/run-task/scripts/workflow.mjs";
+import { parseArgs } from "../skills/delivery/run-task/scripts/plugin.mjs";
 
 const { FRESH_SESSION_SENTENCE: FRESH } = wf;
 
@@ -332,11 +333,11 @@ describe("nextCommand", () => {
     assert.equal(wf.nextCommand(viaOption.taskDir, { with: ["record-evidence"] }).command, "/record-evidence");
     fs.writeFileSync(path.join(viaOption.taskDir, "03-evidence-verbose-flag.md"), artifact("evidence", "status: passed\n"));
     assert.equal(wf.nextCommand(viaOption.taskDir, { with: ["record-evidence"] }).command, "/describe-pr");
-    // Requested in task.md; both optional phases, review-code first; a failed recording repeats after the fix.
-    const viaTask = project({ artifacts: implemented, withPhases: ["record-evidence", "review-code"] });
-    assert.equal(wf.readTask(viaTask.taskDir).with.join(","), "record-evidence,review-code");
-    assert.equal(wf.nextCommand(viaTask.taskDir).command, "/review-code");
-    fs.writeFileSync(path.join(viaTask.taskDir, "03-code-review-verbose-flag.md"), artifact("code-review", "status: clean\n"));
+    // Requested in task.md; both optional phases, review-loop first; a failed recording repeats after the fix.
+    const viaTask = project({ artifacts: implemented, withPhases: ["record-evidence", "review-loop"] });
+    assert.equal(wf.readTask(viaTask.taskDir).with.join(","), "record-evidence,review-loop");
+    assert.equal(wf.nextCommand(viaTask.taskDir).command, "/review-loop");
+    fs.writeFileSync(path.join(viaTask.taskDir, "03-review-loop-verbose-flag.md"), artifact("review-loop", "status: clean\n"));
     assert.equal(wf.nextCommand(viaTask.taskDir).command, "/record-evidence");
     fs.writeFileSync(path.join(viaTask.taskDir, "04-evidence-verbose-flag.md"), artifact("evidence", "status: failed\n"));
     assert.equal(wf.nextCommand(viaTask.taskDir).command, "/iterate-implementation @01-plan-verbose-flag.md");
@@ -344,7 +345,7 @@ describe("nextCommand", () => {
     assert.equal(wf.nextCommand(viaTask.taskDir).command, "/record-evidence");
     fs.writeFileSync(path.join(viaTask.taskDir, "06-evidence-verbose-flag.md"), artifact("evidence", "status: passed\n"));
     assert.equal(wf.nextCommand(viaTask.taskDir).command, "/describe-pr");
-    assert.match(wf.statusReport(viaTask.taskDir, { env: {} }), /^Optional phases: review-code, record-evidence before describe-pr$/m);
+    assert.match(wf.statusReport(viaTask.taskDir, { env: {} }), /^Optional phases: review-loop, record-evidence before describe-pr$/m);
   });
 
   test("parseList accepts YAML-style lists, comma lists, and single values", () => {
@@ -366,6 +367,16 @@ describe("nextCommand", () => {
     assert.equal(pr.pendingGate, true);
     assert.equal(pr.gateArtifact, "pr-description.md");
     assert.match(pr.reason, /external/);
+  });
+
+  test("artifact-only recovery: review-loop statuses", () => {
+    const loopStatus = (s) => wf.nextCommand(project({ artifacts: { "01-review-loop-verbose-flag.md": artifact("review-loop", `status: ${s}\n`) } }).taskDir);
+    assert.equal(loopStatus("clean").command, "/describe-pr");
+    for (const s of ["capped", "blocked"]) {
+      const next = loopStatus(s);
+      assert.equal(next.done, true, s);
+      assert.match(next.reason, /nothing runs automatically/, s);
+    }
   });
 
   test("interactive flag follows the table for the next skill", () => {
@@ -450,6 +461,7 @@ describe("createTask and slugify", () => {
     assert.equal(task.title, "Add a --verbose flag to the CLI");
     assert.equal(task.created, "2026-01-02");
     assert.equal(task.body, "Add a --verbose flag to the CLI");
+    assert.equal(task.maxDepth, null, "task.md without max_depth reads back null");
     assert.equal(fs.readFileSync(path.join(root, ".gitignore"), "utf8"), "node_modules/\n.agents/tasks/\n");
 
     const second = wf.createTask(root, { request: "Second request here", workflow: "full" });
@@ -468,10 +480,22 @@ describe("createTask and slugify", () => {
 
   test("records optional phases that run-task reads back, and rejects unknown ones", () => {
     const root = tmpdir();
-    const { taskDir } = wf.createTask(root, { request: "Add dark mode with a recorded demo", workflow: "lean", with: ["record-evidence", "review-code"] });
-    assert.deepEqual(wf.readTask(taskDir).with, ["record-evidence", "review-code"]);
-    assert.deepEqual(wf.nextCommand(taskDir).optional, ["review-code", "record-evidence"], "run-task orders optional phases as the workflow defines");
-    assert.throws(() => wf.createTask(root, { request: "Another one", with: ["polish"] }), /optional phase "polish" is not one of review-code, record-evidence/);
+    const { taskDir } = wf.createTask(root, { request: "Add dark mode with a recorded demo", workflow: "lean", with: ["record-evidence", "review-loop"] });
+    assert.deepEqual(wf.readTask(taskDir).with, ["record-evidence", "review-loop"]);
+    assert.deepEqual(wf.nextCommand(taskDir).optional, ["review-loop", "record-evidence"], "run-task orders optional phases as the workflow defines");
+    assert.throws(() => wf.createTask(root, { request: "Another one", with: ["polish"] }), /optional phase "polish" is not one of review-loop, record-evidence/);
+  });
+
+  test("round-trips max_depth through createTask and readTask", () => {
+    const root = tmpdir();
+    const { taskDir } = wf.createTask(root, { request: "Bound the review loop", workflow: "lean", maxDepth: 3 });
+    assert.equal(wf.readTask(taskDir).maxDepth, 3);
+  });
+
+  test("parseArgs: --max-depth yields a positive integer, or pushes an error", () => {
+    assert.equal(parseArgs("--max-depth 3").maxDepth, 3);
+    assert.deepEqual(parseArgs("--max-depth 0").errors, ['--max-depth needs a positive integer, got "0"']);
+    assert.deepEqual(parseArgs("--max-depth x").errors, ['--max-depth needs a positive integer, got "x"']);
   });
 });
 

@@ -313,7 +313,7 @@ test("task_status tool reports every task under .agents/tasks/ when no directory
 });
 
 test("parseArgs: flags, task dir, request with workflow detection, stop, and errors", () => {
-  assert.deepEqual(parseArgs("@.agents/tasks/x --step --with review-code,record-evidence --model anthropic/claude-haiku-4-5"), { action: "run", taskDir: ".agents/tasks/x", request: null, workflow: null, step: true, with: ["review-code", "record-evidence"], model: "anthropic/claude-haiku-4-5", flags: new Set(), errors: [] });
+  assert.deepEqual(parseArgs("@.agents/tasks/x --step --with review-code,record-evidence --model anthropic/claude-haiku-4-5"), { action: "run", taskDir: ".agents/tasks/x", request: null, workflow: null, step: true, with: ["review-code", "record-evidence"], model: "anthropic/claude-haiku-4-5", maxDepth: null, flags: new Set(), errors: [] });
   assert.equal(parseArgs("Ship the prd for onboarding").workflow, "prd");
   assert.equal(parseArgs("Ship onboarding --workflow lean").workflow, "lean");
   assert.equal(parseArgs("Ship onboarding").workflow, "full");
@@ -325,6 +325,9 @@ test("parseArgs: flags, task dir, request with workflow detection, stop, and err
   assert.deepEqual(parseArgs("@x --backend herdr").errors, ["give either @<task dir> or a request, not both"]);
   assert.deepEqual(parseArgs("x --workflow big").errors, ['workflow "big" is not one of full, lean, prd, oneshot']);
   assert.deepEqual(parseArgs("@x --with").errors, ["--with needs a value"]);
+  assert.equal(parseArgs("--max-depth 3").maxDepth, 3);
+  assert.deepEqual(parseArgs("--max-depth 0").errors, ['--max-depth needs a positive integer, got "0"']);
+  assert.deepEqual(parseArgs("--max-depth x").errors, ['--max-depth needs a positive integer, got "x"']);
 });
 
 test("loadPlugin finds the checkout's skills tree from the extension's own location", async () => {

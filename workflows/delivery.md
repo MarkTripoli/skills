@@ -28,7 +28,7 @@ A task moves from request to merged pull request through phases. Each phase is o
 | `prd` | the requirement itself is open, or the work is product-facing | the prd chain |
 | epic | several independently mergeable deliverables, or more than about eight plan phases | a parent task and `/create-epic-plan` |
 
-A type named in the request wins over the table. A request that names a code review or video proof gets `with: [review-code]`, `with: [record-evidence]`, or both.
+A type named in the request wins over the table. A request that names a code review or video proof gets `with: [review-loop]`, `with: [record-evidence]`, or both; `with: [review-loop]` accepts an optional `--max-depth <n>` (or `max_depth: <n>` in `task.md`) to cap the loop's iterations.
 
 ## Phase table
 
@@ -57,6 +57,7 @@ A type named in the request wins over the table. A request that names a code rev
 | implement-plan | implementation | /implement-plan between phases, then /describe-pr | yes | no |
 | implement-outline | implementation | /implement-outline between phases, then /describe-pr | yes | no |
 | iterate-implementation | implementation | /implement-plan or /implement-outline between phases, then /describe-pr | yes | yes |
+| review-loop | review-loop | /describe-pr on a clean review; stops and reports on the depth cap or a blocked gate | no | no |
 | review-code | code-review | /fix-code-review while findings remain, otherwise /describe-pr | no | no |
 | fix-code-review | code-review-fixes | /review-code | no | no |
 | record-evidence | evidence | /describe-pr when every test passed or is untested, /iterate-implementation when one failed | no | no |
@@ -75,11 +76,11 @@ Gates stop at design-discussion, design-prd, design-tdd, structure-outline, plan
 
 ## Optional phases
 
-Two phases run only when the user asks for them, between implementation and the pull request: `review-code` (the review loop below) and `record-evidence` (narrated video proof of the implemented behavior). Insert one by answering the implementation gate with its command (`/review-code` or `/record-evidence`), by listing it once in `task.md` (`with: [review-code, record-evidence]`), or with `/run-task --with <skill,...>`. `run-task` then runs each requested phase whose artifact does not exist yet before `describe-pr`, in that order. Both hand back to `describe-pr` on success; failing evidence hands to `iterate-implementation`.
+Two phases run only when the user asks for them, between implementation and the pull request: `review-loop` (the bounded review→fix loop below) and `record-evidence` (narrated video proof of the implemented behavior). Insert one by answering the implementation gate with its command (`/review-loop` or `/record-evidence`), by listing it once in `task.md` (`with: [review-loop, record-evidence]`), or with `/run-task --with <skill,...>`. `run-task` then runs each requested phase whose artifact does not exist yet before `describe-pr`, in that order. `review-loop` hands back to `describe-pr` on a clean review, and stops and reports on the depth cap or a blocked gate; `record-evidence` hands back to `describe-pr` on success, failing evidence hands to `iterate-implementation`.
 
 ## Review loop
 
-`review-code` reviews the diff against the merge target and writes a `code-review` artifact. With findings, `fix-code-review` repairs them, writes `code-review-fixes`, and hands back to `review-code`. A clean review hands off to `describe-pr`. Run the loop between implementation and the pull request when the change is large or the reviewer is a different person.
+`review-loop` drives `review-code` and `fix-code-review` through fresh contexts, pass after pass, until the loop ends: `review-code` reviews the diff against the merge target and writes a `code-review` artifact; with findings, `fix-code-review` repairs them, writes `code-review-fixes`, and hands back to `review-code`; `review-loop` counts the pass and repeats. The loop ends on a clean review (hands off to `describe-pr`), an optional `--max-depth <n>` cap reached with findings still open (stops and reports the remaining findings), or a blocked review (stops). `--max-depth <n>` on `run-task` or `max_depth` in `task.md` sets the cap; absent, the loop is endless. `review-code` and `fix-code-review` remain the loop's workers and stay independently runnable. Run `review-loop` between implementation and the pull request when the change is large or the reviewer is a different person.
 
 ## Epics
 

@@ -165,7 +165,7 @@ export default async function runTaskExtension(pi) {
         if (!taskDir) return say(ctx, `no task.md at ${parsed.taskDir} (looked relative to ${ctx.cwd} and under .agents/tasks/)`, "error");
       } else if (parsed.request) {
         try {
-          const created = wf.createTask(ctx.cwd, { request: parsed.request, workflow: parsed.workflow });
+          const created = wf.createTask(ctx.cwd, { request: parsed.request, workflow: parsed.workflow, maxDepth: parsed.maxDepth });
           taskDir = created.taskDir;
           say(ctx, `created ${plugin.relative(ctx.cwd, taskDir)}/task.md (${parsed.workflow})${created.gitignoreUpdated ? "; added .agents/tasks/ to .gitignore" : ""}`);
         } catch (error) {

@@ -4,7 +4,7 @@
 // until the loop ends, validating every artifact and reply against workflow.mjs on the way.
 //
 // CLI:
-//   node scripts/simulate.mjs <full|lean|prd|oneshot|epic|review-loop|with-evidence|evidence-failed|iterate|recovery|interrupted> [--json] [--keep]
+//   node scripts/simulate.mjs <full|lean|prd|oneshot|epic|review-loop|review-loop-capped|with-evidence|evidence-failed|iterate|recovery|interrupted> [--json] [--keep]
 //   node scripts/simulate.mjs phase <skill> <task dir> [@<artifact>] [--reply <file>] [--feedback "<text>"]
 // Exit 0 when every check passes; 1 with one issue per line otherwise.
 
@@ -345,6 +345,34 @@ export function fakePhase(skill, taskDir, { scenario = {}, skillsDir = DEFAULT_S
       }
       return finish(file, type, reply("implementation_final_answer.md", { ...baseVars(file), plan_file: plan.name }));
     }
+    case "review-loop": {
+      const statuses = scenario.codeReview ?? ["clean"];
+      const maxDepth = scenario.maxDepth ?? null;
+      const createSub = (subSkill, subType, front = {}) =>
+        write(
+          `${String(wf.nextArtifactNumber(taskDir, slug)).padStart(2, "0")}-${subType}-${slug}.md`,
+          fillArtifact(artifactTemplate(subSkill, skillsDir), { type: subType, slug, request: task.body, front: { task: slug, ...front } }),
+        );
+      let depth = 0;
+      let loopStatus;
+      for (;;) {
+        const reviewStatus = statuses[Math.min(counterKey(scenario, "codeReview"), statuses.length - 1)];
+        createSub("review-code", "code-review", { status: reviewStatus });
+        if (reviewStatus === "clean" || reviewStatus === "blocked") {
+          loopStatus = reviewStatus;
+          break;
+        }
+        if (maxDepth != null && depth + 1 > maxDepth) {
+          loopStatus = "capped";
+          break;
+        }
+        createSub("fix-code-review", "code-review-fixes", {});
+        depth += 1;
+      }
+      const file = create({ depth, max_depth: maxDepth ?? "", status: loopStatus });
+      const answer = { clean: "review_loop_clean_answer.md", capped: "review_loop_capped_answer.md", blocked: "review_loop_blocked_answer.md" }[loopStatus];
+      return finish(file, type, reply(answer, baseVars(file)));
+    }
     case "review-code": {
       const statuses = scenario.codeReview ?? ["clean"];
       const status = statuses[Math.min(counterKey(scenario, "codeReview"), statuses.length - 1)];
@@ -530,13 +558,13 @@ export function runChain(projectRoot, taskDir, { scenario = {}, approve = () => 
     let next = wf.nextCommand(taskDir, { projectRoot, with: scenario.with ?? [] });
     if (next.done) return { steps, issues, done: true, reason: next.reason };
     let { command, skill, arg } = next;
-    // workflows/delivery.md, Review loop: nothing in the table routes into review-code; the user invokes it
-    // between implementation and the pull request. The injection models the user typing `/review-code`
+    // workflows/delivery.md, Review loop: nothing in the table routes into review-loop; the user invokes it
+    // between implementation and the pull request. The injection models the user typing `/review-loop`
     // where the table would have run describe-pr.
     if (scenario.reviewLoop && skill === "describe-pr" && !inserted) {
       inserted = true;
-      command = "/review-code";
-      skill = "review-code";
+      command = "/review-loop";
+      skill = "review-loop";
       arg = null;
     }
     const result = fakePhase(skill, taskDir, { scenario, skillsDir, arg });
@@ -572,8 +600,12 @@ export const SCENARIOS = {
   oneshot: { workflow: "oneshot" },
   epic: { workflow: "full", start: "create-epic-plan" },
   // The review loop is user-invoked after implementation (workflows/delivery.md, Review loop); runChain
-  // injects `/review-code` where the table would run describe-pr.
+  // injects `/review-loop` where the table would run describe-pr. review-loop's own fakePhase case models
+  // the internal review-code/fix-code-review passes.
   "review-loop": { workflow: "full", worktree: "disabled", reviewLoop: true, codeReview: ["findings", "clean"] },
+  // Depth cap: two findings-only reviews with maxDepth 1 stop the loop `capped` after one fix pass; the
+  // chain ends there (no describe-pr).
+  "review-loop-capped": { workflow: "full", worktree: "disabled", reviewLoop: true, codeReview: ["findings", "findings"], maxDepth: 1 },
   // Optional phases declared up front: run-task inserts record-evidence before describe-pr (workflows/delivery.md,
   // Optional phases). `evidence` lists the receipt status per run; a failed recording hands to iterate-implementation.
   "with-evidence": { workflow: "lean", worktree: "disabled", with: ["record-evidence"], evidence: ["passed"] },
