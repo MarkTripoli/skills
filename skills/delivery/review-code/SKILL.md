@@ -7,7 +7,7 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 # Code Review
 
-Review the complete code change without editing product code. Output is a durable artifact containing concrete findings or recording a clean review.
+Review the complete code change without editing product code. Output is a durable artifact containing concrete findings or recording a clean review. The delivery workflow's review loop (or the user, by hand) alternates `/review-code` and `/fix-code-review` until a review is clean.
 
 ## Setup
 
@@ -15,7 +15,7 @@ Locate the task directory and read `task.md` per the conventions (create one fro
 
 ## Pin scope
 
-Determine merge target: the base of the existing pull request (`gh pr view --json baseRefName` on GitHub, `glab mr view` on GitLab), else the repository default branch. Record base branch, merge-base SHA, HEAD SHA, staged/unstaged changes, untracked task files, commits after merge base: `git status --short --branch`, `git diff --name-status <base>...HEAD`, `git diff <base>...HEAD`. Review committed/working-tree changes against merge base. Exclude `.agents/tasks/`, unrelated changes. Stop if base unresolved. Empty or incomplete scope is not clean.
+Determine merge target: the base of the existing pull request (`gh pr view --json baseRefName` on GitHub, `glab mr view` on GitLab), else the repository default branch. Record base branch, merge-base SHA, HEAD SHA, staged/unstaged changes, untracked task files, commits after merge base: `git status --short --branch`, `git diff --name-status <base>...HEAD`, `git diff <base>...HEAD`. Review committed/working-tree changes against merge base. Task artifacts under `.agents/tasks/` and unrelated changes are not review subjects. Stop if base unresolved. Empty or incomplete scope is not clean.
 
 ## Requirements and tests
 
@@ -61,7 +61,7 @@ Verify tests/build/manual/screenshots. Green checks alone are not sufficient.
 
 ## Save
 
-Take the next artifact number. Write `NN-code-review-<summary>.md` using template. Set `findings` when actionable remain, `clean` when none, `blocked` when gate failed. Blocked is not clean. Save the file.
+Take the next artifact number. Write `NN-code-review-<summary>.md` using template. Set `findings` when actionable remain, `clean` when none, `blocked` when gate failed. Blocked is not clean. Save the file. When not run by the workflow engine, commit it with `git add <path>` as `docs(task): code-review artifact`.
 
 ## Next
 
@@ -70,5 +70,3 @@ Take the next artifact number. Write `NN-code-review-<summary>.md` using templat
 - Blocked: use `code_review_blocked_answer.md`, stop until gate runs.
 
 Use template only. Fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-code-review-slug.md](.agents/tasks/<slug>/NN-code-review-slug.md)`. End with one fenced `text` command.
-
-If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it.

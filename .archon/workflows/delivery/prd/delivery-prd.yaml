@@ -1,0 +1,186 @@
+name: delivery-prd
+description: |
+  Take an open requirement from request to pull request: research, product requirements document
+  (gate, revised from your feedback until approved), technical design document (gate), plan (gate),
+  implementation one phase per fresh session (gate after each), review loop until clean, pull request
+  description (gate). Every phase runs in a fresh session and reads only the task directory;
+  artifacts are committed on the branch. The `gates` input picks which pauses happen:
+  `--input gates=none` runs unattended, `--input gates=prd,pr` pauses only there.
+
+  Use when: the requirement itself is open (what it should do, for whom, how it behaves at the edges);
+  product-facing work; stakeholders beyond the requester, for example "we need a notifications feature",
+  "design the onboarding flow".
+  NOT for: a known change (delivery-full or delivery-lean), a bug (delivery-bugfix), or a fully
+  specified small change (delivery-oneshot).
+
+interactive: true
+
+inputs:
+  skills_dir:
+    default: ~/.agents/skills
+    description: Directory holding the installed skills, one `<name>/SKILL.md` each.
+  task_dir:
+    default: ""
+    description: Reuse this existing task directory (an epic child, or one created by hand) instead of creating one.
+  review_each_phase:
+    default: "false"
+    description: Set to true to run a review pass after every implementation phase, not only at the end.
+  gates:
+    default: all
+    description: "Human gates to keep: `all`, `none`, or a comma-separated subset of prd, tdd, plan, phases, pr."
+
+# `*-done` nodes commit the phase's artifacts and keep loop bodies runnable between includes; see
+# delivery-full for why.
+nodes:
+  - id: task
+    include: delivery-task
+    with:
+      skills_dir: $INPUTS.skills_dir
+      workflow: prd
+      task_dir: $INPUTS.task_dir
+
+  - id: gates
+    depends_on: [task]
+    bash: |
+      set -eu
+      names="prd tdd plan phases pr"
+      requested=$(printf '%s' "${INPUTS_GATES:-all}" | tr -d ' ')
+      case "$requested" in
+        all|'') on="$names" ;;
+        none) on="" ;;
+        *)
+          on=""
+          for g in $(printf '%s' "$requested" | tr ',' ' '); do
+            case " $names " in
+              *" $g "*) on="$on $g" ;;
+              *) printf 'gates: unknown gate "%s"; use all, none, or a comma-separated subset of: %s\n' "$g" "$names" >&2; exit 1 ;;
+            esac
+          done ;;
+      esac
+      out=""
+      for name in $names; do
+        case " $on " in *" $name "*) v=true ;; *) v=false ;; esac
+        out="$out${out:+,}\"$name\":\"$v\""
+      done
+      printf '{%s}\n' "$out"
+    output_format:
+      type: object
+      properties:
+        prd: { type: string }
+        tdd: { type: string }
+        plan: { type: string }
+        phases: { type: string }
+        pr: { type: string }
+      required: [prd, tdd, plan, phases, pr]
+
+  - id: research
+    context: fresh
+    depends_on: [task, gates]
+    prompt: |
+      Read and follow $task.output.skills_dir/create-research/SKILL.md, the installed `create-research` skill, for task directory $task.output.task_dir. There is no research-questions artifact; derive the questions from task.md.
+
+      The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
+
+  - id: research-done
+    depends_on: [research]
+    bash: |
+      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): research artifacts")
+
+  - id: prd
+    include: delivery-gate-phase
+    depends_on: [research-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: create-prd
+      iterate: iterate-prd
+      label: the product requirements document
+      gate: $gates.output.prd
+
+  - id: prd-done
+    depends_on: [prd]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): prd artifacts")
+
+  - id: tdd
+    include: delivery-gate-phase
+    depends_on: [prd-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: create-tdd
+      iterate: iterate-tdd
+      label: the technical design document
+      gate: $gates.output.tdd
+
+  - id: tdd-done
+    depends_on: [tdd]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): tdd artifacts")
+
+  - id: plan
+    include: delivery-gate-phase
+    depends_on: [tdd-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: create-plan
+      iterate: iterate-plan
+      label: the plan
+      gate: $gates.output.plan
+
+  - id: plan-done
+    depends_on: [plan]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): plan artifacts")
+
+  - id: implement
+    include: delivery-implement
+    depends_on: [plan-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: implement-plan
+      review: $INPUTS.review_each_phase
+      gate: $gates.output.phases
+
+  - id: implement-done
+    depends_on: [implement]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): implement artifacts")
+
+  - id: review
+    include: delivery-review
+    depends_on: [implement-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+
+  - id: review-done
+    depends_on: [review]
+    bash: |
+      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): review artifacts")
+
+  - id: pr
+    include: delivery-gate-phase
+    depends_on: [review-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: describe-pr
+      iterate: describe-pr
+      label: the pull request description
+      gate: $gates.output.pr
+
+  # describe-pr pushes before this join runs, so the join pushes its own commit when the branch has an
+  # upstream.
+  - id: pr-done
+    depends_on: [pr]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): pr artifacts")
+      if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then git push -q; fi

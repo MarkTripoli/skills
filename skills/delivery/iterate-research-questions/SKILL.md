@@ -30,9 +30,7 @@ Beyond `task.md`, do not read `ticket.md`, design artifacts, research artifacts,
 
 5. **Keep questions objective**. Revised questions describe discovery only: what exists, where behavior/data lives, how pieces interact, what contracts/patterns/dependencies/tests/edge cases are present. Remove or rewrite wording that asks how to build the feature, where to put new code, whether to refactor, or what approach is preferable.
 
-6. **Final answer**. If changed, write back to the same path and fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-type-slug.md](.agents/tasks/<slug>/NN-type-slug.md)`. If no edit is needed, do not create a duplicate file. Read references/research_questions_final_answer.md and respond using that template only. End with exactly one fenced `text` block containing `/create-research`.
-
-7. **Reply file**. If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it.
+6. **Final answer**. If changed, write back to the same path and fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-type-slug.md](.agents/tasks/<slug>/NN-type-slug.md)`. If no edit is needed, do not create a duplicate file. Read references/research_questions_final_answer.md and respond using that template only. End with exactly one fenced `text` block containing `/create-research`. When not run by the workflow engine, commit the saved file with `git add <path>` as `docs(task): research-questions artifact`.
 
 ## Question guidelines
 

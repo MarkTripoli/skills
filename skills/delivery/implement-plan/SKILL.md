@@ -69,7 +69,7 @@ Automated checks are green, so implementation continues to the next phase.
 
 ### 6. Commit and continue
 
-When every Automated Verification checkbox in the phase is checked with a recorded passing result, create a focused commit with a Conventional Commits subject (conventions, Commits section) and start the next phase without waiting. Do not commit `.agents/tasks/`. Use explicit paths with `git add`; never stage the whole repository. `/ci-commit` stays the manual fallback for work outside this flow.
+When every Automated Verification checkbox in the phase is checked with a recorded passing result, create a focused commit with a Conventional Commits subject (conventions, Commits section) and start the next phase without waiting. Stage explicit code paths with `git add`; never stage the whole repository, and never mix `.agents/tasks/` files into the code commit. When not run by the workflow engine, commit the ticked plan and the receipt separately with `git add <path>` as `docs(task): implementation artifact`. `/ci-commit` stays the manual fallback for work outside this flow.
 
 ### 7. Repeat for the next phase
 
@@ -116,7 +116,6 @@ If you write an implementation receipt or update the plan artifact, take the nex
 When every phase is complete, automated checks pass, and any phase with `human-gated: true` received its recorded confirmation:
 
 1. Save changed task artifacts in the task directory.
-2. Commit all remaining repository work before the PR handoff. Use the `/ci-commit` conventions: inspect the diff, stage explicit files, exclude `.agents/tasks/` unless the user specifically asks for it, and write a validated Conventional Commits message.
+2. Commit all remaining repository work before the PR handoff. Use the `/ci-commit` conventions: inspect the diff, stage explicit code paths, keep task artifacts in their own `docs(task): implementation artifact` commit, and write a validated Conventional Commits message.
 3. Read `references/implementation_final_answer.md`.
 4. Respond with that template only, including the `/describe-pr` block.
-5. If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it. The same applies to a reply that stops at a `human-gated` phase.

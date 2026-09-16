@@ -1,0 +1,81 @@
+name: delivery-task
+description: |
+  Create the task directory for a delivery run: `.agents/tasks/<slug>/task.md` per the collection
+  conventions, with the run's request as the body, committed on the run's branch as
+  `docs(task): open <slug>`. Deterministic; no AI. Composed by every delivery pack as its first node
+  and returns the task directory path and the skills directory with `~` expanded (Archon passes
+  inputs through verbatim, and not every agent's file tool expands a tilde). An existing task
+  directory passed in (an epic child, or one created by hand) is reused as is.
+  NOT for: running on its own.
+
+inputs:
+  skills_dir:
+    default: ~/.agents/skills
+    description: Directory holding the installed skills, one `<name>/SKILL.md` each; a leading `~` is expanded.
+  workflow:
+    default: full
+    description: The workflow type written to task.md (full, lean, prd, oneshot, bugfix, epic).
+  task_dir:
+    default: ""
+    description: An existing task directory to reuse instead of creating one; empty creates one from the request.
+
+nodes:
+  # Slug: two to four kebab-case words from the request's first line, stop words dropped, `task`
+  # when nothing survives. Mirrors shared/CONVENTIONS.md, Task directory. The request arrives as the
+  # ARGUMENTS environment variable, never spliced into the script. The task directory is committed
+  # so later phases and the pull request carry the artifacts; an exact `.agents/tasks/` line in the
+  # project .gitignore (added by earlier versions of this collection) is removed first.
+  - id: create
+    bash: |
+      set -eu
+      skills_dir="${INPUTS_SKILLS_DIR:-~/.agents/skills}"
+      case "$skills_dir" in "~") skills_dir="$HOME" ;; "~/"*) skills_dir="$HOME${skills_dir#\~}" ;; esac
+      skills_dir="${skills_dir%/}"
+      [ -d "$skills_dir" ] || printf 'warning: skills_dir %s does not exist; install the skills (npx github:MarkTripoli/skills) or pass --input skills_dir=<dir>\n' "$skills_dir" >&2
+      existing="${INPUTS_TASK_DIR:-}"
+      if [ -n "$existing" ]; then
+        [ -f "$existing/task.md" ] || { printf 'task_dir %s has no task.md\n' "$existing" >&2; exit 1; }
+        printf '{"task_dir":"%s","skills_dir":"%s"}\n' "${existing%/}" "$skills_dir"
+        exit 0
+      fi
+      request=$(printf '%s' "$ARGUMENTS" | sed -e 's/\r$//')
+      first=$(printf '%s\n' "$request" | sed -n '1p')
+      slug=$(printf '%s' "$first" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9 -]/ /g' -e 's/-/ /g' \
+        | tr -s ' ' '\n' | sed '/^$/d' | grep -v -x -E 'a|an|the|to|of|for|in|on|and|or|with|that|this|add|make|create|please|fix|bug' \
+        | head -4 | paste -sd- -)
+      if [ "$(printf '%s' "$slug" | tr -cd - | wc -c)" -lt 1 ]; then
+        slug=$(printf '%s' "$first" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9 -]/ /g' -e 's/-/ /g' | tr -s ' ' '\n' | sed '/^$/d' | head -4 | paste -sd- -)
+      fi
+      slug=${slug:-task}
+      dir=.agents/tasks/$slug
+      n=2
+      while [ -e "$dir/task.md" ]; do dir=.agents/tasks/$slug-$n; n=$((n+1)); done
+      mkdir -p "$dir"
+      title=$(printf '%s' "$first" | cut -c1-120)
+      workflow="${INPUTS_WORKFLOW:-full}"
+      {
+        printf -- '---\nslug: %s\ntitle: %s\nworkflow: %s\ncreated: %s\n---\n' "${dir#.agents/tasks/}" "$title" "$workflow" "$(date +%Y-%m-%d)"
+        printf '%s\n' "$request"
+      } > "$dir/task.md"
+      if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        paths="$dir/task.md"
+        if git check-ignore -q "$dir/task.md"; then
+          if [ -f .gitignore ] && grep -q -x -F '.agents/tasks/' .gitignore; then
+            sed -i.bak -e '/^\.agents\/tasks\/$/d' .gitignore && rm -f .gitignore.bak
+            paths="$paths .gitignore"
+          fi
+          if git check-ignore -q "$dir/task.md"; then
+            printf '%s is ignored by git; remove the rule that ignores .agents/tasks/ so the task directory can be committed\n' "$dir/task.md" >&2
+            exit 1
+          fi
+        fi
+        git add -- $paths
+        git commit -q -m "docs(task): open ${dir#.agents/tasks/}" -- $paths
+      fi
+      printf '{"task_dir":"%s","skills_dir":"%s"}\n' "$dir" "$skills_dir"
+    output_format:
+      type: object
+      properties:
+        task_dir: { type: string }
+        skills_dir: { type: string }
+      required: [task_dir, skills_dir]

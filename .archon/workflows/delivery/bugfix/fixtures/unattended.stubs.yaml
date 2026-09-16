@@ -1,0 +1,17 @@
+# `gates=none`: the `reproduce-auto` twin reproduces the bug on its first attempt, `not-reproduced`
+# stays skipped, the fix runs, the pull request description runs once.
+task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills"}'
+gates: '{"reproduce":"false","pr":"false"}'
+attempt-auto: '{"status":"reproduced","summary":"exit code 0 on a missing config","artifact":"01-reproduction-fixture.md"}'
+attempt-count: '{"status":"reproduced","attempt":1}'
+fix: "bug fixed and committed"
+review-code: '{"status":"clean","artifact":"05-code-review-fixture.md","summary":"clean"}'
+pr__once: "pull request described"
+reproduce-done: ""
+review-done: ""
+pr-done: ""
+fixture:
+  expect: completed
+  inputs: { gates: none }
+  reached: [attempt-auto, attempt-count, reproduce-auto, reproduce-done, fix, review__loop, pr__once, pr-done]
+exec-code: false

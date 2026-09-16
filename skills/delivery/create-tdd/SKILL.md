@@ -69,8 +69,6 @@ When code shape is settled, stop and ask user to review Program Design. Gate cat
 
 ## Step 7: Wrap up
 
-When both phases are approved: save the file, read `references/tdd_final_answer.md`, follow the template exactly; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-tdd-slug.md](.agents/tasks/<slug>/NN-tdd-slug.md)`, and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists.
+When both phases are approved: save the file, read `references/tdd_final_answer.md`, follow the template exactly; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-tdd-slug.md](.agents/tasks/<slug>/NN-tdd-slug.md)`, and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. When not run by the workflow engine, commit the saved file with `git add <path>` as `docs(task): tdd artifact`.
 
 Start child workers for role `agent-codebase-locator` (finds files/tests), `agent-codebase-analyzer` (explains behavior), `agent-codebase-pattern-finder` (finds precedents), or `agent-web-search-researcher` (checks external docs) with the assignment (see the conventions' Child workers section) when a missing fact would change the artifact; wait for each; read its final message. Use only findings you have read from the worker's final message. If a child or direct read discovers current-state facts missing or stale in completed research, fold those into the research artifact before finalizing the TDD.
-
-If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it.

@@ -7,7 +7,7 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 # Fix Code Review Findings
 
-Repair the reviewed change, verify, and send through another code review before PR creation.
+Repair the reviewed change, verify, and send through another code review before PR creation. The delivery workflow's review loop (or the user, by hand) alternates `/review-code` and `/fix-code-review` until a review is clean.
 
 ## Setup
 
@@ -31,10 +31,8 @@ Run focused tests, then required gates. Record commands/outcomes. Missing gate r
 
 ## Save receipt
 
-Take the next artifact number. Write `NN-code-review-fixes-<summary>.md` using template. Map Critical/Required ids to disposition/evidence. Record advisories separately. Save the file.
+Take the next artifact number. Write `NN-code-review-fixes-<summary>.md` using template. Map Critical/Required ids to disposition/evidence. Record advisories separately. Save the file. When not run by the workflow engine, commit it with `git add <path>` as `docs(task): code-review-fixes artifact`; fixes to code go in their own commit with explicit code paths.
 
 ## Review again
 
 Read, use `references/code_review_fixes_answer.md` exactly. Fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-code-review-fixes-slug.md](.agents/tasks/<slug>/NN-code-review-fixes-slug.md)`. Final command: `/review-code`, even when all findings fixed. Only fresh clean review proceeds to PR.
-
-If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it.

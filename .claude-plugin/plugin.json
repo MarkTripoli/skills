@@ -20,7 +20,6 @@
   ],
   "skills": [
     "./skills/delivery/ci-commit",
-    "./skills/delivery/configure-workspaces",
     "./skills/delivery/create-design-discussion",
     "./skills/delivery/create-epic-plan",
     "./skills/delivery/create-plan",
@@ -42,14 +41,11 @@
     "./skills/delivery/iterate-structure-outline",
     "./skills/delivery/iterate-tdd",
     "./skills/delivery/record-evidence",
+    "./skills/delivery/reproduce-bug",
     "./skills/delivery/resolve-pr-reviews",
     "./skills/delivery/review-artifact-comments",
     "./skills/delivery/review-code",
-    "./skills/delivery/review-loop",
-    "./skills/delivery/run-task",
-    "./skills/delivery/setup-worktree",
     "./skills/show-me",
-    "./skills/delivery/start-epic-delivery",
-    "./skills/delivery/start-task"
+    "./skills/delivery/start-epic-delivery"
   ]
 }

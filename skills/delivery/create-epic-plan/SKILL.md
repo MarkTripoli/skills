@@ -32,12 +32,15 @@ Split an epic into child tasks that ship as separate pull requests. The epic pla
 
 - One child per independently mergeable change. Name each child by its outcome.
 - A child's `prompt` is a self-contained task description. It never references the epic's artifact directory; the child session cannot read it.
-- `workflow` per child is one of `full`, `lean`, `prd`, `oneshot`: `oneshot` for a bounded change with a clear spec, `full` when research or design is needed, `lean` or `prd` only when the task asks for them.
+- `workflow` per child is one of `full`, `lean`, `prd`, `oneshot`, `bugfix`: `oneshot` for a bounded change with a clear spec, `bugfix` for a reported defect to reproduce and fix, `full` when research or design is needed, `lean` or `prd` only when the task asks for them.
 - `depends_on` lists sibling names whose merged pull request the child needs. Keep it minimal so independent children run together.
 
 ## Output
 
 1. Save the file.
-2. Re-check every child against the Child Rules: `name` is at most 120 characters, `prompt` is at most 10000 characters, `workflow` is one of `full`, `lean`, `prd`, `oneshot`, and every `depends_on` entry names an existing sibling. Fix each violation in the file and save again before replying.
-3. Reply following `references/epic_plan_final_answer.md` exactly; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-epic-plan-slug.md](.agents/tasks/<slug>/NN-epic-plan-slug.md)`, and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists.
-4. If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it.
+2. Re-check every child against the Child Rules: `name` is at most 120 characters, `prompt` is at most 10000 characters, `workflow` is one of `full`, `lean`, `prd`, `oneshot`, `bugfix`, and every `depends_on` entry names an existing sibling. Fix each violation in the file and save again before replying.
+3. Reply following `references/epic_plan_final_answer.md` exactly; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-epic-plan-slug.md](.agents/tasks/<slug>/NN-epic-plan-slug.md)`, and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. When not run by the workflow engine, commit the saved file with `git add <path>` as `docs(task): epic-plan artifact`.
+
+## Feedback
+
+When an epic plan artifact already exists and the user (or the invoking prompt) supplies feedback, revise that file in place: verify each item against the repository, apply it to the affected children or waves, re-run the Output checks, and reply with the same template. Never write a second epic plan.

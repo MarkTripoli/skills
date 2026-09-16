@@ -7,11 +7,13 @@ epic_plan: [NN-epic-plan-<slug>.md]
 
 # [Epic name] Delivery
 
+Epic branch: `[epic branch]`. Child task files are committed here as `docs(task): open epic children`; each child cuts its worktree from this branch and its pull request targets it.
+
 ## Children created
 
 | Child | Slug | Workflow | Depends on |
 |---|---|---|---|
-| [Child name] | `.agents/tasks/[child-slug]/` | [full, lean, prd, or oneshot] | [dependency slugs, or none] |
+| [Child name] | `.agents/tasks/[child-slug]/` | [full, lean, prd, oneshot, or bugfix] | [dependency slugs, or none] |
 
 ## Waves
 

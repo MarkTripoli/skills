@@ -1,0 +1,7 @@
+# gate=true: the `cycle` loop runs the phase and its approval gate; `once` is skipped.
+phase: "artifact saved"
+fixture:
+  expect: completed
+  inputs: { task_dir: .agents/tasks/fixture, skill: create-plan, iterate: iterate-plan, gate: "true" }
+  reached: [phase, cycle]
+exec-code: false

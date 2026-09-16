@@ -34,11 +34,9 @@ A `<feedback>` block or feedback file holds the artifact name and one entry per 
    - Edit: same artifact unless user wants new, preserve frontmatter/structure unless correction needed, save the file in place without a new number.
    - Not applied: say why, in the reply.
 
-5. **Note when useful.** Most need no artifact. If user asks or complex: read `references/comments_template.md`, take the next artifact number, write `NN-comment-review-<slug>.md`, save the file in the task directory.
+5. **Note when useful.** Most need no artifact. If user asks or complex: read `references/comments_template.md`, take the next artifact number, write `NN-comment-review-<slug>.md`, save the file in the task directory. When not run by the workflow engine, commit the saved file with `git add <path>` as `docs(task): comment-review artifact`.
 
 6. **Final.** Read `references/comments_final_answer.md`. Use template. Fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-type-slug.md](.agents/tasks/<slug>/NN-type-slug.md)`; when no receipt was saved, link the edited artifact. End with one fenced `text` block: `/iterate-implementation`.
-
-7. **Reply file.** If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it.
 
 ## Rules
 

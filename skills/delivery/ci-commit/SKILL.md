@@ -24,7 +24,7 @@ git diff
 
 Inspect staged. Read changed files. Decide one or multiple commits.
 
-Do not stage `.agents/tasks/`, scratch, dummy scripts, one-off tests, unrelated output.
+Do not stage scratch files, dummy scripts, one-off tests, or unrelated output. Keep `.agents/tasks/` out of code commits; when the task directory has uncommitted changes, commit them separately as `docs(task): <artifact type> artifact` per the conventions' Commits section.
 
 ### 3. Plan commits
 
@@ -61,15 +61,13 @@ Never `git add -A`, `git add .`, broad staging. Verify with `git log -1 --format
 
 ### 6. Save receipt
 
-Useful: take the next artifact number, write `NN-commit-<slug>.md` from `references/commit_template.md`, save the file in the task directory.
+Useful: take the next artifact number, write `NN-commit-<slug>.md` from `references/commit_template.md`, save the file in the task directory. When not run by the workflow engine, commit it with `git add <path>` as `docs(task): commit artifact`.
 
 Read and use `references/commit_final_answer.md` exactly. Fill `{artifact_link}` with a relative Markdown link to the saved receipt, `[NN-commit-slug.md](.agents/tasks/<slug>/NN-commit-slug.md)`; when no receipt was saved, write `none` in its place. End with single fenced `text` command.
-
-If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it.
 
 ## Rules
 
 - Use current session context; do not ask the user to restate it.
 - Focused commits, one type each, Conventional Commits subjects.
-- No task directory, unrelated files.
+- Artifact files never share a commit with code.
 - Failed tests, unsafe git: blockers.

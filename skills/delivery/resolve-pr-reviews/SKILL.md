@@ -9,6 +9,8 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 Inspect current branch's PR/MR, repair actionable feedback, reply to every handled review thread, record approval state. External replies and resolutions require user's action-time confirmation.
 
+Under Archon this skill runs in the worktree of the delivery run that opened the pull request (`archon workflow run delivery-resolve-reviews --adopt <run-id>`, or `--branch <pr branch>`), so the PR branch is checked out and the task directory with its committed artifacts is present.
+
 ## Setup
 
 Locate the task directory and read `task.md` per the conventions (create one from the request when none exists). Read `references/pr_review_template.md`, `pr_review_pending_answer.md`, `pr_review_approved_answer.md`.
@@ -27,11 +29,11 @@ Classify review threads: `fix`, `discuss`, `decline`, `clarify`. Verify `fix` it
 
 ## Apply
 
-After confirmation: smallest root-cause fixes, add regressions, run checks/gates, commit/push when authorized (stage explicit paths; exclude `.agents/tasks/`), reply with evidence/SHA, resolve after reply+action complete. Never resolve declined/discussed/clarified without confirmed disposition.
+After confirmation: smallest root-cause fixes, add regressions, run checks/gates, commit/push when authorized (stage explicit code paths; keep `.agents/tasks/` files out of the code commit), reply with evidence/SHA, resolve after reply+action complete. Never resolve declined/discussed/clarified without confirmed disposition.
 
 ## Save
 
-Fetch state after push/replies. Take the next artifact number. Write `NN-pr-review-<summary>.md` using template. Record ids, dispositions, replies, SHA, tests, review threads, checks, approval. Save the file.
+Fetch state after push/replies. Take the next artifact number. Write `NN-pr-review-<summary>.md` using template. Record ids, dispositions, replies, SHA, tests, review threads, checks, approval. Save the file. When not run by the workflow engine, commit it with `git add <path>` as `docs(task): pr-review artifact`.
 
 ## Next
 
@@ -39,5 +41,3 @@ Fetch state after push/replies. Take the next artifact number. Write `NN-pr-revi
 - Else: use `pr_review_pending_answer.md`. Repeated command is human gate; no poll/auto-run.
 
 Use template only. Fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-pr-review-slug.md](.agents/tasks/<slug>/NN-pr-review-slug.md)`. End with one fenced `text` command.
-
-If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it.

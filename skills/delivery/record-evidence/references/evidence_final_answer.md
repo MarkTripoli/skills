@@ -15,7 +15,7 @@ Posted to: <PR comment link, tracker issue, or "requester only">
 
 Every test passed or is recorded as untested with its reason; the pull request description can carry this evidence.
 
-Start the next phase in a new session, or hand the task to `/run-task`; continuing in this session carries this phase's context into the next one.
+Start the next phase in a new session; continuing in this session carries this phase's context into the next one.
 
 ```text
 /describe-pr

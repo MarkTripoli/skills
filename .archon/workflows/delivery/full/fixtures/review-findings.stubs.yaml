@@ -1,0 +1,19 @@
+# A review with findings runs `fix-review` before the loop ends.
+task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills"}'
+gates: '{"design":"true","plan":"true","phases":"true","pr":"true"}'
+research__questions: "research questions saved"
+research__research: "research saved"
+phase: "artifact saved"
+implement-phase: "phase implemented"
+review-code: '{"status":"findings","artifact":"05-code-review-fixture.md","summary":"two findings"}'
+fix-review: "findings fixed"
+research-done: ""
+design-done: ""
+plan-done: ""
+implement-done: ""
+review-done: ""
+pr-done: ""
+fixture:
+  expect: completed
+  reached: [review-code, fix-review, review__loop, pr-done]
+exec-code: false

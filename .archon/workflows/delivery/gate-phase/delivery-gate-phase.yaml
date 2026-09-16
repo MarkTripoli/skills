@@ -1,0 +1,77 @@
+name: delivery-gate-phase
+description: |
+  One phase of the delivery workflow that writes an artifact for human review. With gate=true: run a
+  skill in a fresh session, pause for review of the artifact it wrote, and on "request changes" run
+  the matching revision skill in another fresh session with the reviewer's text as feedback, until the
+  reviewer approves. With gate=false: run the skill once and continue. Composed by the delivery packs
+  for every artifact that can take a human decision (design discussion, PRD, TDD, plan, outline, epic
+  plan, pull request description).
+  NOT for: running on its own.
+
+# The loader requires this on any file with a pause node (#2738); the include-expander's
+# `droppedFields: ["interactive"]` log when a pack includes this block is expected.
+interactive: true
+
+inputs:
+  skills_dir:
+    default: ~/.agents/skills
+    description: Directory holding the installed skills, one `<name>/SKILL.md` each.
+  task_dir:
+    required: true
+    description: The task directory (`.agents/tasks/<slug>`) the phase reads and writes.
+  skill:
+    required: true
+    description: Skill that writes the artifact on the first pass (create-plan, create-prd, ...).
+  iterate:
+    required: true
+    description: Skill that revises the artifact from feedback on later passes (iterate-plan, ...).
+  label:
+    default: the artifact
+    description: What the reviewer is asked to review, in prose.
+  gate:
+    required: true
+    description: "\"true\" pauses for human review after the skill runs; anything else runs the skill once."
+
+nodes:
+  # Gated branch. Approve ends the cycle. Request changes runs one more pass: the revision skill with
+  # the reviewer's text as feedback, then the gate again. A paused gate costs nothing, so the iteration
+  # cap is only a guard against a runaway loop. Packs place a plain bash node before this include
+  # (workflows/delivery.md, Archon notes).
+  - id: cycle
+    when: "$INPUTS.gate == 'true'"
+    loop_group:
+      fresh_context: true
+      max_iterations: 100
+      until_bash: |
+        decision=$gate.output.decision
+        test "$decision" = approve
+      nodes:
+        - id: phase
+          context: fresh
+          prompt: |
+            Reviewer feedback from the previous pass (empty on the first pass):
+            $LOOP_PREV.gate.output.text
+
+            When the feedback above is empty, read and follow $INPUTS.skills_dir/$INPUTS.skill/SKILL.md, the installed `$INPUTS.skill` skill, for task directory $INPUTS.task_dir.
+            Otherwise, read and follow $INPUTS.skills_dir/$INPUTS.iterate/SKILL.md, the installed `$INPUTS.iterate` skill, for task directory $INPUTS.task_dir, applying that feedback to the newest artifact the skill owns.
+
+            The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
+
+        - id: gate
+          depends_on: [phase]
+          approval:
+            message: >-
+              Review $INPUTS.label in $INPUTS.task_dir. Approve to continue, or request changes with the
+              changes you want and the phase revises the artifact.
+            decisions:
+              - { id: approve, label: Approve }
+              - { id: reject, label: Request changes }
+
+  # Unattended branch: the skill once, no review.
+  - id: once
+    when: "$INPUTS.gate != 'true'"
+    context: fresh
+    prompt: |
+      Read and follow $INPUTS.skills_dir/$INPUTS.skill/SKILL.md, the installed `$INPUTS.skill` skill, for task directory $INPUTS.task_dir.
+
+      The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.

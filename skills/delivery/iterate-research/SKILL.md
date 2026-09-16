@@ -31,9 +31,7 @@ Beyond `task.md`, do not read `ticket.md`, research-questions files, design arti
 
 5. **Update in place**. Do not create a new research document for normal iteration. Wait for every child worker before editing the artifact. Revise the same artifact path. Write the revised document to the same path. Integrate findings where they belong. Update summary when the answer changes. Rewrite affected sections so narrative flows. Add or adjust diagrams, tables, call/file/component trees, contracts, pseudocode. Update testing patterns and code references with exact paths. Remove answered open questions. Add new open questions only for factual gaps that remain. No change log. If you encounter vague headings while editing, improve them as part of the revision.
 
-6. **Final answer**. Read references/research_final_answer.md and respond using that template only. Fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-type-slug.md](.agents/tasks/<slug>/NN-type-slug.md)`. The last lines must be exactly one fenced `text` block copied from the template. Never repeat the current command `/iterate-research` as the next step. Fill `{next_command}` from `workflow` in `task.md`: `/create-design-discussion` for `full`, `/create-structure-outline` for `lean`, `/create-prd` for `prd`.
-
-7. **Reply file**. If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it.
+6. **Final answer**. Read references/research_final_answer.md and respond using that template only. Fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-type-slug.md](.agents/tasks/<slug>/NN-type-slug.md)`. The last lines must be exactly one fenced `text` block copied from the template. Never repeat the current command `/iterate-research` as the next step. Fill `{next_command}` from `workflow` in `task.md`: `/create-design-discussion` for `full`, `/create-structure-outline` for `lean`, `/create-prd` for `prd`, `/create-epic-plan` for `epic`. When not run by the workflow engine, commit the saved file with `git add <path>` as `docs(task): research artifact`.
 
 ## Document style
 

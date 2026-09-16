@@ -66,9 +66,7 @@ Read only the feedback the user supplied (message or named file). Work one feedb
 
 ## When Iteration Is Complete
 
-When the feedback is addressed, checks have run, and no further implementation edits are known, commit the applied changes with the `/ci-commit` conventions: stage explicit paths, exclude `.agents/tasks/`, and use a validated Conventional Commits subject. Then choose exactly one handoff:
+When the feedback is addressed, checks have run, and no further implementation edits are known, commit the applied changes with the `/ci-commit` conventions: stage explicit code paths, keep `.agents/tasks/` files out of the code commit, and use a validated Conventional Commits subject. When not run by the workflow engine, commit the changed plan or outline and the receipt separately with `git add <path>` as `docs(task): implementation artifact`. Then choose exactly one handoff:
 
 1. If another numbered phase remains in the selected plan or outline, save any changed task artifact in the task directory, read `references/implementation_phase_final_answer.md`, and point its command back to the same implementation skill. Do not use the pull-request handoff at this boundary.
 2. Only when the completed phase is the highest numbered phase, save any changed task artifact in the task directory, read `references/implementation_final_answer.md`, and respond with that terminal template. The next step is `/describe-pr`; use `/ci-commit` only when the user asks for an in-loop commit gate.
-
-If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it.

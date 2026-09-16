@@ -1,0 +1,22 @@
+# `review_each_phase=true`: the gated implement loop reviews every phase and fixes its findings before
+# the phase gate; the pack's final review loop still runs.
+task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills"}'
+gates: '{"design":"true","plan":"true","phases":"true","pr":"true"}'
+research__questions: "research questions saved"
+research__research: "research saved"
+phase: "artifact saved"
+implement-phase: "phase implemented"
+review-phase: '{"status":"findings","artifact":"05-code-review-fixture.md","summary":"one finding"}'
+fix-phase: "finding fixed"
+review-code: '{"status":"clean","artifact":"05-code-review-fixture.md","summary":"clean"}'
+research-done: ""
+design-done: ""
+plan-done: ""
+implement-done: ""
+review-done: ""
+pr-done: ""
+fixture:
+  expect: completed
+  inputs: { review_each_phase: "true" }
+  reached: [implement-phase, review-phase, fix-phase, implement__phases, review__loop, pr-done]
+exec-code: false

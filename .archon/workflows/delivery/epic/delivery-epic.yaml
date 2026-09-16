@@ -1,0 +1,97 @@
+name: delivery-epic
+description: |
+  Split a large request into independently deliverable children: write the epic plan (gate, revised
+  from your feedback until approved), then create one task directory per child, commit them, and
+  print the command that starts each wave-1 child as its own delivery run cut from this run's branch.
+  The parent run ends there; children run as separate delivery-* runs. Start it with `--branch
+  <epic branch>` so the children have a branch to cut from and target. The `gates` input picks
+  whether the plan pause happens: `--input gates=none` runs unattended.
+
+  Use when: several independently mergeable deliverables, work for more than one person, or a change
+  that would need more than about eight plan phases, for example "build the billing module", "migrate the
+  service to the new auth system".
+  NOT for: one deliverable (delivery-full, delivery-lean, delivery-prd).
+
+interactive: true
+
+inputs:
+  skills_dir:
+    default: ~/.agents/skills
+    description: Directory holding the installed skills, one `<name>/SKILL.md` each.
+  task_dir:
+    default: ""
+    description: Reuse this existing task directory (an epic child, or one created by hand) instead of creating one.
+  gates:
+    default: all
+    description: "Human gates to keep: `all`, `none`, or `plan` (the only gate)."
+
+# `*-done` nodes commit the phase's artifacts and keep loop bodies runnable between includes; see
+# delivery-full for why. `gates` is the plain node between the task include and the plan include.
+nodes:
+  - id: task
+    include: delivery-task
+    with:
+      skills_dir: $INPUTS.skills_dir
+      workflow: epic
+      task_dir: $INPUTS.task_dir
+
+  - id: gates
+    depends_on: [task]
+    bash: |
+      set -eu
+      names="plan"
+      requested=$(printf '%s' "${INPUTS_GATES:-all}" | tr -d ' ')
+      case "$requested" in
+        all|'') on="$names" ;;
+        none) on="" ;;
+        *)
+          on=""
+          for g in $(printf '%s' "$requested" | tr ',' ' '); do
+            case " $names " in
+              *" $g "*) on="$on $g" ;;
+              *) printf 'gates: unknown gate "%s"; use all, none, or a comma-separated subset of: %s\n' "$g" "$names" >&2; exit 1 ;;
+            esac
+          done ;;
+      esac
+      out=""
+      for name in $names; do
+        case " $on " in *" $name "*) v=true ;; *) v=false ;; esac
+        out="$out${out:+,}\"$name\":\"$v\""
+      done
+      printf '{%s}\n' "$out"
+    output_format:
+      type: object
+      properties:
+        plan: { type: string }
+      required: [plan]
+
+  - id: plan
+    include: delivery-gate-phase
+    depends_on: [gates]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: create-epic-plan
+      iterate: create-epic-plan
+      label: the epic plan
+      gate: $gates.output.plan
+
+  - id: plan-done
+    depends_on: [plan]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): plan artifacts")
+
+  - id: start
+    context: fresh
+    depends_on: [plan-done]
+    prompt: |
+      Read and follow $task.output.skills_dir/start-epic-delivery/SKILL.md, the installed `start-epic-delivery` skill, for task directory $task.output.task_dir. The epic branch is the current branch (`git rev-parse --abbrev-ref HEAD`); commit each child's task.md on it. For each wave-1 child, the start command is `archon workflow run delivery-<child workflow> --base <epic branch> --input task_dir=.agents/tasks/<child slug> "<child prompt>"`; print one per child.
+
+      The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
+
+  # Commits any child task.md the skill left uncommitted.
+  - id: start-done
+    depends_on: [start]
+    bash: |
+      git add -A .agents/tasks && (git diff --cached --quiet || git commit -q -m "docs(task): open epic children")

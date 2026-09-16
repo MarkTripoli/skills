@@ -1,0 +1,19 @@
+# Default gates: PRD, TDD, plan and pull request take the gated `cycle` branch, the implement include
+# its gated `phases` loop, every join runs.
+task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills"}'
+gates: '{"prd":"true","tdd":"true","plan":"true","phases":"true","pr":"true"}'
+research: "research saved"
+phase: "artifact saved"
+implement-phase: "phase implemented"
+review-code: '{"status":"clean","artifact":"05-code-review-fixture.md","summary":"clean"}'
+research-done: ""
+prd-done: ""
+tdd-done: ""
+plan-done: ""
+implement-done: ""
+review-done: ""
+pr-done: ""
+fixture:
+  expect: completed
+  reached: [gates, research-done, prd__cycle, prd-done, tdd__cycle, tdd-done, plan__cycle, plan-done, implement__phases, implement-done, review__loop, review-done, pr__cycle, pr-done]
+exec-code: false
