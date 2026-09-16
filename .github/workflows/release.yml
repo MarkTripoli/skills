@@ -2,19 +2,36 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
 
-permissions:
-  contents: write
-  pull-requests: write
+concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 jobs:
-  release-please:
-    name: Release PR and tag
+  release:
+    name: Version
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
-      - uses: googleapis/release-please-action@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create Version Pull Request
+        uses: changesets/action@v1
+        with:
+          version: npm run version
+          publish: npx changeset tag
+          commit: "chore: version skills"
+          title: "chore: version skills"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

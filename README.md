@@ -14,6 +14,15 @@ npx github:MarkTripoli/skills
 
 Variants: name the targets (`npx github:MarkTripoli/skills oh-my-pi pi`, `all`, or `portable` for a plain `~/.agents/skills/` copy), `--project` to install into the current repository instead of your home directory, `--dry-run` to look first, `--yes` to skip the question, `--uninstall` to remove exactly what it wrote (it tracks its block in `~/.codex/config.toml` with markers). Node 20 or newer is the only requirement. From a checkout the same command is `node scripts/install.mjs`.
 
+Claude Code, as a plugin (a managed bundle that updates when a release ships, instead of files you own):
+
+```
+/plugin marketplace add MarkTripoli/skills
+/plugin install marktripoli-skills@marktripoli
+```
+
+The plugin carries the 31 non-worker skills and the 7 worker agents; the manifest is `.claude-plugin/plugin.json`, kept in step with the collection by `npm run sync-plugin` (checked by `npm test`). Installing both the plugin and the `npx` tree gives you every skill twice; pick one.
+
 Skills only, through the [skills.sh](https://skills.sh/MarkTripoli/skills) installer that many collections use: `npx skills@latest add MarkTripoli/skills`. It lets you pick skills and agents and writes plain skill files you can edit; it does not install the worker definitions or the extensions, so `/run-task` then uses its subagent and manual backends.
 
 By hand: `npm run build -- --runtime <claude-code|codex|oh-my-pi|pi>` writes `dist/<runtime>/`, and each adapter under [runtimes/](runtimes/) lists where its files go. Where the files land:
@@ -25,13 +34,13 @@ By hand: `npm run build -- --runtime <claude-code|codex|oh-my-pi|pi>` writes `di
 | Oh My Pi | `~/.omp/agent/skills/` | `~/.omp/agent/agents/` | `~/.omp/agent/extensions/run-task/` |
 | Pi | `~/.pi/agent/skills/` | none (phases perform worker roles inline) | `~/.pi/agent/extensions/run-task/` |
 
-`npm test` validates the collection and runs the token-free simulation of every workflow chain; `npm run eval -- --driver <omp|claude|codex>` measures real agents against the same contract (see [docs/testing.md](docs/testing.md)). Everything uses Node 20 or newer and no dependencies.
+`npm test` validates the collection, checks the plugin manifest, and runs the token-free simulation of every workflow chain; `npm run eval -- --driver <omp|claude|codex>` measures real agents against the same contract (see [docs/testing.md](docs/testing.md)). Node 20 or newer; the only dependencies are the changesets tooling used for releases.
 
 ## Commits and releases
 
-Every commit subject follows the Commits section of [shared/CONVENTIONS.md](shared/CONVENTIONS.md). `npm install` (no dependencies; its `prepare` step sets `core.hooksPath` to `.githooks/`) installs a `commit-msg` hook that rejects a subject that breaks the rule; the `Commits` workflow runs the same check, `node scripts/check-commits.mjs <base>..<head> --title <pr title>`, on every pull request and merge queue entry, so a commit that bypasses the hook still cannot merge. Merge commits and `fixup!`/`squash!` markers are exempt; `git revert`'s default message is not, so write it as `revert: <description>`.
+Every commit subject follows the Commits section of [shared/CONVENTIONS.md](shared/CONVENTIONS.md). `npm install` (its `postinstall` step sets `core.hooksPath` to `.githooks/` inside a checkout) installs a `commit-msg` hook that rejects a subject that breaks the rule; the `Commits` workflow runs the same check, `node scripts/check-commits.mjs <base>..<head> --title <pr title>`, on every pull request and merge queue entry, so a commit that bypasses the hook still cannot merge. Merge commits and `fixup!`/`squash!` markers are exempt; `git revert`'s default message is not, so write it as `revert: <description>`.
 
-Versions follow [Semantic Versioning](https://semver.org/) and are derived from those subjects by [release-please](https://github.com/googleapis/release-please): on every push to `main`, the `Release` workflow opens or updates a release pull request that bumps `package.json`, writes `CHANGELOG.md`, and, when merged, tags `v<version>` and publishes a GitHub release. `fix` bumps the patch version; `feat` bumps the minor; a `!` or `BREAKING CHANGE:` footer bumps the minor while the version is below 1.0.0 (`bump-minor-pre-major` in `release-please-config.json`) and the major after that. Install a fixed version with `git clone --branch v<version> https://github.com/MarkTripoli/skills.git`.
+Versions follow [Semantic Versioning](https://semver.org/) through [changesets](https://github.com/changesets/changesets). A pull request that changes what users get adds a file under `.changeset/` naming the bump (`npm run changeset`, or by hand; see [.changeset/README.md](.changeset/README.md)). On every push to `main`, the `Release` workflow gathers the pending changesets into a `chore: version skills` pull request that bumps `package.json`, syncs `.claude-plugin/plugin.json`, and writes `CHANGELOG.md`; merging it tags `v<version>` and publishes the GitHub release, which the Claude Code plugin picks up. Install a fixed version with `git clone --branch v<version> https://github.com/MarkTripoli/skills.git` or `npx github:MarkTripoli/skills#v<version>`.
 
 ## How the workflow runs
 

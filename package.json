@@ -1,9 +1,14 @@
 {
   "name": "@marktripoli/skills",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "private": true,
   "type": "module",
   "description": "Portable agent skills for research, design, planning, implementation, and pull request delivery",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MarkTripoli/skills"
+  },
+  "license": "MIT",
   "bin": {
     "skills-install": "scripts/install.mjs"
   },
@@ -11,12 +16,20 @@
     "node": ">=20"
   },
   "scripts": {
-    "prepare": "node scripts/prepare.mjs",
-    "test": "node scripts/validate.mjs && node --test tests/",
+    "postinstall": "node scripts/prepare.mjs",
+    "test": "node scripts/validate.mjs && node scripts/sync-plugin.mjs --check && node --test tests/",
     "validate": "node scripts/validate.mjs",
     "check-commits": "node scripts/check-commits.mjs",
     "simulate": "node scripts/simulate.mjs",
     "eval": "node scripts/eval.mjs",
-    "build": "node scripts/build-runtimes.mjs"
+    "build": "node scripts/build-runtimes.mjs",
+    "changeset": "changeset",
+    "version": "changeset version && node scripts/sync-plugin.mjs",
+    "check-plugin": "node scripts/sync-plugin.mjs --check",
+    "sync-plugin": "node scripts/sync-plugin.mjs"
+  },
+  "devDependencies": {
+    "@changesets/changelog-github": "^0.7.0",
+    "@changesets/cli": "^2.30.0"
   }
 }
