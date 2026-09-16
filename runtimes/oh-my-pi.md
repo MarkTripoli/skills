@@ -12,4 +12,20 @@ Herdr agent kind: `omp`.
 1. Build the tree: `npm run build -- --runtime oh-my-pi` (writes `dist/oh-my-pi/`).
 2. Skills: `cp -R dist/oh-my-pi/skills/* ~/.agents/skills/` (Oh My Pi reads this directory for every project).
 3. Workers: `cp dist/oh-my-pi/agents/*.md ~/.omp/agent/agents/` for every project, or `cp dist/oh-my-pi/agents/*.md <repo>/.omp/agents/` for one project. Project agents win over user agents with the same name.
-4. Start a new session; `/agents` lists the workers and `/` lists the skills.
+4. Extension (optional): `cp -R dist/oh-my-pi/extensions/run-task ~/.omp/agent/extensions/run-task`, or add the checkout's `runtimes/oh-my-pi/run-task` to `extensions:` in `~/.omp/agent/config.yml`. It replaces the `run-task` skill's orchestrator session with a slash command that runs each phase in a new session of the TUI; see below.
+5. Start a new session; `/agents` lists the workers and `/` lists the skills and, with the extension, the `/run-task` command.
+
+## Extension
+
+`runtimes/oh-my-pi/run-task/index.js` is an Oh My Pi extension that registers the `/run-task` command and a `task_status` tool. It loads `scripts/workflow.mjs` from the installed `run-task` skill (it looks in the checkout, the built tree, `<project>/.agents/skills/`, `~/.agents/skills/`, and the agent directory's `skills/`), so the skills stay the single source of truth and the extension spends no tokens of its own.
+
+`/run-task @<task dir>`, `/run-task <request>`, or `/run-task` alone (which lists the tasks under `.agents/tasks/`) runs the task's chain:
+
+- Each phase opens a new session (`/new`) and receives the same file-form prompt the `run-task` skill uses. You watch the phase live, and an interactive phase can ask you questions in that session; the run continues when the phase's reply file appears under `replies/`.
+- A human gate shows a dialog: approve (runs the next command), request changes (asks for the feedback, then runs the matching `iterate-*` skill with it), run another command instead (for `/review-code` or `/record-evidence`), or stop. Stopping leaves the task on disk; `/run-task @<task dir>` later continues, and running it records the approval, exactly as with the skill.
+- After every phase it appends one line to `replies/phases.jsonl`: skill, command, timing, model, the session's context tokens and percentage, whether the phase or the extension wrote the reply file, and the session file. That is the per-phase context meter.
+- Flags: `--step` (stop after every phase), `--status` (report and stop), `--with review-code,record-evidence`, `--model <spec>` (model for the phase sessions), `--workflow <type>` for a new task. `/run-task stop` ends a run after the phase in progress.
+
+The `task_status` tool returns the same status report to the model, for a session that is asked where a task stands.
+
+The extension needs the interactive TUI or RPC mode for its dialogs; in print mode it reports that and stops. Herdr panes and subagents are not used by the extension; the phase session is the fresh context.

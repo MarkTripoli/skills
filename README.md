@@ -20,7 +20,7 @@ Runtime-specific trees add the runtime's invocation and worker notes to every sk
 |---|---|---|
 | Claude Code | `npm run build -- --runtime claude-code` | copy per [runtimes/claude-code.md](runtimes/claude-code.md) |
 | Codex | `npm run build -- --runtime codex` | copy per [runtimes/codex.md](runtimes/codex.md) |
-| Oh My Pi | `npm run build -- --runtime oh-my-pi` | copy per [runtimes/oh-my-pi.md](runtimes/oh-my-pi.md) |
+| Oh My Pi | `npm run build -- --runtime oh-my-pi` | copy per [runtimes/oh-my-pi.md](runtimes/oh-my-pi.md); optional `/run-task` extension that runs each phase in a new session of the TUI |
 
 `npm test` validates the collection and runs the token-free simulation of every workflow chain; `npm run eval -- --driver <omp|claude|codex>` measures real agents against the same contract (see [docs/testing.md](docs/testing.md)); `npm run build` writes `dist/<runtime>/` (ignored by git). All use Node 20 or newer and no dependencies.
 
@@ -40,12 +40,14 @@ Versions follow [Semantic Versioning](https://semver.org/) and are derived from 
 
 Each phase runs in a fresh context and reads only `task.md` plus the artifacts it selects, so no session carries the whole task history; the artifacts on disk are the memory between phases. `/run-task @.agents/tasks/<slug>` drives a task through its chain: it starts each phase in a fresh context, relays only the phase's final reply, and stops at human gates. Backends, in order: a [Herdr](https://github.com/herdr) pane when `HERDR_ENV=1` and `herdr` is installed (the phase runs visibly beside your session and can ask you questions), the runtime's subagent tool, or manual (it prints the prompt for you to run in a new session). `/run-task @<task dir> --status` reports where a task stands. Phase replies are also written to `.agents/tasks/<slug>/replies/NN-<skill>.md`, which is how the orchestrator knows a phase finished and what comes next.
 
+On Oh My Pi, the optional extension in `runtimes/oh-my-pi/run-task/` turns `/run-task` into a command that opens a new session of your TUI for each phase, waits for its reply file, records the session's context usage in `replies/phases.jsonl`, and stops at gates with an approve, request-changes, or stop dialog; the orchestrator is code and spends no tokens. Install per [runtimes/oh-my-pi.md](runtimes/oh-my-pi.md).
+
 Every reply tells you to start the next phase in a new session. That sentence, the read budget for a phase, and the signs of a degraded context are in the conventions; the per-runtime commands (`/clear`, `/new`, `/context`, `/status`) and what to do when a session degrades are in [docs/context-management.md](docs/context-management.md).
 
 ## Docs
 
 - [docs/getting-started.md](docs/getting-started.md): install, first task by hand and with `/run-task`, gates, feedback, worktrees, epics.
-- [docs/context-management.md](docs/context-management.md): the phase model, fresh contexts per runtime, recognizing a degraded context, what a runtime plugin could add.
+- [docs/context-management.md](docs/context-management.md): the phase model, fresh contexts per runtime, recognizing a degraded context, what a runtime plugin adds.
 - [docs/testing.md](docs/testing.md): static validation, token-free simulation of every chain, and the eval harness for real agents.
 - [workflows/delivery.md](workflows/delivery.md): workflow types, phase table, gates, review loop.
 - [shared/CONVENTIONS.md](shared/CONVENTIONS.md) and [shared/WRITING.md](shared/WRITING.md): the contract every skill follows.

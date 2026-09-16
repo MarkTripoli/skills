@@ -3,7 +3,8 @@
 // Usage: node scripts/build-runtimes.mjs --runtime <claude-code|codex|oh-my-pi> [--dest <dir>]
 // Output: <dest>/skills/<name>/ (SKILL.md with the runtime's notes inserted after line 6),
 //         <dest>/agents/ (one worker definition per agent-* skill in the runtime's format),
-//         codex only: skills/<name>/agents/openai.yaml and <dest>/config.snippet.toml.
+//         codex only: skills/<name>/agents/openai.yaml and <dest>/config.snippet.toml,
+//         runtimes with a runtimes/<runtime>/ directory (oh-my-pi): <dest>/extensions/ copied from it.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -43,8 +44,8 @@ function parseAdapter(content, file) {
   }
   for (const section of sections) section[1] = section[1].join("\n").trim();
   const names = sections.map(([name]) => name);
-  if (!title || names.join("|") !== "Skill notes|Install") {
-    console.error(`${path.relative(repoRoot, file)}: expected an H1 title and exactly two H2 sections, "Skill notes" then "Install" (found ${names.join(", ") || "none"})`);
+  if (!title || names[0] !== "Skill notes" || names[1] !== "Install") {
+    console.error(`${path.relative(repoRoot, file)}: expected an H1 title and H2 sections "Skill notes" then "Install" first (found ${names.join(", ") || "none"})`);
     process.exit(1);
   }
   const notes = sections[0][1];
@@ -150,6 +151,12 @@ for (const name of skillNames) {
 
 if (runtime === "codex") {
   fs.writeFileSync(path.join(dest, "config.snippet.toml"), snippet.join("\n"));
+}
+
+// The Oh My Pi extension ships beside the skills it drives; it finds them at ../../skills from its own directory.
+const extensionSource = path.join(repoRoot, "runtimes", runtime);
+if (fs.existsSync(extensionSource)) {
+  fs.cpSync(extensionSource, path.join(dest, "extensions"), { recursive: true, filter: (src) => path.basename(src) !== ".DS_Store" });
 }
 
 console.log(`built ${runtime}: ${skillNames.length} skills, ${workers} workers -> ${dest}`);

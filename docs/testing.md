@@ -97,14 +97,11 @@ Treat eval results as measurements to compare across skill edits, models, and ru
 4. Extend the relevant simulation scenario so the new phase appears in an observed chain.
 5. Optionally add an eval case.
 
-## What an Oh My Pi extension would add
+## The Oh My Pi extension
 
-Oh My Pi loads extensions as modules that register commands, tools, and session event handlers, and its handler context exposes `getContextUsage()`, `newSession()`, `ui.confirm()`, and `ui.setWidget()`. That is every primitive the roadmap in [Context management](context-management.md#what-a-runtime-plugin-could-add) needs, and `workflow.mjs` is the logic it would call:
+`runtimes/oh-my-pi/run-task/index.js` is the first runtime plugin: it registers `/run-task` and the `task_status` tool, and imports `workflow.mjs` from the installed `run-task` skill at startup. It runs each phase in a new session of the TUI, waits for the reply file, records `getContextUsage()` in `replies/phases.jsonl`, and shows a dialog at gates. [runtimes/oh-my-pi.md](../runtimes/oh-my-pi.md) describes the install and the behavior.
 
-- `registerCommand("run-task")`: `nextCommand`, then `newSession()` and send the phase prompt, so each phase gets a fresh session without a Herdr pane or a subagent.
-- `registerTool("task_status")`: returns `statusReport` so the model never re-derives state from the table.
-- `session_start`: `ui.setWidget` with the status report for the task in the current worktree.
-- `agent_end`: when the reply carries a handoff fence and the phase is a gate, `ui.confirm` to approve or request changes; on approve, start the next phase in a new session.
-- `turn_end`: read `getContextUsage()` and warn when a phase passes the budget; record the number next to the reply file for the eval's cost column.
+It is tested at two levels:
 
-The skills stay unchanged; the extension replaces the manual steps with the same decisions taken by the same code. Building it is the next step once the simulation layer is green.
+- `tests/oh-my-pi-extension.test.mjs` loads the extension with a fake host: the fake `pi` records the command, tool, and event registrations; the fake `ctx` scripts dialog answers and counts `newSession()` calls; `sendUserMessage` hands each phase prompt to the simulator's fake agent, which writes the artifact and reply file. The tests drive the lean chain through approvals, a stop and re-invocation, request-changes with feedback, another command at a gate, `--step`, a phase that prints a valid reply without writing the file, a phase that stops to ask a question, and `/run-task stop`. No tokens and no `omp` binary.
+- A live check runs the same command through `omp --mode rpc` with the extension loaded (`--extension runtimes/oh-my-pi/run-task`) and answers the `extension_ui_request` frames; RPC mode uses the same command context as the TUI (`newSession`, `getContextUsage`, dialogs), so the frames and `phases.jsonl` show exactly what the TUI would do. That check costs tokens like an eval and is not part of `npm test`.
