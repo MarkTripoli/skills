@@ -8,8 +8,10 @@
     "node": ">=20"
   },
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks",
     "test": "node scripts/validate.mjs && node --test tests/",
     "validate": "node scripts/validate.mjs",
+    "check-commits": "node scripts/check-commits.mjs",
     "simulate": "node scripts/simulate.mjs",
     "eval": "node scripts/eval.mjs",
     "build": "node scripts/build-runtimes.mjs"

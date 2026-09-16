@@ -1,0 +1,4 @@
+#!/bin/sh
+# Rejects a commit whose subject is not a Conventional Commit (shared/CONVENTIONS.md, Commits).
+# Active once `npm install` has run: package.json "prepare" points core.hooksPath at this directory.
+exec node "$(dirname "$0")/../scripts/check-commits.mjs" --message-file "$1"
