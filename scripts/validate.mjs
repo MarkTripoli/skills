@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Validates the skill collection: layout, frontmatter, shared links, reference files,
-// answer-template handoffs, human-review templates, banned host tokens, and workflow coverage.
+// answer-template handoffs, human-review templates, banned host tokens, workflow coverage, and the Archon packs.
 // Usage: node scripts/validate.mjs [--root <dir>]
 // Exit 1 with one `file:line: message` per failure.
 
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { scanSkills } from "./lib/layout.mjs";
 import { SUBJECT_PATTERN, MAX_SUBJECT_LENGTH } from "./check-commits.mjs";
@@ -16,7 +17,7 @@ const rootIndex = args.indexOf("--root");
 const root = rootIndex === -1 ? repoRoot : path.resolve(args[rootIndex + 1] ?? "");
 const generated = root !== repoRoot;
 
-const EXPECTED_SKILL_COUNT = 39;
+const EXPECTED_SKILL_COUNT = 35;
 const SHARED_LINKS = {
   "shared/WRITING.md": "https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md",
   "shared/CONVENTIONS.md": "https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md",
@@ -29,19 +30,15 @@ const RESEARCH_VARIANTS = { full: "create-design-discussion", lean: "create-stru
 // answer file -> skill named in the final fence (research answers: per workflow variant).
 const ANSWER_INVENTORY = {
   "ci-commit/references/commit_final_answer.md": "describe-pr",
-  "configure-workspaces/references/workspace_final_answer.md": "setup-worktree",
   "create-design-discussion/references/design_discussion_final_answer.md": "create-plan",
   "create-design-discussion/references/design_discussion_review_answer.md": "iterate-design-discussion",
   "create-epic-plan/references/epic_plan_final_answer.md": "start-epic-delivery",
-  "create-plan/references/plan_disabled_answer.md": "implement-plan",
-  "create-plan/references/plan_final_answer.md": "setup-worktree",
-  "create-plan/references/plan_in_worktree_answer.md": "implement-plan",
+  "create-plan/references/plan_final_answer.md": "implement-plan",
   "create-prd/references/prd_final_answer.md": "create-tdd",
   "create-prd/references/prd_review_answer.md": "iterate-prd",
   "create-research/references/research_final_answer.md": RESEARCH_VARIANTS,
   "create-research-questions/references/research_questions_final_answer.md": "create-research",
   "create-structure-outline/references/structure_outline_final_answer.md": "implement-outline",
-  "create-structure-outline/references/structure_outline_setup_answer.md": "setup-worktree",
   "create-tdd/references/tdd_final_answer.md": "create-plan",
   "create-tdd/references/tdd_program_review_answer.md": "iterate-tdd",
   "create-tdd/references/tdd_system_review_answer.md": "iterate-tdd",
@@ -55,40 +52,28 @@ const ANSWER_INVENTORY = {
   "iterate-design-discussion/references/design_discussion_review_answer.md": "iterate-design-discussion",
   "iterate-implementation/references/implementation_final_answer.md": "describe-pr",
   "iterate-implementation/references/implementation_phase_final_answer.md": "implement-plan",
-  "iterate-plan/references/plan_disabled_answer.md": "implement-plan",
-  "iterate-plan/references/plan_final_answer.md": "setup-worktree",
-  "iterate-plan/references/plan_in_worktree_answer.md": "implement-plan",
+  "iterate-plan/references/plan_final_answer.md": "implement-plan",
   "iterate-prd/references/prd_final_answer.md": "create-tdd",
   "iterate-prd/references/prd_review_answer.md": "iterate-prd",
   "iterate-research/references/research_final_answer.md": RESEARCH_VARIANTS,
   "iterate-research-questions/references/research_questions_final_answer.md": "create-research",
   "iterate-structure-outline/references/structure_outline_final_answer.md": "implement-outline",
-  "iterate-structure-outline/references/structure_outline_setup_answer.md": "setup-worktree",
   "iterate-tdd/references/tdd_final_answer.md": "create-plan",
   "iterate-tdd/references/tdd_review_answer.md": "iterate-tdd",
   "record-evidence/references/evidence_failed_answer.md": "iterate-implementation",
   "record-evidence/references/evidence_final_answer.md": "describe-pr",
   "record-evidence/references/evidence_standalone_answer.md": "show-me",
+  "reproduce-bug/references/reproduction_not_reproduced_answer.md": "show-me",
+  "reproduce-bug/references/reproduction_reproduced_answer.md": "review-code",
   "resolve-pr-reviews/references/pr_review_approved_answer.md": "show-me",
   "resolve-pr-reviews/references/pr_review_pending_answer.md": "resolve-pr-reviews",
   "review-artifact-comments/references/comments_final_answer.md": "iterate-implementation",
   "review-code/references/code_review_blocked_answer.md": "show-me",
   "review-code/references/code_review_clean_answer.md": "describe-pr",
   "review-code/references/code_review_findings_answer.md": "fix-code-review",
-  "review-loop/references/review_loop_blocked_answer.md": "show-me",
-  "review-loop/references/review_loop_capped_answer.md": "show-me",
-  "review-loop/references/review_loop_clean_answer.md": "describe-pr",
-  "setup-worktree/references/worktree_final_answer.md": "implement-plan",
   "show-me/references/show_me_final_answer.md": "show-me",
-  "start-epic-delivery/references/epic_delivery_final_answer.md": "create-research-questions",
-  "start-task/references/route_direct_answer.md": "start-task",
-  "start-task/references/route_epic_answer.md": "create-epic-plan",
-  "start-task/references/route_task_answer.md": "run-task",
+  "start-epic-delivery/references/epic_delivery_final_answer.md": "show-me",
 };
-
-// Replies that end an exchange instead of handing to a phase: no fresh-session sentence. Every reply whose
-// fence names show-me is terminal by convention; these are terminal although their fence names another skill.
-const TERMINAL_ANSWERS = new Set(["start-task/references/route_direct_answer.md"]);
 
 const HUMAN_REVIEW_TEMPLATES = [
   "create-design-discussion/references/design_discussion_template.md",
@@ -106,6 +91,7 @@ const HUMAN_REVIEW_TEMPLATES = [
   "implement-outline/references/implementation_template.md",
   "iterate-implementation/references/implementation_template.md",
   "describe-pr/references/pr_description_template.md",
+  "reproduce-bug/references/reproduction_template.md",
   "resolve-pr-reviews/references/pr_review_template.md",
   "start-epic-delivery/references/epic_delivery_template.md",
 ];
@@ -117,7 +103,7 @@ const PHASE_ANSWERS = IMPLEMENTATION_SKILLS.map((skill) => `${skill}/references/
 const HUMAN_GATE_ANSWERS = Object.keys(ANSWER_INVENTORY).filter(
   (file) =>
     !PHASE_ANSWERS.includes(file) &&
-    /^(?:create|iterate)-(?:design-discussion|prd|tdd|structure-outline|plan|epic-plan)\/|^(?:implement-plan|implement-outline|iterate-implementation)\/|^describe-pr\/references\/pr_description_final_answer|^resolve-pr-reviews\/references\/pr_review_pending_answer|^start-epic-delivery\//.test(
+    /^(?:create|iterate)-(?:design-discussion|prd|tdd|structure-outline|plan|epic-plan)\/|^(?:implement-plan|implement-outline|iterate-implementation)\/|^describe-pr\/references\/pr_description_final_answer|^resolve-pr-reviews\/references\/pr_review_pending_answer|^reproduce-bug\/references\/reproduction_reproduced_answer/.test(
       file,
     ),
 );
@@ -172,20 +158,16 @@ function fillTemplate(input) {
     .replaceAll("{summary}", "Saved the requested artifact.")
     .replaceAll("{artifact_file}", "01-artifact.md")
     .replaceAll("{plan_file}", "01-plan.md")
-    .replaceAll("{report_link}", "[report.md](.agents/tasks/task-slug/evidence/screen/report.md)")
     .replaceAll("{implementation_command}", "/implement-plan")
-    .replaceAll("{first_child_command}", "/create-research-questions")
+    .replaceAll("{report_link}", "[report.md](.agents/tasks/task-slug/evidence/screen/report.md)")
     .replaceAll("{child_slug}", "child-slug")
-    .replaceAll("{child_start_command}", "/create-research-questions")
+    .replaceAll("{child_start_command}", 'archon workflow run delivery-lean --base epic-slug --input task_dir=.agents/tasks/child-slug "Child prompt"')
     .replaceAll("{review_check}", "Review the named behavior and evidence.")
     .replaceAll("{known_limits}", "None.")
+    .replaceAll("{needed}", "The exact input file that triggers the crash.")
     .replaceAll("{completed_phase}", "1")
     .replaceAll("{next_phase}", "2")
-    .replaceAll("{task_dir}", ".agents/tasks/task-slug")
-    .replaceAll("{workflow}", "lean")
-    .replaceAll("{reason}", "The shape is clear and it touches several files.")
-    .replaceAll("{with_note}", "")
-    .replaceAll("{first_command}", "/create-research-questions");
+    .replaceAll("{task_dir}", ".agents/tasks/task-slug");
 }
 
 // Research answers carry `{next_command}`, filled per workflow type by the skill; render one per type.
@@ -259,8 +241,7 @@ const inventoryFiles = Object.keys(ANSWER_INVENTORY).sort();
 for (const file of answerFiles) if (!ANSWER_INVENTORY[file]) fail(rel(skillFile(file)), 0, "answer template missing from the declared inventory");
 for (const file of inventoryFiles) if (!answerFiles.includes(file)) fail(rel(skillFile(file)), 0, "declared answer template does not exist");
 
-const FRESH_SESSION_SENTENCE =
-  "Start the next phase in a new session, or hand the task to `/run-task`; continuing in this session carries this phase's context into the next one.";
+const FRESH_SESSION_SENTENCE = "Start the next phase in a new session; continuing in this session carries this phase's context into the next one.";
 
 function checkHandoff(content, expectedSkill, label, { terminal = expectedSkill === "show-me" } = {}) {
   const blocks = fences(content);
@@ -295,7 +276,7 @@ for (const [file, expected] of Object.entries(ANSWER_INVENTORY)) {
       checkHandoff(rendered, skill, `${rel(skillFile(file))} (${workflow})`);
     }
   } else {
-    checkHandoff(raw, expected, rel(skillFile(file)), { terminal: expected === "show-me" || TERMINAL_ANSWERS.has(file) });
+    checkHandoff(raw, expected, rel(skillFile(file)), { terminal: expected === "show-me" });
   }
 }
 
@@ -380,90 +361,129 @@ if (!fs.existsSync(workflowFile)) {
     if (!fs.existsSync(doc)) fail(`workflows/${skill.group}.md`, 0, `group skills/${skill.group}/ needs a workflow document`);
     else if (!read(doc).includes(skill.name)) fail(`workflows/${skill.group}.md`, 0, `does not mention skill "${skill.name}"`);
   }
-  if (!/^\| Skill \| Artifact type \| Next command \| Human gate \| Interactive \|$/m.test(content)) {
-    fail("workflows/delivery.md", 0, "phase table must have the columns Skill, Artifact type, Next command, Human gate, Interactive");
+  if (!/^\| Skill \| Artifact type \| Human gate \| Runs in \|$/m.test(content)) {
+    fail("workflows/delivery.md", 0, "phase table must have the columns Skill, Artifact type, Human gate, Runs in");
   }
 }
 
-// 11. The phase table and the deterministic module agree: skill, artifact type, gate, interactive, and the
-// set of skills each phase's next() can hand off to over the whole decision space. The workflow-type
-// chain rows must equal the commands the module produces for a plain repository.
-const workflowModule = path.join(skillDirs.get("run-task") ?? path.join(skillsDir, "run-task"), "scripts", "workflow.mjs");
-if (!fs.existsSync(workflowModule)) {
-  fail("skills/delivery/run-task/scripts/workflow.mjs", 0, "run-task must ship its deterministic workflow module");
-} else if (fs.existsSync(workflowFile)) {
-  const { PHASES, TYPES, START_COMMAND, parseCommand } = await import(workflowModule);
-  const doc = read(workflowFile);
-  const rows = doc
-    .split("\n")
-    .filter((line) => /^\| [a-z0-9-]+ \| /.test(line) && !line.startsWith("| Skill |"))
-    .map((line) => line.split("|").map((cell) => cell.trim()).slice(1, -1))
-    .filter((cells) => cells.length === 5);
-  const contexts = [];
-  for (const workflow of TYPES) {
-    for (const probe of [{ inWorktree: false, disabled: false }, { inWorktree: false, disabled: true }, { inWorktree: true, disabled: false }]) {
-      for (const remaining of [[1], []]) {
-        for (const status of ["", "findings", "clean", "blocked", "pending", "approved", "passed", "untested", "failed"]) {
-          contexts.push({ workflow, probe, remaining, status, artifact: "NN-type-slug.md", planFile: "NN-plan-slug.md" });
-        }
+// 11. The Archon packs. The native packs are the source; the Oh My Pi flavor is generated from them and must be
+// current. Every skill a pack names exists, every AI node runs in a fresh session, and each workflow directory
+// holds exactly one YAML file (Archon's packaged layout) plus at least one dry-run fixture. Every pack that
+// opens a task directory declares the `gates` input and node; every join after a gated include or the bugfix
+// twins tolerates the skipped branch. When an Archon 0.10+ binary is on PATH, the packs must also load there
+// without errors or warnings; without one, that check is skipped and reported.
+const packsRoot = path.join(repoRoot, ".archon", "workflows");
+const { build: buildPacks, listNative } = await import("./build-packs.mjs");
+let archonChecked = "skipped (no archon 0.10+ on PATH)";
+if (!fs.existsSync(path.join(packsRoot, "delivery"))) {
+  fail(".archon/workflows/delivery", 0, "missing the native delivery packs");
+} else {
+  for (const stale of buildPacks({ write: false }).filter((r) => r.stale)) {
+    fail(rel(stale.target), 0, stale.orphan ? "generated pack has no native source; run node scripts/build-packs.mjs" : "generated Oh My Pi flavor is stale; run node scripts/build-packs.mjs");
+  }
+  for (const flavor of ["delivery", "delivery-omp"]) {
+    for (const dir of fs.readdirSync(path.join(packsRoot, flavor), { withFileTypes: true })) {
+      if (!dir.isDirectory()) continue;
+      const yamls = fs.readdirSync(path.join(packsRoot, flavor, dir.name)).filter((f) => f.endsWith(".yaml"));
+      if (yamls.length !== 1) fail(rel(path.join(packsRoot, flavor, dir.name)), 0, `a workflow directory holds exactly one YAML file (found ${yamls.length})`);
+    }
+  }
+  for (const { dir, file } of listNative()) {
+    const full = path.join(packsRoot, "delivery", dir, file);
+    const content = read(full);
+    const lines = content.split("\n");
+    const expectedName = `delivery-${dir}`;
+    if (!lines.includes(`name: ${expectedName}`)) fail(rel(full), 1, `workflow name must be "${expectedName}" (the directory name)`);
+    for (const match of content.matchAll(/\$(?:INPUTS|task\.output)\.skills_dir\/([a-z0-9-]+)\/SKILL\.md/g)) {
+      if (!skillSet.has(match[1])) fail(rel(full), content.slice(0, match.index).split("\n").length, `names unknown skill "${match[1]}"`);
+    }
+    // Every `$id.output...` and `$LOOP_PREV.id.output...` outside a comment names a node or include alias
+    // this file declares.
+    const declared = new Set([...content.matchAll(/^\s*- id: (\S+)$/gm)].map((m) => m[1]));
+    const code = lines.map((l) => (/^\s*#/.test(l) ? "" : l)).join("\n");
+    for (const match of code.matchAll(/\$(?:LOOP_PREV\.)?([a-z][a-z0-9-]*)\.output\b/g)) {
+      if (!declared.has(match[1])) fail(rel(full), code.slice(0, match.index).split("\n").length, `references \`$${match[1]}.output\` but declares no node "${match[1]}"`);
+    }
+    lines.forEach((line, index) => {
+      const prompt = /^(\s*)prompt: \|$/.exec(line);
+      if (!prompt) return;
+      // The node's keys sit at the prompt's indent, from the preceding `- id:` line to the next one.
+      const keyIndent = prompt[1].length;
+      let start = index;
+      while (start > 0 && !new RegExp(`^${" ".repeat(keyIndent - 2)}- id: `).test(lines[start])) start--;
+      let end = index + 1;
+      while (end < lines.length && !new RegExp(`^${" ".repeat(keyIndent - 2)}- id: `).test(lines[end]) && !(lines[end].trim() !== "" && lines[end].length - lines[end].trimStart().length < keyIndent - 2)) end++;
+      const node = lines.slice(start, end);
+      if (!node.some((l) => l === `${" ".repeat(keyIndent)}context: fresh`)) fail(rel(full), start + 1, "every prompt node declares `context: fresh`");
+    });
+    // Top-level nodes: id, the indent-4 keys, and the `depends_on` list.
+    const nodes = [];
+    lines.forEach((line, index) => {
+      const id = /^ {2}- id: (\S+)$/.exec(line);
+      if (id) nodes.push({ id: id[1], line: index + 1, keys: {} });
+      const key = /^ {4}([a-z_]+): ?(.*)$/.exec(line);
+      if (key && nodes.length) nodes.at(-1).keys[key[1]] = key[2];
+    });
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    // A pack with a gated phase declares the `gates` input and node (resolve-reviews has no gate).
+    if (nodes.some((n) => ["delivery-gate-phase", "delivery-implement"].includes(n.keys.include))) {
+      if (!/^ {2}gates:\n {4}default: all$/m.test(content)) fail(rel(full), 1, "a pack with a gated phase declares input `gates` with `default: all`");
+      if (!byId.has("gates")) fail(rel(full), 1, "a pack with a gated phase has a `gates` node");
+    }
+    // A gated include or a `when:`-guarded twin leaves one branch skipped; an unconditional join after it must
+    // not wait for it. A `when:` node after a twin (bugfix `not-reproduced`) is meant to skip with it.
+    const gated = new Set(nodes.filter((n) => ["delivery-gate-phase", "delivery-implement"].includes(n.keys.include) || "when" in n.keys).map((n) => n.id));
+    for (const node of nodes) {
+      const deps = /^\[(.*)\]$/.exec(node.keys.depends_on ?? "");
+      if ("when" in node.keys || !deps || !deps[1].split(",").some((d) => gated.has(d.trim()))) continue;
+      if (node.keys.trigger_rule !== "none_failed_min_one_success") fail(rel(full), node.line, `\`${node.id}\` follows a gated branch and needs \`trigger_rule: none_failed_min_one_success\``);
+    }
+    const fixtures = path.join(packsRoot, "delivery", dir, "fixtures");
+    if (!fs.existsSync(fixtures) || !fs.readdirSync(fixtures).some((f) => f.endsWith(".stubs.yaml"))) fail(rel(fixtures), 0, "every pack declares at least one dry-run fixture (fixtures/<name>.stubs.yaml)");
+    // Twins: a gate condition on `== 'true'` has a sibling on `!= 'true'` over the same value, so one branch
+    // always runs. Other `when:` nodes (the optional review pass) are single.
+    const whens = [...content.matchAll(/^\s*when: "(\$[A-Za-z0-9_.-]*gate[A-Za-z0-9_.-]*) (==|!=) 'true'"$/gm)].map((m) => `${m[1]} ${m[2]}`);
+    for (const w of whens) {
+      const twin = w.endsWith("==") ? w.replace(/==$/, "!=") : w.replace(/!=$/, "==");
+      if (!whens.includes(twin)) fail(rel(full), lines.findIndex((l) => l.includes(`when: "${w} 'true'"`)) + 1, `\`when: "${w} 'true'"\` has no twin branch \`${twin} 'true'\``);
+    }
+  }
+  const archon = archonBinary();
+  if (archon) {
+    try {
+      const out = execFileSync(archon, ["workflow", "list", "--cwd", repoRoot, "--json"], { encoding: "utf8", env: { ...process.env, DO_NOT_TRACK: "1" }, stdio: ["ignore", "pipe", "ignore"], timeout: 120000 });
+      const listed = JSON.parse(out);
+      const names = new Set();
+      for (const workflow of listed.workflows) {
+        if (!workflow.name.startsWith("delivery-")) continue;
+        names.add(workflow.name);
+        for (const warning of workflow.parseWarnings ?? []) fail(`.archon/workflows (${workflow.name})`, 0, `archon warning: ${warning.slice(0, 200)}`);
       }
+      for (const error of listed.errors) fail(`.archon/workflows/${error.filename}`, 0, `archon: ${error.error.slice(0, 300)}`);
+      for (const { dir } of listNative()) {
+        for (const name of [`delivery-${dir}`, `delivery-${dir}-omp`]) if (!names.has(name)) fail(`.archon/workflows (${name})`, 0, "archon does not list this workflow");
+      }
+      archonChecked = `checked with ${archon}`;
+    } catch (error) {
+      fail(".archon/workflows", 0, `archon workflow list failed: ${String(error.message).split("\n")[0]}`);
     }
   }
-  const reachable = (skill) => {
-    const out = new Set();
-    for (const ctx of contexts) {
-      const command = PHASES[skill].next(ctx);
-      if (command) out.add(parseCommand(command)?.skill ?? command);
-    }
-    return out;
-  };
-  const tabled = new Set();
-  for (const [skill, type, nextCell, gate, interactive] of rows) {
-    tabled.add(skill);
-    if (skill === "run-task") continue;
-    const phase = PHASES[skill];
-    if (!phase) {
-      fail("workflows/delivery.md", 0, `phase table row "${skill}" has no entry in workflow.mjs PHASES`);
-      continue;
-    }
-    if (phase.type !== type) fail("workflows/delivery.md", 0, `"${skill}" artifact type is "${type}" in the table and "${phase.type}" in workflow.mjs`);
-    if (phase.gate !== (gate === "yes")) fail("workflows/delivery.md", 0, `"${skill}" human gate is "${gate}" in the table and ${phase.gate} in workflow.mjs`);
-    if (phase.interactive !== (interactive === "yes")) fail("workflows/delivery.md", 0, `"${skill}" interactive is "${interactive}" in the table and ${phase.interactive} in workflow.mjs`);
-    const named = new Set([...nextCell.matchAll(/\/([a-z0-9]+(?:-[a-z0-9]+)*)/g)].map((m) => m[1]));
-    const coded = reachable(skill);
-    const sortedNamed = [...named].sort().join(", ");
-    const sortedCoded = [...coded].sort().join(", ");
-    if (sortedNamed !== sortedCoded) {
-      fail("workflows/delivery.md", 0, `"${skill}" next command names [${sortedNamed}] in the table but workflow.mjs can hand off to [${sortedCoded}]`);
-    }
-  }
-  for (const skill of Object.keys(PHASES)) if (!tabled.has(skill)) fail("workflows/delivery.md", 0, `workflow.mjs PHASES has "${skill}" but the phase table does not`);
+}
 
-  // Chain rows: simulate the module for a plain repository (no workspace config, not a worktree) and a
-  // plan with one phase, up to the external pull request review.
-  for (const workflow of TYPES) {
-    if (workflow === "oneshot") continue;
-    const row = doc.split("\n").find((line) => line.startsWith(`| \`${workflow}\` |`));
-    if (!row) {
-      fail("workflows/delivery.md", 0, `no chain row for workflow type ${workflow}`);
-      continue;
-    }
-    const documented = row.split("|")[2].trim().split(",").map((s) => s.trim());
-    const chain = [];
-    let skill = parseCommand(START_COMMAND[workflow]).skill;
-    const seen = new Set();
-    while (skill && !seen.has(skill)) {
-      chain.push(skill);
-      seen.add(skill);
-      const command = PHASES[skill].next({ workflow, probe: { inWorktree: false, disabled: false }, remaining: [], status: "clean", artifact: "a.md", planFile: "p.md" });
-      skill = command ? parseCommand(command)?.skill ?? null : null;
-    }
-    if (chain.at(-1) === "resolve-pr-reviews") chain.pop();
-    chain.push("resolve-pr-reviews");
-    if (chain.join(",") !== documented.join(",")) {
-      fail("workflows/delivery.md", 0, `chain for ${workflow} is documented as [${documented.join(", ")}] but workflow.mjs produces [${chain.join(", ")}]`);
+// The first `archon` on PATH whose version is 0.10 or later, else null. `archon --version` prints
+// `Archon CLI vX.Y.Z` on its first line.
+function archonBinary() {
+  for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
+    const candidate = path.join(dir, "archon");
+    if (!dir || !fs.existsSync(candidate)) continue;
+    try {
+      const version = /v(\d+)\.(\d+)\./.exec(execFileSync(candidate, ["--version"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 20000 }));
+      if (version && (Number(version[1]) > 0 || Number(version[2]) >= 10)) return candidate;
+    } catch {
+      // Not a usable archon; keep looking.
     }
   }
+  return null;
 }
 
 // 12. The commit subject rule the conventions document is the rule the commit-msg hook and CI enforce.
@@ -487,6 +507,6 @@ function report() {
     process.exit(1);
   }
   console.log(
-    `ok: ${skillNames.length} skills, ${answerFiles.length} answer templates, ${HUMAN_REVIEW_TEMPLATES.length} human-review templates, ${bannedHits} banned tokens${generated ? ` (generated tree ${root})` : ""}`,
+    `ok: ${skillNames.length} skills, ${answerFiles.length} answer templates, ${HUMAN_REVIEW_TEMPLATES.length} human-review templates, ${bannedHits} banned tokens, packs ${archonChecked}${generated ? ` (generated tree ${root})` : ""}`,
   );
 }
