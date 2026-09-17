@@ -177,6 +177,8 @@ Artifact type is the frontmatter `type` of the artifact the skill writes. "Human
 | reproduce-bug | reproduction | yes | `delivery-bugfix` `reproduce` loop (gated) or `reproduce-auto` (up to four reproduction sessions, then cancel) |
 | fix-bug | fix | no | `delivery-bugfix` |
 | record-evidence | evidence | no | by hand |
+| test-app | app-test | no | `delivery-app-test` `test` loop in every pack except `delivery-epic` and `delivery-resolve-reviews`, when `app_test` is `web`, `ios`, or `android` |
+| typed-judgment | none | no | helper: `judge.mjs` is run by pack bash nodes and by `create-epic-plan`, `resolve-pr-reviews`, and `test-app` steps |
 | describe-pr | pr-description | yes | `delivery-gate-phase` `pr` in every pack except `delivery-epic` and `delivery-resolve-reviews`; also the iterate skill of that gate |
 | resolve-pr-reviews | pr-review | no | `delivery-resolve-reviews` |
 | ci-commit | commit | no | by hand; the `delivery-oneshot` and `delivery-bugfix` commit prompts follow its conventions |
