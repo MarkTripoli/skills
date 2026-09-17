@@ -27,9 +27,18 @@ Read from this skill directory: `references/tdd_template.md`, `references/artifa
 
 ## Step 1: Understand the context
 
-First, locate the task directory and read `task.md` per the conventions, creating it from the user's message when none exists. Then read primary inputs fully: PRD if present (the newest artifact of type `design-prd`), otherwise task/ticket plus design discussion (or the newest artifact of type `research` when no design discussion exists), and user-mentioned files. For other artifacts in the task directory listing: use `summary` field, open only when summary shows it bears on design, read by heading. Exclude research-question artifacts. Read `references/tdd_template.md` before creating.
+First, locate the task directory and read `task.md` per the conventions, creating it from the user's message when none exists. Then read primary inputs fully: PRD if present (the newest artifact of type `design-prd`), otherwise task/ticket plus design discussion (or the newest artifact of type `research` when no design discussion exists), the newest artifact of type `sources` when one exists (vendor documentation, API contracts, and specs a `gather-sources` session fetched, cited by location and pointer), and user-mentioned files. For other artifacts in the task directory listing: use `summary` field, open only when summary shows it bears on design, read by heading. Exclude research-question artifacts. Read `references/tdd_template.md` before creating.
 
 PRD is helpful but not required. Cite inputs; do not duplicate. If requirements are thin, ask questions instead of inventing scope. When technical reality changes product behavior, make that explicit.
+
+## Converting an existing technical document
+
+When the request asks to convert, import, adopt, or port an existing RFC, design document, technical spec, or architecture decision record, and the newest artifact of type `sources` (or a file the user names) holds it, the interview and its two review gates do not run. Write the whole TDD in one pass and stop at Step 7:
+
+1. Map the source onto the template: its architecture, components, endpoints, data flow, and external systems become System Design; its module layout, call paths, and internal contracts become Program Design; its interfaces, schemas, and message shapes become Type Definitions; its settings, flags, and migrations become Configuration; its failure modes and recovery become Error Handling; its non-goals become What We're Not Doing. Beside each mapped statement cite the source as the sources artifact records it: location and pointer. Redraw a diagram the source gives as Mermaid only when its content is fully stated; otherwise link the source's visual by location.
+2. Fill the blanks from the repository, not from the source: for each area the source names, start a child worker for role `agent-codebase-locator` or `agent-codebase-pattern-finder` (see the conventions' Child workers section), wait for it, read its final message, and write Local Patterns from what it found, cited with paths. Where the repository contradicts the source (a module, contract, or store the source assumes does not exist or differs), record the difference in the affected section and as a `### Known limits` item; do not resolve it.
+3. A template section the source does not cover, and every item the source marks open (`TBD`, `TODO`, `open question`, `to be decided`), reads `Not stated in <source title>.` followed by the closest fact the source gives, never an invented decision. Each becomes one `### Known limits` item and one `### Verify` box naming the decision the reader must make.
+4. Do not ask questions during the conversion. Wrap up per Step 7: save, commit, and reply with `references/tdd_final_answer.md`, whose `Check:` and `Known limits:` lines carry the blanks the reader fills before the plan.
 
 ## Step 2: Write the skeleton
 

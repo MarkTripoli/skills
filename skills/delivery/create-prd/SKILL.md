@@ -29,9 +29,20 @@ Read from this skill directory: `references/prd_template.md`, `references/prd_fi
 
 ## Step 1: Understand the context
 
-First, locate the task directory and read `task.md` per the conventions, creating it from the user's message when none exists. Then read primary inputs fully: task or ticket, design discussion if present (otherwise the newest artifact of type `research`), every user-mentioned file. For other artifacts in the task directory listing: use `summary` field, open only when summary shows it bears on PRD, read by heading. Exclude research-question artifacts. Read `references/prd_template.md` before writing.
+First, locate the task directory and read `task.md` per the conventions, creating it from the user's message when none exists. Then read primary inputs fully: task or ticket, design discussion if present (otherwise the newest artifact of type `research`), the newest artifact of type `sources` when one exists, every user-mentioned file. For other artifacts in the task directory listing: use `summary` field, open only when summary shows it bears on PRD, read by heading. Exclude research-question artifacts. Read `references/prd_template.md` before writing.
 
-PRD can start from detailed ticket, research, design discussion, or short request. Ground claims in source. Reference upstream artifacts; do not copy. If context is thin, ask questions instead of inventing. Capture product implications of technical constraints; leave implementation for TDD.
+PRD can start from detailed ticket, research, design discussion, gathered sources, or short request. Ground claims in source. Reference upstream artifacts; do not copy. If context is thin, ask questions instead of inventing. Capture product implications of technical constraints; leave implementation for TDD.
+
+## Converting an existing product document
+
+When the request asks to convert, import, adopt, or port an existing PRD, product spec, or brief, and the newest artifact of type `sources` (or a file the user names) holds it, the interview does not run. Write the whole PRD in one pass and stop at Step 6:
+
+1. Map the source onto the template: its problem statement and user impact become Problem to Solve; its goals, metrics, or success criteria become Success Measures; its chosen approach becomes Proposed Solution; rejected options become Alternative Solutions Considered; each requirement, user story, flow, or acceptance criterion becomes one Solution Details obligation with an observable outcome; its non-goals become Out of Scope. Beside each mapped statement cite the source as the sources artifact records it: location and pointer.
+2. A template section the source does not cover reads `Not stated in <source title>.` followed by the closest fact the source gives, never an invented one. Each such section, and each source statement too vague to be one obligation, becomes one `### Known limits` item and one `### Verify` box naming the decision the reader must make.
+3. Do not ask questions during the conversion. Do not write mockups; link the source's own visuals by location when it has them. Do not reconcile the source with the codebase; that is the TDD's work.
+4. Wrap up per Step 6: save, commit, and reply with `references/prd_final_answer.md`, whose `Check:` and `Known limits:` lines carry the blanks the reader fills before the TDD.
+
+Outside this case, a sources artifact that holds a product document is an input to the interview: draft Problem to Solve, the success signal, and each Solution Details behavior from its excerpts, quoting the source and its pointer beside each, and confirm or amend each drafted decision one question at a time instead of rediscovering it.
 
 If work touches UI, mockups look like the user's product, not a generic template. Check research for colors, typography, spacing, components, theming. If none documented, start a child worker for role `agent-codebase-analyzer` to identify the design system before creating mockups.
 
