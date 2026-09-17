@@ -68,12 +68,24 @@ export function collect(db, since) {
   const model = { families: new Map(), runs, events: [], runsScanned: runs.length };
   for (const [name, type, buckets] of [["archon_runs_total", "counter"], ["archon_run_duration_seconds", "histogram", HISTOGRAMS.archon_run_duration_seconds], ["archon_node_duration_seconds", "histogram", HISTOGRAMS.archon_node_duration_seconds], ["archon_node_failures_total", "counter"], ["archon_gate_wait_seconds", "histogram", HISTOGRAMS.archon_gate_wait_seconds], ["archon_gate_decisions_total", "counter"], ["archon_loop_iterations", "histogram", HISTOGRAMS.archon_loop_iterations], ["archon_metrics_runs_scanned", "gauge"], ["archon_metrics_db_mtime_seconds", "gauge"]]) family(model, name, type, buckets);
   const workflows = new Map(runs.map((run) => [run.id, text(run.workflow_name)]));
+  model.events = eventRows(db, runs.map((run) => run.id)).map((event) => ({ ...event, workflow: workflows.get(event.workflow_run_id) || "unknown" }));
+  // A run that paused and resumed gets its `started_at` reset by the last continuation, so the row's
+  // own span is the last leg only; the first and last event of the run bound the real wall time.
+  const span = new Map();
+  for (const event of model.events) {
+    const current = span.get(event.workflow_run_id) || { first: event.created_at, last: event.created_at };
+    if (event.created_at < current.first) current.first = event.created_at;
+    if (event.created_at > current.last) current.last = event.created_at;
+    span.set(event.workflow_run_id, current);
+  }
   for (const run of runs) {
     const labels = { workflow: text(run.workflow_name), gates: gatesFor(run) };
     add(model, "archon_runs_total", "counter", { ...labels, outcome: runOutcome(run) }, 1);
-    const seconds = duration(run.started_at, run.completed_at); if (seconds !== null) observe(model, "archon_run_duration_seconds", labels, seconds);
+    if (!run.completed_at) continue;
+    const events = span.get(run.id);
+    const seconds = events ? duration(events.first, events.last) : duration(run.started_at, run.completed_at);
+    if (seconds !== null) observe(model, "archon_run_duration_seconds", labels, seconds);
   }
-  model.events = eventRows(db, runs.map((run) => run.id)).map((event) => ({ ...event, workflow: workflows.get(event.workflow_run_id) || "unknown" }));
   const loops = new Map();
   for (const event of model.events) {
     const data = json(event.data); const workflow = event.workflow; const node = text(event.step_name || data.nodeId);

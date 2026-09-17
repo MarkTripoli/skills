@@ -22,6 +22,8 @@ function fixture() {
   run.run("r1", "delivery-full", "completed", null, "2026-01-01 00:00:00", "2026-01-01 00:10:00", "2026-01-01 00:10:00", '{"inputs":{"gates":"pr"}}', null, null, null);
   run.run("r2", "delivery-oneshot", "completed", null, "2026-01-01 00:00:00", "2026-01-01 00:02:00", "2026-01-01 00:02:00", '{"inputs":{"gates":"none"}}', null, null, null);
   run.run("r3", "delivery-bugfix", "failed", "failed", "2026-01-01 00:00:00", "2026-01-01 00:03:00", "2026-01-01 00:03:00", "{}", null, null, null);
+  // A resumed run: Archon resets started_at on the last continuation, so the row spans 0 s while its events span 15 min.
+  run.run("r4", "delivery-lean", "completed", null, "2026-01-01 00:15:00", "2026-01-01 00:15:00", "2026-01-01 00:15:00", "{}", null, null, null);
   const event = db.prepare("INSERT INTO remote_agent_workflow_events VALUES (?, ?, ?, ?, ?, ?)");
   const add = (id, order, type, node, data, created) => event.run(id, order, type, node, JSON.stringify(data), `2026-01-01 ${created}`);
   add("r1", 1, "workflow_started", null, {}, "00:00:00");
@@ -37,6 +39,9 @@ function fixture() {
   add("r2", 1, "workflow_cancelled", null, { reason: "cancelled by test" }, "00:02:00");
   add("r3", 1, "node_failed", "bash", { type: "bash", duration_ms: 2000, error: "e".repeat(600) }, "00:01:00");
   add("r3", 2, "workflow_failed", null, { error: "failed" }, "00:03:00");
+  add("r4", 1, "workflow_started", null, {}, "00:00:00");
+  add("r4", 2, "approval_requested", "gate", {}, "00:05:00");
+  add("r4", 3, "workflow_completed", null, { duration_ms: 50 }, "00:15:00");
   db.close();
   return { dir, file };
 }
@@ -75,13 +80,14 @@ test("collect and render all metric families", () => {
   assert.match(output, /archon_loop_iterations_bucket\{le="4",node="review-loop",workflow="delivery-full"\} 1/);
   assert.match(output, /archon_tokens_total\{kind="cache_read",node="prompt",workflow="delivery-full"\} 3/);
   assert.match(output, /archon_cost_usd_total\{node="prompt",workflow="delivery-full"\} 0.25/);
-  assert.match(output, /archon_metrics_runs_scanned 3/);
+  assert.match(output, /archon_run_duration_seconds_sum\{gates="all",workflow="delivery-lean"\} 900/, "a resumed run is measured from its first event to its last, not from the reset started_at");
+  assert.match(output, /archon_metrics_runs_scanned 4/);
   assert.match(output, /archon_metrics_db_mtime_seconds [0-9]+\.[0-9]+/);
   const lines = influxLines(model);
   assert.ok(lines.some((line) => line.startsWith("archon_runs_total,")));
   assert.ok(lines.some((line) => line.includes("archon_run_duration_seconds_bucket") && line.endsWith("value=1")));
   const payload = lokiPayload(model.events);
-  assert.equal(payload.streams.length, 7);
+  assert.equal(payload.streams.length, 9, "one Loki stream per workflow and event type that is pushed");
   const failed = payload.streams.find((stream) => stream.stream.event_type === "node_failed");
   assert.equal(JSON.parse(failed.values[0][1]).error.length, 500);
 });
