@@ -221,17 +221,23 @@ const SPLITS = {
   none: "No split applies: the child is already one unit of work.",
 };
 
-// The four tests of shared/SLICING.md, as probabilities that the child passes each one. A child fails on its
-// weakest test: one clear no is enough to split, and every test must be clearly yes before the child stands.
+// Sizing bars, set from a calibration run over eight children, four of them one pull request each and four
+// oversize: the structural tests separated at 0.65 against 0.52, so a pass needs 0.60 and a clear fail sits
+// under 0.40. The effort question answers lower for every child because the model cannot see the codebase
+// (0.54 to 0.67 for the small ones, 0.06 to 0.22 for the oversize ones), so it carries its own two bars.
+const SIZE = { pass: 0.6, fail: 0.4, effort_pass: 0.4, effort_fail: 0.25 };
+
+// The four tests of shared/SLICING.md, as probabilities that the child passes each one. A child fails on the
+// test furthest below its bar; a declared enabler is exempt from the vertical-slice test by design.
 async function sizeChildren(file) {
   const children = JSON.parse(fs.readFileSync(file, "utf8"));
   const questions = {};
   children.forEach((child, i) => {
     const it = `the child task \`children[${i}]\` (named \`children[${i}].name\`, described in \`children[${i}].prompt\`)`;
-    questions[`obligation_${i}`] = noul(`${it} states one obligation: a single actor, a single thing the system must do, and a single measurable pass criterion. Wording such as "and also" or a second unconditional requirement means more than one obligation.`);
+    questions[`obligation_${i}`] = noul(`${it} asks one thing of the system: one actor, one behavior, and one measurable pass criterion, stated in \`children[${i}].acceptance\` when it has them. Naming the files to change, the tests to write, or the documentation to update is part of that one obligation. Two unrelated behaviors, or wording such as "and also", is more than one.`);
     questions[`vertical_${i}`] = noul(`${it} ends at behavior a user or a calling program can exercise once it merges, crossing whatever storage, service, contract, and client layers that behavior needs. A change that stops at one layer boundary and leaves nothing exercisable does not.`);
-    questions[`one_day_${i}`] = noul(`One engineer implements ${it}, proves it, and opens the pull request within one working day.`);
-    questions[`merge_safe_${i}`] = noul(`Merging ${it} on its own leaves the product working: its path is additive, unreachable until later work, or held behind a flag whose default keeps today's behavior.`);
+    questions[`one_day_${i}`] = noul(`An engineer who knows this codebase implements ${it}, proves it with a test or an observation, and opens the pull request within one working day.`);
+    questions[`merge_safe_${i}`] = noul(`Merging ${it} on its own leaves the product releasable: it finishes the behavior it changes, or its path stays additive, unreachable until later work, or behind a flag whose default keeps today's behavior. A child that half-changes a behavior another child must finish does not.`);
     if (Array.isArray(child.acceptance) && child.acceptance.length) {
       questions[`criteria_${i}`] = noul(`Every sentence in \`children[${i}].acceptance\` names observable state (a status code, stored record, emitted event, exit code, or rendered value) that a command, request, or observation decides, states one behavior, and avoids unmeasurable words such as fast, secure, user-friendly, or works correctly.`);
     }
@@ -245,9 +251,17 @@ async function sizeChildren(file) {
       one_day: answers[`one_day_${i}`].noul,
       merge_safe: answers[`merge_safe_${i}`].noul,
     };
-    const weakest = Object.keys(tests).reduce((worst, key) => (tests[key] < tests[worst] ? key : worst));
-    const probability = tests[weakest];
-    const verdict = probability <= T.no ? "split" : probability >= T.yes ? "ok" : "unclear";
+    const enabler = child.slice === "enabler";
+    const bars = { single_obligation: SIZE.pass, merge_safe: SIZE.pass, one_day: SIZE.effort_pass };
+    if (!enabler) bars.vertical_slice = SIZE.pass;
+    const weakest = Object.keys(bars).reduce((worst, key) => (tests[key] - bars[key] < tests[worst] - bars[worst] ? key : worst));
+    const structural = Math.min(...Object.keys(bars).filter((key) => key !== "one_day").map((key) => tests[key]));
+    const verdict =
+      structural < SIZE.fail || tests.one_day < SIZE.effort_fail
+        ? "split"
+        : structural >= SIZE.pass && tests.one_day >= SIZE.effort_pass
+          ? "ok"
+          : "unclear";
     const criteriaAnswer = answers[`criteria_${i}`];
     const criteria = !criteriaAnswer ? "none" : criteriaAnswer.noul >= T.yes ? "ok" : criteriaAnswer.noul <= T.no ? "weak" : "unclear";
     const suggestion = answers[`split_${i}`];
@@ -256,8 +270,9 @@ async function sizeChildren(file) {
       name: child.name,
       verdict,
       weakest,
-      probability,
+      probability: tests[weakest],
       tests,
+      enabler,
       criteria,
       criteria_probability: criteriaAnswer?.noul ?? null,
       split: named ? suggestion.choice : null,

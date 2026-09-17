@@ -38,9 +38,9 @@ Run from the skill's directory under the installed skills (`<skills dir>/typed-j
 | `grade-steps <steps.json>` | `pass`, `fail`, `unclear` and a severity level per step | `test-app` |
 | `ask --state <json> --questions <json>` | the raw answers object | ad hoc |
 
-Input shapes: `--children` is `[{name, prompt}]` for `route-workflow` and `[{name, prompt, acceptance}]` for `size-children`; `triage-threads` reads `[{id, author, body, hunk?}]`; `grade-steps` reads `[{id, expected, observed}]`.
+Input shapes: `--children` is `[{name, prompt}]` for `route-workflow` and `[{name, slice, prompt, acceptance}]` for `size-children`; `triage-threads` reads `[{id, author, body, hunk?}]`; `grade-steps` reads `[{id, expected, observed}]`.
 
-`size-children` asks the four tests of the [slicing guide](https://github.com/MarkTripoli/skills/blob/main/shared/SLICING.md) as one probability each (single obligation, vertical slice, one day, safe to merge alone), plus one probability for whether the child's acceptance sentences name observable state, plus the speculative question of which split would apply. A child fails on its weakest test: one clear no makes the verdict `split`, every test clearly yes makes it `ok`, anything between is `unclear` and the skill decides.
+`size-children` asks the four tests of the [slicing guide](https://github.com/MarkTripoli/skills/blob/main/shared/SLICING.md) as one probability each (single obligation, vertical slice, one day, safe to merge alone), plus one probability for whether the child's acceptance sentences name observable state, plus the speculative question of which split would apply. A child fails on whichever test sits furthest below its bar. The effort question carries lower bars than the text questions because the model cannot see the codebase and hedges on every child; the bars come from a calibration set of eight children, four of them one pull request each and four oversize. A child whose `slice` is `enabler` skips the vertical test, since stopping at a layer boundary is what it declares; its consumer is the skill's check, not the model's.
 
 ## Rules
 

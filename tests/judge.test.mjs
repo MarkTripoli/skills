@@ -142,12 +142,12 @@ test("judge feedback-intent, route-workflow, slug, tier, triage-threads, grade-s
   } finally { stub.close(); }
 });
 
-test("judge size-children: the weakest of the four slicing tests decides the verdict, and a split is named only when the model is sure", async () => {
-  let oneDay = 0.95; let criteria = 0.95; let split = "workflow_step"; let confidence = 0.95;
+test("judge size-children: each sizing test is read against its own bar, a declared enabler skips the vertical test, and a split is named only when the model is sure", async () => {
+  let oneDay = 0.9; let vertical = 0.9; let criteria = 0.95; let split = "workflow_step"; let confidence = 0.95;
   const stub = await startStub((id, question) =>
     question.type === "choice"
       ? choice(split, question.criteria, confidence)
-      : noul(id.startsWith("one_day") ? oneDay : id.startsWith("criteria") ? criteria : 0.95),
+      : noul(id.startsWith("one_day") ? oneDay : id.startsWith("vertical") ? vertical : id.startsWith("criteria") ? criteria : 0.9),
   );
   try {
     const file = tmp("children.json", JSON.stringify([
@@ -155,25 +155,42 @@ test("judge size-children: the weakest of the four slicing tests decides the ver
       { name: "Rebuild the gateway", prompt: "Move every endpoint onto the new router." },
     ]));
     let rows = JSON.parse((await judge(["size-children", "--children", file, "--json"], stub.env)).out);
-    assert.deepEqual(rows.map((row) => [row.verdict, row.split]), [["ok", null], ["ok", null]], "every test clearly yes stands, and no split is applied to a child that passes");
+    assert.deepEqual(rows.map((row) => [row.verdict, row.split]), [["ok", null], ["ok", null]], "every test above its bar stands, and no split is applied to a child that passes");
     assert.deepEqual([rows[0].criteria, rows[1].criteria], ["ok", "none"], "a child without acceptance sentences is not judged on them");
     assert.deepEqual(Object.keys(stub.requests.at(-1).questions).filter((id) => id.startsWith("criteria")), ["criteria_0"]);
 
-    oneDay = 0.1;
+    // The effort question answers lower than the text questions for every child, so it carries lower bars:
+    // 0.5 still passes, 0.2 is a clear no.
+    oneDay = 0.5;
+    assert.equal(JSON.parse((await judge(["size-children", "--children", file, "--json"], stub.env)).out)[0].verdict, "ok", "a hedged effort answer alone does not split a child");
+    oneDay = 0.2;
     rows = JSON.parse((await judge(["size-children", "--children", file, "--json"], stub.env)).out);
     assert.deepEqual(rows.map((row) => [row.verdict, row.weakest, row.split]), [["split", "one_day", "workflow_step"], ["split", "one_day", "workflow_step"]]);
-    assert.equal((await judge(["size-children", "--children", file], stub.env)).out.split("\n")[0], "Reject expired keys\tsplit\tone_day\t0.1\tworkflow_step");
+    assert.equal((await judge(["size-children", "--children", file], stub.env)).out.split("\n")[0], "Reject expired keys\tsplit\tone_day\t0.2\tworkflow_step");
 
     confidence = 0.6;
     rows = JSON.parse((await judge(["size-children", "--children", file, "--json"], stub.env)).out);
     assert.deepEqual([rows[0].split, rows[0].suggested_split], [null, "workflow_step"], "an unsure split is reported but never applied");
-
     confidence = 0.95; split = "none";
     assert.equal(JSON.parse((await judge(["size-children", "--children", file, "--json"], stub.env)).out)[0].split, null, "no split pattern fits: the skill decides");
 
-    oneDay = 0.5; criteria = 0.1;
-    rows = JSON.parse((await judge(["size-children", "--children", file, "--json"], stub.env)).out);
-    assert.deepEqual([rows[0].verdict, rows[0].criteria], ["unclear", "weak"], "the band between the bars hands the decision back, and vague criteria are flagged on their own");
+    oneDay = 0.9; criteria = 0.1;
+    const banded = tmp("banded.json", JSON.stringify([{ name: "Half sure", prompt: "Do the thing.", acceptance: ["The system shall be fast."] }]));
+    const between = await startStub((id, question) => (question.type === "choice" ? choice("none", question.criteria, 0.95) : noul(id.startsWith("merge_safe") ? 0.5 : id.startsWith("criteria") ? 0.1 : 0.9)));
+    try {
+      const row = JSON.parse((await judge(["size-children", "--children", banded, "--json"], between.env)).out)[0];
+      assert.deepEqual([row.verdict, row.weakest, row.criteria], ["unclear", "merge_safe", "weak"], "between the bars the decision goes back to the skill, and vague criteria are flagged on their own");
+    } finally { between.close(); }
+
+    // A child that stops at a layer boundary fails the vertical test unless the plan declares it an enabler.
+    vertical = 0.1; criteria = 0.95;
+    const migration = tmp("migration.json", JSON.stringify([{ name: "Add the invoices table", prompt: "Add the migration; nothing reads it yet.", acceptance: ["The migration shall create the invoices table."] }]));
+    assert.equal(JSON.parse((await judge(["size-children", "--children", migration, "--json"], stub.env)).out)[0].verdict, "split");
+    const enabler = tmp("enabler.json", JSON.stringify([{ name: "Add the invoices table", slice: "enabler", prompt: "Add the migration; nothing reads it yet.", acceptance: ["The migration shall create the invoices table."] }]));
+    const row = JSON.parse((await judge(["size-children", "--children", enabler, "--json"], stub.env)).out)[0];
+    assert.deepEqual([row.verdict, row.enabler], ["ok", true], "a declared enabler is exempt from the vertical test; its consumer is the skill's check");
+    assert.ok(row.tests.vertical_slice === 0.1, "the vertical probability is still reported for the reader");
+
     assert.equal((await judge(["size-children"], stub.env)).code, 2);
   } finally { stub.close(); }
 });
