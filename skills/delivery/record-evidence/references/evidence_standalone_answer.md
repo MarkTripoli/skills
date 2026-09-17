@@ -11,8 +11,4 @@ Caveats:
 
 Posted to: <PR comment link, tracker issue, or "requester only">
 
-This recording belongs to no task, so no phase follows. Attach the video wherever the work is tracked.
-
-```text
-/show-me
-```
+Attach the video wherever the work is tracked. No further action is scheduled.

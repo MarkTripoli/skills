@@ -87,8 +87,8 @@ Never fix a degraded phase with `/compact`. The artifact survives a new session;
 A new skill that joins a workflow keeps the guarantees above by following the conventions:
 
 - Read only `task.md` and selected artifacts; delegate codebase exploration to workers; never paste worker output.
-- Save the artifact before printing the reply; the reply ends with the fresh-session sentence and one command fence.
+- Save the artifact before printing the reply; a handoff ends with `Next action:`, `Open a new session, then run:`, and one command fence. A terminal reply ends with its state and has no fence.
 - Stop on the first sign of degradation and hand off from the saved file.
 - When a pack node needs to route on the result, put the JSON-only answer requirement in the pack prompt with an `output_format`, not in the skill; the skill keeps writing its artifact first.
 
-`npm test` checks the reply shape, the fresh-session sentence, the shared links, and the banned tokens for every skill in the collection.
+`npm test` checks the reply shape, the next-action label, the new-session instruction, the shared links, and the banned tokens for every skill in the collection.

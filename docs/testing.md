@@ -4,7 +4,7 @@ The collection is checked at three depths. None spends tokens.
 
 | Layer | Command | Answers |
 |---|---|---|
-| Skill validation | `node scripts/validate.mjs` | Are the skill files well formed: layout, frontmatter, shared links, referenced templates, handoff fences, the fresh-session sentence, banned words, phase-table coverage? |
+| Skill validation | `node scripts/validate.mjs` | Are the skill files well formed: layout, frontmatter, shared links, referenced templates, actionable handoffs, terminal reply shape, banned words, phase-table coverage? |
 | Pack checks | `node scripts/build-packs.mjs --check`, then `archon workflow test <pack>` | Is the generated OMP flavor current, and does each pack's DAG route as its fixtures declare, without an agent? |
 | Unit tests | `node --test tests/` | Do the installer, the commit-subject rule, the pack generator, and the deterministic pack nodes behave? |
 
@@ -18,7 +18,7 @@ Only the phase work needs tokens, and nothing here runs it.
 
 ## Skill validation
 
-`scripts/validate.mjs` checks, in order: the `skills/` layout and count; frontmatter keys and names; the shared-document links on line 6; every `references/` file a skill mentions exists; every answer template ends with one `text` fence naming an existing skill and carries the fresh-session sentence exactly once (terminal `/show-me` replies excepted); human-review templates have the four review headings; implementation templates declare `type` and `completed_phase`; human-gate answers carry `{artifact_link}`, a `Check:` line, and the approval sentence; banned host tokens are absent from every file; `workflows/delivery.md` mentions every delivery skill and has the phase table; and the commit subject regex and length limit written in `shared/CONVENTIONS.md` are the ones `scripts/check-commits.mjs` enforces. Exit 1 with one `file:line: message` per failure.
+`scripts/validate.mjs` checks, in order: the `skills/` layout and count; frontmatter keys and names; the shared-document links on line 6; every `references/` file a skill mentions exists; every nonterminal answer template ends with one `text` fence naming an existing skill and carries `Next action:` plus the new-session instruction exactly once; terminal replies contain no fence; human-review templates have the four review headings; implementation templates declare `type` and `completed_phase`; human-gate answers carry `{artifact_link}`, a `Check:` line, and the approval sentence; banned host tokens are absent from every file; `workflows/delivery.md` mentions every delivery skill and has the phase table; and the commit subject regex and length limit written in `shared/CONVENTIONS.md` are the same values the hook enforces.
 
 Run it on a generated runtime tree with `node scripts/validate.mjs --root dist/<runtime>`.
 

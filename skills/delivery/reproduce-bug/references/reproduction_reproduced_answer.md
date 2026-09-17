@@ -10,9 +10,10 @@ Known limits:
 
 Reply with the changes you want, or run `/reproduce-bug` again with corrections; either revises the artifact in place. Running the next command records approval: the fix goes ahead from the artifact's `## Fix` steps.
 
-Start the next phase in a new session; continuing in this session carries this phase's context into the next one.
+The fix phase has not started. It applies the artifact's `## Fix` steps, makes the reproduction pass, commits with explicit paths, and then runs the review.
 
-Apply the `## Fix` steps and make the reproduction pass, commit with explicit paths, then run the review:
+Next action:
+Open a new session, then run:
 
 ```text
 /fix-bug

@@ -28,8 +28,9 @@ const LINE6 =
 const RESEARCH_VARIANTS = { full: "create-design-discussion", lean: "create-structure-outline", prd: "create-prd" };
 // The deliver skill's by-hand reply names the first skill of the routed chain.
 const DELIVER_VARIANTS = { bugfix: "reproduce-bug", oneshot: "review-code", lean: "create-research-questions", full: "create-research-questions", prd: "create-research", epic: "create-research-questions", program: "create-research" };
+const TERMINAL_ANSWER = "<terminal>";
 
-// answer file -> skill named in the final fence (research answers: per workflow variant).
+// answer file -> skill named in the final fence, or TERMINAL_ANSWER when no skill follows.
 const ANSWER_INVENTORY = {
   "ci-commit/references/commit_final_answer.md": "describe-pr",
   "create-design-discussion/references/design_discussion_final_answer.md": "create-plan",
@@ -44,7 +45,7 @@ const ANSWER_INVENTORY = {
   "create-tdd/references/tdd_final_answer.md": "create-plan",
   "create-tdd/references/tdd_program_review_answer.md": "iterate-tdd",
   "create-tdd/references/tdd_system_review_answer.md": "iterate-tdd",
-  "deliver/references/deliver_archon_answer.md": "show-me",
+  "deliver/references/deliver_archon_answer.md": TERMINAL_ANSWER,
   "deliver/references/deliver_hand_answer.md": DELIVER_VARIANTS,
   "describe-pr/references/pr_description_final_answer.md": "resolve-pr-reviews",
   "fix-code-review/references/code_review_fixes_answer.md": "review-code",
@@ -67,23 +68,23 @@ const ANSWER_INVENTORY = {
   "iterate-tdd/references/tdd_review_answer.md": "iterate-tdd",
   "record-evidence/references/evidence_failed_answer.md": "iterate-implementation",
   "record-evidence/references/evidence_final_answer.md": "describe-pr",
-  "record-evidence/references/evidence_standalone_answer.md": "show-me",
-  "reproduce-bug/references/reproduction_not_reproduced_answer.md": "show-me",
+  "record-evidence/references/evidence_standalone_answer.md": TERMINAL_ANSWER,
+  "reproduce-bug/references/reproduction_not_reproduced_answer.md": TERMINAL_ANSWER,
   "reproduce-bug/references/reproduction_reproduced_answer.md": "fix-bug",
-  "resolve-pr-reviews/references/pr_review_approved_answer.md": "show-me",
+  "resolve-pr-reviews/references/pr_review_approved_answer.md": TERMINAL_ANSWER,
   "resolve-pr-reviews/references/pr_review_pending_answer.md": "resolve-pr-reviews",
   "review-artifact-comments/references/comments_final_answer.md": "iterate-implementation",
-  "review-code/references/code_review_blocked_answer.md": "show-me",
+  "review-code/references/code_review_blocked_answer.md": TERMINAL_ANSWER,
   "review-code/references/code_review_clean_answer.md": "describe-pr",
   "review-code/references/code_review_findings_answer.md": "fix-code-review",
-  "show-me/references/show_me_final_answer.md": "show-me",
-  "start-epic-delivery/references/epic_delivery_final_answer.md": "show-me",
+  "show-me/references/show_me_final_answer.md": TERMINAL_ANSWER,
+  "start-epic-delivery/references/epic_delivery_final_answer.md": TERMINAL_ANSWER,
   "test-app/references/app_test_passed_answer.md": "describe-pr",
   "test-app/references/app_test_failed_answer.md": "iterate-implementation",
-  "test-app/references/app_test_blocked_answer.md": "show-me",
+  "test-app/references/app_test_blocked_answer.md": TERMINAL_ANSWER,
   "verify-implementation/references/verification_passed_answer.md": "review-code",
   "verify-implementation/references/verification_failed_answer.md": "iterate-implementation",
-  "verify-implementation/references/verification_blocked_answer.md": "show-me",
+  "verify-implementation/references/verification_blocked_answer.md": TERMINAL_ANSWER,
 };
 
 const HUMAN_REVIEW_TEMPLATES = [
@@ -260,24 +261,33 @@ const inventoryFiles = Object.keys(ANSWER_INVENTORY).sort();
 for (const file of answerFiles) if (!ANSWER_INVENTORY[file]) fail(rel(skillFile(file)), 0, "answer template missing from the declared inventory");
 for (const file of inventoryFiles) if (!answerFiles.includes(file)) fail(rel(skillFile(file)), 0, "declared answer template does not exist");
 
-const FRESH_SESSION_SENTENCE = "Start the next phase in a new session; continuing in this session carries this phase's context into the next one.";
+const FRESH_SESSION_SENTENCE = "Open a new session, then run:";
+const NEXT_ACTION_LABEL = "Next action:";
 
-function checkHandoff(content, expectedSkill, label, { terminal = expectedSkill === "show-me" } = {}) {
+function checkHandoff(content, expectedSkill, label, { terminal = false } = {}) {
   const blocks = fences(content);
+  const freshSentences = content.split(FRESH_SESSION_SENTENCE).length - 1;
+  const nextActionLabels = content.split(NEXT_ACTION_LABEL).length - 1;
+  if (terminal) {
+    if (blocks.length !== 0) fail(label, 0, `terminal reply must have no fenced blocks, found ${blocks.length}`);
+    if (freshSentences !== 0) fail(label, 0, "terminal reply must not carry the fresh-session sentence");
+    if (nextActionLabels !== 0) fail(label, 0, "terminal reply must not carry a next-action label");
+    return;
+  }
   if (blocks.length !== 1) return fail(label, 0, `expected exactly one fenced block, found ${blocks.length}`);
   const [block] = blocks;
-  if (block.lang.toLowerCase() !== "text") return fail(label, 0, `final fence must be a text fence, found "${block.lang}"`);
+  if (block.lang.toLowerCase() !== "text") fail(label, 0, `final fence must be a text fence, found "${block.lang}"`);
   const body = block.body.trim();
   const match = /^\/([a-z0-9]+(?:-[a-z0-9]+)*)( @\S+)?$/.exec(body);
-  if (!match) return fail(label, 0, `fence must hold one /<skill>[ @<file>] line, found "${body}"`);
-  if (!skillSet.has(match[1])) fail(label, 0, `fence names unknown skill "${match[1]}"`);
-  if (match[1] !== expectedSkill) fail(label, 0, `fence names "${match[1]}", expected "${expectedSkill}"`);
+  if (!match) fail(label, 0, `fence must hold one /<skill>[ @<file>] line, found "${body}"`);
+  if (match && !skillSet.has(match[1])) fail(label, 0, `fence names unknown skill "${match[1]}"`);
+  if (match && match[1] !== expectedSkill) fail(label, 0, `fence names "${match[1]}", expected "${expectedSkill}"`);
   if (content.slice(block.end).trim() !== "") fail(label, 0, "nothing may follow the command fence");
-  const sentences = content.split(FRESH_SESSION_SENTENCE).length - 1;
-  if (terminal) {
-    if (sentences !== 0) fail(label, 0, "terminal replies must not carry the fresh-session sentence");
-  } else if (sentences !== 1) {
-    fail(label, 0, `must carry the fresh-session sentence exactly once before the fence (found ${sentences})`);
+  if (freshSentences !== 1) fail(label, 0, `must carry the fresh-session sentence exactly once before the fence (found ${freshSentences})`);
+  if (nextActionLabels !== 1) fail(label, 0, `must carry the next-action label exactly once before the fence (found ${nextActionLabels})`);
+  const handoff = `${NEXT_ACTION_LABEL}\n${FRESH_SESSION_SENTENCE}`;
+  if (!content.slice(0, block.index).trimEnd().endsWith(handoff)) {
+    fail(label, 0, "handoff must end with Next action: followed by Open a new session, then run: immediately before the command fence");
   }
 }
 
@@ -285,7 +295,9 @@ for (const [file, expected] of Object.entries(ANSWER_INVENTORY)) {
   const full = skillFile(file);
   if (!fs.existsSync(full)) continue;
   const raw = fillTemplate(read(full));
-  if (typeof expected === "object") {
+  if (expected === TERMINAL_ANSWER) {
+    checkHandoff(raw, null, rel(skillFile(file)), { terminal: true });
+  } else if (typeof expected === "object") {
     for (const [workflow, skill] of Object.entries(expected)) {
       const rendered = renderWorkflowVariant(raw, workflow, expected);
       if (!rendered) {
@@ -295,7 +307,7 @@ for (const [file, expected] of Object.entries(ANSWER_INVENTORY)) {
       checkHandoff(rendered, skill, `${rel(skillFile(file))} (${workflow})`);
     }
   } else {
-    checkHandoff(raw, expected, rel(skillFile(file)), { terminal: expected === "show-me" });
+    checkHandoff(raw, expected, rel(skillFile(file)));
   }
 }
 

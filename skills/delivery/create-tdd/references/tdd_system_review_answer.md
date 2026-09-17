@@ -8,7 +8,8 @@ Check:
 
 Reply with the changes you want; the iteration skill below applies them. Starting iteration records requested changes, not approval.
 
-Start the next phase in a new session; continuing in this session carries this phase's context into the next one.
+Next action:
+Open a new session, then run:
 
 ```text
 /iterate-tdd @{artifact_file}

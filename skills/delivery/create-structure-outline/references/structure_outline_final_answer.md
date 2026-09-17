@@ -9,7 +9,8 @@ Check:
 Reply with the changes you want, or run `/iterate-structure-outline @{artifact_file}`.
 Running the next command records approval of the outline.
 
-Start the next phase in a new session; continuing in this session carries this phase's context into the next one.
+Next action:
+Open a new session, then run:
 
 ```text
 /implement-outline @{artifact_file}

@@ -175,6 +175,6 @@ Choose the template by situation and use it only:
 
 - In a task, every test passed or untested: `references/evidence_final_answer.md`, which hands off to `/describe-pr`.
 - In a task, any test failed: `references/evidence_failed_answer.md`, which hands off to `/iterate-implementation @{plan_file}`; `{plan_file}` is the name of the plan or structure outline being implemented.
-- No task: `references/evidence_standalone_answer.md`, which ends with `/show-me` because no phase follows.
+- No task: `references/evidence_standalone_answer.md`, which ends with the recording's state and attachment action because no delivery step follows.
 
 `{artifact_link}` is a relative Markdown link to the receipt, `[NN-evidence-slug.md](.agents/tasks/<slug>/NN-evidence-slug.md)`. `{report_link}` is a relative Markdown link to `report.md` of the session (or the composite), relative to the repository root, or to the current directory when there is no task directory. `{summary}` is the receipt's `summary`.

@@ -8,9 +8,8 @@ Known limits:
 
 The research-questions artifact is ready to guide the next research pass. You do not need to answer the questions yourself.
 
-Start the next phase in a new session; continuing in this session carries this phase's context into the next one.
-
-To continue, start the research session with:
+Next action:
+Open a new session, then run:
 
 ```text
 /create-research

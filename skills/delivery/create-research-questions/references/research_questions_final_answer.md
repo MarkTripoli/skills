@@ -8,9 +8,8 @@ Known limits:
 
 These questions are the query plan for the research phase. They are not questions for you to answer manually.
 
-Start the next phase in a new session; continuing in this session carries this phase's context into the next one.
-
-To continue, start the research session with:
+Next action:
+Open a new session, then run:
 
 ```text
 /create-research

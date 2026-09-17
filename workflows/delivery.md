@@ -248,7 +248,7 @@ Artifact type is the frontmatter `type` of the artifact the skill writes. "Human
 
 ## Running skills by hand
 
-Every skill still works in a plain agent session without Archon: `/<skill> @<artifact or task dir>` (Codex: `$<skill>`). A skill given no task directory creates one from the request and commits `task.md` as `docs(task): open <slug>`. Each reply ends with the sentence "Start the next phase in a new session; continuing in this session carries this phase's context into the next one." and one fenced `text` command naming the next skill; paste that command into a new session. Under Archon the fence is ignored: the engine already knows the next node. Skills that no pack invokes (`iterate-research*`, `record-evidence`, `ci-commit`, `review-artifact-comments`, `show-me`) run this way only.
+Every skill still works in a plain agent session without Archon: `/<skill> @<artifact or task dir>` (Codex: `$<skill>`). A skill given no task directory creates one from the request and commits `task.md` as `docs(task): open <slug>`. A reply that hands off to another skill ends with `Next action:`, `Open a new session, then run:`, and one fenced `text` command naming that skill. Paste the command into a new session. A terminal reply ends with its current state and contains no command fence. Under Archon, the engine ignores the handoff copy because it already knows the next node. Skills that no pack invokes (`iterate-research*`, `record-evidence`, `ci-commit`, `review-artifact-comments`, `show-me`) run this way only.
 
 ## Epics
 

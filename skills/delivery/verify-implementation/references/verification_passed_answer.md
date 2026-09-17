@@ -8,9 +8,10 @@ Check:
 Known limits:
 - {known_limits}
 
-Start the next phase in a new session; continuing in this session carries this phase's context into the next one.
+Every repository check and every decidable acceptance item passed when re-run in this session. The review phase has not started.
 
-Every repository check and every decidable acceptance item passed when re-run in this session. Continue to the review:
+Next action:
+Open a new session, then run:
 
 ```text
 /review-code

@@ -9,9 +9,10 @@ Check:
 Deferred human evidence (recorded, not executed):
 - {evidence item and pointer, or None}
 
-Implementation continues to Phase {next_phase}. This command re-enters the skill with the same target if the run is interrupted.
+Phase {next_phase} has not started. The command below starts it with the same implementation target.
 
-Start the next phase in a new session; continuing in this session carries this phase's context into the next one.
+Next action:
+Open a new session, then run:
 
 ```text
 {implementation_command} @{plan_file}
