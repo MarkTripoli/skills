@@ -50,6 +50,7 @@
     "./skills/show-me",
     "./skills/delivery/start-epic-delivery",
     "./skills/delivery/test-app",
-    "./skills/delivery/typed-judgment"
+    "./skills/delivery/typed-judgment",
+    "./skills/delivery/verify-implementation"
   ]
 }

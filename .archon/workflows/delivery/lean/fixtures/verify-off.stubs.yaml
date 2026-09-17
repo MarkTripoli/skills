@@ -1,0 +1,24 @@
+# `gates=none` and `verify=false`: the include's `when` skips every node of the verification block and
+# the `verify-done` join fires from `implement-done` alone; the run still ends at `pr-done`.
+task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills"}'
+gates: '{"outline":"false","phases":"false","pr":"false"}'
+research__questions: "research questions saved"
+research__research: "research saved"
+outline__once: "structure outline saved"
+implement-phase-auto: "phase implemented"
+review-code: '{"status":"clean","artifact":"05-code-review-fixture.md","summary":"clean"}'
+pr__once: "pull request described"
+next-phase-auto: '{"next":""}'
+verify-review: '{"status":"clean"}'
+app-test-done: ""
+research-done: ""
+outline-done: ""
+implement-done: ""
+review-done: ""
+pr-done: ""
+verify-done: ""
+fixture:
+  expect: completed
+  inputs: { gates: none, verify: "false" }
+  reached: [outline__once, implement__phases-auto, implement-phase-auto, implement-done, verify-done, pr__once, pr-done]
+exec-code: false

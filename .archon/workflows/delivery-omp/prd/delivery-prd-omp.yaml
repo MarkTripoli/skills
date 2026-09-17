@@ -2,10 +2,11 @@ name: delivery-prd-omp
 description: |
   Take an open requirement from request to pull request: research, product requirements document
   (gate, revised from your feedback until approved), technical design document (gate), plan (gate),
-  implementation one phase per fresh session (gate after each), review loop until clean, pull request
-  description (gate). Every phase runs in a fresh session and reads only the task directory;
-  artifacts are committed on the branch. The `gates` input picks which pauses happen:
-  `--input gates=none` runs unattended, `--input gates=prd,pr` pauses only there.
+  implementation one phase per fresh session (gate after each), verification (checks and acceptance
+  items re-run in a fresh session), review loop until clean, pull request description (gate). Every
+  phase runs in a fresh session and reads only the task directory; artifacts are committed on the
+  branch. The `gates` input picks which pauses happen: `--input gates=none` runs unattended,
+  `--input gates=prd,pr` pauses only there.
 
   Use when: the requirement itself is open (what it should do, for whom, how it behaves at the edges);
   product-facing work; stakeholders beyond the requester, for example "we need a notifications feature",
@@ -35,6 +36,9 @@ inputs:
   app_target:
     default: ""
     description: What the app test launches; a URL for web, a bundle id or .app path for ios, a package or .apk for android. Empty lets the skill start the repository's own dev server or build.
+  verify:
+    default: "true"
+    description: "Run the verification phase after implementation: `true` (default) re-runs the repository's checks and the task's acceptance items in a fresh session, `false` skips it; see docs/verification.md."
 
 # `*-done` nodes commit the phase's artifacts and keep loop bodies runnable between includes; see
 # delivery-full for why.
@@ -183,11 +187,31 @@ nodes:
       git add -A -- "$dir"
       git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): implement artifacts" -- "$dir"
 
-  # Manual app testing when asked: the include's `when` gates every node of the block, and the join fires
+  # Verification unless turned off: the include's `when` gates every node of the block, and the join fires
   # from implement-done alone when the block is skipped.
+  - id: verify
+    include: delivery-verify-omp
+    depends_on: [implement-done]
+    when: "$INPUTS.verify != 'false'"
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+
+  - id: verify-done
+    depends_on: [implement-done, verify]
+    trigger_rule: none_failed_min_one_success
+    # The block commits its own artifacts; this join picks up what the preceding phase left in the task directory.
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): implement artifacts" -- "$dir"
+
+  # Manual app testing when asked: the include's `when` gates every node of the block, and the join fires
+  # from verify-done alone when the block is skipped.
   - id: app-test
     include: delivery-app-test-omp
-    depends_on: [implement-done]
+    depends_on: [verify-done]
     when: "$INPUTS.app_test != 'none'"
     with:
       skills_dir: $task.output.skills_dir
@@ -196,7 +220,7 @@ nodes:
       target: $INPUTS.app_target
 
   - id: app-test-done
-    depends_on: [implement-done, app-test]
+    depends_on: [verify-done, app-test]
     trigger_rule: none_failed_min_one_success
     # The block commits its own artifacts; this join picks up what the preceding phase left in the task directory.
     bash: |

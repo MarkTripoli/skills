@@ -2,9 +2,10 @@ name: delivery-bugfix
 description: |
   Fix a reported bug reproduction-first: reproduce it and record the cause and a short fix plan
   (gate: confirm the reproduction, or supply what is missing when it could not be reproduced), fix it
-  in one fresh session so the reproduction passes, review the diff until clean, write the pull
-  request description (gate). No research phase, no plan artifact: the reproduction artifact is the
-  plan. No product code is edited until the bug is reproduced. Artifacts are committed on the branch. The
+  in one fresh session so the reproduction passes, verify the fix (checks and acceptance items re-run
+  in a fresh session), review the diff until clean, write the pull request description (gate). No
+  research phase, no plan artifact: the reproduction artifact is the plan. No product code is edited
+  until the bug is reproduced. Artifacts are committed on the branch. The
   `gates` input picks which pauses happen: `--input gates=none` runs unattended and cancels the run
   when four reproduction sessions fail to reproduce the bug, `--input gates=pr` pauses only there.
 
@@ -32,6 +33,9 @@ inputs:
   app_target:
     default: ""
     description: What the app test launches; a URL for web, a bundle id or .app path for ios, a package or .apk for android. Empty lets the skill start the repository's own dev server or build.
+  verify:
+    default: "true"
+    description: "Run the verification phase after implementation: `true` (default) re-runs the repository's checks and the task's acceptance items in a fresh session, `false` skips it; see docs/verification.md."
 
 # `*-done` nodes commit the phase's artifacts and keep loop bodies runnable between includes; see
 # delivery-full for why.
@@ -78,7 +82,7 @@ nodes:
   # Not reproduced: the gate is the escalation: reply with the missing information (either decision,
   # with your text) to retry, or abandon the run. The loop only ends on approve of a reproduced bug;
   # every retry is a human decision, so the cap is only a guard against a runaway loop. The status the
-  # gate and the loop read is the session's claim checked against the artifact by `verify`.
+  # gate and the loop read is the session's claim checked against the artifact by `verify-reproduction`.
   - id: reproduce
     depends_on: [gates]
     when: "$gates.output.reproduce == 'true'"
@@ -87,7 +91,7 @@ nodes:
       max_iterations: 100
       until_bash: |
         decision=$gate.output.decision
-        status=$verify.output.status
+        status=$verify-reproduction.output.status
         test "$decision" = approve && test "$status" = reproduced
       nodes:
         - id: attempt
@@ -113,7 +117,7 @@ nodes:
         # The claimed status checked against the reproduction artifact by the typed-judgment helper,
         # which only ever moves a `reproduced` claim to `not-reproduced`. Without the helper (not
         # installed, no TypeSafe key, no node) or without the artifact file, the claim stands.
-        - id: verify
+        - id: verify-reproduction
           depends_on: [attempt]
           bash: |
             set -eu
@@ -136,10 +140,10 @@ nodes:
             required: [status]
 
         - id: gate
-          depends_on: [verify]
+          depends_on: [verify-reproduction]
           approval:
             message: >-
-              Reproduction $verify.output.status (the session claimed $attempt.output.status; the typed-judgment
+              Reproduction $verify-reproduction.output.status (the session claimed $attempt.output.status; the typed-judgment
               helper checks the artifact shows a run that exhibits the bug): $attempt.output.summary (artifact
               $attempt.output.artifact in $task.output.task_dir). Reproduced: approve to fix it, or request
               changes to correct the reproduction. Not reproduced: reply with the missing information
@@ -150,7 +154,7 @@ nodes:
 
   # Unattended reproduction: up to four fresh reproduction sessions, until one reproduces the bug.
   # A body cannot be shared between loop_groups, so the reproduction session is duplicated without the gate. The
-  # `attempt-count` node checks the session's claim against its artifact (as `verify` does above) and
+  # `attempt-count` node checks the session's claim against its artifact (as `verify-reproduction` does above) and
   # ends the loop on the fourth failure instead of letting max_iterations fail it: a failed loop_group's
   # output is unreadable, and `not-reproduced` needs the status.
   - id: reproduce-auto
@@ -234,11 +238,31 @@ nodes:
     prompt: |
       Read and follow $task.output.skills_dir/fix-bug/SKILL.md, the installed `fix-bug` skill, for task directory $task.output.task_dir. The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
 
-  # Manual app testing when asked: the include's `when` gates every node of the block, and the join fires
+  # Verification unless turned off: the include's `when` gates every node of the block, and the join fires
   # from fix alone when the block is skipped.
+  - id: verify
+    include: delivery-verify
+    depends_on: [fix]
+    when: "$INPUTS.verify != 'false'"
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+
+  - id: verify-done
+    depends_on: [fix, verify]
+    trigger_rule: none_failed_min_one_success
+    # The block commits its own artifacts; this join picks up what the preceding phase left in the task directory.
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): fix artifacts" -- "$dir"
+
+  # Manual app testing when asked: the include's `when` gates every node of the block, and the join fires
+  # from verify-done alone when the block is skipped.
   - id: app-test
     include: delivery-app-test
-    depends_on: [fix]
+    depends_on: [verify-done]
     when: "$INPUTS.app_test != 'none'"
     with:
       skills_dir: $task.output.skills_dir
@@ -247,7 +271,7 @@ nodes:
       target: $INPUTS.app_target
 
   - id: app-test-done
-    depends_on: [fix, app-test]
+    depends_on: [verify-done, app-test]
     trigger_rule: none_failed_min_one_success
     # The block commits its own artifacts; this join picks up what the preceding phase left in the task directory.
     bash: |

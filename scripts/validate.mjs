@@ -17,7 +17,7 @@ const rootIndex = args.indexOf("--root");
 const root = rootIndex === -1 ? repoRoot : path.resolve(args[rootIndex + 1] ?? "");
 const generated = root !== repoRoot;
 
-const EXPECTED_SKILL_COUNT = 39;
+const EXPECTED_SKILL_COUNT = 40;
 const SHARED_LINKS = {
   "shared/WRITING.md": "https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md",
   "shared/CONVENTIONS.md": "https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md",
@@ -81,6 +81,9 @@ const ANSWER_INVENTORY = {
   "test-app/references/app_test_passed_answer.md": "describe-pr",
   "test-app/references/app_test_failed_answer.md": "iterate-implementation",
   "test-app/references/app_test_blocked_answer.md": "show-me",
+  "verify-implementation/references/verification_passed_answer.md": "review-code",
+  "verify-implementation/references/verification_failed_answer.md": "iterate-implementation",
+  "verify-implementation/references/verification_blocked_answer.md": "show-me",
 };
 
 const HUMAN_REVIEW_TEMPLATES = [
@@ -103,6 +106,7 @@ const HUMAN_REVIEW_TEMPLATES = [
   "resolve-pr-reviews/references/pr_review_template.md",
   "start-epic-delivery/references/epic_delivery_template.md",
   "test-app/references/app_test_template.md",
+  "verify-implementation/references/verification_template.md",
 ];
 
 const IMPLEMENTATION_SKILLS = ["implement-plan", "implement-outline", "iterate-implementation"];

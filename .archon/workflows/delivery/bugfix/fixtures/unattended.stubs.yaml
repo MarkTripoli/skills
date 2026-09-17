@@ -12,8 +12,12 @@ reproduce-done: ""
 app-test-done: ""
 review-done: ""
 pr-done: ""
+verify-implementation: '{"status":"passed","artifact":"06-verification-fixture.md","summary":"checks and acceptance items passed"}'
+verification-status: '{"status":"passed"}'
+verification-done: ""
+verify-done: ""
 fixture:
   expect: completed
   inputs: { gates: none }
-  reached: [attempt-auto, attempt-count, reproduce-auto, reproduce-done, fix, app-test-done, review__loop, pr__once, pr-done]
+  reached: [attempt-auto, attempt-count, reproduce-auto, reproduce-done, fix, verify-done, app-test-done, review__loop, pr__once, pr-done]
 exec-code: false

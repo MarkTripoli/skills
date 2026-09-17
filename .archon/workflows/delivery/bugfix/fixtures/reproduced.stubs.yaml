@@ -5,8 +5,9 @@ attempt-auto: '{"status":"reproduced","summary":"exit code 0 on a missing config
 fix: "bug fixed and committed"
 review-code: '{"status":"clean","artifact":"05-code-review-fixture.md","summary":"clean"}'
 pr__once: "pull request described"
+verify-implementation: '{"status":"passed","artifact":"06-verification-fixture.md","summary":"checks and acceptance items passed"}'
 fixture:
   expect: completed
   inputs: { gates: none }
-  reached: [task__create, gates, attempt-auto, attempt-count, reproduce-auto, reproduce-done, fix, review__loop, review-done, pr__once, pr-done]
+  reached: [task__create, gates, attempt-auto, attempt-count, reproduce-auto, reproduce-done, fix, verify-done, review__loop, review-done, pr__once, pr-done]
 exec-code: true

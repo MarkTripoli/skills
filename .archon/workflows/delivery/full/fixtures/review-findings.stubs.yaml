@@ -17,7 +17,11 @@ plan-done: ""
 implement-done: ""
 review-done: ""
 pr-done: ""
+verify-implementation: '{"status":"passed","artifact":"06-verification-fixture.md","summary":"checks and acceptance items passed"}'
+verification-status: '{"status":"passed"}'
+verification-done: ""
+verify-done: ""
 fixture:
   expect: completed
-  reached: [review-code, fix-review, review__loop, pr-done]
+  reached: [review-code, fix-review, verify-done, review__loop, pr-done]
 exec-code: false

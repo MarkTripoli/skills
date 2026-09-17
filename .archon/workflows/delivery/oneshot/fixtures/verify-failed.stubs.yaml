@@ -1,0 +1,22 @@
+# `gates=none` with a failed verification: `iterate-verify` runs on the failed status before
+# `verification-done` commits. A dry run never executes `until_bash`, so the loop is assumed complete
+# after this one round and the run still ends at `pr-done`.
+task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills"}'
+gates: '{"pr":"false"}'
+implement: "task implemented and committed"
+review-code: '{"status":"clean","artifact":"05-code-review-fixture.md","summary":"clean"}'
+pr__once: "pull request described"
+verify-review: '{"status":"clean"}'
+app-test-done: ""
+review-done: ""
+pr-done: ""
+verify-implementation: '{"status":"failed","artifact":"06-verification-fixture.md","summary":"one acceptance item failed"}'
+verification-status: '{"status":"failed"}'
+iterate-verify: "implementation revised for A2"
+verification-done: ""
+verify-done: ""
+fixture:
+  expect: completed
+  inputs: { gates: none }
+  reached: [implement, verify-implementation, iterate-verify, verify__verification, verify-done, review__loop, pr__once, pr-done]
+exec-code: false

@@ -1,9 +1,10 @@
 name: delivery-oneshot
 description: |
-  Implement a fully specified small change in one fresh session, review the diff until clean, and
-  write the pull request description (gate). No research, no plan: task.md is the whole
-  specification. Artifacts are committed on the branch. The `gates` input picks whether the pull
-  request pause happens: `--input gates=none` runs unattended.
+  Implement a fully specified small change in one fresh session, verify it (checks and acceptance
+  items re-run in a fresh session), review the diff until clean, and write the pull request
+  description (gate). No research, no plan: task.md is the whole specification. Artifacts are
+  committed on the branch. The `gates` input picks whether the pull request pause happens:
+  `--input gates=none` runs unattended.
 
   Use when: a small change with a stated expected behavior, a way to verify it, no design choice,
   and a small footprint, for example "rename the flag", "add the missing null check and a test", "bump the
@@ -29,6 +30,9 @@ inputs:
   app_target:
     default: ""
     description: What the app test launches; a URL for web, a bundle id or .app path for ios, a package or .apk for android. Empty lets the skill start the repository's own dev server or build.
+  verify:
+    default: "true"
+    description: "Run the verification phase after implementation: `true` (default) re-runs the repository's checks and the task's acceptance items in a fresh session, `false` skips it; see docs/verification.md."
 
 # `*-done` nodes commit the phase's artifacts and keep loop bodies runnable between includes; see
 # delivery-full for why.
@@ -77,11 +81,31 @@ nodes:
     prompt: |
       Complete the task in $task.output.task_dir/task.md end to end: implement it, run the narrowest checks that prove it, and commit the code with explicit paths (never `git add -A`); anything you write under $task.output.task_dir goes in its own `docs(task): implement artifacts` commit. Follow the commit conventions in $task.output.skills_dir/ci-commit/SKILL.md for the message. Do not open a pull request. End with a short summary of what changed and how it was verified.
 
-  # Manual app testing when asked: the include's `when` gates every node of the block, and the join fires
+  # Verification unless turned off: the include's `when` gates every node of the block, and the join fires
   # from implement alone when the block is skipped.
+  - id: verify
+    include: delivery-verify
+    depends_on: [implement]
+    when: "$INPUTS.verify != 'false'"
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+
+  - id: verify-done
+    depends_on: [implement, verify]
+    trigger_rule: none_failed_min_one_success
+    # The block commits its own artifacts; this join picks up what the preceding phase left in the task directory.
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): implement artifacts" -- "$dir"
+
+  # Manual app testing when asked: the include's `when` gates every node of the block, and the join fires
+  # from verify-done alone when the block is skipped.
   - id: app-test
     include: delivery-app-test
-    depends_on: [implement]
+    depends_on: [verify-done]
     when: "$INPUTS.app_test != 'none'"
     with:
       skills_dir: $task.output.skills_dir
@@ -90,7 +114,7 @@ nodes:
       target: $INPUTS.app_target
 
   - id: app-test-done
-    depends_on: [implement, app-test]
+    depends_on: [verify-done, app-test]
     trigger_rule: none_failed_min_one_success
     # The block commits its own artifacts; this join picks up what the preceding phase left in the task directory.
     bash: |

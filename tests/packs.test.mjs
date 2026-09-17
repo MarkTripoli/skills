@@ -509,7 +509,7 @@ test("archon: every pack loads without warnings and dry-runs gated and unattende
     assert.equal(state(autoBugfix, "not-reproduced"), "skipped");
 
     const bugfix = dryRun(cwd, "delivery-bugfix", "Another bug report here");
-    assert.deepEqual(ran(bugfix).slice(0, 6), ["task__create", "gates", "attempt", "verify", "gate", "reproduce"], "reproduction, its status check, and its gate run before anything else");
+    assert.deepEqual(ran(bugfix).slice(0, 6), ["task__create", "gates", "attempt", "verify-reproduction", "gate", "reproduce"], "reproduction, its status check, and its gate run before anything else");
 
     // A gate subset pauses only there: with gates=plan the design phase runs once and the run stops at the
     // plan gate, before any implementation node.
@@ -591,6 +591,7 @@ case "$prompt" in
     f="$task/03-structure-outline-x.md"
     awk '!done && /^- \[ \]/ { sub(/- \[ \]/, "- [x]"); done = 1 } { print }' "$f" > "$f.new" && mv "$f.new" "$f"
     n=$(grep -c '^- \[x\]' "$f"); echo "step $n" > "step-$n.txt"; git add "step-$n.txt"; git commit -q -m "feat: step $n"; echo implemented ;;
+  *verify-implementation/SKILL.md*) printf 'status: passed\n' > "$task/04-verification-x.md"; printf '${FENCE}json\n{"status":"passed","artifact":"04-verification-x.md","summary":"checks passed"}\n${FENCE}\n' ;;
   *review-code/SKILL.md*) printf 'status: clean\n' > "$task/05-code-review-x.md"; printf 'Here is the review:\n${FENCE}json\n{"status":"clean",\n "artifact":"05-code-review-x.md","summary":"ok"}\n${FENCE}\nDone.\n' ;;
   *describe-pr/SKILL.md*) printf 'pr\n' > "$task/06-pr-description-x.md"; echo described ;;
   *reproduce-bug/SKILL.md*) repro=$FAKE_REPRO; [ -n "$repro" ] || repro=not-reproduced; n=$(grep -c '=== CALL' "$FAKE_OMP_LOG"); printf 'attempt %s\n' "$n" > "$task/01-reproduction-x.md"; printf '{"status":"%s","summary":"attempt %s","artifact":"01-reproduction-x.md"}\n' "$repro" "$n" ;;
@@ -626,12 +627,14 @@ test("archon: a real run of the omp flavor with a fake omp proves what dry runs 
     assert.equal(lean.code, 0, lean.out);
     assert.match(lean.out, /Workflow completed successfully/);
     const skill = (call) => /[Rr]ead and follow (\S+)\/SKILL\.md/.exec(call)?.[1];
-    assert.deepEqual(lean.calls.map((c) => path.basename(skill(c))), ["create-research-questions", "create-research", "create-structure-outline", "implement-outline", "implement-outline", "review-code", "describe-pr"], "two implementation phases: until_bash counted the real boxes and ignored the Human Review one");
+    assert.deepEqual(lean.calls.map((c) => path.basename(skill(c))), ["create-research-questions", "create-research", "create-structure-outline", "implement-outline", "implement-outline", "verify-implementation", "review-code", "describe-pr"], "two implementation phases: until_bash counted the real boxes and ignored the Human Review one; verification runs once and passes");
     for (const call of lean.calls) assert.equal(path.dirname(skill(call)), path.join(home, ".agents", "skills"), "every node, included or not, reads the skills directory with ~ expanded");
-    assert.match(lean.calls[5], /CRITICAL: Respond with ONLY a JSON object[\s\S]*status: \{ type: string, enum: \[clean, findings, blocked\] \}/, "the review node's schema is in its prompt");
+    assert.match(lean.calls[5], /CRITICAL: Respond with ONLY a JSON object[\s\S]*status: \{ type: string, enum: \[passed, failed, blocked\] \}/, "the verify node's schema is in its prompt");
+    assert.match(lean.calls[6], /CRITICAL: Respond with ONLY a JSON object[\s\S]*status: \{ type: string, enum: \[clean, findings, blocked\] \}/, "the review node's schema is in its prompt");
     assert.deepEqual(git(cwd, "log", "--format=%s").split("\n"), [
       "docs(task): pr artifacts",
       "docs(task): review artifacts",
+      "docs(task): verification artifacts",
       "docs(task): implement artifacts",
       "feat: step 2",
       "feat: step 1",
@@ -678,7 +681,7 @@ test("archon: a real run of the omp flavor with a fake omp proves what dry runs 
     assert.equal(approved.status, 0, approved.stderr);
     assert.equal(steer(["workflow", "wait", runId, "--timeout", "90"]).status, 0);
     calls = fs.readFileSync(path.join(cwd, "omp.log"), "utf8").split("=== CALL\n").slice(1);
-    assert.deepEqual(calls.slice(1).map((c) => path.basename(skill(c))), ["implement-outline", "implement-outline", "review-code", "describe-pr"], "after approve the implementation gate is off, so the phases run unattended to the end");
+    assert.deepEqual(calls.slice(1).map((c) => path.basename(skill(c))), ["implement-outline", "implement-outline", "verify-implementation", "review-code", "describe-pr"], "after approve the implementation gate is off, so the phases run unattended to the end");
     assert.equal(git(cwd, "log", "-1", "--format=%s"), "docs(task): pr artifacts");
     fs.rmSync(path.join(cwd, "omp.log"), { force: true });
   } finally {

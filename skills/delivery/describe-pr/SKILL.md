@@ -43,7 +43,7 @@ If no PR exists, inspect branch status and committed changes. Commit and push on
 
 ### 3. Gather context
 
-Read `task.md` or `ticket.md`, explanatory artifacts: plan, outline, PRD/TDD, design, receipts, @file inputs. When the task directory holds an `evidence` artifact (newest `NN-evidence-*.md`), read it: its sessions, results table, caveats, and where the video was posted go into the description.
+Read `task.md` or `ticket.md`, explanatory artifacts: plan, outline, PRD/TDD, design, receipts, @file inputs. When the task directory holds a `verification` artifact (newest `NN-verification-*.md`), read its items table and `## Findings`: each acceptance criterion's verdict, command, and observed output come from there, and an `untested` item is described as untested, never as passing. When the task directory holds an `evidence` artifact (newest `NN-evidence-*.md`), read it: its sessions, results table, caveats, and where the video was posted go into the description.
 
 Read full diff plus surrounding code.
 
