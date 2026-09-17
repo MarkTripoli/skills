@@ -136,9 +136,12 @@ echo "end $slug" >> "$FAKE_ARCHON_LOG"
 exit 0
 `;
 
-test("launch: every ready child is started once with the child's workflow, branch, base, task_dir, gates=none, and prompt; at most max_parallel run at once; a nonzero child is listed under failed", async () => {
+test("launch: the epic branch is pushed to origin before any child is cut from it; every ready child is started once with the child's workflow, branch, base, task_dir, gates=none, and prompt; at most max_parallel run at once; a nonzero child is listed under failed", async () => {
   const cwd = epicRepo();
+  const origin = fs.mkdtempSync(path.join(os.tmpdir(), "skills-wave-origin-"));
   try {
+    git(origin, "init", "-q", "--bare");
+    git(cwd, "remote", "add", "origin", origin);
     const bin = path.join(cwd, "bin");
     fs.mkdirSync(bin);
     fs.writeFileSync(path.join(bin, "archon"), FAKE_ARCHON, { mode: 0o755 });
@@ -151,6 +154,8 @@ test("launch: every ready child is started once with the child's workflow, branc
     });
     assert.equal(result.code, 0, result.err);
     assert.deepEqual(JSON.parse(result.out), { launched: ["a", "b"], failed: ["c"], skipped_manual: false });
+    assert.equal(git(cwd, "rev-parse", "origin/epic-x"), git(cwd, "rev-parse", "HEAD"), "the epic branch is on origin, where Archon cuts the children from");
+    assert.equal(git(cwd, "rev-parse", "--abbrev-ref", "epic-x@{upstream}"), "origin/epic-x", "the push sets the upstream so later joins push too");
     assert.match(result.err, /child c: archon workflow run exited nonzero/);
 
     const events = fs.readFileSync(log, "utf8").trim().split("\n");
@@ -162,6 +167,24 @@ test("launch: every ready child is started once with the child's workflow, branc
     assert.equal(argv("b")[2], "delivery-oneshot");
     assert.equal(argv("c")[2], "delivery-full");
     assert.equal(git(cwd, "status", "--porcelain", "--", ".agents"), "", "the launch leaves nothing behind in the task directories");
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+    fs.rmSync(origin, { recursive: true, force: true });
+  }
+});
+
+test("launch: a push that fails ends the node before any child is started", async () => {
+  const cwd = epicRepo();
+  try {
+    git(cwd, "remote", "add", "origin", path.join(cwd, "no-such-remote.git"));
+    const bin = path.join(cwd, "bin");
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, "archon"), FAKE_ARCHON, { mode: 0o755 });
+    const log = path.join(cwd, "archon.log");
+    const result = await runLaunch("launch", cwd, { branch: "epic-x", ready: ["a"] }, { PATH: `${bin}${path.delimiter}${process.env.PATH}`, FAKE_ARCHON_LOG: log });
+    assert.equal(result.code, 1);
+    assert.match(result.err, /cannot push the epic branch epic-x to origin/);
+    assert.ok(!fs.existsSync(log), "no child was started");
   } finally {
     fs.rmSync(cwd, { recursive: true, force: true });
   }

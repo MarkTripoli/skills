@@ -91,7 +91,9 @@ nodes:
         blocked: { type: array, items: { type: string } }
       required: [branch, ready, started, done, blocked]
 
-  # Every ready child as its own run, cut from and targeting the epic branch, unattended. bash 3.2 has no
+  # Every ready child as its own run, cut from and targeting the epic branch, unattended. Archon cuts a
+  # child's worktree from `origin/<base>`, so the epic branch is pushed first (with an upstream, so the
+  # later joins push too); a push that fails ends the node before any child is started. bash 3.2 has no
   # `wait -n`: pids are kept in order and the oldest is waited for when the slots are full. A child
   # that exits nonzero is listed under `failed`; the node itself fails only when it cannot read a child.
   - id: launch
@@ -107,6 +109,9 @@ nodes:
       ready=$ready.output.ready
       branch=$ready.output.branch
       slugs=$(printf '%s' "$ready" | tr -d '[]"' | tr ',' ' ')
+      if git remote get-url origin >/dev/null 2>&1; then
+        GIT_TERMINAL_PROMPT=0 git push -q -u origin "HEAD:refs/heads/$branch" || { printf 'cannot push the epic branch %s to origin; child runs are cut from origin/%s\n' "$branch" "$branch" >&2; exit 1; }
+      fi
       field() {
         awk -v key="$2" 'NR == 1 { if ($0 != "---") exit; next } $0 == "---" { exit } index($0, key ":") == 1 { v = $0; sub("^" key ":[ \t]*", "", v); gsub(/^"|"$/, "", v); print v; exit }' "$1"
       }
