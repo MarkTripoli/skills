@@ -65,7 +65,7 @@ Every prompt node names its tier (`model: large` for authoring, implementing, an
 `--input gates=all` (default) | `none` | `plan,pr` (comma list of the pack's names; an unknown name fails the run at node `gates`). With a gate off:
 - `design`, `outline`, `prd`, `tdd`, `plan`, `pr`: the create skill runs once, no revision pass.
 - `phases`: phases run back to back until the newest plan or outline has no `- [ ]` under a `## Phase N` or `## Step N` heading; 16 iterations fail the node.
-- `reproduce`: up to 4 reproduction sessions, then the run cancels pointing at the artifact's `## Missing` list. The review loop (every pack, never gated) runs review-code, fix-code-review until `clean`, at most 4 rounds; `blocked` cancels the run.
+- `reproduce`: up to 4 reproduction sessions, then the run cancels pointing at the artifact's `## Missing` list. The verification (every implementing pack, never gated, `--input verify=false` skips it) re-runs the repository's checks and the acceptance items in a fresh session, `iterate-implementation` on `failed`, at most 3 rounds; `blocked` cancels the run ([verification.md](verification.md)). The review loop (every pack, never gated) runs review-code, fix-code-review until `clean`, at most 4 rounds; `blocked` cancels the run.
 
 Gates are fixed per run (`--input` and `--resume` are mutually exclusive); to add gates, start a new run on the same `--branch` with `--input task_dir=.agents/tasks/<slug> --input gates=<names>`.
 

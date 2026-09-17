@@ -86,7 +86,7 @@ archon workflow run delivery-full --branch plugin-formatters --input gates=none 
 archon workflow run delivery-full --branch plugin-formatters --input gates=plan,pr "Add a plugin system for output formatters"
 ```
 
-- `none`: unattended. The design and plan skills run once, implementation phases run back to back until the plan has no unchecked box, the review loop runs until clean, and the pull request opens without a pause. Read what happened with `archon workflow get <run-id> --json` and the `docs(task): <phase> artifacts` commits on the branch.
+- `none`: unattended. The design and plan skills run once, implementation phases run back to back until the plan has no unchecked box, the verification re-runs the checks and acceptance items in a fresh session (fixing and re-verifying up to three times), the review loop runs until clean, and the pull request opens without a pause. Read what happened with `archon workflow get <run-id> --json` and the `docs(task): <phase> artifacts` commits on the branch.
 - `plan,pr`: the run pauses only at the plan and the pull request description; unknown names fail the run at node `gates`.
 - To go unattended after a run has started, approve the remaining gates as they come. To add gates, start a new run on the same branch with `--input task_dir=.agents/tasks/<slug> --input gates=<names>`; it reuses the task directory. `--input` and `--resume` are mutually exclusive.
 
@@ -105,7 +105,7 @@ Task directory: `.agents/tasks/missing-config-file-cli/`. `reproduce-bug` runs f
 
 With `--input gates=none` the pack tries up to four reproduction sessions on its own, each reading the previous artifact's `## Missing` list, then cancels the run with a pointer to that list when none reproduced the bug.
 
-The `fix-bug` node reads the artifact's `## Fix` steps, makes the reproduction pass, keeps it as a regression test when it is one, and commits. Then the review loop and the pull request gate.
+The `fix-bug` node reads the artifact's `## Fix` steps, makes the reproduction pass, keeps it as a regression test when it is one, and commits. Then the verification (the reproduction is re-run and the regression test is checked against the merge target), the review loop, and the pull request gate.
 
 ## An epic
 
@@ -157,7 +157,7 @@ Every skill runs in a plain agent session without Archon. Commands are written a
 
 3. At a human gate the reply links the artifact, lists its `### Verify` checks and known limits, and names the iterate skill. To approve, run the fenced command in a new session. To change it, reply in the same session for one or two rounds, or run `/iterate-plan @04-plan-verbose-flag-cli-prints.md` in a new session after a long review. `/review-artifact-comments @<artifact file>` applies a list of notes one at a time.
 
-4. Implementation runs phase by phase: `implement-plan` (or `implement-outline` for `lean`) implements the first unchecked phase, ticks its boxes, commits code with explicit paths, and stops with a receipt. Run the same command again in a new session for the next phase; the last phase hands off to `/describe-pr`. Run `/review-code` and `/fix-code-review` between implementation and `/describe-pr` when you want the review loop by hand.
+4. Implementation runs phase by phase: `implement-plan` (or `implement-outline` for `lean`) implements the first unchecked phase, ticks its boxes, commits code with explicit paths, and stops with a receipt. Run the same command again in a new session for the next phase; the last phase hands off to `/describe-pr`. Run `/verify-implementation` after the last phase to re-run the checks and acceptance items in a session that did not write the code, then `/review-code` and `/fix-code-review` before `/describe-pr`, when you want the verification and the review loop by hand.
 
 5. `describe-pr` writes and publishes the pull request description. `resolve-pr-reviews` works through review threads until reviewers approve.
 

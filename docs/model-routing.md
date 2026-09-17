@@ -15,6 +15,7 @@ Every `prompt:` node in the native packs names a tier, `model: small`, `model: m
 | `delivery-bugfix`: `fix` | large | Root cause and fix from the reproduction; the session commits its own code. |
 | `delivery-oneshot`: `implement` | large | The only session doing the work; no plan to lean on. It commits itself, so there is no commit prompt. |
 | `delivery-app-test`: `test-app`, `iterate-app` | large | Writes the test charter and grades what it observed; the iterate node changes code like `implement-phase`. |
+| `delivery-verify`: `verify-implementation`, `iterate-verify` | large | Decides pass or fail per acceptance item from command output and reads test diffs for weakened checks; the iterate node changes code like `implement-phase`. Where the machine has two providers, bind `large` for a verifying run to a different family than the implementer's (`--model large=<provider>/<model>`): judges favor their own output. |
 | `delivery-epic`: `start` | medium | Creates child task directories from an approved plan. |
 | `delivery-resolve-reviews`: `round` | medium | Answers enumerated review threads one by one. |
 

@@ -12,7 +12,7 @@ The collection is checked at three depths. None spends tokens.
 
 ## What is deterministic and what is not
 
-The workflow has two halves. The control flow (which node runs next, where the run pauses, when a loop ends) is Archon's DAG over the YAML in `.archon/workflows/delivery/`; every routing decision reads a gate decision, the `gates` node's flags, a JSON field the node prompt requires (`status` from `review-code` and `reproduce-bug`, `attempt` from `attempt-count`), or the plan file's checkboxes (`until_bash` in `delivery-implement`). The phase work (research, planning, implementation) needs a model.
+The workflow has two halves. The control flow (which node runs next, where the run pauses, when a loop ends) is Archon's DAG over the YAML in `.archon/workflows/delivery/`; every routing decision reads a gate decision, the `gates` node's flags, a JSON field the node prompt requires (`status` from `review-code`, `reproduce-bug`, `test-app`, and `verify-implementation`, `attempt` from `attempt-count`), or the plan file's checkboxes (`until_bash` in `delivery-implement`). The phase work (research, planning, implementation) needs a model.
 
 Only the phase work needs tokens, and nothing here runs it.
 
