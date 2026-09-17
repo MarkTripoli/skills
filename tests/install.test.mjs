@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { plan, apply, destinations, detectTargets, updateConfigBlock, packDestination, packFlavors, PACKS } from "../scripts/install.mjs";
+import { plan, apply, buildTrees, destinations, detectTargets, updateConfigBlock, packDestination, packFlavors, PACKS } from "../scripts/install.mjs";
 import { buildRuntime } from "../scripts/lib/build.mjs";
 import { scanSkills } from "../scripts/lib/layout.mjs";
 import { listNative } from "../scripts/build-packs.mjs";
@@ -132,12 +132,9 @@ test("apply installs every target into a home directory and uninstall leaves onl
   fs.writeFileSync(path.join(home, ".archon", "workflows", "mine", "mine.yaml"), "name: mine\n");
   const targets = ["claude-code", "codex", "oh-my-pi", "pi"];
   const planned = plan({ targets, project: false, packs: true, cwd: home, home, env });
-  const work = tmpdir();
-  const built = new Map();
-  for (const target of targets) {
-    buildRuntime(target, path.join(work, target));
-    built.set(target, path.join(work, target));
-  }
+  // The installer's own build step: the plan also carries the `retired` removal step, whose pseudo-target is no runtime.
+  const built = buildTrees(planned, tmpdir());
+  assert.deepEqual([...built.keys()].sort(), [...targets, "packs"].sort(), "one tree per runtime plus the canonical copy the packs read; nothing for the retired step");
   apply(planned, { built, uninstall: false, home });
 
   const count = scanSkills(path.join(REPO, "skills")).skills.length;

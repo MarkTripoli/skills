@@ -274,6 +274,21 @@ export function apply(planned, { built, uninstall, home }) {
   return done;
 }
 
+// One built tree per target the plan writes: runtimes get their flavor, `portable` and `packs` the
+// canonical copy, and the `retired` removal step builds nothing (its pseudo-target is no runtime).
+export function buildTrees(planned, work) {
+  const built = new Map();
+  for (const target of new Set(planned.steps.filter((step) => step.kind !== "retired").map((step) => step.target))) {
+    const dest = path.join(work, target);
+    if (target === "portable" || target === "packs") {
+      fs.mkdirSync(path.join(dest, "skills"), { recursive: true });
+      for (const skill of scanSkills(path.join(repoRoot, "skills")).skills) fs.cpSync(skill.dir, path.join(dest, "skills", skill.name), { recursive: true, filter: noDsStore });
+    } else buildRuntime(target, dest);
+    built.set(target, dest);
+  }
+  return built;
+}
+
 async function confirm(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const answer = await new Promise((resolve) => rl.question(question, resolve));
@@ -325,17 +340,7 @@ async function main(argv) {
 
   const work = fs.mkdtempSync(path.join(os.tmpdir(), "skills-install-"));
   try {
-    const built = new Map();
-    const canonical = (dest) => {
-      fs.mkdirSync(path.join(dest, "skills"), { recursive: true });
-      for (const skill of scanSkills(path.join(repoRoot, "skills")).skills) fs.cpSync(skill.dir, path.join(dest, "skills", skill.name), { recursive: true, filter: noDsStore });
-    };
-    for (const target of new Set(planned.steps.map((s) => s.target))) {
-      const dest = path.join(work, target);
-      if (target === "portable" || target === "packs") canonical(dest);
-      else buildRuntime(target, dest);
-      built.set(target, dest);
-    }
+    const built = buildTrees(planned, work);
     for (const line of apply(planned, { built, uninstall: args.uninstall, home })) console.log(`  ${line}`);
   } finally {
     fs.rmSync(work, { recursive: true, force: true });
