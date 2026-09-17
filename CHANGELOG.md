@@ -1,5 +1,11 @@
 # @marktripoli/skills
 
+## 2.0.0
+
+### Major Changes
+
+- [#10](https://github.com/MarkTripoli/skills/pull/10) [`ce032f3`](https://github.com/MarkTripoli/skills/commit/ce032f3b8f17264c4c56f327dc392fa94825ed3c) Thanks [@Triippz](https://github.com/Triippz)! - Make delivery replies state whether work has started, label real next commands, and remove misleading `/show-me` terminal sentinels.
+
 ## 1.0.0
 
 ### Major Changes
