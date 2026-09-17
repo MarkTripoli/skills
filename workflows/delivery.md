@@ -4,6 +4,19 @@ A task moves from request to pull request through [Archon](https://archon.diy) w
 
 Pack source: `.archon/workflows/delivery/` (native: Claude Code, Codex, Pi through `prompt:` nodes) and `.archon/workflows/delivery-omp/` (generated; every prompt runs `omp -p`). See [Two flavors](#two-flavors).
 
+## One command
+
+`archon workflow run delivery-start "<request>"` picks the pack and the human involvement from the request itself, then runs that pack as a child run. Two judgments over the request (`judge.mjs route-workflow`, `autonomy`) decide:
+
+| The request | Pack | Gates |
+|---|---|---|
+| "add 1 2 prints NaN; just fix it, no need to check with me" | `delivery-bugfix` | `none` |
+| "add a --json flag to the list command" | `delivery-oneshot` | `all` (nothing said, so every gate) |
+| "write the PRD for multi-tenant billing, I want to review the PRD and the design first" | `delivery-prd` | `prd,tdd,plan` |
+| "take this PRD to pull requests: split it into epics and issues, hands off" | `delivery-program` | `none` |
+
+Autonomy levels: `none` (hands-off) needs a decisive reading; `pr` (show me the result) and `plan` (review the plan or design, then build) a confident one; anything less, or nothing said, is `all`. `plan` maps to each pack's planning gates (full `design,plan`; prd and program `prd,tdd,plan`; lean `outline`; bugfix `reproduce`; epic `plan`; oneshot `pr`). When the pack is judged below 0.8 and gates are on, the run pauses once at `confirm`: approve, or request changes naming the pack and gates (`lean, outline`). Unattended and unsure takes `delivery-full`, the pack with the most process. `--input workflow=` and `--input gates=` override either judgment; a child gate pauses the parent, and `archon workflow approve <child run id>` continues it. In an agent session the `deliver` skill makes the same call and prints the command; without Archon it opens the task directory and hands off to the chain's first skill.
+
 ## Packs
 
 `workflow` in `task.md` records the pack that created the task. Chains list the skills in order; "gate" marks an approval node. The Gates column lists the names the `gates` input accepts; see [Gates](#gates).
@@ -15,14 +28,17 @@ Pack source: `.archon/workflows/delivery/` (native: Claude Code, Codex, Pi throu
 | `delivery-prd` | create-research (questions derived from `task.md`), create-prd (gate), create-tdd (gate), create-plan (gate), implement-plan per phase (gate after each), review loop, describe-pr (gate) | `prd`, `tdd`, `plan`, `phases`, `pr` | The requirement itself is open: what it should do, for whom, edge behavior; product-facing work; stakeholders beyond the requester. |
 | `delivery-oneshot` | one session implements, verifies, and commits per the `ci-commit` conventions; review loop; describe-pr (gate) | `pr` | A small change with a stated expected behavior, a way to verify it, no design choice, a small footprint. |
 | `delivery-bugfix` | reproduce-bug (gate), fix-bug, review loop, describe-pr (gate) | `reproduce`, `pr` | Observed behavior differs from expected behavior and a reproduction is possible. No product code is edited before the bug reproduces. |
-| `delivery-epic` | research, create-epic-plan (gate), start-epic-delivery | `plan` | Several independently mergeable deliverables, work for more than one person, more than about eight plan phases, or work no single pull request can carry in a day. Run with `--branch epic-<slug>`; the parent run ends after printing the child start commands. |
+| `delivery-start` | route (judge the pack and the autonomy level), confirm (gate, only when unsure), then the chosen pack as a child run | `auto` (judged), or any value the chosen pack accepts | You do not want to pick a pack: `archon workflow run delivery-start "<request>"`. `--input workflow=<pack>` and `--input gates=<...>` override the judgments. |
+| `delivery-epic` | research, create-epic-plan (gate), start-epic-delivery (task directories, GitHub issues), wave 1 of the children as their own unattended runs | `plan` | Several independently mergeable deliverables, work for more than one person, more than about eight plan phases, or work no single pull request can carry in a day. Run with `--branch epic-<slug>`; `--input children=manual` prints the child commands instead of starting them. |
+| `delivery-program` | research, create-prd (gate), create-tdd (gate), create-epic-plan (gate), start-epic-delivery, wave 1 | `prd`, `tdd`, `plan` | An initiative that starts from requirements and ends as several pull requests: PRD, design, decomposition into children with issues, then the children run. `--branch epic-<slug>`. |
+| `delivery-epic-wave` | ready children of an epic launched as unattended runs | none | Later waves of an epic: after the previous wave's pull requests merged into the epic branch, `archon workflow run delivery-epic-wave --branch epic-<slug> --input epic_dir=.agents/tasks/<epic slug> "next wave"`. |
 | `delivery-resolve-reviews` | resolve-pr-reviews, one round | none | Reviewers left comments on a pull request a delivery run opened. Start it with `--adopt <run-id>` of that run (or `--branch <pr branch>`) so it works in the adopted worktree, pass `--input task_dir=<task dir>`, and run it again when reviewers respond. |
 
 `delivery-full`, `delivery-lean`, and `delivery-prd` accept `--input review_each_phase=true`, which adds one review-code, fix-code-review pass after every implementation phase. All packs accept `--input skills_dir=<dir>` (default `~/.agents/skills`), the directory holding one `<skill>/SKILL.md` per installed skill, and `--input task_dir=<dir>` to reuse an existing task directory (an epic child, or one created by hand) instead of creating one. `delivery-task` expands a leading `~` in `skills_dir` (Archon passes inputs through verbatim and not every agent's file tool expands one), warns on stderr when the directory is missing, and returns it as `$task.output.skills_dir`, which every later node reads.
 
 ## Blocks
 
-Packs compose five blocks with `include:`. None runs on its own.
+Packs compose seven blocks with `include:`. None runs on its own.
 
 | Block | Construct | Inputs | Does |
 |---|---|---|---|
@@ -31,6 +47,8 @@ Packs compose five blocks with `include:`. None runs on its own.
 | `delivery-gate-phase` | `cycle`: a `loop_group` (`max_iterations: 100`) of `prompt:` and `approval:` under `when: "$INPUTS.gate == 'true'"`; `once`: one `prompt:` under `when: "$INPUTS.gate != 'true'"` | `skills_dir`, `task_dir`, `skill`, `iterate`, `label`, `gate` | Gated: the first pass runs `skill`; the gate asks to review `label`; every rejection runs `iterate` with the reviewer's text (`$LOOP_PREV.gate.output.text`) and gates again; `until_bash` exits when the decision is `approve`. Unattended: `skill` runs once. |
 | `delivery-implement` | `phases`: a `loop_group` (`max_iterations: 16`) of `prompt:`, optional review pass, `approval:`, under `when: "$INPUTS.gate == 'true'"`; `phases-auto`: the same body without the approval, under the complementary `when:` | `skills_dir`, `task_dir`, `skill` (`implement-plan` or `implement-outline`), `review`, `gate` | One plan phase per iteration; see [Implementation loop](#implementation-loop). |
 | `delivery-review` | `loop_group` (`max_iterations: 4`) of `prompt:` (JSON output), `cancel:`, `prompt:` | `skills_dir`, `task_dir` | review-code, fix-code-review until clean; see [Review until clean](#review-until-clean). |
+| `delivery-app-test` | `loop_group` (`max_iterations: 3`) of `prompt:` (JSON output), `prompt:`, commit join, `cancel:` | `skills_dir`, `task_dir`, `kind`, `target` | test-app, iterate-implementation on a failure, until a pass; blocked cancels; see [docs/app-testing.md](../docs/app-testing.md). |
+| `delivery-wave` | three `bash:` nodes and a join | `skills_dir`, `epic_dir`, `max_parallel`, `children`, `flavor` | `ready` lists the epic's children whose dependencies have merged into the epic branch (their `pr-description.md` is on it); `launch` starts each as its own unattended run (`--branch <slug> --base <epic branch> --input gates=none`), at most `max_parallel` at once; `children=manual` prints the commands instead. |
 
 ## Gates
 
@@ -147,6 +165,8 @@ Where a pack once parsed prose, it now asks `typed-judgment/judge.mjs` (installe
 | The task slug, complexity, and the pack the request reads like | `delivery-task` `create` (`complexity:` and `suggested_workflow:` in `task.md`, a stderr warning on a mismatch) | `slug`, `tier`, `route-workflow` | the word rule; no fields |
 | Whether an epic child is one pull request, and which split fits when it is not | `create-epic-plan` step 4 (the `## Sizing judgments` table) | `size-children` | the skill's own reading of [shared/SLICING.md](../shared/SLICING.md) |
 | The JSON object an `omp -p` answer contains or implies | every `-omp` schema node | `extract-json` | the fence-stripping awk |
+| Which pack, and how much human involvement, a request asks for | `delivery-start` `route`; the `deliver` skill | `route-workflow`, `autonomy` | `full`, `all`, and a `confirm` pause when gates are on |
+| Research: is a question neutral, which worker answers it, which candidates to read first, is each cited claim supported, is every question answered | `create-research-questions`, `create-research`, and their iterate skills | `neutral`, `route-question`, `rerank`, `cite`, `coverage` | the skill's own reading |
 
 Skills call it too where their steps say so (`create-epic-plan`, `resolve-pr-reviews`, `test-app`); `shared/CONVENTIONS.md`, "Typed judgments", has the rules. Verdicts and probabilities are recorded in the artifacts, not in the run.
 
@@ -225,7 +245,11 @@ Start the parent on its own branch: `archon workflow run delivery-epic --branch 
 archon workflow run delivery-<child workflow> --base <epic branch> --input task_dir=.agents/tasks/<child slug> '<child prompt>'
 ```
 
-Run it from the project root on the epic branch. The child command uses shell single quotes, writing each prompt apostrophe as ` '\'' `; `--base` cuts the child's worktree from the epic branch, which holds the child's `task.md`, and makes the epic branch the target of the child's pull request. `task_dir` makes the child run reuse that directory instead of creating a second one. Each child is its own run; children in a later wave start after every dependency's pull request has merged into the epic branch. The parent does not fan the children out as sub-runs: a child with gates would pause with nobody watching, which Archon refuses for a background dispatch.
+Run it from the project root on the epic branch. The child command uses shell single quotes, writing each prompt apostrophe as ` '\'' `; `--base` cuts the child's worktree from the epic branch, which holds the child's `task.md`, and makes the epic branch the target of the child's pull request. `task_dir` makes the child run reuse that directory instead of creating a second one.
+
+With `children=auto` (the default) the `delivery-wave` block runs right after `start-epic-delivery` and starts every wave-1 child itself, each as its own unattended run (`--input gates=none`), at most `max_parallel` (default 3) at once; the parent run ends when the children have been started, and `archon workflow runs` lists them. Children are ordinary runs, not sub-runs: Archon's `fan_out` refuses any child workflow that contains an approval node, whatever its `gates` input says, and every pack does. A later wave starts by hand once the previous wave's pull requests have merged into the epic branch: `archon workflow run delivery-epic-wave --branch epic-<slug> --input epic_dir=.agents/tasks/<epic slug> "next wave"`. A child counts as done when its `pr-description.md` is on the epic branch (squash merges keep the file), as started when a branch named after it exists, and as ready when it is neither and every `depends_on` sibling is done.
+
+When `gh` is authenticated and `origin` is a GitHub remote, `start-epic-delivery` opens one issue per child (the prompt, `Depends on: #n`, the epic branch, the task directory; label `epic:<slug>`), records `issue: <number>` in the child's `task.md`, and the child's pull request description ends with `Closes #<number>`. `delivery-program` is the same chain with a PRD and a TDD gate before the epic plan: `archon workflow run delivery-program --branch epic-<slug> "<initiative>"`.
 
 ## Archon notes
 
@@ -241,6 +265,9 @@ Engine behavior, verified against Archon 0.10.1, that the packs work around:
 8. `archon workflow run <name>` resolves the name by exact match, then case-insensitive, suffix, and substring match. A native pack that fails to load silently runs its `-omp` twin; check the resolved name in `archon workflow get <run-id> --json` (tests assert on it).
 9. An include alias shadows a body node of the same id when `$id.output` refs are rewired. Block body ids differ from every alias packs use; see [Pack source](#pack-source).
 10. `output_format` on a `bash:` node is ignored (log line `bash_node_ai_fields_ignored`); stdout that parses as a JSON object still serves `$node.output.field`. Deterministic nodes keep the field as documentation of what they print; the generator moves a prompt node's schema into the OMP prompt text.
+11. A `loop_group` inside an include that is itself included never runs its body (the body keeps the inner file's un-namespaced `depends_on` ids), and every pack loops, so a pack cannot be included by another pack. `delivery-start` runs the chosen pack as a `workflow:` child run instead. A `workflow:` node takes `with:` or `input:`, not both, so the child gets its inputs and no message; `delivery-start` creates the task directory itself and passes `task_dir`. A child gate pauses the parent (`Blocked on sub-run`); approve the child's run id.
+12. `fan_out` on a `workflow:` node refuses a child that contains an approval node ("interactive-class"), whatever its inputs say. `delivery-wave` launches children with `archon workflow run` from a bash node instead (`--branch`, `--base`, and `--input` are honoured; the environment is inherited).
+13. `--dry-run --exec-code` delivers no `INPUTS_*` environment to included bash nodes, while a real run does; the `$INPUTS.x` macro in an included `bash:` body is substituted at include time in both. Included bash nodes therefore read `${INPUTS_X:-$INPUTS.x}`: the environment first, the include-time value second.
 
 ### Pack source
 

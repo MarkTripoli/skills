@@ -12,6 +12,15 @@ npx github:MarkTripoli/skills                  # skills per runtime, ~/.agents/s
 
 `--project` installs into the current repository but still writes the `~/.agents/skills` copy the packs read; install prunes the other managed flavor and retired paths. `--no-packs` skips the packs, `--dry-run` prints the plan and stops.
 
+## One command
+
+```sh
+archon workflow run delivery-start --branch <slug> "Bug: add 1 2 prints NaN. Just fix it, no need to check with me."
+archon workflow run delivery-start --branch epic-billing "Write the PRD for usage billing; I want to review the PRD and design, then split it into epics and issues"
+```
+
+The request decides the pack and the gates: hands-off wording runs unattended, "review the plan" keeps the planning gates, nothing said keeps every gate. `--input workflow=<pack>` and `--input gates=<...>` override. Unsure with gates on: the run pauses once at `confirm`; `archon workflow reject <id> "lean, outline"` names the pack and gates. In an agent session: `/deliver <request>`.
+
 ## Pick a pack
 
 | Pack | When | Gates | Start |
@@ -22,6 +31,8 @@ npx github:MarkTripoli/skills                  # skills per runtime, ~/.agents/s
 | `delivery-full` | competing approaches, cross-module impact, a shared interface | `design`, `plan`, `phases`, `pr` | `archon workflow run delivery-full --branch plugin-formatters "Add a plugin system for output formatters"` |
 | `delivery-prd` | the requirement itself is open; product-facing | `prd`, `tdd`, `plan`, `phases`, `pr` | `archon workflow run delivery-prd --branch csv-export "Export reports as CSV from the dashboard"` |
 | `delivery-epic` | several mergeable deliverables, or more than about eight phases | `plan` | `archon workflow run delivery-epic --branch epic-build-billing-module "Build the billing module"` |
+| `delivery-program` | requirements first, then epics and issues, then the children run | `prd`, `tdd`, `plan` | `archon workflow run delivery-program --branch epic-billing "Usage-based billing for teams"` |
+| `delivery-epic-wave` | the next wave of an epic after its pull requests merged | none | `archon workflow run delivery-epic-wave --branch epic-billing --input epic_dir=.agents/tasks/epic-billing "next wave"` |
 | `delivery-resolve-reviews` | reviewers commented on a pull request a run opened | none | [PR review rounds](#epics-and-pr-review-rounds) |
 
 Other inputs: `--input review_each_phase=true` (full, lean, prd: one review pass after every phase), `--input task_dir=.agents/tasks/<slug>` (reuse a task directory), `--input skills_dir=<dir>` (default `~/.agents/skills`).
