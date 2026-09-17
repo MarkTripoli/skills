@@ -11,7 +11,7 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 ## When it runs
 
-Only when a skill step or a pack node names it. The packs call it from bash nodes; skills such as `create-epic-plan`, `resolve-pr-reviews`, and `test-app` name the command to run in their steps. Never add a call the step does not ask for.
+Only when a skill step or a pack node names it. The packs call it from bash nodes; skills such as `create-epic-plan`, `resolve-pr-reviews`, `test-app`, and `verify-implementation` name the command to run in their steps. Never add a call the step does not ask for.
 
 ## Availability and fallback
 
@@ -28,6 +28,7 @@ Run from the skill's directory under the installed skills (`<skills dir>/typed-j
 | `plan-remaining <plan.md>` | `done`, `remaining`, `no-phases`, `unclear`; `--json` adds `next` | implement block |
 | `review-status <artifact.md> <claimed>` | effective `clean`, `findings`, `blocked`; moves a claim only toward the safer status | review block |
 | `reproduction-status <artifact.md> <claimed>` | `reproduced` or `not-reproduced` | bugfix pack |
+| `verification-status <artifact.md> <claimed>` | effective `passed`, `failed`, `blocked`; moves a claim only toward the safer status | verify block |
 | `extract-json --required a,b --enum status=x,y [--dir d] [file]` | the JSON object an answer contains or implies, else the answer as is | generated omp packs |
 | `route-workflow [--children file.json] [text]` | the pack that fits a request, or one per epic child | task node, `create-epic-plan` |
 | `size-children --children file.json` | `ok`, `split`, or `unclear` per epic child, with its weakest sizing test and the split to apply | `create-epic-plan` |
@@ -36,7 +37,7 @@ Run from the skill's directory under the installed skills (`<skills dir>/typed-j
 | `slug [request]` | the directory slug picked from code-proposed candidates | task node |
 | `tier [text]` | `small`, `medium`, `large` | task node, launch scripts |
 | `autonomy [text]` | `none`, `pr`, `plan`, `all`: how much the request wants a person involved | `delivery-start`, `deliver` |
-| `grade-steps <steps.json>` | `pass`, `fail`, `unclear` and a severity level per step | `test-app` |
+| `grade-steps [--kind screen\|command] <steps.json>` | `pass`, `fail`, `unclear` and a severity level per step; `screen` (default) grades what a screen showed, `command` what a command, request, or file read returned | `test-app`, `verify-implementation` |
 | `rerank --query <text> <candidates.json>` | candidates ordered by how well they answer the question, with a level 0 to 3 | `create-research`, `iterate-research` |
 | `coverage <questions.json> <artifact.md>` | `answered`, `partial`, `missing` per research question | `create-research`, `iterate-research` |
 | `cite <claims.json>` | `supported`, `unsupported`, `unclear` per claim against its fetched source lines | `create-research`, `iterate-research` |

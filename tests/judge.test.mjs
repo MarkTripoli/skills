@@ -79,6 +79,24 @@ test("judge review-status and reproduction-status: a claim only ever moves towar
   } finally { stub.close(); }
 });
 
+test("judge verification-status: a passed claim with a failed item becomes failed, a blocked artifact blocks, failed is never relaxed", async () => {
+  let openFail = 0.9; let blocked = 0.0;
+  const stub = await startStub((id) => (id === "open_fail" ? noul(openFail) : noul(blocked)));
+  try {
+    const artifact = tmp("06-verification-x.md", "# Verification\n\n| A2 | fail | 2 |\n");
+    assert.equal((await judge(["verification-status", artifact, "passed"], stub.env)).out, "failed", "passed with a failed item in the table becomes failed");
+    assert.equal(stub.requests.at(-1).state.verification, fs.readFileSync(artifact, "utf8"), "the artifact text is the state");
+    openFail = 0.45;
+    assert.equal((await judge(["verification-status", artifact, "passed"], stub.env)).out, "passed");
+    assert.equal((await judge(["verification-status", artifact, "failed"], stub.env)).out, "failed", "failed is never relaxed to passed");
+    blocked = 0.9;
+    assert.equal((await judge(["verification-status", artifact, "passed"], stub.env)).out, "blocked");
+    assert.equal((await judge(["verification-status", artifact, "blocked"], stub.env)).out, "blocked");
+    const full = JSON.parse((await judge(["verification-status", artifact, "passed", "--json"], stub.env)).out);
+    assert.deepEqual(Object.keys(full).sort(), ["blocked", "claimed", "open_fail", "status"]);
+  } finally { stub.close(); }
+});
+
 test("judge extract-json: a contained object needs no call; prose is recovered by enum choice plus the one artifact name; unclear falls back to the text", async () => {
   let status = "findings"; let confidence = 0.95;
   const stub = await startStub((id, question) => choice(id === "artifact_name" ? Object.keys(question.criteria)[1] : status, question.criteria, confidence));
@@ -147,6 +165,11 @@ test("judge feedback-intent, route-workflow, slug, tier, triage-threads, grade-s
     const steps = tmp("steps.json", JSON.stringify([{ id: "s1", expected: "a toast says Saved", observed: "toast: Saved" }]));
     level = 2; confidence = 0.9;
     assert.deepEqual(JSON.parse((await judge(["grade-steps", steps, "--json"], stub.env)).out), [{ id: "s1", verdict: "pass", satisfied: 0.9, severity: 2, severity_confidence: 0.9 }]);
+    const checks = tmp("checks.json", JSON.stringify([{ id: "C1", expected: "exits 0 with no failing test", observed: "tests 9, pass 9, fail 0; exit 0" }]));
+    level = 0;
+    assert.deepEqual(JSON.parse((await judge(["grade-steps", "--kind", "command", checks, "--json"], stub.env)).out), [{ id: "C1", verdict: "pass", satisfied: 0.9, severity: 0, severity_confidence: 0.9 }]);
+    assert.match(stub.requests.at(-1).questions.satisfied_0.instructions, /stdout, stderr, the exit code/, "command rows are graded as command output, not as a screen");
+    assert.equal((await judge(["grade-steps", "--kind", "file", checks], stub.env)).code, 2, "an unknown kind is a usage error");
   } finally { stub.close(); }
 });
 

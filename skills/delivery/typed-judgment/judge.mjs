@@ -9,6 +9,7 @@
 //   plan-remaining <plan.md>                     done | remaining | no-phases | unclear
 //   review-status <artifact.md> <claimed>        clean | findings | blocked (never relaxes a claim)
 //   reproduction-status <artifact.md> <claimed>  reproduced | not-reproduced
+//   verification-status <artifact.md> <claimed>  passed | failed | blocked (never relaxes a claim)
 //   extract-json --required a,b --enum f=x,y [--dir d] [file|-]   a JSON object, or the input text
 //   route-workflow [--children file.json] [text|@file|-]          {workflow, confidence, probabilities}
 //   size-children --children file.json          one ok | split | unclear per epic child, with the split to apply
@@ -17,7 +18,7 @@
 //   slug [request|@file|-]                       the chosen directory slug
 //   tier [text|@file|-]                          small | medium | large
 //   autonomy [text|@file|-]                      none | pr | plan | all (how much the request wants a human involved)
-//   grade-steps <steps.json>                     one pass | fail | unclear per observed step
+//   grade-steps [--kind screen|command] <steps.json>   one pass | fail | unclear per observed step
 //   rerank --query <text|@file|-> <candidates.json>   candidates ordered by how well they answer the query
 //   coverage <questions.json> <artifact.md>      answered | partial | missing per research question
 //   cite <claims.json>                           supported | unsupported | unclear per cited claim
@@ -139,6 +140,25 @@ async function reproductionStatus(file, claimed) {
   const shown = answers.shown.noul;
   const status = claimed === "reproduced" ? (shown < T.safe ? "not-reproduced" : "reproduced") : claimed === "not-reproduced" ? "not-reproduced" : shown >= T.yes ? "reproduced" : "not-reproduced";
   return { text: status, json: { status, claimed, shown } };
+}
+
+// The verifier's claim checked against its own artifact. Only ever moves a claim toward the safer
+// status: `passed` with a failed item in the table becomes `failed`; an artifact that says the checks
+// could not run becomes `blocked`.
+async function verificationStatus(file, claimed) {
+  const verification = fs.readFileSync(file, "utf8");
+  const answers = await systemOne({ verification }, {
+    open_fail: noul("The verification record in `verification` lists at least one repository check or acceptance item whose verdict is fail, or a finding that is not recorded as resolved."),
+    blocked: noul("The verifier states the checks could not be run for a reason outside the change: a missing toolchain, dependency, service, or credential, or the verification is marked blocked."),
+  });
+  const open = answers.open_fail.noul; const blocked = answers.blocked.noul;
+  let status;
+  if (claimed === "blocked") status = "blocked";
+  else if (blocked > T.safe) status = "blocked";
+  else if (claimed === "failed") status = "failed";
+  else if (claimed === "passed") status = open > T.safe ? "failed" : "passed";
+  else status = open <= T.no ? "passed" : "failed";
+  return { text: status, json: { status, claimed, open_fail: open, blocked } };
 }
 
 // The first JSON object in `text` that has every required key; else the first that parses; else null.
@@ -380,17 +400,39 @@ async function autonomy(text) {
   return { text: level, json: { autonomy: level, suggested: a.choice, confidence: a.confidence, probabilities: a.probabilities } };
 }
 
-async function gradeSteps(file) {
-  const steps = JSON.parse(fs.readFileSync(file, "utf8"));
-  const questions = {};
-  steps.forEach((step, i) => {
-    questions[`satisfied_${i}`] = noul(`\`steps[${i}].observed\` is the accessibility snapshot or view hierarchy read from the screen after the step: element roles, names, values, and states, one per entry. It shows the outcome described in \`steps[${i}].expected\`: the named elements, text, or states are present as described.`);
-    questions[`severity_${i}`] = score(`How far does \`steps[${i}].observed\` deviate from \`steps[${i}].expected\``, [
+// `--kind screen` (default) grades what a screen showed after a step; `--kind command` grades what a
+// command, request, or file read returned. Same rows, same bands; only the questions name the medium.
+const STEP_MEDIA = {
+  screen: {
+    observed: "the accessibility snapshot or view hierarchy read from the screen after the step: element roles, names, values, and states, one per entry",
+    shows: "the named elements, text, or states are present as described",
+    severity: [
       "Matches the expectation; nothing wrong",
       "Cosmetic difference only: layout, wording, or styling that does not affect the task",
       "Functional deviation: the outcome is partly wrong or a control does not behave as described",
       "Blocking: the flow cannot continue, crashes, or shows an error state",
-    ]);
+    ],
+  },
+  command: {
+    observed: "the output recorded after running the command or taking the observation the item names: stdout, stderr, the exit code, a response body, or the lines of a file",
+    shows: "the named values, texts, exit codes, files, or states are present as described",
+    severity: [
+      "Matches the expectation; nothing wrong",
+      "Cosmetic difference only: formatting, ordering, or wording that does not change the outcome",
+      "Functional deviation: a value, file, exit code, or behavior differs from what was expected",
+      "Blocking: the command fails, errors, or crashes, or the check could not complete",
+    ],
+  },
+};
+
+async function gradeSteps(file, kind = "screen") {
+  const medium = STEP_MEDIA[kind];
+  if (!medium) usage(`grade-steps --kind takes ${Object.keys(STEP_MEDIA).join(" or ")}`);
+  const steps = JSON.parse(fs.readFileSync(file, "utf8"));
+  const questions = {};
+  steps.forEach((step, i) => {
+    questions[`satisfied_${i}`] = noul(`\`steps[${i}].observed\` is ${medium.observed}. It shows the outcome described in \`steps[${i}].expected\`: ${medium.shows}.`);
+    questions[`severity_${i}`] = score(`How far does \`steps[${i}].observed\` deviate from \`steps[${i}].expected\``, medium.severity);
   });
   const answers = await systemOne({ steps }, questions);
   const rows = steps.map((step, i) => {
@@ -470,6 +512,7 @@ async function main(argv) {
     case "plan-remaining": need(1, "<plan.md>"); result = await planRemaining(rest[0]); break;
     case "review-status": need(2, "<artifact.md> <claimed>"); result = await reviewStatus(rest[0], rest[1]); break;
     case "reproduction-status": need(2, "<artifact.md> <claimed>"); result = await reproductionStatus(rest[0], rest[1]); break;
+    case "verification-status": need(2, "<artifact.md> <claimed>"); result = await verificationStatus(rest[0], rest[1]); break;
     case "extract-json": result = await extractJson(rest); break;
     case "route-workflow": result = await routeWorkflow(rest); break;
     case "size-children": { const childrenFile = flag(rest, "--children") ?? rest[0]; if (!childrenFile) usage("size-children needs --children <file.json>"); result = await sizeChildren(childrenFile); break; }
@@ -478,7 +521,7 @@ async function main(argv) {
     case "slug": result = await slug(rest[0] ?? "-"); break;
     case "tier": result = await tier(rest[0] ?? "-"); break;
     case "autonomy": result = await autonomy(rest[0] ?? "-"); break;
-    case "grade-steps": need(1, "<steps.json>"); result = await gradeSteps(rest[0]); break;
+    case "grade-steps": { const kind = flag(rest, "--kind") ?? "screen"; need(1, "<steps.json>"); result = await gradeSteps(rest[0], kind); break; }
     case "rerank": result = await rerank(rest); break;
     case "coverage": need(2, "<questions.json> <artifact.md>"); result = await coverage(rest[0], rest[1]); break;
     case "cite": need(1, "<claims.json>"); result = await cite(rest[0]); break;
