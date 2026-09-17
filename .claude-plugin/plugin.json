@@ -32,6 +32,7 @@
     "./skills/delivery/describe-pr",
     "./skills/delivery/fix-bug",
     "./skills/delivery/fix-code-review",
+    "./skills/delivery/gather-sources",
     "./skills/delivery/implement-outline",
     "./skills/delivery/implement-plan",
     "./skills/delivery/iterate-design-discussion",

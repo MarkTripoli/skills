@@ -73,7 +73,7 @@ Delivery skills live in `skills/delivery/`; `show-me` is standalone in `skills/s
 
 | Group | Skills |
 |---|---|
-| Research | `create-research-questions`, `create-research`, and `iterate-*` for each |
+| Research | `gather-sources`, `create-research-questions`, `create-research`, and `iterate-*` for questions and research |
 | Design | `create-design-discussion`, `create-prd`, `create-tdd`, and `iterate-*` for each |
 | Planning | `create-structure-outline`, `create-plan`, `create-epic-plan`, `start-epic-delivery`, and `iterate-*` for outline and plan |
 | Implementation | `implement-plan`, `implement-outline`, `iterate-implementation`, `reproduce-bug`, `fix-bug` |
