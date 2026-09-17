@@ -21,6 +21,8 @@ Determine merge target: the base of the existing pull request (`gh pr view --jso
 
 Read `task.md`/`ticket.md`, the newest artifact of the implementation source type (prefer `plan`, then `structure-outline`, `tdd`, `prd`). Use artifact summaries to avoid opening unrelated documents. Read repo instructions, standards for changed files. Read changed/existing tests before judging. Check claims, boundaries, catches regression/requirement. Inspect commit/PR description; title stands alone, body explains behavior/motivation/decisions/evidence/limits. Record models when known.
 
+When `task.md` lists acceptance criteria, decide each one against the diff and its tests. A criterion nothing in the change proves is a major-severity finding that names the missing check; a criterion the change contradicts is critical.
+
 ## Review
 
 Trace behavior through callers/tests. Evaluate every applicable axis:

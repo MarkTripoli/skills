@@ -113,7 +113,7 @@ The `fix-bug` node reads the artifact's `## Fix` steps, makes the reproduction p
 archon workflow run delivery-epic --branch epic-build-billing-module "Build the billing module"
 ```
 
-Task directory: `.agents/tasks/build-billing-module/`. `create-epic-plan` writes the plan and gates (`plan`); `start-epic-delivery` creates one task directory per child, commits them as `docs(task): open epic children` on the epic branch, and prints one start command per wave-1 child:
+Task directory: `.agents/tasks/build-billing-module/`. `create-epic-plan` sizes every child against [shared/SLICING.md](../shared/SLICING.md) (one obligation, one vertical slice, one day of work, safe to merge alone), gives each one EARS acceptance criteria, writes the plan, and gates (`plan`); `start-epic-delivery` rejects a child that breaks those rules, creates one task directory per child with the criteria in its `task.md`, commits them as `docs(task): open epic children` on the epic branch, and prints one start command per wave-1 child:
 
 ```sh
 archon workflow run delivery-<child workflow> --base epic-build-billing-module --input task_dir=.agents/tasks/<child slug> '<child prompt>'

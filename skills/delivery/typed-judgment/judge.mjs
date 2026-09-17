@@ -11,6 +11,7 @@
 //   reproduction-status <artifact.md> <claimed>  reproduced | not-reproduced
 //   extract-json --required a,b --enum f=x,y [--dir d] [file|-]   a JSON object, or the input text
 //   route-workflow [--children file.json] [text|@file|-]          {workflow, confidence, probabilities}
+//   size-children --children file.json          one ok | split | unclear per epic child, with the split to apply
 //   triage-threads <threads.json>                one disposition per review thread
 //   feedback-intent [text|@file|-]               revise | proceed | stop
 //   slug [request|@file|-]                       the chosen directory slug
@@ -209,6 +210,79 @@ async function routeWorkflow(args) {
   return { text: workflow, json: { workflow, suggested: a.choice, confidence: a.confidence, probabilities: a.probabilities } };
 }
 
+// One split per symptom in shared/SLICING.md, in that document's order.
+const SPLITS = {
+  workflow_step: "The child walks several steps of one flow; each step becomes its own child and the first is a walking skeleton.",
+  rule_variation: "The child carries a core rule and its exceptions; the core rule ships first and each variation becomes its own child.",
+  input_format: "The child accepts several input shapes or formats; the first shape ships first and each further format becomes its own child.",
+  failure_path: "The child mixes the happy path with error, permission, or boundary handling; the happy path ships first and each failure class becomes its own child.",
+  research_spike: "The child is large because the approach is unknown; a time-boxed research child that ends in a design artifact comes first.",
+  layer_batch: "The child changes one layer for every feature at once, so it is a horizontal batch; the work regroups by behavior instead.",
+  none: "No split applies: the child is already one unit of work.",
+};
+
+// Sizing bars, set from a calibration run over eight children, four of them one pull request each and four
+// oversize: the structural tests separated at 0.65 against 0.52, so a pass needs 0.60 and a clear fail sits
+// under 0.40. The effort question answers lower for every child because the model cannot see the codebase
+// (0.54 to 0.67 for the small ones, 0.06 to 0.22 for the oversize ones), so it carries its own two bars.
+const SIZE = { pass: 0.6, fail: 0.4, effort_pass: 0.4, effort_fail: 0.25 };
+
+// The four tests of shared/SLICING.md, as probabilities that the child passes each one. A child fails on the
+// test furthest below its bar; a declared enabler is exempt from the vertical-slice test by design.
+async function sizeChildren(file) {
+  const children = JSON.parse(fs.readFileSync(file, "utf8"));
+  const questions = {};
+  children.forEach((child, i) => {
+    const it = `the child task \`children[${i}]\` (named \`children[${i}].name\`, described in \`children[${i}].prompt\`)`;
+    questions[`obligation_${i}`] = noul(`${it} asks one thing of the system: one actor, one behavior, and one measurable pass criterion, stated in \`children[${i}].acceptance\` when it has them. Naming the files to change, the tests to write, or the documentation to update is part of that one obligation. Two unrelated behaviors, or wording such as "and also", is more than one.`);
+    questions[`vertical_${i}`] = noul(`${it} ends at behavior a user or a calling program can exercise once it merges, crossing whatever storage, service, contract, and client layers that behavior needs. A change that stops at one layer boundary and leaves nothing exercisable does not.`);
+    questions[`one_day_${i}`] = noul(`An engineer who knows this codebase implements ${it}, proves it with a test or an observation, and opens the pull request within one working day.`);
+    questions[`merge_safe_${i}`] = noul(`Merging ${it} on its own leaves the product releasable: it finishes the behavior it changes, or its path stays additive, unreachable until later work, or behind a flag whose default keeps today's behavior. A child that half-changes a behavior another child must finish does not.`);
+    if (Array.isArray(child.acceptance) && child.acceptance.length) {
+      questions[`criteria_${i}`] = noul(`Every sentence in \`children[${i}].acceptance\` names observable state (a status code, stored record, emitted event, exit code, or rendered value) that a command, request, or observation decides, states one behavior, and avoids unmeasurable words such as fast, secure, user-friendly, or works correctly.`);
+    }
+    questions[`split_${i}`] = choice(`Assuming ${it} is too large for one pull request and must be split, which split applies`, SPLITS);
+  });
+  const answers = await systemOne({ children }, questions);
+  const rows = children.map((child, i) => {
+    const tests = {
+      single_obligation: answers[`obligation_${i}`].noul,
+      vertical_slice: answers[`vertical_${i}`].noul,
+      one_day: answers[`one_day_${i}`].noul,
+      merge_safe: answers[`merge_safe_${i}`].noul,
+    };
+    const enabler = child.slice === "enabler";
+    const bars = { single_obligation: SIZE.pass, merge_safe: SIZE.pass, one_day: SIZE.effort_pass };
+    if (!enabler) bars.vertical_slice = SIZE.pass;
+    const weakest = Object.keys(bars).reduce((worst, key) => (tests[key] - bars[key] < tests[worst] - bars[worst] ? key : worst));
+    const structural = Math.min(...Object.keys(bars).filter((key) => key !== "one_day").map((key) => tests[key]));
+    const verdict =
+      structural < SIZE.fail || tests.one_day < SIZE.effort_fail
+        ? "split"
+        : structural >= SIZE.pass && tests.one_day >= SIZE.effort_pass
+          ? "ok"
+          : "unclear";
+    const criteriaAnswer = answers[`criteria_${i}`];
+    const criteria = !criteriaAnswer ? "none" : criteriaAnswer.noul >= T.yes ? "ok" : criteriaAnswer.noul <= T.no ? "weak" : "unclear";
+    const suggestion = answers[`split_${i}`];
+    const named = verdict !== "ok" && suggestion.choice !== "none" && suggestion.confidence >= T.confident;
+    return {
+      name: child.name,
+      verdict,
+      weakest,
+      probability: tests[weakest],
+      tests,
+      enabler,
+      criteria,
+      criteria_probability: criteriaAnswer?.noul ?? null,
+      split: named ? suggestion.choice : null,
+      suggested_split: suggestion.choice,
+      split_confidence: suggestion.confidence,
+    };
+  });
+  return { text: rows.map((row) => `${row.name}\t${row.verdict}\t${row.weakest}\t${row.probability}\t${row.split ?? "none"}`).join("\n"), json: rows };
+}
+
 async function triageThreads(file) {
   const threads = JSON.parse(fs.readFileSync(file, "utf8"));
   const questions = {};
@@ -320,6 +394,7 @@ async function main(argv) {
     case "reproduction-status": need(2, "<artifact.md> <claimed>"); result = await reproductionStatus(rest[0], rest[1]); break;
     case "extract-json": result = await extractJson(rest); break;
     case "route-workflow": result = await routeWorkflow(rest); break;
+    case "size-children": { const childrenFile = flag(rest, "--children") ?? rest[0]; if (!childrenFile) usage("size-children needs --children <file.json>"); result = await sizeChildren(childrenFile); break; }
     case "triage-threads": need(1, "<threads.json>"); result = await triageThreads(rest[0]); break;
     case "feedback-intent": result = await feedbackIntent(rest[0] ?? "-"); break;
     case "slug": result = await slug(rest[0] ?? "-"); break;

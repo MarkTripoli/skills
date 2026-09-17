@@ -30,7 +30,7 @@ A wave starts after every dependency's pull request is merged.
 
 ### Verify
 
-- [ ] [Each child directory exists and its `task.md` body matches the epic plan prompt.]
+- [ ] [Each child directory exists and its `task.md` carries the epic plan's prompt and acceptance criteria.]
 
 ### Known limits
 

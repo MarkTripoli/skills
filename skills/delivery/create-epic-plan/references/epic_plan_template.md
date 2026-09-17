@@ -19,16 +19,40 @@ sha: [current commit]
 
 ## Decomposition
 
-[Why these children, at this granularity, in this order. Name the boundary that makes each child mergeable on its own.]
+[Why these children, at this granularity, in this order. Name the boundary that makes each child mergeable on its own, and the contract siblings share so they can run in parallel.]
 
 ## Children
 
 ```json
 [
-  { "name": "[Child outcome]", "workflow": "oneshot", "depends_on": [], "prompt": "[Self-contained task description]" },
-  { "name": "[Child outcome]", "workflow": "full", "depends_on": ["[Child outcome]"], "prompt": "[Self-contained task description]" }
+  {
+    "name": "[Child outcome]",
+    "workflow": "oneshot",
+    "slice": "vertical",
+    "depends_on": [],
+    "acceptance": [
+      "WHEN [trigger], the [system] shall [observable response].",
+      "IF [condition], THEN the [system] shall [observable response]."
+    ],
+    "prompt": "[Self-contained task description: the files, the behavior, and what proves it]"
+  },
+  {
+    "name": "[Child outcome]",
+    "workflow": "full",
+    "slice": "enabler",
+    "flag": "[flag name; its default keeps today's behavior]",
+    "depends_on": ["[Child outcome]"],
+    "acceptance": ["WHILE [state], the [system] shall [observable response]."],
+    "prompt": "[Self-contained task description]"
+  }
 ]
 ```
+
+## Slice Check
+
+| Child | Observable increment | Size evidence | Merge safety |
+|---|---|---|---|
+| [Child outcome] | [what a caller can exercise once this merges, or the sibling that consumes this enabler] | [layers and files touched; the split applied when the first cut was larger] | [flag and its default, additive, or unreachable until the named child merges] |
 
 ## Ordering
 
@@ -42,6 +66,14 @@ sha: [current commit]
 | [Child outcome] | oneshot | oneshot | 0.00 |
 
 [Or: `Helper unavailable; workflows chosen by this skill.`]
+
+## Sizing judgments
+
+| Child | Verdict | Weakest test | Probability | Criteria | Split named |
+|---|---|---|---|---|---|
+| [Child outcome] | ok | one_day | 0.00 | ok | none |
+
+[Or: `Helper unavailable; sizing judged by this skill.`]
 
 ## Human Review
 

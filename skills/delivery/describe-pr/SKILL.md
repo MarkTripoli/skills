@@ -57,6 +57,7 @@ Template exactly:
 
 - `Why the change`: one sentence.
 - `Special things to note`: one to three bullets. `- None.` when no warnings, migrations, constraints, omissions, surprises.
+- `Acceptance criteria` (only when `task.md` lists them): one bullet per criterion in task order, each naming the command, request, or observation that decides it. A criterion this diff does not satisfy is listed with what is missing; never drop one.
 - `Evidence` (only when an `evidence` artifact exists): the result line, one bullet per recorded surface linking its `report.md`, and the video location; a failed test is never described as passing.
 - `Change outline`: compact structural view from `references/show-me.md`. Views that help: data shape, endpoint contract, pseudocode, file tree, component tree, call/control/data flow. `diff` for changes, full shape for new. Focus on files, calls, fields, components, boundaries.
 

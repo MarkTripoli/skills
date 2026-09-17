@@ -20,6 +20,7 @@ Run as a guided conversation. Settle foundation (problem, success signal), then 
 - When decision lands, rework section. Replace stale prose, update mockups, move ruled-out choices to alternatives or out of scope.
 - Keep readable as product spec. Headers state takeaway, short paragraphs, visuals near explanatory text.
 - Stay in product space: user flows, behavior, permissions, states, constraints, success criteria. Defer implementation mechanics to TDD.
+- Record each behavior in Solution Details as one obligation with an observable outcome, per the [slicing guide](https://github.com/MarkTripoli/skills/blob/main/shared/SLICING.md), which a checkout has at `shared/SLICING.md`. A behavior carrying "and also" is two behaviors; a vague term ("fast", "secure", "works correctly") is a decision nobody made yet, so ask the question that settles it.
 - If codebase reality or product behavior is unclear, verify before presenting options.
 
 ## References
