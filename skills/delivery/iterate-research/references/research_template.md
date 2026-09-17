@@ -35,6 +35,10 @@ status: complete
 
 This document records current behavior only. It does not recommend implementation work, refactors, optimizations, or future changes.
 
+### Known limits
+
+- [Judgments skipped because the helper was unavailable, the count of claims dropped as unsupported, questions the coverage check left `partial` or `missing`, or `None.`]
+
 ## Summary
 
 [Lead with the updated answer in a short paragraph. Add detail only for distinct findings the reader needs before the evidence below.]
