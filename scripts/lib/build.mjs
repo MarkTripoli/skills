@@ -67,8 +67,8 @@ function tomlMultiline(value) {
 
 const noDsStore = (src) => path.basename(src) !== ".DS_Store";
 
-// Returns { skills: [names], workers }.
-export function buildRuntime(runtime, dest) {
+// Returns { skills: [names], workers }. `skillNames` narrows an installer build; omitted builds the collection.
+export function buildRuntime(runtime, dest, { skillNames } = {}) {
   if (!RUNTIMES.includes(runtime)) throw new Error(`unknown runtime "${runtime}"; choose one of ${RUNTIMES.join(", ")}`);
   const runtimeFile = path.join(repoRoot, "runtimes", `${runtime}.md`);
   if (!fs.existsSync(runtimeFile)) throw new Error(`missing runtime adapter ${path.relative(repoRoot, runtimeFile)}`);
@@ -76,6 +76,11 @@ export function buildRuntime(runtime, dest) {
 
   const layout = scanSkills(path.join(repoRoot, "skills"));
   if (layout.problems.length) throw new Error(layout.problems.map((p) => `${path.relative(repoRoot, p.path)}: ${p.message}`).join("\n"));
+  const requested = skillNames ? new Set(skillNames) : null;
+  const available = new Set(layout.skills.map((skill) => skill.name));
+  const unknown = requested ? [...requested].filter((name) => !available.has(name)) : [];
+  if (unknown.length) throw new Error(`unknown skill${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}`);
+  const selected = requested ? layout.skills.filter((skill) => requested.has(skill.name)) : layout.skills;
 
   fs.rmSync(dest, { recursive: true, force: true });
   fs.mkdirSync(path.join(dest, "skills"), { recursive: true });
@@ -83,7 +88,7 @@ export function buildRuntime(runtime, dest) {
 
   const snippet = [];
   let workers = 0;
-  for (const { name, dir: source } of layout.skills) {
+  for (const { name, dir: source } of selected) {
     const target = path.join(dest, "skills", name);
     fs.cpSync(source, target, { recursive: true, filter: noDsStore });
 
@@ -111,5 +116,5 @@ export function buildRuntime(runtime, dest) {
 
   if (runtime === "codex") fs.writeFileSync(path.join(dest, "config.snippet.toml"), snippet.join("\n"));
 
-  return { skills: layout.skills.map((s) => s.name), workers };
+  return { skills: selected.map((skill) => skill.name), workers };
 }

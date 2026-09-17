@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { plan, apply, buildTrees, destinations, detectTargets, updateConfigBlock, packDestination, packFlavors, PACKS } from "../scripts/install.mjs";
+import { plan, apply, buildTrees, destinations, detectTargets, parseArgs, promptSelections, updateConfigBlock, packDestination, packFlavors, PACKS } from "../scripts/install.mjs";
 import { buildRuntime } from "../scripts/lib/build.mjs";
 import { scanSkills } from "../scripts/lib/layout.mjs";
 import { listNative } from "../scripts/build-packs.mjs";
@@ -65,6 +65,44 @@ test("detectTargets falls back to portable when no runtime binary is on PATH", (
   assert.deepEqual(detectTargets({ PATH: bin }), ["oh-my-pi", "pi"]);
 });
 
+test("installer prompts for harnesses and a searchable skill subset", async () => {
+  const catalog = [
+    { name: "create-plan", group: "delivery" },
+    { name: "show-me", group: null },
+  ];
+  const calls = [];
+  const prompt = {
+    isCancel: () => false,
+    multiselect: async (options) => {
+      calls.push(["targets", options]);
+      return ["codex", "oh-my-pi"];
+    },
+    select: async (options) => {
+      calls.push(["mode", options]);
+      return "choose";
+    },
+    autocompleteMultiselect: async (options) => {
+      calls.push(["skills", options]);
+      return ["show-me"];
+    },
+  };
+
+  const selected = await promptSelections(parseArgs([]), catalog, { prompt, isTTY: true, env: { PATH: "" } });
+  assert.deepEqual(selected, { targets: ["codex", "oh-my-pi"], skillNames: ["show-me"] });
+  assert.deepEqual(calls.map(([kind]) => kind), ["targets", "mode", "skills"]);
+  assert.deepEqual(calls[0][1].initialValues, ["portable"], "detected harnesses start selected");
+  assert.equal(calls[2][1].options[0].hint, "delivery");
+});
+
+test("--yes skips menus and repeated --skill flags select exact skills", async () => {
+  const catalog = [{ name: "create-plan", group: "delivery" }, { name: "show-me", group: null }];
+  const args = parseArgs(["codex", "--skill", "show-me", "--skill=create-plan", "--yes"]);
+  const prompt = new Proxy({}, { get: () => () => assert.fail("prompt should not run") });
+  const selected = await promptSelections(args, catalog, { prompt, isTTY: true, env: { PATH: "" } });
+  assert.deepEqual(selected, { targets: ["codex"], skillNames: ["create-plan", "show-me"] });
+  assert.deepEqual(parseArgs(["--skill"]).errors, ["--skill requires a skill name"]);
+});
+
 test("destinations follow each runtime's directories and honor CLAUDE_CONFIG_DIR and CODEX_HOME", () => {
   const home = "/h";
   assert.deepEqual(destinations("claude-code", { project: false, home, env: { CLAUDE_CONFIG_DIR: "/cc" } }), { skills: "/cc/skills", agents: "/cc/agents" });
@@ -83,6 +121,27 @@ test("plan: codex and portable share ~/.agents/skills, so the portable copy is s
   assert.deepEqual(project.steps.filter((s) => s.kind !== "retired").map((s) => `${s.target}:${s.kind}`), ["codex:skills", "oh-my-pi:skills", "oh-my-pi:agents"]);
   assert.match(project.notes[0], /codex: worker definitions .* user-level/);
   assert.equal(project.steps[0].names.length, scanSkills(path.join(REPO, "skills")).skills.length);
+});
+
+test("plan and runtime build carry only selected skills and workers", () => {
+  const home = "/h";
+  const selected = ["agent-implementer", "create-plan"];
+  const partial = plan({ targets: ["codex"], skillNames: selected, project: false, packs: false, cwd: "/p", home, env });
+  const skillStep = partial.steps.find((step) => step.kind === "skills");
+  const agentStep = partial.steps.find((step) => step.kind === "agents");
+  const configStep = partial.steps.find((step) => step.kind === "config");
+  assert.deepEqual(skillStep.names, selected);
+  assert.deepEqual(agentStep.names, ["agent-implementer"]);
+  assert.deepEqual(configStep.names, ["agent-implementer"]);
+  assert.equal(configStep.complete, false);
+  assert.throws(() => plan({ targets: ["codex"], skillNames: selected, project: false, packs: true, cwd: "/p", home, env }), /packs require the full skill collection/);
+
+  const built = buildTrees(partial, tmpdir());
+  assert.deepEqual(fs.readdirSync(path.join(built.get("codex"), "skills")).sort(), selected.sort());
+  assert.deepEqual(fs.readdirSync(path.join(built.get("codex"), "agents")), ["agent-implementer.toml"]);
+  const snippet = fs.readFileSync(path.join(built.get("codex"), "config.snippet.toml"), "utf8");
+  assert.match(snippet, /\[agents\.agent-implementer\]/);
+  assert.doesNotMatch(snippet, /\[agents\.agent-codebase-analyzer\]/);
 });
 
 test("plan: packs add the ~/.agents/skills copy they read unless a target already writes it, then the two pack directories", () => {
@@ -120,6 +179,28 @@ test("updateConfigBlock appends once, replaces in place, and removes cleanly", (
   assert.ok(second.endsWith("\n[other]\nx = 1\n"), "content after the block survives");
   assert.equal(updateConfigBlock(first, null), original);
   assert.equal(updateConfigBlock("", null), "");
+});
+
+test("partial Codex worker changes preserve unselected managed config entries", () => {
+  const home = tmpdir("skills-install-partial-config-");
+  const full = plan({ targets: ["codex"], project: false, packs: false, cwd: home, home, env });
+  const fullBuilt = buildTrees(full, tmpdir());
+  apply(full, { built: fullBuilt, uninstall: false, home });
+
+  const selected = ["agent-implementer"];
+  const partial = plan({ targets: ["codex"], skillNames: selected, project: false, packs: false, cwd: home, home, env });
+  const partialBuilt = buildTrees(partial, tmpdir());
+  apply(partial, { built: partialBuilt, uninstall: false, home });
+  const configFile = path.join(home, ".codex", "config.toml");
+  const afterInstall = fs.readFileSync(configFile, "utf8");
+  assert.match(afterInstall, /\[agents\.agent-implementer\]/);
+  assert.match(afterInstall, /\[agents\.agent-codebase-analyzer\]/, "an unselected worker remains configured");
+
+  const remove = plan({ targets: ["codex"], skillNames: selected, project: false, packs: false, uninstall: true, cwd: home, home, env });
+  apply(remove, { built: partialBuilt, uninstall: true, home });
+  const afterRemove = fs.readFileSync(configFile, "utf8");
+  assert.doesNotMatch(afterRemove, /\[agents\.agent-implementer\]/);
+  assert.match(afterRemove, /\[agents\.agent-codebase-analyzer\]/);
 });
 
 test("apply installs every target into a home directory and uninstall leaves only what was there before", () => {

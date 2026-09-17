@@ -7,10 +7,10 @@ Commands for the delivery packs, run from a git checkout of the project. Long fo
 ```sh
 curl -fsSL https://archon.diy/install | bash   # Archon 0.10 or later
 archon setup                                   # provider: Claude Code, Codex, or Pi (Oh My Pi: skip, use the -omp packs)
-npx github:MarkTripoli/skills                  # skills per runtime, ~/.agents/skills, packs in ~/.archon/workflows/
+npx github:MarkTripoli/skills                  # choose harnesses and all or specific skills, then install
 ```
 
-`--project` installs into the current repository but still writes the `~/.agents/skills` copy the packs read; install prunes the other managed flavor and retired paths. `--no-packs` skips the packs, `--dry-run` prints the plan and stops.
+The terminal menu preselects detected harnesses and offers a searchable skill picker. `--skill <name>` is the non-interactive equivalent; repeat it for more. A partial skill selection skips the Archon packs because their workflows require the complete collection. `--project` installs into the current repository but still writes the `~/.agents/skills` copy the packs read; `--no-packs` skips the packs, `--dry-run` prints the plan, and `--yes` skips menus and confirmation.
 
 ## One command
 

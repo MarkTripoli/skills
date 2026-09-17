@@ -6,7 +6,7 @@ This guide takes one request from idea to pull request with the delivery packs, 
 
 1. Install Archon 0.10 or later: `curl -fsSL https://archon.diy/install | bash`.
 2. `archon setup` picks the provider (Claude Code, Codex, or Pi) and its credentials; `archon doctor` confirms the binaries and `gh` auth. Oh My Pi users skip the provider and use the `-omp` packs.
-3. Install the skills and packs: `npx github:MarkTripoli/skills` (see the [README install section](../README.md#install)). It writes the portable skills to `~/.agents/skills/`, the packs' `skills_dir` default, and the packs to `~/.archon/workflows/`; `--project` puts packs in the current repository but still writes the `~/.agents/skills` copy they read.
+3. Install the skills and packs: `npx github:MarkTripoli/skills` (see the [README install section](../README.md#install)). The menu preselects detected harnesses and lets you install all skills or search for specific ones. A full install writes portable skills to `~/.agents/skills/`, the packs' `skills_dir` default, and packs to `~/.archon/workflows/`; `--project` puts packs in the current repository but still writes the `~/.agents/skills` copy. A partial skill selection skips packs because the workflow chain requires every delivery skill.
 4. From a git checkout of the project you want to change, check the packs are visible:
 
    ```sh

@@ -10,11 +10,11 @@ New here: [docs/getting-started.md](docs/getting-started.md), then [docs/context
 
 - Archon 0.10 or later: `curl -fsSL https://archon.diy/install | bash`.
 - One agent Archon runs as a provider: Claude Code, Codex, or Pi. Oh My Pi users run the `-omp` pack flavor, which needs `omp` on `PATH`.
-- Node 20+ for the installer and the checks.
+- Node 20.12+ for the installer and the checks.
 
 ## Install
 
-Detects the agents on your `PATH`, shows what it will write, asks, then installs skills and worker definitions per runtime, a portable skills copy in `~/.agents/skills/` (the packs' `skills_dir` default), and the packs in `~/.archon/workflows/`: the native `delivery/` flavor for Claude Code, Codex, or Pi, the `delivery-omp/` flavor when Oh My Pi is a target, both when both are. With `--project`, packs go in the current repository but still read the `~/.agents/skills` copy. Install prunes the other managed flavor and retired paths. Archon's router lists every installed workflow, so a one-runtime machine sees one set of packs.
+In a terminal, the installer opens a multi-select menu with detected agent harnesses preselected, then offers every skill or a searchable skill picker. It shows the resulting file plan and asks before writing. A full install adds runtime-adapted skills and worker definitions, a portable skills copy in `~/.agents/skills/` (the packs' `skills_dir` default), and the Archon packs in `~/.archon/workflows/`: the native `delivery/` flavor for Claude Code, Codex, or Pi, the `delivery-omp/` flavor for Oh My Pi, or both. With `--project`, packs go in the current repository but still read the `~/.agents/skills` copy. Install prunes the other managed flavor and retired paths.
 
 ```sh
 npx github:MarkTripoli/skills
@@ -23,8 +23,9 @@ npx github:MarkTripoli/skills
 | Flag or argument | Effect |
 |---|---|
 | `oh-my-pi pi`, `all`, `portable` | Pick targets; `portable` writes the plain `~/.agents/skills/` copy and the native packs |
+| `--skill <name>`, `-s <name>` | Install one skill; repeat the flag for more. Selecting fewer than all skills skips the Archon packs because their workflows require the complete collection |
 | `--project` | Install into the current repository; packs still read `~/.agents/skills` |
-| `--dry-run`, `--yes` | Preview only; skip the confirmation |
+| `--dry-run`, `--yes` | Preview only; or skip both menus and confirmation, using detected targets and every skill when unspecified |
 | `--uninstall` | Remove what it wrote for the named targets (Codex config block is marker-tracked); a named runtime keeps the packs and the shared `~/.agents/skills/` copy they read |
 
 | Runtime | Skills | Workers |
