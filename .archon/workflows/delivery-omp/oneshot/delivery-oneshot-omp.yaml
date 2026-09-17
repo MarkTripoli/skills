@@ -74,7 +74,8 @@ nodes:
       { prompt=$(cat); } <<DELIVERY_PROMPT
       Complete the task in ${v1}/task.md end to end: implement it, run the narrowest checks that prove it, and commit the code with explicit paths (never \`git add -A\`); anything you write under ${v1} goes in its own \`docs(task): implement artifacts\` commit. Follow the commit conventions in ${v2}/ci-commit/SKILL.md for the message. Do not open a pull request. End with a short summary of what changed and how it was verified.
       DELIVERY_PROMPT
-      omp -p --auto-approve --no-session --max-time=45m "$prompt"
+      omp -p --auto-approve --no-session --max-time=45m "$prompt" </dev/null
+    timeout: 2760000
 
   - id: review
     include: delivery-review-omp

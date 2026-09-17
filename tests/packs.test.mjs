@@ -38,7 +38,7 @@ test("bashForPrompt: refs are hoisted unquoted, inputs read from INPUTS_* env, e
   assert.ok(body.includes("${INPUTS_TASK_DIR}; user: ${LOOP_USER_INPUT:-}; cost \\$5; a \\\\ backslash"), "engine variables default to empty under set -u");
   assert.throws(() => bashForPrompt(["fine", "DELIVERY_PROMPT", "fine"]), /close the heredoc early/);
   assert.throws(() => convert(["nodes:", "  - id: b", "    prompt: |", "      Do it.", "    depends_on: [a]", "    output_format:", "      type: object", ""].join("\n")), /output_format must directly follow the prompt block/);
-  assert.equal(lines.at(-1), 'omp -p --auto-approve --no-session --max-time=45m "$prompt"');
+  assert.equal(lines.at(-1), 'omp -p --auto-approve --no-session --max-time=45m "$prompt" </dev/null', "stdin is closed: omp -p waits on an open pipe");
   // The heredoc opens and closes with the same marker and nothing in the prompt can close it early.
   assert.equal(lines[3], "{ prompt=$(cat); } <<DELIVERY_PROMPT");
   assert.equal(lines.at(-2), "DELIVERY_PROMPT");
@@ -102,8 +102,8 @@ test("convert: renames the workflow and its includes, notes the flavor, turns pr
   assert.ok(out.includes("    include: delivery-other-omp\n"));
   assert.ok(!out.includes("context: fresh"));
   assert.ok(!out.includes("output_format"), "Archon ignores output_format on bash nodes, so the generated node does not carry it");
-  assert.ok(out.includes("    bash: |\n      set -eu\n      v1=$a.output\n      { prompt=$(cat); } <<DELIVERY_PROMPT\n      Do it for ${INPUTS_TASK_DIR} with ${v1}.\n\n      Second paragraph.\n\n      CRITICAL: Respond with ONLY a JSON object matching this schema (JSON Schema, written as YAML). No prose before or after it.\n      type: object\n      DELIVERY_PROMPT\n      answer=$(omp -p --auto-approve --no-session --max-time=45m \"$prompt\")\n      printf '%s\\n' \"$answer\" | awk '\n"), "a schema node captures the answer and filters it down to the JSON object");
-  assert.ok(/awk '\n(?: {6}.*\n)+ {6}'\n  - id: c\n/.test(out));
+  assert.ok(out.includes("    bash: |\n      set -eu\n      v1=$a.output\n      { prompt=$(cat); } <<DELIVERY_PROMPT\n      Do it for ${INPUTS_TASK_DIR} with ${v1}.\n\n      Second paragraph.\n\n      CRITICAL: Respond with ONLY a JSON object matching this schema (JSON Schema, written as YAML). No prose before or after it.\n      type: object\n      DELIVERY_PROMPT\n      answer=$(omp -p --auto-approve --no-session --max-time=45m \"$prompt\" </dev/null)\n      printf '%s\\n' \"$answer\" | awk '\n"), "a schema node captures the answer and filters it down to the JSON object");
+  assert.ok(/awk '\n(?: {6}.*\n)+ {6}'\n    timeout: 2760000\n  - id: c\n/.test(out), "the node outlives omp's own 45 minute bound (Archon's default is 120 s)");
   assert.ok(out.includes('  - id: c\n    bash: "true"\n    depends_on: [b]\n'), "deterministic nodes are untouched");
 });
 

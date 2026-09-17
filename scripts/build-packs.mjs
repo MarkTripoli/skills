@@ -17,7 +17,11 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 export const NATIVE_DIR = path.join(repoRoot, ".archon", "workflows", "delivery");
 export const OMP_DIR = path.join(repoRoot, ".archon", "workflows", "delivery-omp");
 export const OMP_SUFFIX = "-omp";
+// stdin comes from /dev/null: `omp -p` waits for more prompt text while stdin is an open pipe, and
+// Archon hands bash nodes exactly that.
 export const OMP_COMMAND = "omp -p --auto-approve --no-session --max-time=45m";
+export const OMP_STDIN = "</dev/null";
+export const NODE_TIMEOUT_MS = 46 * 60 * 1000;
 
 const HEREDOC = "DELIVERY_PROMPT";
 
@@ -78,7 +82,7 @@ export function bashForPrompt(promptLines, schemaLines = []) {
     .replace(/\$/g, "\\$")
     .replace(/\u0000([A-Za-z_0-9:-]+)\u0000/g, "$${$1}");
   const assignments = [...vars.entries()].map(([ref, name]) => `${name}=${ref}`);
-  const run = schemaLines.length ? [`answer=$(${OMP_COMMAND} "$prompt")`, ...JSON_FILTER] : [`${OMP_COMMAND} "$prompt"`];
+  const run = schemaLines.length ? [`answer=$(${OMP_COMMAND} "$prompt" ${OMP_STDIN})`, ...JSON_FILTER] : [`${OMP_COMMAND} "$prompt" ${OMP_STDIN}`];
   return ["set -eu", ...assignments, `{ prompt=$(cat); } <<${HEREDOC}`, ...body.split("\n"), HEREDOC, ...run];
 }
 
@@ -160,6 +164,9 @@ export function convert(source) {
       }
       out.push(`${prompt[1]}bash: |`);
       for (const b of bashForPrompt(promptLines, schemaLines)) out.push(b === "" ? "" : `${" ".repeat(bodyIndent)}${b}`);
+      // Archon kills a bash node after 120 s by default; an agent session runs far longer. The node's
+      // timeout sits above omp's own --max-time so omp ends the session and reports before Archon does.
+      out.push(`${prompt[1]}timeout: ${NODE_TIMEOUT_MS}`);
       // Trailing blank lines the prompt block consumed belong to the file layout; keep one.
       if (j < lines.length && lines[j - 1].trim() === "") out.push("");
       i = j - 1;

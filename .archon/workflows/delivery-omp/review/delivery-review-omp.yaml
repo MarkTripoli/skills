@@ -42,7 +42,7 @@ nodes:
               summary: { type: string }
             required: [status, artifact, summary]
             DELIVERY_PROMPT
-            answer=$(omp -p --auto-approve --no-session --max-time=45m "$prompt")
+            answer=$(omp -p --auto-approve --no-session --max-time=45m "$prompt" </dev/null)
             printf '%s\n' "$answer" | awk '
               /^[[:space:]]*```/ { next }
               { n++; line[n] = $0 }
@@ -50,6 +50,7 @@ nodes:
               /\}[[:space:]]*$/ { end = n }
               END { if (!start || end < start) { start = 1; end = n }; for (i = start; i <= end; i++) print line[i] }
             '
+          timeout: 2760000
 
         - id: review-blocked
           cancel: "Review blocked; resolve the blocker recorded in the newest code-review artifact, then run the workflow again."
@@ -67,4 +68,5 @@ nodes:
 
             The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
             DELIVERY_PROMPT
-            omp -p --auto-approve --no-session --max-time=45m "$prompt"
+            omp -p --auto-approve --no-session --max-time=45m "$prompt" </dev/null
+          timeout: 2760000

@@ -67,7 +67,8 @@ nodes:
 
             The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
             DELIVERY_PROMPT
-            omp -p --auto-approve --no-session --max-time=45m "$prompt"
+            omp -p --auto-approve --no-session --max-time=45m "$prompt" </dev/null
+          timeout: 2760000
 
         # One review pass per phase when asked (not a nested loop: Archon 0.10 does not run the body of a
         # loop_group nested in a loop_group body). The pack's final review loop still runs until clean.
@@ -89,7 +90,7 @@ nodes:
               summary: { type: string }
             required: [status, artifact, summary]
             DELIVERY_PROMPT
-            answer=$(omp -p --auto-approve --no-session --max-time=45m "$prompt")
+            answer=$(omp -p --auto-approve --no-session --max-time=45m "$prompt" </dev/null)
             printf '%s\n' "$answer" | awk '
               /^[[:space:]]*```/ { next }
               { n++; line[n] = $0 }
@@ -97,6 +98,7 @@ nodes:
               /\}[[:space:]]*$/ { end = n }
               END { if (!start || end < start) { start = 1; end = n }; for (i = start; i <= end; i++) print line[i] }
             '
+          timeout: 2760000
 
         - id: fix-phase
           depends_on: [review-phase]
@@ -109,7 +111,8 @@ nodes:
 
             The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
             DELIVERY_PROMPT
-            omp -p --auto-approve --no-session --max-time=45m "$prompt"
+            omp -p --auto-approve --no-session --max-time=45m "$prompt" </dev/null
+          timeout: 2760000
 
         - id: gate
           depends_on: [implement-phase, review-phase, fix-phase]
@@ -150,7 +153,8 @@ nodes:
 
             The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
             DELIVERY_PROMPT
-            omp -p --auto-approve --no-session --max-time=45m "$prompt"
+            omp -p --auto-approve --no-session --max-time=45m "$prompt" </dev/null
+          timeout: 2760000
 
         - id: review-phase-auto
           depends_on: [implement-phase-auto]
@@ -170,7 +174,7 @@ nodes:
               summary: { type: string }
             required: [status, artifact, summary]
             DELIVERY_PROMPT
-            answer=$(omp -p --auto-approve --no-session --max-time=45m "$prompt")
+            answer=$(omp -p --auto-approve --no-session --max-time=45m "$prompt" </dev/null)
             printf '%s\n' "$answer" | awk '
               /^[[:space:]]*```/ { next }
               { n++; line[n] = $0 }
@@ -178,6 +182,7 @@ nodes:
               /\}[[:space:]]*$/ { end = n }
               END { if (!start || end < start) { start = 1; end = n }; for (i = start; i <= end; i++) print line[i] }
             '
+          timeout: 2760000
 
         - id: fix-phase-auto
           depends_on: [review-phase-auto]
@@ -190,4 +195,5 @@ nodes:
 
             The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
             DELIVERY_PROMPT
-            omp -p --auto-approve --no-session --max-time=45m "$prompt"
+            omp -p --auto-approve --no-session --max-time=45m "$prompt" </dev/null
+          timeout: 2760000
