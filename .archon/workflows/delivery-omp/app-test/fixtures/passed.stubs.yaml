@@ -1,0 +1,8 @@
+# A passing test ends the loop after the commit join; `iterate-app` and `test-blocked` stay skipped.
+test-app: '{"status":"passed","artifact":"06-app-test-fixture.md","summary":"eight steps passed on web"}'
+test-done: ""
+fixture:
+  expect: completed
+  inputs: { task_dir: .agents/tasks/fixture, kind: web, target: http://localhost:3000 }
+  reached: [test-app, test-done, test]
+exec-code: false

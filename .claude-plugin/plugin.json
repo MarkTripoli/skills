@@ -47,6 +47,8 @@
     "./skills/delivery/review-artifact-comments",
     "./skills/delivery/review-code",
     "./skills/show-me",
-    "./skills/delivery/start-epic-delivery"
+    "./skills/delivery/start-epic-delivery",
+    "./skills/delivery/test-app",
+    "./skills/delivery/typed-judgment"
   ]
 }
