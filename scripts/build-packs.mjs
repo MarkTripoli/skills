@@ -225,9 +225,17 @@ export function convert(source) {
       out.push(`name: ${name[1]}${OMP_SUFFIX}`);
       continue;
     }
-    const include = /^(\s*)include: (delivery-[a-z0-9-]+)$/.exec(line);
+    // Composition targets get the suffix: `include:` (expanded at load) and `workflow:` (a child run),
+    // so a flavor only ever composes itself. A bash node that launches children by name reads the
+    // `flavor` input instead; its default is the suffix in this flavor.
+    const include = /^(\s*)(include|workflow): (delivery-[a-z0-9-]+)$/.exec(line);
     if (include) {
-      out.push(`${include[1]}include: ${include[2]}${OMP_SUFFIX}`);
+      out.push(`${include[1]}${include[2]}: ${include[3]}${OMP_SUFFIX}`);
+      continue;
+    }
+    if (/^  flavor:$/.test(line) && lines[i + 1] === '    default: ""') {
+      out.push(line, `    default: "${OMP_SUFFIX}"`);
+      i++;
       continue;
     }
     if (/^description: \|$/.test(line)) {

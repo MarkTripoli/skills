@@ -8,7 +8,7 @@ A task lives in `.agents/tasks/<slug>/` under the project root. `<slug>` is two 
 
 ## task.md
 
-`task.md` is the only required file in a task directory. Frontmatter keys: `slug`, `title`, `workflow`, `created` (ISO date); epic children also carry `parent`, `base`, and `depends_on`. The body is the user's request verbatim.
+`task.md` is the only required file in a task directory. Frontmatter keys: `slug`, `title`, `workflow`, `created` (ISO date); epic children also carry `parent`, `base`, and `depends_on`. Optional keys: `issue` (the GitHub issue number a child task tracks, written by `start-epic-delivery` and closed by its pull request) and `routed_by` with `route_confidence` (the pack the `deliver` skill chose and how sure the judgment was). The body is the user's request verbatim.
 
 `workflow` is one of `full`, `lean`, `prd`, `oneshot`, `bugfix`, `epic`; the default is `full`. It records the delivery pack that created the task; the chains are in [workflows/delivery.md](../workflows/delivery.md).
 
@@ -100,7 +100,7 @@ Answer templates under `references/` use these placeholders; fill every one befo
 - `{next_command}`: in research replies, `/create-design-discussion` for `full`, `/create-structure-outline` for `lean`, `/create-prd` for `prd`.
 - `{implementation_command}`: `/implement-outline` for `lean`, `/implement-plan` otherwise; used by the plan, outline, and `iterate-implementation` replies.
 - `{completed_phase}` and `{next_phase}`: phase numbers in implementation replies.
-- `{child_slug}`, `{child_start_command}`: epic delivery; see `start-epic-delivery`. `{child_start_command}` is `archon workflow run delivery-<workflow> --base <epic branch> --input task_dir=.agents/tasks/<child slug> '<child prompt>'`, with every `'` in the prompt written as `'\''`, run from the project root on the epic branch; it appears in the reply body, and the fence is terminal (`/show-me`).
+- `{child_slug}`, `{child_issue}`, `{child_start_command}`: epic delivery; see `start-epic-delivery`. `{child_issue}` is `#<number>` of the child's GitHub issue, or `no issue`. `{child_start_command}` is `archon workflow run delivery-<workflow> --base <epic branch> --input task_dir=.agents/tasks/<child slug> '<child prompt>'`, with every `'` in the prompt written as `'\''`, run from the project root on the epic branch; it appears in the reply body, and the fence is terminal (`/show-me`).
 - `{needed}`: one line per item of the artifact's `## Missing` list (the reproduction artifact in `reproduce-bug`, the app-test artifact in `test-app`).
 
 ## Commits

@@ -1,0 +1,9 @@
+# Default `children=auto` with no child ready: `launch` runs and starts nothing, the join fires.
+ready: '{"branch":"epic-fixture","ready":[],"started":["a"],"done":[],"blocked":["b"]}'
+launch: '{"launched":[],"failed":[],"skipped_manual":false}'
+wave-done: '{"ready":[],"started":["a"],"done":[],"blocked":["b"]}'
+fixture:
+  expect: completed
+  inputs: { epic_dir: .agents/tasks/fixture }
+  reached: [ready, launch, wave-done]
+exec-code: false

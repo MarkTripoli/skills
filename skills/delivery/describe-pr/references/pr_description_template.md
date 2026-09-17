@@ -58,3 +58,5 @@ Omit this section when the task has no `evidence` artifact.
 ### Known limits
 
 - {Known limit, or `None.`}
+
+Closes #{ISSUE_NUMBER}

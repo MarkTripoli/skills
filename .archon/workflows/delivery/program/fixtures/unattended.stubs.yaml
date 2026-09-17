@@ -1,12 +1,16 @@
-# `gates=none` and `children=manual`: the epic plan runs once, the children are opened, and the
+# `gates=none` and `children=manual`: every artifact is written once, the children are opened, and the
 # wave-1 start commands are printed by `wave__launch-manual` instead of run.
 task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills"}'
-gates: '{"plan":"false"}'
+gates: '{"prd":"false","tdd":"false","plan":"false"}'
 research__questions: "research questions saved"
 research__research: "research saved"
+prd__once: "prd saved"
+tdd__once: "tdd saved"
 plan__once: "epic plan saved"
 start: "children started"
 research-done: ""
+prd-done: ""
+tdd-done: ""
 plan-done: ""
 start-done: ""
 wave__ready: '{"branch":"epic-fixture","ready":["a"],"started":[],"done":[],"blocked":["b"]}'
@@ -15,5 +19,5 @@ wave__wave-done: '{"ready":["a"],"started":[],"done":[],"blocked":["b"]}'
 fixture:
   expect: completed
   inputs: { gates: none, children: manual }
-  reached: [research__questions, research__research, research-done, plan__once, plan-done, start, start-done, wave__ready, wave__launch-manual, wave__wave-done]
+  reached: [research__questions, research__research, research-done, prd__once, prd-done, tdd__once, tdd-done, plan__once, plan-done, start, start-done, wave__ready, wave__launch-manual, wave__wave-done]
 exec-code: false

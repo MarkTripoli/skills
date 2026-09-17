@@ -175,6 +175,7 @@ function fillTemplate(input) {
     .replaceAll("{implementation_command}", "/implement-plan")
     .replaceAll("{report_link}", "[report.md](.agents/tasks/task-slug/evidence/screen/report.md)")
     .replaceAll("{child_slug}", "child-slug")
+    .replaceAll("{child_issue}", "#12")
     .replaceAll("{child_start_command}", "archon workflow run delivery-lean --base epic-slug --input task_dir=.agents/tasks/child-slug 'Child prompt'")
     .replaceAll("{review_check}", "Review the named behavior and evidence.")
     .replaceAll("{known_limits}", "None.")

@@ -119,3 +119,11 @@ test("the generated bash recovers or passes through an omp answer under /bin/bas
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("convert: a flavor composes only itself: workflow child targets get the suffix and a `flavor` input defaults to it", () => {
+  const source = ["name: delivery-x", "description: |", "  d", "inputs:", "  flavor:", '    default: ""', "  other:", '    default: ""', "nodes:", "  - id: a", "    workflow: delivery-lean", "    with:", "      gates: none", ""].join("\n");
+  const out = convert(source);
+  assert.match(out, /^    workflow: delivery-lean-omp$/m, "a child run targets the same flavor");
+  assert.match(out, /^  flavor:\n    default: "-omp"$/m, "the wave launcher's flavor input names the suffix");
+  assert.match(out, /^  other:\n    default: ""$/m, "other empty defaults are untouched");
+});

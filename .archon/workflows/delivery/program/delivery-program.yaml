@@ -1,17 +1,19 @@
-name: delivery-epic
+name: delivery-program
 description: |
-  Split a large request into independently deliverable children: research the request, write the epic
-  plan (gate, revised from your feedback until approved), then create one task directory per child, commit them, and
-  start every wave-1 child as its own unattended delivery run cut from this run's branch, at most
-  `max_parallel` at a time (`--input children=manual` prints the start commands instead). Later waves
-  start with delivery-epic-wave after a wave's pull requests merge. Start it with `--branch
-  <epic branch>` so the children have a branch to cut from and target. The `gates` input picks
-  whether the plan pause happens: `--input gates=none` runs unattended.
+  Take an open, large requirement from request to running children: research, product requirements
+  document (gate, revised from your feedback until approved), technical design document (gate), epic
+  plan (gate), then one task directory per child and every wave-1 child started as its own unattended
+  delivery run cut from this run's branch, at most `max_parallel` at a time (`--input children=manual`
+  prints the start commands instead). Later waves start with delivery-epic-wave after a wave's pull
+  requests merge. Start it with `--branch <epic branch>` so the children have a branch to cut from
+  and target. The `gates` input picks which pauses happen: `--input gates=none` runs unattended,
+  `--input gates=prd` pauses only there.
 
-  Use when: several independently mergeable deliverables, work for more than one person, or a change
-  that would need more than about eight plan phases, for example "build the billing module", "migrate the
-  service to the new auth system".
-  NOT for: one deliverable (delivery-full, delivery-lean, delivery-prd).
+  Use when: the requirement is open (what it should do, for whom, how it behaves at the edges) AND the
+  work splits into several independently mergeable deliverables, for example "write the requirements
+  for billing and open one pull request per module".
+  NOT for: an open requirement with one deliverable (delivery-prd), a known split of known work
+  (delivery-epic), or one deliverable (delivery-full, delivery-lean).
 
 interactive: true
 
@@ -21,10 +23,10 @@ inputs:
     description: Directory holding the installed skills, one `<name>/SKILL.md` each.
   task_dir:
     default: ""
-    description: Reuse this existing task directory (an epic child, or one created by hand) instead of creating one.
+    description: Reuse this existing task directory (one created by hand) instead of creating one.
   gates:
     default: all
-    description: "Human gates to keep: `all`, `none`, or `plan` (the only gate)."
+    description: "Human gates to keep: `all`, `none`, or a comma-separated subset of prd, tdd, plan."
   children:
     default: auto
     description: "`auto` starts every wave-1 child after the task directories are committed; `manual` prints the start commands and starts nothing."
@@ -33,20 +35,20 @@ inputs:
     description: How many child runs to keep running at once.
 
 # `*-done` nodes commit the phase's artifacts and keep loop bodies runnable between includes; see
-# delivery-full for why. `gates` is the plain node between the task include and the plan include.
+# delivery-full for why. `gates` is the plain node between the task include and the first include.
 nodes:
   - id: task
     include: delivery-task
     with:
       skills_dir: $INPUTS.skills_dir
-      workflow: epic
+      workflow: program
       task_dir: $INPUTS.task_dir
 
   - id: gates
     depends_on: [task]
     bash: |
       set -eu
-      names="plan"
+      names="prd tdd plan"
       requested=$(printf '%s' "${INPUTS_GATES:-all}" | tr -d ' ')
       case "$requested" in
         all|'') on="$names" ;;
@@ -69,8 +71,10 @@ nodes:
     output_format:
       type: object
       properties:
+        prd: { type: string }
+        tdd: { type: string }
         plan: { type: string }
-      required: [plan]
+      required: [prd, tdd, plan]
 
   - id: research
     include: delivery-research
@@ -87,9 +91,50 @@ nodes:
       git add -A -- "$dir"
       git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): research artifacts" -- "$dir"
 
-  - id: plan
+  - id: prd
     include: delivery-gate-phase
     depends_on: [research-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: create-prd
+      iterate: iterate-prd
+      label: the product requirements document
+      gate: $gates.output.prd
+
+  - id: prd-done
+    depends_on: [prd]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): prd artifacts" -- "$dir"
+
+  - id: tdd
+    include: delivery-gate-phase
+    depends_on: [prd-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: create-tdd
+      iterate: iterate-tdd
+      label: the technical design document
+      gate: $gates.output.tdd
+
+  - id: tdd-done
+    depends_on: [tdd]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): tdd artifacts" -- "$dir"
+
+  # The epic plan is revised by running create-epic-plan again with the feedback, as delivery-epic does.
+  - id: plan
+    include: delivery-gate-phase
+    depends_on: [tdd-done]
     with:
       skills_dir: $task.output.skills_dir
       task_dir: $task.output.task_dir

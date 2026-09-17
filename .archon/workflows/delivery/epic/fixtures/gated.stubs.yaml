@@ -1,4 +1,5 @@
-# Default gate: the epic plan takes the gated `cycle` branch, then the children are started.
+# Default gate and `children=auto`: the epic plan takes the gated `cycle` branch, the children are
+# opened, and the wave-1 children are started by `wave__launch`.
 task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills"}'
 gates: '{"plan":"true"}'
 research__questions: "research questions saved"
@@ -9,7 +10,10 @@ intent: '{"intent":"revise"}'
 research-done: ""
 plan-done: ""
 start-done: ""
+wave__ready: '{"branch":"epic-fixture","ready":["a"],"started":[],"done":[],"blocked":["b"]}'
+wave__launch: '{"launched":["a"],"failed":[],"skipped_manual":false}'
+wave__wave-done: '{"ready":["a"],"started":[],"done":[],"blocked":["b"]}'
 fixture:
   expect: completed
-  reached: [gates, research__questions, research__research, research-done, plan__cycle, plan-done, start, start-done]
+  reached: [gates, research__questions, research__research, research-done, plan__cycle, plan-done, start, start-done, wave__ready, wave__launch, wave__wave-done]
 exec-code: false

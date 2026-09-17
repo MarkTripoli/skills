@@ -456,7 +456,7 @@ const PACKS = {
   "delivery-prd": [["prd__cycle", "tdd__cycle", "plan__cycle", "implement__phases", "pr__cycle"], ["prd__once", "tdd__once", "plan__once", "implement__phases-auto", "pr__once"], "pr-done"],
   "delivery-oneshot": [["pr__cycle"], ["pr__once"], "pr-done"],
   "delivery-bugfix": [["reproduce", "pr__cycle"], ["reproduce-auto", "pr__once"], "pr-done"],
-  "delivery-epic": [["plan__cycle"], ["plan__once"], "start-done"],
+  "delivery-epic": [["plan__cycle"], ["plan__once"], "wave__wave-done"],
 };
 
 test("archon: every pack loads without warnings and dry-runs gated and unattended to its final join", { skip: !ARCHON && "no archon 0.10+ on PATH" }, () => {
