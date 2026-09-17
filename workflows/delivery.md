@@ -202,6 +202,7 @@ Artifact type is the frontmatter `type` of the artifact the skill writes. "Human
 | reproduce-bug | reproduction | yes | `delivery-bugfix` `reproduce` loop (gated) or `reproduce-auto` (up to four reproduction sessions, then cancel) |
 | fix-bug | fix | no | `delivery-bugfix` |
 | record-evidence | evidence | no | by hand |
+| deliver | none | no | by hand: routes a request to a pack and an autonomy level (`judge.mjs route-workflow`, `autonomy`), then prints the `archon workflow run delivery-<pack>` command or, without Archon, opens the task directory and hands off to the chain's first skill |
 | test-app | app-test | no | `delivery-app-test` `test` loop in every pack except `delivery-epic` and `delivery-resolve-reviews`, when `app_test` is `web`, `ios`, or `android` |
 | typed-judgment | none | no | helper: `judge.mjs` is run by pack bash nodes and by `create-epic-plan`, `resolve-pr-reviews`, and `test-app` steps |
 | describe-pr | pr-description | yes | `delivery-gate-phase` `pr` in every pack except `delivery-epic` and `delivery-resolve-reviews`; also the iterate skill of that gate |

@@ -17,7 +17,7 @@ const rootIndex = args.indexOf("--root");
 const root = rootIndex === -1 ? repoRoot : path.resolve(args[rootIndex + 1] ?? "");
 const generated = root !== repoRoot;
 
-const EXPECTED_SKILL_COUNT = 38;
+const EXPECTED_SKILL_COUNT = 39;
 const SHARED_LINKS = {
   "shared/WRITING.md": "https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md",
   "shared/CONVENTIONS.md": "https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md",
@@ -26,6 +26,8 @@ const LINE6 =
   "Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.";
 
 const RESEARCH_VARIANTS = { full: "create-design-discussion", lean: "create-structure-outline", prd: "create-prd" };
+// The deliver skill's by-hand reply names the first skill of the routed chain.
+const DELIVER_VARIANTS = { bugfix: "reproduce-bug", oneshot: "review-code", lean: "create-research-questions", full: "create-research-questions", prd: "create-research", epic: "create-research-questions", program: "create-research" };
 
 // answer file -> skill named in the final fence (research answers: per workflow variant).
 const ANSWER_INVENTORY = {
@@ -42,6 +44,8 @@ const ANSWER_INVENTORY = {
   "create-tdd/references/tdd_final_answer.md": "create-plan",
   "create-tdd/references/tdd_program_review_answer.md": "iterate-tdd",
   "create-tdd/references/tdd_system_review_answer.md": "iterate-tdd",
+  "deliver/references/deliver_archon_answer.md": "show-me",
+  "deliver/references/deliver_hand_answer.md": DELIVER_VARIANTS,
   "describe-pr/references/pr_description_final_answer.md": "resolve-pr-reviews",
   "fix-code-review/references/code_review_fixes_answer.md": "review-code",
   "fix-bug/references/fix_answer.md": "review-code",
@@ -181,9 +185,9 @@ function fillTemplate(input) {
 }
 
 // Research answers carry `{next_command}`, filled per workflow type by the skill; render one per type.
-function renderWorkflowVariant(input, workflow) {
+function renderWorkflowVariant(input, workflow, variants) {
   if (!input.includes("{next_command}")) return null;
-  return input.replaceAll("{next_command}", `/${RESEARCH_VARIANTS[workflow]}`);
+  return input.replaceAll("{next_command}", `/${variants[workflow]}`);
 }
 
 // 1. Layout: skills/<name>/ or skills/<group>/<name>/, names unique across groups.
@@ -278,7 +282,7 @@ for (const [file, expected] of Object.entries(ANSWER_INVENTORY)) {
   const raw = fillTemplate(read(full));
   if (typeof expected === "object") {
     for (const [workflow, skill] of Object.entries(expected)) {
-      const rendered = renderWorkflowVariant(raw, workflow);
+      const rendered = renderWorkflowVariant(raw, workflow, expected);
       if (!rendered) {
         fail(rel(skillFile(file)), 0, `missing workflow variant for ${workflow}`);
         continue;

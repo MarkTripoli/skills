@@ -35,6 +35,7 @@ Run from the skill's directory under the installed skills (`<skills dir>/typed-j
 | `feedback-intent [text]` | `revise`, `proceed`, `stop` | gate blocks |
 | `slug [request]` | the directory slug picked from code-proposed candidates | task node |
 | `tier [text]` | `small`, `medium`, `large` | task node, launch scripts |
+| `autonomy [text]` | `none`, `pr`, `plan`, `all`: how much the request wants a person involved | `delivery-start`, `deliver` |
 | `grade-steps <steps.json>` | `pass`, `fail`, `unclear` and a severity level per step | `test-app` |
 | `ask --state <json> --questions <json>` | the raw answers object | ad hoc |
 

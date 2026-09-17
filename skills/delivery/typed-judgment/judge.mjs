@@ -16,6 +16,7 @@
 //   feedback-intent [text|@file|-]               revise | proceed | stop
 //   slug [request|@file|-]                       the chosen directory slug
 //   tier [text|@file|-]                          small | medium | large
+//   autonomy [text|@file|-]                      none | pr | plan | all (how much the request wants a human involved)
 //   grade-steps <steps.json>                     one pass | fail | unclear per observed step
 //   ask --state <json|@file> --questions <json|@file>             the raw answers object
 // Text arguments: `@path` reads a file, `-` reads stdin.
@@ -355,6 +356,25 @@ async function tier(text) {
   return { text: TIERS[level], json: { tier: TIERS[level], score: a.score, confidence: a.confidence, probabilities: a.probabilities } };
 }
 
+// How much human involvement the request asks for, from none (hands-off) to all (every gate). Unattended
+// is the risky direction, so `none` needs the decisive bar and `pr`/`plan` the confident one; anything
+// less, or nothing said, is `all`, the packs' default.
+async function autonomy(text) {
+  const request = textArg(text);
+  const answers = await systemOne({ request }, {
+    involvement: choice("How much does the `request` want a person involved while the work is done", {
+      none: "Do it without checking in: just do it, hands-off, fully automatic, no review needed, do not wait for me",
+      pr: "Only show the finished result: review the pull request, tell me when it is done, check with me at the end",
+      plan: "Review the plan or design before the build starts, but not every step after that",
+      all: "Stay involved along the way: approve each step, keep me in the loop, check with me as you go",
+      unspecified: "Says nothing about how much to check in",
+    }),
+  });
+  const a = answers.involvement;
+  const level = a.choice === "none" ? (a.confidence >= T.decisive ? "none" : "all") : a.choice === "pr" || a.choice === "plan" ? (a.confidence >= T.confident ? a.choice : "all") : "all";
+  return { text: level, json: { autonomy: level, suggested: a.choice, confidence: a.confidence, probabilities: a.probabilities } };
+}
+
 async function gradeSteps(file) {
   const steps = JSON.parse(fs.readFileSync(file, "utf8"));
   const questions = {};
@@ -399,6 +419,7 @@ async function main(argv) {
     case "feedback-intent": result = await feedbackIntent(rest[0] ?? "-"); break;
     case "slug": result = await slug(rest[0] ?? "-"); break;
     case "tier": result = await tier(rest[0] ?? "-"); break;
+    case "autonomy": result = await autonomy(rest[0] ?? "-"); break;
     case "grade-steps": need(1, "<steps.json>"); result = await gradeSteps(rest[0]); break;
     case "ask": result = await ask(rest); break;
     default: usage(`unknown command ${command ?? "(none)"}; see the header of ${path.basename(process.argv[1])}`);

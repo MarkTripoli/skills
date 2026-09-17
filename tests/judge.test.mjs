@@ -130,6 +130,14 @@ test("judge feedback-intent, route-workflow, slug, tier, triage-threads, grade-s
     assert.equal((await judge(["tier", "Add a flag"], stub.env)).out, "medium");
     confidence = 0.4;
     assert.equal((await judge(["tier", "Add a flag"], stub.env)).out, "large", "an unsure tier is the strong one");
+    confidence = 0.95; picked = "none";
+    assert.equal((await judge(["autonomy", "just fix it, no need to check with me"], stub.env)).out, "none");
+    confidence = 0.85;
+    assert.equal((await judge(["autonomy", "just fix it"], stub.env)).out, "all", "unattended needs the decisive bar");
+    picked = "plan";
+    assert.equal((await judge(["autonomy", "run the plan by me first"], stub.env)).out, "plan");
+    picked = "unspecified"; confidence = 1;
+    assert.equal((await judge(["autonomy", "Add a flag"], stub.env)).out, "all", "nothing said means every gate");
     confidence = 0.95; picked = "decline";
     const threads = tmp("threads.json", JSON.stringify([{ id: "t1", author: "bob", body: "Rename x", hunk: "const x = 1" }, { id: "t2", author: "bot", body: "Consider y" }]));
     const triage = JSON.parse((await judge(["triage-threads", threads, "--json"], stub.env)).out);
