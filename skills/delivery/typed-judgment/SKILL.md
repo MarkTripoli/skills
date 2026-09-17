@@ -30,6 +30,7 @@ Run from the skill's directory under the installed skills (`<skills dir>/typed-j
 | `reproduction-status <artifact.md> <claimed>` | `reproduced` or `not-reproduced` | bugfix pack |
 | `extract-json --required a,b --enum status=x,y [--dir d] [file]` | the JSON object an answer contains or implies, else the answer as is | generated omp packs |
 | `route-workflow [--children file.json] [text]` | the pack that fits a request, or one per epic child | task node, `create-epic-plan` |
+| `size-children --children file.json` | `ok`, `split`, or `unclear` per epic child, with its weakest sizing test and the split to apply | `create-epic-plan` |
 | `triage-threads <threads.json>` | `fix`, `discuss`, `decline`, `clarify`, or `undecided` per thread | `resolve-pr-reviews` |
 | `feedback-intent [text]` | `revise`, `proceed`, `stop` | gate blocks |
 | `slug [request]` | the directory slug picked from code-proposed candidates | task node |
@@ -37,7 +38,9 @@ Run from the skill's directory under the installed skills (`<skills dir>/typed-j
 | `grade-steps <steps.json>` | `pass`, `fail`, `unclear` and a severity level per step | `test-app` |
 | `ask --state <json> --questions <json>` | the raw answers object | ad hoc |
 
-Input shapes: `--children` is `[{name, prompt}]`; `triage-threads` reads `[{id, author, body, hunk?}]`; `grade-steps` reads `[{id, expected, observed}]`.
+Input shapes: `--children` is `[{name, prompt}]` for `route-workflow` and `[{name, prompt, acceptance}]` for `size-children`; `triage-threads` reads `[{id, author, body, hunk?}]`; `grade-steps` reads `[{id, expected, observed}]`.
+
+`size-children` asks the four tests of the [slicing guide](https://github.com/MarkTripoli/skills/blob/main/shared/SLICING.md) as one probability each (single obligation, vertical slice, one day, safe to merge alone), plus one probability for whether the child's acceptance sentences name observable state, plus the speculative question of which split would apply. A child fails on its weakest test: one clear no makes the verdict `split`, every test clearly yes makes it `ok`, anything between is `unclear` and the skill decides.
 
 ## Rules
 

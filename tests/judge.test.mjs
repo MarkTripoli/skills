@@ -141,3 +141,39 @@ test("judge feedback-intent, route-workflow, slug, tier, triage-threads, grade-s
     assert.deepEqual(JSON.parse((await judge(["grade-steps", steps, "--json"], stub.env)).out), [{ id: "s1", verdict: "pass", satisfied: 0.9, severity: 2, severity_confidence: 0.9 }]);
   } finally { stub.close(); }
 });
+
+test("judge size-children: the weakest of the four slicing tests decides the verdict, and a split is named only when the model is sure", async () => {
+  let oneDay = 0.95; let criteria = 0.95; let split = "workflow_step"; let confidence = 0.95;
+  const stub = await startStub((id, question) =>
+    question.type === "choice"
+      ? choice(split, question.criteria, confidence)
+      : noul(id.startsWith("one_day") ? oneDay : id.startsWith("criteria") ? criteria : 0.95),
+  );
+  try {
+    const file = tmp("children.json", JSON.stringify([
+      { name: "Reject expired keys", prompt: "Return 401 for an expired key.", acceptance: ["WHEN an expired key is used, the gateway shall return 401."] },
+      { name: "Rebuild the gateway", prompt: "Move every endpoint onto the new router." },
+    ]));
+    let rows = JSON.parse((await judge(["size-children", "--children", file, "--json"], stub.env)).out);
+    assert.deepEqual(rows.map((row) => [row.verdict, row.split]), [["ok", null], ["ok", null]], "every test clearly yes stands, and no split is applied to a child that passes");
+    assert.deepEqual([rows[0].criteria, rows[1].criteria], ["ok", "none"], "a child without acceptance sentences is not judged on them");
+    assert.deepEqual(Object.keys(stub.requests.at(-1).questions).filter((id) => id.startsWith("criteria")), ["criteria_0"]);
+
+    oneDay = 0.1;
+    rows = JSON.parse((await judge(["size-children", "--children", file, "--json"], stub.env)).out);
+    assert.deepEqual(rows.map((row) => [row.verdict, row.weakest, row.split]), [["split", "one_day", "workflow_step"], ["split", "one_day", "workflow_step"]]);
+    assert.equal((await judge(["size-children", "--children", file], stub.env)).out.split("\n")[0], "Reject expired keys\tsplit\tone_day\t0.1\tworkflow_step");
+
+    confidence = 0.6;
+    rows = JSON.parse((await judge(["size-children", "--children", file, "--json"], stub.env)).out);
+    assert.deepEqual([rows[0].split, rows[0].suggested_split], [null, "workflow_step"], "an unsure split is reported but never applied");
+
+    confidence = 0.95; split = "none";
+    assert.equal(JSON.parse((await judge(["size-children", "--children", file, "--json"], stub.env)).out)[0].split, null, "no split pattern fits: the skill decides");
+
+    oneDay = 0.5; criteria = 0.1;
+    rows = JSON.parse((await judge(["size-children", "--children", file, "--json"], stub.env)).out);
+    assert.deepEqual([rows[0].verdict, rows[0].criteria], ["unclear", "weak"], "the band between the bars hands the decision back, and vague criteria are flagged on their own");
+    assert.equal((await judge(["size-children"], stub.env)).code, 2);
+  } finally { stub.close(); }
+});

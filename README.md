@@ -60,7 +60,7 @@ flowchart LR
     P2 --> PR([pull request])
 ```
 
-- A task is `.agents/tasks/<slug>/task.md` plus numbered artifacts, committed on the run's branch (`docs(task): open <slug>`, then `docs(task): <phase> artifacts` after each phase; joins stage only that run's task directory). Contract: [shared/CONVENTIONS.md](shared/CONVENTIONS.md); prose rules: [shared/WRITING.md](shared/WRITING.md).
+- A task is `.agents/tasks/<slug>/task.md` plus numbered artifacts, committed on the run's branch (`docs(task): open <slug>`, then `docs(task): <phase> artifacts` after each phase; joins stage only that run's task directory). Contract: [shared/CONVENTIONS.md](shared/CONVENTIONS.md); prose rules: [shared/WRITING.md](shared/WRITING.md); sizing and acceptance-criteria rules: [shared/SLICING.md](shared/SLICING.md).
 - Packs (`delivery-full`, `delivery-lean`, `delivery-prd`, `delivery-oneshot`, `delivery-bugfix`, `delivery-epic`, `delivery-resolve-reviews`), blocks, gates, review loop, and phase table: [workflows/delivery.md](workflows/delivery.md). The epic pack researches before its plan; the bugfix chain is `reproduce-bug`, `fix-bug`, review, then `describe-pr`.
 - Every AI node is `context: fresh`: it reads only `task.md` and the artifacts it selects and writes one artifact. Disk artifacts are the only memory between nodes.
 - Start a run with `archon workflow run delivery-<type> --branch <name> "<request>"`. It exits at each gate; `archon workflow approve <run-id> --detach` continues, `archon workflow reject <run-id> --detach "<text>"` runs the matching `iterate-*` skill with that text and gates again, `archon workflow wait <run-id>` blocks until the next decision. The web UI and chat adapters offer the same two decisions. `--input gates=none` runs unattended; `--input gates=plan,pr` keeps only those pauses.
@@ -96,7 +96,7 @@ Delivery skills live in `skills/delivery/`; `show-me` is standalone in `skills/s
 - [docs/testing.md](docs/testing.md): validation, pack fixtures, unit tests, what stays manual.
 - [docs/observability.md](docs/observability.md): optional Archon metrics, push targets, serving, and Grafana provisioning.
 - [docs/model-routing.md](docs/model-routing.md): the tier each phase runs on, binding tiers to models, and rebinding per request.
-- [workflows/delivery.md](workflows/delivery.md), [shared/CONVENTIONS.md](shared/CONVENTIONS.md), [shared/WRITING.md](shared/WRITING.md), [runtimes/](runtimes/).
+- [workflows/delivery.md](workflows/delivery.md), [shared/CONVENTIONS.md](shared/CONVENTIONS.md), [shared/WRITING.md](shared/WRITING.md), [shared/SLICING.md](shared/SLICING.md), [runtimes/](runtimes/).
 
 ## License
 

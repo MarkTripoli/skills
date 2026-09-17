@@ -4,6 +4,12 @@ Ticket: [{TICKET_ID}]({TICKET_URL}) | Task: `{TASK_SLUG}` | Walkthrough: [{PR_WA
 
 {One sentence explaining the problem addressed and the capability this PR adds.}
 
+## Acceptance criteria
+
+Omit this section when `task.md` states none.
+
+- {One criterion from the task, then the check that decides it: command, request, or observation. A criterion this pull request does not satisfy says what is missing.}
+
 ## Special things to note
 
 - {Name up to three items a reviewer should not miss, such as migrations, constraints, tradeoffs, or unusual choices. Write "None." if nothing needs special attention.}
