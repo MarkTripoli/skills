@@ -58,6 +58,14 @@ function eventRows(db, ids) {
   return db.prepare(`SELECT workflow_run_id, event_order, event_type, step_name, data, created_at FROM remote_agent_workflow_events WHERE workflow_run_id IN (${marks}) ORDER BY workflow_run_id, event_order`).all(...ids);
 }
 function runOutcome(run) { return run.status === "failed" || run.outcome === "failed" ? "failed" : OUTCOMES.includes(run.status) ? run.status : "running"; }
+// The agent that ran the AI phases: the `-omp` flavor runs them in Oh My Pi whatever Archon's default
+// provider is; otherwise Archon's provider id, under the name people use for it.
+const HARNESS = { claude: "claude-code", codex: "codex", pi: "pi", copilot: "copilot", opencode: "opencode" };
+export function harnessFor(workflow, provider) {
+  if (String(workflow || "").endsWith("-omp")) return "oh-my-pi";
+  const key = String(provider || "").toLowerCase();
+  return key ? HARNESS[key] || key : "unknown";
+}
 function gatesFor(run) {
   const gates = json(run.metadata).inputs?.gates;
   return Array.isArray(gates) ? gates.join(",") || "all" : text(gates, "all");
@@ -74,16 +82,25 @@ export function collect(db, since) {
   model.events = eventRows(db, runs.map((run) => run.id)).map((event) => ({ ...event, workflow: workflows.get(event.workflow_run_id) || "unknown" }));
   // A run that paused and resumed gets its `started_at` reset by the last continuation, so the row's
   // own span is the last leg only; the first and last event of the run bound the real wall time.
+  // The first `workflow_started` event names the provider Archon drove and where the run was launched.
   const span = new Map();
+  const info = new Map();
   for (const event of model.events) {
     const current = span.get(event.workflow_run_id) || { first: event.created_at, last: event.created_at };
     if (event.created_at < current.first) current.first = event.created_at;
     if (event.created_at > current.last) current.last = event.created_at;
     span.set(event.workflow_run_id, current);
+    if (event.event_type === "workflow_started" && !info.has(event.workflow_run_id)) {
+      const data = json(event.data);
+      info.set(event.workflow_run_id, { harness: harnessFor(event.workflow, data.provider), origin: text(data.origin, "unknown"), model: data.model ? String(data.model) : null });
+    }
   }
+  const infoFor = (id) => info.get(id) || { harness: harnessFor(workflows.get(id) || "", null), origin: "unknown", model: null };
+  for (const event of model.events) event.harness = infoFor(event.workflow_run_id).harness;
   for (const run of runs) {
-    const labels = { workflow: text(run.workflow_name), gates: gatesFor(run) };
-    add(model, "delivery_runs_total", "counter", { ...labels, outcome: runOutcome(run) }, 1);
+    const { harness, origin } = infoFor(run.id);
+    const labels = { workflow: text(run.workflow_name), gates: gatesFor(run), harness };
+    add(model, "delivery_runs_total", "counter", { ...labels, outcome: runOutcome(run), origin }, 1);
     if (!run.completed_at) continue;
     const events = span.get(run.id);
     const seconds = events ? duration(events.first, events.last) : duration(run.started_at, run.completed_at);
@@ -93,11 +110,13 @@ export function collect(db, since) {
   for (const event of model.events) {
     const data = json(event.data); const workflow = event.workflow; const node = text(event.step_name || data.nodeId);
     if (event.event_type === "node_completed" || event.event_type === "node_failed") {
-      if (event.event_type === "node_failed") add(model, "delivery_node_failures_total", "counter", { workflow, node }, 1);
-      if (finite(data.duration_ms) !== null) observe(model, "delivery_node_duration_seconds", { workflow, node, type: text(data.type) }, Number(data.duration_ms) / 1000);
+      const { harness, model: runModel } = infoFor(event.workflow_run_id);
+      const modelName = text(data.model_usage?.resolved || runModel, "unknown");
+      if (event.event_type === "node_failed") add(model, "delivery_node_failures_total", "counter", { workflow, node, harness }, 1);
+      if (finite(data.duration_ms) !== null) observe(model, "delivery_node_duration_seconds", { workflow, node, type: text(data.type), harness, model: modelName }, Number(data.duration_ms) / 1000);
       const tokens = data.tokens && typeof data.tokens === "object" ? data.tokens : {};
-      for (const [source, kind] of [["input", "input"], ["output", "output"], ["cacheRead", "cache_read"], ["cacheWrite", "cache_write"]]) if (finite(tokens[source]) !== null) add(model, "delivery_tokens_total", "counter", { workflow, node, kind }, tokens[source]);
-      if (finite(data.cost_usd) !== null) add(model, "delivery_cost_usd_total", "counter", { workflow, node }, data.cost_usd);
+      for (const [source, kind] of [["input", "input"], ["output", "output"], ["cacheRead", "cache_read"], ["cacheWrite", "cache_write"]]) if (finite(tokens[source]) !== null) add(model, "delivery_tokens_total", "counter", { workflow, node, kind, harness, model: modelName }, tokens[source]);
+      if (finite(data.cost_usd) !== null) add(model, "delivery_cost_usd_total", "counter", { workflow, node, harness, model: modelName }, data.cost_usd);
     }
     if (event.event_type === "approval_received") add(model, "delivery_gate_decisions_total", "counter", { workflow, node, decision: text(data.decision) }, 1);
     if (event.event_type === "loop_iteration_completed") {
@@ -157,8 +176,8 @@ function lokiLine(event) {
 export function lokiPayload(events) {
   const streams = new Map();
   for (const event of events.filter((item) => LOKI_TYPES.has(item.event_type))) {
-    const workflow = text(event.workflow || event.workflow_name); const key = `${workflow}\0${event.event_type}`;
-    if (!streams.has(key)) streams.set(key, { stream: { job: "skills_delivery", workflow, event_type: event.event_type }, values: [] });
+    const workflow = text(event.workflow || event.workflow_name); const harness = text(event.harness, "unknown"); const key = `${workflow}\0${harness}\0${event.event_type}`;
+    if (!streams.has(key)) streams.set(key, { stream: { job: "skills_delivery", workflow, harness, event_type: event.event_type }, values: [] });
     const timestamp = parseTime(event.created_at); streams.get(key).values.push([String((Number.isFinite(timestamp) ? timestamp : Date.now()) * 1000000), lokiLine(event)]);
   }
   return { streams: [...streams.values()] };
@@ -199,7 +218,7 @@ export function otlpLogs(events) {
       timeUnixNano: String((Number.isFinite(timestamp) ? timestamp : Date.now()) * 1000000),
       severityText: event.event_type.endsWith("failed") ? "ERROR" : "INFO",
       body: { stringValue: lokiLine(event) },
-      attributes: otlpAttributes({ job: "skills_delivery", workflow: text(event.workflow || event.workflow_name), event_type: event.event_type, node: text(event.step_name), run: event.workflow_run_id }),
+      attributes: otlpAttributes({ job: "skills_delivery", workflow: text(event.workflow || event.workflow_name), harness: text(event.harness, "unknown"), event_type: event.event_type, node: text(event.step_name), run: event.workflow_run_id }),
     };
   });
   return { resourceLogs: [{ resource: { attributes: otlpAttributes({ "service.name": "skills_delivery" }) }, scopeLogs: [{ scope: { name: "skills/metrics" }, logRecords }] }] };
