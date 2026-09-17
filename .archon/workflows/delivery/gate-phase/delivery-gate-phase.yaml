@@ -76,6 +76,12 @@ nodes:
               intent=$(printf '%s' "$text" | node "$judge" feedback-intent - 2>/dev/null) || intent=revise
             fi
             case "$intent" in revise|proceed|stop) ;; *) intent=revise ;; esac
+            # A stop cancels the run before the phase's join commits, so the artifacts of the pass that was
+            # rejected are committed here; the reviewer can then resume from the branch.
+            if [ "$intent" = stop ]; then
+              dir=$INPUTS.task_dir
+              git add -A -- "$dir" 2>/dev/null && { git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): artifacts at stop" -- "$dir"; } || true
+            fi
             printf '{"intent":"%s"}\n' "$intent"
           output_format:
             type: object
@@ -84,7 +90,7 @@ nodes:
             required: [intent]
 
         - id: stopped
-          cancel: "Run stopped at the review of $INPUTS.label: the reviewer asked to stop. The artifacts stay in $INPUTS.task_dir; run the workflow again to continue."
+          cancel: "Run stopped at the review of $INPUTS.label: the reviewer asked to stop. The artifacts are committed in $INPUTS.task_dir on the branch; run the workflow again to continue."
           depends_on: [intent]
           when: "$intent.output.intent == 'stop'"
 
