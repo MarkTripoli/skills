@@ -37,7 +37,7 @@ Run from the skill's directory under the installed skills (`<skills dir>/typed-j
 | `slug [request]` | the directory slug picked from code-proposed candidates | task node |
 | `tier [text]` | `small`, `medium`, `large` | task node, launch scripts |
 | `autonomy [text]` | `none`, `pr`, `plan`, `all`: how much the request wants a person involved | `delivery-start`, `deliver` |
-| `grade-steps [--kind screen\|command] <steps.json>` | `pass`, `fail`, `unclear` and a severity level per step; `screen` (default) grades what a screen showed, `command` what a command, request, or file read returned | `test-app`, `verify-implementation` |
+| `grade-steps [--kind screen\|command\|diff] <steps.json>` | `pass`, `fail`, `unclear` and a severity level per step; `screen` (default) grades what a screen showed, `command` what a command, request, or file read returned, `diff` whether a test file's diff against the merge target keeps its strength | `test-app`, `verify-implementation` |
 | `rerank --query <text> <candidates.json>` | candidates ordered by how well they answer the question, with a level 0 to 3 | `create-research`, `iterate-research` |
 | `coverage <questions.json> <artifact.md>` | `answered`, `partial`, `missing` per research question | `create-research`, `iterate-research` |
 | `cite <claims.json>` | `supported`, `unsupported`, `unclear` per claim against its fetched source lines | `create-research`, `iterate-research` |

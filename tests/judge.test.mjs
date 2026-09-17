@@ -169,6 +169,9 @@ test("judge feedback-intent, route-workflow, slug, tier, triage-threads, grade-s
     level = 0;
     assert.deepEqual(JSON.parse((await judge(["grade-steps", "--kind", "command", checks, "--json"], stub.env)).out), [{ id: "C1", verdict: "pass", satisfied: 0.9, severity: 0, severity_confidence: 0.9 }]);
     assert.match(stub.requests.at(-1).questions.satisfied_0.instructions, /stdout, stderr, the exit code/, "command rows are graded as command output, not as a screen");
+    const diffs = tmp("diffs.json", JSON.stringify([{ id: "T1", expected: "the change keeps this check's strength", observed: "additions only: two tests appended; no skip, only, or todo" }]));
+    assert.equal(JSON.parse((await judge(["grade-steps", "--kind", "diff", diffs, "--json"], stub.env)).out)[0].verdict, "pass");
+    assert.match(stub.requests.at(-1).questions.satisfied_0.instructions, /no test deleted, skipped/, "diff rows are graded for weakened checks");
     assert.equal((await judge(["grade-steps", "--kind", "file", checks], stub.env)).code, 2, "an unknown kind is a usage error");
   } finally { stub.close(); }
 });

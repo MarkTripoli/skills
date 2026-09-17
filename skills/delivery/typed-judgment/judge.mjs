@@ -18,7 +18,7 @@
 //   slug [request|@file|-]                       the chosen directory slug
 //   tier [text|@file|-]                          small | medium | large
 //   autonomy [text|@file|-]                      none | pr | plan | all (how much the request wants a human involved)
-//   grade-steps [--kind screen|command] <steps.json>   one pass | fail | unclear per observed step
+//   grade-steps [--kind screen|command|diff] <steps.json>   one pass | fail | unclear per observed step
 //   rerank --query <text|@file|-> <candidates.json>   candidates ordered by how well they answer the query
 //   coverage <questions.json> <artifact.md>      answered | partial | missing per research question
 //   cite <claims.json>                           supported | unsupported | unclear per cited claim
@@ -401,7 +401,8 @@ async function autonomy(text) {
 }
 
 // `--kind screen` (default) grades what a screen showed after a step; `--kind command` grades what a
-// command, request, or file read returned. Same rows, same bands; only the questions name the medium.
+// command, request, or file read returned; `--kind diff` grades a test file's diff against the merge
+// target for weakened checks. Same rows, same bands; only the questions name the medium.
 const STEP_MEDIA = {
   screen: {
     observed: "the accessibility snapshot or view hierarchy read from the screen after the step: element roles, names, values, and states, one per entry",
@@ -421,6 +422,16 @@ const STEP_MEDIA = {
       "Cosmetic difference only: formatting, ordering, or wording that does not change the outcome",
       "Functional deviation: a value, file, exit code, or behavior differs from what was expected",
       "Blocking: the command fails, errors, or crashes, or the check could not complete",
+    ],
+  },
+  diff: {
+    observed: "a digest, written by the verifier, of how a test or check file changed between the merge target and the change: which tests were added, removed, skipped, or rewritten, and how each assertion, fixture, or input changed",
+    shows: "the file keeps its strength: no test deleted, skipped, marked only or todo, or made to expect a wrong value; no assertion removed or loosened; no fixture or input changed so that a failing case no longer reaches the code; only additions or equivalent rewrites",
+    severity: [
+      "Keeps every check's strength; additions or equivalent rewrites only",
+      "Cosmetic: renames, reordering, or comment changes that do not change what is checked",
+      "Weakened: an assertion loosened, an input narrowed, or a case no longer exercised",
+      "Disabled: a test deleted, skipped, or made to pass regardless of the code",
     ],
   },
 };
