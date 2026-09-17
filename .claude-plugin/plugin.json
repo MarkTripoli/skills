@@ -28,6 +28,7 @@
     "./skills/delivery/create-research-questions",
     "./skills/delivery/create-structure-outline",
     "./skills/delivery/create-tdd",
+    "./skills/delivery/deliver",
     "./skills/delivery/describe-pr",
     "./skills/delivery/fix-bug",
     "./skills/delivery/fix-code-review",
