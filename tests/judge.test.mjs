@@ -202,3 +202,30 @@ test("judge size-children: each sizing test is read against its own bar, a decla
     assert.equal((await judge(["size-children"], stub.env)).code, 2);
   } finally { stub.close(); }
 });
+
+test("judge research commands: rerank orders by expected level and asks whether any candidate answers; coverage, cite, neutral, and route-question apply their bands", async () => {
+  let level = 0; let p = 0.9; let role = "analyze"; let confidence = 0.9;
+  const stub = await startStub((id, question) => (question.type === "score" ? score(id === "c_1" ? 3 : level, question.criteria) : question.type === "noul" ? noul(p) : choice(role, question.criteria, confidence)));
+  try {
+    const cands = tmp("cands.json", JSON.stringify([{ id: "a.js", text: "x" }, { id: "b.js", text: "y" }]));
+    const ranked = JSON.parse((await judge(["rerank", "--query", "where is y", cands, "--json"], stub.env)).out);
+    assert.deepEqual(ranked.candidates.map((c) => [c.id, c.level]), [["b.js", 3], ["a.js", 0]], "the best candidate comes first");
+    assert.equal(ranked.any, 0.9);
+    assert.ok(stub.requests.at(-1).questions.c_0.instructions.includes("candidates[0].text"), "each candidate gets its own score question over the shared state");
+    const qs = tmp("q.json", JSON.stringify([{ id: "Q1", text: "Where is dispatch?" }]));
+    const artifact = tmp("02-research-x.md", "# Research\n");
+    assert.equal((await judge(["coverage", qs, artifact], stub.env)).out, "Q1\tanswered\t0.9");
+    p = 0.5;
+    assert.equal((await judge(["coverage", qs, artifact], stub.env)).out, "Q1\tpartial\t0.5");
+    const claims = tmp("claims.json", JSON.stringify([{ id: "C1", claim: "exits 1", source: "process.exit(2)" }]));
+    p = 0.03;
+    assert.equal((await judge(["cite", claims], stub.env)).out, "C1\tunsupported\t0.03");
+    p = 0.65;
+    assert.equal((await judge(["neutral", qs], stub.env)).out, "Q1\tleading\t0.65", "the flag bar for a leading question is 0.6");
+    p = 0.35;
+    assert.equal((await judge(["neutral", qs], stub.env)).out, "Q1\tneutral\t0.35");
+    assert.equal((await judge(["route-question", qs], stub.env)).out, "Q1\tanalyze\t0.9");
+    confidence = 0.45;
+    assert.equal((await judge(["route-question", qs], stub.env)).out, "Q1\tundecided\t0.45", "below a majority reading the skill picks the worker");
+  } finally { stub.close(); }
+});

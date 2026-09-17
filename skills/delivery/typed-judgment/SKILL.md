@@ -37,9 +37,14 @@ Run from the skill's directory under the installed skills (`<skills dir>/typed-j
 | `tier [text]` | `small`, `medium`, `large` | task node, launch scripts |
 | `autonomy [text]` | `none`, `pr`, `plan`, `all`: how much the request wants a person involved | `delivery-start`, `deliver` |
 | `grade-steps <steps.json>` | `pass`, `fail`, `unclear` and a severity level per step | `test-app` |
+| `rerank --query <text> <candidates.json>` | candidates ordered by how well they answer the question, with a level 0 to 3 | `create-research`, `iterate-research` |
+| `coverage <questions.json> <artifact.md>` | `answered`, `partial`, `missing` per research question | `create-research`, `iterate-research` |
+| `cite <claims.json>` | `supported`, `unsupported`, `unclear` per claim against its fetched source lines | `create-research`, `iterate-research` |
+| `route-question <questions.json>` | `locate`, `analyze`, `pattern`, `web`, `none`, or `undecided` per question | `create-research-questions`, `create-research` |
+| `neutral <questions.json>` | `neutral`, `leading`, `unclear` per question | `create-research-questions`, `iterate-research-questions` |
 | `ask --state <json> --questions <json>` | the raw answers object | ad hoc |
 
-Input shapes: `--children` is `[{name, prompt}]` for `route-workflow` and `[{name, slice, prompt, acceptance}]` for `size-children`; `triage-threads` reads `[{id, author, body, hunk?}]`; `grade-steps` reads `[{id, expected, observed}]`.
+Input shapes: `--children` is `[{name, prompt}]` for `route-workflow` and `[{name, slice, prompt, acceptance}]` for `size-children`; `triage-threads` reads `[{id, author, body, hunk?}]`; `grade-steps` reads `[{id, expected, observed}]`; `rerank` reads `[{id, text}]` (`id` a path or `path:lines`, `text` the excerpt); `coverage`, `route-question`, and `neutral` read `[{id, text}]` questions; `cite` reads `[{id, claim, source}]` where `source` is the text at the claim's `path:line` pointer, fetched by the caller.
 
 `size-children` asks the four tests of the [slicing guide](https://github.com/MarkTripoli/skills/blob/main/shared/SLICING.md) as one probability each (single obligation, vertical slice, one day, safe to merge alone), plus one probability for whether the child's acceptance sentences name observable state, plus the speculative question of which split would apply. A child fails on whichever test sits furthest below its bar. The effort question carries lower bars than the text questions because the model cannot see the codebase and hedges on every child; the bars come from a calibration set of eight children, four of them one pull request each and four oversize. A child whose `slice` is `enabler` skips the vertical test, since stopping at a layer boundary is what it declares; its consumer is the skill's check, not the model's.
 

@@ -18,6 +18,11 @@
 //   tier [text|@file|-]                          small | medium | large
 //   autonomy [text|@file|-]                      none | pr | plan | all (how much the request wants a human involved)
 //   grade-steps <steps.json>                     one pass | fail | unclear per observed step
+//   rerank --query <text|@file|-> <candidates.json>   candidates ordered by how well they answer the query
+//   coverage <questions.json> <artifact.md>      answered | partial | missing per research question
+//   cite <claims.json>                           supported | unsupported | unclear per cited claim
+//   route-question <questions.json>              locate | analyze | pattern | web | none | undecided per question
+//   neutral <questions.json>                     neutral | leading | unclear per question
 //   ask --state <json|@file> --questions <json|@file>             the raw answers object
 // Text arguments: `@path` reads a file, `-` reads stdin.
 // Env: TYPESAFE_API_KEY (required), TYPESAFE_BASE_URL, TYPESAFE_DEFAULT_MODEL, JUDGE_TIMEOUT (seconds, default 20).
@@ -395,6 +400,59 @@ async function gradeSteps(file) {
   return { text: rows.map((row) => `${row.id}\t${row.verdict}\t${row.satisfied}\t${row.severity}`).join("\n"), json: rows };
 }
 
+// Research support. `rerank` scores candidate files or excerpts against one question so a skill reads the
+// useful ones first; `coverage` checks a finished research document against the questions it set out to
+// answer; `cite` checks a claim against the source lines the skill fetched for its `path:line` pointer;
+// `route-question` names the worker role a question needs (a wrong role costs little, so a majority reading
+// decides); `neutral` flags a question that presumes its answer (plainly neutral questions score around 0.3,
+// so the flag bar is 0.6). Rows carry the probabilities so the skill can record them.
+const RELEVANCE = ["Unrelated to the question", "Touches the topic but does not help answer it", "Useful context: part of the answer or a pointer to it", "Answers the question directly"];
+async function rerank(args) {
+  const query = textArg(flag(args, "--query") ?? usage("rerank needs --query"));
+  const candidates = JSON.parse(fs.readFileSync(args[0] ?? usage("rerank needs <candidates.json>"), "utf8"));
+  const questions = Object.fromEntries(candidates.map((_, i) => [`c_${i}`, score(`How well does \`candidates[${i}].text\` (from \`candidates[${i}].id\`) help answer the \`query\``, RELEVANCE)]));
+  questions.any = noul("At least one of the `candidates` answers the `query` directly or points to where the answer is");
+  const answers = await systemOne({ query, candidates }, questions);
+  const rows = candidates.map((c, i) => { const a = answers[`c_${i}`]; return { id: c.id, score: Number(a.score.toFixed(2)), level: Number(argmax(a.probabilities)), confidence: a.confidence }; }).sort((x, y) => y.score - x.score);
+  return { text: rows.map((r) => `${r.id}\t${r.score}\t${r.level}`).join("\n"), json: { any: answers.any.noul, candidates: rows } };
+}
+
+async function coverage(questionsFile, artifactFile) {
+  const questions = JSON.parse(fs.readFileSync(questionsFile, "utf8"));
+  const research = fs.readFileSync(artifactFile, "utf8");
+  const answers = await systemOne({ research, questions }, Object.fromEntries(questions.map((_, i) => [`q_${i}`, noul(`The \`research\` document answers \`questions[${i}].text\` with concrete evidence: file paths, line references, quoted source, or a stated finding tied to them`)])));
+  const rows = questions.map((q, i) => { const p = answers[`q_${i}`].noul; return { id: q.id, answered: p, verdict: p >= T.yes ? "answered" : p <= T.no ? "missing" : "partial" }; });
+  return { text: rows.map((r) => `${r.id}\t${r.verdict}\t${r.answered}`).join("\n"), json: rows };
+}
+
+async function cite(file) {
+  const claims = JSON.parse(fs.readFileSync(file, "utf8"));
+  const answers = await systemOne({ claims }, Object.fromEntries(claims.map((_, i) => [`s_${i}`, noul(`The source text \`claims[${i}].source\` supports the statement \`claims[${i}].claim\`; the statement describes what the source shows, not something the source contradicts or does not mention`)])));
+  const rows = claims.map((c, i) => { const p = answers[`s_${i}`].noul; return { id: c.id, supported: p, verdict: p >= T.yes ? "supported" : p <= T.no ? "unsupported" : "unclear" }; });
+  return { text: rows.map((r) => `${r.id}\t${r.verdict}\t${r.supported}`).join("\n"), json: rows };
+}
+
+const ROLES = {
+  locate: "Find where something lives: files, directories, entry points, configuration, tests for a topic",
+  analyze: "Explain how a piece of the code works, with file and line evidence",
+  pattern: "Find existing examples, conventions, or comparable implementations to follow",
+  web: "Needs current external information: library documentation, a standard, a vendor API, release notes",
+  none: "Answerable from the request and the task files alone; no repository or web reading needed",
+};
+async function routeQuestion(file) {
+  const questions = JSON.parse(fs.readFileSync(file, "utf8"));
+  const answers = await systemOne({ questions }, Object.fromEntries(questions.map((_, i) => [`r_${i}`, choice(`Which kind of worker answers \`questions[${i}].text\``, ROLES)])));
+  const rows = questions.map((q, i) => { const a = answers[`r_${i}`]; return { id: q.id, role: a.confidence >= 0.5 ? a.choice : null, suggested: a.choice, confidence: a.confidence }; });
+  return { text: rows.map((r) => `${r.id}\t${r.role ?? "undecided"}\t${r.confidence}`).join("\n"), json: rows };
+}
+
+async function neutral(file) {
+  const questions = JSON.parse(fs.readFileSync(file, "utf8"));
+  const answers = await systemOne({ questions }, Object.fromEntries(questions.map((_, i) => [`n_${i}`, noul(`\`questions[${i}].text\` presumes its own answer or steers toward one approach, for example by asserting a cause, naming the expected result, or asking why something is the case before establishing that it is`)])));
+  const rows = questions.map((q, i) => { const p = answers[`n_${i}`].noul; return { id: q.id, leading: p, verdict: p >= 0.6 ? "leading" : p < 0.4 ? "neutral" : "unclear" }; });
+  return { text: rows.map((r) => `${r.id}\t${r.verdict}\t${r.leading}`).join("\n"), json: rows };
+}
+
 async function ask(args) {
   const state = flag(args, "--state"); const questions = flag(args, "--questions");
   if (!state || !questions) usage("ask needs --state and --questions");
@@ -421,6 +479,11 @@ async function main(argv) {
     case "tier": result = await tier(rest[0] ?? "-"); break;
     case "autonomy": result = await autonomy(rest[0] ?? "-"); break;
     case "grade-steps": need(1, "<steps.json>"); result = await gradeSteps(rest[0]); break;
+    case "rerank": result = await rerank(rest); break;
+    case "coverage": need(2, "<questions.json> <artifact.md>"); result = await coverage(rest[0], rest[1]); break;
+    case "cite": need(1, "<claims.json>"); result = await cite(rest[0]); break;
+    case "route-question": need(1, "<questions.json>"); result = await routeQuestion(rest[0]); break;
+    case "neutral": need(1, "<questions.json>"); result = await neutral(rest[0]); break;
     case "ask": result = await ask(rest); break;
     default: usage(`unknown command ${command ?? "(none)"}; see the header of ${path.basename(process.argv[1])}`);
   }
