@@ -12,11 +12,12 @@ Map for working on this repository: building skills, packs, and their docs. Usin
 - `shared/WRITING.md` and `shared/CONVENTIONS.md` are the prose rules and the task-directory, artifact, and commit conventions; every `SKILL.md` links both on line 6.
 - `runtimes/<runtime>.md` carries what differs per runtime; `scripts/lib/build.mjs` reads it when building an install tree.
 - `observability/` holds the optional Grafana dashboard; `scripts/metrics.mjs` reads Archon's SQLite database read-only and exports metrics without pack wiring.
+- `evals/` runs the skills against a live model (`npm run evals`, not part of `npm test`): `run.mjs` builds the Oh My Pi tree, gives each scenario a throwaway repository from `fixtures/repo-cli/`, and runs every phase as its own `omp -p` session; `scenarios/*.mjs` name the phases, the expected handoff, and the facts each artifact must carry; `docs/testing.md`, "Evals".
 
 ## When changing something
 
 - A skill or template: `docs/testing.md`, "Adding a skill to the workflow"; `scripts/validate.mjs` is the contract it must pass.
 - A pack or block: `workflows/delivery.md`, "Pack source" for the authoring rules and "Archon notes" for the engine limits the DAG works around; then `node scripts/build-packs.mjs`.
 - Docs: `workflows/delivery.md` is the long form, `docs/cheatsheet.md` the short one; both follow the YAML, not the other way round.
-- Done means `npm test` passes: validator, plugin sync, generator staleness, unit tests, and the Archon dry-run, fixture, and real-run tests when `archon` 0.10 or later is on `PATH`.
+- Done means `npm test` passes: validator, plugin sync, generator staleness, unit tests, and the Archon dry-run, fixture, and real-run tests when `archon` 0.10 or later is on `PATH`. A change to what a skill makes a model produce also passes its `npm run evals <scenario>`.
 - Commit subjects follow `scripts/check-commits.mjs`; a user-facing change adds a `.changeset/` entry.
