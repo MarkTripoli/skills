@@ -47,6 +47,4 @@ If user wants to keep resolving choices: read PRD fully, identify sparse or unre
 
 7. **Stop and ask next**: After incorporating feedback, stop. State change briefly, ask what to work on next, offer next decision if unresolved parts remain. Never continue to another change without user direction.
 
-8. **Finish when user is done**: When user says PRD is complete or solution fully fleshed out and approved, read `references/prd_final_answer.md`, save the file, follow template; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-prd-slug.md](.agents/tasks/<slug>/NN-prd-slug.md)`, and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists.
-
-9. **Reply file**: If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it.
+8. **Finish when user is done**: When user says PRD is complete or solution fully fleshed out and approved, read `references/prd_final_answer.md`, save the file, follow template; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-prd-slug.md](.agents/tasks/<slug>/NN-prd-slug.md)`, and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. When not run by the workflow engine, commit the saved file with `git add <path>` as `docs(task): prd artifact`.

@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 // Installs the collection for the coding agents on this machine: skills with the runtime's notes, worker
-// definitions, and the run-task extension where the runtime has one. Dependency-free; runs from a checkout
+// definitions, and the Archon delivery packs (native and Oh My Pi flavors). Dependency-free; runs from a checkout
 // (`node scripts/install.mjs`) or straight from GitHub (`npx github:MarkTripoli/skills`).
 //
-// Usage: npx github:MarkTripoli/skills [target...] [--project] [--dry-run] [--yes] [--no-extension] [--uninstall] [--list]
+// Usage: npx github:MarkTripoli/skills [target...] [--project] [--dry-run] [--yes] [--no-packs] [--uninstall] [--list]
 //   target   claude-code | codex | oh-my-pi | pi | portable | all   (default: every runtime found on PATH, else portable)
-//   --project      install into the current project (./.claude, ./.agents, ./.omp, ./.pi) instead of the home directory
+//   --project      install into the current project (./.claude, ./.agents, ./.omp, ./.pi, ./.archon) instead of the home directory
 //   --dry-run      print what would change and stop
 //   --yes          do not ask for confirmation
-//   --no-extension skip the run-task extension for oh-my-pi and pi
+//   --no-packs     skip the Archon workflow packs (and the ~/.agents/skills copy they read)
 //   --uninstall    remove what an earlier install put in place (same targets and scope)
 //   --list         print the skills in the collection and stop
 // Exit 0 on success, 1 on error, 2 on usage error or a declined confirmation.
@@ -27,17 +27,20 @@ const MARK_BEGIN = "# >>> MarkTripoli/skills workers (managed by the installer; 
 const MARK_END = "# <<< MarkTripoli/skills workers";
 
 function parseArgs(argv) {
-  const out = { targets: [], project: false, dryRun: false, yes: false, extension: true, uninstall: false, list: false, help: false, errors: [] };
+  const out = { targets: [], all: false, project: false, dryRun: false, yes: false, packs: true, uninstall: false, list: false, help: false, errors: [] };
   for (const arg of argv) {
     if (arg === "--project") out.project = true;
     else if (arg === "--global") out.project = false;
     else if (arg === "--dry-run") out.dryRun = true;
     else if (arg === "--yes" || arg === "-y") out.yes = true;
-    else if (arg === "--no-extension" || arg === "--no-extensions") out.extension = false;
+    else if (arg === "--no-packs" || arg === "--no-pack") out.packs = false;
     else if (arg === "--uninstall") out.uninstall = true;
     else if (arg === "--list") out.list = true;
     else if (arg === "--help" || arg === "-h") out.help = true;
-    else if (arg === "all") out.targets.push(...TARGETS.filter((t) => t !== "portable"));
+    else if (arg === "all") {
+      out.all = true;
+      out.targets.push(...TARGETS.filter((t) => t !== "portable"));
+    }
     else if (TARGETS.includes(arg)) out.targets.push(arg);
     else out.errors.push(`unknown argument "${arg}"; targets are ${TARGETS.join(", ")} or all`);
   }
@@ -72,12 +75,10 @@ export function destinations(target, { project, cwd = process.cwd(), home = os.h
         : { skills: path.join(home, ".agents", "skills"), agents: path.join(codexHome, "agents"), config: path.join(codexHome, "config.toml") };
     case "oh-my-pi":
       return project
-        ? { skills: path.join(cwd, ".omp", "skills"), agents: path.join(cwd, ".omp", "agents"), extension: path.join(cwd, ".omp", "extensions", "run-task") }
-        : { skills: path.join(home, ".omp", "agent", "skills"), agents: path.join(home, ".omp", "agent", "agents"), extension: path.join(home, ".omp", "agent", "extensions", "run-task") };
+        ? { skills: path.join(cwd, ".omp", "skills"), agents: path.join(cwd, ".omp", "agents") }
+        : { skills: path.join(home, ".omp", "agent", "skills"), agents: path.join(home, ".omp", "agent", "agents") };
     case "pi":
-      return project
-        ? { skills: path.join(cwd, ".pi", "skills"), extension: path.join(cwd, ".pi", "extensions", "run-task") }
-        : { skills: path.join(home, ".pi", "agent", "skills"), extension: path.join(home, ".pi", "agent", "extensions", "run-task") };
+      return project ? { skills: path.join(cwd, ".pi", "skills") } : { skills: path.join(home, ".pi", "agent", "skills") };
     case "portable":
       return { skills: project ? path.join(cwd, ".agents", "skills") : path.join(home, ".agents", "skills") };
     default:
@@ -85,27 +86,80 @@ export function destinations(target, { project, cwd = process.cwd(), home = os.h
   }
 }
 
+// The Archon packs: `~/.archon/workflows/<pack>/` (or `<cwd>/.archon/workflows/<pack>/` with --project), one
+// directory per flavor. Their prompts read skills from `~/.agents/skills` (the packs' `skills_dir` input default).
+// The native flavor serves the runtimes Archon drives itself; the `-omp` flavor serves Oh My Pi. Only the flavors
+// the chosen targets need are installed, so the router lists one set of packs on a one-runtime machine.
+export const PACKS = ["delivery", "delivery-omp"];
+export const RETIRED = {
+  skills: ["run-task", "start-task", "review-loop", "setup-worktree", "configure-workspaces"],
+  extension: "run-task",
+};
+export function packFlavors(targets) {
+  const flavors = [];
+  if (targets.some((t) => ["claude-code", "codex", "pi", "portable"].includes(t))) flavors.push("delivery");
+  if (targets.includes("oh-my-pi")) flavors.push("delivery-omp");
+  return flavors;
+}
+
+export function packDestination({ project, cwd = process.cwd(), home = os.homedir() }) {
+  return project ? path.join(cwd, ".archon", "workflows") : path.join(home, ".archon", "workflows");
+}
+
 // One install plan: the file operations for every target, computed before anything is written.
 export function plan(options) {
-  const { targets, project, extension, cwd, home, env } = options;
+  const { targets, project, packs, uninstall = false, cwd, home, env } = options;
   const { skills } = scanSkills(path.join(repoRoot, "skills"));
   const names = skills.map((s) => s.name);
   const steps = [];
   const notes = [];
   const skillDirsClaimed = new Map();
-  for (const target of targets) {
+  const skillStep = (target) => {
     const dest = destinations(target, { project, cwd, home, env });
     const claimant = skillDirsClaimed.get(dest.skills);
     if (claimant) {
       notes.push(`${target}: skills directory ${short(dest.skills, home)} is already written by ${claimant}; skipping the ${target} copy of the skills`);
-    } else {
-      skillDirsClaimed.set(dest.skills, target);
-      steps.push({ target, kind: "skills", from: target === "portable" ? "canonical" : `built for ${target}`, to: dest.skills, names });
+      return dest;
     }
+    skillDirsClaimed.set(dest.skills, target);
+    steps.push({ target, kind: "skills", from: target === "portable" ? "canonical" : `built for ${target}`, to: dest.skills, names });
+    return dest;
+  };
+  for (const target of targets) {
+    const dest = skillStep(target);
     if (dest.agents) steps.push({ target, kind: "agents", to: dest.agents, names: names.filter((n) => n.startsWith("agent-")), format: target === "codex" ? "toml" : "md" });
     else if (target === "codex" && project) notes.push("codex: worker definitions and their config.toml block are user-level; run without --project to install them");
     if (dest.config) steps.push({ target, kind: "config", to: dest.config });
-    if (dest.extension && extension) steps.push({ target, kind: "extension", to: dest.extension });
+  }
+  if (packs) {
+    // The packs read `~/.agents/skills/<name>/SKILL.md`; make sure a copy lives there (the codex and portable
+    // targets already write it at home scope).
+    const portable = destinations("portable", { project: false, cwd, home, env });
+    if (!skillDirsClaimed.has(portable.skills)) {
+      skillDirsClaimed.set(portable.skills, "packs");
+      steps.push({ target: "packs", kind: "skills", from: "canonical, read by the packs", to: portable.skills, names });
+    }
+    const to = packDestination({ project, cwd, home });
+    if (path.resolve(to) === path.join(repoRoot, ".archon", "workflows")) notes.push("packs: this checkout already holds the packs; nothing to copy");
+    else steps.push({ target: "packs", kind: "packs", to, names: packFlavors(targets) });
+    if (project) notes.push("packs: project-scoped packs still read skills from ~/.agents/skills; pass --input skills_dir=<dir> to a run to read from elsewhere");
+  }
+  if (uninstall && !packs) {
+    const portable = destinations("portable", { project: false, cwd, home, env }).skills;
+    const kept = steps.filter((step) => step.kind !== "skills" || path.resolve(step.to) !== path.resolve(portable));
+    if (kept.length !== steps.length) steps.splice(0, steps.length, ...kept);
+    notes.push("packs: kept, so the ~/.agents/skills copy they read stays too");
+  }
+  if (!uninstall) {
+    const skillDestinations = [...new Set(steps.filter((step) => step.kind === "skills").map((step) => step.to))];
+    const paths = skillDestinations.flatMap((to) => RETIRED.skills.map((name) => path.join(to, name)));
+    for (const target of targets) {
+      if (target !== "oh-my-pi" && target !== "pi") continue;
+      const root = project ? cwd : home;
+      const extension = target === "oh-my-pi" ? ".omp" : ".pi";
+      paths.push(path.join(root, extension, project ? "extensions" : path.join("agent", "extensions"), RETIRED.extension));
+    }
+    if (paths.length) steps.push({ target: "retired", kind: "retired", paths: [...new Set(paths)] });
   }
   if (targets.includes("codex") && !project && (targets.includes("pi") || targets.includes("oh-my-pi"))) {
     notes.push("Pi and Oh My Pi also read ~/.agents/skills, where the Codex copy lives; their own skill directories are installed too, so a skill may appear twice by name in those runtimes");
@@ -125,8 +179,10 @@ function describe(step, home) {
       return `${step.target}: ${step.names.length} worker definitions -> ${short(step.to, home)}/agent-*.${step.format}`;
     case "config":
       return `${step.target}: [agents.*] block -> ${short(step.to, home)}`;
-    case "extension":
-      return `${step.target}: run-task extension -> ${short(step.to, home)}/`;
+    case "packs":
+      return `packs: Archon workflows ${step.names.join(", ")} -> ${short(step.to, home)}/<pack>/`;
+    case "retired":
+      return `remove ${step.paths.length} retired paths`;
     default:
       return JSON.stringify(step);
   }
@@ -182,17 +238,33 @@ export function apply(planned, { built, uninstall, home }) {
         break;
       }
       case "config": {
+        if (uninstall && !fs.existsSync(step.to)) break;
         const existing = fs.existsSync(step.to) ? fs.readFileSync(step.to, "utf8") : "";
         const block = uninstall ? null : fs.readFileSync(path.join(tree, "config.snippet.toml"), "utf8");
-        fs.mkdirSync(path.dirname(step.to), { recursive: true });
-        fs.writeFileSync(step.to, updateConfigBlock(existing, block));
+        const updated = updateConfigBlock(existing, block);
+        if (uninstall && updated.trim() === "") fs.rmSync(step.to, { force: true });
+        else {
+          fs.mkdirSync(path.dirname(step.to), { recursive: true });
+          fs.writeFileSync(step.to, updated);
+        }
         done.push(`${uninstall ? "removed the workers block from" : "updated the workers block in"} ${short(step.to, home)}`);
         break;
       }
-      case "extension": {
-        if (uninstall) fs.rmSync(step.to, { recursive: true, force: true });
-        else copyDir(path.join(tree, "extensions", "run-task"), step.to);
-        done.push(`${uninstall ? "removed" : "wrote"} the run-task extension at ${short(step.to, home)}`);
+      case "packs": {
+        if (!uninstall) {
+          for (const name of PACKS.filter((name) => !step.names.includes(name))) fs.rmSync(path.join(step.to, name), { recursive: true, force: true });
+        }
+        for (const name of step.names) {
+          const to = path.join(step.to, name);
+          if (uninstall) fs.rmSync(to, { recursive: true, force: true });
+          else copyDir(path.join(repoRoot, ".archon", "workflows", name), to);
+        }
+        done.push(`${uninstall ? "removed" : "wrote"} Archon packs ${step.names.join(", ")} under ${short(step.to, home)}`);
+        break;
+      }
+      case "retired": {
+        if (!uninstall) for (const to of step.paths) fs.rmSync(to, { recursive: true, force: true });
+        done.push(`removed ${step.paths.length} retired paths`);
         break;
       }
       default:
@@ -200,6 +272,21 @@ export function apply(planned, { built, uninstall, home }) {
     }
   }
   return done;
+}
+
+// One built tree per target the plan writes: runtimes get their flavor, `portable` and `packs` the
+// canonical copy, and the `retired` removal step builds nothing (its pseudo-target is no runtime).
+export function buildTrees(planned, work) {
+  const built = new Map();
+  for (const target of new Set(planned.steps.filter((step) => step.kind !== "retired").map((step) => step.target))) {
+    const dest = path.join(work, target);
+    if (target === "portable" || target === "packs") {
+      fs.mkdirSync(path.join(dest, "skills"), { recursive: true });
+      for (const skill of scanSkills(path.join(repoRoot, "skills")).skills) fs.cpSync(skill.dir, path.join(dest, "skills", skill.name), { recursive: true, filter: noDsStore });
+    } else buildRuntime(target, dest);
+    built.set(target, dest);
+  }
+  return built;
 }
 
 async function confirm(question) {
@@ -212,7 +299,7 @@ async function confirm(question) {
 async function main(argv) {
   const args = parseArgs(argv);
   const version = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8")).version;
-  const usage = "usage: npx github:MarkTripoli/skills [claude-code|codex|oh-my-pi|pi|portable|all ...] [--project] [--dry-run] [--yes] [--no-extension] [--uninstall] [--list]";
+  const usage = "usage: npx github:MarkTripoli/skills [claude-code|codex|oh-my-pi|pi|portable|all ...] [--project] [--dry-run] [--yes] [--no-packs] [--uninstall] [--list]";
   if (args.help) {
     console.log(usage);
     return 0;
@@ -230,7 +317,10 @@ async function main(argv) {
   }
   const targets = args.targets.length ? args.targets : detectTargets();
   const detected = args.targets.length ? "" : " (found on PATH)";
-  const planned = plan({ targets, project: args.project, extension: args.extension, cwd, home, env: process.env });
+  // Uninstalling one named runtime leaves the packs and the ~/.agents/skills copy they read in place; every
+  // detected runtime, or `all`, removes them too.
+  const packs = args.packs && (!args.uninstall || !args.targets.length || args.all);
+  const planned = plan({ targets, project: args.project, packs, uninstall: args.uninstall, cwd, home, env: process.env });
 
   console.log(`skills ${version} from ${repoRoot}`);
   console.log(`${args.uninstall ? "Uninstall" : "Install"} for ${targets.join(", ")}${detected}, ${args.project ? `project scope (${cwd})` : "home directory"}:`);
@@ -250,21 +340,14 @@ async function main(argv) {
 
   const work = fs.mkdtempSync(path.join(os.tmpdir(), "skills-install-"));
   try {
-    const built = new Map();
-    for (const target of targets) {
-      const dest = path.join(work, target);
-      if (target === "portable") {
-        fs.mkdirSync(path.join(dest, "skills"), { recursive: true });
-        for (const skill of scanSkills(path.join(repoRoot, "skills")).skills) fs.cpSync(skill.dir, path.join(dest, "skills", skill.name), { recursive: true, filter: noDsStore });
-      } else buildRuntime(target, dest);
-      built.set(target, dest);
-    }
+    const built = buildTrees(planned, work);
     for (const line of apply(planned, { built, uninstall: args.uninstall, home })) console.log(`  ${line}`);
   } finally {
     fs.rmSync(work, { recursive: true, force: true });
   }
   if (!args.uninstall) {
-    console.log("Done. Start a new session; `/start-task <request>` routes a request, `/run-task @<task dir>` drives a task.");
+    if (args.packs) console.log("Done. With Archon installed, `archon workflow list` shows the delivery packs; `archon workflow run delivery-bugfix --branch <name> \"<report>\"` runs one (docs/cheatsheet.md).");
+    else console.log("Done. Start a new session; run a skill as /<name> (Codex: $<name>) for a task directory.");
     if (targets.includes("codex")) console.log("Codex: skills are invoked as $<name>.");
   }
   return 0;

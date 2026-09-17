@@ -1,0 +1,10 @@
+# `children=manual` with two ready children: the `launch-manual` twin prints the start commands and
+# `launch` is skipped; the join fires from the twin alone.
+ready: '{"branch":"epic-fixture","ready":["a","b"],"started":[],"done":[],"blocked":["c"]}'
+launch-manual: '{"launched":[],"failed":[],"skipped_manual":true,"commands":["archon workflow run delivery-lean --branch a --base epic-fixture --input task_dir=.agents/tasks/a --input gates=none --input skills_dir=/home/me/.agents/skills --quiet ''a''","archon workflow run delivery-oneshot --branch b --base epic-fixture --input task_dir=.agents/tasks/b --input gates=none --input skills_dir=/home/me/.agents/skills --quiet ''b''"]}'
+wave-done: '{"ready":["a","b"],"started":[],"done":[],"blocked":["c"]}'
+fixture:
+  expect: completed
+  inputs: { epic_dir: .agents/tasks/fixture, children: manual }
+  reached: [ready, launch-manual, wave-done]
+exec-code: false

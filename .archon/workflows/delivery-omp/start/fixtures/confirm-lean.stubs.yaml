@@ -1,0 +1,14 @@
+# An unsure route (`full` below the confident bar) with gates on: `confirm` pauses with the judged pack
+# and gates in its message (a dry run approves it), and `resolve` carries the reviewer's request
+# changes text `lean, outline`: the task directory is opened for lean and the run reaches the lean
+# child alone (a dry run cannot start a `workflow:` child, so it fails there).
+route: '{"workflow":"full","gates":"all","suggested":"lean","confidence":"0.55","confirm":"true"}'
+resolve: '{"workflow":"lean","gates":"outline"}'
+task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills","tier":"","suggested_workflow":""}'
+fixture:
+  expect: failed
+  fail-node: lean
+  reached: [route, confirm, resolve, task__create]
+  resolved-text-contains:
+    confirm: "delivery-full (confidence 0.55) with gates all"
+exec-code: false

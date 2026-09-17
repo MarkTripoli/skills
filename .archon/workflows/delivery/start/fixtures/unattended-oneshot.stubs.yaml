@@ -1,0 +1,12 @@
+# `gates=none` and a confident route: no confirmation, the task directory is opened for oneshot, and
+# the run reaches the oneshot child alone (a dry run cannot start a `workflow:` child, so it fails
+# there; the six other packs are skipped).
+route: '{"workflow":"oneshot","gates":"none","suggested":"oneshot","confidence":"0.95","confirm":"false"}'
+resolve: '{"workflow":"oneshot","gates":"none"}'
+task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills","tier":"","suggested_workflow":""}'
+fixture:
+  expect: failed
+  fail-node: oneshot
+  inputs: { gates: none }
+  reached: [route, resolve, task__create]
+exec-code: false

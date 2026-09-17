@@ -27,6 +27,10 @@ This document records current behavior only. It does not recommend implementatio
 
 [Name the sources actually examined and any limit that affects the findings. One sentence is usually enough.]
 
+### Known limits
+
+- [Judgments skipped because the helper was unavailable, the count of claims dropped as unsupported, questions the coverage check left `partial` or `missing`, or `None.`]
+
 ## Summary
 
 [Lead with the answer in a short paragraph. Add detail only for distinct findings the reader needs before the evidence below.]

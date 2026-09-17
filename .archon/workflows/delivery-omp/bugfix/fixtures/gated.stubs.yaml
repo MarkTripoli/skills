@@ -1,0 +1,23 @@
+# Default gates: the gated `reproduce` loop runs (a reproduction session, its status checked against the
+# artifact, then the approval gate), the fix follows `reproduce-done`, the pull request description is gated.
+task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills"}'
+gates: '{"reproduce":"true","pr":"true"}'
+attempt: '{"status":"reproduced","summary":"exit code 0 on a missing config","artifact":"01-reproduction-fixture.md"}'
+verify-reproduction: '{"status":"reproduced"}'
+fix: "bug fixed and committed"
+review-code: '{"status":"clean","artifact":"05-code-review-fixture.md","summary":"clean"}'
+verify-review: '{"status":"clean"}'
+intent: '{"intent":"revise"}'
+phase: "pull request described"
+reproduce-done: ""
+app-test-done: ""
+review-done: ""
+pr-done: ""
+verify-implementation: '{"status":"passed","artifact":"06-verification-fixture.md","summary":"checks and acceptance items passed"}'
+verification-status: '{"status":"passed"}'
+verification-done: ""
+verify-done: ""
+fixture:
+  expect: completed
+  reached: [gates, attempt, verify-reproduction, reproduce, reproduce-done, fix, verify-done, app-test-done, review__loop, review-done, pr__cycle, pr-done]
+exec-code: false

@@ -1,0 +1,10 @@
+# A blocked verification commits the artifact, then `verification-blocked` cancels the run;
+# `iterate-verify` never runs.
+verify-implementation: '{"status":"blocked","artifact":"06-verification-fixture.md","summary":"npm install needs a private registry token"}'
+verification-status: '{"status":"blocked"}'
+verification-done: ""
+fixture:
+  expect: cancelled
+  inputs: { task_dir: .agents/tasks/fixture }
+  reached: [verify-implementation, verification-status, verification-done, verification-blocked]
+exec-code: false

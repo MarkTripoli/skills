@@ -9,6 +9,8 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 Inspect current branch's PR/MR, repair actionable feedback, reply to every handled review thread, record approval state. External replies and resolutions require user's action-time confirmation.
 
+Under Archon this skill runs in the worktree of the delivery run that opened the pull request (`archon workflow run delivery-resolve-reviews --adopt <run-id>`, or `--branch <pr branch>`), so the PR branch is checked out and the task directory with its committed artifacts is present.
+
 ## Setup
 
 Locate the task directory and read `task.md` per the conventions (create one from the request when none exists). Read `references/pr_review_template.md`, `pr_review_pending_answer.md`, `pr_review_approved_answer.md`.
@@ -23,15 +25,17 @@ Fetch submissions, unresolved review threads, changes, approvals, checks: `gh pr
 
 ## Triage
 
-Classify review threads: `fix`, `discuss`, `decline`, `clarify`. Verify `fix` items against code. Research conventions/sources before `decline`/`discuss`. Default `fix` when no evidence declines. Draft a complete reply per review thread: result/evidence, no tooling mentions. Present the numbered triage, proposed edits, and exact replies. Wait for confirmation.
+Write the unresolved review threads as `[{id, author, body, hunk}]` to a temporary JSON file outside the repository (`mktemp`); `hunk` is the few lines of current code the thread points at, omitted when the thread has no location. Run `node <skills dir>/typed-judgment/judge.mjs triage-threads <file> --json`, where `<skills dir>` is the directory that contains this skill, then delete the file. Take the helper's `disposition` where it is not `null`; classify the rest yourself as `fix`, `discuss`, `decline`, `clarify`. `addressed` of 0.8 or more signals that the current code may already do what the thread asks: verify against the code before drafting that reply. Helper unavailable (exit 3, no `node`, no `TYPESAFE_API_KEY`): classify every thread yourself, write `unavailable` in the template's `helper triage` field, and add a `### Known limits` item saying judgments were skipped so the reply carries it in one line.
+
+Verify `fix` items against code. Research conventions/sources before `decline`/`discuss`. Default `fix` when no evidence declines. Draft a complete reply per review thread: result/evidence, no tooling mentions. Present the numbered triage with each thread's disposition, `confidence`, and `requests_change`, proposed edits, and exact replies. Wait for confirmation.
 
 ## Apply
 
-After confirmation: smallest root-cause fixes, add regressions, run checks/gates, commit/push when authorized (stage explicit paths; exclude `.agents/tasks/`), reply with evidence/SHA, resolve after reply+action complete. Never resolve declined/discussed/clarified without confirmed disposition.
+After confirmation: smallest root-cause fixes, add regressions, run checks/gates, commit/push when authorized (stage explicit code paths; keep `.agents/tasks/` files out of the code commit), reply with evidence/SHA, resolve after reply+action complete. Never resolve declined/discussed/clarified without confirmed disposition.
 
 ## Save
 
-Fetch state after push/replies. Take the next artifact number. Write `NN-pr-review-<summary>.md` using template. Record ids, dispositions, replies, SHA, tests, review threads, checks, approval. Save the file.
+Fetch state after push/replies. Take the next artifact number. Write `NN-pr-review-<summary>.md` using template. Record ids, dispositions, replies, SHA, tests, review threads, checks, approval. Save the file. When not run by the workflow engine, commit it with `git add <path>` as `docs(task): pr-review artifact`.
 
 ## Next
 
@@ -39,5 +43,3 @@ Fetch state after push/replies. Take the next artifact number. Write `NN-pr-revi
 - Else: use `pr_review_pending_answer.md`. Repeated command is human gate; no poll/auto-run.
 
 Use template only. Fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-pr-review-slug.md](.agents/tasks/<slug>/NN-pr-review-slug.md)`. End with one fenced `text` command.
-
-If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it.

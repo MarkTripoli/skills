@@ -25,6 +25,7 @@ summary: "State what this review round resolved and what still prevents approval
 - location:
 - reviewer request:
 - disposition: fixed | discussed | declined | clarify
+- helper triage: fix | discuss | decline | clarify | undecided, confidence 0.00, requests_change 0.00 (or `unavailable`)
 - evidence:
 - reply sent:
 - resolved:

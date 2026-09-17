@@ -7,14 +7,14 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 # Create Plan
 
-Expand the structure outline into a detailed implementation plan with concrete edits, examples, and verification. The plan is the last artifact before worktree setup or implementation.
+Expand the structure outline into a detailed implementation plan with concrete edits, examples, and verification. The plan is the last artifact before implementation.
 
 ## Steps
 
 1. **Locate the task directory and read `task.md`** per the conventions, creating it from the user's message when none exists.
 
 2. **Read primary inputs fully, others by summary**:
-   - Read `references/plan_template.md`, `references/plan_final_answer.md`, `references/plan_in_worktree_answer.md`, `references/plan_disabled_answer.md`.
+   - Read `references/plan_template.md` and `references/plan_final_answer.md`.
    - Read completely: `task.md` or `ticket.md`, plus the newest design artifact (the highest-numbered file whose frontmatter `type` is a TDD, PRD, structure outline, or design discussion, in that order of preference).
    - Other artifacts in the task directory listing: use the `summary` field. Open only when the design leaves a gap.
 
@@ -42,17 +42,4 @@ Expand the structure outline into a detailed implementation plan with concrete e
 
 ## Output
 
-1. Run the Worktree probe from the conventions:
-
-```text
-Read .agents/workspace.json if present
-Read .agents/workspace.local.json if present
-git rev-parse --git-dir
-```
-
-2. Choose the final answer template:
-   - If the git dir path includes `/worktrees/`, use `references/plan_in_worktree_answer.md`.
-   - Else if a workspace config is present with `disabled: true`, check out the task branch using the task slug as the default branch name (creating it when it does not exist), then use `references/plan_disabled_answer.md`.
-   - Otherwise, including when no config file exists, use `references/plan_final_answer.md`.
-3. Save the plan and follow the selected template exactly; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-plan-slug.md](.agents/tasks/<slug>/NN-plan-slug.md)`, and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists.
-4. If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it.
+1. Save the plan and follow `references/plan_final_answer.md` exactly; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-plan-slug.md](.agents/tasks/<slug>/NN-plan-slug.md)`, and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. When not run by the workflow engine, commit the saved file with `git add <path>` as `docs(task): plan artifact`.

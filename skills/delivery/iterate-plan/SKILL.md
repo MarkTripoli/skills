@@ -15,7 +15,7 @@ Revise an existing implementation plan. Check feedback before applying it, prese
 
 2. **Resolve target and read references**:
    - Resolve the target plan from `@file` or, when none is given, the newest artifact of type `plan` in the task directory listing. Ask only if multiple plan artifacts are plausible.
-   - Read `references/plan_template.md`, `references/plan_final_answer.md`, `references/plan_in_worktree_answer.md`, `references/plan_disabled_answer.md`.
+   - Read `references/plan_template.md` and `references/plan_final_answer.md`.
 
 3. **Read primary inputs fully, others by summary**:
    - Read completely: the plan and the supplied feedback (the user's message or a file the user names).
@@ -39,22 +39,7 @@ Revise an existing implementation plan. Check feedback before applying it, prese
     - Keep deferred human evidence as plain bullets with pointers, never checkboxes; remove filler.
    - Maintain phase sections with success criteria.
 
-6. **Run the Worktree probe** from the conventions:
-
-```text
-Read .agents/workspace.json if present
-Read .agents/workspace.local.json if present
-git rev-parse --git-dir
-```
-
-7. **Select the final answer template**:
-   - If the git dir path includes `/worktrees/`, use `references/plan_in_worktree_answer.md`.
-   - Else if a workspace config is present with `disabled: true`, check out the task branch named after the task slug (creating it when it does not exist), then use `references/plan_disabled_answer.md`.
-   - Otherwise, including when no config file exists, use `references/plan_final_answer.md`.
-
-8. Save the file and respond following the selected template exactly; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-plan-slug.md](.agents/tasks/<slug>/NN-plan-slug.md)`, and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists.
-
-9. If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it.
+6. Save the file and respond following `references/plan_final_answer.md` exactly; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-plan-slug.md](.agents/tasks/<slug>/NN-plan-slug.md)`, and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. When not run by the workflow engine, commit the saved file with `git add <path>` as `docs(task): plan artifact`.
 
 ## Plan Guidelines
 

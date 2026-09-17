@@ -1,0 +1,205 @@
+name: delivery-wave-omp
+description: |
+  One wave of an epic: on the epic branch, read every child task directory whose `parent` is the epic,
+  sort the children into done (their pull request merged into this branch, seen as
+  `.agents/tasks/<child>/pr-description.md`), started (a local or `origin/` branch named after the
+  child), ready (no branch yet and every `depends_on` sibling done), and blocked; then start every
+  ready child as its own `archon workflow run delivery-<child workflow>` cut from this branch, at most
+  `max_parallel` at a time, unattended (`gates=none`). With `children=manual` the start commands are
+  printed instead of run. Composed by delivery-epic and delivery-program after `start-epic-delivery`,
+  and by delivery-epic-wave for every later wave.
+  NOT for: running on its own; use delivery-epic-wave.
+  Oh My Pi flavor: every AI phase runs in `omp -p`; deterministic nodes, gates, and loops are unchanged.
+
+inputs:
+  skills_dir:
+    default: ~/.agents/skills
+    description: Directory holding the installed skills, one `<name>/SKILL.md` each; passed to every child run.
+  epic_dir:
+    required: true
+    description: The epic's task directory (`.agents/tasks/<epic slug>`); its `slug` is the children's `parent`.
+  max_parallel:
+    default: "3"
+    description: How many child runs `launch` keeps running at once.
+  children:
+    default: auto
+    description: "`auto` starts every ready child; `manual` prints the start commands and starts nothing."
+  flavor:
+    default: "-omp"
+    description: Suffix of the child pack names; empty for the native packs, `-omp` in the generated flavor (the generator sets it).
+
+# Bash nodes read their inputs from the `INPUTS_<UPPER>` environment (an include's `with:` values
+# arrive that way; the `$INPUTS.x` macro is not substituted into bash bodies, see workflows/delivery.md,
+# Archon notes). Body ids differ from every include alias packs use.
+nodes:
+  # Frontmatter is read with awk only: `slug:`, `parent:`, `workflow:` are scalars; `depends_on:` is the
+  # YAML list start-epic-delivery writes (block `- slug` lines, or a flow `[a, b]`, or `[]`).
+  - id: ready
+    bash: |
+      set -eu
+      # Env first (a real run), the include-time value second (a dry run, which delivers no INPUTS_* env).
+      epic_dir=${INPUTS_EPIC_DIR:-$INPUTS.epic_dir}
+      epic_dir="${epic_dir%/}"
+      [ -n "$epic_dir" ] || { printf 'epic_dir is required: the epic task directory, .agents/tasks/<epic slug>\n' >&2; exit 1; }
+      [ -f "$epic_dir/task.md" ] || { printf 'epic_dir %s has no task.md\n' "$epic_dir" >&2; exit 1; }
+      field() {
+        awk -v key="$2" 'NR == 1 { if ($0 != "---") exit; next } $0 == "---" { exit } index($0, key ":") == 1 { v = $0; sub("^" key ":[ \t]*", "", v); gsub(/^"|"$/, "", v); print v; exit }' "$1"
+      }
+      deps() {
+        awk 'NR == 1 { if ($0 != "---") exit; next } $0 == "---" { exit }
+          list && /^[ \t]+-[ \t]/ { v = $0; sub(/^[ \t]+-[ \t]*/, "", v); gsub(/[" \t]/, "", v); if (v != "") print v; next }
+          list { exit }
+          index($0, "depends_on:") == 1 { v = $0; sub(/^depends_on:[ \t]*/, "", v); if (v == "") { list = 1; next }
+            gsub(/[][",]/, " ", v); n = split(v, a, " "); for (i = 1; i <= n; i++) print a[i]; exit }' "$1"
+      }
+      json_list() { out=""; for s in "$@"; do out="$out${out:+,}\"$s\""; done; printf '[%s]' "$out"; }
+      epic=$(field "$epic_dir/task.md" slug)
+      epic=${epic:-${epic_dir##*/}}
+      branch=$(git rev-parse --abbrev-ref HEAD)
+      GIT_TERMINAL_PROMPT=0 git fetch -q origin 2>/dev/null || true
+      children=""; done_list=""
+      for f in .agents/tasks/*/task.md; do
+        [ -f "$f" ] || continue
+        dir=${f%/task.md}; slug=${dir##*/}
+        case "$slug" in *[!a-z0-9-]*) continue ;; esac
+        [ "$(field "$f" parent)" = "$epic" ] || continue
+        children="$children $slug"
+        if [ -f "$dir/pr-description.md" ] || git cat-file -e "origin/$branch:$dir/pr-description.md" 2>/dev/null; then
+          done_list="$done_list $slug"
+        fi
+      done
+      ready=""; started=""; blocked=""
+      for slug in $children; do
+        case " $done_list " in *" $slug "*) continue ;; esac
+        if git show-ref --verify --quiet "refs/heads/$slug" || git show-ref --verify --quiet "refs/remotes/origin/$slug"; then
+          started="$started $slug"; continue
+        fi
+        waiting=""
+        for dep in $(deps ".agents/tasks/$slug/task.md"); do
+          case " $done_list " in *" $dep "*) ;; *) waiting=1 ;; esac
+        done
+        if [ -z "$waiting" ]; then ready="$ready $slug"; else blocked="$blocked $slug"; fi
+      done
+      printf '{"branch":"%s","ready":%s,"started":%s,"done":%s,"blocked":%s}\n' "$branch" "$(json_list $ready)" "$(json_list $started)" "$(json_list $done_list)" "$(json_list $blocked)"
+    output_format:
+      type: object
+      properties:
+        branch: { type: string }
+        ready: { type: array, items: { type: string } }
+        started: { type: array, items: { type: string } }
+        done: { type: array, items: { type: string } }
+        blocked: { type: array, items: { type: string } }
+      required: [branch, ready, started, done, blocked]
+
+  # Every ready child as its own run, cut from and targeting the epic branch, unattended. Archon cuts a
+  # child's worktree from `origin/<base>`, so the epic branch is pushed first (with an upstream, so the
+  # later joins push too); a push that fails ends the node before any child is started. bash 3.2 has no
+  # `wait -n`: pids are kept in order and the oldest is waited for when the slots are full. A child
+  # that exits nonzero is listed under `failed`; the node itself fails only when it cannot read a child.
+  - id: launch
+    depends_on: [ready]
+    when: "$INPUTS.children == 'auto'"
+    timeout: 21600000
+    bash: |
+      set -eu
+      skills_dir=${INPUTS_SKILLS_DIR:-$INPUTS.skills_dir}
+      max=${INPUTS_MAX_PARALLEL:-$INPUTS.max_parallel}
+      flavor=${INPUTS_FLAVOR:-$INPUTS.flavor}
+      case "$max" in ''|*[!0-9]*|0) max=3 ;; esac
+      ready=$ready.output.ready
+      branch=$ready.output.branch
+      slugs=$(printf '%s' "$ready" | tr -d '[]"' | tr ',' ' ')
+      if git remote get-url origin >/dev/null 2>&1; then
+        GIT_TERMINAL_PROMPT=0 git push -q -u origin "HEAD:refs/heads/$branch" || { printf 'cannot push the epic branch %s to origin; child runs are cut from origin/%s\n' "$branch" "$branch" >&2; exit 1; }
+      fi
+      field() {
+        awk -v key="$2" 'NR == 1 { if ($0 != "---") exit; next } $0 == "---" { exit } index($0, key ":") == 1 { v = $0; sub("^" key ":[ \t]*", "", v); gsub(/^"|"$/, "", v); print v; exit }' "$1"
+      }
+      body() { awk 'seen >= 2 { print } $0 == "---" { seen++ }' "$1"; }
+      json_list() { out=""; for s in "$@"; do out="$out${out:+,}\"$s\""; done; printf '[%s]' "$out"; }
+      logs=$(mktemp -d)
+      launched=""; failed=""; pids=""; running=""
+      reap_oldest() {
+        set -- $pids; pid=$1; shift; pids="$*"
+        set -- $running; slug=$1; shift; running="$*"
+        if wait "$pid"; then launched="$launched $slug"; else
+          failed="$failed $slug"
+          printf 'child %s: archon workflow run exited nonzero; its output:\n' "$slug" >&2
+          tail -20 "$logs/$slug.log" >&2 || true
+        fi
+      }
+      count=0
+      for slug in $slugs; do
+        dir=.agents/tasks/$slug
+        wf=$(field "$dir/task.md" workflow)
+        case "$wf" in full|lean|prd|oneshot|bugfix) ;; *) printf 'child %s: workflow "%s" is not one of full, lean, prd, oneshot, bugfix\n' "$slug" "$wf" >&2; failed="$failed $slug"; continue ;; esac
+        prompt=$(body "$dir/task.md")
+        archon workflow run "delivery-$wf$flavor" --branch "$slug" --base "$branch" --input "task_dir=$dir" --input gates=none --input "skills_dir=$skills_dir" --quiet "$prompt" </dev/null >"$logs/$slug.log" 2>&1 &
+        pids="$pids $!"; running="$running $slug"; count=$((count+1))
+        if [ "$count" -ge "$max" ]; then reap_oldest; count=$((count-1)); fi
+      done
+      while [ -n "$pids" ]; do reap_oldest; done
+      rm -rf "$logs"
+      printf '{"launched":%s,"failed":%s,"skipped_manual":false}\n' "$(json_list $launched)" "$(json_list $failed)"
+    output_format:
+      type: object
+      properties:
+        launched: { type: array, items: { type: string } }
+        failed: { type: array, items: { type: string } }
+        skipped_manual: { type: boolean }
+      required: [launched, failed, skipped_manual]
+
+  # The twin for `children=manual`: the same commands, printed for the user to run, each prompt in shell
+  # single quotes with `'` written as `'\''`.
+  - id: launch-manual
+    depends_on: [ready]
+    when: "$INPUTS.children != 'auto'"
+    bash: |
+      set -eu
+      skills_dir=${INPUTS_SKILLS_DIR:-$INPUTS.skills_dir}
+      flavor=${INPUTS_FLAVOR:-$INPUTS.flavor}
+      ready=$ready.output.ready
+      branch=$ready.output.branch
+      slugs=$(printf '%s' "$ready" | tr -d '[]"' | tr ',' ' ')
+      field() {
+        awk -v key="$2" 'NR == 1 { if ($0 != "---") exit; next } $0 == "---" { exit } index($0, key ":") == 1 { v = $0; sub("^" key ":[ \t]*", "", v); gsub(/^"|"$/, "", v); print v; exit }' "$1"
+      }
+      body() { awk 'seen >= 2 { print } $0 == "---" { seen++ }' "$1"; }
+      json_str() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | awk 'BEGIN { ORS = "" } NR > 1 { print "\\n" } { gsub(/\t/, "\\t"); print }'; }
+      commands=""
+      for slug in $slugs; do
+        dir=.agents/tasks/$slug
+        wf=$(field "$dir/task.md" workflow)
+        prompt=$(body "$dir/task.md" | sed "s/'/'\\\\''/g")
+        cmd="archon workflow run delivery-$wf$flavor --branch $slug --base $branch --input task_dir=$dir --input gates=none --input skills_dir=$skills_dir --quiet '$prompt'"
+        commands="$commands${commands:+,}\"$(json_str "$cmd")\""
+      done
+      printf '{"launched":[],"failed":[],"skipped_manual":true,"commands":[%s]}\n' "$commands"
+    output_format:
+      type: object
+      properties:
+        launched: { type: array, items: { type: string } }
+        failed: { type: array, items: { type: string } }
+        skipped_manual: { type: boolean }
+        commands: { type: array, items: { type: string } }
+      required: [launched, failed, skipped_manual, commands]
+
+  # Fires from whichever twin ran; repeats the wave's state for the run log.
+  - id: wave-done
+    depends_on: [launch, launch-manual]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      set -eu
+      ready=$ready.output.ready
+      started=$ready.output.started
+      done_list=$ready.output.done
+      blocked=$ready.output.blocked
+      printf '{"ready":%s,"started":%s,"done":%s,"blocked":%s}\n' "$ready" "$started" "$done_list" "$blocked"
+    output_format:
+      type: object
+      properties:
+        ready: { type: array, items: { type: string } }
+        started: { type: array, items: { type: string } }
+        done: { type: array, items: { type: string } }
+        blocked: { type: array, items: { type: string } }
+      required: [ready, started, done, blocked]

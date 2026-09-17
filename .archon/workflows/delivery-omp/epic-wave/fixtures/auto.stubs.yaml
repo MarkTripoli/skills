@@ -1,0 +1,9 @@
+# Default `children=auto`: the ready children are started by `wave__launch`.
+wave__ready: '{"branch":"epic-fixture","ready":["b"],"started":[],"done":["a"],"blocked":["c"]}'
+wave__launch: '{"launched":["b"],"failed":[],"skipped_manual":false}'
+wave__wave-done: '{"ready":["b"],"started":[],"done":["a"],"blocked":["c"]}'
+fixture:
+  expect: completed
+  inputs: { epic_dir: .agents/tasks/fixture }
+  reached: [wave__ready, wave__launch, wave__wave-done]
+exec-code: false

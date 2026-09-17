@@ -45,7 +45,7 @@ describe("subjectProblems", () => {
       "feat(cli): add --verbose flag for command tracing",
       "fix: keep trailing slash in base urls",
       "refactor!: replace callback api with promises",
-      "docs(run-task): explain the status report",
+      "docs(packs): explain the status report",
       "chore(main): release 0.2.0",
       "revert: drop the verbose flag",
     ]) {

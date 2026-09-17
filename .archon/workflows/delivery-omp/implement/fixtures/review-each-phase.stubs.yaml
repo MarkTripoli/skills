@@ -1,0 +1,12 @@
+# gate=false, review=true: the per-phase review runs after the phase, its claimed status is checked,
+# and its findings are fixed.
+next-phase-auto: '{"next":""}'
+implement-phase-auto: "phase implemented"
+review-phase-auto: '{"status":"findings","artifact":"05-code-review-fixture.md","summary":"one finding"}'
+verify-phase-auto: '{"status":"findings"}'
+fix-phase-auto: "finding fixed"
+fixture:
+  expect: completed
+  inputs: { task_dir: .agents/tasks/fixture, gate: "false", review: "true" }
+  reached: [next-phase-auto, implement-phase-auto, review-phase-auto, verify-phase-auto, fix-phase-auto, phases-auto]
+exec-code: false

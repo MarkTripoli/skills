@@ -130,4 +130,4 @@ You may use one of these, you may use several, it is unlikely you will use all o
 
 ### final response
 
-If you saved an HTML file, reply with `references/show_me_final_answer.md`, filling `{artifact_link}` with a relative Markdown link to it. Otherwise answer with the visual and no next-step command. If the invoking prompt named a reply file, write the complete reply to it verbatim after printing it.
+If you saved an HTML file, reply with `references/show_me_final_answer.md`, filling `{artifact_link}` with a relative Markdown link to it. Otherwise answer with the visual and no next-step command.

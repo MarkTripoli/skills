@@ -1,0 +1,10 @@
+# A passing verification ends the loop after the commit join; `iterate-verify` and `verification-blocked`
+# stay skipped.
+verify-implementation: '{"status":"passed","artifact":"06-verification-fixture.md","summary":"three checks and five acceptance items passed"}'
+verification-status: '{"status":"passed"}'
+verification-done: ""
+fixture:
+  expect: completed
+  inputs: { task_dir: .agents/tasks/fixture }
+  reached: [verify-implementation, verification-status, verification-done, verification]
+exec-code: false

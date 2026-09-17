@@ -3,8 +3,7 @@
 //
 // Output: <dest>/skills/<name>/ (SKILL.md with the runtime's notes inserted after line 6),
 //         <dest>/agents/ (one worker definition per agent-* skill, in the runtime's format, when it has one),
-//         codex only: skills/<name>/agents/openai.yaml and <dest>/config.snippet.toml,
-//         runtimes with a runtimes/<runtime>/ directory (oh-my-pi, pi): <dest>/extensions/ copied from it.
+//         codex only: skills/<name>/agents/openai.yaml and <dest>/config.snippet.toml.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -68,7 +67,7 @@ function tomlMultiline(value) {
 
 const noDsStore = (src) => path.basename(src) !== ".DS_Store";
 
-// Returns { skills: [names], workers, extension: <path or null> }.
+// Returns { skills: [names], workers }.
 export function buildRuntime(runtime, dest) {
   if (!RUNTIMES.includes(runtime)) throw new Error(`unknown runtime "${runtime}"; choose one of ${RUNTIMES.join(", ")}`);
   const runtimeFile = path.join(repoRoot, "runtimes", `${runtime}.md`);
@@ -112,13 +111,5 @@ export function buildRuntime(runtime, dest) {
 
   if (runtime === "codex") fs.writeFileSync(path.join(dest, "config.snippet.toml"), snippet.join("\n"));
 
-  // A runtime's extension ships beside the skills it drives; it finds them at ../../skills from its own directory.
-  const extensionSource = path.join(repoRoot, "runtimes", runtime);
-  let extension = null;
-  if (fs.existsSync(extensionSource)) {
-    extension = path.join(dest, "extensions");
-    fs.cpSync(extensionSource, extension, { recursive: true, filter: noDsStore });
-  }
-
-  return { skills: layout.skills.map((s) => s.name), workers, extension };
+  return { skills: layout.skills.map((s) => s.name), workers };
 }

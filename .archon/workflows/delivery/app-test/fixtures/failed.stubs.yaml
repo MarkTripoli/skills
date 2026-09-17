@@ -1,0 +1,11 @@
+# A failed test runs `iterate-app` with the findings as feedback before the commit join. A dry run
+# never executes `until_bash`, so the loop is assumed complete after this one round; the real run tests
+# again until a pass or three rounds.
+test-app: '{"status":"failed","artifact":"06-app-test-fixture.md","summary":"S3 failed: the flag is not echoed"}'
+iterate-app: "implementation revised for S3"
+test-done: ""
+fixture:
+  expect: completed
+  inputs: { task_dir: .agents/tasks/fixture, kind: ios, target: com.example.app }
+  reached: [test-app, iterate-app, test-done, test]
+exec-code: false

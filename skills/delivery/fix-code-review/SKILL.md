@@ -7,7 +7,7 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 # Fix Code Review Findings
 
-Repair the reviewed change, verify, and send through another code review before PR creation.
+Repair the reviewed change, verify, and send through another code review before PR creation. The delivery workflow's review loop (or the user, by hand) alternates `/review-code` and `/fix-code-review` until a review is clean.
 
 ## Setup
 
@@ -15,7 +15,7 @@ Locate the task directory and read `task.md` per the conventions (create one fro
 
 ## Validate
 
-Resolve the merge target as the review did: the base of the existing pull request (`gh pr view --json baseRefName` on GitHub, `glab mr view` on GitLab), else the repository default branch. Compare artifact base/head SHAs with current state (`git status --short --branch`, `git diff --name-status <base>...HEAD`). Preserve unrelated changes. If base moved or edits invalidate scope, record drift; re-check findings.
+Resolve the merge target as the review did: the base of the existing pull request (`gh pr view --json baseRefName` on GitHub, `glab mr view` on GitLab), else `base:` from `task.md` when present, else the repository default branch. Compare artifact base/head SHAs with current state (`git status --short --branch`, `git diff --name-status <base>...HEAD`). Preserve unrelated changes. If base moved or edits invalidate scope, record drift; re-check findings.
 
 Per critical/major-severity finding: reproduce/prove failure, trace callers, mark `fixed`/`declined`/`blocked`. Decline only with concrete evidence.
 
@@ -31,10 +31,8 @@ Run focused tests, then required gates. Record commands/outcomes. Missing gate r
 
 ## Save receipt
 
-Take the next artifact number. Write `NN-code-review-fixes-<summary>.md` using template. Map Critical/Required ids to disposition/evidence. Record advisories separately. Save the file.
+Take the next artifact number. Write `NN-code-review-fixes-<summary>.md` using template. Map Critical/Required ids to disposition/evidence. Record advisories separately. Save the file. When not run by the workflow engine, commit it with `git add <path>` as `docs(task): code-review-fixes artifact`; fixes to code go in their own commit with explicit code paths.
 
 ## Review again
 
 Read, use `references/code_review_fixes_answer.md` exactly. Fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-code-review-fixes-slug.md](.agents/tasks/<slug>/NN-code-review-fixes-slug.md)`. Final command: `/review-code`, even when all findings fixed. Only fresh clean review proceeds to PR.
-
-If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it.

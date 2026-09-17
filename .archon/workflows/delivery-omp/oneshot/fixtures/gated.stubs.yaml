@@ -1,0 +1,19 @@
+# Default gates: implement, review loop, gated pull request description, `pr-done`.
+task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills"}'
+gates: '{"pr":"true"}'
+implement: "task implemented and committed"
+review-code: '{"status":"clean","artifact":"05-code-review-fixture.md","summary":"clean"}'
+phase: "pull request described"
+verify-review: '{"status":"clean"}'
+intent: '{"intent":"revise"}'
+app-test-done: ""
+review-done: ""
+pr-done: ""
+verify-implementation: '{"status":"passed","artifact":"06-verification-fixture.md","summary":"checks and acceptance items passed"}'
+verification-status: '{"status":"passed"}'
+verification-done: ""
+verify-done: ""
+fixture:
+  expect: completed
+  reached: [gates, implement, verify-done, review__loop, review-done, pr__cycle, pr-done]
+exec-code: false

@@ -1,0 +1,29 @@
+# `gates=none`: every gate-phase include takes its `once` twin, the implement include its
+# `phases-auto` loop, and the run ends at `pr-done` without a pause.
+task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills"}'
+gates: '{"design":"false","plan":"false","phases":"false","pr":"false"}'
+research__questions: "research questions saved"
+research__research: "research saved"
+design__once: "design discussion saved"
+plan__once: "plan saved"
+implement-phase-auto: "phase implemented"
+review-code: '{"status":"clean","artifact":"05-code-review-fixture.md","summary":"clean"}'
+pr__once: "pull request described"
+next-phase-auto: '{"next":""}'
+verify-review: '{"status":"clean"}'
+app-test-done: ""
+research-done: ""
+design-done: ""
+plan-done: ""
+implement-done: ""
+review-done: ""
+pr-done: ""
+verify-implementation: '{"status":"passed","artifact":"06-verification-fixture.md","summary":"checks and acceptance items passed"}'
+verification-status: '{"status":"passed"}'
+verification-done: ""
+verify-done: ""
+fixture:
+  expect: completed
+  inputs: { gates: none }
+  reached: [design__once, plan__once, implement__phases-auto, implement-phase-auto, verify-done, review__loop, pr__once, pr-done]
+exec-code: false

@@ -1,0 +1,133 @@
+name: delivery-gate-phase
+description: |
+  One phase of the delivery workflow that writes an artifact for human review. With gate=true: run a
+  skill in a fresh session, pause for review of the artifact it wrote, and on "request changes" run
+  the matching revision skill in another fresh session with the reviewer's text as feedback, until the
+  reviewer approves. With gate=false: run the skill once and continue. Composed by the delivery packs
+  for every artifact that can take a human decision (design discussion, PRD, TDD, plan, outline, epic
+  plan, pull request description).
+  NOT for: running on its own.
+
+# The loader requires this on any file with a pause node (#2738); the include-expander's
+# `droppedFields: ["interactive"]` log when a pack includes this block is expected.
+interactive: true
+
+inputs:
+  skills_dir:
+    default: ~/.agents/skills
+    description: Directory holding the installed skills, one `<name>/SKILL.md` each.
+  task_dir:
+    required: true
+    description: The task directory (`.agents/tasks/<slug>`) the phase reads and writes.
+  skill:
+    required: true
+    description: Skill that writes the artifact on the first pass (create-plan, create-prd, ...).
+  iterate:
+    required: true
+    description: Skill that revises the artifact from feedback on later passes (iterate-plan, ...).
+  label:
+    default: the artifact
+    description: What the reviewer is asked to review, in prose.
+  gate:
+    required: true
+    description: "\"true\" pauses for human review after the skill runs; anything else runs the skill once."
+
+nodes:
+  # Gated branch. Approve ends the cycle, and so does a "request changes" whose text only asks to
+  # proceed (judged by the typed-judgment helper when it is installed and the TypeSafe key is set;
+  # without it every request changes revises). Any other request changes runs one more pass: the
+  # revision skill with the reviewer's text as feedback, then the gate again; text that asks to stop
+  # cancels the run at the start of that pass. The gate stays the body's only terminal sink, which is
+  # what lets it pause the loop (Archon #2707), so the judgments sit in `until_bash` and in the node
+  # that opens the next pass. A paused gate costs nothing, so the iteration cap is only a guard against
+  # a runaway loop. Packs place a plain bash node before this include (workflows/delivery.md, Archon
+  # notes).
+  - id: cycle
+    when: "$INPUTS.gate == 'true'"
+    loop_group:
+      fresh_context: true
+      max_iterations: 100
+      until_bash: |
+        decision=$gate.output.decision
+        test "$decision" = approve && exit 0
+        text=$gate.output.text
+        skills=$INPUTS.skills_dir
+        judge="$skills/typed-judgment/judge.mjs"
+        intent=revise
+        if [ -n "$(printf '%s' "$text" | tr -d '[:space:]')" ] && [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+          intent=$(printf '%s' "$text" | node "$judge" feedback-intent - 2>/dev/null) || intent=revise
+        fi
+        test "$intent" = proceed
+      nodes:
+        # What the previous pass's "request changes" text asks for: `revise` (the default, also for
+        # the first pass, an approve, or an unavailable helper) runs the revision skill, `stop` cancels
+        # the run through `stopped`. `$LOOP_PREV` is empty on the first pass and stays literal in a dry
+        # run; both read as revise.
+        - id: intent
+          bash: |
+            set -eu
+            LOOP_PREV=${LOOP_PREV:-}
+            decision=$LOOP_PREV.gate.output.decision
+            text=$LOOP_PREV.gate.output.text
+            skills=$INPUTS.skills_dir
+            judge="$skills/typed-judgment/judge.mjs"
+            intent=revise
+            if [ "$decision" = reject ] && [ -n "$(printf '%s' "$text" | tr -d '[:space:]')" ] && [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+              intent=$(printf '%s' "$text" | node "$judge" feedback-intent - 2>/dev/null) || intent=revise
+            fi
+            case "$intent" in revise|proceed|stop) ;; *) intent=revise ;; esac
+            # A stop cancels the run before the phase's join commits, so the artifacts of the pass that was
+            # rejected are committed here; the reviewer can then resume from the branch.
+            if [ "$intent" = stop ]; then
+              dir=$INPUTS.task_dir
+              git add -A -- "$dir" 2>/dev/null && { git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): artifacts at stop" -- "$dir"; } || true
+            fi
+            printf '{"intent":"%s"}\n' "$intent"
+          output_format:
+            type: object
+            properties:
+              intent: { type: string, enum: [revise, proceed, stop] }
+            required: [intent]
+
+        - id: stopped
+          cancel: "Run stopped at the review of $INPUTS.label: the reviewer asked to stop. The artifacts are committed in $INPUTS.task_dir on the branch; run the workflow again to continue."
+          depends_on: [intent]
+          when: "$intent.output.intent == 'stop'"
+
+        - id: phase
+          context: fresh
+          depends_on: [intent]
+          when: "$intent.output.intent != 'stop'"
+          model: large
+          effort: high
+          prompt: |
+            Reviewer decision and feedback from the previous pass (both empty on the first pass):
+            decision: $LOOP_PREV.gate.output.decision
+            feedback: $LOOP_PREV.gate.output.text
+
+            When the decision above is empty, read and follow $INPUTS.skills_dir/$INPUTS.skill/SKILL.md, the installed `$INPUTS.skill` skill, for task directory $INPUTS.task_dir.
+            When the decision is reject, read and follow $INPUTS.skills_dir/$INPUTS.iterate/SKILL.md, the installed `$INPUTS.iterate` skill, for task directory $INPUTS.task_dir, applying the feedback (which may be empty) to the newest artifact the skill owns.
+
+            The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
+
+        - id: gate
+          depends_on: [phase, stopped]
+          trigger_rule: none_failed_min_one_success
+          approval:
+            message: >-
+              Review $INPUTS.label in $INPUTS.task_dir. Approve to continue, or request changes with the
+              changes you want and the phase revises the artifact.
+            decisions:
+              - { id: approve, label: Approve }
+              - { id: reject, label: Request changes }
+
+  # Unattended branch: the skill once, no review.
+  - id: once
+    when: "$INPUTS.gate != 'true'"
+    context: fresh
+    model: large
+    effort: high
+    prompt: |
+      Read and follow $INPUTS.skills_dir/$INPUTS.skill/SKILL.md, the installed `$INPUTS.skill` skill, for task directory $INPUTS.task_dir.
+
+      The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.

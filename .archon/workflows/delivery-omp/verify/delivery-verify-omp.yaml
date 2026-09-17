@@ -1,0 +1,133 @@
+name: delivery-verify-omp
+description: |
+  The verification loop: a session that did not write the code re-runs the repository's own checks
+  and every acceptance item the task's artifacts name, records what each returned against what was
+  promised, grades every item, and on a failure runs iterate-implementation with the failed items as
+  feedback, then verifies again, until a pass. Each session is fresh. A blocked verification (the
+  checks could not run for a reason outside the change) cancels the run with the missing prerequisites
+  recorded in the verification artifact; three failed rounds fail the node. Composed by the delivery
+  packs after implementation unless `verify` is `false`.
+  NOT for: running on its own.
+  Oh My Pi flavor: every AI phase runs in `omp -p`; deterministic nodes, gates, and loops are unchanged.
+
+inputs:
+  skills_dir:
+    default: ~/.agents/skills
+  task_dir:
+    required: true
+
+returns: verification
+
+nodes:
+  # Body node ids are deliberately distinct from the include alias packs use (`verify`): an alias
+  # shadows a same-named body node when `$id.output` refs are rewired.
+  - id: verification
+    loop_group:
+      fresh_context: true
+      max_iterations: 3
+      until_bash: |
+        status=$verification-status.output.status
+        test "$status" = passed
+      nodes:
+        - id: verify-implementation
+          bash: |
+            set -eu
+            v1=$LOOP_PREV.verify-implementation.output.status
+            v2=$LOOP_PREV.verify-implementation.output.summary
+            model=""
+            if [ -n "${OMP_MODEL_LARGE:-}" ]; then model="--model=$OMP_MODEL_LARGE"; fi
+            { prompt=$(cat); } <<DELIVERY_PROMPT
+            Previous verification session (both empty on the first session):
+            status: ${v1}
+            summary: ${v2}
+
+            Read and follow ${INPUTS_SKILLS_DIR}/verify-implementation/SKILL.md, the installed \`verify-implementation\` skill, for task directory ${INPUTS_TASK_DIR}. In a later session the implementation was revised after the previous failure: revise the existing verification artifact in place and re-run every item, not only the ones that failed.
+
+            The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. After saving the verification artifact, answer with only the JSON object below: status from the artifact's frontmatter, artifact its file name, summary its frontmatter summary.
+
+            CRITICAL: Respond with ONLY a JSON object matching this schema (JSON Schema, written as YAML). No prose before or after it.
+            type: object
+            properties:
+              status: { type: string, enum: [passed, failed, blocked] }
+              artifact: { type: string }
+              summary: { type: string }
+            required: [status, artifact, summary]
+            DELIVERY_PROMPT
+            answer=$(omp -p --auto-approve --no-session --max-time=45m ${model:+"$model"} "$prompt" </dev/null)
+            judge="${INPUTS_SKILLS_DIR}/typed-judgment/judge.mjs"
+            object=""
+            if [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+              object=$(printf '%s\n' "$answer" | node "$judge" extract-json --required 'status,artifact,summary' --enum 'status=passed,failed,blocked' --dir "${INPUTS_TASK_DIR}") || object=""
+            fi
+            if [ -n "$object" ]; then
+              printf '%s\n' "$object"
+            else
+              printf '%s\n' "$answer" | awk '
+                /^[[:space:]]*```/ { next }
+                { n++; line[n] = $0 }
+                !start && /^[[:space:]]*\{/ { start = n }
+                /\}[[:space:]]*$/ { end = n }
+                END { if (!start || end < start) { start = 1; end = n }; for (i = start; i <= end; i++) print line[i] }
+              '
+            fi
+          timeout: 2760000
+
+        # The claimed status checked against the artifact by the typed-judgment helper, which only ever
+        # moves a claim toward failed or blocked: a `passed` whose table carries a failed item is not one.
+        # Without the helper (not installed, no TypeSafe key, no node) or without the artifact file, the
+        # claim stands. The loop and the nodes below read this status, not the claim.
+        - id: verification-status
+          depends_on: [verify-implementation]
+          bash: |
+            set -eu
+            status=$verify-implementation.output.status
+            artifact=$verify-implementation.output.artifact
+            dir=${INPUTS_TASK_DIR:-$INPUTS.task_dir}
+            file="$dir/$artifact"
+            skills=${INPUTS_SKILLS_DIR:-$INPUTS.skills_dir}
+            judge="$skills/typed-judgment/judge.mjs"
+            verdict=""
+            if [ -n "$artifact" ] && [ -f "$file" ] && [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+              verdict=$(node "$judge" verification-status "$file" "$status" 2>/dev/null) || verdict=""
+            fi
+            case "$verdict" in passed|failed|blocked) status=$verdict ;; esac
+            printf '{"status":"%s"}\n' "$status"
+          output_format:
+            type: object
+            properties:
+              status: { type: string, enum: [passed, failed, blocked] }
+            required: [status]
+
+        - id: iterate-verify
+          depends_on: [verification-status]
+          when: "$verification-status.output.status == 'failed'"
+          bash: |
+            set -eu
+            v1=$verify-implementation.output.artifact
+            model=""
+            if [ -n "${OMP_MODEL_LARGE:-}" ]; then model="--model=$OMP_MODEL_LARGE"; fi
+            { prompt=$(cat); } <<DELIVERY_PROMPT
+            Read and follow ${INPUTS_SKILLS_DIR}/iterate-implementation/SKILL.md, the installed \`iterate-implementation\` skill, for task directory ${INPUTS_TASK_DIR}. The feedback is the \`## Findings\` section of the verification artifact ${v1} in that directory: each entry is a repository check or an acceptance item that failed when the verifier re-ran it, with the command or observation, what was expected, and what was observed. Fix the implementation so every listed item passes; make a failing check pass by fixing the code it checks, never by weakening, skipping, or deleting the check. Do not edit the verification artifact, the next verification session revises it.
+
+            The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
+            DELIVERY_PROMPT
+            omp -p --auto-approve --no-session --max-time=45m ${model:+"$model"} "$prompt" </dev/null
+          timeout: 2760000
+
+        # Commits the session's artifact before the loop decides, so a blocked cancel and a failed
+        # round both leave the verification artifact on the branch.
+        - id: verification-done
+          depends_on: [verification-status, iterate-verify]
+          trigger_rule: none_failed_min_one_success
+          # `$INPUTS.task_dir` is spliced with the pack's `with:` value (a `$task.output.task_dir` ref) when
+          # the block is included; the environment variable covers a run of the block on its own.
+          bash: |
+            set -eu
+            dir=${INPUTS_TASK_DIR:-$INPUTS.task_dir}
+            git add -A -- "$dir"
+            git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): verification artifacts" -- "$dir"
+
+        - id: verification-blocked
+          cancel: "Verification blocked; supply what the newest verification artifact's `## Missing` list names, then run the workflow again."
+          depends_on: [verification-done]
+          when: "$verification-status.output.status == 'blocked'"

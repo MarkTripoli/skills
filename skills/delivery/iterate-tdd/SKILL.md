@@ -68,6 +68,4 @@ If a PRD exists, use it for product requirements, user flows, and mockups. Do no
 
 If driven by a feedback file the user names: read it fully, work one item or related group at a time, verify factual corrections, treat new choices as open decisions (ask exactly one question). Apply each change, or say why it was not applied. Feedback items are collaboration inputs, not a second source of hidden requirements. Fold accepted content into TDD.
 
-8. **Finish when user is done**: When design is complete and approved, save the file, read `references/tdd_final_answer.md`, follow template; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-tdd-slug.md](.agents/tasks/<slug>/NN-tdd-slug.md)`, and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists.
-
-9. **Reply file**: If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it.
+8. **Finish when user is done**: When design is complete and approved, save the file, read `references/tdd_final_answer.md`, follow template; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-tdd-slug.md](.agents/tasks/<slug>/NN-tdd-slug.md)`, and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. When not run by the workflow engine, commit the saved file with `git add <path>` as `docs(task): tdd artifact`.

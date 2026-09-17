@@ -20,6 +20,7 @@ Run as a guided conversation. Settle foundation (problem, success signal), then 
 - When decision lands, rework section. Replace stale prose, update mockups, move ruled-out choices to alternatives or out of scope.
 - Keep readable as product spec. Headers state takeaway, short paragraphs, visuals near explanatory text.
 - Stay in product space: user flows, behavior, permissions, states, constraints, success criteria. Defer implementation mechanics to TDD.
+- Record each behavior in Solution Details as one obligation with an observable outcome, per the [slicing guide](https://github.com/MarkTripoli/skills/blob/main/shared/SLICING.md), which a checkout has at `shared/SLICING.md`. A behavior carrying "and also" is two behaviors; a vague term ("fast", "secure", "works correctly") is a decision nobody made yet, so ask the question that settles it.
 - If codebase reality or product behavior is unclear, verify before presenting options.
 
 ## References
@@ -54,8 +55,6 @@ When solution seems complete, stop. Ask user to read Solution Details top to bot
 
 ## Step 6: Wrap up
 
-When user approves solution: save the file, read `references/prd_final_answer.md`, follow template exactly; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-prd-slug.md](.agents/tasks/<slug>/NN-prd-slug.md)`, and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists.
+When user approves solution: save the file, read `references/prd_final_answer.md`, follow template exactly; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-prd-slug.md](.agents/tasks/<slug>/NN-prd-slug.md)`, and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. When not run by the workflow engine, commit the saved file with `git add <path>` as `docs(task): prd artifact`.
 
 Start child workers for role `agent-codebase-locator` (finds files/tests), `agent-codebase-analyzer` (explains behavior), `agent-codebase-pattern-finder` (finds precedents), or `agent-web-search-researcher` (checks external docs) with the assignment (see the conventions' Child workers section) when a missing fact would change the artifact; wait for each; read its final message. Use only findings you have read from the worker's final message. If a child or direct read discovers current-state facts missing or stale in completed research, fold those into the research artifact before finalizing the PRD.
-
-If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it.

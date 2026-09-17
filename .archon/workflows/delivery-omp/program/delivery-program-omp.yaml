@@ -1,0 +1,189 @@
+name: delivery-program-omp
+description: |
+  Take an open, large requirement from request to running children: research, product requirements
+  document (gate, revised from your feedback until approved), technical design document (gate), epic
+  plan (gate), then one task directory per child and every wave-1 child started as its own unattended
+  delivery run cut from this run's branch, at most `max_parallel` at a time (`--input children=manual`
+  prints the start commands instead). Later waves start with delivery-epic-wave after a wave's pull
+  requests merge. Start it with `--branch <epic branch>` so the children have a branch to cut from
+  and target. The `gates` input picks which pauses happen: `--input gates=none` runs unattended,
+  `--input gates=prd` pauses only there.
+
+  Use when: the requirement is open (what it should do, for whom, how it behaves at the edges) AND the
+  work splits into several independently mergeable deliverables, for example "write the requirements
+  for billing and open one pull request per module".
+  NOT for: an open requirement with one deliverable (delivery-prd), a known split of known work
+  (delivery-epic), or one deliverable (delivery-full, delivery-lean).
+  Oh My Pi flavor: every AI phase runs in `omp -p`; deterministic nodes, gates, and loops are unchanged.
+
+interactive: true
+
+inputs:
+  skills_dir:
+    default: ~/.agents/skills
+    description: Directory holding the installed skills, one `<name>/SKILL.md` each.
+  task_dir:
+    default: ""
+    description: Reuse this existing task directory (one created by hand) instead of creating one.
+  gates:
+    default: all
+    description: "Human gates to keep: `all`, `none`, or a comma-separated subset of prd, tdd, plan."
+  children:
+    default: auto
+    description: "`auto` starts every wave-1 child after the task directories are committed; `manual` prints the start commands and starts nothing."
+  max_parallel:
+    default: "3"
+    description: How many child runs to keep running at once.
+
+# `*-done` nodes commit the phase's artifacts and keep loop bodies runnable between includes; see
+# delivery-full for why. `gates` is the plain node between the task include and the first include.
+nodes:
+  - id: task
+    include: delivery-task-omp
+    with:
+      skills_dir: $INPUTS.skills_dir
+      workflow: program
+      task_dir: $INPUTS.task_dir
+
+  - id: gates
+    depends_on: [task]
+    bash: |
+      set -eu
+      names="prd tdd plan"
+      requested=$(printf '%s' "${INPUTS_GATES:-all}" | tr -d ' ')
+      case "$requested" in
+        all|'') on="$names" ;;
+        none) on="" ;;
+        *)
+          on=""
+          for g in $(printf '%s' "$requested" | tr ',' ' '); do
+            case " $names " in
+              *" $g "*) on="$on $g" ;;
+              *) printf 'gates: unknown gate "%s"; use all, none, or a comma-separated subset of: %s\n' "$g" "$names" >&2; exit 1 ;;
+            esac
+          done ;;
+      esac
+      out=""
+      for name in $names; do
+        case " $on " in *" $name "*) v=true ;; *) v=false ;; esac
+        out="$out${out:+,}\"$name\":\"$v\""
+      done
+      printf '{%s}\n' "$out"
+    output_format:
+      type: object
+      properties:
+        prd: { type: string }
+        tdd: { type: string }
+        plan: { type: string }
+      required: [prd, tdd, plan]
+
+  - id: research
+    include: delivery-research-omp
+    depends_on: [gates]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+
+  - id: research-done
+    depends_on: [research]
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): research artifacts" -- "$dir"
+
+  - id: prd
+    include: delivery-gate-phase-omp
+    depends_on: [research-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: create-prd
+      iterate: iterate-prd
+      label: the product requirements document
+      gate: $gates.output.prd
+
+  - id: prd-done
+    depends_on: [prd]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): prd artifacts" -- "$dir"
+
+  - id: tdd
+    include: delivery-gate-phase-omp
+    depends_on: [prd-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: create-tdd
+      iterate: iterate-tdd
+      label: the technical design document
+      gate: $gates.output.tdd
+
+  - id: tdd-done
+    depends_on: [tdd]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): tdd artifacts" -- "$dir"
+
+  # The epic plan is revised by running create-epic-plan again with the feedback, as delivery-epic does.
+  - id: plan
+    include: delivery-gate-phase-omp
+    depends_on: [tdd-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: create-epic-plan
+      iterate: create-epic-plan
+      label: the epic plan
+      gate: $gates.output.plan
+
+  - id: plan-done
+    depends_on: [plan]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): plan artifacts" -- "$dir"
+
+  - id: start
+    depends_on: [plan-done]
+    bash: |
+      set -eu
+      v1=$task.output.skills_dir
+      v2=$task.output.task_dir
+      model=""
+      if [ -n "${OMP_MODEL_MEDIUM:-}" ]; then model="--model=$OMP_MODEL_MEDIUM"; fi
+      { prompt=$(cat); } <<DELIVERY_PROMPT
+      Read and follow ${v1}/start-epic-delivery/SKILL.md, the installed \`start-epic-delivery\` skill, for task directory ${v2}. The epic branch is the current branch (\`git rev-parse --abbrev-ref HEAD\`); commit each child's task.md on it. For each wave-1 child, the start command is \`archon workflow run delivery-<child workflow> --base <epic branch> --input task_dir=.agents/tasks/<child slug> '<child prompt>'\`; print one per child. The workflow engine starts the wave-1 children itself after this phase unless it was run with \`children=manual\`.
+
+      The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
+      DELIVERY_PROMPT
+      omp -p --auto-approve --no-session --max-time=45m ${model:+"$model"} "$prompt" </dev/null
+    timeout: 2760000
+
+  # Commits any child task.md the skill left uncommitted.
+  - id: start-done
+    depends_on: [start]
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): open epic children" -- "$dir"
+
+  # Wave 1: every child with no dependencies, each its own unattended run cut from this branch.
+  - id: wave
+    include: delivery-wave-omp
+    depends_on: [start-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      epic_dir: $task.output.task_dir
+      max_parallel: $INPUTS.max_parallel
+      children: $INPUTS.children

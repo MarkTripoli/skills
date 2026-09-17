@@ -1,0 +1,407 @@
+name: delivery-implement-omp
+description: |
+  Implement a plan or structure outline one phase per fresh session until no phase has an unchecked
+  box left. With gate=true the run pauses for human review after every phase; "request changes" at a
+  pause runs iterate-implementation with the reviewer's text before the next phase. With gate=false
+  the phases run back to back. With review=true a review pass runs after every phase, before the
+  pause. Composed by the delivery packs.
+  NOT for: running on its own.
+  Oh My Pi flavor: every AI phase runs in `omp -p`; deterministic nodes, gates, and loops are unchanged.
+
+# The loader requires this on any file with a pause node (#2738); the include-expander's
+# `droppedFields: ["interactive"]` log when a pack includes this block is expected.
+interactive: true
+
+inputs:
+  skills_dir:
+    default: ~/.agents/skills
+  task_dir:
+    required: true
+  skill:
+    default: implement-plan
+    description: implement-plan for plans, implement-outline for structure outlines.
+  review:
+    default: "false"
+    description: Set to true to run a review pass after every implementation phase.
+  gate:
+    required: true
+    description: "\"true\" pauses for human review after every phase; anything else runs the phases unattended."
+
+nodes:
+  # Gated branch. The completion channel is approval plus the plan itself: exit 0 once the reviewer
+  # approved (or requested changes with text that only asks to proceed, judged by the typed-judgment
+  # helper when it is installed and the TypeSafe key is set) and no `## Phase N` / `## Step N` section
+  # of the newest plan or outline holds an unchecked box (boxes under `## Human Review` do not count).
+  # The helper reads the plan first; its `done` and `remaining` verdicts decide, anything else defers
+  # to the box count. Approve with phases remaining continues with the next phase. The gate stays the
+  # body's only terminal sink, which is what lets it pause the loop (Archon #2707), so the intent
+  # judgment sits in `until_bash` and in the node that opens the next pass. The unattended twin below
+  # duplicates the body: Archon 0.10 cannot share a loop body between two loop_groups.
+  - id: phases
+    when: "$INPUTS.gate == 'true'"
+    loop_group:
+      fresh_context: true
+      max_iterations: 16
+      until_bash: |
+        decision=$gate.output.decision
+        skills=$INPUTS.skills_dir
+        judge="$skills/typed-judgment/judge.mjs"
+        if [ "$decision" != approve ]; then
+          text=$gate.output.text
+          intent=revise
+          if [ -n "$(printf '%s' "$text" | tr -d '[:space:]')" ] && [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+            intent=$(printf '%s' "$text" | node "$judge" feedback-intent - 2>/dev/null) || intent=revise
+          fi
+          test "$intent" = proceed || exit 1
+        fi
+        plan=$(ls -1 $INPUTS.task_dir/??-plan-*.md $INPUTS.task_dir/??-structure-outline-*.md 2>/dev/null | sort | tail -1)
+        test -n "$plan" || exit 1
+        verdict=""
+        if [ -f "$judge" ] && command -v node >/dev/null 2>&1; then verdict=$(node "$judge" plan-remaining "$plan" 2>/dev/null) || verdict=""; fi
+        case "$verdict" in done) exit 0 ;; remaining) exit 1 ;; esac
+        awk '
+          /^[[:space:]]*```/ { infence = !infence; next }
+          infence { next }
+          /^## (Phase|Step) [0-9]+/ { seen = 1; inphase = 1; next }
+          /^## / { inphase = 0; next }
+          inphase && /^[[:space:]]*- \[ \]/ { open = 1 }
+          END { exit (seen && !open) ? 0 : 1 }
+        ' "$plan"
+      nodes:
+        # What the previous pass's "request changes" text asks for: `revise` (the default, also for
+        # the first pass, an approve, or an unavailable helper) runs iterate-implementation as before,
+        # `proceed` runs the next phase, `stop` cancels the run through `stopped`. `$LOOP_PREV` is empty
+        # on the first pass and stays literal in a dry run; both read as revise.
+        - id: intent
+          bash: |
+            set -eu
+            LOOP_PREV=${LOOP_PREV:-}
+            decision=$LOOP_PREV.gate.output.decision
+            text=$LOOP_PREV.gate.output.text
+            skills=$INPUTS.skills_dir
+            judge="$skills/typed-judgment/judge.mjs"
+            intent=revise
+            if [ "$decision" = reject ] && [ -n "$(printf '%s' "$text" | tr -d '[:space:]')" ] && [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+              intent=$(printf '%s' "$text" | node "$judge" feedback-intent - 2>/dev/null) || intent=revise
+            fi
+            case "$intent" in revise|proceed|stop) ;; *) intent=revise ;; esac
+            # A stop cancels the run before the phase's join commits, so the artifacts of the pass that was
+            # rejected are committed here; the reviewer can then resume from the branch.
+            if [ "$intent" = stop ]; then
+              dir=$INPUTS.task_dir
+              git add -A -- "$dir" 2>/dev/null && { git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): artifacts at stop" -- "$dir"; } || true
+            fi
+            printf '{"intent":"%s"}\n' "$intent"
+          output_format:
+            type: object
+            properties:
+              intent: { type: string, enum: [revise, proceed, stop] }
+            required: [intent]
+
+        - id: stopped
+          cancel: "Run stopped at the implementation gate: the reviewer asked to stop. The phase's artifacts are committed in $INPUTS.task_dir on the branch; run the workflow again to continue."
+          depends_on: [intent]
+          when: "$intent.output.intent == 'stop'"
+
+        # The phase to implement, named for the session so a plan whose boxes lag behind its receipts
+        # still advances: the helper's confident `next` when available, else the first `## Phase N` /
+        # `## Step N` section (heading level 2 or 3, outside code fences) with an open box, else empty.
+        - id: next-phase
+          bash: |
+            set -eu
+            plan=$(ls -1 $INPUTS.task_dir/??-plan-*.md $INPUTS.task_dir/??-structure-outline-*.md 2>/dev/null | sort | tail -1)
+            next=""
+            if [ -n "$plan" ]; then
+              skills=$INPUTS.skills_dir
+              judge="$skills/typed-judgment/judge.mjs"
+              if [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+                judged=$(node "$judge" plan-remaining --json "$plan" 2>/dev/null) || judged=""
+                if [ -n "$judged" ]; then
+                  next=$(printf '%s' "$judged" | node -e 'let s="";process.stdin.on("data",d=>{s+=d}).on("end",()=>{const o=JSON.parse(s);process.stdout.write(o.next?String(o.next):"")})' 2>/dev/null) || next=""
+                fi
+              fi
+              if [ -z "$next" ]; then
+                next=$(awk '
+                  /^[[:space:]]*```/ { infence = !infence; next }
+                  infence { next }
+                  /^##(#)? (Phase|Step) [0-9]+/ { if (open) exit; match($0, /^#+/); level = RLENGTH; title = substr($0, RLENGTH + 2); inphase = 1; next }
+                  /^#+ / { match($0, /^#+/); if (inphase && RLENGTH <= level) { if (open) exit; inphase = 0 } next }
+                  inphase && /^[[:space:]]*- \[ \]/ { open = 1 }
+                  END { if (open) print title }
+                ' "$plan")
+              fi
+            fi
+            next_json=$(printf '%s' "$next" | tr '\t' ' ' | sed 's/\\/\\\\/g; s/"/\\"/g')
+            printf '{"next":"%s"}\n' "$next_json"
+          output_format:
+            type: object
+            properties:
+              next: { type: string }
+            required: [next]
+
+        - id: implement-phase
+          depends_on: [intent, next-phase]
+          when: "$intent.output.intent != 'stop'"
+          bash: |
+            set -eu
+            v1=$LOOP_PREV.gate.output.decision
+            v2=$LOOP_PREV.gate.output.text
+            v3=$intent.output.intent
+            v4=$next-phase.output.next
+            model=""
+            if [ -n "${OMP_MODEL_LARGE:-}" ]; then model="--model=$OMP_MODEL_LARGE"; fi
+            { prompt=$(cat); } <<DELIVERY_PROMPT
+            Reviewer decision and feedback from the previous pass (all empty on the first pass):
+            decision: ${v1}
+            feedback: ${v2}
+            feedback intent: ${v3}
+
+            When the decision above is empty or approve, or the feedback intent is proceed, read and follow ${INPUTS_SKILLS_DIR}/${INPUTS_SKILL}/SKILL.md, the installed \`${INPUTS_SKILL}\` skill, for task directory ${INPUTS_TASK_DIR}: implement the first incomplete phase of the newest plan or outline, tick its boxes, write its receipt, commit with explicit paths, and stop after that one phase. The phase to implement when named: ${v4}; when empty, the first incomplete phase.
+            When the decision is reject and the feedback intent is not proceed, read and follow ${INPUTS_SKILLS_DIR}/iterate-implementation/SKILL.md, the installed \`iterate-implementation\` skill, for task directory ${INPUTS_TASK_DIR}, applying the feedback to the implemented work; do not start the next phase.
+
+            The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
+            DELIVERY_PROMPT
+            omp -p --auto-approve --no-session --max-time=45m ${model:+"$model"} "$prompt" </dev/null
+          timeout: 2760000
+
+        # One review pass per phase when asked (not a nested loop: Archon 0.10 does not run the body of a
+        # loop_group nested in a loop_group body). The pack's final review loop still runs until clean.
+        - id: review-phase
+          depends_on: [implement-phase]
+          when: "$INPUTS.review == 'true'"
+          bash: |
+            set -eu
+            model=""
+            if [ -n "${OMP_MODEL_LARGE:-}" ]; then model="--model=$OMP_MODEL_LARGE"; fi
+            { prompt=$(cat); } <<DELIVERY_PROMPT
+            Read and follow ${INPUTS_SKILLS_DIR}/review-code/SKILL.md, the installed \`review-code\` skill, for task directory ${INPUTS_TASK_DIR}. Review the diff of the implementation phase just completed against the merge target.
+
+            The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. After saving the code-review artifact, answer with only the JSON object below, where status is the artifact's frontmatter \`status\` and artifact is its file name.
+
+            CRITICAL: Respond with ONLY a JSON object matching this schema (JSON Schema, written as YAML). No prose before or after it.
+            type: object
+            properties:
+              status: { type: string, enum: [clean, findings, blocked] }
+              artifact: { type: string }
+              summary: { type: string }
+            required: [status, artifact, summary]
+            DELIVERY_PROMPT
+            answer=$(omp -p --auto-approve --no-session --max-time=45m ${model:+"$model"} "$prompt" </dev/null)
+            judge="${INPUTS_SKILLS_DIR}/typed-judgment/judge.mjs"
+            object=""
+            if [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+              object=$(printf '%s\n' "$answer" | node "$judge" extract-json --required 'status,artifact,summary' --enum 'status=clean,findings,blocked' --dir "${INPUTS_TASK_DIR}") || object=""
+            fi
+            if [ -n "$object" ]; then
+              printf '%s\n' "$object"
+            else
+              printf '%s\n' "$answer" | awk '
+                /^[[:space:]]*```/ { next }
+                { n++; line[n] = $0 }
+                !start && /^[[:space:]]*\{/ { start = n }
+                /\}[[:space:]]*$/ { end = n }
+                END { if (!start || end < start) { start = 1; end = n }; for (i = start; i <= end; i++) print line[i] }
+              '
+            fi
+          timeout: 2760000
+
+        # The claimed status checked against the artifact: the helper only ever moves a claim toward
+        # findings or blocked; without it, or without the artifact, the claim stands.
+        - id: verify-phase
+          depends_on: [review-phase]
+          bash: |
+            set -eu
+            status=$review-phase.output.status
+            artifact=$review-phase.output.artifact
+            dir=$INPUTS.task_dir
+            file="$dir/$artifact"
+            skills=$INPUTS.skills_dir
+            judge="$skills/typed-judgment/judge.mjs"
+            verdict=""
+            if [ -n "$artifact" ] && [ -f "$file" ] && [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+              verdict=$(node "$judge" review-status "$file" "$status" 2>/dev/null) || verdict=""
+            fi
+            case "$verdict" in clean|findings|blocked) status=$verdict ;; esac
+            printf '{"status":"%s"}\n' "$status"
+          output_format:
+            type: object
+            properties:
+              status: { type: string, enum: [clean, findings, blocked] }
+            required: [status]
+
+        - id: fix-phase
+          depends_on: [verify-phase]
+          when: "$verify-phase.output.status == 'findings'"
+          bash: |
+            set -eu
+            v1=$review-phase.output.artifact
+            model=""
+            if [ -n "${OMP_MODEL_MEDIUM:-}" ]; then model="--model=$OMP_MODEL_MEDIUM"; fi
+            { prompt=$(cat); } <<DELIVERY_PROMPT
+            Read and follow ${INPUTS_SKILLS_DIR}/fix-code-review/SKILL.md, the installed \`fix-code-review\` skill, for task directory ${INPUTS_TASK_DIR}, fixing every finding in the code-review artifact ${v1}. Advisories included.
+
+            The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
+            DELIVERY_PROMPT
+            omp -p --auto-approve --no-session --max-time=45m ${model:+"$model"} "$prompt" </dev/null
+          timeout: 2760000
+
+        - id: gate
+          depends_on: [implement-phase, review-phase, verify-phase, fix-phase, stopped]
+          trigger_rule: none_failed_min_one_success
+          approval:
+            message: >-
+              Implementation phase done; its receipt is the newest implementation artifact in
+              $INPUTS.task_dir. Approve to continue with the next phase (or to finish when none remains),
+              or request changes with what should change before the next phase.
+            decisions:
+              - { id: approve, label: Approve }
+              - { id: reject, label: Request changes }
+
+  # Unattended branch: the same body without the pause; the plan's boxes (or the helper's verdict on
+  # the plan) are the only completion channel.
+  - id: phases-auto
+    when: "$INPUTS.gate != 'true'"
+    loop_group:
+      fresh_context: true
+      max_iterations: 16
+      until_bash: |
+        plan=$(ls -1 $INPUTS.task_dir/??-plan-*.md $INPUTS.task_dir/??-structure-outline-*.md 2>/dev/null | sort | tail -1)
+        test -n "$plan" || exit 1
+        skills=$INPUTS.skills_dir
+        judge="$skills/typed-judgment/judge.mjs"
+        verdict=""
+        if [ -f "$judge" ] && command -v node >/dev/null 2>&1; then verdict=$(node "$judge" plan-remaining "$plan" 2>/dev/null) || verdict=""; fi
+        case "$verdict" in done) exit 0 ;; remaining) exit 1 ;; esac
+        awk '
+          /^[[:space:]]*```/ { infence = !infence; next }
+          infence { next }
+          /^## (Phase|Step) [0-9]+/ { seen = 1; inphase = 1; next }
+          /^## / { inphase = 0; next }
+          inphase && /^[[:space:]]*- \[ \]/ { open = 1 }
+          END { exit (seen && !open) ? 0 : 1 }
+        ' "$plan"
+      nodes:
+        - id: next-phase-auto
+          bash: |
+            set -eu
+            plan=$(ls -1 $INPUTS.task_dir/??-plan-*.md $INPUTS.task_dir/??-structure-outline-*.md 2>/dev/null | sort | tail -1)
+            next=""
+            if [ -n "$plan" ]; then
+              skills=$INPUTS.skills_dir
+              judge="$skills/typed-judgment/judge.mjs"
+              if [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+                judged=$(node "$judge" plan-remaining --json "$plan" 2>/dev/null) || judged=""
+                if [ -n "$judged" ]; then
+                  next=$(printf '%s' "$judged" | node -e 'let s="";process.stdin.on("data",d=>{s+=d}).on("end",()=>{const o=JSON.parse(s);process.stdout.write(o.next?String(o.next):"")})' 2>/dev/null) || next=""
+                fi
+              fi
+              if [ -z "$next" ]; then
+                next=$(awk '
+                  /^[[:space:]]*```/ { infence = !infence; next }
+                  infence { next }
+                  /^##(#)? (Phase|Step) [0-9]+/ { if (open) exit; match($0, /^#+/); level = RLENGTH; title = substr($0, RLENGTH + 2); inphase = 1; next }
+                  /^#+ / { match($0, /^#+/); if (inphase && RLENGTH <= level) { if (open) exit; inphase = 0 } next }
+                  inphase && /^[[:space:]]*- \[ \]/ { open = 1 }
+                  END { if (open) print title }
+                ' "$plan")
+              fi
+            fi
+            next_json=$(printf '%s' "$next" | tr '\t' ' ' | sed 's/\\/\\\\/g; s/"/\\"/g')
+            printf '{"next":"%s"}\n' "$next_json"
+          output_format:
+            type: object
+            properties:
+              next: { type: string }
+            required: [next]
+
+        - id: implement-phase-auto
+          depends_on: [next-phase-auto]
+          bash: |
+            set -eu
+            v1=$next-phase-auto.output.next
+            model=""
+            if [ -n "${OMP_MODEL_LARGE:-}" ]; then model="--model=$OMP_MODEL_LARGE"; fi
+            { prompt=$(cat); } <<DELIVERY_PROMPT
+            Read and follow ${INPUTS_SKILLS_DIR}/${INPUTS_SKILL}/SKILL.md, the installed \`${INPUTS_SKILL}\` skill, for task directory ${INPUTS_TASK_DIR}: implement the first incomplete phase of the newest plan or outline, tick its boxes, write its receipt, commit with explicit paths, and stop after that one phase. The phase to implement when named: ${v1}; when empty, the first incomplete phase.
+
+            The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
+            DELIVERY_PROMPT
+            omp -p --auto-approve --no-session --max-time=45m ${model:+"$model"} "$prompt" </dev/null
+          timeout: 2760000
+
+        - id: review-phase-auto
+          depends_on: [implement-phase-auto]
+          when: "$INPUTS.review == 'true'"
+          bash: |
+            set -eu
+            model=""
+            if [ -n "${OMP_MODEL_LARGE:-}" ]; then model="--model=$OMP_MODEL_LARGE"; fi
+            { prompt=$(cat); } <<DELIVERY_PROMPT
+            Read and follow ${INPUTS_SKILLS_DIR}/review-code/SKILL.md, the installed \`review-code\` skill, for task directory ${INPUTS_TASK_DIR}. Review the diff of the implementation phase just completed against the merge target.
+
+            The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. After saving the code-review artifact, answer with only the JSON object below, where status is the artifact's frontmatter \`status\` and artifact is its file name.
+
+            CRITICAL: Respond with ONLY a JSON object matching this schema (JSON Schema, written as YAML). No prose before or after it.
+            type: object
+            properties:
+              status: { type: string, enum: [clean, findings, blocked] }
+              artifact: { type: string }
+              summary: { type: string }
+            required: [status, artifact, summary]
+            DELIVERY_PROMPT
+            answer=$(omp -p --auto-approve --no-session --max-time=45m ${model:+"$model"} "$prompt" </dev/null)
+            judge="${INPUTS_SKILLS_DIR}/typed-judgment/judge.mjs"
+            object=""
+            if [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+              object=$(printf '%s\n' "$answer" | node "$judge" extract-json --required 'status,artifact,summary' --enum 'status=clean,findings,blocked' --dir "${INPUTS_TASK_DIR}") || object=""
+            fi
+            if [ -n "$object" ]; then
+              printf '%s\n' "$object"
+            else
+              printf '%s\n' "$answer" | awk '
+                /^[[:space:]]*```/ { next }
+                { n++; line[n] = $0 }
+                !start && /^[[:space:]]*\{/ { start = n }
+                /\}[[:space:]]*$/ { end = n }
+                END { if (!start || end < start) { start = 1; end = n }; for (i = start; i <= end; i++) print line[i] }
+              '
+            fi
+          timeout: 2760000
+
+        - id: verify-phase-auto
+          depends_on: [review-phase-auto]
+          bash: |
+            set -eu
+            status=$review-phase-auto.output.status
+            artifact=$review-phase-auto.output.artifact
+            dir=$INPUTS.task_dir
+            file="$dir/$artifact"
+            skills=$INPUTS.skills_dir
+            judge="$skills/typed-judgment/judge.mjs"
+            verdict=""
+            if [ -n "$artifact" ] && [ -f "$file" ] && [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+              verdict=$(node "$judge" review-status "$file" "$status" 2>/dev/null) || verdict=""
+            fi
+            case "$verdict" in clean|findings|blocked) status=$verdict ;; esac
+            printf '{"status":"%s"}\n' "$status"
+          output_format:
+            type: object
+            properties:
+              status: { type: string, enum: [clean, findings, blocked] }
+            required: [status]
+
+        - id: fix-phase-auto
+          depends_on: [verify-phase-auto]
+          when: "$verify-phase-auto.output.status == 'findings'"
+          bash: |
+            set -eu
+            v1=$review-phase-auto.output.artifact
+            model=""
+            if [ -n "${OMP_MODEL_MEDIUM:-}" ]; then model="--model=$OMP_MODEL_MEDIUM"; fi
+            { prompt=$(cat); } <<DELIVERY_PROMPT
+            Read and follow ${INPUTS_SKILLS_DIR}/fix-code-review/SKILL.md, the installed \`fix-code-review\` skill, for task directory ${INPUTS_TASK_DIR}, fixing every finding in the code-review artifact ${v1}. Advisories included.
+
+            The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
+            DELIVERY_PROMPT
+            omp -p --auto-approve --no-session --max-time=45m ${model:+"$model"} "$prompt" </dev/null
+          timeout: 2760000

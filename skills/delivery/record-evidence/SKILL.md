@@ -9,7 +9,7 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 Record proof of behavior, narrate it, and attach it to the PR and tracker issue instead of claiming it in prose.
 
-Inside a task this is an optional phase of the delivery workflow: it runs after implementation and before `describe-pr`, when the user inserts it (`/record-evidence` at the implementation gate, `with: [record-evidence]` in `task.md`, or `/run-task --with record-evidence`). Passed or untested evidence hands off to `/describe-pr`; a failed test hands off to `/iterate-implementation` with the plan, because failing evidence is feedback, not a pull request. Outside a task the skill stands alone and no phase follows.
+Inside a task this is an optional phase of the delivery workflow: it runs after implementation and before `describe-pr`, when the user asks for it (`/record-evidence` at the implementation gate). Passed or untested evidence hands off to `/describe-pr`; a failed test hands off to `/iterate-implementation` with the plan, because failing evidence is feedback, not a pull request. Outside a task the skill stands alone and no phase follows.
 
 The recording is the capture of you testing the app live: start the recorder, then drive the app yourself through each test target while adding narration and Jest-style assertions that the recorder timestamps and burns into the video. Every action in the video is the test being performed; a recording that does not show that live session is not evidence.
 
@@ -21,7 +21,7 @@ The recording is the capture of you testing the app live: start the recorder, th
 
 ## Where evidence lives
 
-Inside a task: `.agents/tasks/<slug>/evidence/<session-name>/` (one directory per recorded surface, plus `composite/` for a side-by-side), and a numbered receipt `NN-evidence-<slug>.md` in the task directory written from `references/evidence_template.md`, which is how later phases and `run-task` see that this phase ran. Outside a task: `.artifacts/evidence/<session-name>/`; append `.artifacts/` to `.gitignore` when the file exists and lacks it. Recordings are uploaded, never committed; the receipt is a task artifact like any other.
+Inside a task: `.agents/tasks/<slug>/evidence/<session-name>/` (one directory per recorded surface, plus `composite/` for a side-by-side), and a numbered receipt `NN-evidence-<slug>.md` in the task directory written from `references/evidence_template.md`, which is how later phases see that this phase ran. Before the first session, write `.agents/tasks/<slug>/evidence/.gitignore` containing the single line `*`: task-directory artifact commits keep recordings out of the committed receipt. Outside a task: `.artifacts/evidence/<session-name>/`; append `.artifacts/` to `.gitignore` when the file exists and lacks it. Recordings are uploaded, never committed; the receipt is a task artifact like any other and, when not run by the workflow engine, is committed with `git add <path>` as `docs(task): evidence artifact`.
 
 Each session directory ends up with `evidence.mp4` (overlay burned in), `report.md`, `manifest.json`, `capture/` (raw footage), `frames/` (review stills), and `events.jsonl`.
 
@@ -167,7 +167,7 @@ Emulators and simulators run headless and record fine: `boot ... --headless` the
 
 - Confirm the server or build you probe is yours: `lsof -i :<port>` (or `ss -ltnp "sport = :<port>"`), then `ps -p <pid> -o args=`; on devices, `adb shell dumpsys package <id> | grep versionName` or `xcrun simctl get_app_container <udid> <bundle>`.
 - Evidence complements the repository's checks (typecheck, build, tests); it never replaces them.
-- Evidence directories are never committed.
+- Evidence directories are never committed; the `evidence/.gitignore` from [Where evidence lives](#where-evidence-lives) enforces it.
 
 ## Final response
 
@@ -178,5 +178,3 @@ Choose the template by situation and use it only:
 - No task: `references/evidence_standalone_answer.md`, which ends with `/show-me` because no phase follows.
 
 `{artifact_link}` is a relative Markdown link to the receipt, `[NN-evidence-slug.md](.agents/tasks/<slug>/NN-evidence-slug.md)`. `{report_link}` is a relative Markdown link to `report.md` of the session (or the composite), relative to the repository root, or to the current directory when there is no task directory. `{summary}` is the receipt's `summary`.
-
-If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it.

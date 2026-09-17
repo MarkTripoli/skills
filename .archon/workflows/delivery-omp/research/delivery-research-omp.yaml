@@ -1,0 +1,43 @@
+name: delivery-research-omp
+description: |
+  The research half of a delivery run: write the research questions, then answer them against the
+  repository. Two fresh sessions, no gates; the artifacts are the memory. Composed by the full and
+  lean packs.
+  NOT for: running on its own.
+  Oh My Pi flavor: every AI phase runs in `omp -p`; deterministic nodes, gates, and loops are unchanged.
+
+inputs:
+  skills_dir:
+    default: ~/.agents/skills
+  task_dir:
+    required: true
+
+returns: research
+
+nodes:
+  - id: questions
+    bash: |
+      set -eu
+      model=""
+      if [ -n "${OMP_MODEL_MEDIUM:-}" ]; then model="--model=$OMP_MODEL_MEDIUM"; fi
+      { prompt=$(cat); } <<DELIVERY_PROMPT
+      Read and follow ${INPUTS_SKILLS_DIR}/create-research-questions/SKILL.md, the installed \`create-research-questions\` skill, for task directory ${INPUTS_TASK_DIR}.
+
+      The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
+      DELIVERY_PROMPT
+      omp -p --auto-approve --no-session --max-time=45m ${model:+"$model"} "$prompt" </dev/null
+    timeout: 2760000
+
+  - id: research
+    depends_on: [questions]
+    bash: |
+      set -eu
+      model=""
+      if [ -n "${OMP_MODEL_MEDIUM:-}" ]; then model="--model=$OMP_MODEL_MEDIUM"; fi
+      { prompt=$(cat); } <<DELIVERY_PROMPT
+      Read and follow ${INPUTS_SKILLS_DIR}/create-research/SKILL.md, the installed \`create-research\` skill, for task directory ${INPUTS_TASK_DIR}.
+
+      The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
+      DELIVERY_PROMPT
+      omp -p --auto-approve --no-session --max-time=45m ${model:+"$model"} "$prompt" </dev/null
+    timeout: 2760000

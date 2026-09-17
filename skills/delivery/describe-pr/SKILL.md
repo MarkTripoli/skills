@@ -37,13 +37,13 @@ git diff --name-status <base>...HEAD
 git diff <base>...HEAD
 ```
 
-On GitLab, `glab mr view` replaces the `gh pr view` line. `<base>` is `baseRefName` from the pull request when one exists, else the repository default branch (`git symbolic-ref --short refs/remotes/origin/HEAD`).
+On GitLab, `glab mr view` replaces the `gh pr view` line. `<base>` is the existing pull request's base, else `base:` from `task.md` when present, else the repository default branch (`git symbolic-ref --short refs/remotes/origin/HEAD`).
 
-If no PR exists, inspect branch status and committed changes. Commit and push only when required, staging explicit paths and excluding `.agents/tasks/`, then create the pull request with `gh pr create` or `glab mr create`. With neither CLI, print the branch and base for a manual pull request.
+If no PR exists, inspect branch status and committed changes. Commit and push only when required: code commits stage explicit code paths; uncommitted task artifacts go in their own `docs(task): <artifact type> artifact` commit per the conventions' Commits section. Then create the pull request with `gh pr create` or `glab mr create`. With neither CLI, print the branch and base for a manual pull request.
 
 ### 3. Gather context
 
-Read `task.md` or `ticket.md`, explanatory artifacts: plan, outline, PRD/TDD, design, receipts, @file inputs. When the task directory holds an `evidence` artifact (newest `NN-evidence-*.md`), read it: its sessions, results table, caveats, and where the video was posted go into the description.
+Read `task.md` or `ticket.md`, explanatory artifacts: plan, outline, PRD/TDD, design, receipts, @file inputs. When the task directory holds a `verification` artifact (newest `NN-verification-*.md`), read its items table and `## Findings`: each acceptance criterion's verdict, command, and observed output come from there, and an `untested` item is described as untested, never as passing. When the task directory holds an `evidence` artifact (newest `NN-evidence-*.md`), read it: its sessions, results table, caveats, and where the video was posted go into the description.
 
 Read full diff plus surrounding code.
 
@@ -57,8 +57,12 @@ Template exactly:
 
 - `Why the change`: one sentence.
 - `Special things to note`: one to three bullets. `- None.` when no warnings, migrations, constraints, omissions, surprises.
+- `Acceptance criteria` (only when `task.md` lists them): one bullet per criterion in task order, each naming the command, request, or observation that decides it. A criterion this diff does not satisfy is listed with what is missing; never drop one.
 - `Evidence` (only when an `evidence` artifact exists): the result line, one bullet per recorded surface linking its `report.md`, and the video location; a failed test is never described as passing.
 - `Change outline`: compact structural view from `references/show-me.md`. Views that help: data shape, endpoint contract, pseudocode, file tree, component tree, call/control/data flow. `diff` for changes, full shape for new. Focus on files, calls, fields, components, boundaries.
+- `Closes #{ISSUE_NUMBER}`, the template's last line: keep it only when `task.md` has `issue: <number>` (an epic child whose issue `start-epic-delivery` opened), filled with that number, so the merge closes the issue; otherwise delete the line and the blank line before it, so the body ends with the Known limits bullet.
+
+Task artifacts are committed on the branch, so the body may link them as branch-relative paths (`.agents/tasks/<slug>/NN-plan-<slug>.md`); the hosting site renders them from the head branch. Link only files that `git ls-files .agents/tasks/<slug>` lists.
 
 Do not include walkthrough artifacts in the PR body unless asked. When requested, create a separate HTML artifact from `references/pr_walkthrough_example.html`, fill it with real diff nodes, write it under the task directory, and save it.
 
@@ -66,10 +70,10 @@ Do not include walkthrough artifacts in the PR body unless asked. When requested
 
 Write `.agents/tasks/<task-slug>/pr-description.md` (no task dir: `.agents/tasks/pr-<number>/description.md`).
 
-Save the file. Publish:
+Save the file. When not run by the workflow engine, commit it with `git add <path>` as `docs(task): pr-description artifact` and push before publishing. Publish:
 
-1. `gh` on PATH, GitHub PR: `gh pr edit <number> --body-file <path>` (new PR: `gh pr create --body-file <path>`).
-2. `glab` on PATH, GitLab MR: `glab mr update <number> --description "$(cat <path>)"` (new MR: `glab mr create --description "$(cat <path>)"`).
+1. `gh` on PATH, GitHub PR: `gh pr edit <number> --body-file <path>` (new PR: `gh pr create --base <base> --body-file <path>`).
+2. `glab` on PATH, GitLab MR: `glab mr update <number> --description "$(cat <path>)"` (new MR: `glab mr create --target-branch <base> --description "$(cat <path>)"`).
 3. Otherwise: print the branch, base, and description path for a manual pull request.
 
 Confirm URL, title, number, base, head.
@@ -80,7 +84,9 @@ Read and use `references/pr_description_final_answer.md` exactly. Include PR URL
 
 The final answer must end with exactly one fenced `text` block. This is a human gate; running the next command records approval.
 
-If the invoking prompt named a reply file, write this complete reply to it verbatim after printing it.
+## Feedback
+
+When `pr-description.md` already exists and the user (or the invoking prompt) supplies feedback, revise that file in place and publish it again with the step 5 command so the pull request body matches. Never write a second description.
 
 ## Style
 

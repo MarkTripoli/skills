@@ -1,0 +1,24 @@
+# A blocked review cancels the run at `review-blocked`; nothing after the review loop runs.
+task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills"}'
+gates: '{"design":"true","plan":"true","phases":"true","pr":"true"}'
+research__questions: "research questions saved"
+research__research: "research saved"
+phase: "artifact saved"
+implement-phase: "phase implemented"
+review-code: '{"status":"blocked","artifact":"05-code-review-fixture.md","summary":"cannot build"}'
+intent: '{"intent":"revise"}'
+next-phase: '{"next":""}'
+verify-review: '{"status":"blocked"}'
+app-test-done: ""
+research-done: ""
+design-done: ""
+plan-done: ""
+implement-done: ""
+verify-implementation: '{"status":"passed","artifact":"06-verification-fixture.md","summary":"checks and acceptance items passed"}'
+verification-status: '{"status":"passed"}'
+verification-done: ""
+verify-done: ""
+fixture:
+  expect: cancelled
+  reached: [implement-done, verify-done, review-code, review-blocked]
+exec-code: false

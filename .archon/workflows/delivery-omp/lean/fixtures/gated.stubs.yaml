@@ -1,0 +1,26 @@
+# Default gates: outline and pull request take the gated `cycle` branch, the implement include its
+# gated `phases` loop, every join runs.
+task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills"}'
+gates: '{"outline":"true","phases":"true","pr":"true"}'
+research__questions: "research questions saved"
+research__research: "research saved"
+phase: "artifact saved"
+implement-phase: "phase implemented"
+review-code: '{"status":"clean","artifact":"05-code-review-fixture.md","summary":"clean"}'
+intent: '{"intent":"revise"}'
+next-phase: '{"next":""}'
+verify-review: '{"status":"clean"}'
+app-test-done: ""
+research-done: ""
+outline-done: ""
+implement-done: ""
+review-done: ""
+pr-done: ""
+verify-implementation: '{"status":"passed","artifact":"06-verification-fixture.md","summary":"checks and acceptance items passed"}'
+verification-status: '{"status":"passed"}'
+verification-done: ""
+verify-done: ""
+fixture:
+  expect: completed
+  reached: [gates, research-done, outline__cycle, outline-done, implement__phases, implement-done, verify-done, review__loop, review-done, pr__cycle, pr-done]
+exec-code: false

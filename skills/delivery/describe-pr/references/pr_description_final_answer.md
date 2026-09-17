@@ -12,7 +12,7 @@ Check:
 Reply with the changes you want; they are applied to the same file.
 Running the next command records approval of the pull request description.
 
-Start the next phase in a new session, or hand the task to `/run-task`; continuing in this session carries this phase's context into the next one.
+Start the next phase in a new session; continuing in this session carries this phase's context into the next one.
 
 ```text
 /resolve-pr-reviews

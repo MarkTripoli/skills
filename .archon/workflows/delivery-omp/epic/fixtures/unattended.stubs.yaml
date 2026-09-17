@@ -1,0 +1,19 @@
+# `gates=none` and `children=manual`: the epic plan runs once, the children are opened, and the
+# wave-1 start commands are printed by `wave__launch-manual` instead of run.
+task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills"}'
+gates: '{"plan":"false"}'
+research__questions: "research questions saved"
+research__research: "research saved"
+plan__once: "epic plan saved"
+start: "children started"
+research-done: ""
+plan-done: ""
+start-done: ""
+wave__ready: '{"branch":"epic-fixture","ready":["a"],"started":[],"done":[],"blocked":["b"]}'
+wave__launch-manual: '{"launched":[],"failed":[],"skipped_manual":true,"commands":["archon workflow run delivery-lean --branch a --base epic-fixture --input task_dir=.agents/tasks/a --input gates=none --input skills_dir=/home/me/.agents/skills --quiet ''a''"]}'
+wave__wave-done: '{"ready":["a"],"started":[],"done":[],"blocked":["b"]}'
+fixture:
+  expect: completed
+  inputs: { gates: none, children: manual }
+  reached: [research__questions, research__research, research-done, plan__once, plan-done, start, start-done, wave__ready, wave__launch-manual, wave__wave-done]
+exec-code: false

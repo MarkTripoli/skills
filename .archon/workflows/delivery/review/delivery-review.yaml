@@ -1,0 +1,82 @@
+name: delivery-review
+description: |
+  The review loop: review the diff against the merge target, fix every finding, review again, until a
+  review is clean. Each pass is a fresh session. A blocked review cancels the run with the blocker
+  recorded in the code-review artifact; four passes with findings still open fail the node. Composed by
+  the delivery packs after implementation, and by the implementation block after every phase when asked.
+  NOT for: running on its own.
+
+inputs:
+  skills_dir:
+    default: ~/.agents/skills
+  task_dir:
+    required: true
+
+returns: loop
+
+nodes:
+  # Body node ids are deliberately distinct from the include aliases packs use (`review`,
+  # `phase-review`): an alias shadows a same-named body node when `$id.output` refs are rewired.
+  - id: loop
+    loop_group:
+      fresh_context: true
+      max_iterations: 4
+      until_bash: |
+        status=$verify-review.output.status
+        test "$status" = clean
+      nodes:
+        - id: review-code
+          context: fresh
+          model: large
+          prompt: |
+            Read and follow $INPUTS.skills_dir/review-code/SKILL.md, the installed `review-code` skill, for task directory $INPUTS.task_dir. Review the whole current diff against the merge target.
+
+            The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. After saving the code-review artifact, answer with only the JSON object below, where status is the artifact's frontmatter `status` and artifact is its file name.
+          output_format:
+            type: object
+            properties:
+              status: { type: string, enum: [clean, findings, blocked] }
+              artifact: { type: string }
+              summary: { type: string }
+            required: [status, artifact, summary]
+
+        # The claimed status checked against the artifact by the typed-judgment helper, which only ever
+        # moves a claim toward findings or blocked. Without the helper (not installed, no TypeSafe key,
+        # no node) or without the artifact file, the claim stands. The loop and the nodes below read
+        # this status, not the claim.
+        - id: verify-review
+          depends_on: [review-code]
+          bash: |
+            set -eu
+            status=$review-code.output.status
+            artifact=$review-code.output.artifact
+            dir=$INPUTS.task_dir
+            file="$dir/$artifact"
+            skills=$INPUTS.skills_dir
+            judge="$skills/typed-judgment/judge.mjs"
+            verdict=""
+            if [ -n "$artifact" ] && [ -f "$file" ] && [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+              verdict=$(node "$judge" review-status "$file" "$status" 2>/dev/null) || verdict=""
+            fi
+            case "$verdict" in clean|findings|blocked) status=$verdict ;; esac
+            printf '{"status":"%s"}\n' "$status"
+          output_format:
+            type: object
+            properties:
+              status: { type: string, enum: [clean, findings, blocked] }
+            required: [status]
+
+        - id: review-blocked
+          cancel: "Review blocked; resolve the blocker recorded in the newest code-review artifact, then run the workflow again."
+          depends_on: [verify-review]
+          when: "$verify-review.output.status == 'blocked'"
+
+        - id: fix-review
+          context: fresh
+          depends_on: [verify-review]
+          when: "$verify-review.output.status == 'findings'"
+          model: medium
+          prompt: |
+            Read and follow $INPUTS.skills_dir/fix-code-review/SKILL.md, the installed `fix-code-review` skill, for task directory $INPUTS.task_dir, fixing every finding in the code-review artifact $review-code.output.artifact. Advisories included.
+
+            The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.

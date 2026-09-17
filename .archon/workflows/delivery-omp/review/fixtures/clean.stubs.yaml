@@ -1,0 +1,8 @@
+# A clean review, confirmed by the check, ends the loop with nothing else run.
+review-code: '{"status":"clean","artifact":"05-code-review-fixture.md","summary":"clean"}'
+verify-review: '{"status":"clean"}'
+fixture:
+  expect: completed
+  inputs: { task_dir: .agents/tasks/fixture }
+  reached: [review-code, verify-review, loop]
+exec-code: false

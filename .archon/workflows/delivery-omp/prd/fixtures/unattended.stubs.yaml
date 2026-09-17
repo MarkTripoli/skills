@@ -1,0 +1,29 @@
+# `gates=none`: the `once` and `phases-auto` twins run and the run ends at `pr-done`.
+task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills"}'
+gates: '{"prd":"false","tdd":"false","plan":"false","phases":"false","pr":"false"}'
+research: "research saved"
+prd__once: "product requirements saved"
+tdd__once: "technical design saved"
+plan__once: "plan saved"
+implement-phase-auto: "phase implemented"
+review-code: '{"status":"clean","artifact":"05-code-review-fixture.md","summary":"clean"}'
+pr__once: "pull request described"
+next-phase-auto: '{"next":""}'
+verify-review: '{"status":"clean"}'
+app-test-done: ""
+research-done: ""
+prd-done: ""
+tdd-done: ""
+plan-done: ""
+implement-done: ""
+review-done: ""
+pr-done: ""
+verify-implementation: '{"status":"passed","artifact":"06-verification-fixture.md","summary":"checks and acceptance items passed"}'
+verification-status: '{"status":"passed"}'
+verification-done: ""
+verify-done: ""
+fixture:
+  expect: completed
+  inputs: { gates: none }
+  reached: [prd__once, tdd__once, plan__once, implement__phases-auto, implement-phase-auto, verify-done, pr__once, pr-done]
+exec-code: false

@@ -7,18 +7,20 @@ epic_plan: [NN-epic-plan-<slug>.md]
 
 # [Epic name] Delivery
 
+Epic branch: `[epic branch]`. Child task files are committed here as `docs(task): open epic children`; each child cuts its worktree from this branch and its pull request targets it.
+
 ## Children created
 
-| Child | Slug | Workflow | Depends on |
-|---|---|---|---|
-| [Child name] | `.agents/tasks/[child-slug]/` | [full, lean, prd, or oneshot] | [dependency slugs, or none] |
+| Child | Slug | Workflow | Depends on | Issue |
+|---|---|---|---|---|
+| [Child name] | `.agents/tasks/[child-slug]/` | [full, lean, prd, oneshot, or bugfix] | [dependency slugs, or none] | [#number, or none] |
 
 ## Waves
 
 - Wave 1: [child slugs with no dependencies]
 - Wave 2: [child slugs whose dependencies are all in wave 1]
 
-A wave starts after every dependency's pull request is merged.
+A wave starts after every dependency's pull request is merged. Under `delivery-epic` and `delivery-program`, the `delivery-wave` block launches each ready child when the pack's `children` input is `auto`; with `children=manual`, or by hand, start the children from the commands in the final answer.
 
 ## Human Review
 
@@ -28,8 +30,8 @@ A wave starts after every dependency's pull request is merged.
 
 ### Verify
 
-- [ ] [Each child directory exists and its `task.md` body matches the epic plan prompt.]
+- [ ] [Each child directory exists and its `task.md` carries the epic plan's prompt and acceptance criteria.]
 
 ### Known limits
 
-- [Known limit, or `None.`]
+- [Known limit, or `None.` Name any child whose GitHub issue was not created, or say `GitHub issues were not created: <reason>.`]
