@@ -15,7 +15,10 @@ Posted to: <PR comment link, tracker issue, or "requester only">
 
 At least one test failed on video, so the implementation changes before a pull request is described. The failed tests above are the feedback for the next phase; the recording is the "before" half of the fix's evidence.
 
-Start the next phase in a new session; continuing in this session carries this phase's context into the next one.
+The next phase has not started.
+
+Next action:
+Open a new session, then run:
 
 ```text
 /iterate-implementation @{plan_file}

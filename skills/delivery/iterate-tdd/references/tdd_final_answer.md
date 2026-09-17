@@ -9,7 +9,8 @@ Check:
 Reply with the changes you want, or run `/iterate-tdd @{artifact_file}`.
 Running the next command records approval of the TDD.
 
-Start the next phase in a new session; continuing in this session carries this phase's context into the next one.
+Next action:
+Open a new session, then run:
 
 ```text
 /create-plan @{artifact_file}

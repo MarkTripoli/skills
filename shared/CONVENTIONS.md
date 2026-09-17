@@ -59,7 +59,8 @@ Known limits:
 
 Reply with the changes you want, or run `/iterate-<phase> @NN-type-slug.md`. Running the next command records approval.
 
-Start the next phase in a new session; continuing in this session carries this phase's context into the next one.
+Next action:
+Open a new session, then run:
 
 ```text
 /<next-skill> @NN-type-slug.md
@@ -70,11 +71,11 @@ Under Archon the approval node records the decision; the reply's fence is ignore
 
 ## Handoff
 
-The final answer ends with exactly one fenced `text` block containing exactly one line: `/<skill-name>`, optionally followed by ` @<artifact file>`. Nothing follows the fence. Codex users type `$<skill-name>` instead of `/<skill-name>`; the fence still shows `/`.
+A reply that hands off to another skill ends with exactly one fenced `text` block containing exactly one line: `/<skill-name>`, optionally followed by ` @<artifact file>`. Nothing follows the fence. Codex users type `$<skill-name>` instead of `/<skill-name>`; the fence still shows `/`.
 
-The sentence before the fence is always: "Start the next phase in a new session; continuing in this session carries this phase's context into the next one." Terminal replies whose fence names `/show-me` omit it, because no phase follows.
+The two lines before the fence are always `Next action:` and `Open a new session, then run:`. A terminal reply contains no command fence; it ends with the current state and any prerequisite action in plain prose.
 
-The fence is for manual mode: the user pastes it into a new session. Archon ignores it and runs the next node itself.
+The command fence is for manual mode: the user pastes it into a new session. Archon ignores it and runs the next node itself.
 
 ## Running under Archon
 
@@ -100,7 +101,7 @@ Answer templates under `references/` use these placeholders; fill every one befo
 - `{next_command}`: in research replies, `/create-design-discussion` for `full`, `/create-structure-outline` for `lean`, `/create-prd` for `prd`.
 - `{implementation_command}`: `/implement-outline` for `lean`, `/implement-plan` otherwise; used by the plan, outline, and `iterate-implementation` replies.
 - `{completed_phase}` and `{next_phase}`: phase numbers in implementation replies.
-- `{child_slug}`, `{child_issue}`, `{child_start_command}`: epic delivery; see `start-epic-delivery`. `{child_issue}` is `#<number>` of the child's GitHub issue, or `no issue`. `{child_start_command}` is `archon workflow run delivery-<workflow> --base <epic branch> --input task_dir=.agents/tasks/<child slug> '<child prompt>'`, with every `'` in the prompt written as `'\''`, run from the project root on the epic branch; it appears in the reply body, and the fence is terminal (`/show-me`).
+- `{child_slug}`, `{child_issue}`, `{child_start_command}`: epic delivery; see `start-epic-delivery`. `{child_issue}` is `#<number>` of the child's GitHub issue, or `no issue`. `{child_start_command}` is `archon workflow run delivery-<workflow> --base <epic branch> --input task_dir=.agents/tasks/<child slug> '<child prompt>'`, with every `'` in the prompt written as `'\''`, run from the project root on the epic branch; it appears in the terminal reply body.
 - `{needed}`: one line per item of the artifact's `## Missing` list (the reproduction artifact in `reproduce-bug`, the app-test artifact in `test-app`).
 
 ## Commits

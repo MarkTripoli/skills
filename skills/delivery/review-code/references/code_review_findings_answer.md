@@ -3,9 +3,10 @@ Artifact saved: {artifact_link}
 Review result:
 {summary}
 
-Start the next phase in a new session; continuing in this session carries this phase's context into the next one.
+Fix every validated finding, then review the resulting diff again.
 
-Fix every validated finding, then review the resulting diff again:
+Next action:
+Open a new session, then run:
 
 ```text
 /fix-code-review @{artifact_file}

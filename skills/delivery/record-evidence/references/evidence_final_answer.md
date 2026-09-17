@@ -15,7 +15,10 @@ Posted to: <PR comment link, tracker issue, or "requester only">
 
 Every test passed or is recorded as untested with its reason; the pull request description can carry this evidence.
 
-Start the next phase in a new session; continuing in this session carries this phase's context into the next one.
+The next phase has not started.
+
+Next action:
+Open a new session, then run:
 
 ```text
 /describe-pr

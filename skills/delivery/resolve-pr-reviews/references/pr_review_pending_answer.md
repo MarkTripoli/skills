@@ -12,7 +12,10 @@ Check:
 When repository changes are needed, run `/iterate-implementation` with the changes you want.
 Starting another review round does not record approval; pull request approval remains external.
 
-Start the next phase in a new session; continuing in this session carries this phase's context into the next one.
+Another review round has not started.
+
+Next action:
+Open a new session, then run:
 
 ```text
 /resolve-pr-reviews
