@@ -48,7 +48,7 @@ async function push(options, model) {
       }));
     }
   }
-  if (process.env.PROM_PUSHGATEWAY_URL) tasks.push(request(appendUrl(process.env.PROM_PUSHGATEWAY_URL, "/metrics/job/archon_delivery"), { method: "PUT", headers: { "content-type": "text/plain; version=0.0.4" }, body: exposition(model) }));
+  if (process.env.PROM_PUSHGATEWAY_URL) tasks.push(request(appendUrl(process.env.PROM_PUSHGATEWAY_URL, "/metrics/job/skills_delivery"), { method: "PUT", headers: { "content-type": "text/plain; version=0.0.4" }, body: exposition(model) }));
   if (cloud) {
     const auth = Buffer.from(`${process.env.GRAFANA_CLOUD_METRICS_USER}:${cloudToken()}`).toString("base64");
     tasks.push(request(appendUrl(process.env.GRAFANA_CLOUD_METRICS_URL, "/api/v1/push/influx/write"), { method: "POST", headers: headers({ authorization: `Basic ${auth}`, "content-type": "text/plain" }), body: influxLines(model).join("\n") }));
@@ -76,12 +76,12 @@ async function provision() {
   const result = json(await request(appendUrl(process.env.GRAFANA_URL, "/api/dashboards/db"), { method: "POST", headers: headers(auth), body: JSON.stringify({ dashboard, overwrite: true }) }));
   if (process.env.GRAFANA_PROMETHEUS_URL) {
     let existing;
-    try { existing = json(await request(appendUrl(process.env.GRAFANA_URL, "/api/datasources/name/archon-prometheus"), { headers: auth })); } catch (error) { if (!error.message.includes("HTTP 404")) throw error; }
-    const data = { name: "archon-prometheus", type: "prometheus", access: "proxy", url: process.env.GRAFANA_PROMETHEUS_URL, basicAuth: false };
+    try { existing = json(await request(appendUrl(process.env.GRAFANA_URL, "/api/datasources/name/skills-prometheus"), { headers: auth })); } catch (error) { if (!error.message.includes("HTTP 404")) throw error; }
+    const data = { name: "skills-prometheus", type: "prometheus", access: "proxy", url: process.env.GRAFANA_PROMETHEUS_URL, basicAuth: false };
     const known = existing && existing.id !== undefined;
     await request(appendUrl(process.env.GRAFANA_URL, known ? `/api/datasources/${existing.id}` : "/api/datasources"), { method: known ? "PUT" : "POST", headers: headers(auth), body: JSON.stringify(data) });
   }
-  console.log(result.url || appendUrl(process.env.GRAFANA_URL, "/d/archon-delivery"));
+  console.log(result.url || appendUrl(process.env.GRAFANA_URL, "/d/skills-delivery"));
 }
 
 function optionsFrom(argv) {

@@ -2,19 +2,19 @@ import fs from "node:fs";
 
 const OUTCOMES = ["completed", "failed", "cancelled", "paused", "running"];
 export const HISTOGRAMS = {
-  archon_run_duration_seconds: [60, 300, 900, 1800, 3600, 7200],
-  archon_node_duration_seconds: [5, 30, 60, 300, 900, 1800],
-  archon_gate_wait_seconds: [60, 600, 3600, 14400, 86400],
-  archon_loop_iterations: [1, 2, 3, 4, 8, 16],
+  delivery_run_duration_seconds: [60, 300, 900, 1800, 3600, 7200],
+  delivery_node_duration_seconds: [5, 30, 60, 300, 900, 1800],
+  delivery_gate_wait_seconds: [60, 600, 3600, 14400, 86400],
+  delivery_loop_iterations: [1, 2, 3, 4, 8, 16],
 };
 const LOKI_TYPES = new Set(["approval_requested", "approval_received", "node_failed", "workflow_completed", "workflow_failed", "workflow_cancelled", "loop_iteration_completed"]);
 const HELP = {
-  archon_runs_total: "Workflow runs by outcome.", archon_run_duration_seconds: "Completed workflow run duration in seconds.",
-  archon_node_duration_seconds: "Completed or failed node duration in seconds.", archon_node_failures_total: "Failed workflow nodes.",
-  archon_gate_wait_seconds: "Approval gate wait time in seconds.", archon_gate_decisions_total: "Approval gate decisions.",
-  archon_loop_iterations: "Maximum loop iterations per run.", archon_tokens_total: "Workflow token usage.",
-  archon_cost_usd_total: "Workflow cost in US dollars.", archon_metrics_runs_scanned: "Workflow runs scanned from the Archon database.",
-  archon_metrics_db_mtime_seconds: "Archon database modification time as Unix seconds.",
+  delivery_runs_total: "Workflow runs by outcome.", delivery_run_duration_seconds: "Completed workflow run duration in seconds.",
+  delivery_node_duration_seconds: "Completed or failed node duration in seconds.", delivery_node_failures_total: "Failed workflow nodes.",
+  delivery_gate_wait_seconds: "Approval gate wait time in seconds.", delivery_gate_decisions_total: "Approval gate decisions.",
+  delivery_loop_iterations: "Maximum loop iterations per run.", delivery_tokens_total: "Workflow token usage.",
+  delivery_cost_usd_total: "Workflow cost in US dollars.", delivery_metrics_runs_scanned: "Workflow runs scanned from the run database.",
+  delivery_metrics_db_mtime_seconds: "Run database modification time as Unix seconds.",
 };
 const json = (value, fallback = {}) => {
   try { const parsed = JSON.parse(value || "{}"); return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : fallback; } catch { return fallback; }
@@ -69,7 +69,7 @@ export function collect(db, since) {
   const query = filter ? `SELECT ${base} FROM remote_agent_workflow_runs WHERE julianday(started_at) >= julianday(?) ORDER BY started_at, id` : `SELECT ${base} FROM remote_agent_workflow_runs ORDER BY started_at, id`;
   const runs = filter ? db.prepare(query).all(filter.toISOString()) : db.prepare(query).all();
   const model = { families: new Map(), runs, events: [], runsScanned: runs.length };
-  for (const [name, type, buckets] of [["archon_runs_total", "counter"], ["archon_run_duration_seconds", "histogram", HISTOGRAMS.archon_run_duration_seconds], ["archon_node_duration_seconds", "histogram", HISTOGRAMS.archon_node_duration_seconds], ["archon_node_failures_total", "counter"], ["archon_gate_wait_seconds", "histogram", HISTOGRAMS.archon_gate_wait_seconds], ["archon_gate_decisions_total", "counter"], ["archon_loop_iterations", "histogram", HISTOGRAMS.archon_loop_iterations], ["archon_metrics_runs_scanned", "gauge"], ["archon_metrics_db_mtime_seconds", "gauge"]]) family(model, name, type, buckets);
+  for (const [name, type, buckets] of [["delivery_runs_total", "counter"], ["delivery_run_duration_seconds", "histogram", HISTOGRAMS.delivery_run_duration_seconds], ["delivery_node_duration_seconds", "histogram", HISTOGRAMS.delivery_node_duration_seconds], ["delivery_node_failures_total", "counter"], ["delivery_gate_wait_seconds", "histogram", HISTOGRAMS.delivery_gate_wait_seconds], ["delivery_gate_decisions_total", "counter"], ["delivery_loop_iterations", "histogram", HISTOGRAMS.delivery_loop_iterations], ["delivery_metrics_runs_scanned", "gauge"], ["delivery_metrics_db_mtime_seconds", "gauge"]]) family(model, name, type, buckets);
   const workflows = new Map(runs.map((run) => [run.id, text(run.workflow_name)]));
   model.events = eventRows(db, runs.map((run) => run.id)).map((event) => ({ ...event, workflow: workflows.get(event.workflow_run_id) || "unknown" }));
   // A run that paused and resumed gets its `started_at` reset by the last continuation, so the row's
@@ -83,28 +83,28 @@ export function collect(db, since) {
   }
   for (const run of runs) {
     const labels = { workflow: text(run.workflow_name), gates: gatesFor(run) };
-    add(model, "archon_runs_total", "counter", { ...labels, outcome: runOutcome(run) }, 1);
+    add(model, "delivery_runs_total", "counter", { ...labels, outcome: runOutcome(run) }, 1);
     if (!run.completed_at) continue;
     const events = span.get(run.id);
     const seconds = events ? duration(events.first, events.last) : duration(run.started_at, run.completed_at);
-    if (seconds !== null) observe(model, "archon_run_duration_seconds", labels, seconds);
+    if (seconds !== null) observe(model, "delivery_run_duration_seconds", labels, seconds);
   }
   const loops = new Map();
   for (const event of model.events) {
     const data = json(event.data); const workflow = event.workflow; const node = text(event.step_name || data.nodeId);
     if (event.event_type === "node_completed" || event.event_type === "node_failed") {
-      if (event.event_type === "node_failed") add(model, "archon_node_failures_total", "counter", { workflow, node }, 1);
-      if (finite(data.duration_ms) !== null) observe(model, "archon_node_duration_seconds", { workflow, node, type: text(data.type) }, Number(data.duration_ms) / 1000);
+      if (event.event_type === "node_failed") add(model, "delivery_node_failures_total", "counter", { workflow, node }, 1);
+      if (finite(data.duration_ms) !== null) observe(model, "delivery_node_duration_seconds", { workflow, node, type: text(data.type) }, Number(data.duration_ms) / 1000);
       const tokens = data.tokens && typeof data.tokens === "object" ? data.tokens : {};
-      for (const [source, kind] of [["input", "input"], ["output", "output"], ["cacheRead", "cache_read"], ["cacheWrite", "cache_write"]]) if (finite(tokens[source]) !== null) add(model, "archon_tokens_total", "counter", { workflow, node, kind }, tokens[source]);
-      if (finite(data.cost_usd) !== null) add(model, "archon_cost_usd_total", "counter", { workflow, node }, data.cost_usd);
+      for (const [source, kind] of [["input", "input"], ["output", "output"], ["cacheRead", "cache_read"], ["cacheWrite", "cache_write"]]) if (finite(tokens[source]) !== null) add(model, "delivery_tokens_total", "counter", { workflow, node, kind }, tokens[source]);
+      if (finite(data.cost_usd) !== null) add(model, "delivery_cost_usd_total", "counter", { workflow, node }, data.cost_usd);
     }
-    if (event.event_type === "approval_received") add(model, "archon_gate_decisions_total", "counter", { workflow, node, decision: text(data.decision) }, 1);
+    if (event.event_type === "approval_received") add(model, "delivery_gate_decisions_total", "counter", { workflow, node, decision: text(data.decision) }, 1);
     if (event.event_type === "loop_iteration_completed") {
       const key = `${event.workflow_run_id}\0${workflow}\0${node}`; loops.set(key, Math.max(loops.get(key) || 0, finite(data.iteration) || 0));
     }
   }
-  for (const [key, value] of loops) { const [, workflow, node] = key.split("\0"); observe(model, "archon_loop_iterations", { workflow, node }, value); }
+  for (const [key, value] of loops) { const [, workflow, node] = key.split("\0"); observe(model, "delivery_loop_iterations", { workflow, node }, value); }
   const pending = new Map();
   for (const event of model.events) {
     if (event.event_type === "approval_requested") {
@@ -113,11 +113,11 @@ export function collect(db, since) {
     }
     if (event.event_type === "approval_received" && pending.get(event.workflow_run_id)?.length) {
       const request = pending.get(event.workflow_run_id).shift();
-      const seconds = duration(request.created_at, event.created_at); if (seconds !== null) observe(model, "archon_gate_wait_seconds", { workflow: event.workflow, node: text(request.step_name) }, seconds);
+      const seconds = duration(request.created_at, event.created_at); if (seconds !== null) observe(model, "delivery_gate_wait_seconds", { workflow: event.workflow, node: text(request.step_name) }, seconds);
     }
   }
-  add(model, "archon_metrics_runs_scanned", "gauge", {}, runs.length);
-  try { const location = typeof db.location === "function" ? db.location() : null; if (location) add(model, "archon_metrics_db_mtime_seconds", "gauge", {}, fs.statSync(location).mtimeMs / 1000); } catch { /* memory databases have no mtime */ }
+  add(model, "delivery_metrics_runs_scanned", "gauge", {}, runs.length);
+  try { const location = typeof db.location === "function" ? db.location() : null; if (location) add(model, "delivery_metrics_db_mtime_seconds", "gauge", {}, fs.statSync(location).mtimeMs / 1000); } catch { /* memory databases have no mtime */ }
   return model;
 }
 
@@ -158,7 +158,7 @@ export function lokiPayload(events) {
   const streams = new Map();
   for (const event of events.filter((item) => LOKI_TYPES.has(item.event_type))) {
     const workflow = text(event.workflow || event.workflow_name); const key = `${workflow}\0${event.event_type}`;
-    if (!streams.has(key)) streams.set(key, { stream: { job: "archon_delivery", workflow, event_type: event.event_type }, values: [] });
+    if (!streams.has(key)) streams.set(key, { stream: { job: "skills_delivery", workflow, event_type: event.event_type }, values: [] });
     const timestamp = parseTime(event.created_at); streams.get(key).values.push([String((Number.isFinite(timestamp) ? timestamp : Date.now()) * 1000000), lokiLine(event)]);
   }
   return { streams: [...streams.values()] };
@@ -190,7 +190,7 @@ export function otlpMetrics(model, now = Date.now()) {
       ? { name: target.name, description: HELP[target.name] ?? "", sum: { aggregationTemporality: 2, isMonotonic: true, dataPoints } }
       : { name: target.name, description: HELP[target.name] ?? "", gauge: { dataPoints } });
   }
-  return { resourceMetrics: [{ resource: { attributes: otlpAttributes({ "service.name": "archon_delivery" }) }, scopeMetrics: [{ scope: { name: "skills/metrics" }, metrics }] }] };
+  return { resourceMetrics: [{ resource: { attributes: otlpAttributes({ "service.name": "skills_delivery" }) }, scopeMetrics: [{ scope: { name: "skills/metrics" }, metrics }] }] };
 }
 export function otlpLogs(events) {
   const logRecords = events.filter((item) => LOKI_TYPES.has(item.event_type)).map((event) => {
@@ -199,8 +199,8 @@ export function otlpLogs(events) {
       timeUnixNano: String((Number.isFinite(timestamp) ? timestamp : Date.now()) * 1000000),
       severityText: event.event_type.endsWith("failed") ? "ERROR" : "INFO",
       body: { stringValue: lokiLine(event) },
-      attributes: otlpAttributes({ job: "archon_delivery", workflow: text(event.workflow || event.workflow_name), event_type: event.event_type, node: text(event.step_name), run: event.workflow_run_id }),
+      attributes: otlpAttributes({ job: "skills_delivery", workflow: text(event.workflow || event.workflow_name), event_type: event.event_type, node: text(event.step_name), run: event.workflow_run_id }),
     };
   });
-  return { resourceLogs: [{ resource: { attributes: otlpAttributes({ "service.name": "archon_delivery" }) }, scopeLogs: [{ scope: { name: "skills/metrics" }, logRecords }] }] };
+  return { resourceLogs: [{ resource: { attributes: otlpAttributes({ "service.name": "skills_delivery" }) }, scopeLogs: [{ scope: { name: "skills/metrics" }, logRecords }] }] };
 }
