@@ -55,13 +55,15 @@ test("judge plan-remaining: verdict from the probability bands, phase criteria b
   } finally { stub.close(); }
 });
 
-test("judge review-status and reproduction-status: a claim only ever moves toward the safer status", async () => {
+test("judge review-status and reproduction-status: a claim only ever moves toward the safer status, at the majority bar", async () => {
   let open = 0.9; let blocked = 0.0; let shown = 0.9;
   const stub = await startStub((id) => (id === "open_major" ? noul(open) : id === "blocked" ? noul(blocked) : noul(shown)));
   try {
     const review = tmp("08-code-review-x.md", "# Review\n\nR1 major: null deref at a.js:3\n");
     assert.equal((await judge(["review-status", review, "clean"], stub.env)).out, "findings", "clean with an open major finding becomes findings");
-    open = 0.05;
+    open = 0.55;
+    assert.equal((await judge(["review-status", review, "clean"], stub.env)).out, "findings", "a majority reading of an open major finding is enough to keep reviewing");
+    open = 0.45;
     assert.equal((await judge(["review-status", review, "clean"], stub.env)).out, "clean");
     assert.equal((await judge(["review-status", review, "findings"], stub.env)).out, "findings", "findings is never relaxed to clean");
     blocked = 0.9;
@@ -69,8 +71,10 @@ test("judge review-status and reproduction-status: a claim only ever moves towar
     assert.equal((await judge(["review-status", review, "blocked"], stub.env)).out, "blocked");
     const repro = tmp("02-reproduction-x.md", "# Reproduction\n");
     assert.equal((await judge(["reproduction-status", repro, "reproduced"], stub.env)).out, "reproduced");
-    shown = 0.1;
-    assert.equal((await judge(["reproduction-status", repro, "reproduced"], stub.env)).out, "not-reproduced", "a claimed reproduction nothing shows is not one");
+    shown = 0.24;
+    assert.equal((await judge(["reproduction-status", repro, "reproduced"], stub.env)).out, "not-reproduced", "a claimed reproduction the artifact more likely than not does not show is not one");
+    shown = 0.55;
+    assert.equal((await judge(["reproduction-status", repro, "reproduced"], stub.env)).out, "reproduced");
     assert.equal((await judge(["reproduction-status", repro, "not-reproduced"], stub.env)).out, "not-reproduced");
   } finally { stub.close(); }
 });

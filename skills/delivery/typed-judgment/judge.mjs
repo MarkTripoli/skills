@@ -25,8 +25,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Act only when the model is clear; the band between hands the decision back to the caller.
-const T = { yes: 0.8, no: 0.2, confident: 0.8, decisive: 0.9, triage: 0.7 };
+// Act only when the model is clear; the band between hands the decision back to the caller. `safe` is the
+// bar for moving a claim toward the safer status (clean to findings, reproduced to not-reproduced): a wrong
+// move there costs one extra session, the opposite mistake ships a bug, so the majority reading is enough.
+const T = { yes: 0.8, no: 0.2, safe: 0.5, confident: 0.8, decisive: 0.9, triage: 0.7 };
 const WORKFLOWS = {
   oneshot: "A bounded change with a clear specification that one session implements without research or design: a flag, a copy change, a small function, a configuration edit.",
   bugfix: "A reported defect: something that should work behaves wrongly, and it needs reproducing and fixing.",
@@ -115,9 +117,9 @@ async function reviewStatus(file, claimed) {
   const open = answers.open_major.noul; const blocked = answers.blocked.noul;
   let status;
   if (claimed === "blocked") status = "blocked";
-  else if (blocked >= T.yes) status = "blocked";
+  else if (blocked > T.safe) status = "blocked";
   else if (claimed === "findings") status = "findings";
-  else if (claimed === "clean") status = open >= T.yes ? "findings" : "clean";
+  else if (claimed === "clean") status = open > T.safe ? "findings" : "clean";
   else status = open <= T.no ? "clean" : "findings";
   return { text: status, json: { status, claimed, open_major: open, blocked } };
 }
@@ -128,7 +130,7 @@ async function reproductionStatus(file, claimed) {
     shown: noul("`reproduction` records a concrete attempt, a command or steps with their observed result, whose outcome exhibits the reported behavior, and names the code that causes it."),
   });
   const shown = answers.shown.noul;
-  const status = claimed === "reproduced" ? (shown <= T.no ? "not-reproduced" : "reproduced") : claimed === "not-reproduced" ? "not-reproduced" : shown >= T.yes ? "reproduced" : "not-reproduced";
+  const status = claimed === "reproduced" ? (shown < T.safe ? "not-reproduced" : "reproduced") : claimed === "not-reproduced" ? "not-reproduced" : shown >= T.yes ? "reproduced" : "not-reproduced";
   return { text: status, json: { status, claimed, shown } };
 }
 
@@ -233,7 +235,7 @@ async function feedbackIntent(text) {
   const answers = await systemOne({ feedback }, {
     intent: choice("What does the reviewer's `feedback` ask the workflow to do", {
       revise: "Asks for changes to the artifact or work just reviewed before continuing",
-      proceed: "Accepts the work as it is, or only notes something for later; no change is requested before continuing",
+      proceed: "Accepts the work as it is (including saying it is approved, fine, or that the wrong button was pressed), or only notes something for later; no change is requested before continuing",
       stop: "Asks to stop, abandon, cancel, or pause the run instead of continuing",
       unclear: "None of these can be told from the text",
     }),
@@ -245,10 +247,13 @@ async function feedbackIntent(text) {
 
 // The same stop list as the task node's slug pipeline; the candidates are what code can propose.
 const STOP = new Set("a an the to of for in on and or with that this add make create please fix bug".split(" "));
+// Function words the task node keeps; dropping them gives the judge one more candidate to weigh.
+const FILLER = new Set([...STOP, ..."where when which who is are was does do so into from by as at be it its we our users report since after".split(" ")]);
 export function slugCandidates(request) {
   const words = request.split("\n")[0].toLowerCase().replace(/[^a-z0-9 -]/g, " ").replace(/-/g, " ").split(/\s+/).filter(Boolean);
   const kept = words.filter((word) => !STOP.has(word));
-  const candidates = [kept.slice(0, 4), words.slice(0, 4), kept.slice(0, 3), kept.slice(1, 5), kept.slice(2, 6)].map((list) => list.join("-")).filter((slug) => slug.includes("-"));
+  const lean = words.filter((word) => !FILLER.has(word));
+  const candidates = [kept.slice(0, 4), words.slice(0, 4), kept.slice(0, 3), lean.slice(0, 4), lean.slice(0, 3), kept.slice(1, 5)].map((list) => list.join("-")).filter((slug) => slug.includes("-"));
   return [...new Set(candidates)];
 }
 async function slug(text) {
@@ -280,7 +285,7 @@ async function gradeSteps(file) {
   const steps = JSON.parse(fs.readFileSync(file, "utf8"));
   const questions = {};
   steps.forEach((step, i) => {
-    questions[`satisfied_${i}`] = noul(`The observed state in \`steps[${i}].observed\` shows the outcome described in \`steps[${i}].expected\``);
+    questions[`satisfied_${i}`] = noul(`\`steps[${i}].observed\` is the accessibility snapshot or view hierarchy read from the screen after the step: element roles, names, values, and states, one per entry. It shows the outcome described in \`steps[${i}].expected\`: the named elements, text, or states are present as described.`);
     questions[`severity_${i}`] = score(`How far does \`steps[${i}].observed\` deviate from \`steps[${i}].expected\``, [
       "Matches the expectation; nothing wrong",
       "Cosmetic difference only: layout, wording, or styling that does not affect the task",

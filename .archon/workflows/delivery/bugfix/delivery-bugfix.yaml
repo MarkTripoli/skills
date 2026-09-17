@@ -139,7 +139,8 @@ nodes:
           depends_on: [verify]
           approval:
             message: >-
-              Reproduction $verify.output.status: $attempt.output.summary (artifact
+              Reproduction $verify.output.status (the session claimed $attempt.output.status; the typed-judgment
+              helper checks the artifact shows a run that exhibits the bug): $attempt.output.summary (artifact
               $attempt.output.artifact in $task.output.task_dir). Reproduced: approve to fix it, or request
               changes to correct the reproduction. Not reproduced: reply with the missing information
               (steps, data, environment) to try again, or abandon the run.
