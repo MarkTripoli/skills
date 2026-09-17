@@ -89,15 +89,25 @@ test("collect and render all metric families", () => {
   const payload = lokiPayload(model.events);
   assert.equal(payload.streams.length, 9, "one Loki stream per workflow and event type that is pushed");
   const failed = payload.streams.find((stream) => stream.stream.event_type === "node_failed");
+  assert.equal(failed.values[0][0], String(Date.UTC(2026, 0, 1, 0, 1, 0) * 1000000), "SQLite timestamps are UTC, not local time");
   assert.equal(JSON.parse(failed.values[0][1]).error.length, 500);
 });
 
 test("push sends all configured targets and cursor filters Loki events", async (t) => {
   const { file, dir } = fixture(); const target = server(); const base = await listen(target.server);
   const cursor = path.join(dir, "cursor.json");
-  const env = { ...process.env, PATH: `${path.dirname(process.execPath)}:${process.env.PATH}`, PROM_PUSHGATEWAY_URL: base, GRAFANA_CLOUD_METRICS_URL: base, GRAFANA_CLOUD_METRICS_USER: "123", GRAFANA_SA_TOKEN: "secret", LOKI_URL: base, LOKI_USER: "loki", LOKI_TOKEN: "token" };
+  const env = { ...process.env, PATH: `${path.dirname(process.execPath)}:${process.env.PATH}`, PROM_PUSHGATEWAY_URL: base, GRAFANA_CLOUD_METRICS_URL: base, GRAFANA_CLOUD_METRICS_USER: "123", GRAFANA_CLOUD_TOKEN: "secret", LOKI_URL: base, LOKI_USER: "loki", LOKI_TOKEN: "token", OTLP_ENDPOINT: `${base}/otlp`, OTLP_AUTH: "Basic c3RhY2s6Z2xj" };
   await execFileAsync(process.execPath, [script, "--push", "--db", file, "--cursor", cursor], { env });
-  assert.equal(target.requests.length, 3);
+  assert.equal(target.requests.length, 5);
+  const otlpMetricsRequest = target.requests.find((request) => request.path === "/otlp/v1/metrics");
+  assert.equal(otlpMetricsRequest.headers.authorization, "Basic c3RhY2s6Z2xj");
+  const otlpBody = JSON.parse(otlpMetricsRequest.body).resourceMetrics[0].scopeMetrics[0].metrics;
+  assert.ok(otlpBody.find((metric) => metric.name === "archon_runs_total").sum.isMonotonic);
+  const runHistogram = otlpBody.find((metric) => metric.name === "archon_run_duration_seconds").histogram.dataPoints.find((point) => point.attributes.some((a) => a.value.stringValue === "delivery-full"));
+  assert.deepEqual({ count: runHistogram.count, sum: runHistogram.sum, bucketCounts: runHistogram.bucketCounts }, { count: "1", sum: 600, bucketCounts: ["0", "0", "1", "0", "0", "0", "0"] }, "600 s lands in the (300, 900] bucket");
+  const otlpLogsRequest = target.requests.find((request) => request.path === "/otlp/v1/logs");
+  const records = JSON.parse(otlpLogsRequest.body).resourceLogs[0].scopeLogs[0].logRecords;
+  assert.ok(records.length > 0 && records.every((record) => record.attributes.some((a) => a.key === "event_type")));
   assert.ok(target.requests.some((request) => request.method === "PUT" && request.path === "/metrics/job/archon_delivery" && request.body.includes("archon_runs_total")));
   const influx = target.requests.find((request) => request.path === "/api/v1/push/influx/write");
   assert.equal(influx.headers.authorization, `Basic ${Buffer.from("123:secret").toString("base64")}`);
@@ -109,6 +119,7 @@ test("push sends all configured targets and cursor filters Loki events", async (
   target.requests.length = 0;
   await execFileAsync(process.execPath, [script, "--push", "--db", file, "--cursor", cursor], { env });
   assert.deepEqual(JSON.parse(target.requests.find((request) => request.path === "/loki/api/v1/push").body), { streams: [] });
+  assert.ok(!target.requests.some((request) => request.path === "/otlp/v1/logs"), "no new events, no OTLP log request");
   await close(target.server);
 });
 

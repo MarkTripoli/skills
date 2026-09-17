@@ -4,8 +4,8 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { collect, exposition, influxLines, lokiPayload, parseSince } from "./metrics-core.mjs";
-export { collect, exposition, influxLines, lokiPayload, parseSince } from "./metrics-core.mjs";
+import { collect, exposition, influxLines, lokiPayload, otlpLogs, otlpMetrics, parseSince } from "./metrics-core.mjs";
+export { collect, exposition, influxLines, lokiPayload, otlpLogs, otlpMetrics, parseSince } from "./metrics-core.mjs";
 
 let DatabaseSync;
 try { ({ DatabaseSync } = await import("node:sqlite")); } catch { DatabaseSync = undefined; }
@@ -24,20 +24,40 @@ async function request(url, options = {}) {
 const cursorValue = (file) => { try { return Number(json(fs.readFileSync(file, "utf8"), { last_event_order: 0 }).last_event_order) || 0; } catch { return 0; } };
 function saveCursor(file, value) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, `${JSON.stringify({ last_event_order: value })}\n`); }
 
+// Grafana Cloud ingestion (metrics and Loki) takes an access-policy token (`glc_...`) with the write
+// scopes; the Grafana HTTP API behind --provision takes a service-account token (`glsa_...`). One
+// variable each, with the older single-variable form still accepted.
+const cloudToken = () => process.env.GRAFANA_CLOUD_TOKEN || process.env.GRAFANA_SA_TOKEN;
 async function push(options, model) {
-  const cloud = process.env.GRAFANA_CLOUD_METRICS_URL && process.env.GRAFANA_CLOUD_METRICS_USER && process.env.GRAFANA_SA_TOKEN;
-  if (!process.env.PROM_PUSHGATEWAY_URL && !cloud && !process.env.LOKI_URL) throw new Error("--push: set PROM_PUSHGATEWAY_URL for Pushgateway, GRAFANA_CLOUD_METRICS_URL + GRAFANA_CLOUD_METRICS_USER + GRAFANA_SA_TOKEN for Grafana Cloud, or LOKI_URL for Loki");
+  const cloud = process.env.GRAFANA_CLOUD_METRICS_URL && process.env.GRAFANA_CLOUD_METRICS_USER && cloudToken();
+  const otlp = process.env.OTLP_ENDPOINT;
+  if (!process.env.PROM_PUSHGATEWAY_URL && !cloud && !process.env.LOKI_URL && !otlp) throw new Error("--push: set OTLP_ENDPOINT (+ OTLP_AUTH) for an OTLP gateway such as Grafana Cloud's, PROM_PUSHGATEWAY_URL for Pushgateway, GRAFANA_CLOUD_METRICS_URL + GRAFANA_CLOUD_METRICS_USER + GRAFANA_CLOUD_TOKEN for Grafana Cloud Influx, or LOKI_URL for Loki");
   const tasks = [];
+  // OTLP: metrics every push; events past the cursor as log records, sharing the Loki cursor file.
+  if (otlp) {
+    const auth = process.env.OTLP_AUTH ? { authorization: process.env.OTLP_AUTH } : {};
+    tasks.push(request(appendUrl(otlp, "/v1/metrics"), { method: "POST", headers: headers(auth), body: JSON.stringify(otlpMetrics(model)) }));
+    const cursorFile = options.cursor || path.join(path.dirname(options.db), "metrics-cursor.json");
+    const cursor = options.since ? 0 : cursorValue(cursorFile);
+    const events = model.events.filter((event) => options.since || (Number(event.event_order) || 0) > cursor);
+    const payload = otlpLogs(events);
+    if (payload.resourceLogs[0].scopeLogs[0].logRecords.length) {
+      tasks.push(request(appendUrl(otlp, "/v1/logs"), { method: "POST", headers: headers(auth), body: JSON.stringify(payload) }).then(() => {
+        const last = Math.max(cursor, ...events.map((event) => Number(event.event_order) || 0));
+        if (last > cursor) saveCursor(cursorFile, last);
+      }));
+    }
+  }
   if (process.env.PROM_PUSHGATEWAY_URL) tasks.push(request(appendUrl(process.env.PROM_PUSHGATEWAY_URL, "/metrics/job/archon_delivery"), { method: "PUT", headers: { "content-type": "text/plain; version=0.0.4" }, body: exposition(model) }));
   if (cloud) {
-    const auth = Buffer.from(`${process.env.GRAFANA_CLOUD_METRICS_USER}:${process.env.GRAFANA_SA_TOKEN}`).toString("base64");
+    const auth = Buffer.from(`${process.env.GRAFANA_CLOUD_METRICS_USER}:${cloudToken()}`).toString("base64");
     tasks.push(request(appendUrl(process.env.GRAFANA_CLOUD_METRICS_URL, "/api/v1/push/influx/write"), { method: "POST", headers: headers({ authorization: `Basic ${auth}`, "content-type": "text/plain" }), body: influxLines(model).join("\n") }));
   }
   if (process.env.LOKI_URL) {
     const cursorFile = options.cursor || path.join(path.dirname(options.db), "metrics-cursor.json");
     const cursor = options.since ? 0 : cursorValue(cursorFile);
     const events = model.events.filter((event) => options.since || (Number(event.event_order) || 0) > cursor);
-    const token = process.env.LOKI_TOKEN || process.env.GRAFANA_SA_TOKEN;
+    const token = process.env.LOKI_TOKEN || cloudToken();
     const auth = token ? { authorization: process.env.LOKI_USER ? `Basic ${Buffer.from(`${process.env.LOKI_USER}:${token}`).toString("base64")}` : `Bearer ${token}` } : {};
     tasks.push(request(appendUrl(process.env.LOKI_URL, "/loki/api/v1/push"), { method: "POST", headers: headers(auth), body: JSON.stringify(lokiPayload(events)) }).then(() => {
       const sent = events.filter((event) => lokiPayload([event]).streams.length);

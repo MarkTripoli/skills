@@ -23,8 +23,11 @@ const finite = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
 const text = (value, fallback = "unknown") => value === null || value === undefined || value === "" ? fallback : String(value);
 const keyOf = (labels) => JSON.stringify(Object.entries(labels).sort(([a], [b]) => a.localeCompare(b)));
 const sorted = (labels) => Object.fromEntries(Object.entries(labels).sort(([a], [b]) => a.localeCompare(b)));
+// SQLite's datetime('now') writes UTC without a zone ("2026-09-17 00:23:51"); Date.parse would read that
+// as local time and push timestamps hours into the future, which Loki rejects.
+export const parseTime = (value) => Date.parse(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value || "") ? `${value.replace(" ", "T")}Z` : value || "");
 const duration = (start, end) => {
-  const first = Date.parse(start || ""); const last = Date.parse(end || "");
+  const first = parseTime(start); const last = parseTime(end);
   return Number.isFinite(first) && Number.isFinite(last) && last >= first ? (last - first) / 1000 : null;
 };
 const sinceDate = (value, now = Date.now()) => {
@@ -156,7 +159,48 @@ export function lokiPayload(events) {
   for (const event of events.filter((item) => LOKI_TYPES.has(item.event_type))) {
     const workflow = text(event.workflow || event.workflow_name); const key = `${workflow}\0${event.event_type}`;
     if (!streams.has(key)) streams.set(key, { stream: { job: "archon_delivery", workflow, event_type: event.event_type }, values: [] });
-    const timestamp = Date.parse(event.created_at || ""); streams.get(key).values.push([String((Number.isFinite(timestamp) ? timestamp : Date.now()) * 1000000), lokiLine(event)]);
+    const timestamp = parseTime(event.created_at); streams.get(key).values.push([String((Number.isFinite(timestamp) ? timestamp : Date.now()) * 1000000), lokiLine(event)]);
   }
   return { streams: [...streams.values()] };
+}
+
+// OTLP/HTTP JSON, the encoding Grafana Cloud's OTLP gateway accepts with the stack's basic credential.
+// Counters and gauges become sums and gauges, histograms keep their explicit bounds; everything is
+// cumulative since the exporter recomputes from the whole database on every push.
+const otlpAttributes = (labels) => Object.entries(labels).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => ({ key, value: { stringValue: String(value) } }));
+export function otlpMetrics(model, now = Date.now()) {
+  const timeUnixNano = String(now * 1000000);
+  const metrics = [];
+  for (const target of model.families.values()) {
+    if (target.type === "histogram") {
+      const groups = new Map();
+      for (const item of target.values) { const key = keyOf(item.labels); if (!groups.has(key)) groups.set(key, { labels: item.labels, values: [] }); groups.get(key).values.push(item.value); }
+      if (!groups.size) continue;
+      const dataPoints = [...groups.values()].map(({ labels, values }) => {
+        const bounds = target.buckets; const counts = new Array(bounds.length + 1).fill(0);
+        for (const value of values) counts[bounds.findIndex((bound) => value <= bound) === -1 ? bounds.length : bounds.findIndex((bound) => value <= bound)] += 1;
+        return { attributes: otlpAttributes(labels), timeUnixNano, count: String(values.length), sum: values.reduce((sum, value) => sum + value, 0), bucketCounts: counts.map(String), explicitBounds: bounds };
+      });
+      metrics.push({ name: target.name, description: HELP[target.name] ?? "", histogram: { aggregationTemporality: 2, dataPoints } });
+      continue;
+    }
+    const dataPoints = [...target.samples.values()].filter((sample) => Number.isFinite(sample.value)).map((sample) => ({ attributes: otlpAttributes(sample.labels), timeUnixNano, asDouble: sample.value }));
+    if (!dataPoints.length) continue;
+    metrics.push(target.type === "counter"
+      ? { name: target.name, description: HELP[target.name] ?? "", sum: { aggregationTemporality: 2, isMonotonic: true, dataPoints } }
+      : { name: target.name, description: HELP[target.name] ?? "", gauge: { dataPoints } });
+  }
+  return { resourceMetrics: [{ resource: { attributes: otlpAttributes({ "service.name": "archon_delivery" }) }, scopeMetrics: [{ scope: { name: "skills/metrics" }, metrics }] }] };
+}
+export function otlpLogs(events) {
+  const logRecords = events.filter((item) => LOKI_TYPES.has(item.event_type)).map((event) => {
+    const timestamp = parseTime(event.created_at);
+    return {
+      timeUnixNano: String((Number.isFinite(timestamp) ? timestamp : Date.now()) * 1000000),
+      severityText: event.event_type.endsWith("failed") ? "ERROR" : "INFO",
+      body: { stringValue: lokiLine(event) },
+      attributes: otlpAttributes({ job: "archon_delivery", workflow: text(event.workflow || event.workflow_name), event_type: event.event_type, node: text(event.step_name), run: event.workflow_run_id }),
+    };
+  });
+  return { resourceLogs: [{ resource: { attributes: otlpAttributes({ "service.name": "archon_delivery" }) }, scopeLogs: [{ scope: { name: "skills/metrics" }, logRecords }] }] };
 }
