@@ -4,8 +4,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { bashForPrompt, build, convert, listNative, NATIVE_DIR, OMP_DIR } from "../scripts/build-packs.mjs";
+import { startStub, noul, choice, score } from "./lib/typesafe-stub.mjs";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -102,8 +103,8 @@ test("convert: renames the workflow and its includes, notes the flavor, turns pr
   assert.ok(out.includes("    include: delivery-other-omp\n"));
   assert.ok(!out.includes("context: fresh"));
   assert.ok(!out.includes("output_format"), "Archon ignores output_format on bash nodes, so the generated node does not carry it");
-  assert.ok(out.includes("    bash: |\n      set -eu\n      v1=$a.output\n      { prompt=$(cat); } <<DELIVERY_PROMPT\n      Do it for ${INPUTS_TASK_DIR} with ${v1}.\n\n      Second paragraph.\n\n      CRITICAL: Respond with ONLY a JSON object matching this schema (JSON Schema, written as YAML). No prose before or after it.\n      type: object\n      DELIVERY_PROMPT\n      answer=$(omp -p --auto-approve --no-session --max-time=45m \"$prompt\" </dev/null)\n      printf '%s\\n' \"$answer\" | awk '\n"), "a schema node captures the answer and filters it down to the JSON object");
-  assert.ok(/awk '\n(?: {6}.*\n)+ {6}'\n    timeout: 2760000\n  - id: c\n/.test(out), "the node outlives omp's own 45 minute bound (Archon's default is 120 s)");
+  assert.ok(out.includes("    bash: |\n      set -eu\n      v1=$a.output\n      { prompt=$(cat); } <<DELIVERY_PROMPT\n      Do it for ${INPUTS_TASK_DIR} with ${v1}.\n\n      Second paragraph.\n\n      CRITICAL: Respond with ONLY a JSON object matching this schema (JSON Schema, written as YAML). No prose before or after it.\n      type: object\n      DELIVERY_PROMPT\n      answer=$(omp -p --auto-approve --no-session --max-time=45m \"$prompt\" </dev/null)\n      judge=\"${INPUTS_SKILLS_DIR:-$HOME/.agents/skills}/typed-judgment/judge.mjs\"\n      object=\"\"\n      if [ -f \"$judge\" ] && command -v node >/dev/null 2>&1; then\n        object=$(printf '%s\\n' \"$answer\" | node \"$judge\" extract-json --dir \"${INPUTS_TASK_DIR}\") || object=\"\"\n      fi\n      if [ -n \"$object\" ]; then\n        printf '%s\\n' \"$object\"\n      else\n        printf '%s\\n' \"$answer\" | awk '\n"), "a schema node captures the answer, hands it to the judge's extract-json, and falls back to the awk filter");
+  assert.ok(/awk '\n(?: {8}.*\n)+ {8}'\n {6}fi\n    timeout: 2760000\n  - id: c\n/.test(out), "the node outlives omp's own 45 minute bound (Archon's default is 120 s)");
   assert.ok(out.includes('  - id: c\n    bash: "true"\n    depends_on: [b]\n'), "deterministic nodes are untouched");
 });
 
@@ -143,43 +144,58 @@ function gitRepo(gitignore) {
   return dir;
 }
 
-// The task node's bash body, run directly with the environment Archon provides (ARGUMENTS, INPUTS_*). The
-// skills directory defaults to the repository's own, which exists, so no warning is printed unless a test asks.
+// Bash bodies from the blocks run directly, asynchronously so the in-process TypeSafe stub can answer the
+// typed-judgment helper while the body runs.
+function bash(body, { cwd, env } = {}) {
+  return new Promise((resolve) => {
+    const child = spawn("bash", ["-c", body], { cwd, env: { PATH: process.env.PATH, ...env } });
+    let out = ""; let err = "";
+    child.stdout.on("data", (chunk) => { out += chunk; });
+    child.stderr.on("data", (chunk) => { err += chunk; });
+    child.on("close", (code) => resolve({ code, out: out.trim(), err: err.trim() }));
+    child.stdin.end();
+  });
+}
+
+// The task node's bash body, run with the environment Archon provides (ARGUMENTS, INPUTS_*). The skills
+// directory defaults to the repository's own, which exists and holds `typed-judgment/judge.mjs` the way an
+// installed skills directory does, so no warning is printed unless a test asks and the helper is exercised
+// (without a TypeSafe key it exits 3 and the deterministic rules apply).
 const SKILLS = path.join(REPO, "skills", "delivery");
 function runTaskNode(cwd, env) {
   const yaml = fs.readFileSync(path.join(NATIVE_DIR, "task", "delivery-task.yaml"), "utf8");
   const body = /bash: \|\n((?: {6}.*\n|\n)+?) {4}output_format:/.exec(yaml)[1].replace(/^ {6}/gm, "");
-  const result = spawnSync("bash", ["-c", body], { cwd, encoding: "utf8", env: { PATH: process.env.PATH, HOME: "/home/t", INPUTS_SKILLS_DIR: SKILLS, ...GIT_ENV, ...env } });
-  return { code: result.status, out: result.stdout.trim(), err: result.stderr.trim() };
+  return bash(body, { cwd, env: { HOME: "/home/t", INPUTS_SKILLS_DIR: SKILLS, ...GIT_ENV, ...env } });
 }
+const created = (dir, tier = "", suggested = "") => `{"task_dir":"${dir}","skills_dir":"${SKILLS}","tier":"${tier}","suggested_workflow":"${suggested}"}`;
 
-test("task node: slugs follow the conventions, task.md carries the workflow, an existing task_dir is reused, a bogus one fails", () => {
+test("task node: slugs follow the conventions, task.md carries the workflow, an existing task_dir is reused, a bogus one fails", async () => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "skills-task-node-"));
   try {
     fs.writeFileSync(path.join(cwd, ".gitignore"), "node_modules/");
-    const created = runTaskNode(cwd, { ARGUMENTS: "Please make the dashboard load faster for admins\nDetails on line two", INPUTS_WORKFLOW: "lean" });
-    assert.equal(created.out, `{"task_dir":".agents/tasks/dashboard-load-faster-admins","skills_dir":"${SKILLS}"}`);
+    const first = await runTaskNode(cwd, { ARGUMENTS: "Please make the dashboard load faster for admins\nDetails on line two", INPUTS_WORKFLOW: "lean" });
+    assert.equal(first.out, created(".agents/tasks/dashboard-load-faster-admins"));
     const taskMd = fs.readFileSync(path.join(cwd, ".agents/tasks/dashboard-load-faster-admins/task.md"), "utf8");
     assert.match(taskMd, /^---\nslug: dashboard-load-faster-admins\ntitle: "Please make the dashboard load faster for admins"\nworkflow: lean\ncreated: \d{4}-\d{2}-\d{2}\n---\nPlease make the dashboard load faster for admins\nDetails on line two\n$/);
-    const quoted = runTaskNode(cwd, { ARGUMENTS: 'Fix CLI: reject missing "config" #12', INPUTS_WORKFLOW: "bugfix" });
-    const quotedTaskMd = fs.readFileSync(path.join(cwd, quoted.out.match(/task_dir":"([^"]+)/)?.[1] ?? "" , "task.md"), "utf8");
+    const quoted = await runTaskNode(cwd, { ARGUMENTS: 'Fix CLI: reject missing "config" #12', INPUTS_WORKFLOW: "bugfix" });
+    const quotedTaskMd = fs.readFileSync(path.join(cwd, quoted.out.match(/task_dir":"([^"]+)/)?.[1] ?? "", "task.md"), "utf8");
     assert.match(quotedTaskMd, /^---\nslug: [a-z0-9-]+\ntitle: "Fix CLI: reject missing \\"config\\" #12"\nworkflow: bugfix\ncreated: \d{4}-\d{2}-\d{2}\n---/);
     assert.equal(fs.readFileSync(path.join(cwd, ".gitignore"), "utf8"), "node_modules/", "outside a git work tree nothing else is touched");
     // A one-word request falls back to the raw words; a repeated request gets a numbered directory.
-    assert.equal(runTaskNode(cwd, { ARGUMENTS: "Fix the bug", INPUTS_WORKFLOW: "bugfix" }).out, `{"task_dir":".agents/tasks/fix-the-bug","skills_dir":"${SKILLS}"}`);
-    assert.equal(runTaskNode(cwd, { ARGUMENTS: "Fix the bug", INPUTS_WORKFLOW: "bugfix" }).out, `{"task_dir":".agents/tasks/fix-the-bug-2","skills_dir":"${SKILLS}"}`);
+    assert.equal((await runTaskNode(cwd, { ARGUMENTS: "Fix the bug", INPUTS_WORKFLOW: "bugfix" })).out, created(".agents/tasks/fix-the-bug"));
+    assert.equal((await runTaskNode(cwd, { ARGUMENTS: "Fix the bug", INPUTS_WORKFLOW: "bugfix" })).out, created(".agents/tasks/fix-the-bug-2"));
     // An epic child's pre-created directory is reused untouched.
     fs.mkdirSync(path.join(cwd, ".agents/tasks/child-one"));
     fs.writeFileSync(path.join(cwd, ".agents/tasks/child-one/task.md"), "---\nslug: child-one\nworkflow: lean\nparent: epic\n---\nChild prompt\n");
-    const reused = runTaskNode(cwd, { ARGUMENTS: "Child prompt", INPUTS_WORKFLOW: "lean", INPUTS_TASK_DIR: ".agents/tasks/child-one/" });
-    assert.equal(reused.out, `{"task_dir":".agents/tasks/child-one","skills_dir":"${SKILLS}"}`);
+    const reused = await runTaskNode(cwd, { ARGUMENTS: "Child prompt", INPUTS_WORKFLOW: "lean", INPUTS_TASK_DIR: ".agents/tasks/child-one/" });
+    assert.equal(reused.out, created(".agents/tasks/child-one"));
     assert.equal(fs.readFileSync(path.join(cwd, ".agents/tasks/child-one/task.md"), "utf8"), "---\nslug: child-one\nworkflow: lean\nparent: epic\n---\nChild prompt\n");
     // skills_dir: `~` expands against HOME, a trailing slash is dropped, a missing directory only warns.
-    const tilde = runTaskNode(cwd, { ARGUMENTS: "Child prompt", INPUTS_TASK_DIR: ".agents/tasks/child-one", INPUTS_SKILLS_DIR: "~/my/skills/" });
-    assert.equal(tilde.out, '{"task_dir":".agents/tasks/child-one","skills_dir":"/home/t/my/skills"}');
+    const tilde = await runTaskNode(cwd, { ARGUMENTS: "Child prompt", INPUTS_TASK_DIR: ".agents/tasks/child-one", INPUTS_SKILLS_DIR: "~/my/skills/" });
+    assert.equal(tilde.out, '{"task_dir":".agents/tasks/child-one","skills_dir":"/home/t/my/skills","tier":"","suggested_workflow":""}');
     assert.match(tilde.err, /^warning: skills_dir \/home\/t\/my\/skills does not exist/);
-    assert.equal(runTaskNode(cwd, { ARGUMENTS: "Child prompt", INPUTS_TASK_DIR: ".agents/tasks/child-one", INPUTS_SKILLS_DIR: "" }).out, '{"task_dir":".agents/tasks/child-one","skills_dir":"/home/t/.agents/skills"}');
-    const bogus = runTaskNode(cwd, { ARGUMENTS: "x", INPUTS_TASK_DIR: ".agents/tasks/nope" });
+    assert.equal((await runTaskNode(cwd, { ARGUMENTS: "Child prompt", INPUTS_TASK_DIR: ".agents/tasks/child-one", INPUTS_SKILLS_DIR: "" })).out, '{"task_dir":".agents/tasks/child-one","skills_dir":"/home/t/.agents/skills","tier":"","suggested_workflow":""}');
+    const bogus = await runTaskNode(cwd, { ARGUMENTS: "x", INPUTS_TASK_DIR: ".agents/tasks/nope" });
     assert.equal(bogus.code, 1);
     assert.match(bogus.err, /has no task\.md/);
   } finally {
@@ -187,29 +203,29 @@ test("task node: slugs follow the conventions, task.md carries the workflow, an 
   }
 });
 
-test("task node: in a git work tree task.md is committed, an exact `.agents/tasks/` ignore line is removed with it, any other ignore rule fails the node", () => {
+test("task node: in a git work tree task.md is committed, an exact `.agents/tasks/` ignore line is removed with it, any other ignore rule fails the node", async () => {
   const cwd = gitRepo("node_modules/\n.agents/tasks/\n");
   try {
-    const created = runTaskNode(cwd, { ARGUMENTS: "Add a --verbose flag to the CLI that prints each command", INPUTS_WORKFLOW: "full" });
-    assert.equal(created.code, 0, created.err);
-    assert.equal(created.out, `{"task_dir":".agents/tasks/verbose-flag-cli-prints","skills_dir":"${SKILLS}"}`);
+    const first = await runTaskNode(cwd, { ARGUMENTS: "Add a --verbose flag to the CLI that prints each command", INPUTS_WORKFLOW: "full" });
+    assert.equal(first.code, 0, first.err);
+    assert.equal(first.out, created(".agents/tasks/verbose-flag-cli-prints"));
     assert.equal(git(cwd, "log", "-1", "--format=%s"), "docs(task): open verbose-flag-cli-prints");
     assert.equal(fs.readFileSync(path.join(cwd, ".gitignore"), "utf8"), "node_modules/\n", "only the exact `.agents/tasks/` line is removed");
     assert.deepEqual(git(cwd, "show", "--name-only", "--format=", "HEAD").split("\n").sort(), [".agents/tasks/verbose-flag-cli-prints/task.md", ".gitignore"]);
     assert.equal(git(cwd, "status", "--porcelain"), "", "the commit leaves the tree clean");
     // A second task in the same repository: nothing left to fix in .gitignore, task.md alone is committed.
-    assert.equal(runTaskNode(cwd, { ARGUMENTS: "Fix the bug", INPUTS_WORKFLOW: "bugfix" }).code, 0);
+    assert.equal((await runTaskNode(cwd, { ARGUMENTS: "Fix the bug", INPUTS_WORKFLOW: "bugfix" })).code, 0);
     assert.equal(git(cwd, "show", "--name-only", "--format=", "HEAD"), ".agents/tasks/fix-the-bug/task.md");
     // A reused task_dir is not committed.
     const before = git(cwd, "rev-parse", "HEAD");
-    assert.equal(runTaskNode(cwd, { ARGUMENTS: "Fix the bug", INPUTS_TASK_DIR: ".agents/tasks/fix-the-bug" }).out, `{"task_dir":".agents/tasks/fix-the-bug","skills_dir":"${SKILLS}"}`);
+    assert.equal((await runTaskNode(cwd, { ARGUMENTS: "Fix the bug", INPUTS_TASK_DIR: ".agents/tasks/fix-the-bug" })).out, created(".agents/tasks/fix-the-bug"));
     assert.equal(git(cwd, "rev-parse", "HEAD"), before);
   } finally {
     fs.rmSync(cwd, { recursive: true, force: true });
   }
   const other = gitRepo(".agents/\n");
   try {
-    const failed = runTaskNode(other, { ARGUMENTS: "Add a --verbose flag", INPUTS_WORKFLOW: "full" });
+    const failed = await runTaskNode(other, { ARGUMENTS: "Add a --verbose flag", INPUTS_WORKFLOW: "full" });
     assert.equal(failed.code, 1);
     assert.match(failed.err, /\.agents\/tasks\/verbose-flag\/task\.md is ignored by git; remove the rule that ignores \.agents\/tasks\//);
     assert.equal(fs.readFileSync(path.join(other, ".gitignore"), "utf8"), ".agents/\n", "a rule the node does not own is left alone");
@@ -219,49 +235,169 @@ test("task node: in a git work tree task.md is committed, an exact `.agents/task
   }
 });
 
-// The implement block's unattended completion check: the `until_bash` of `phases-auto`, with the task
-// directory substituted, run against a task directory. Exit 0 ends the loop.
-function runPlanCheck(taskDir) {
-  const yaml = fs.readFileSync(path.join(NATIVE_DIR, "implement", "delivery-implement.yaml"), "utf8");
-  const body = /id: phases-auto\n[\s\S]*?until_bash: \|\n((?: {8}.*\n)+?) {6}nodes:/.exec(yaml)[1].replace(/^ {8}/gm, "").replaceAll("$INPUTS.task_dir", taskDir);
-  return spawnSync("bash", ["-c", body], { encoding: "utf8", env: { PATH: process.env.PATH } }).status;
+test("task node: with the TypeSafe stub the helper picks the slug among the word rule's candidates, writes the complexity tier and the suggested pack into task.md, and warns when the suggestion is not the pack running", async () => {
+  let slug = "verbose-flag-cli"; let level = 0; let workflow = "oneshot"; let routeConfidence = 0.95;
+  const stub = await startStub((id, question) => (id === "slug" ? choice(slug, question.criteria) : id === "complexity" ? score(level, question.criteria) : choice(workflow, question.criteria, routeConfidence)));
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "skills-task-judged-"));
+  try {
+    const request = "Add a --verbose flag to the CLI that prints each command";
+    const judged = await runTaskNode(cwd, { ARGUMENTS: request, INPUTS_WORKFLOW: "oneshot", ...stub.env });
+    assert.equal(judged.code, 0, judged.err);
+    assert.equal(judged.out, created(".agents/tasks/verbose-flag-cli", "small", "oneshot"));
+    assert.equal(judged.err, "", "the suggestion matches the pack running: no warning");
+    assert.match(fs.readFileSync(path.join(cwd, ".agents/tasks/verbose-flag-cli/task.md"), "utf8"), /^---\nslug: verbose-flag-cli\ntitle: "Add a --verbose flag to the CLI that prints each command"\nworkflow: oneshot\ncomplexity: small\nsuggested_workflow: oneshot\ncreated: \d{4}-\d{2}-\d{2}\n---\n/);
+    assert.deepEqual(stub.requests.map((r) => Object.keys(r.questions)[0]), ["slug", "complexity", "workflow"], "one judgment each over the request");
+    assert.ok(Object.keys(stub.requests[0].questions.slug.criteria).includes("verbose-flag-cli-prints"), "the deterministic slug is among the candidates offered");
+    // The chosen slug still goes through the numbered-directory rule.
+    assert.equal((await runTaskNode(cwd, { ARGUMENTS: request, INPUTS_WORKFLOW: "oneshot", ...stub.env })).out, created(".agents/tasks/verbose-flag-cli-2", "small", "oneshot"));
+    // A suggestion that differs from the pack running is written and warned about, never enforced.
+    slug = "exits-0-when-config"; level = 2; workflow = "bugfix";
+    const warned = await runTaskNode(cwd, { ARGUMENTS: "The CLI exits 0 when the config file is missing", INPUTS_WORKFLOW: "full", ...stub.env });
+    assert.equal(warned.code, 0);
+    assert.equal(warned.out, created(".agents/tasks/exits-0-when-config", "large", "bugfix"));
+    assert.equal(warned.err, "warning: the request reads like delivery-bugfix; running delivery-full");
+    assert.match(fs.readFileSync(path.join(cwd, ".agents/tasks/exits-0-when-config/task.md"), "utf8"), /\nworkflow: full\ncomplexity: large\nsuggested_workflow: bugfix\ncreated: /);
+    // An unsure routing falls back to `full` inside the helper, so a full run sees no warning.
+    slug = "whole-settings-area"; routeConfidence = 0.4;
+    const unsure = await runTaskNode(cwd, { ARGUMENTS: "Rework the whole settings area", INPUTS_WORKFLOW: "full", ...stub.env });
+    assert.equal(unsure.out, created(".agents/tasks/whole-settings-area", "large", "full"));
+    assert.equal(unsure.err, "");
+    // A dead endpoint: every judgment is unavailable and the deterministic node is what runs.
+    const dead = await runTaskNode(cwd, { ARGUMENTS: "Rework the whole settings area", INPUTS_WORKFLOW: "lean", TYPESAFE_API_KEY: "k", TYPESAFE_BASE_URL: "http://127.0.0.1:9", JUDGE_TIMEOUT: "2" });
+    assert.equal(dead.out, created(".agents/tasks/rework-whole-settings-area"));
+    assert.equal(dead.err, "");
+  } finally {
+    stub.close();
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+// A loop `until_bash` or body node from a block, with the input macros substituted the way Archon does
+// when a pack includes the block: the skills directory is the repository's own.
+function implementBlock() {
+  return fs.readFileSync(path.join(NATIVE_DIR, "implement", "delivery-implement.yaml"), "utf8");
+}
+const substitute = (body, taskDir) => body.replaceAll("$INPUTS.task_dir", taskDir).replaceAll("$INPUTS.skills_dir", SKILLS);
+
+// The implement block's unattended completion check: the `until_bash` of `phases-auto`, run against a task
+// directory. Exit 0 ends the loop.
+async function runPlanCheck(taskDir, env) {
+  const body = /id: phases-auto\n[\s\S]*?until_bash: \|\n((?: {8}.*\n)+?) {6}nodes:/.exec(implementBlock())[1].replace(/^ {8}/gm, "");
+  return (await bash(substitute(body, taskDir), { env })).code;
 }
 
-test("implement until_bash: the loop ends when every `## Phase N`/`## Step N` box of the newest plan or outline is ticked; checklist and review boxes do not count", () => {
+// The `next-phase-auto` body node: prints the phase the session should implement.
+async function runNextPhase(taskDir, env) {
+  const body = /id: next-phase-auto\n\s+bash: \|\n((?: {12}.*\n|\n)+?) {10}output_format:/.exec(implementBlock())[1].replace(/^ {12}/gm, "");
+  const result = await bash(substitute(body, taskDir), { env });
+  assert.equal(result.code, 0, result.err);
+  return JSON.parse(result.out);
+}
+
+const PLAN_TEMPLATE = fs.readFileSync(path.join(REPO, "skills", "delivery", "create-plan", "references", "plan_template.md"), "utf8");
+const OUTLINE_TEMPLATE = fs.readFileSync(path.join(REPO, "skills", "delivery", "create-structure-outline", "references", "structure_outline_template.md"), "utf8");
+// Tick the boxes under phase headings only; `## Phase Checklist` and `## Human Review` keep theirs open.
+const tickPhases = (text) => {
+  let inPhase = false;
+  return text
+    .split("\n")
+    .map((line) => {
+      if (/^## (Phase|Step) [0-9]+/.test(line)) inPhase = true;
+      else if (/^## /.test(line)) inPhase = false;
+      return inPhase ? line.replace(/^(\s*)- \[ \]/, "$1- [x]") : line;
+    })
+    .join("\n");
+};
+
+test("implement until_bash: the loop ends when every `## Phase N`/`## Step N` box of the newest plan or outline is ticked; checklist and review boxes do not count", async () => {
   const taskDir = fs.mkdtempSync(path.join(os.tmpdir(), "skills-plan-check-"));
-  const plan = fs.readFileSync(path.join(REPO, "skills", "delivery", "create-plan", "references", "plan_template.md"), "utf8");
-  const outline = fs.readFileSync(path.join(REPO, "skills", "delivery", "create-structure-outline", "references", "structure_outline_template.md"), "utf8");
-  // Tick the boxes under phase headings only; `## Phase Checklist` and `## Human Review` keep theirs open.
-  const tickPhases = (text) => {
-    let inPhase = false;
-    return text
-      .split("\n")
-      .map((line) => {
-        if (/^## (Phase|Step) [0-9]+/.test(line)) inPhase = true;
-        else if (/^## /.test(line)) inPhase = false;
-        return inPhase ? line.replace(/^(\s*)- \[ \]/, "$1- [x]") : line;
-      })
-      .join("\n");
-  };
+  const plan = PLAN_TEMPLATE; const outline = OUTLINE_TEMPLATE;
   assert.ok(/^## Phase Checklist\n\n- \[ \]/m.test(outline) && /^## Human Review\n[\s\S]*?- \[ \]/m.test(plan), "the templates keep boxes outside phase sections");
   try {
-    assert.notEqual(runPlanCheck(taskDir), 0, "no plan yet: keep looping");
+    assert.notEqual(await runPlanCheck(taskDir), 0, "no plan yet: keep looping");
     fs.writeFileSync(path.join(taskDir, "03-plan-slug.md"), plan);
-    assert.notEqual(runPlanCheck(taskDir), 0, "template boxes open: keep looping");
+    assert.notEqual(await runPlanCheck(taskDir), 0, "template boxes open: keep looping");
     fs.writeFileSync(path.join(taskDir, "03-plan-slug.md"), tickPhases(plan));
-    assert.equal(runPlanCheck(taskDir), 0, "every phase box ticked: done, review boxes ignored");
+    assert.equal(await runPlanCheck(taskDir), 0, "every phase box ticked: done, review boxes ignored");
     // A checklist quoted inside a code fence is prose, not a phase box.
     fs.writeFileSync(path.join(taskDir, "03-plan-slug.md"), tickPhases(plan).replace("## Phase 2: [Phase title]\n", "## Phase 2: [Phase title]\n\n```markdown\n- [ ] quoted in a sample\n```\n"));
-    assert.equal(runPlanCheck(taskDir), 0, "an open box inside a code fence does not count");
+    assert.equal(await runPlanCheck(taskDir), 0, "an open box inside a code fence does not count");
     fs.writeFileSync(path.join(taskDir, "03-plan-slug.md"), tickPhases(plan).replace("## Phase 2: [Phase title]\n", "## Phase 2: [Phase title]\n\n- [ ] one more\n"));
-    assert.notEqual(runPlanCheck(taskDir), 0, "one open box in a later phase: keep looping");
+    assert.notEqual(await runPlanCheck(taskDir), 0, "one open box in a later phase: keep looping");
     // The newest plan or outline decides: an older ticked outline does not end the loop, a newer one does.
     fs.writeFileSync(path.join(taskDir, "02-structure-outline-slug.md"), tickPhases(outline));
-    assert.notEqual(runPlanCheck(taskDir), 0);
+    assert.notEqual(await runPlanCheck(taskDir), 0);
     fs.writeFileSync(path.join(taskDir, "04-structure-outline-slug.md"), tickPhases(outline));
-    assert.equal(runPlanCheck(taskDir), 0, "ticked outline newest: done, checklist boxes ignored");
+    assert.equal(await runPlanCheck(taskDir), 0, "ticked outline newest: done, checklist boxes ignored");
   } finally {
     fs.rmSync(taskDir, { recursive: true, force: true });
+  }
+});
+
+test("implement until_bash and next-phase: with the TypeSafe stub the helper's done and remaining verdicts decide, unclear defers to the boxes, and the named next phase reaches the prompt", async () => {
+  let remaining = 0.1; let next = "none";
+  const stub = await startStub((id, question) => (id === "remaining" ? noul(remaining) : id === "has_phases" ? noul(0.99) : choice(next, question.criteria)));
+  const taskDir = fs.mkdtempSync(path.join(os.tmpdir(), "skills-plan-judged-"));
+  const open = PLAN_TEMPLATE.replace("## Phase 2: [Phase title]\n", "## Phase 2: [Phase title]\n\n- [ ] one more\n");
+  try {
+    fs.writeFileSync(path.join(taskDir, "03-plan-slug.md"), open);
+    assert.equal(await runPlanCheck(taskDir, stub.env), 0, "done: the loop ends although a box is open");
+    remaining = 0.95;
+    fs.writeFileSync(path.join(taskDir, "03-plan-slug.md"), tickPhases(PLAN_TEMPLATE));
+    assert.notEqual(await runPlanCheck(taskDir, stub.env), 0, "remaining: the loop goes on although every box is ticked");
+    remaining = 0.5;
+    assert.equal(await runPlanCheck(taskDir, stub.env), 0, "unclear with every box ticked: the boxes decide");
+    fs.writeFileSync(path.join(taskDir, "03-plan-slug.md"), open);
+    assert.notEqual(await runPlanCheck(taskDir, stub.env), 0, "unclear with an open box: the boxes decide");
+    assert.equal(stub.requests.at(-1).state.plan, open, "the newest plan is what the helper reads");
+    // next-phase: the helper's confident answer names the phase; unsure, or without the service, the first
+    // phase section with an open box does (level 2 or 3 headings, fences ignored).
+    fs.writeFileSync(path.join(taskDir, "03-plan-slug.md"), tickPhases(PLAN_TEMPLATE).replace("## Phase 2: [Phase title]\n", "## Phase 2: [Phase title]\n\n- [ ] one more\n"));
+    next = "phase-1";
+    assert.deepEqual(await runNextPhase(taskDir, stub.env), { next: "Phase 1: [Phase title]" }, "the helper names the phase even when its boxes are ticked");
+    next = "none";
+    assert.deepEqual(await runNextPhase(taskDir, stub.env), { next: "Phase 2: [Phase title]" }, "no confident next phase: the first phase with an open box");
+    assert.deepEqual(await runNextPhase(taskDir), { next: "Phase 2: [Phase title]" }, "no key: the first phase with an open box");
+    fs.writeFileSync(path.join(taskDir, "03-plan-slug.md"), tickPhases(PLAN_TEMPLATE));
+    assert.deepEqual(await runNextPhase(taskDir), { next: "" }, "nothing open: empty");
+    fs.writeFileSync(path.join(taskDir, "04-plan-slug.md"), "# Plan\n\n### Step 1: Say \"hi\"\n\n- [x] done\n\n#### Notes\n\n- [ ] a sub-heading box counts for its step\n\n```\n## Phase 9: quoted\n- [ ] quoted\n```\n\n### Step 2: Next\n\n- [ ] open\n");
+    assert.deepEqual(await runNextPhase(taskDir), { next: 'Step 1: Say "hi"' }, "level 3 headings, a deeper sub-heading inside the step, quotes escaped");
+    fs.rmSync(path.join(taskDir, "04-plan-slug.md"));
+    assert.deepEqual(await runNextPhase(taskDir), { next: "" }, "a ticked plan with no phase named");
+  } finally {
+    stub.close();
+    fs.rmSync(taskDir, { recursive: true, force: true });
+  }
+});
+
+// A gated loop's `until_bash` with the gate's structured output substituted the way Archon does (shell-quoted).
+async function runGateCheck(block, loopId, decision, text, env) {
+  const yaml = fs.readFileSync(path.join(NATIVE_DIR, block, `delivery-${block}.yaml`), "utf8");
+  const body = new RegExp(`id: ${loopId}\\n[\\s\\S]*?until_bash: \\|\\n((?: {8}.*\\n)+?) {6}nodes:`).exec(yaml)[1].replace(/^ {8}/gm, "");
+  const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
+  return (await bash(substitute(body, "/nonexistent").replaceAll("$gate.output.decision", quote(decision)).replaceAll("$gate.output.text", quote(text)), { env })).code;
+}
+
+test("gate-phase until_bash: approve ends the cycle, request changes revises, and with the TypeSafe stub a request changes whose text only asks to proceed ends it too", async () => {
+  let intent = "revise";
+  const stub = await startStub((id, question) => choice(intent, question.criteria));
+  try {
+    assert.equal(await runGateCheck("gate-phase", "cycle", "approve", ""), 0);
+    assert.notEqual(await runGateCheck("gate-phase", "cycle", "reject", "Split step 1 in two"), 0, "no key: every request changes revises");
+    assert.notEqual(await runGateCheck("gate-phase", "cycle", "reject", "Split step 1 in two", stub.env), 0);
+    intent = "proceed";
+    assert.equal(await runGateCheck("gate-phase", "cycle", "reject", "Fine as is, carry on", stub.env), 0, "proceed ends the cycle");
+    assert.equal(stub.requests.at(-1).state.feedback, "Fine as is, carry on");
+    assert.notEqual(await runGateCheck("gate-phase", "cycle", "reject", "   ", stub.env), 0, "blank text is not judged");
+    intent = "stop";
+    assert.notEqual(await runGateCheck("gate-phase", "cycle", "reject", "Stop here", stub.env), 0, "stop is not proceed: the next pass cancels");
+    // The implement loop applies the same rule before its plan check (no plan here, so proceed alone is not enough).
+    intent = "proceed";
+    assert.notEqual(await runGateCheck("implement", "phases", "reject", "Carry on"), 0, "no key: reject keeps looping");
+    assert.notEqual(await runGateCheck("implement", "phases", "reject", "Carry on", stub.env), 0, "proceed without a plan still loops");
+    assert.equal(stub.requests.at(-1).state.feedback, "Carry on", "the implement loop judged the text");
+  } finally {
+    stub.close();
   }
 });
 
@@ -335,7 +471,7 @@ test("archon: every pack loads without warnings and dry-runs gated and unattende
     const full = dryRun(cwd, "delivery-full", "Add a --verbose flag to the CLI that prints each command");
     assert.equal(full.workflow, "delivery-full");
     assert.equal(full.outcome, "completed");
-    assert.equal(full.trace.find((t) => t.nodeId === "task__create").output, `{"task_dir":".agents/tasks/verbose-flag-cli-prints","skills_dir":"${ARCHON_HOME}/.agents/skills"}`, "the default skills_dir is expanded from ~");
+    assert.equal(full.trace.find((t) => t.nodeId === "task__create").output, `{"task_dir":".agents/tasks/verbose-flag-cli-prints","skills_dir":"${ARCHON_HOME}/.agents/skills","tier":"","suggested_workflow":""}`, "the default skills_dir is expanded from ~; without the helper the judgments are empty");
     // The dry run delivers no INPUTS_* to the included task node, so `workflow:` is its default here; the
     // task-node tests above prove the field. The trace proves slug, title, body and the commit.
     assert.match(fs.readFileSync(path.join(cwd, ".agents", "tasks", "verbose-flag-cli-prints", "task.md"), "utf8"), /^---\nslug: verbose-flag-cli-prints\ntitle: "Add a --verbose flag to the CLI that prints each command"\nworkflow: [a-z]+\ncreated: \d{4}-\d{2}-\d{2}\n---\nAdd a --verbose flag/);
@@ -373,7 +509,7 @@ test("archon: every pack loads without warnings and dry-runs gated and unattende
     assert.equal(state(autoBugfix, "not-reproduced"), "skipped");
 
     const bugfix = dryRun(cwd, "delivery-bugfix", "Another bug report here");
-    assert.deepEqual(ran(bugfix).slice(0, 5), ["task__create", "gates", "attempt", "gate", "reproduce"], "reproduction and its gate run before anything else");
+    assert.deepEqual(ran(bugfix).slice(0, 6), ["task__create", "gates", "attempt", "verify", "gate", "reproduce"], "reproduction, its status check, and its gate run before anything else");
 
     // A gate subset pauses only there: with gates=plan the design phase runs once and the run stops at the
     // plan gate, before any implementation node.

@@ -9,6 +9,11 @@ implement-phase: "phase implemented"
 review-phase: '{"status":"findings","artifact":"05-code-review-fixture.md","summary":"one finding"}'
 fix-phase: "finding fixed"
 review-code: '{"status":"clean","artifact":"05-code-review-fixture.md","summary":"clean"}'
+intent: '{"intent":"revise"}'
+next-phase: '{"next":""}'
+verify-phase: '{"status":"findings"}'
+verify-review: '{"status":"clean"}'
+app-test-done: ""
 research-done: ""
 design-done: ""
 plan-done: ""
@@ -18,5 +23,5 @@ pr-done: ""
 fixture:
   expect: completed
   inputs: { review_each_phase: "true" }
-  reached: [implement-phase, review-phase, fix-phase, implement__phases, review__loop, pr-done]
+  reached: [implement-phase, review-phase, verify-phase, fix-phase, implement__phases, review__loop, pr-done]
 exec-code: false

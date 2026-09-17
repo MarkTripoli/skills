@@ -2,10 +2,14 @@ name: delivery-task-omp
 description: |
   Create the task directory for a delivery run: `.agents/tasks/<slug>/task.md` per the collection
   conventions, with the run's request as the body, committed on the run's branch as
-  `docs(task): open <slug>`. Deterministic; no AI. Composed by every delivery pack as its first node
-  and returns the task directory path and the skills directory with `~` expanded (Archon passes
-  inputs through verbatim, and not every agent's file tool expands a tilde). An existing task
-  directory passed in (an epic child, or one created by hand) is reused as is.
+  `docs(task): open <slug>`. Deterministic, with three optional typed judgments over the request when
+  the typed-judgment helper is installed and the TypeSafe key is set: the slug picked among the
+  candidates the word rule proposes, the request's complexity tier (`complexity` in task.md), and the
+  pack the request reads like (`suggested_workflow` in task.md, and a warning on stderr when it is not
+  the pack running). Composed by every delivery pack as its first node and returns the task directory
+  path, the skills directory with `~` expanded (Archon passes inputs through verbatim, and not every
+  agent's file tool expands a tilde), and the tier and suggestion (empty when not judged). An existing
+  task directory passed in (an epic child, or one created by hand) is reused as is.
   NOT for: running on its own.
   Oh My Pi flavor: every AI phase runs in `omp -p`; deterministic nodes, gates, and loops are unchanged.
 
@@ -22,10 +26,11 @@ inputs:
 
 nodes:
   # Slug: two to four kebab-case words from the request's first line, stop words dropped, `task`
-  # when nothing survives. Mirrors shared/CONVENTIONS.md, Task directory. The request arrives as the
-  # ARGUMENTS environment variable, never spliced into the script. The task directory is committed
-  # so later phases and the pull request carry the artifacts; an exact `.agents/tasks/` line in the
-  # project .gitignore (added by earlier versions of this collection) is removed first.
+  # when nothing survives. Mirrors shared/CONVENTIONS.md, Task directory; the helper's `slug` command
+  # chooses among the same candidates. The request arrives as the ARGUMENTS environment variable,
+  # never spliced into the script. The task directory is committed so later phases and the pull
+  # request carry the artifacts; an exact `.agents/tasks/` line in the project .gitignore (added by
+  # earlier versions of this collection) is removed first.
   - id: create
     bash: |
       set -eu
@@ -38,7 +43,7 @@ nodes:
         [ -f "$existing/task.md" ] || { printf 'task_dir %s has no task.md\n' "$existing" >&2; exit 1; }
         existing_json=$(printf '%s' "${existing%/}" | sed 's/\\/\\\\/g; s/"/\\"/g')
         skills_json=$(printf '%s' "$skills_dir" | sed 's/\\/\\\\/g; s/"/\\"/g')
-        printf '{"task_dir":"%s","skills_dir":"%s"}\n' "$existing_json" "$skills_json"
+        printf '{"task_dir":"%s","skills_dir":"%s","tier":"","suggested_workflow":""}\n' "$existing_json" "$skills_json"
         exit 0
       fi
       request=$(printf '%s' "${ARGUMENTS:-}" | sed -e 's/\r$//')
@@ -50,6 +55,16 @@ nodes:
       if [ "$(printf '%s' "$slug" | tr -cd - | wc -c)" -lt 1 ]; then
         slug=$(printf '%s' "$first" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9 -]/ /g' -e 's/-/ /g' | tr -s ' ' '\n' | sed '/^$/d' | head -4 | paste -sd- -)
       fi
+      judge="$skills_dir/typed-judgment/judge.mjs"
+      judged=""; tier=""; suggested=""
+      if [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+        judged=$(printf '%s' "$request" | node "$judge" slug - 2>/dev/null) || judged=""
+        tier=$(printf '%s' "$request" | node "$judge" tier - 2>/dev/null) || tier=""
+        suggested=$(printf '%s' "$request" | node "$judge" route-workflow - 2>/dev/null) || suggested=""
+      fi
+      case "$judged" in ''|*[!a-z0-9-]*) ;; *) slug=$judged ;; esac
+      case "$tier" in small|medium|large) ;; *) tier="" ;; esac
+      case "$suggested" in ''|*[!a-z-]*) suggested="" ;; esac
       slug=${slug:-task}
       dir=.agents/tasks/$slug
       n=2
@@ -57,8 +72,14 @@ nodes:
       mkdir -p "$dir"
       title=$(printf '%s' "$first" | cut -c1-120 | sed 's/\\/\\\\/g; s/"/\\"/g')
       workflow="${INPUTS_WORKFLOW:-full}"
+      if [ -n "$suggested" ] && [ "$suggested" != "$workflow" ]; then
+        printf 'warning: the request reads like delivery-%s; running delivery-%s\n' "$suggested" "$workflow" >&2
+      fi
       {
-        printf -- '---\nslug: %s\ntitle: "%s"\nworkflow: %s\ncreated: %s\n---\n' "${dir#.agents/tasks/}" "$title" "$workflow" "$(date +%Y-%m-%d)"
+        printf -- '---\nslug: %s\ntitle: "%s"\nworkflow: %s\n' "${dir#.agents/tasks/}" "$title" "$workflow"
+        [ -z "$tier" ] || printf 'complexity: %s\n' "$tier"
+        [ -z "$suggested" ] || printf 'suggested_workflow: %s\n' "$suggested"
+        printf 'created: %s\n---\n' "$(date +%Y-%m-%d)"
         printf '%s\n' "$request"
       } > "$dir/task.md"
       if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -78,10 +99,12 @@ nodes:
       fi
       dir_json=$(printf '%s' "$dir" | sed 's/\\/\\\\/g; s/"/\\"/g')
       skills_json=$(printf '%s' "$skills_dir" | sed 's/\\/\\\\/g; s/"/\\"/g')
-      printf '{"task_dir":"%s","skills_dir":"%s"}\n' "$dir_json" "$skills_json"
+      printf '{"task_dir":"%s","skills_dir":"%s","tier":"%s","suggested_workflow":"%s"}\n' "$dir_json" "$skills_json" "$tier" "$suggested"
     output_format:
       type: object
       properties:
         task_dir: { type: string }
         skills_dir: { type: string }
+        tier: { type: string }
+        suggested_workflow: { type: string }
       required: [task_dir, skills_dir]

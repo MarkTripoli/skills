@@ -1,7 +1,9 @@
-# gate=true: the `cycle` loop runs the phase and its approval gate; `once` is skipped.
+# gate=true: the `cycle` loop reads the previous pass's intent, runs the phase and its approval gate;
+# `once` is skipped.
+intent: '{"intent":"revise"}'
 phase: "artifact saved"
 fixture:
   expect: completed
   inputs: { task_dir: .agents/tasks/fixture, skill: create-plan, iterate: iterate-plan, gate: "true" }
-  reached: [phase, cycle]
+  reached: [intent, phase, cycle]
 exec-code: false

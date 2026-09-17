@@ -107,12 +107,14 @@ nodes:
       set -eu
       v1=$task.output.skills_dir
       v2=$task.output.task_dir
+      model=""
+      if [ -n "${OMP_MODEL_MEDIUM:-}" ]; then model="--model=$OMP_MODEL_MEDIUM"; fi
       { prompt=$(cat); } <<DELIVERY_PROMPT
       Read and follow ${v1}/start-epic-delivery/SKILL.md, the installed \`start-epic-delivery\` skill, for task directory ${v2}. The epic branch is the current branch (\`git rev-parse --abbrev-ref HEAD\`); commit each child's task.md on it. For each wave-1 child, the start command is \`archon workflow run delivery-<child workflow> --base <epic branch> --input task_dir=.agents/tasks/<child slug> '<child prompt>'\`; print one per child.
 
       The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
       DELIVERY_PROMPT
-      omp -p --auto-approve --no-session --max-time=45m "$prompt" </dev/null
+      omp -p --auto-approve --no-session --max-time=45m ${model:+"$model"} "$prompt" </dev/null
     timeout: 2760000
 
   # Commits any child task.md the skill left uncommitted.

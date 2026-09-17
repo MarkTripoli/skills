@@ -23,6 +23,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 // Act only when the model is clear; the band between hands the decision back to the caller.
 const T = { yes: 0.8, no: 0.2, confident: 0.8, decisive: 0.9, triage: 0.7 };
@@ -325,7 +326,9 @@ async function main(argv) {
   process.stdout.write(`${json && result.json !== null ? JSON.stringify(result.json) : result.text}\n`);
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file://${path.resolve(process.argv[1])}`).href) {
+// Compared by real path so a symlinked skills directory still runs the command.
+const invoked = process.argv[1] && fs.existsSync(process.argv[1]) ? fs.realpathSync(process.argv[1]) : null;
+if (invoked && invoked === fs.realpathSync(fileURLToPath(import.meta.url))) {
   main(process.argv.slice(2)).catch((error) => {
     if (error instanceof Unavailable) { process.stderr.write(`judge: unavailable: ${error.message}\n`); process.exit(3); }
     process.stderr.write(`judge: ${error.stack || error.message}\n`);

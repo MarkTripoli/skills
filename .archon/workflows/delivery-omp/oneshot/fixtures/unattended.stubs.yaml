@@ -4,6 +4,8 @@ gates: '{"pr":"false"}'
 implement: "task implemented and committed"
 review-code: '{"status":"clean","artifact":"05-code-review-fixture.md","summary":"clean"}'
 pr__once: "pull request described"
+verify-review: '{"status":"clean"}'
+app-test-done: ""
 review-done: ""
 pr-done: ""
 fixture:

@@ -16,6 +16,7 @@ returns: research
 nodes:
   - id: questions
     context: fresh
+    model: medium
     prompt: |
       Read and follow $INPUTS.skills_dir/create-research-questions/SKILL.md, the installed `create-research-questions` skill, for task directory $INPUTS.task_dir.
 
@@ -24,6 +25,7 @@ nodes:
   - id: research
     context: fresh
     depends_on: [questions]
+    model: medium
     prompt: |
       Read and follow $INPUTS.skills_dir/create-research/SKILL.md, the installed `create-research` skill, for task directory $INPUTS.task_dir.
 

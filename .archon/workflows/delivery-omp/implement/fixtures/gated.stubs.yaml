@@ -1,7 +1,12 @@
-# gate=true: the `phases` loop runs a phase and its approval gate; the per-phase review stays off.
+# gate=true: the `phases` loop reads the previous pass's intent, names the phase, runs it and its
+# approval gate; the per-phase review stays off.
+intent: '{"intent":"revise"}'
+next-phase: '{"next":"Phase 1: Fixture"}'
 implement-phase: "phase implemented"
 fixture:
   expect: completed
   inputs: { task_dir: .agents/tasks/fixture, gate: "true" }
-  reached: [implement-phase, phases]
+  reached: [intent, next-phase, implement-phase, phases]
+  resolved-text-contains:
+    implement-phase: "The phase to implement when named: Phase 1: Fixture"
 exec-code: false

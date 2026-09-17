@@ -102,6 +102,7 @@ nodes:
 
   - id: start
     context: fresh
+    model: medium
     depends_on: [plan-done]
     prompt: |
       Read and follow $task.output.skills_dir/start-epic-delivery/SKILL.md, the installed `start-epic-delivery` skill, for task directory $task.output.task_dir. The epic branch is the current branch (`git rev-parse --abbrev-ref HEAD`); commit each child's task.md on it. For each wave-1 child, the start command is `archon workflow run delivery-<child workflow> --base <epic branch> --input task_dir=.agents/tasks/<child slug> '<child prompt>'`; print one per child.

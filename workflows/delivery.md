@@ -134,6 +134,30 @@ archon workflow wait <run-id>
 
 Why: an Archon run works in a disposable worktree, so an uncommitted task directory would vanish with it. On the branch, the artifacts reach the pull request, where a reviewer can open the plan and the review receipts, and `delivery-resolve-reviews --adopt <run-id>` finds them in the adopted worktree. `record-evidence` writes `evidence/.gitignore` (`*`) before its first recording so videos stay out of the artifact commits.
 
+## Typed judgments
+
+Where a pack once parsed prose, it now asks `typed-judgment/judge.mjs` (installed beside the skills) a typed question and branches on the answer; the deterministic rule stays as the fallback, so a machine without `TYPESAFE_API_KEY` runs exactly as before. Calls take under a second. Where each sits:
+
+| Decision | Node | Command | Fallback |
+|---|---|---|---|
+| Is the plan finished; which phase is next | `delivery-implement` `until_bash`, `next-phase`, `next-phase-auto` | `plan-remaining` | the `## Phase N` checkbox awk |
+| Is a review really clean | `delivery-review` `verify-review`; `delivery-implement` `verify-phase`, `verify-phase-auto` | `review-status` (only ever moves a claim toward `findings` or `blocked`) | the claimed status |
+| Was the bug really reproduced | `delivery-bugfix` `verify`, `attempt-count` | `reproduction-status` | the claimed status |
+| What a "request changes" text asks for | `delivery-gate-phase` and `delivery-implement` `until_bash` (`proceed` ends the loop) and `intent` (`stop` cancels through `stopped`) | `feedback-intent` | `revise` |
+| The task slug, complexity, and the pack the request reads like | `delivery-task` `create` (`complexity:` and `suggested_workflow:` in `task.md`, a stderr warning on a mismatch) | `slug`, `tier`, `route-workflow` | the word rule; no fields |
+| The JSON object an `omp -p` answer contains or implies | every `-omp` schema node | `extract-json` | the fence-stripping awk |
+
+Skills call it too where their steps say so (`create-epic-plan`, `resolve-pr-reviews`, `test-app`); `shared/CONVENTIONS.md`, "Typed judgments", has the rules. Verdicts and probabilities are recorded in the artifacts, not in the run.
+
+## Model tiers
+
+Every `prompt:` node carries `model: small|medium|large`; Archon binds the word to a provider and model (`archon ai tier set`, or `--model large=<provider>/<model>` for one run), and no pack sets a workflow-level `model:`. The gate-phase authoring nodes add `effort: high`. `scripts/validate.mjs` fails a prompt node without a tier word. Reasons, binding commands, the `-omp` mapping, and routing a run by the request: [docs/model-routing.md](../docs/model-routing.md).
+
+| Nodes | Tier |
+|---|---|
+| `delivery-research` (both nodes), `delivery-prd` `research`, `delivery-epic` `start`, `delivery-resolve-reviews` `round`, bugfix `attempt` and `attempt-auto`, `fix-phase`, `fix-phase-auto`, `fix-review` | medium |
+| `delivery-gate-phase` (create, iterate, `describe-pr`; `effort: high`), `implement-phase`, `implement-phase-auto`, `review-phase`, `review-phase-auto`, `review-code`, bugfix `fix`, oneshot `implement`, `delivery-app-test` `test-app` and `iterate-app` | large |
+
 ## Two flavors
 
 | Flavor | Directory | AI node | Providers |
@@ -145,7 +169,7 @@ The installer writes the native flavor for Claude Code, Codex, Pi, or portable t
 
 The OMP flavor is generated: `node scripts/build-packs.mjs` rewrites every native file into `<pack>-omp` with the same DAG (inputs, gates, loops, includes, and deterministic nodes unchanged), `$INPUTS.x` read from `INPUTS_<UPPER>` environment variables, and `$node.output` refs hoisted into shell variables. The prompt is read with `{ prompt=$(cat); } <<DELIVERY_PROMPT`, a heredoc feeding a brace group: bash 3.2 (macOS `/bin/bash`) scans a heredoc nested in `$(...)` for quotes, so an unpaired apostrophe in a prompt would fail to parse there. `node scripts/build-packs.mjs --check` exits 1 when the generated tree is stale. Never edit `delivery-omp/` by hand.
 
-What the flavor loses: a `bash:` node has no per-node cost, retry, or idle timeout, so `--max-time=45m` is the only bound on a stuck session; each generated node carries `timeout: 2760000` (46 minutes) because Archon kills a bash node after 120 seconds by default, and runs `omp` with stdin from `/dev/null`, since `omp -p` waits for more prompt text while stdin is the open pipe Archon hands a bash node (both found in the first live run). Archon ignores `output_format` on a `bash:` node, so the generator moves a prompt node's schema into the prompt text (the same "respond with only a JSON object" instruction Archon appends for AI nodes) and drops the field; nothing validates the stdout of `omp -p`. A non-JSON answer surfaces one node later, when `$review-code.output.status` or `$attempt-auto.output.status` is read and fails the run, so `omp -p` must print only the final answer on stdout. A native Oh My Pi provider in Archon is the fix; the flavor is a stopgap.
+What the flavor loses: a `bash:` node has no per-node cost, retry, or idle timeout, so `--max-time=45m` is the only bound on a stuck session; each generated node carries `timeout: 2760000` (46 minutes) because Archon kills a bash node after 120 seconds by default, and runs `omp` with stdin from `/dev/null`, since `omp -p` waits for more prompt text while stdin is the open pipe Archon hands a bash node (both found in the first live run). Archon ignores `output_format` on a `bash:` node, so the generator moves a prompt node's schema into the prompt text (the same "respond with only a JSON object" instruction Archon appends for AI nodes) and drops the field. The answer goes through `judge.mjs extract-json`: a contained JSON object is taken as is; prose is read for the schema's enum fields and the one artifact name it mentions when the TypeSafe key is set; otherwise the fence-stripping awk runs and a non-JSON answer surfaces one node later, when `$review-code.output.status` or `$attempt-auto.output.status` is read and fails the run. A node's `model:` tier becomes `--model="$OMP_MODEL_<TIER>"` when that variable is set and `effort:` becomes `--thinking=<level>`. A native Oh My Pi provider in Archon is the fix; the flavor is a stopgap.
 
 ## Phase table
 

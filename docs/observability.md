@@ -4,7 +4,7 @@ Optional. Nothing here runs unless you run it, and nothing leaves the machine un
 
 `scripts/metrics.mjs` reads `~/.archon/archon.db` read-only. Set `ARCHON_HOME` or pass `--db` to use another database.
 
-Labels: `workflow` (the pack), `gates` (the input), `harness` (which agent ran the AI phases: `claude-code`, `codex`, `pi`, `copilot`, `opencode`, or `oh-my-pi` for the `-omp` flavor), `origin` (`cli`, `web`, chat) on runs; `harness` and `model` (the resolved model when Archon reports it, else `unknown`) on node durations, tokens, and cost. Log records carry `harness` too.
+Labels: `workflow` (the pack), `gates` (the input), `harness` (which agent ran the AI phases: `claude-code`, `codex`, `pi`, `copilot`, `opencode`, or `oh-my-pi` for the `-omp` flavor), `origin` (`cli`, `web`, chat) on runs; `harness` and `model` (the resolved model when Archon reports it, else `unknown`; with the packs' model tiers this is the model a tier resolved to, so cost per phase per model reads directly) on node durations, tokens, and cost. Log records carry `harness` too.
 
 Measured metrics:
 

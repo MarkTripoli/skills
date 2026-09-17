@@ -1,8 +1,10 @@
-# Findings run `fix-review` before the loop ends.
-review-code: '{"status":"findings","artifact":"05-code-review-fixture.md","summary":"two findings"}'
+# Findings run `fix-review` before the loop ends. The check, not the claim, drives the fix: a clean
+# claim the artifact contradicts is fixed the same way.
+review-code: '{"status":"clean","artifact":"05-code-review-fixture.md","summary":"two findings"}'
+verify-review: '{"status":"findings"}'
 fix-review: "findings fixed"
 fixture:
   expect: completed
   inputs: { task_dir: .agents/tasks/fixture }
-  reached: [review-code, fix-review, loop]
+  reached: [review-code, verify-review, fix-review, loop]
 exec-code: false

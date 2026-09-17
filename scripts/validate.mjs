@@ -130,6 +130,9 @@ const BANNED_TOKENS = [
 
 const SKIP_DIRS = new Set([".git", "node_modules", "dist", "results", ".cache"]);
 const SKIP_FILES = new Set(["scripts/validate.mjs", ".skill-lock.json"]);
+const MODEL_TIERS = ["small", "medium", "large"];
+// Archon 0.10.1's `effort:` enum, read from its loader message: 'effort' Invalid option: expected one of ...
+const EFFORT_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 
 const failures = [];
 const fail = (file, line, message) => failures.push(`${file}:${line}: ${message}`);
@@ -411,18 +414,9 @@ if (!fs.existsSync(path.join(packsRoot, "delivery"))) {
     for (const match of code.matchAll(/\$(?:LOOP_PREV\.)?([a-z][a-z0-9-]*)\.output\b/g)) {
       if (!declared.has(match[1])) fail(rel(full), code.slice(0, match.index).split("\n").length, `references \`$${match[1]}.output\` but declares no node "${match[1]}"`);
     }
-    lines.forEach((line, index) => {
-      const prompt = /^(\s*)prompt: \|$/.exec(line);
-      if (!prompt) return;
-      // The node's keys sit at the prompt's indent, from the preceding `- id:` line to the next one.
-      const keyIndent = prompt[1].length;
-      let start = index;
-      while (start > 0 && !new RegExp(`^${" ".repeat(keyIndent - 2)}- id: `).test(lines[start])) start--;
-      let end = index + 1;
-      while (end < lines.length && !new RegExp(`^${" ".repeat(keyIndent - 2)}- id: `).test(lines[end]) && !(lines[end].trim() !== "" && lines[end].length - lines[end].trimStart().length < keyIndent - 2)) end++;
-      const node = lines.slice(start, end);
+    for (const { start, keyIndent, node } of promptNodes(lines)) {
       if (!node.some((l) => l === `${" ".repeat(keyIndent)}context: fresh`)) fail(rel(full), start + 1, "every prompt node declares `context: fresh`");
-    });
+    }
     // Top-level nodes: id, the indent-4 keys, and the `depends_on` list.
     const nodes = [];
     lines.forEach((line, index) => {
@@ -493,7 +487,19 @@ function archonBinary() {
   return null;
 }
 
-// 12. The commit subject rule the conventions document is the rule the commit-msg hook and CI enforce.
+// 12. Model tiers. Every prompt node in the native tree names the tier it runs on (`model: small|medium|large`,
+// the words `archon ai tier set` and `archon workflow run --model` bind), and `effort:` when present is one of
+// Archon's levels. Archon accepts any string for `model:` (the SDK decides what exists), so a typo would only
+// surface as a provider error at run time; this check catches it at validation. The generated Oh My Pi tree
+// is not checked: its generator turns the fields into `omp` flags. See docs/model-routing.md.
+if (fs.existsSync(path.join(packsRoot, "delivery"))) {
+  for (const { dir, file } of listNative()) {
+    const full = path.join(packsRoot, "delivery", dir, file);
+    for (const { line, message } of promptNodeTierProblems(read(full).split("\n"))) fail(rel(full), line, message);
+  }
+}
+
+// 13. The commit subject rule the conventions document is the rule the commit-msg hook and CI enforce.
 const conventionsFile = path.join(repoRoot, "shared", "CONVENTIONS.md");
 const conventionsLines = read(conventionsFile).split("\n");
 const ruleIndex = conventionsLines.findIndex((line) => /^Validate the subject before committing: it must match `/.test(line));
@@ -516,4 +522,43 @@ function report() {
   console.log(
     `ok: ${skillNames.length} skills, ${answerFiles.length} answer templates, ${HUMAN_REVIEW_TEMPLATES.length} human-review templates, ${bannedHits} banned tokens, packs ${archonChecked}${generated ? ` (generated tree ${root})` : ""}`,
   );
+}
+
+// Every `prompt: |` node in a workflow file: the node's lines (from its `- id:` line to the next sibling or
+// the end of its parent) and the indent of its keys. Body nodes of a `loop_group` are found the same way,
+// since their `- id:` sits two columns left of their keys too.
+function promptNodes(lines) {
+  const found = [];
+  lines.forEach((line, index) => {
+    const prompt = /^(\s*)prompt: \|$/.exec(line);
+    if (!prompt) return;
+    const keyIndent = prompt[1].length;
+    const idLine = new RegExp(`^${" ".repeat(keyIndent - 2)}- id: `);
+    let start = index;
+    while (start > 0 && !idLine.test(lines[start])) start--;
+    let end = index + 1;
+    while (end < lines.length && !idLine.test(lines[end]) && !(lines[end].trim() !== "" && lines[end].length - lines[end].trimStart().length < keyIndent - 2)) end++;
+    found.push({ start, end, keyIndent, node: lines.slice(start, end) });
+  });
+  return found;
+}
+
+// `{line, message}` per prompt node whose `model:` is missing or not a tier word, or whose `effort:` is not
+// an Archon level. Lines are 1-based and point at the offending key, or at the node's `- id:` line when
+// `model:` is missing.
+function promptNodeTierProblems(lines) {
+  const problems = [];
+  for (const { start, keyIndent, node } of promptNodes(lines)) {
+    const key = (name) => {
+      const pattern = new RegExp(`^ {${keyIndent}}${name}: ?(.*)$`);
+      const offset = node.findIndex((l) => pattern.test(l));
+      return offset === -1 ? null : { line: start + offset + 1, value: pattern.exec(node[offset])[1].trim() };
+    };
+    const model = key("model");
+    if (!model) problems.push({ line: start + 1, message: `prompt node declares no \`model:\`; use one of ${MODEL_TIERS.join(", ")}` });
+    else if (!MODEL_TIERS.includes(model.value)) problems.push({ line: model.line, message: `\`model: ${model.value}\` is not a tier; use one of ${MODEL_TIERS.join(", ")}` });
+    const effort = key("effort");
+    if (effort && !EFFORT_LEVELS.includes(effort.value)) problems.push({ line: effort.line, message: `\`effort: ${effort.value}\` is not an Archon effort level; use one of ${EFFORT_LEVELS.join(", ")}` });
+  }
+  return problems;
 }

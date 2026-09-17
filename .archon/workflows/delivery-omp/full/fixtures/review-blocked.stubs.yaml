@@ -6,6 +6,10 @@ research__research: "research saved"
 phase: "artifact saved"
 implement-phase: "phase implemented"
 review-code: '{"status":"blocked","artifact":"05-code-review-fixture.md","summary":"cannot build"}'
+intent: '{"intent":"revise"}'
+next-phase: '{"next":""}'
+verify-review: '{"status":"blocked"}'
+app-test-done: ""
 research-done: ""
 design-done: ""
 plan-done: ""

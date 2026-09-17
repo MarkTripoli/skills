@@ -84,6 +84,10 @@ Some nodes end the prompt with a JSON-only requirement instead of "Print the ski
 
 An iterate skill run by a pack receives the reviewer's text in the prompt as its feedback and revises the newest artifact it owns in place.
 
+## Typed judgments
+
+`typed-judgment/judge.mjs`, installed beside the other skills, asks the TypeSafe System One model a typed question about prose (one option out of a set, a yes/no probability, a graded level) and prints one word, or JSON with `--json`; the thresholds live in the helper. Only a skill step or a pack node that names the command calls it; no other step adds a call. The helper is optional: without `TYPESAFE_API_KEY`, without `node`, or on any nonzero exit the caller applies its own rule, the pack's deterministic check or the skill's own reading, never fails the step, and says once in the reply that judgments were skipped. Only what the step names leaves the machine: the artifact, request, feedback, thread bodies with the few lines of code they point at, or step observations; never other repository code, diffs, or secrets. Where a template has a place for it, the step records the answer word and its confidence in the artifact so a reader can see why the workflow branched.
+
 ## Answer template placeholders
 
 Answer templates under `references/` use these placeholders; fill every one before printing.
@@ -97,7 +101,7 @@ Answer templates under `references/` use these placeholders; fill every one befo
 - `{implementation_command}`: `/implement-outline` for `lean`, `/implement-plan` otherwise; used by the plan, outline, and `iterate-implementation` replies.
 - `{completed_phase}` and `{next_phase}`: phase numbers in implementation replies.
 - `{child_slug}`, `{child_start_command}`: epic delivery; see `start-epic-delivery`. `{child_start_command}` is `archon workflow run delivery-<workflow> --base <epic branch> --input task_dir=.agents/tasks/<child slug> '<child prompt>'`, with every `'` in the prompt written as `'\''`, run from the project root on the epic branch; it appears in the reply body, and the fence is terminal (`/show-me`).
-- `{needed}`: one line per item of the reproduction artifact's `## Missing` list (`reproduce-bug`).
+- `{needed}`: one line per item of the artifact's `## Missing` list (the reproduction artifact in `reproduce-bug`, the app-test artifact in `test-app`).
 
 ## Commits
 

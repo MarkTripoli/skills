@@ -29,6 +29,7 @@ nodes:
 
   - id: round
     context: fresh
+    model: medium
     depends_on: [task]
     prompt: |
       Read and follow $task.output.skills_dir/resolve-pr-reviews/SKILL.md, the installed `resolve-pr-reviews` skill, for task directory $task.output.task_dir. Request context: $ARGUMENTS

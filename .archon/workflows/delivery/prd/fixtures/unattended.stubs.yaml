@@ -8,6 +8,9 @@ plan__once: "plan saved"
 implement-phase-auto: "phase implemented"
 review-code: '{"status":"clean","artifact":"05-code-review-fixture.md","summary":"clean"}'
 pr__once: "pull request described"
+next-phase-auto: '{"next":""}'
+verify-review: '{"status":"clean"}'
+app-test-done: ""
 research-done: ""
 prd-done: ""
 tdd-done: ""

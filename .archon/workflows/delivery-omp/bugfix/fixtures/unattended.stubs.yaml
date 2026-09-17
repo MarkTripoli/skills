@@ -6,12 +6,14 @@ attempt-auto: '{"status":"reproduced","summary":"exit code 0 on a missing config
 attempt-count: '{"status":"reproduced","attempt":1}'
 fix: "bug fixed and committed"
 review-code: '{"status":"clean","artifact":"05-code-review-fixture.md","summary":"clean"}'
+verify-review: '{"status":"clean"}'
 pr__once: "pull request described"
 reproduce-done: ""
+app-test-done: ""
 review-done: ""
 pr-done: ""
 fixture:
   expect: completed
   inputs: { gates: none }
-  reached: [attempt-auto, attempt-count, reproduce-auto, reproduce-done, fix, review__loop, pr__once, pr-done]
+  reached: [attempt-auto, attempt-count, reproduce-auto, reproduce-done, fix, app-test-done, review__loop, pr__once, pr-done]
 exec-code: false

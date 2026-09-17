@@ -2,9 +2,11 @@
 // Generates the Oh My Pi flavor of the delivery packs. The native packs under .archon/workflows/delivery/
 // run each AI phase as an Archon `prompt:` node (Claude Code, Codex, Pi, ...). Archon has no Oh My Pi
 // provider, so the OMP flavor under .archon/workflows/delivery-omp/ is the same DAG with every prompt node
-// rewritten as a `bash:` node that runs `omp -p` with the same prompt. Deterministic nodes, gates, loops,
-// includes, and inputs are unchanged. Node built-ins only; the source YAML follows the authoring
-// conventions in workflows/delivery.md (Pack source), which is what makes a line-level rewrite safe.
+// rewritten as a `bash:` node that runs `omp -p` with the same prompt. A prompt node's `model:` tier
+// becomes `--model="$OMP_MODEL_<TIER>"` when that variable is set and `effort:` becomes `--thinking`.
+// Deterministic nodes, gates, loops, includes, and inputs are unchanged. Node built-ins only; the source
+// YAML follows the authoring conventions in workflows/delivery.md (Pack source), which is what makes a
+// line-level rewrite safe.
 //
 //   node scripts/build-packs.mjs            # write .archon/workflows/delivery-omp/
 //   node scripts/build-packs.mjs --check    # exit 1 when the generated flavor is stale
@@ -46,10 +48,13 @@ export function listNative() {
 // a heredoc nested in `$(...)` for quotes, so a prompt with an unpaired apostrophe fails to parse there.
 // A prompt node's `output_format` is appended to the prompt the way Archon appends it for AI nodes:
 // Archon ignores the field on bash nodes, so the schema has to travel in the text and the node's stdout
-// is what the next `$node.output.field` reads. A model still tends to wrap the object in a code fence
-// (observed with `omp -p`), so the node prints only the JSON object it finds: fence lines dropped, then
-// the first line opening with `{` through the last line closing with `}`. Anything else is printed as
-// is, so a non-answer fails the next node with the raw text in the error.
+// is what the next `$node.output.field` reads. A model still tends to wrap the object in a code fence or
+// answer in prose (observed with `omp -p`), so the answer goes through the typed-judgment helper's
+// `extract-json`: a contained object is printed compact, prose is recovered into the schema's enum and
+// artifact fields when the TypeSafe key is set, and anything else is printed as is so a non-answer fails
+// the next node with the raw text in the error. Without the helper (skills installed without it, or no
+// `node`), or when it exits nonzero, the awk filter does the fence-and-brace part of that job: fence
+// lines dropped, then the first line opening with `{` through the last line closing with `}`.
 const JSON_FILTER = [
   "printf '%s\\n' \"$answer\" | awk '",
   "  /^[[:space:]]*```/ { next }",
@@ -59,7 +64,51 @@ const JSON_FILTER = [
   "  END { if (!start || end < start) { start = 1; end = n }; for (i = start; i <= end; i++) print line[i] }",
   "'",
 ];
-export function bashForPrompt(promptLines, schemaLines = []) {
+// The pack source writes schemas flat: one `field: { type: string, enum: [a, b] }` line per enum field
+// and one `required: [a, b]` list. The generator reads them with these shapes and refuses anything else,
+// since an enum it cannot read would silently lose its recovery.
+const SCHEMA_ENUM = /^\s*([a-z_][a-z0-9_]*): \{ type: string, enum: \[([^\]]*)\] \}\s*$/;
+const SCHEMA_REQUIRED = /^(\s*)required: \[([^\]]*)\]\s*$/;
+const csv = (list) => list.split(",").map((s) => s.trim()).filter(Boolean);
+export function schemaArgs(schemaLines) {
+  let required = null;
+  const enums = [];
+  for (const line of schemaLines) {
+    const req = SCHEMA_REQUIRED.exec(line);
+    if (req) {
+      if (required === null || req[1].length < required.indent) required = { indent: req[1].length, fields: csv(req[2]) };
+      continue;
+    }
+    if (!/\benum\b/.test(line)) continue;
+    const field = SCHEMA_ENUM.exec(line);
+    if (!field) throw new Error(`cannot read the enum in schema line "${line.trim()}"; write it as \`field: { type: string, enum: [a, b] }\` on one line`);
+    enums.push(`${field[1]}=${csv(field[2]).join(",")}`);
+  }
+  const args = [];
+  if (required?.fields.length) args.push(`--required '${required.fields.join(",")}'`);
+  if (enums.length) args.push(`--enum '${enums.join(";")}'`);
+  return args;
+}
+
+// Per-node AI fields the OMP flavor carries as omp flags. `effort` is `--thinking`; `ultra` is Archon's
+// rung above `max`, the top omp has. `model` is a tier word, and the flavor has no tier table of its
+// own: the tier is read from OMP_MODEL_<TIER> at run time and adds no flag while the variable is unset,
+// so omp's own default model applies exactly as before.
+export const MODEL_TIERS = ["small", "medium", "large"];
+function ompFlags({ model, effort } = {}) {
+  const setup = [];
+  const flags = [];
+  if (effort) flags.push(`--thinking=${effort === "ultra" ? "max" : effort}`);
+  if (model) {
+    if (!MODEL_TIERS.includes(model)) throw new Error(`model must be a tier word (${MODEL_TIERS.join(", ")}), not "${model}"; the OMP flavor binds tiers through OMP_MODEL_<TIER>`);
+    const variable = `OMP_MODEL_${model.toUpperCase()}`;
+    setup.push('model=""', `if [ -n "\${${variable}:-}" ]; then model="--model=$${variable}"; fi`);
+    flags.push('${model:+"$model"}');
+  }
+  return { setup, flags };
+}
+
+export function bashForPrompt(promptLines, schemaLines = [], fields = {}) {
   const marker = promptLines.find((l) => l.trim() === HEREDOC);
   if (marker !== undefined) throw new Error(`a prompt line reads "${HEREDOC}", which would close the heredoc early`);
   if (schemaLines.length) {
@@ -82,17 +131,70 @@ export function bashForPrompt(promptLines, schemaLines = []) {
     .replace(/\$/g, "\\$")
     .replace(/\u0000([A-Za-z_0-9:-]+)\u0000/g, "$${$1}");
   const assignments = [...vars.entries()].map(([ref, name]) => `${name}=${ref}`);
-  const run = schemaLines.length ? [`answer=$(${OMP_COMMAND} "$prompt" ${OMP_STDIN})`, ...JSON_FILTER] : [`${OMP_COMMAND} "$prompt" ${OMP_STDIN}`];
-  return ["set -eu", ...assignments, `{ prompt=$(cat); } <<${HEREDOC}`, ...body.split("\n"), HEREDOC, ...run];
+  const { setup, flags } = ompFlags(fields);
+  const command = [OMP_COMMAND, ...flags, '"$prompt"', OMP_STDIN].join(" ");
+  let run;
+  if (schemaLines.length) {
+    // The helper lives beside the skills the prompt reads; the prompt's own reference says where they are.
+    const dirRef = (name) => (text.includes(`$INPUTS.${name}`) ? `\${INPUTS_${name.toUpperCase()}}` : vars.has(`$task.output.${name}`) ? `\${${vars.get(`$task.output.${name}`)}}` : null);
+    const skillsDir = dirRef("skills_dir") ?? "${INPUTS_SKILLS_DIR:-$HOME/.agents/skills}";
+    const taskDir = dirRef("task_dir");
+    const extract = ["extract-json", ...schemaArgs(schemaLines), ...(taskDir ? [`--dir "${taskDir}"`] : [])].join(" ");
+    run = [
+      `answer=$(${command})`,
+      `judge="${skillsDir}/typed-judgment/judge.mjs"`,
+      'object=""',
+      'if [ -f "$judge" ] && command -v node >/dev/null 2>&1; then',
+      `  object=$(printf '%s\\n' "$answer" | node "$judge" ${extract}) || object=""`,
+      "fi",
+      'if [ -n "$object" ]; then',
+      "  printf '%s\\n' \"$object\"",
+      "else",
+      ...JSON_FILTER.map((l) => `  ${l}`),
+      "fi",
+    ];
+  } else {
+    run = [command];
+  }
+  return ["set -eu", ...assignments, ...setup, `{ prompt=$(cat); } <<${HEREDOC}`, ...body.split("\n"), HEREDOC, ...run];
 }
 
 function indentOf(line) {
   return line.length - line.trimStart().length;
 }
 
+// The node that owns the key line `i` (a `- id:` two columns left of the key, up to the next sibling or
+// a dedent): its line range and the `model:`/`effort:` fields at the key indent.
+function promptNode(lines, i, keyIndent) {
+  const sibling = new RegExp(`^${" ".repeat(Math.max(keyIndent - 2, 0))}- id: `);
+  const start = lines.slice(0, i).findLastIndex((l) => sibling.test(l));
+  let end = i + 1;
+  while (end < lines.length && !sibling.test(lines[end]) && (lines[end].trim() === "" || indentOf(lines[end]) >= keyIndent)) end++;
+  const fields = {};
+  const fieldLines = [];
+  for (let k = start; k < end; k++) {
+    const field = new RegExp(`^${" ".repeat(keyIndent)}(model|effort): (\\S+)$`).exec(lines[k]);
+    if (!field) continue;
+    fields[field[1]] = field[2];
+    fieldLines.push(k);
+  }
+  return { start, end, fields, fieldLines };
+}
+
 // Rewrites one native workflow file into its OMP flavor.
 export function convert(source) {
   const lines = source.split("\n");
+  // `model:` and `effort:` are AI-node fields; on a prompt node they become omp flags, so their lines
+  // are dropped wherever they sit in the node (a pre-pass, since they usually precede the prompt).
+  const nodes = new Map();
+  const drop = new Set();
+  lines.forEach((line, i) => {
+    const prompt = /^(\s*)prompt: \|$/.exec(line);
+    if (!prompt) return;
+    const node = promptNode(lines, i, prompt[1].length);
+    nodes.set(i, node);
+    for (const k of node.fieldLines) drop.add(k);
+  });
   const out = [];
   let inDescription = false;
   let descriptionIndent = 0;
@@ -134,10 +236,12 @@ export function convert(source) {
       out.push(line);
       continue;
     }
+    if (drop.has(i)) continue;
     const prompt = /^(\s*)prompt: \|$/.exec(line);
     if (prompt) {
       const keyIndent = prompt[1].length;
       const bodyIndent = keyIndent + 2;
+      const node = nodes.get(i);
       const promptLines = [];
       let j = i + 1;
       while (j < lines.length && (lines[j].trim() === "" || indentOf(lines[j]) >= bodyIndent)) {
@@ -155,15 +259,17 @@ export function convert(source) {
           k++;
         }
         j = k;
-      } else {
-        const nodeStart = /^(\s*)- id: /.exec(lines[i - 1] ?? "") ? i - 1 : lines.slice(0, i).findLastIndex((l) => new RegExp(`^${" ".repeat(Math.max(keyIndent - 2, 0))}- id: `).test(l));
-        let k = j;
-        while (k < lines.length && !new RegExp(`^${" ".repeat(Math.max(keyIndent - 2, 0))}- id: `).test(lines[k]) && (lines[k].trim() === "" || indentOf(lines[k]) >= keyIndent)) k++;
-        const node = lines.slice(nodeStart, k);
-        if (node.some((l) => l === `${prompt[1]}output_format:`)) throw new Error(`${lines[nodeStart].trim()}: output_format must directly follow the prompt block so the generator can move it into the prompt`);
+      } else if (lines.slice(node.start, node.end).some((l) => l === `${prompt[1]}output_format:`)) {
+        throw new Error(`${lines[node.start].trim()}: output_format must directly follow the prompt block so the generator can move it into the prompt`);
       }
       out.push(`${prompt[1]}bash: |`);
-      for (const b of bashForPrompt(promptLines, schemaLines)) out.push(b === "" ? "" : `${" ".repeat(bodyIndent)}${b}`);
+      let bash;
+      try {
+        bash = bashForPrompt(promptLines, schemaLines, node.fields);
+      } catch (error) {
+        throw new Error(`${lines[node.start].trim()}: ${error.message}`);
+      }
+      for (const b of bash) out.push(b === "" ? "" : `${" ".repeat(bodyIndent)}${b}`);
       // Archon kills a bash node after 120 s by default; an agent session runs far longer. The node's
       // timeout sits above omp's own --max-time so omp ends the session and reports before Archon does.
       out.push(`${prompt[1]}timeout: ${NODE_TIMEOUT_MS}`);

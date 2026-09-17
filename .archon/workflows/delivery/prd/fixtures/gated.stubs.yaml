@@ -6,6 +6,10 @@ research: "research saved"
 phase: "artifact saved"
 implement-phase: "phase implemented"
 review-code: '{"status":"clean","artifact":"05-code-review-fixture.md","summary":"clean"}'
+intent: '{"intent":"revise"}'
+next-phase: '{"next":""}'
+verify-review: '{"status":"clean"}'
+app-test-done: ""
 research-done: ""
 prd-done: ""
 tdd-done: ""

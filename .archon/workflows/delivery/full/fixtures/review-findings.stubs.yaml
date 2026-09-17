@@ -7,6 +7,10 @@ phase: "artifact saved"
 implement-phase: "phase implemented"
 review-code: '{"status":"findings","artifact":"05-code-review-fixture.md","summary":"two findings"}'
 fix-review: "findings fixed"
+intent: '{"intent":"revise"}'
+next-phase: '{"next":""}'
+verify-review: '{"status":"findings"}'
+app-test-done: ""
 research-done: ""
 design-done: ""
 plan-done: ""

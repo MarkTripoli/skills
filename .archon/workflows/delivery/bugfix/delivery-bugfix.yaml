@@ -26,6 +26,12 @@ inputs:
   gates:
     default: all
     description: "Human gates to keep: `all`, `none`, or a comma-separated subset of reproduce, pr."
+  app_test:
+    default: none
+    description: "Manual app testing after implementation: `none`, or the surface to drive, `web`, `ios`, or `android`; see docs/app-testing.md."
+  app_target:
+    default: ""
+    description: What the app test launches; a URL for web, a bundle id or .app path for ios, a package or .apk for android. Empty lets the skill start the repository's own dev server or build.
 
 # `*-done` nodes commit the phase's artifacts and keep loop bodies runnable between includes; see
 # delivery-full for why.
@@ -71,7 +77,8 @@ nodes:
   # Gated reproduction. Reproduced: approve fixes it, request changes corrects the reproduction session's artifact.
   # Not reproduced: the gate is the escalation: reply with the missing information (either decision,
   # with your text) to retry, or abandon the run. The loop only ends on approve of a reproduced bug;
-  # every retry is a human decision, so the cap is only a guard against a runaway loop.
+  # every retry is a human decision, so the cap is only a guard against a runaway loop. The status the
+  # gate and the loop read is the session's claim checked against the artifact by `verify`.
   - id: reproduce
     depends_on: [gates]
     when: "$gates.output.reproduce == 'true'"
@@ -80,11 +87,12 @@ nodes:
       max_iterations: 100
       until_bash: |
         decision=$gate.output.decision
-        status=$attempt.output.status
+        status=$verify.output.status
         test "$decision" = approve && test "$status" = reproduced
       nodes:
         - id: attempt
           context: fresh
+          model: medium
           prompt: |
             Previous reproduction session (both empty on the first session):
             status: $LOOP_PREV.attempt.output.status
@@ -102,11 +110,36 @@ nodes:
               artifact: { type: string }
             required: [status, summary, artifact]
 
-        - id: gate
+        # The claimed status checked against the reproduction artifact by the typed-judgment helper,
+        # which only ever moves a `reproduced` claim to `not-reproduced`. Without the helper (not
+        # installed, no TypeSafe key, no node) or without the artifact file, the claim stands.
+        - id: verify
           depends_on: [attempt]
+          bash: |
+            set -eu
+            status=$attempt.output.status
+            artifact=$attempt.output.artifact
+            dir=$task.output.task_dir
+            file="$dir/$artifact"
+            skills=$task.output.skills_dir
+            judge="$skills/typed-judgment/judge.mjs"
+            verdict=""
+            if [ -n "$artifact" ] && [ -f "$file" ] && [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+              verdict=$(node "$judge" reproduction-status "$file" "$status" 2>/dev/null) || verdict=""
+            fi
+            case "$verdict" in reproduced|not-reproduced) status=$verdict ;; esac
+            printf '{"status":"%s"}\n' "$status"
+          output_format:
+            type: object
+            properties:
+              status: { type: string, enum: [reproduced, not-reproduced] }
+            required: [status]
+
+        - id: gate
+          depends_on: [verify]
           approval:
             message: >-
-              Reproduction $attempt.output.status: $attempt.output.summary (artifact
+              Reproduction $verify.output.status: $attempt.output.summary (artifact
               $attempt.output.artifact in $task.output.task_dir). Reproduced: approve to fix it, or request
               changes to correct the reproduction. Not reproduced: reply with the missing information
               (steps, data, environment) to try again, or abandon the run.
@@ -116,8 +149,9 @@ nodes:
 
   # Unattended reproduction: up to four fresh reproduction sessions, until one reproduces the bug.
   # A body cannot be shared between loop_groups, so the reproduction session is duplicated without the gate. The
-  # `attempt-count` node ends the loop on the fourth failure instead of letting max_iterations fail
-  # it: a failed loop_group's output is unreadable, and `not-reproduced` needs the status.
+  # `attempt-count` node checks the session's claim against its artifact (as `verify` does above) and
+  # ends the loop on the fourth failure instead of letting max_iterations fail it: a failed loop_group's
+  # output is unreadable, and `not-reproduced` needs the status.
   - id: reproduce-auto
     depends_on: [gates]
     when: "$gates.output.reproduce != 'true'"
@@ -131,6 +165,7 @@ nodes:
       nodes:
         - id: attempt-auto
           context: fresh
+          model: medium
           prompt: |
             Previous reproduction session (both empty on the first session):
             status: $LOOP_PREV.attempt-auto.output.status
@@ -157,7 +192,16 @@ nodes:
             prev=$LOOP_PREV.attempt-count.output.attempt
             case "$prev" in ''|*[!0-9]*) prev=0 ;; esac
             status=$attempt-auto.output.status
+            artifact=$attempt-auto.output.artifact
             dir=$task.output.task_dir
+            file="$dir/$artifact"
+            skills=$task.output.skills_dir
+            judge="$skills/typed-judgment/judge.mjs"
+            verdict=""
+            if [ -n "$artifact" ] && [ -f "$file" ] && [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+              verdict=$(node "$judge" reproduction-status "$file" "$status" 2>/dev/null) || verdict=""
+            fi
+            case "$verdict" in reproduced|not-reproduced) status=$verdict ;; esac
             git add -A -- "$dir"
             git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): reproduce artifacts" -- "$dir"
             printf '{"status":"%s","attempt":%s}\n' "$status" "$((prev + 1))"
@@ -185,12 +229,34 @@ nodes:
   - id: fix
     context: fresh
     depends_on: [reproduce-done]
+    model: large
     prompt: |
       Read and follow $task.output.skills_dir/fix-bug/SKILL.md, the installed `fix-bug` skill, for task directory $task.output.task_dir. The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
 
+  # Manual app testing when asked: the include's `when` gates every node of the block, and the join fires
+  # from fix alone when the block is skipped.
+  - id: app-test
+    include: delivery-app-test
+    depends_on: [fix]
+    when: "$INPUTS.app_test != 'none'"
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      kind: $INPUTS.app_test
+      target: $INPUTS.app_target
+
+  - id: app-test-done
+    depends_on: [fix, app-test]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): app-test artifacts" -- "$dir"
+
   - id: review
     include: delivery-review
-    depends_on: [fix]
+    depends_on: [app-test-done]
     with:
       skills_dir: $task.output.skills_dir
       task_dir: $task.output.task_dir

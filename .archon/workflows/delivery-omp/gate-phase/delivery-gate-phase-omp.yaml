@@ -34,10 +34,15 @@ inputs:
     description: "\"true\" pauses for human review after the skill runs; anything else runs the skill once."
 
 nodes:
-  # Gated branch. Approve ends the cycle. Request changes runs one more pass: the revision skill with
-  # the reviewer's text as feedback, then the gate again. A paused gate costs nothing, so the iteration
-  # cap is only a guard against a runaway loop. Packs place a plain bash node before this include
-  # (workflows/delivery.md, Archon notes).
+  # Gated branch. Approve ends the cycle, and so does a "request changes" whose text only asks to
+  # proceed (judged by the typed-judgment helper when it is installed and the TypeSafe key is set;
+  # without it every request changes revises). Any other request changes runs one more pass: the
+  # revision skill with the reviewer's text as feedback, then the gate again; text that asks to stop
+  # cancels the run at the start of that pass. The gate stays the body's only terminal sink, which is
+  # what lets it pause the loop (Archon #2707), so the judgments sit in `until_bash` and in the node
+  # that opens the next pass. A paused gate costs nothing, so the iteration cap is only a guard against
+  # a runaway loop. Packs place a plain bash node before this include (workflows/delivery.md, Archon
+  # notes).
   - id: cycle
     when: "$INPUTS.gate == 'true'"
     loop_group:
@@ -45,13 +50,54 @@ nodes:
       max_iterations: 100
       until_bash: |
         decision=$gate.output.decision
-        test "$decision" = approve
+        test "$decision" = approve && exit 0
+        text=$gate.output.text
+        skills=$INPUTS.skills_dir
+        judge="$skills/typed-judgment/judge.mjs"
+        intent=revise
+        if [ -n "$(printf '%s' "$text" | tr -d '[:space:]')" ] && [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+          intent=$(printf '%s' "$text" | node "$judge" feedback-intent - 2>/dev/null) || intent=revise
+        fi
+        test "$intent" = proceed
       nodes:
+        # What the previous pass's "request changes" text asks for: `revise` (the default, also for
+        # the first pass, an approve, or an unavailable helper) runs the revision skill, `stop` cancels
+        # the run through `stopped`. `$LOOP_PREV` is empty on the first pass and stays literal in a dry
+        # run; both read as revise.
+        - id: intent
+          bash: |
+            set -eu
+            LOOP_PREV=${LOOP_PREV:-}
+            decision=$LOOP_PREV.gate.output.decision
+            text=$LOOP_PREV.gate.output.text
+            skills=$INPUTS.skills_dir
+            judge="$skills/typed-judgment/judge.mjs"
+            intent=revise
+            if [ "$decision" = reject ] && [ -n "$(printf '%s' "$text" | tr -d '[:space:]')" ] && [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+              intent=$(printf '%s' "$text" | node "$judge" feedback-intent - 2>/dev/null) || intent=revise
+            fi
+            case "$intent" in revise|proceed|stop) ;; *) intent=revise ;; esac
+            printf '{"intent":"%s"}\n' "$intent"
+          output_format:
+            type: object
+            properties:
+              intent: { type: string, enum: [revise, proceed, stop] }
+            required: [intent]
+
+        - id: stopped
+          cancel: "Run stopped at the review of $INPUTS.label: the reviewer asked to stop. The artifacts stay in $INPUTS.task_dir; run the workflow again to continue."
+          depends_on: [intent]
+          when: "$intent.output.intent == 'stop'"
+
         - id: phase
+          depends_on: [intent]
+          when: "$intent.output.intent != 'stop'"
           bash: |
             set -eu
             v1=$LOOP_PREV.gate.output.decision
             v2=$LOOP_PREV.gate.output.text
+            model=""
+            if [ -n "${OMP_MODEL_LARGE:-}" ]; then model="--model=$OMP_MODEL_LARGE"; fi
             { prompt=$(cat); } <<DELIVERY_PROMPT
             Reviewer decision and feedback from the previous pass (both empty on the first pass):
             decision: ${v1}
@@ -62,11 +108,12 @@ nodes:
 
             The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
             DELIVERY_PROMPT
-            omp -p --auto-approve --no-session --max-time=45m "$prompt" </dev/null
+            omp -p --auto-approve --no-session --max-time=45m --thinking=high ${model:+"$model"} "$prompt" </dev/null
           timeout: 2760000
 
         - id: gate
-          depends_on: [phase]
+          depends_on: [phase, stopped]
+          trigger_rule: none_failed_min_one_success
           approval:
             message: >-
               Review $INPUTS.label in $INPUTS.task_dir. Approve to continue, or request changes with the
@@ -80,10 +127,12 @@ nodes:
     when: "$INPUTS.gate != 'true'"
     bash: |
       set -eu
+      model=""
+      if [ -n "${OMP_MODEL_LARGE:-}" ]; then model="--model=$OMP_MODEL_LARGE"; fi
       { prompt=$(cat); } <<DELIVERY_PROMPT
       Read and follow ${INPUTS_SKILLS_DIR}/${INPUTS_SKILL}/SKILL.md, the installed \`${INPUTS_SKILL}\` skill, for task directory ${INPUTS_TASK_DIR}.
 
       The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
       DELIVERY_PROMPT
-      omp -p --auto-approve --no-session --max-time=45m "$prompt" </dev/null
+      omp -p --auto-approve --no-session --max-time=45m --thinking=high ${model:+"$model"} "$prompt" </dev/null
     timeout: 2760000

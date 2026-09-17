@@ -29,6 +29,12 @@ inputs:
   gates:
     default: all
     description: "Human gates to keep: `all`, `none`, or a comma-separated subset of outline, phases, pr."
+  app_test:
+    default: none
+    description: "Manual app testing after implementation: `none`, or the surface to drive, `web`, `ios`, or `android`; see docs/app-testing.md."
+  app_target:
+    default: ""
+    description: What the app test launches; a URL for web, a bundle id or .app path for ios, a package or .apk for android. Empty lets the skill start the repository's own dev server or build.
 
 # `*-done` nodes commit the phase's artifacts and keep loop bodies runnable between includes; see
 # delivery-full for why.
@@ -126,9 +132,30 @@ nodes:
       git add -A -- "$dir"
       git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): implement artifacts" -- "$dir"
 
+  # Manual app testing when asked: the include's `when` gates every node of the block, and the join fires
+  # from implement-done alone when the block is skipped.
+  - id: app-test
+    include: delivery-app-test-omp
+    depends_on: [implement-done]
+    when: "$INPUTS.app_test != 'none'"
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      kind: $INPUTS.app_test
+      target: $INPUTS.app_target
+
+  - id: app-test-done
+    depends_on: [implement-done, app-test]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): app-test artifacts" -- "$dir"
+
   - id: review
     include: delivery-review-omp
-    depends_on: [implement-done]
+    depends_on: [app-test-done]
     with:
       skills_dir: $task.output.skills_dir
       task_dir: $task.output.task_dir

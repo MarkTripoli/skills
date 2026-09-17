@@ -39,6 +39,16 @@ archon workflow abandon <run-id>                                  # dead run; `r
 
 `--quiet` on any command hides the JSON log lines. A fresh `run` of a pack refuses `--detach`; `approve`, `reject`, `respond`, and `resume` take it. `--branch` needs a git remote whose base branch exists (Archon cuts the worktree from it); `--no-worktree` runs in the live checkout instead.
 
+## Model tiers
+
+```sh
+archon ai tier list                                                     # what small, medium, large resolve to (defaults: claude/haiku, sonnet, opus)
+archon ai tier set large claude opus --effort high                      # persistent binding
+archon workflow run delivery-lean --branch split-loader --model large=claude/sonnet "..."   # rebind for one run; repeat per tier
+```
+
+Every prompt node names its tier (`model: large` for authoring, implementing, and reviewing; `medium` for research, fixes, and reproduction); the `-omp` flavor reads `OMP_MODEL_SMALL|MEDIUM|LARGE` instead. Table, reasons, and routing by request: [model-routing.md](model-routing.md).
+
 ## Gates
 
 `--input gates=all` (default) | `none` | `plan,pr` (comma list of the pack's names; an unknown name fails the run at node `gates`). With a gate off:

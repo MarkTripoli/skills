@@ -7,6 +7,9 @@ outline__once: "structure outline saved"
 implement-phase-auto: "phase implemented"
 review-code: '{"status":"clean","artifact":"05-code-review-fixture.md","summary":"clean"}'
 pr__once: "pull request described"
+next-phase-auto: '{"next":""}'
+verify-review: '{"status":"clean"}'
+app-test-done: ""
 research-done: ""
 outline-done: ""
 implement-done: ""

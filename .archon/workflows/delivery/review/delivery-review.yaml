@@ -22,11 +22,12 @@ nodes:
       fresh_context: true
       max_iterations: 4
       until_bash: |
-        status=$review-code.output.status
+        status=$verify-review.output.status
         test "$status" = clean
       nodes:
         - id: review-code
           context: fresh
+          model: large
           prompt: |
             Read and follow $INPUTS.skills_dir/review-code/SKILL.md, the installed `review-code` skill, for task directory $INPUTS.task_dir. Review the whole current diff against the merge target.
 
@@ -39,15 +40,42 @@ nodes:
               summary: { type: string }
             required: [status, artifact, summary]
 
+        # The claimed status checked against the artifact by the typed-judgment helper, which only ever
+        # moves a claim toward findings or blocked. Without the helper (not installed, no TypeSafe key,
+        # no node) or without the artifact file, the claim stands. The loop and the nodes below read
+        # this status, not the claim.
+        - id: verify-review
+          depends_on: [review-code]
+          bash: |
+            set -eu
+            status=$review-code.output.status
+            artifact=$review-code.output.artifact
+            dir=$INPUTS.task_dir
+            file="$dir/$artifact"
+            skills=$INPUTS.skills_dir
+            judge="$skills/typed-judgment/judge.mjs"
+            verdict=""
+            if [ -n "$artifact" ] && [ -f "$file" ] && [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+              verdict=$(node "$judge" review-status "$file" "$status" 2>/dev/null) || verdict=""
+            fi
+            case "$verdict" in clean|findings|blocked) status=$verdict ;; esac
+            printf '{"status":"%s"}\n' "$status"
+          output_format:
+            type: object
+            properties:
+              status: { type: string, enum: [clean, findings, blocked] }
+            required: [status]
+
         - id: review-blocked
           cancel: "Review blocked; resolve the blocker recorded in the newest code-review artifact, then run the workflow again."
-          depends_on: [review-code]
-          when: "$review-code.output.status == 'blocked'"
+          depends_on: [verify-review]
+          when: "$verify-review.output.status == 'blocked'"
 
         - id: fix-review
           context: fresh
-          depends_on: [review-code]
-          when: "$review-code.output.status == 'findings'"
+          depends_on: [verify-review]
+          when: "$verify-review.output.status == 'findings'"
+          model: medium
           prompt: |
             Read and follow $INPUTS.skills_dir/fix-code-review/SKILL.md, the installed `fix-code-review` skill, for task directory $INPUTS.task_dir, fixing every finding in the code-review artifact $review-code.output.artifact. Advisories included.
 

@@ -27,6 +27,12 @@ inputs:
   gates:
     default: all
     description: "Human gates to keep: `all`, `none`, or a comma-separated subset of reproduce, pr."
+  app_test:
+    default: none
+    description: "Manual app testing after implementation: `none`, or the surface to drive, `web`, `ios`, or `android`; see docs/app-testing.md."
+  app_target:
+    default: ""
+    description: What the app test launches; a URL for web, a bundle id or .app path for ios, a package or .apk for android. Empty lets the skill start the repository's own dev server or build.
 
 # `*-done` nodes commit the phase's artifacts and keep loop bodies runnable between includes; see
 # delivery-full for why.
@@ -72,7 +78,8 @@ nodes:
   # Gated reproduction. Reproduced: approve fixes it, request changes corrects the reproduction session's artifact.
   # Not reproduced: the gate is the escalation: reply with the missing information (either decision,
   # with your text) to retry, or abandon the run. The loop only ends on approve of a reproduced bug;
-  # every retry is a human decision, so the cap is only a guard against a runaway loop.
+  # every retry is a human decision, so the cap is only a guard against a runaway loop. The status the
+  # gate and the loop read is the session's claim checked against the artifact by `verify`.
   - id: reproduce
     depends_on: [gates]
     when: "$gates.output.reproduce == 'true'"
@@ -81,7 +88,7 @@ nodes:
       max_iterations: 100
       until_bash: |
         decision=$gate.output.decision
-        status=$attempt.output.status
+        status=$verify.output.status
         test "$decision" = approve && test "$status" = reproduced
       nodes:
         - id: attempt
@@ -92,6 +99,8 @@ nodes:
             v3=$LOOP_PREV.gate.output.text
             v4=$task.output.skills_dir
             v5=$task.output.task_dir
+            model=""
+            if [ -n "${OMP_MODEL_MEDIUM:-}" ]; then model="--model=$OMP_MODEL_MEDIUM"; fi
             { prompt=$(cat); } <<DELIVERY_PROMPT
             Previous reproduction session (both empty on the first session):
             status: ${v1}
@@ -110,21 +119,55 @@ nodes:
               artifact: { type: string }
             required: [status, summary, artifact]
             DELIVERY_PROMPT
-            answer=$(omp -p --auto-approve --no-session --max-time=45m "$prompt" </dev/null)
-            printf '%s\n' "$answer" | awk '
-              /^[[:space:]]*```/ { next }
-              { n++; line[n] = $0 }
-              !start && /^[[:space:]]*\{/ { start = n }
-              /\}[[:space:]]*$/ { end = n }
-              END { if (!start || end < start) { start = 1; end = n }; for (i = start; i <= end; i++) print line[i] }
-            '
+            answer=$(omp -p --auto-approve --no-session --max-time=45m ${model:+"$model"} "$prompt" </dev/null)
+            judge="${v4}/typed-judgment/judge.mjs"
+            object=""
+            if [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+              object=$(printf '%s\n' "$answer" | node "$judge" extract-json --required 'status,summary,artifact' --enum 'status=reproduced,not-reproduced' --dir "${v5}") || object=""
+            fi
+            if [ -n "$object" ]; then
+              printf '%s\n' "$object"
+            else
+              printf '%s\n' "$answer" | awk '
+                /^[[:space:]]*```/ { next }
+                { n++; line[n] = $0 }
+                !start && /^[[:space:]]*\{/ { start = n }
+                /\}[[:space:]]*$/ { end = n }
+                END { if (!start || end < start) { start = 1; end = n }; for (i = start; i <= end; i++) print line[i] }
+              '
+            fi
           timeout: 2760000
 
-        - id: gate
+        # The claimed status checked against the reproduction artifact by the typed-judgment helper,
+        # which only ever moves a `reproduced` claim to `not-reproduced`. Without the helper (not
+        # installed, no TypeSafe key, no node) or without the artifact file, the claim stands.
+        - id: verify
           depends_on: [attempt]
+          bash: |
+            set -eu
+            status=$attempt.output.status
+            artifact=$attempt.output.artifact
+            dir=$task.output.task_dir
+            file="$dir/$artifact"
+            skills=$task.output.skills_dir
+            judge="$skills/typed-judgment/judge.mjs"
+            verdict=""
+            if [ -n "$artifact" ] && [ -f "$file" ] && [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+              verdict=$(node "$judge" reproduction-status "$file" "$status" 2>/dev/null) || verdict=""
+            fi
+            case "$verdict" in reproduced|not-reproduced) status=$verdict ;; esac
+            printf '{"status":"%s"}\n' "$status"
+          output_format:
+            type: object
+            properties:
+              status: { type: string, enum: [reproduced, not-reproduced] }
+            required: [status]
+
+        - id: gate
+          depends_on: [verify]
           approval:
             message: >-
-              Reproduction $attempt.output.status: $attempt.output.summary (artifact
+              Reproduction $verify.output.status: $attempt.output.summary (artifact
               $attempt.output.artifact in $task.output.task_dir). Reproduced: approve to fix it, or request
               changes to correct the reproduction. Not reproduced: reply with the missing information
               (steps, data, environment) to try again, or abandon the run.
@@ -134,8 +177,9 @@ nodes:
 
   # Unattended reproduction: up to four fresh reproduction sessions, until one reproduces the bug.
   # A body cannot be shared between loop_groups, so the reproduction session is duplicated without the gate. The
-  # `attempt-count` node ends the loop on the fourth failure instead of letting max_iterations fail
-  # it: a failed loop_group's output is unreadable, and `not-reproduced` needs the status.
+  # `attempt-count` node checks the session's claim against its artifact (as `verify` does above) and
+  # ends the loop on the fourth failure instead of letting max_iterations fail it: a failed loop_group's
+  # output is unreadable, and `not-reproduced` needs the status.
   - id: reproduce-auto
     depends_on: [gates]
     when: "$gates.output.reproduce != 'true'"
@@ -154,6 +198,8 @@ nodes:
             v2=$LOOP_PREV.attempt-auto.output.summary
             v3=$task.output.skills_dir
             v4=$task.output.task_dir
+            model=""
+            if [ -n "${OMP_MODEL_MEDIUM:-}" ]; then model="--model=$OMP_MODEL_MEDIUM"; fi
             { prompt=$(cat); } <<DELIVERY_PROMPT
             Previous reproduction session (both empty on the first session):
             status: ${v1}
@@ -171,14 +217,23 @@ nodes:
               artifact: { type: string }
             required: [status, summary, artifact]
             DELIVERY_PROMPT
-            answer=$(omp -p --auto-approve --no-session --max-time=45m "$prompt" </dev/null)
-            printf '%s\n' "$answer" | awk '
-              /^[[:space:]]*```/ { next }
-              { n++; line[n] = $0 }
-              !start && /^[[:space:]]*\{/ { start = n }
-              /\}[[:space:]]*$/ { end = n }
-              END { if (!start || end < start) { start = 1; end = n }; for (i = start; i <= end; i++) print line[i] }
-            '
+            answer=$(omp -p --auto-approve --no-session --max-time=45m ${model:+"$model"} "$prompt" </dev/null)
+            judge="${v3}/typed-judgment/judge.mjs"
+            object=""
+            if [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+              object=$(printf '%s\n' "$answer" | node "$judge" extract-json --required 'status,summary,artifact' --enum 'status=reproduced,not-reproduced' --dir "${v4}") || object=""
+            fi
+            if [ -n "$object" ]; then
+              printf '%s\n' "$object"
+            else
+              printf '%s\n' "$answer" | awk '
+                /^[[:space:]]*```/ { next }
+                { n++; line[n] = $0 }
+                !start && /^[[:space:]]*\{/ { start = n }
+                /\}[[:space:]]*$/ { end = n }
+                END { if (!start || end < start) { start = 1; end = n }; for (i = start; i <= end; i++) print line[i] }
+              '
+            fi
           timeout: 2760000
 
         - id: attempt-count
@@ -191,7 +246,16 @@ nodes:
             prev=$LOOP_PREV.attempt-count.output.attempt
             case "$prev" in ''|*[!0-9]*) prev=0 ;; esac
             status=$attempt-auto.output.status
+            artifact=$attempt-auto.output.artifact
             dir=$task.output.task_dir
+            file="$dir/$artifact"
+            skills=$task.output.skills_dir
+            judge="$skills/typed-judgment/judge.mjs"
+            verdict=""
+            if [ -n "$artifact" ] && [ -f "$file" ] && [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+              verdict=$(node "$judge" reproduction-status "$file" "$status" 2>/dev/null) || verdict=""
+            fi
+            case "$verdict" in reproduced|not-reproduced) status=$verdict ;; esac
             git add -A -- "$dir"
             git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): reproduce artifacts" -- "$dir"
             printf '{"status":"%s","attempt":%s}\n' "$status" "$((prev + 1))"
@@ -222,15 +286,38 @@ nodes:
       set -eu
       v1=$task.output.skills_dir
       v2=$task.output.task_dir
+      model=""
+      if [ -n "${OMP_MODEL_LARGE:-}" ]; then model="--model=$OMP_MODEL_LARGE"; fi
       { prompt=$(cat); } <<DELIVERY_PROMPT
       Read and follow ${v1}/fix-bug/SKILL.md, the installed \`fix-bug\` skill, for task directory ${v2}. The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
       DELIVERY_PROMPT
-      omp -p --auto-approve --no-session --max-time=45m "$prompt" </dev/null
+      omp -p --auto-approve --no-session --max-time=45m ${model:+"$model"} "$prompt" </dev/null
     timeout: 2760000
+
+  # Manual app testing when asked: the include's `when` gates every node of the block, and the join fires
+  # from fix alone when the block is skipped.
+  - id: app-test
+    include: delivery-app-test-omp
+    depends_on: [fix]
+    when: "$INPUTS.app_test != 'none'"
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      kind: $INPUTS.app_test
+      target: $INPUTS.app_target
+
+  - id: app-test-done
+    depends_on: [fix, app-test]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): app-test artifacts" -- "$dir"
 
   - id: review
     include: delivery-review-omp
-    depends_on: [fix]
+    depends_on: [app-test-done]
     with:
       skills_dir: $task.output.skills_dir
       task_dir: $task.output.task_dir

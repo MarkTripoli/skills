@@ -35,6 +35,14 @@ sha: [current commit]
 - Wave 1: [children with no dependencies]
 - Wave 2: [children whose dependencies are all in wave 1]
 
+## Workflow judgments
+
+| Child | Chosen | Suggested | Confidence |
+|---|---|---|---|
+| [Child outcome] | oneshot | oneshot | 0.00 |
+
+[Or: `Helper unavailable; workflows chosen by this skill.`]
+
 ## Human Review
 
 ### Review targets
