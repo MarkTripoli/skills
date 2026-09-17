@@ -94,6 +94,7 @@ Delivery skills live in `skills/delivery/`; `show-me` is standalone in `skills/s
 - [docs/getting-started.md](docs/getting-started.md): setup, first run with `--branch`, the steering loop, gates, artifacts, bugfix, epics, running skills by hand.
 - [docs/context-management.md](docs/context-management.md): phase model, fresh contexts, recognizing a degraded context.
 - [docs/testing.md](docs/testing.md): validation, pack fixtures, unit tests, what stays manual.
+- [docs/observability.md](docs/observability.md): optional Archon metrics, push targets, serving, and Grafana provisioning.
 - [workflows/delivery.md](workflows/delivery.md), [shared/CONVENTIONS.md](shared/CONVENTIONS.md), [shared/WRITING.md](shared/WRITING.md), [runtimes/](runtimes/).
 
 ## License

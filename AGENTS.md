@@ -10,6 +10,7 @@ Map for working on this repository: building skills, packs, and their docs. Usin
 - `.archon/workflows/delivery/` holds the Archon blocks and packs that chain the phases, each with `fixtures/` dry-run cases. `delivery-omp/` is generated from it by `scripts/build-packs.mjs` and never edited.
 - `shared/WRITING.md` and `shared/CONVENTIONS.md` are the prose rules and the task-directory, artifact, and commit conventions; every `SKILL.md` links both on line 6.
 - `runtimes/<runtime>.md` carries what differs per runtime; `scripts/lib/build.mjs` reads it when building an install tree.
+- `observability/` holds the optional Grafana dashboard; `scripts/metrics.mjs` reads Archon's SQLite database read-only and exports metrics without pack wiring.
 
 ## When changing something
 

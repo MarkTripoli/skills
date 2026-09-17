@@ -86,4 +86,5 @@ A skill given no task directory creates one and commits `docs(task): open <slug>
 npm test                                # validator, plugin manifest check, node --test tests/
 archon workflow test delivery           # every pack's fixtures/*.stubs.yaml; no agent, no run
 node scripts/build-packs.mjs --check    # exit 1 when the OMP flavor is stale; drop --check to regenerate
+npm run metrics -- --serve 9464          # serve Archon metrics for Prometheus
 ```

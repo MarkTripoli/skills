@@ -23,6 +23,7 @@
     "build": "node scripts/build-runtimes.mjs",
     "build-packs": "node scripts/build-packs.mjs",
     "check-packs": "node scripts/build-packs.mjs --check",
+    "metrics": "node scripts/metrics.mjs",
     "changeset": "changeset",
     "version": "changeset version && node scripts/sync-plugin.mjs",
     "check-plugin": "node scripts/sync-plugin.mjs --check",
