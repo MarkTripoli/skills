@@ -171,6 +171,18 @@ const HUMAN_REVIEW_TEMPLATES = [
   "verify-implementation/references/verification_template.md",
 ];
 
+const EXECUTION_DAG_TEMPLATES = [
+  "create-design-discussion/references/design_discussion_template.md",
+  "iterate-design-discussion/references/design_discussion_template.md",
+  "create-tdd/references/tdd_template.md",
+  "iterate-tdd/references/tdd_template.md",
+];
+
+const WORK_BREAKDOWN_TEMPLATES = [
+  "create-tdd/references/tdd_template.md",
+  "iterate-tdd/references/tdd_template.md",
+];
+
 const IMPLEMENTATION_SKILLS = ["implement-plan", "implement-outline", "iterate-implementation"];
 
 const PHASE_ANSWERS = IMPLEMENTATION_SKILLS.map((skill) => `${skill}/references/implementation_phase_final_answer.md`);
@@ -416,6 +428,29 @@ for (const file of HUMAN_REVIEW_TEMPLATES) {
   }
 }
 
+// 6b. The execution-DAG and work-breakdown sections. Separate from the human-review loop above: its four
+// headings are shared by all 20 templates, while these belong to a four-file and a two-file subset.
+const sectionOf = (content, heading) => {
+  const parts = content.split(`\n${heading}\n`);
+  return { count: parts.length - 1, body: parts[1]?.split("\n#")[0] ?? "" };
+};
+for (const file of EXECUTION_DAG_TEMPLATES) {
+  const full = skillFile(file);
+  if (!fs.existsSync(full)) { fail(rel(full), 0, "execution-DAG template missing"); continue; }
+  const { count, body } = sectionOf(read(full), "### Execution DAG");
+  if (count !== 1) { fail(rel(full), 0, `must contain exactly one "### Execution DAG" heading (found ${count})`); continue; }
+  if (!body.includes("```mermaid")) fail(rel(full), 0, "Execution DAG must draw the composed chain as a Mermaid flowchart");
+}
+for (const file of WORK_BREAKDOWN_TEMPLATES) {
+  const full = skillFile(file);
+  if (!fs.existsSync(full)) { fail(rel(full), 0, "work-breakdown template missing"); continue; }
+  const { count, body } = sectionOf(read(full), "### Engineering Work Breakdown");
+  if (count !== 1) { fail(rel(full), 0, `must contain exactly one "### Engineering Work Breakdown" heading (found ${count})`); continue; }
+  if (!body.includes("```mermaid")) fail(rel(full), 0, "Engineering Work Breakdown must draw the work items as a Mermaid flowchart");
+  if (!/^Critical path:/m.test(body)) fail(rel(full), 0, "Engineering Work Breakdown must state one `Critical path:` line");
+  if (!body.includes("| Item | Depends on | Can run in parallel with | Proof it is done |")) fail(rel(full), 0, "Engineering Work Breakdown must carry the four-column work-item table");
+}
+
 // 7. Implementation templates.
 for (const skill of IMPLEMENTATION_SKILLS) {
   const full = skillFile(`${skill}/references/implementation_template.md`);
@@ -632,7 +667,7 @@ function report() {
     process.exit(1);
   }
   console.log(
-    `ok: ${skillNames.length} skills, ${answerFiles.length} answer templates, ${HUMAN_REVIEW_TEMPLATES.length} human-review templates, ${bannedHits} banned tokens, packs ${archonChecked}${generated ? ` (generated tree ${root})` : ""}`,
+    `ok: ${skillNames.length} skills, ${answerFiles.length} answer templates, ${HUMAN_REVIEW_TEMPLATES.length} human-review templates, ${EXECUTION_DAG_TEMPLATES.length} execution-DAG templates, ${WORK_BREAKDOWN_TEMPLATES.length} work-breakdown templates, ${bannedHits} banned tokens, packs ${archonChecked}${generated ? ` (generated tree ${root})` : ""}`,
   );
 }
 

@@ -65,6 +65,18 @@ Recommendation: [recommended option and why the research or product pattern supp
 [short target-shape snippet]
 ```
 
+### Execution DAG
+
+[How this work will be executed: the phases ahead, which pause for approval, what runs unattended, and what verification and review follow. When the task directory holds an execution-plan artifact (`NN-execution-plan-<slug>.md`), embed its Mermaid flowchart here and name the phases it dropped with their probabilities. When it does not, describe the fixed chain of `task.md`'s `workflow` value from the phases and gate set in workflows/delivery.md, with no flowchart and no probabilities.]
+
+```mermaid
+flowchart TD
+  research["research"] --> design["design discussion<br/>gate: design"]
+  design --> plan["plan<br/>gate: plan"]
+  plan --> implement["implement<br/>gate: phases"]
+  implement --> verify["verify"] --> review["review loop"] --> pr["pr<br/>gate: pr"]
+```
+
 ## Human Review
 
 ### Review targets
