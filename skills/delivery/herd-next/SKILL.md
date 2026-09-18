@@ -71,3 +71,53 @@ Step 8, stage or submit. `send-text` is the default and stages without Enter, wh
 Step 9, the reply: `references/herd_next_answer.md`, every `<...>` slot filled.
 
 Never close a pane, tab, or workspace this skill did not create. Never target a pane by focus; only by `--current`, an id read from JSON, or a live agent name. Never run `herdr server stop`. No emojis, no em dashes.
+
+## Archon gate mode
+
+Entered when the caller passes `--run <run-id>` or names a run. Step 1's guard runs first here too.
+
+Find the run when the caller named none. One running or paused run for this project is taken without asking; several means asking which:
+
+```bash
+archon workflow status --json | jq -r '.runs[] | "\(.id)\t\(.workflow_name)\t\(.status)\t\(.working_path)"'
+```
+
+Block on the run in this pane. `--detach` is refused on a fresh launch of an interactive pack and the delivery packs declare `interactive: true` (`workflows/delivery.md:147`), so `wait` is a foreground process and this pane is held while it runs:
+
+```bash
+archon workflow wait "$run_id" --json
+```
+
+Read the paused state; never guess a path or a decision id:
+
+```bash
+run=$(archon workflow get "$run_id" --json)
+status=$(jq -r '.status' <<<"$run")
+cwd=$(jq -r '.working_path' <<<"$run")
+node=$(jq -r '.metadata.approval.nodeId // empty' <<<"$run")
+msg=$(jq -r '.metadata.approval.message // empty' <<<"$run")
+decisions=$(jq -r '.metadata.approval.decisions[].id' <<<"$run")
+resolved=$(jq -r '.metadata.approval.resolved // empty' <<<"$run")
+```
+
+A gate is live when `status` is `paused` and `resolved` is empty; the key is absent while the gate waits and appears once it has been answered. Any other `status`, or a non-empty `resolved`, means the run moved on: print the skipped reply with the reason `the run is not paused at a gate` and stop. The phase label is `nodeId` with a trailing `__cycle` stripped, so `design__cycle` labels the pane `<slug>/design`.
+
+Notify, then open the review pane at the run's own worktree:
+
+```bash
+herdr notification show "Gate: $slug/$phase" --body "$msg" --sound request
+pane=$(herdr pane split --current --direction "$dir" --cwd "$cwd" --no-focus | jq -r '.result.pane.pane_id')
+herdr agent start "$name" --kind "$kind" --pane "$pane"
+herdr pane rename "$pane" "$slug/$phase gate"
+herdr pane send-text "$pane" "Read $artifact and report whether it is ready to approve."
+```
+
+`$artifact` is the task directory named in `metadata.approval.message`, resolved against `$cwd`; when the message names none, stage the task directory path itself. The decision command is reported in the reply rather than staged in the same input line, because a pane holds one staged line at a time:
+
+```text
+archon workflow respond <run-id> <decision> "<what should change>"
+```
+
+`respond` is the general form and covers every id in `decisions[]`, including any a pack authored beyond `approve` and `reject`. The tab-versus-split rule, the agent-name rule, the kind rule, and the stage-not-submit rule are the ones already stated for the handoff mode; the gate mode does not restate them.
+
+The reply is `references/herd_next_gate_answer.md`, every `<...>` slot filled.

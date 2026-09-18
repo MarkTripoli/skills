@@ -55,6 +55,7 @@ const ANSWER_INVENTORY = {
   "fix-bug/references/fix_answer.md": "review-code",
   "gather-sources/references/sources_final_answer.md": SOURCES_VARIANTS,
   "herd-next/references/herd_next_answer.md": TERMINAL_ANSWER,
+  "herd-next/references/herd_next_gate_answer.md": TERMINAL_ANSWER,
   "herd-next/references/herd_next_skipped_answer.md": TERMINAL_ANSWER,
   "implement-outline/references/implementation_final_answer.md": "describe-pr",
   "implement-outline/references/implementation_phase_final_answer.md": "implement-outline",

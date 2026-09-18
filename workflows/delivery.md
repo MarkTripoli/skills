@@ -236,7 +236,7 @@ Artifact type is the frontmatter `type` of the artifact the skill writes. "Human
 | fix-bug | fix | no | `delivery-bugfix` |
 | record-evidence | evidence | no | by hand |
 | deliver | none | no | by hand: routes a request to a pack and an autonomy level (`judge.mjs route-workflow`, `autonomy`), then prints the `archon workflow run delivery-<pack>` command or, without Archon, opens the task directory and hands off to the chain's first skill |
-| herd-next | none | no | by hand, inside Herdr: parses the handoff fence the finishing phase printed, opens a sibling pane at the same working directory, starts an agent of the caller's kind, labels it `<slug>/<phase>`, and stages the command without submitting it |
+| herd-next | none | no | by hand, inside Herdr: parses the handoff fence the finishing phase printed, opens a sibling pane at the same working directory, starts an agent of the caller's kind, labels it `<slug>/<phase>`, and stages the command without submitting it; with `--run <run-id>` it waits on an Archon run, notifies at the pause, and opens a review pane at the run's `working_path` with the gated artifact staged |
 | verify-implementation | verification | no | `delivery-verify` `verification` loop in every pack except `delivery-epic`, `delivery-program`, and `delivery-resolve-reviews`, unless `verify` is `false` |
 | test-app | app-test | no | `delivery-app-test` `test` loop in every pack except `delivery-epic` and `delivery-resolve-reviews`, when `app_test` is `web`, `ios`, or `android` |
 | typed-judgment | none | no | helper: `judge.mjs` is run by pack bash nodes and by `create-epic-plan`, `resolve-pr-reviews`, `test-app`, and `verify-implementation` steps |
