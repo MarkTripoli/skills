@@ -1,16 +1,14 @@
-Routing is complete. Product work has not started.
+Routing is complete. The workflow is running.
 
 Routed to `delivery-<pack>` (route confidence <confidence>, autonomy <level>): gates `<gates>`.
 
-Archon creates the task directory, works in a worktree of the branch, and drives every phase.
-
-Start the workflow from the project root:
+Started from the project root:
 
 `archon workflow run delivery-<pack> --branch <branch> --input gates=<gates> '<request>'`
 
-Pauses:
-- <one line per gate left on: its name and what it reviews; or `none: the run is unattended`>
+Run `<run-id>` on branch `<branch>`, worktree `<path Archon printed>`: <`paused at <gate>`, followed by what that gate reviews and the artifact it points at; or `completed`, followed by the pull request or end state Archon printed; or `failed at <node>`, followed by Archon's reason>.
 
-The command prints "Workflow paused" and the run id at each pause; `archon workflow approve <run-id>` continues, `archon workflow reject <run-id> "<what should change>"` revises the artifact it paused on, `archon workflow wait <run-id>` blocks until the next pause or the end. <One sentence when judgments were skipped and the pack was picked by hand; otherwise omit.>
+Pauses still ahead:
+- <one line per gate left on after the current one: its name and what it reviews; or `none: the run continues to the end without a pause`>
 
-Run the command above to start the workflow.
+`archon workflow approve <run-id>` continues, `archon workflow reject <run-id> "<what should change>"` revises the artifact it paused on, `archon workflow wait <run-id>` blocks until the next pause or the end. <One sentence when judgments were skipped and the pack was picked by hand; otherwise omit.>

@@ -4,6 +4,7 @@
 
 Invoke a skill by typing `/<name>` in the Pi prompt, for example `/create-plan @03-plan-verbose-flag-cli.md`.
 Child workers: Pi has no worker tool of its own. Perform the role inline after reading the installed `agent-<role>` skill, and say so in the reply; when a subagent tool has been added to Pi, give it the same assignment text and read its final message before using any claim.
+Long-running commands (an `archon workflow run` that exits at its first gate): run them in the foreground with the bash tool's timeout raised to at least an hour and read the output when the command exits. Never `--detach`.
 
 ## Install
 

@@ -4,6 +4,7 @@
 
 Invoke a skill by typing `$<name>` in the Codex prompt, for example `$create-plan @03-plan-verbose-flag-cli.md`. Handoff fences still show `/<name>`; type the `$` form.
 Child workers: use the multi-agent spawn tool with the custom agent `agent-<role>` and the assignment text as the message; wait for the agent and read its final message before using any claim. If the spawn tool is unavailable, perform the role inline and say so.
+Long-running commands (an `archon workflow run` that exits at its first gate): run them in the foreground with the shell tool's timeout raised to at least an hour, or in the background when the tool offers it, and read the output when the command exits. Never `--detach`.
 
 ## Install
 
