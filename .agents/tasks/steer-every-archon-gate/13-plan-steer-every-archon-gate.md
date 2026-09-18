@@ -308,8 +308,8 @@ The gap research 11 found, that nothing documents who reclaims `~/.archon/worksp
 
 #### Automated Verification:
 
-- [ ] `grep -n 'archon/workspaces' workflows/delivery.md` prints the new line
-- [ ] `npm test`
+- [x] `grep -n 'archon/workspaces' workflows/delivery.md` prints the new line
+- [x] `npm test`
 
 human-gated: false
 
