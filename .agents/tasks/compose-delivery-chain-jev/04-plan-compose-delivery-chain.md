@@ -427,11 +427,11 @@ test("decide node: the TypeSafe stub skips a confident-no phase and writes the e
 
 #### Automated Verification:
 
-- [ ] `node --test tests/packs.test.mjs` passes
-- [ ] `node scripts/validate.mjs` passes
-- [ ] `node scripts/build-packs.mjs && node scripts/build-packs.mjs --check` is clean
-- [ ] `archon workflow test delivery-decide` passes
-- [ ] `archon workflow run delivery-decide --dry-run --json --input task_dir=.agents/tasks/fixture` prints node `decide` with the declared object, confirming `returns:` resolves for a bash node with an `output_format` object (design `### Verify` item 4). If it does not, inline the same body four times in `delivery-adaptive.yaml` and drop this block; nothing else in the plan changes.
+- [x] `node --test tests/packs.test.mjs` passes
+- [x] `node scripts/validate.mjs` passes
+- [x] `node scripts/build-packs.mjs && node scripts/build-packs.mjs --check` is clean
+- [x] `archon workflow test delivery-decide` passes
+- [x] `archon workflow run delivery-decide --dry-run --exec-code --json --input task_dir=.agents/tasks/fixture` prints node `decide` with the declared object, confirming `returns:` resolves for a bash node with an `output_format` object (design `### Verify` item 4). If it does not, inline the same body four times in `delivery-adaptive.yaml` and drop this block; nothing else in the plan changes. (`--exec-code` added during implementation: without it a bare `--dry-run` never executes a bash node and archon fails with `Missing reachable stub for node 'decide'`, so only the `--exec-code` form can prove the claim.)
 
 human-gated: false
 
