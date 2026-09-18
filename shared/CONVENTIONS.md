@@ -89,6 +89,16 @@ Open a new session in {run_location}, then run:
 
 Under Archon the approval node records the decision; the reply's fence is ignored.
 
+## Archon gate ask
+
+A reply that announces a paused Archon gate ends with this sentence, byte-exact:
+
+`Say `approve`, or say what should change.`
+
+The agent that printed it resolves the gate itself with `archon workflow respond`; the person never
+runs that command. A gate that declares a decision beyond `approve` and `reject` names it in the line
+above the ask.
+
 ## Handoff
 
 A reply that hands off to another skill ends with exactly one fenced `text` block containing exactly one line: `/<skill-name>`, optionally followed by ` @<artifact file>`. Nothing follows the fence. Codex users type `$<skill-name>` instead of `/<skill-name>`; the fence still shows `/`.

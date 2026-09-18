@@ -49,6 +49,8 @@ const ANSWER_INVENTORY = {
   "create-tdd/references/tdd_program_review_answer.md": "iterate-tdd",
   "create-tdd/references/tdd_system_review_answer.md": "iterate-tdd",
   "deliver/references/deliver_archon_answer.md": TERMINAL_ANSWER,
+  "deliver/references/deliver_ended_answer.md": TERMINAL_ANSWER,
+  "deliver/references/deliver_gate_answer.md": TERMINAL_ANSWER,
   "deliver/references/deliver_hand_answer.md": DELIVER_VARIANTS,
   "describe-pr/references/pr_description_final_answer.md": "resolve-pr-reviews",
   "fix-code-review/references/code_review_fixes_answer.md": "review-code",
