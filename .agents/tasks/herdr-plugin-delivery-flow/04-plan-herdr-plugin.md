@@ -320,10 +320,10 @@ Decide from any pane once you have read it: `archon workflow respond <run-id> ap
 
 #### Automated Verification:
 
-- [ ] `npm test`
-- [ ] `archon workflow status --json | jq -e '.runs | type == "array"'` exits 0, confirming the discovery command's shape on this machine
-- [ ] `archon workflow get <any recent run id> --json | jq -e 'has("working_path") and (.metadata | has("approval"))'` exits 0
-- [ ] `git grep -c "herd_next_gate_answer" scripts/validate.mjs skills/delivery/herd-next/SKILL.md` prints 1 for each file
+- [x] `npm test`
+- [x] `archon workflow status --json | jq -e '.runs | type == "array"'` exits 0, confirming the discovery command's shape on this machine
+- [x] `archon workflow get <any recent run id> --json | jq -e 'has("working_path") and (.metadata | has("approval"))'` exits 0
+- [x] `git grep -c "herd_next_gate_answer" scripts/validate.mjs skills/delivery/herd-next/SKILL.md` prints 1 for each file
 
 human-gated: false
 
