@@ -108,10 +108,10 @@ Extend the paragraph after the fence (`:112`):
 
 #### Automated Verification:
 
-- [ ] `grep -c 'archon workflow get "$run_id" --json' skills/delivery/deliver/SKILL.md` is 2, and `grep -c '|| { printf' skills/delivery/deliver/SKILL.md` is 2
-- [ ] `grep -c -- '--cwd "$cwd"' skills/delivery/deliver/SKILL.md` is 3
-- [ ] `grep -rn 'archon workflow' skills/delivery/deliver/SKILL.md` shows no line telling a person to run a command (acceptance (d))
-- [ ] `npm test`
+- [x] `grep -c 'archon workflow get "$run_id" --json' skills/delivery/deliver/SKILL.md` is 2, and `grep -c '|| { printf' skills/delivery/deliver/SKILL.md` is 2
+- [x] `grep -c -- '--cwd "$cwd"' skills/delivery/deliver/SKILL.md` is 4: the three calls at `:106`, `:108`, and `:109`, plus the prose sentence 1.2 adds at `:115`, which restates the flag in backticks. The count was written as 3 before that sentence was part of the edit.
+- [x] `grep -rn 'archon workflow' skills/delivery/deliver/SKILL.md` shows no line telling a person to run a command (acceptance (d))
+- [x] `npm test`
 
 human-gated: false
 
