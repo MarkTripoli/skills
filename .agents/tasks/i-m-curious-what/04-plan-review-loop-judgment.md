@@ -257,8 +257,8 @@ The no-key assertions at lines 29 and 33 are unchanged: no call is made, so no p
 
 #### Automated Verification:
 
-- [ ] `node --test tests/judge.test.mjs`
-- [ ] `npm test`
+- [x] `node --test tests/judge.test.mjs`
+- [x] `npm test`
 
 human-gated: false
 
@@ -335,8 +335,8 @@ Each question the review, verification, and bugfix loops route on states the bou
 
 #### Automated Verification:
 
-- [ ] `node --test tests/judge.test.mjs`
-- [ ] `npm test`
+- [x] `node --test tests/judge.test.mjs`
+- [x] `npm test`
 
 human-gated: false
 
