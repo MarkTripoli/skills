@@ -168,11 +168,11 @@ Line 1 keeps `paused at <nodeId>`; when the run is running rather than paused it
 
 #### Automated Verification:
 
-- [ ] `node scripts/validate.mjs`
-- [ ] `npm test`
-- [ ] `grep -rn 'archon workflow' skills/*/references` returns only `deliver_archon_answer.md:7`, the provenance line
-- [ ] `grep -c 'Open a new session in \|Next action:' skills/delivery/deliver/references/deliver_gate_answer.md skills/delivery/deliver/references/deliver_ended_answer.md` reports `0` for both
-- [ ] `grep -n 'Say `approve`, or say what should change\.' shared/CONVENTIONS.md skills/delivery/deliver/references/deliver_gate_answer.md skills/delivery/deliver/references/deliver_archon_answer.md skills/delivery/herd-next/references/herd_next_gate_answer.md` matches in all four files
+- [x] `node scripts/validate.mjs`
+- [x] `npm test`
+- [x] `grep -rn 'archon workflow' skills/*/*/references` returns only `deliver_archon_answer.md:7`, the provenance line (the repo nests skills as `skills/<group>/<name>/`, so the two-level glob the Human Review Verify list already uses is the one that matches)
+- [x] `grep -c 'Open a new session in \|Next action:' skills/delivery/deliver/references/deliver_gate_answer.md skills/delivery/deliver/references/deliver_ended_answer.md` reports `0` for both
+- [x] `grep -n 'Say `approve`, or say what should change\.' shared/CONVENTIONS.md skills/delivery/deliver/references/deliver_gate_answer.md skills/delivery/deliver/references/deliver_archon_answer.md skills/delivery/herd-next/references/herd_next_gate_answer.md` matches in all four files
 
 human-gated: false
 
@@ -333,13 +333,13 @@ human-gated: false
 
 #### Automated Verification:
 
-- [ ] `node scripts/validate.mjs`
-- [ ] `npm test`
-- [ ] `grep -n 'archon workflow' skills/delivery/deliver/SKILL.md` shows only the agent's own commands (`run`, `get`, `respond`, `wait`, `abandon`), none addressed to a person
-- [ ] `grep -c 'deliver_gate_answer.md\|deliver_ended_answer.md' skills/delivery/deliver/SKILL.md` is at least 2
-- [ ] `grep -n 'long-running process\|outlives' skills/delivery/deliver/SKILL.md` matches in step 4's run bullet
-- [ ] `grep -n 'in the foreground' skills/delivery/deliver/SKILL.md` returns nothing
-- [ ] `grep -n 'running-run branch' skills/delivery/deliver/SKILL.md` matches in step 6, naming it as the branch taken right after step 4
+- [x] `node scripts/validate.mjs`
+- [x] `npm test`
+- [x] `grep -n 'archon workflow' skills/delivery/deliver/SKILL.md` shows only the agent's own commands (`run`, `status`, `get`, `respond`, `wait`, `abandon`), none addressed to a person
+- [x] `grep -c 'deliver_gate_answer.md\|deliver_ended_answer.md' skills/delivery/deliver/SKILL.md` is at least 2
+- [x] `grep -n 'long-running process\|outlives' skills/delivery/deliver/SKILL.md` matches in step 4's run bullet
+- [x] `grep -n 'in the foreground' skills/delivery/deliver/SKILL.md` returns nothing
+- [x] `grep -n 'running-run branch' skills/delivery/deliver/SKILL.md` matches in step 6, naming it as the branch taken right after step 4
 
 human-gated: false
 
