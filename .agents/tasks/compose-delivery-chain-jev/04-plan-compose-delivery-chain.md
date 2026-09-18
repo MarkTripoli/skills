@@ -832,10 +832,10 @@ rm -rf "$scratch"
 
 #### Automated Verification:
 
-- [ ] `npm test` passes
-- [ ] `node scripts/build-packs.mjs --check` is clean
-- [ ] `archon workflow test delivery-adaptive` passes
-- [ ] `archon workflow status --json` lists no run started by this phase
+- [x] `npm test` passes — exit 0, `pass 67 / fail 0`
+- [x] `node scripts/build-packs.mjs --check` is clean — exit 0
+- [x] `archon workflow test delivery-adaptive` passes — `4 passed, 0 failed`
+- [x] `archon workflow status --json` lists no run started by this phase — the run list is byte-identical to the baseline taken before 6.1 (`a30667ac` delivery-tail, `f9db22fa` delivery-full, both pre-existing); `--dry-run` registers no run
 
 #### Deferred human evidence (recorded, not a gate):
 
@@ -876,5 +876,9 @@ human-gated: false
 - `docs/testing.md`'s fixture count is already stale at 29 against 49 native fixtures; Phase 5.4 corrects it, which is a larger diff than this task strictly needs.
 - The decide node renders the flowchart and table in POSIX shell with `sed` field extraction. If that body outgrows one readable block scalar, the fallback named in the design is a rendering script installed beside `judge.mjs`, at the cost of a second installed file and a second unavailable path.
 - `delivery-adaptive` has no `review_each_phase` input: the judgment owns that decision, so a person who wants to force it runs `delivery-full --input review_each_phase=true` instead.
+- A `skills_dir` that begins with `~` never resolves in the decide node, so `delivery-adaptive` run with its default inputs always falls back to the canonical full chain and never consults JEV. Measured in Phase 6 against one directory under two spellings: `--input skills_dir=~/phase6-tilde-test` reached the TypeSafe stub zero times and wrote `helper available=false`, and `--input skills_dir=$HOME/phase6-tilde-test` reached it once and wrote `helper available=true`. `delivery-task`'s body expands the tilde (`case "$skills_dir" in "~") ... "~/"*) ...`) and `delivery-adaptive` wires the expanded value in as `skills_dir: $task.output.skills_dir`, but the decide body reads `${INPUTS_SKILLS_DIR:-$INPUTS.skills_dir}`, environment first, and Archon sets `INPUTS_SKILLS_DIR` from the pack input whose default is the literal `~/.agents/skills`. The fix is the same `case` expansion in the decide body; it is a code change outside Phase 6's declared edits and is not applied here.
+- Phase 6.1's task-directory probe did not collapse the finished phases. With this task's ten artifact summaries in the state, `research` scored 0.75 and `design` 0.96 against a bar of 0.2, both runs; only `app_test` skipped, at 0.13. The per-boundary collapse the design expects is therefore unmeasured-positive: the wording answers "is this phase necessary for this task" rather than "is it still outstanding given these artifacts", and the `artifacts` list reaches the model without the verdict changing. The Human Review Verify item for it stays open.
+- Phase 6.2's command as written cannot run: `--stubs` rejects any file carrying a `fixture:` key with "this is a fixture file; run it with 'workflow test'". Phase 6 used `sed '/^fixture:/,$d'` to strip the block into a temporary stub file, the same workaround Phase 3's receipt records.
+- A stub for a bash node wins over `--exec-code`: the first 6.2 run left `decide-task__decide` in state `stubbed` and wrote no artifact. Proving both halves of acceptance criterion (c) took two runs, one for the skipped nodes and one with the decide stubs removed for the artifact.
 </content>
 </invoke>
