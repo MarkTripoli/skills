@@ -17,7 +17,7 @@ const rootIndex = args.indexOf("--root");
 const root = rootIndex === -1 ? repoRoot : path.resolve(args[rootIndex + 1] ?? "");
 const generated = root !== repoRoot;
 
-const EXPECTED_SKILL_COUNT = 40;
+const EXPECTED_SKILL_COUNT = 41;
 const SHARED_LINKS = {
   "shared/WRITING.md": "https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md",
   "shared/CONVENTIONS.md": "https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md",
@@ -28,6 +28,9 @@ const LINE6 =
 const RESEARCH_VARIANTS = { full: "create-design-discussion", lean: "create-structure-outline", prd: "create-prd" };
 // The deliver skill's by-hand reply names the first skill of the routed chain.
 const DELIVER_VARIANTS = { bugfix: "reproduce-bug", oneshot: "review-code", lean: "create-research-questions", full: "create-research-questions", prd: "create-research", epic: "create-research-questions", program: "create-research" };
+// A sources reply hands off to the chain's first skill, or to the skill that owns a document being converted;
+// a oneshot with sources to gather starts with research.
+const SOURCES_VARIANTS = { ...DELIVER_VARIANTS, oneshot: "create-research", "product-document": "create-prd", "technical-document": "create-tdd" };
 const TERMINAL_ANSWER = "<terminal>";
 
 // answer file -> skill named in the final fence, or TERMINAL_ANSWER when no skill follows.
@@ -50,6 +53,7 @@ const ANSWER_INVENTORY = {
   "describe-pr/references/pr_description_final_answer.md": "resolve-pr-reviews",
   "fix-code-review/references/code_review_fixes_answer.md": "review-code",
   "fix-bug/references/fix_answer.md": "review-code",
+  "gather-sources/references/sources_final_answer.md": SOURCES_VARIANTS,
   "implement-outline/references/implementation_final_answer.md": "describe-pr",
   "implement-outline/references/implementation_phase_final_answer.md": "implement-outline",
   "implement-plan/references/implementation_final_answer.md": "describe-pr",

@@ -23,13 +23,13 @@ If the user named a research-questions artifact with `@...`, use it. Otherwise l
 - Multiple: use the newest of type `research-questions` unless the user named one; ask when the choice is unclear.
 - None: reply "I'm ready to research the codebase. Please provide the research question or area to investigate, and I will document the relevant components and connections." and wait.
 
-Beyond `task.md`, do not read `ticket.md`, design artifacts, plans, or PR descriptions unless the user names them. The research-questions document is the handoff.
+Beyond `task.md`, do not read `ticket.md`, design artifacts, plans, or PR descriptions unless the user names them. The research-questions document is the handoff. The exception is the newest artifact of type `sources`, when one exists: read it fully; it holds the external material a `gather-sources` session fetched, with a digest and verbatim excerpts per source.
 
 ## Steps
 
 1. **Locate the task**. Locate the task directory and read `task.md` per the conventions; when none exists, create it from the user's message as the conventions describe.
 
-2. **Read named files first**. Read references/research_template.md from this skill's directory. If the user or research-questions doc names files, read them completely before starting child workers.
+2. **Read named files first**. Read references/research_template.md from this skill's directory. If the user or research-questions doc names files, read them completely before starting child workers. Read the newest artifact of type `sources` when one exists; for a `web` question its excerpts are the external evidence, cited by the source's location and pointer, and a web worker runs only for what the sources leave open.
 
 3. **Decompose the research**. Break the query into independent areas. Plan before starting workers: entry points, persistence, state, events, APIs, commands, UI, tests, fixtures, dependency docs, directories.
 

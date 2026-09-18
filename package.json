@@ -19,6 +19,7 @@
     "postinstall": "node scripts/prepare.mjs",
     "test": "node scripts/validate.mjs && node scripts/sync-plugin.mjs --check && node scripts/build-packs.mjs --check && node --test tests/",
     "validate": "node scripts/validate.mjs",
+    "evals": "node evals/run.mjs",
     "check-commits": "node scripts/check-commits.mjs",
     "build": "node scripts/build-runtimes.mjs",
     "build-packs": "node scripts/build-packs.mjs",

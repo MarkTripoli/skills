@@ -1,0 +1,10 @@
+{
+  "timezone": "UTC",
+  "outbox": "outbox",
+  "channels": {
+    "console": {},
+    "email": {
+      "from": "billing@example.com"
+    }
+  }
+}
