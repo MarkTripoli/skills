@@ -278,9 +278,9 @@ test("a get that fails inside the wait loop ends the steward instead of spinning
 
 #### Automated Verification:
 
-- [ ] `node --test tests/steward.test.mjs` passes 5 tests
-- [ ] Reverting phase 1's guard makes `a get that fails ends the read` fail; reverting phase 1's `--cwd` makes `respond and every wait chunk` fail (check by hand, restore the file, do not commit the revert)
-- [ ] `npm test` passes with 69 tests, the 64 at `4ff7078` plus these 5
+- [x] `node --test tests/steward.test.mjs` passes 5 tests
+- [x] Reverting phase 1's guard makes `a get that fails ends the read` fail; reverting phase 1's `--cwd` makes `respond and every wait chunk` fail (check by hand, restore the file, do not commit the revert)
+- [x] `npm test` passes with 69 tests, the 64 at `4ff7078` plus these 5
 
 human-gated: false
 
