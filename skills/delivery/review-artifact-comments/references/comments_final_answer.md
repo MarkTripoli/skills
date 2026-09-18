@@ -6,7 +6,7 @@ Summary:
 Feedback was applied only where the user asked.
 
 Next action:
-Open a new session, then run:
+Open a new session in {run_location}, then run:
 
 ```text
 /iterate-implementation

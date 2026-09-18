@@ -12,7 +12,7 @@ Deferred human evidence (recorded, not executed):
 Phase {next_phase} has not started. The command below starts it with the same plan.
 
 Next action:
-Open a new session, then run:
+Open a new session in {run_location}, then run:
 
 ```text
 /implement-plan @{plan_file}

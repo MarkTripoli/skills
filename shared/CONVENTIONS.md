@@ -80,7 +80,7 @@ Known limits:
 Reply with the changes you want, or run `/iterate-<phase> @NN-type-slug.md`. Running the next command records approval.
 
 Next action:
-Open a new session, then run:
+Open a new session in {run_location}, then run:
 
 ```text
 /<next-skill> @NN-type-slug.md
@@ -93,9 +93,11 @@ Under Archon the approval node records the decision; the reply's fence is ignore
 
 A reply that hands off to another skill ends with exactly one fenced `text` block containing exactly one line: `/<skill-name>`, optionally followed by ` @<artifact file>`. Nothing follows the fence. Codex users type `$<skill-name>` instead of `/<skill-name>`; the fence still shows `/`.
 
-The two lines before the fence are always `Next action:` and `Open a new session, then run:`. A terminal reply contains no command fence; it ends with the current state and any prerequisite action in plain prose.
+The two lines before the fence are always `Next action:` and `Open a new session in {run_location}, then run:`. A terminal reply contains no command fence; it ends with the current state and any prerequisite action in plain prose.
 
-The command fence is for manual mode: the user pastes it into a new session. Archon ignores it and runs the next node itself.
+The new session must open in the task worktree, on the task branch, where the phase that printed the reply ran: the task directory and every artifact are committed there and travel with the branch, and the `@<file>` argument is a path relative to that worktree's root. `{run_location}` names that worktree and branch, so the reply cannot drop where to run. Fill it from observed git state, never a guess: in a git work tree, `` `<root>` on branch `<branch>` `` where `<root>` is `git rev-parse --show-toplevel` (the task worktree, since every phase runs from it) and `<branch>` is `git rev-parse --abbrev-ref HEAD`; when the worktree was skipped and the project is not a git work tree, `this checkout`. A reply states only the worktree and branch it is actually in.
+
+The command fence is for manual mode: the user pastes it into a new session in that same worktree on that branch. Archon ignores it and runs the next node itself in the run's worktree.
 
 ## Running under Archon
 
@@ -113,6 +115,7 @@ An iterate skill run by a pack receives the reviewer's text in the prompt as its
 
 Answer templates under `references/` use these placeholders; fill every one before printing.
 
+- `{run_location}`: where the next session runs, in the fixed handoff sentence `Open a new session in {run_location}, then run:`. Observed, never guessed: the task worktree and branch the phase ran in, `` `<root>` on branch `<branch>` `` (`<root>` from `git rev-parse --show-toplevel`, `<branch>` from `git rev-parse --abbrev-ref HEAD`); `this checkout` when the worktree was skipped and the project is not a git work tree. Under Archon the reply is ignored, so the value is unused; a by-hand run fills it so the user opens the next session in the worktree where the committed task directory and each `@<file>` resolve.
 - `{artifact_link}`: relative Markdown link to the file this phase saved, `[NN-type-slug.md](.agents/tasks/<slug>/NN-type-slug.md)`; `none` when nothing was saved.
 - `{artifact_file}`: that file's name only, for example `04-plan-verbose-flag-cli.md`. Templates write `@{artifact_file}` in commands; the `@` is already there, so fill nothing but the name, never a path.
 - `{summary}`: the saved artifact's frontmatter `summary`.

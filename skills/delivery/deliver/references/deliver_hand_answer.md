@@ -9,7 +9,7 @@ Task directory: [task.md](.agents/tasks/<slug>/task.md) in that worktree, commit
 Chain: <the pack's skills in order, `(gate)` after each one whose gate stays on>. Each phase ends with the next command; a phase marked `(gate)` is a reply you review before pasting it. <For `oneshot`: "The change is small enough to implement in this session: on your go it is implemented, verified, and committed per the `ci-commit` conventions, then reviewed with the command below." Otherwise omit.> <One sentence when judgments were skipped and the pack was picked by hand; otherwise omit.>
 
 Next action:
-Open a new session, then run:
+Open a new session in {run_location}, then run:
 
 ```text
 {next_command}

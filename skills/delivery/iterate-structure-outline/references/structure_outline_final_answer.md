@@ -10,7 +10,7 @@ Reply with the changes you want, or run `/iterate-structure-outline @{artifact_f
 Running the next command records approval of the outline.
 
 Next action:
-Open a new session, then run:
+Open a new session in {run_location}, then run:
 
 ```text
 /implement-outline @{artifact_file}

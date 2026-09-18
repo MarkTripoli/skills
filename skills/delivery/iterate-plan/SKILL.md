@@ -39,7 +39,7 @@ Revise an existing implementation plan. Check feedback before applying it, prese
     - Keep deferred human evidence as plain bullets with pointers, never checkboxes; remove filler.
    - Maintain phase sections with success criteria.
 
-6. Save the file and respond following `references/plan_final_answer.md` exactly; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-plan-slug.md](.agents/tasks/<slug>/NN-plan-slug.md)`, and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. When not run by the workflow engine, commit the saved file with `git add <path>` as `docs(task): plan artifact`.
+6. Save the file and respond following `references/plan_final_answer.md` exactly; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-plan-slug.md](.agents/tasks/<slug>/NN-plan-slug.md)`, fill `{artifact_file}` with the saved file's name only (the template carries the `@`; name this artifact and no other file, never a path), and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. Add no prose before or after the template. When not run by the workflow engine, commit the saved file with `git add <path>` as `docs(task): plan artifact`.
 
 ## Plan Guidelines
 

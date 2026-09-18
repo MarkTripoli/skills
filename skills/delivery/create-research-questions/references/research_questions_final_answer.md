@@ -9,8 +9,8 @@ Known limits:
 These questions are the query plan for the research phase. They are not questions for you to answer manually.
 
 Next action:
-Open a new session, then run:
+Open a new session in {run_location}, then run:
 
 ```text
-/create-research
+/create-research @{artifact_file}
 ```
