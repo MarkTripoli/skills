@@ -130,7 +130,7 @@ herdr pane rename "$pane" "$slug/$phase"
 herdr pane send-text "$pane" "$command"
 ```
 
-`agent start` returns `agent_not_ready` when the agent is blocked during startup while keeping the name usable; on that response, wait with `herdr agent wait "$name" --timeout 30000` before staging, and report a still-blocked agent in the reply rather than sending input to it.
+`agent start` returns `agent_not_ready` when the agent is blocked during startup while keeping the name usable; on that response, wait with `herdr agent wait "$name" --until idle --until done --timeout 30000` before staging, and report a still-blocked agent in the reply rather than sending input to it. A bare wait with no `--until` settles on `blocked` too, which is the state this branch exists to sit out.
 
 Step 8, stage or submit. `send-text` is the default and stages without Enter, which is what keeps "running the next command records approval" true. Submit with `herdr agent prompt "$name" "$command" --wait --timeout 120000` only when the caller passed `--submit`, or when the task's `task.md` carries `gates: none`, because that chain was already declared unattended.
 
