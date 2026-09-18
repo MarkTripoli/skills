@@ -18,7 +18,7 @@ At least one test failed on video, so the implementation changes before a pull r
 The next phase has not started.
 
 Next action:
-Open a new session, then run:
+Open a new session in {run_location}, then run:
 
 ```text
 /iterate-implementation @{plan_file}

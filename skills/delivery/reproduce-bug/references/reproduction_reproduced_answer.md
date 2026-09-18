@@ -13,7 +13,7 @@ Reply with the changes you want, or run `/reproduce-bug` again with corrections;
 The fix phase has not started. It applies the artifact's `## Fix` steps, makes the reproduction pass, commits with explicit paths, and then runs the review.
 
 Next action:
-Open a new session, then run:
+Open a new session in {run_location}, then run:
 
 ```text
 /fix-bug

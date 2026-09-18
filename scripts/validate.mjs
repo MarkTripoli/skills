@@ -91,6 +91,63 @@ const ANSWER_INVENTORY = {
   "verify-implementation/references/verification_blocked_answer.md": TERMINAL_ANSWER,
 };
 
+// Whether a forward handoff fence must carry `@<file>`. `true` when the next skill acts on the specific
+// artifact this phase produced and documents honoring a `@file` argument, so a bare command would leave it
+// guessing (the create-research bug); `false` when the next skill reviews the whole diff or pull request, or
+// resolves the newest artifact of a type itself and would reject or mis-read a named file. Every non-terminal
+// answer in ANSWER_INVENTORY is listed; the two are kept in sync by the check below. The tie to each next
+// skill's input contract is in its SKILL.md `## Input`/step-2 read rule.
+const FENCE_ARTIFACT = {
+  // Next skill expands, implements, iterates, or acts on the artifact just written; carries @<file>.
+  "create-design-discussion/references/design_discussion_final_answer.md": true, // create-plan reads the named design artifact
+  "iterate-design-discussion/references/design_discussion_final_answer.md": true,
+  "create-design-discussion/references/design_discussion_review_answer.md": true, // iterate-design-discussion resolves @file
+  "iterate-design-discussion/references/design_discussion_review_answer.md": true,
+  "create-tdd/references/tdd_final_answer.md": true, // create-plan
+  "iterate-tdd/references/tdd_final_answer.md": true,
+  "create-tdd/references/tdd_program_review_answer.md": true, // iterate-tdd resolves @file
+  "create-tdd/references/tdd_system_review_answer.md": true,
+  "iterate-tdd/references/tdd_review_answer.md": true,
+  "create-prd/references/prd_final_answer.md": true, // create-tdd reads a named file
+  "iterate-prd/references/prd_final_answer.md": true,
+  "create-prd/references/prd_review_answer.md": true, // iterate-prd resolves @file
+  "iterate-prd/references/prd_review_answer.md": true,
+  "create-plan/references/plan_final_answer.md": true, // implement-plan honors @file
+  "iterate-plan/references/plan_final_answer.md": true,
+  "create-structure-outline/references/structure_outline_final_answer.md": true, // implement-outline honors @file
+  "iterate-structure-outline/references/structure_outline_final_answer.md": true,
+  "create-research-questions/references/research_questions_final_answer.md": true, // create-research uses the named questions file
+  "iterate-research-questions/references/research_questions_final_answer.md": true,
+  "create-epic-plan/references/epic_plan_final_answer.md": true, // start-epic-delivery uses the named plan
+  "review-code/references/code_review_findings_answer.md": true, // fix-code-review resolves the @file review
+  "implement-outline/references/implementation_phase_final_answer.md": true, // resumes on @{plan_file}
+  "implement-plan/references/implementation_phase_final_answer.md": true,
+  "iterate-implementation/references/implementation_phase_final_answer.md": true,
+  "record-evidence/references/evidence_failed_answer.md": true, // iterate-implementation on @{plan_file}
+  "test-app/references/app_test_failed_answer.md": true,
+  "verify-implementation/references/verification_failed_answer.md": true,
+  // Next skill reviews the whole diff or pull request, or resolves the newest artifact itself; bare command.
+  "ci-commit/references/commit_final_answer.md": false, // describe-pr acts on the PR
+  "create-research/references/research_final_answer.md": false, // design/outline/prd read newest research, exclude questions
+  "iterate-research/references/research_final_answer.md": false,
+  "deliver/references/deliver_hand_answer.md": false, // chain's first skill reads task.md
+  "gather-sources/references/sources_final_answer.md": false,
+  "describe-pr/references/pr_description_final_answer.md": false, // resolve-pr-reviews acts on the PR
+  "fix-code-review/references/code_review_fixes_answer.md": false, // review-code reviews the whole diff
+  "fix-bug/references/fix_answer.md": false,
+  "verify-implementation/references/verification_passed_answer.md": false,
+  "review-code/references/code_review_clean_answer.md": false, // describe-pr
+  "implement-outline/references/implementation_final_answer.md": false,
+  "implement-plan/references/implementation_final_answer.md": false,
+  "iterate-implementation/references/implementation_final_answer.md": false,
+  "record-evidence/references/evidence_final_answer.md": false,
+  "test-app/references/app_test_passed_answer.md": false,
+  "reproduce-bug/references/reproduction_reproduced_answer.md": false, // fix-bug reads newest reproduction
+  "resolve-pr-reviews/references/pr_review_pending_answer.md": false, // acts on the PR
+  // review-artifact-comments is a general feedback skill that need not own a plan; its pointer stays bare.
+  "review-artifact-comments/references/comments_final_answer.md": false,
+};
+
 const HUMAN_REVIEW_TEMPLATES = [
   "create-design-discussion/references/design_discussion_template.md",
   "iterate-design-discussion/references/design_discussion_template.md",
@@ -191,7 +248,8 @@ function fillTemplate(input) {
     .replaceAll("{needed}", "The exact input file that triggers the crash.")
     .replaceAll("{completed_phase}", "1")
     .replaceAll("{next_phase}", "2")
-    .replaceAll("{task_dir}", ".agents/tasks/task-slug");
+    .replaceAll("{task_dir}", ".agents/tasks/task-slug")
+    .replaceAll("{run_location}", "`/repo` on branch `task-slug`");
 }
 
 // Research answers carry `{next_command}`, filled per workflow type by the skill; render one per type.
@@ -265,12 +323,16 @@ const inventoryFiles = Object.keys(ANSWER_INVENTORY).sort();
 for (const file of answerFiles) if (!ANSWER_INVENTORY[file]) fail(rel(skillFile(file)), 0, "answer template missing from the declared inventory");
 for (const file of inventoryFiles) if (!answerFiles.includes(file)) fail(rel(skillFile(file)), 0, "declared answer template does not exist");
 
-const FRESH_SESSION_SENTENCE = "Open a new session, then run:";
+// The handoff sentence names where the next session opens: `Open a new session in <run location>, then run:`.
+// `<run location>` is the `{run_location}` slot every forward template fills from observed git state; it must be
+// non-empty and single-line, so a reply cannot drop the location the way the old fixed sentence did.
+const FRESH_SESSION_RE = /^Open a new session in (.+), then run:$/m;
+const FRESH_SESSION_PREFIX = "Open a new session in ";
 const NEXT_ACTION_LABEL = "Next action:";
 
-function checkHandoff(content, expectedSkill, label, { terminal = false } = {}) {
+function checkHandoff(content, expectedSkill, label, { terminal = false, wantsArtifact = null } = {}) {
   const blocks = fences(content);
-  const freshSentences = content.split(FRESH_SESSION_SENTENCE).length - 1;
+  const freshSentences = content.split(FRESH_SESSION_PREFIX).length - 1;
   const nextActionLabels = content.split(NEXT_ACTION_LABEL).length - 1;
   if (terminal) {
     if (blocks.length !== 0) fail(label, 0, `terminal reply must have no fenced blocks, found ${blocks.length}`);
@@ -286,12 +348,24 @@ function checkHandoff(content, expectedSkill, label, { terminal = false } = {}) 
   if (!match) fail(label, 0, `fence must hold one /<skill>[ @<file>] line, found "${body}"`);
   if (match && !skillSet.has(match[1])) fail(label, 0, `fence names unknown skill "${match[1]}"`);
   if (match && match[1] !== expectedSkill) fail(label, 0, `fence names "${match[1]}", expected "${expectedSkill}"`);
+  if (match && wantsArtifact === true && !match[2]) {
+    fail(label, 0, `fence must name the artifact this phase wrote, "/${expectedSkill} @<file>", because ${expectedSkill} acts on that specific file`);
+  }
+  if (match && wantsArtifact === false && match[2]) {
+    fail(label, 0, `fence must be the bare command "/${expectedSkill}"; ${expectedSkill} resolves its own input, and a named file would mislead it`);
+  }
   if (content.slice(block.end).trim() !== "") fail(label, 0, "nothing may follow the command fence");
   if (freshSentences !== 1) fail(label, 0, `must carry the fresh-session sentence exactly once before the fence (found ${freshSentences})`);
   if (nextActionLabels !== 1) fail(label, 0, `must carry the next-action label exactly once before the fence (found ${nextActionLabels})`);
-  const handoff = `${NEXT_ACTION_LABEL}\n${FRESH_SESSION_SENTENCE}`;
-  if (!content.slice(0, block.index).trimEnd().endsWith(handoff)) {
-    fail(label, 0, "handoff must end with Next action: followed by Open a new session, then run: immediately before the command fence");
+  const preamble = content.slice(0, block.index).trimEnd();
+  const sentence = FRESH_SESSION_RE.exec(preamble);
+  if (!sentence || sentence[1].trim() === "") {
+    fail(label, 0, "the fresh-session sentence must be `Open a new session in <run location>, then run:` with a non-empty location");
+  } else if (!preamble.endsWith(sentence[0])) {
+    fail(label, 0, "the command fence must follow the fresh-session sentence immediately");
+  }
+  if (!preamble.slice(0, preamble.length - (sentence ? sentence[0].length : 0)).trimEnd().endsWith(NEXT_ACTION_LABEL)) {
+    fail(label, 0, "the next-action label must sit immediately before the fresh-session sentence");
   }
 }
 
@@ -301,18 +375,31 @@ for (const [file, expected] of Object.entries(ANSWER_INVENTORY)) {
   const raw = fillTemplate(read(full));
   if (expected === TERMINAL_ANSWER) {
     checkHandoff(raw, null, rel(skillFile(file)), { terminal: true });
-  } else if (typeof expected === "object") {
+    if (file in FENCE_ARTIFACT) fail(rel(skillFile(file)), 0, "terminal answer must not appear in FENCE_ARTIFACT");
+    continue;
+  }
+  if (!(file in FENCE_ARTIFACT)) {
+    fail(rel(skillFile(file)), 0, "answer template missing from FENCE_ARTIFACT; declare whether its fence carries @<file>");
+    continue;
+  }
+  const wantsArtifact = FENCE_ARTIFACT[file];
+  if (typeof expected === "object") {
     for (const [workflow, skill] of Object.entries(expected)) {
       const rendered = renderWorkflowVariant(raw, workflow, expected);
       if (!rendered) {
         fail(rel(skillFile(file)), 0, `missing workflow variant for ${workflow}`);
         continue;
       }
-      checkHandoff(rendered, skill, `${rel(skillFile(file))} (${workflow})`);
+      checkHandoff(rendered, skill, `${rel(skillFile(file))} (${workflow})`, { wantsArtifact });
     }
   } else {
-    checkHandoff(raw, expected, rel(skillFile(file)));
+    checkHandoff(raw, expected, rel(skillFile(file)), { wantsArtifact });
   }
+}
+// FENCE_ARTIFACT must not name an answer the inventory does not.
+for (const file of Object.keys(FENCE_ARTIFACT)) {
+  if (!(file in ANSWER_INVENTORY)) fail(rel(skillFile(file)), 0, "FENCE_ARTIFACT names an answer missing from ANSWER_INVENTORY");
+  else if (ANSWER_INVENTORY[file] === TERMINAL_ANSWER) fail(rel(skillFile(file)), 0, "FENCE_ARTIFACT names a terminal answer");
 }
 
 // 6. Human-review artifact templates.

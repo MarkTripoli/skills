@@ -12,7 +12,7 @@ Deferred human evidence (recorded, not executed):
 Phase {next_phase} has not started. The command below starts it with the same outline.
 
 Next action:
-Open a new session, then run:
+Open a new session in {run_location}, then run:
 
 ```text
 /implement-outline @{plan_file}

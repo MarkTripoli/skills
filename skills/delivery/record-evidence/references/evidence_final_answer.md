@@ -18,7 +18,7 @@ Every test passed or is recorded as untested with its reason; the pull request d
 The next phase has not started.
 
 Next action:
-Open a new session, then run:
+Open a new session in {run_location}, then run:
 
 ```text
 /describe-pr

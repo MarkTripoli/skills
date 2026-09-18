@@ -13,7 +13,7 @@ At least one repository check or acceptance item failed when re-run, so the impl
 The next implementation phase has not started.
 
 Next action:
-Open a new session, then run:
+Open a new session in {run_location}, then run:
 
 ```text
 /iterate-implementation @{plan_file}

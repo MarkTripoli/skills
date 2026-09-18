@@ -6,7 +6,7 @@ Review result:
 No actionable findings remain in the pinned scope.
 
 Next action:
-Open a new session, then run:
+Open a new session in {run_location}, then run:
 
 ```text
 /describe-pr

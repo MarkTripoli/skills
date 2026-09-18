@@ -11,7 +11,7 @@ Known limits:
 Every charter step passed against the running application. The pull request description phase has not started.
 
 Next action:
-Open a new session, then run:
+Open a new session in {run_location}, then run:
 
 ```text
 /describe-pr
