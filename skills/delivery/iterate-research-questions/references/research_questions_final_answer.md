@@ -9,8 +9,8 @@ Known limits:
 The research-questions artifact is ready to guide the next research pass. You do not need to answer the questions yourself.
 
 Next action:
-Open a new session, then run:
+Open a new session in {run_location}, then run:
 
 ```text
-/create-research
+/create-research @{artifact_file}
 ```

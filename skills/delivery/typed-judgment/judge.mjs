@@ -10,6 +10,7 @@
 //   review-status <artifact.md> <claimed>        clean | findings | blocked (never relaxes a claim)
 //   reproduction-status <artifact.md> <claimed>  reproduced | not-reproduced
 //   verification-status <artifact.md> <claimed>  passed | failed | blocked (never relaxes a claim)
+//   axis-coverage <artifact.md>                  covered | asserted | skipped | unclear per review axis
 //   extract-json --required a,b --enum f=x,y [--dir d] [file|-]   a JSON object, or the input text
 //   route-workflow [--children file.json] [text|@file|-]          {workflow, confidence, probabilities}
 //   size-children --children file.json          one ok | split | unclear per epic child, with the split to apply
@@ -27,7 +28,8 @@
 //   ask --state <json|@file> --questions <json|@file>             the raw answers object
 // Text arguments: `@path` reads a file, `-` reads stdin.
 // Env: TYPESAFE_API_KEY, else the first line of TYPESAFE_API_KEY_FILE or $XDG_CONFIG_HOME/typesafe/api_key
-//      (default ~/.config/typesafe/api_key); TYPESAFE_BASE_URL, TYPESAFE_DEFAULT_MODEL, JUDGE_TIMEOUT (seconds, default 20).
+//      (default ~/.config/typesafe/api_key); TYPESAFE_BASE_URL, TYPESAFE_DEFAULT_MODEL, JUDGE_TIMEOUT (seconds,
+//      default 20, the bound on the whole call), JUDGE_RETRIES (transient retries, default 2).
 // Exit: 0 answered, 2 usage error, 3 unavailable.
 
 import fs from "node:fs";
@@ -48,6 +50,28 @@ const WORKFLOWS = {
 };
 
 class Unavailable extends Error {}
+// A request the service rejected as too large. Exits 3 like any other unavailability; the message names
+// the cause so the caller splits its input instead of checking the key.
+class TooLarge extends Unavailable {}
+
+// Model version and token counts of the most recent answered call, for the artifact that records the judgment.
+export let lastCall = null;
+
+// The vendor's transient set: rate limits, its own 529, and any server error.
+const retryable = (status) => status === 429 || status >= 500;
+// Resolves early when the call's deadline fires, so `JUDGE_TIMEOUT` still bounds the whole call.
+const wait = (ms, signal) => new Promise((resolve) => {
+  const timer = setTimeout(resolve, ms);
+  signal?.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+});
+// `retry-after` is seconds or an HTTP-date. The wait is capped at 5s and the attempt still goes out, so a
+// service asking for a long pause is re-asked early; the retry count and `JUDGE_TIMEOUT` bound the cost.
+const retryAfter = (response) => {
+  const header = response.headers.get("retry-after");
+  if (!header) return null;
+  const ms = Number.isFinite(Number(header)) ? Number(header) * 1000 : Date.parse(header) - Date.now();
+  return Number.isFinite(ms) && ms >= 0 ? Math.min(ms, 5000) : null;
+};
 const usage = (message) => { process.stderr.write(`judge: ${message}\n`); process.exit(2); };
 const textArg = (value) => (value === "-" ? fs.readFileSync(0, "utf8") : value?.startsWith("@") ? fs.readFileSync(value.slice(1), "utf8") : value ?? "");
 const flag = (args, name) => { const i = args.indexOf(name); if (i < 0) return undefined; const [value] = args.splice(i, 2).slice(1); return value; };
@@ -71,19 +95,31 @@ export async function systemOne(state, questions) {
   if (!key) throw new Unavailable("TYPESAFE_API_KEY is not set and no key file was found");
   const base = (process.env.TYPESAFE_BASE_URL || "https://api.typesafe.ai").replace(/\/$/, "");
   const seconds = Number(process.env.JUDGE_TIMEOUT) || 20;
+  // A blank value reads as unset; `Number("")` is 0, which would silently disable retries.
+  const retriesEnv = Number((process.env.JUDGE_RETRIES ?? "").trim() || NaN);
+  const retries = Number.isInteger(retriesEnv) && retriesEnv >= 0 ? retriesEnv : 2;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), seconds * 1000);
+  const request = {
+    method: "POST",
+    headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+    body: JSON.stringify({ state, model: process.env.TYPESAFE_DEFAULT_MODEL || "jev-latest", questions }),
+    signal: controller.signal,
+  };
   try {
-    const response = await fetch(`${base}/v1/systemone`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-      body: JSON.stringify({ state, model: process.env.TYPESAFE_DEFAULT_MODEL || "jev-latest", questions }),
-      signal: controller.signal,
-    });
-    if (!response.ok) throw new Unavailable(`HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
-    const body = await response.json();
-    if (!body || typeof body.answers !== "object") throw new Unavailable("response has no answers");
-    return body.answers;
+    for (let attempt = 0; ; attempt++) {
+      const response = await fetch(`${base}/v1/systemone`, request);
+      if (!response.ok) {
+        const text = (await response.text()).slice(0, 300);
+        if (response.status === 400 && text.includes("max_tokens_exceeded")) throw new TooLarge(`request too large for the model: ${text}`);
+        if (retryable(response.status) && attempt < retries) { await wait(retryAfter(response) ?? 250 * 2 ** attempt, controller.signal); continue; }
+        throw new Unavailable(`HTTP ${response.status}: ${text}`);
+      }
+      const body = await response.json();
+      if (!body || typeof body.answers !== "object") throw new Unavailable("response has no answers");
+      lastCall = { model: body.model ?? null, usage: body.usage ?? null };
+      return body.answers;
+    }
   } catch (error) {
     if (error instanceof Unavailable) throw error;
     throw new Unavailable(error.name === "AbortError" ? `no answer within ${seconds}s` : error.message);
@@ -92,7 +128,7 @@ export async function systemOne(state, questions) {
   }
 }
 
-const noul = (instructions) => ({ type: "noul", instructions });
+const noul = (instructions, criteria) => ({ type: "noul", instructions, ...(criteria ? { criteria } : {}) });
 const choice = (instructions, criteria) => ({ type: "choice", instructions, criteria });
 const score = (instructions, criteria) => ({ type: "score", instructions, criteria });
 
@@ -132,8 +168,14 @@ async function planRemaining(file) {
 async function reviewStatus(file, claimed) {
   const review = fs.readFileSync(file, "utf8");
   const answers = await systemOne({ review }, {
-    open_major: noul("The code review in `review` lists at least one finding of critical or major severity, or marked required or blocking, that is not recorded as fixed or declined."),
-    blocked: noul("The reviewer states the review could not be completed: a required check could not run, the diff could not be obtained, or the review is marked blocked."),
+    open_major: noul("The code review in `review` lists at least one finding of critical or major severity, or marked required or blocking, that is not recorded as fixed or declined.", {
+      true: "An entry under Critical and Required Findings is still open, or an advisory describes a defect that meets the critical or major bar.",
+      false: "Only advisories remain, or every gating finding is recorded as fixed or declined with evidence.",
+    }),
+    blocked: noul("The reviewer states the review could not be completed: a required check could not run, the diff could not be obtained, or the review is marked blocked.", {
+      true: "The scope could not be pinned or a required check could not run, so part of the change went unreviewed.",
+      false: "The pinned scope was reviewed; a check that ran and failed is a finding, not a block.",
+    }),
   });
   const open = answers.open_major.noul; const blocked = answers.blocked.noul;
   let status;
@@ -148,7 +190,10 @@ async function reviewStatus(file, claimed) {
 async function reproductionStatus(file, claimed) {
   const reproduction = fs.readFileSync(file, "utf8");
   const answers = await systemOne({ reproduction }, {
-    shown: noul("`reproduction` records a concrete attempt, a command or steps with their observed result, whose outcome exhibits the reported behavior, and names the code that causes it."),
+    shown: noul("`reproduction` records a concrete attempt, a command or steps with their observed result, whose outcome exhibits the reported behavior, and names the code that causes it.", {
+      true: "A command or steps are recorded with their observed result, the result exhibits the reported behavior, and the causing code is named.",
+      false: "The attempt is described but not run, the observed result does not show the reported behavior, or no causing code is named.",
+    }),
   });
   const shown = answers.shown.noul;
   const status = claimed === "reproduced" ? (shown < T.safe ? "not-reproduced" : "reproduced") : claimed === "not-reproduced" ? "not-reproduced" : shown >= T.yes ? "reproduced" : "not-reproduced";
@@ -161,8 +206,14 @@ async function reproductionStatus(file, claimed) {
 async function verificationStatus(file, claimed) {
   const verification = fs.readFileSync(file, "utf8");
   const answers = await systemOne({ verification }, {
-    open_fail: noul("The verification record in `verification` lists at least one repository check or acceptance item whose verdict is fail, or a finding that is not recorded as resolved."),
-    blocked: noul("The verifier states the checks could not be run for a reason outside the change: a missing toolchain, dependency, service, or credential, or the verification is marked blocked."),
+    open_fail: noul("The verification record in `verification` lists at least one repository check or acceptance item whose verdict is fail, or a finding that is not recorded as resolved.", {
+      true: "An item in the table has verdict fail, or a finding is recorded without a resolution.",
+      false: "Every item is pass, or the only non-pass items are untested and recorded as such, and no finding is left open.",
+    }),
+    blocked: noul("The verifier states the checks could not be run for a reason outside the change: a missing toolchain, dependency, service, or credential, or the verification is marked blocked.", {
+      true: "A toolchain, dependency, service, credential, or data the checks need is missing, so the checks could not run.",
+      false: "The checks ran; a check that ran and failed is a failure, not a block.",
+    }),
   });
   const open = answers.open_fail.noul; const blocked = answers.blocked.noul;
   let status;
@@ -172,6 +223,35 @@ async function verificationStatus(file, claimed) {
   else if (claimed === "passed") status = open > T.safe ? "failed" : "passed";
   else status = open <= T.no ? "passed" : "failed";
   return { text: status, json: { status, claimed, open_fail: open, blocked } };
+}
+
+// The five axes of `review-code`, scored for coverage rather than quality: the failure the loop cannot
+// otherwise see is an axis asserted without evidence, which reads the same as an axis with nothing to report.
+const AXES = {
+  correctness: "Correctness: requirements, boundary cases, failure paths, test validity, state, and lifecycle",
+  readability: "Readability and Simplicity: names, flow, organization, unnecessary abstraction, dead code",
+  architecture: "Architecture: ownership, dependencies, duplication, coupling, boundaries",
+  security: "Security: untrusted input, authorization, secrets, encoding, boundary validation",
+  performance: "Performance: unbounded work, N+1 access, blocking calls, hot-path allocation",
+};
+const AXIS_COVERAGE = [
+  "Not examined: the section is empty, absent, or says nothing about the change",
+  "Asserted: a verdict with no evidence from the change, or a restatement of the heading",
+  "Partial: evidence from some changed code, leaving part of the pinned scope unexamined",
+  "Examined: evidence named from the changed code across the pinned scope, or a stated reason the axis does not apply",
+];
+
+async function axisCoverage(file) {
+  const review = fs.readFileSync(file, "utf8");
+  const answers = await systemOne({ review }, Object.fromEntries(Object.entries(AXES).map(([key, axis]) =>
+    [key, score(`How far does the code review in \`review\` examine the change it pins on this axis: ${axis}`, AXIS_COVERAGE)])));
+  const rows = Object.keys(AXES).map((key) => {
+    const a = answers[key];
+    const level = Number(argmax(a.probabilities));
+    const verdict = a.confidence < T.safe ? "unclear" : level >= 2 ? "covered" : level === 1 ? "asserted" : "skipped";
+    return { axis: key, verdict, level, score: Number(a.score.toFixed(2)), confidence: a.confidence };
+  });
+  return { text: rows.map((r) => `${r.axis}\t${r.verdict}\t${r.level}\t${r.confidence}`).join("\n"), json: rows };
 }
 
 // The first JSON object in `text` that has every required key; else the first that parses; else null.
@@ -537,6 +617,7 @@ async function main(argv) {
     case "review-status": need(2, "<artifact.md> <claimed>"); result = await reviewStatus(rest[0], rest[1]); break;
     case "reproduction-status": need(2, "<artifact.md> <claimed>"); result = await reproductionStatus(rest[0], rest[1]); break;
     case "verification-status": need(2, "<artifact.md> <claimed>"); result = await verificationStatus(rest[0], rest[1]); break;
+    case "axis-coverage": need(1, "<artifact.md>"); result = await axisCoverage(rest[0]); break;
     case "extract-json": result = await extractJson(rest); break;
     case "route-workflow": result = await routeWorkflow(rest); break;
     case "size-children": { const childrenFile = flag(rest, "--children") ?? rest[0]; if (!childrenFile) usage("size-children needs --children <file.json>"); result = await sizeChildren(childrenFile); break; }
@@ -554,6 +635,7 @@ async function main(argv) {
     case "ask": result = await ask(rest); break;
     default: usage(`unknown command ${command ?? "(none)"}; see the header of ${path.basename(process.argv[1])}`);
   }
+  if (lastCall) process.stderr.write(`judge: model ${lastCall.model ?? "unknown"}, tokens ${lastCall.usage?.input_tokens ?? "?"} in / ${lastCall.usage?.output_tokens ?? "?"} out\n`);
   process.stdout.write(`${json && result.json !== null ? JSON.stringify(result.json) : result.text}\n`);
 }
 

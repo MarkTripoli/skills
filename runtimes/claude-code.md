@@ -4,6 +4,7 @@
 
 Invoke a skill by typing `/<name>` in the Claude Code prompt, for example `/create-plan @03-plan-verbose-flag-cli.md`.
 Child workers: call the `Task` tool with `subagent_type: "agent-<role>"` and the assignment text as `prompt`. The worker's final message is the tool result; read it before using any claim.
+Long-running commands (an `archon workflow run` that exits at its first gate): run them with `Bash` and `run_in_background: true`, then read the result with `BashOutput` until the command exits. Never `--detach`.
 
 ## Install
 

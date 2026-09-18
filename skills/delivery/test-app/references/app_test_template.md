@@ -14,7 +14,7 @@ target: "[URL, bundle id, package, or path launched; empty when blocked before l
 - Revision: [`git rev-parse HEAD` and branch]
 - Launched with: [`<exact command or URL>`]
 - Driven with: [`agent-browser`, Playwright, Puppeteer, Maestro, idb, or adb]
-- Graded by: [typed-judgment helper, or own judgment because the helper was unavailable]
+- Graded by: [typed-judgment helper, or own judgment because the helper was unavailable; model `<model>`, tokens `<n>` in / `<m>` out, or `unavailable`]
 
 ## Steps
 

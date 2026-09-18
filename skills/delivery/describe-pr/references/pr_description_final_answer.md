@@ -13,7 +13,7 @@ Reply with the changes you want; they are applied to the same file.
 Running the next command records approval of the pull request description.
 
 Next action:
-Open a new session, then run:
+Open a new session in {run_location}, then run:
 
 ```text
 /resolve-pr-reviews

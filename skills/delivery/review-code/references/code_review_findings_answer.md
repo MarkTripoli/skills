@@ -6,7 +6,7 @@ Review result:
 Fix every validated finding, then review the resulting diff again.
 
 Next action:
-Open a new session, then run:
+Open a new session in {run_location}, then run:
 
 ```text
 /fix-code-review @{artifact_file}

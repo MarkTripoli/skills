@@ -149,7 +149,9 @@ function commonChecks(phase, ctx) {
     // (a gated phase hands off to its iterate skill while it has open decisions).
     const next = typeof phase.next === "function" ? phase.next(ctx) : phase.next;
     if (h.skill !== next) out.push(`reply: hands off to /${h.skill}, expected /${next}`);
-    if (!ctx.answer.slice(0, h.index).trimEnd().endsWith("Next action:\nOpen a new session, then run:")) out.push("reply: the fence must directly follow `Next action:` and `Open a new session, then run:`");
+    const preamble = ctx.answer.slice(0, h.index).trimEnd();
+    const sentence = /Next action:\nOpen a new session in (.+), then run:$/.exec(preamble);
+    if (!sentence || sentence[1].trim() === "") out.push("reply: the fence must directly follow `Next action:` and `Open a new session in <run location>, then run:` with a non-empty location");
   }
   if (!ctx.artifact) out.push(`artifact: no artifact of type ${phase.artifactType} in ${path.basename(ctx.taskDir)} (found: ${ctx.artifacts.map((a) => `${a.file}[${a.fm.type ?? "?"}]`).join(", ") || "none"})`);
   else {

@@ -19,7 +19,7 @@ archon workflow run delivery-start --branch <slug> "Bug: add 1 2 prints NaN. Jus
 archon workflow run delivery-start --branch epic-billing "Write the PRD for usage billing; I want to review the PRD and design, then split it into epics and issues"
 ```
 
-The request decides the pack and the gates: hands-off wording runs unattended, "review the plan" keeps the planning gates, nothing said keeps every gate. `--input workflow=<pack>` and `--input gates=<...>` override. Unsure with gates on: the run pauses once at `confirm`; `archon workflow reject <id> "lean, outline"` names the pack and gates. In an agent session: `/deliver <request>`.
+The request decides the pack and the gates: hands-off wording runs unattended, "review the plan" keeps the planning gates, nothing said keeps every gate. `--input workflow=<pack>` and `--input gates=<...>` override. Unsure with gates on: the run pauses once at `confirm`; `archon workflow reject <id> "lean, outline"` names the pack and gates. In an agent session: `/deliver <request>` routes the same way, starts the run, and replies with the run id and the first pause.
 
 ## Pick a pack
 
@@ -99,7 +99,7 @@ Same packs with an `-omp` suffix (`archon workflow run delivery-full-omp --branc
 - Oh My Pi: `/create-plan @.agents/tasks/<slug>`; new session with `/new`.
 - Pi: `/create-plan @.agents/tasks/<slug>`; new session with `/new`; worker roles run inline.
 
-A skill given no task directory creates one and commits `docs(task): open <slug>`; a by-hand run commits its artifact as `docs(task): <type> artifact`. Paste the reply's fenced command into the next session.
+A skill given no task directory opens the task worktree (`git worktree add ~/.agents/worktrees/<repo>/<slug> -b <slug> <target>`, the default, never asked about; skip cases in [CONVENTIONS.md](../shared/CONVENTIONS.md), Task worktree), creates the directory there, and commits `docs(task): open <slug>`; a by-hand run commits its artifact as `docs(task): <type> artifact`. Run every later session from the worktree and paste the reply's fenced command into it. `git worktree remove <path>` after the merge.
 
 ## Develop / test
 

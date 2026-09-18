@@ -9,7 +9,7 @@ Check:
 Reply with the changes you want; the iteration skill below applies them. Starting iteration records requested changes, not approval.
 
 Next action:
-Open a new session, then run:
+Open a new session in {run_location}, then run:
 
 ```text
 /iterate-design-discussion @{artifact_file}

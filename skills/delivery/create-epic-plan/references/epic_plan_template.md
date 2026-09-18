@@ -69,6 +69,8 @@ sha: [current commit]
 
 ## Sizing judgments
 
+- helper size-children: model `<model>`, tokens `<n>` in / `<m>` out (or `unavailable`)
+
 | Child | Verdict | Weakest test | Probability | Criteria | Split named |
 |---|---|---|---|---|---|
 | [Child outcome] | ok | one_day | 0.00 | ok | none |

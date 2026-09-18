@@ -15,7 +15,7 @@ Expand the structure outline into a detailed implementation plan with concrete e
 
 2. **Read primary inputs fully, others by summary**:
    - Read `references/plan_template.md` and `references/plan_final_answer.md`.
-   - Read completely: `task.md` or `ticket.md`, plus the newest design artifact (the highest-numbered file whose frontmatter `type` is a TDD, PRD, structure outline, or design discussion, in that order of preference).
+   - Read completely: `task.md` or `ticket.md`, plus the design artifact this plan expands: the file the user named with `@...` when one is given, otherwise the newest design artifact (the highest-numbered file whose frontmatter `type` is a TDD, PRD, structure outline, or design discussion, in that order of preference).
    - Other artifacts in the task directory listing: use the `summary` field. Open only when the design leaves a gap.
 
 3. **Read relevant source files**:
@@ -42,4 +42,4 @@ Expand the structure outline into a detailed implementation plan with concrete e
 
 ## Output
 
-1. Save the plan and follow `references/plan_final_answer.md` exactly; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-plan-slug.md](.agents/tasks/<slug>/NN-plan-slug.md)`, and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. When not run by the workflow engine, commit the saved file with `git add <path>` as `docs(task): plan artifact`.
+1. Save the plan and follow `references/plan_final_answer.md` exactly; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-plan-slug.md](.agents/tasks/<slug>/NN-plan-slug.md)`, fill `{artifact_file}` with the saved file's name only (the template carries the `@`; name this artifact and no other file, never a path), and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. Add no prose before or after the template. When not run by the workflow engine, commit the saved file with `git add <path>` as `docs(task): plan artifact`.

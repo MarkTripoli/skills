@@ -7,17 +7,17 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 # Typed Judgment
 
-`judge.mjs` in this directory turns a decision the workflow needs about agent or human prose into a typed question for the TypeSafe System One model (`jev`): a probability for a yes/no, one option out of a defined set with a confidence, or a level on a described scale. Code keeps the thresholds and the fallback; the model supplies the reading of the text. Calls take well under a second and a few thousand tokens.
+`judge.mjs` in this directory turns a decision the workflow needs about agent or human prose into a typed question for the TypeSafe System One model (`jev`): a probability for a yes/no, one option out of a defined set with a confidence, or a level on a described scale. Code keeps the thresholds and the fallback; the model supplies the reading of the text. One attempt takes well under a second and a few thousand tokens; a rate-limited or failing attempt is retried inside `JUDGE_TIMEOUT`, so the worst case is the timeout, 20 seconds by default, and not the round trip.
 
 ## When it runs
 
-Only when a skill step or a pack node names it. The packs call it from bash nodes; skills such as `create-epic-plan`, `resolve-pr-reviews`, `test-app`, and `verify-implementation` name the command to run in their steps. Never add a call the step does not ask for.
+Only when a skill step or a pack node names it. The packs call it from bash nodes; skills such as `create-epic-plan`, `resolve-pr-reviews`, `review-code`, `test-app`, and `verify-implementation` name the command to run in their steps. Never add a call the step does not ask for.
 
 ## Availability and fallback
 
 The helper needs a TypeSafe key (from [console.typesafe.ai](https://console.typesafe.ai/settings/keys)): `TYPESAFE_API_KEY` in the environment, else the first line of the file `TYPESAFE_API_KEY_FILE` names, else `~/.config/typesafe/api_key` (under `$XDG_CONFIG_HOME` when set). The file exists because Archon nodes, hooks, and agent-spawned shells do not inherit an interactive shell's exports; write it once with `umask 077; mkdir -p ~/.config/typesafe; printf '%s\n' "$TYPESAFE_API_KEY" > ~/.config/typesafe/api_key`. Without a key, or when the service does not answer, every command prints nothing and exits 3; `extract-json` prints its input unchanged instead. A caller then applies its own rule: the pack's deterministic check, or the agent's own reading in a skill step. Never fail a step because the helper was unavailable, and never ask the user for the key mid-run: mention once in the reply that judgments were skipped.
 
-`TYPESAFE_BASE_URL` points the helper at another endpoint (tests use a stub); `TYPESAFE_DEFAULT_MODEL` picks the model; `JUDGE_TIMEOUT` is seconds, default 20.
+`TYPESAFE_BASE_URL` points the helper at another endpoint (tests use a stub); `TYPESAFE_DEFAULT_MODEL` picks the model; `JUDGE_TIMEOUT` is seconds, default 20, and bounds the whole call; `JUDGE_RETRIES` is how many transient failures (429, 529, any 5xx) are retried with `retry-after` or exponential backoff, default 2. A request the service rejects as too large exits 3 with `request too large for the model`, is never retried, and means the caller should send fewer questions.
 
 ## Commands
 
@@ -29,6 +29,7 @@ Run from the skill's directory under the installed skills (`<skills dir>/typed-j
 | `review-status <artifact.md> <claimed>` | effective `clean`, `findings`, `blocked`; moves a claim only toward the safer status | review block |
 | `reproduction-status <artifact.md> <claimed>` | `reproduced` or `not-reproduced` | bugfix pack |
 | `verification-status <artifact.md> <claimed>` | effective `passed`, `failed`, `blocked`; moves a claim only toward the safer status | verify block |
+| `axis-coverage <artifact.md>` | `covered`, `asserted`, `skipped`, or `unclear` per review axis, with a level 0 to 3 | `review-code` |
 | `extract-json --required a,b --enum status=x,y [--dir d] [file]` | the JSON object an answer contains or implies, else the answer as is | generated omp packs |
 | `route-workflow [--children file.json] [text]` | the pack that fits a request, or one per epic child | task node, `create-epic-plan` |
 | `size-children --children file.json` | `ok`, `split`, or `unclear` per epic child, with its weakest sizing test and the split to apply | `create-epic-plan` |
@@ -52,5 +53,5 @@ Input shapes: `--children` is `[{name, prompt}]` for `route-workflow` and `[{nam
 ## Rules
 
 - What the command sends leaves the machine: the named artifact, request, feedback, thread bodies, or step observations, nothing else. Do not add repository code, diffs, or secrets to the state.
-- Record the judgment where the skill's template has a place for it (the answer word and its probability or confidence), so a reader can see why the workflow branched.
+- Record the judgment where the skill's template has a place for it (the answer word and its probability or confidence), so a reader can see why the workflow branched. An answered call writes `judge: model <model>, tokens <n> in / <m> out` to stderr; record that model and those counts on the same line, so two artifacts that disagree can be compared by version. `jev-latest` resolves to a moving version, which is the reason to pin it in the record.
 - Thresholds live in the helper; a skill step overrides none of them. When a printed verdict is `unclear` or `undecided`, the step's own rule decides.

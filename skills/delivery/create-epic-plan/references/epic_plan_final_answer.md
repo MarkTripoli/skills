@@ -10,7 +10,7 @@ Reply with the changes you want; they are applied to the same file.
 Running the next command records approval of the epic plan and creates the child tasks.
 
 Next action:
-Open a new session, then run:
+Open a new session in {run_location}, then run:
 
 ```text
 /start-epic-delivery @{artifact_file}
