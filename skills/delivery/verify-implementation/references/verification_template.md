@@ -15,7 +15,7 @@ target: [merge target branch]
 - Target: [`<merge target>`; `<n>` files changed, `<m>` of them tests]
 - Checks from: [`package.json` scripts, `Makefile`, CI file, or none defined]
 - Coverage: [`<n>` acceptance items; `<k>` claimed by a receipt, `<n - k>` claimed by none]
-- Graded by: [typed-judgment helper (`grade-steps --kind command`), or own judgment because the helper was unavailable]
+- Graded by: [typed-judgment helper (`grade-steps --kind command`), or own judgment because the helper was unavailable; model `<model>`, tokens `<n>` in / `<m>` out, or `unavailable`]
 
 ## Items
 

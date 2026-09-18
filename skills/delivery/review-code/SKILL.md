@@ -23,6 +23,8 @@ Read `task.md`/`ticket.md`, the newest artifact of the implementation source typ
 
 When `task.md` lists acceptance criteria, decide each one against the diff and its tests. A criterion nothing in the change proves is a major-severity finding that names the missing check; a criterion the change contradicts is critical. When the task directory holds a `verification` artifact (newest `NN-verification-*.md`), read its items table first: a criterion it records as `pass` with a command and quoted output is proven and is not re-run here; its `fail` and `untested` items are findings to confirm against the diff, and its `## Findings` name the checks to read.
 
+When the task directory holds an earlier `NN-code-review-*.md`, read only the `### CR-...` heading lines under its `## Critical and Required Findings`, and no finding body. Record each one in `## Previous Round` as `fixed`, `still open`, or `declined`, decided from the current diff and the fix round's recorded reason, never from the previous reviewer's reasoning. A `still open` entry is raised again under `## Critical and Required Findings` with a new identifier so the gate counts it; a finding the previous round did not raise is judged on its own.
+
 ## Review
 
 Trace behavior through callers/tests. Evaluate every applicable axis:
@@ -63,7 +65,11 @@ Verify tests/build/manual/screenshots. Green checks alone are not sufficient.
 
 ## Save
 
-Take the next artifact number. Write `NN-code-review-<summary>.md` using template. Set `findings` when actionable remain, `clean` when none, `blocked` when gate failed. Blocked is not clean. Save the file. When not run by the workflow engine, commit it with `git add <path>` as `docs(task): code-review artifact`.
+Take the next artifact number. Write `NN-code-review-<summary>.md` using template. Set `findings` when actionable remain, `clean` when none, `blocked` when gate failed. Blocked is not clean. Save the file.
+
+Then run `node <skills dir>/typed-judgment/judge.mjs axis-coverage <the saved file> --json`, where `<skills dir>` is the directory that holds this skill (in a checkout, `skills/delivery`). Record each row's verdict, level, and confidence on that axis's `helper coverage` line, and the stderr provenance line under the heading. An axis that comes back `skipped` or `asserted` was not examined against the pinned scope: examine it, rewrite that section with evidence from the changed code or the reason the axis does not apply, save again, and run the command once more. Run it at most twice and record what the second run says. A finding the second pass turns up is a finding like any other and can change the status. Exit 3, no `node`, no `TYPESAFE_API_KEY`, or an `unclear` row: write `unavailable` on the lines it would have filled, decide those axes yourself, and say under `## Review Limits` that judgments were skipped.
+
+When not run by the workflow engine, commit it with `git add <path>` as `docs(task): code-review artifact`.
 
 ## Next
 

@@ -15,8 +15,9 @@ export const score = (level, levels, p = 0.95) => {
   return { type: "score", score: level, legend: Object.fromEntries(levels.map((text, i) => [String(i), text])), probabilities: Object.fromEntries(levels.map((_, i) => [String(i), i === level ? p : rest])), confidence: p };
 };
 
-export function startStub(decide) {
+export function startStub(decide, options = {}) {
   const requests = [];
+  const statuses = [...(options.statuses ?? [])];
   const server = http.createServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
@@ -24,6 +25,12 @@ export function startStub(decide) {
       if (request.headers.authorization !== "Bearer test-key") { response.writeHead(401); response.end('{"error":"unauthorized"}'); return; }
       const payload = JSON.parse(body);
       requests.push(payload);
+      const status = statuses.shift();
+      if (status) {
+        response.writeHead(status, options.retryAfter === undefined ? {} : { "retry-after": String(options.retryAfter) });
+        response.end(status === 400 ? '{"error":"max_tokens_exceeded"}' : `{"error":"status ${status}"}`);
+        return;
+      }
       const answers = {};
       for (const [id, question] of Object.entries(payload.questions)) answers[id] = decide(id, question, payload.state);
       response.writeHead(200, { "content-type": "application/json" });

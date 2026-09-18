@@ -165,7 +165,7 @@ Why: an Archon run works in a disposable worktree, so an uncommitted task direct
 
 ## Typed judgments
 
-Where a pack once parsed prose, it now asks `typed-judgment/judge.mjs` (installed beside the skills) a typed question and branches on the answer; the deterministic rule stays as the fallback, so a machine without `TYPESAFE_API_KEY` runs exactly as before. Calls take under a second. Where each sits:
+Where a pack once parsed prose, it now asks `typed-judgment/judge.mjs` (installed beside the skills) a typed question and branches on the answer; the deterministic rule stays as the fallback, so a machine without `TYPESAFE_API_KEY` runs exactly as before. One attempt takes under a second; a rate-limited or failing attempt is retried twice (`JUDGE_RETRIES`) inside `JUDGE_TIMEOUT`, so the worst case is the timeout, 20 seconds by default, and not the round trip. Where each sits:
 
 | Decision | Node | Command | Fallback |
 |---|---|---|---|
@@ -173,6 +173,7 @@ Where a pack once parsed prose, it now asks `typed-judgment/judge.mjs` (installe
 | Is a review really clean | `delivery-review` `verify-review`; `delivery-implement` `verify-phase`, `verify-phase-auto` | `review-status` (only ever moves a claim toward `findings` or `blocked`) | the claimed status |
 | Was the bug really reproduced | `delivery-bugfix` `verify-reproduction`, `attempt-count` | `reproduction-status` | the claimed status |
 | Did the verification really pass | `delivery-verify` `verification-status` | `verification-status` (only ever moves a claim toward `failed` or `blocked`) | the claimed status |
+| Whether each review axis was examined or only asserted | `review-code` save step | `axis-coverage` | the session's own reading |
 | What a "request changes" text asks for | `delivery-gate-phase` and `delivery-implement` `until_bash` (`proceed` ends the loop) and `intent` (`stop` cancels through `stopped`) | `feedback-intent` | `revise` |
 | The task slug, complexity, and the pack the request reads like | `delivery-task` `create` (`complexity:` and `suggested_workflow:` in `task.md`, a stderr warning on a mismatch) | `slug`, `tier`, `route-workflow` | the word rule; no fields |
 | Whether an epic child is one pull request, and which split fits when it is not | `create-epic-plan` step 4 (the `## Sizing judgments` table) | `size-children` | the skill's own reading of [shared/SLICING.md](../shared/SLICING.md) |
@@ -180,7 +181,7 @@ Where a pack once parsed prose, it now asks `typed-judgment/judge.mjs` (installe
 | Which pack, and how much human involvement, a request asks for | `delivery-start` `route`; the `deliver` skill | `route-workflow`, `autonomy` | `full`, `all`, and a `confirm` pause when gates are on |
 | Research: is a question neutral, which worker answers it, which candidates to read first, is each cited claim supported, is every question answered | `create-research-questions`, `create-research`, and their iterate skills | `neutral`, `route-question`, `rerank`, `cite`, `coverage` | the skill's own reading |
 
-Skills call it too where their steps say so (`create-epic-plan`, `resolve-pr-reviews`, `test-app`, `verify-implementation`); `shared/CONVENTIONS.md`, "Typed judgments", has the rules. Verdicts and probabilities are recorded in the artifacts, not in the run.
+Skills call it too where their steps say so (`create-epic-plan`, `resolve-pr-reviews`, `review-code`, `test-app`, `verify-implementation`); `shared/CONVENTIONS.md`, "Typed judgments", has the rules. Verdicts and probabilities are recorded in the artifacts, not in the run.
 
 ## Model tiers
 
@@ -238,7 +239,7 @@ Artifact type is the frontmatter `type` of the artifact the skill writes. "Human
 | deliver | none | no | by hand: routes a request to a pack and an autonomy level (`judge.mjs route-workflow`, `autonomy`), then starts `archon workflow run delivery-<pack>` in the foreground, waits for its first pause or its end, and reports the run id and the gate it stopped at; without Archon, opens the task worktree and the task directory in it and hands off to the chain's first skill |
 | verify-implementation | verification | no | `delivery-verify` `verification` loop in every pack except `delivery-epic`, `delivery-program`, and `delivery-resolve-reviews`, unless `verify` is `false` |
 | test-app | app-test | no | `delivery-app-test` `test` loop in every pack except `delivery-epic` and `delivery-resolve-reviews`, when `app_test` is `web`, `ios`, or `android` |
-| typed-judgment | none | no | helper: `judge.mjs` is run by pack bash nodes and by `create-epic-plan`, `resolve-pr-reviews`, `test-app`, and `verify-implementation` steps |
+| typed-judgment | none | no | helper: `judge.mjs` is run by pack bash nodes and by `create-epic-plan`, `resolve-pr-reviews`, `review-code`, `test-app`, and `verify-implementation` steps |
 | describe-pr | pr-description | yes | `delivery-gate-phase` `pr` in every pack except `delivery-epic` and `delivery-resolve-reviews`; also the iterate skill of that gate |
 | resolve-pr-reviews | pr-review | no | `delivery-resolve-reviews` |
 | ci-commit | commit | no | by hand; the `delivery-oneshot` and `delivery-bugfix` commit prompts follow its conventions |
