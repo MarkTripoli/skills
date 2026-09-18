@@ -46,6 +46,7 @@ nodes:
       set -eu
       dir=${INPUTS_TASK_DIR:-$INPUTS.task_dir}
       skills=${INPUTS_SKILLS_DIR:-$INPUTS.skills_dir}
+      case "$skills" in "~") skills="$HOME" ;; "~/"*) skills="$HOME${skills#\~}" ;; esac
       boundary=${INPUTS_BOUNDARY:-$INPUTS.boundary}
       gates_requested=${INPUTS_GATES:-$INPUTS.gates}
       tiers=${INPUTS_TIERS:-$INPUTS.tiers}

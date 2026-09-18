@@ -332,6 +332,13 @@ test("decide node: the TypeSafe stub skips a confident-no phase and writes the e
     });
     const rewritten = fs.readFileSync(artifactPath, "utf8");
     assert.match(rewritten, /^\| design discussion \| yes \| design \| - \| - \| - \|/m, "unavailable: every probability and bar is -");
+
+    // 4. skills_dir: `~` expands against HOME the way the task node's does. The block's own default is
+    // `~/.agents/skills`, and Archon passes it through as INPUTS_SKILLS_DIR, so without the expansion the
+    // helper is never found and every run falls back to the canonical chain with "available":"false".
+    const tilde = await runDecideNode(cwd, { INPUTS_TASK_DIR: dir, HOME: path.dirname(SKILLS), INPUTS_SKILLS_DIR: `~/${path.basename(SKILLS)}`, ...stub.env });
+    assert.equal(tilde.code, 0, tilde.err);
+    assert.equal(JSON.parse(tilde.out).available, "true", "a `~` skills_dir reaches the helper");
   } finally {
     stub.close();
     fs.rmSync(cwd, { recursive: true, force: true });
