@@ -42,25 +42,32 @@ summary: "State the reviewed scope, the highest-risk result, and what the next p
 
 ## Five-Axis Assessment
 
+- helper axis-coverage: model `<model>`, tokens `<n>` in / `<m>` out (or `unavailable`)
+
 ### Correctness
 
 - assessment and evidence:
+- helper coverage: covered | asserted | skipped | unclear, level 0-3, confidence 0.00 (or `unavailable`)
 
 ### Readability and Simplicity
 
 - assessment and evidence:
+- helper coverage: covered | asserted | skipped | unclear, level 0-3, confidence 0.00 (or `unavailable`)
 
 ### Architecture
 
 - assessment and evidence:
+- helper coverage: covered | asserted | skipped | unclear, level 0-3, confidence 0.00 (or `unavailable`)
 
 ### Security
 
 - assessment and evidence:
+- helper coverage: covered | asserted | skipped | unclear, level 0-3, confidence 0.00 (or `unavailable`)
 
 ### Performance
 
 - assessment and evidence:
+- helper coverage: covered | asserted | skipped | unclear, level 0-3, confidence 0.00 (or `unavailable`)
 
 ## Verification Story
 

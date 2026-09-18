@@ -101,6 +101,26 @@ test("judge verification-status: a passed claim with a failed item becomes faile
   } finally { stub.close(); }
 });
 
+test("judge axis-coverage: one level per review axis, an unsure level goes back to the reviewer", async () => {
+  let level = 3; let confidence = 0.9;
+  const stub = await startStub((id, question) => score(level, question.criteria, confidence));
+  try {
+    const review = tmp("08-code-review-x.md", "# Code Review\n\n## Five-Axis Assessment\n");
+    assert.match((await judge(["axis-coverage", review], stub.env)).out.split("\n")[0], /^correctness\tcovered\t3\t/);
+    assert.deepEqual(Object.keys(stub.requests.at(-1).questions), ["correctness", "readability", "architecture", "security", "performance"]);
+    assert.equal(stub.requests.at(-1).state.review, fs.readFileSync(review, "utf8"), "the artifact text is the state");
+    level = 1;
+    assert.match((await judge(["axis-coverage", review], stub.env)).out.split("\n")[0], /^correctness\tasserted\t1\t/);
+    level = 0;
+    assert.match((await judge(["axis-coverage", review], stub.env)).out.split("\n")[0], /^correctness\tskipped\t0\t/);
+    confidence = 0.4;
+    assert.match((await judge(["axis-coverage", review], stub.env)).out.split("\n")[0], /^correctness\tunclear\t0\t/);
+    confidence = 0.9;
+    assert.equal(JSON.parse((await judge(["axis-coverage", review, "--json"], stub.env)).out).length, 5);
+    assert.equal((await judge(["axis-coverage"], stub.env)).code, 2);
+  } finally { stub.close(); }
+});
+
 test("judge systemOne: a rate limit or a 5xx is retried inside the timeout, an oversized request is not, and an answered call names its model", async () => {
   const review = tmp("08-code-review-x.md", "# Review\n");
   const once = await startStub(() => noul(0.1), { statuses: [429], retryAfter: 0 });

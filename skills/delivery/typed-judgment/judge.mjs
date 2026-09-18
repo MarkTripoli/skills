@@ -10,6 +10,7 @@
 //   review-status <artifact.md> <claimed>        clean | findings | blocked (never relaxes a claim)
 //   reproduction-status <artifact.md> <claimed>  reproduced | not-reproduced
 //   verification-status <artifact.md> <claimed>  passed | failed | blocked (never relaxes a claim)
+//   axis-coverage <artifact.md>                  covered | asserted | skipped | unclear per review axis
 //   extract-json --required a,b --enum f=x,y [--dir d] [file|-]   a JSON object, or the input text
 //   route-workflow [--children file.json] [text|@file|-]          {workflow, confidence, probabilities}
 //   size-children --children file.json          one ok | split | unclear per epic child, with the split to apply
@@ -206,6 +207,35 @@ async function verificationStatus(file, claimed) {
   else if (claimed === "passed") status = open > T.safe ? "failed" : "passed";
   else status = open <= T.no ? "passed" : "failed";
   return { text: status, json: { status, claimed, open_fail: open, blocked } };
+}
+
+// The five axes of `review-code`, scored for coverage rather than quality: the failure the loop cannot
+// otherwise see is an axis asserted without evidence, which reads the same as an axis with nothing to report.
+const AXES = {
+  correctness: "Correctness: requirements, boundary cases, failure paths, test validity, state, and lifecycle",
+  readability: "Readability and Simplicity: names, flow, organization, unnecessary abstraction, dead code",
+  architecture: "Architecture: ownership, dependencies, duplication, coupling, boundaries",
+  security: "Security: untrusted input, authorization, secrets, encoding, boundary validation",
+  performance: "Performance: unbounded work, N+1 access, blocking calls, hot-path allocation",
+};
+const AXIS_COVERAGE = [
+  "Not examined: the section is empty, absent, or says nothing about the change",
+  "Asserted: a verdict with no evidence from the change, or a restatement of the heading",
+  "Partial: evidence from some changed code, leaving part of the pinned scope unexamined",
+  "Examined: evidence named from the changed code across the pinned scope, or a stated reason the axis does not apply",
+];
+
+async function axisCoverage(file) {
+  const review = fs.readFileSync(file, "utf8");
+  const answers = await systemOne({ review }, Object.fromEntries(Object.entries(AXES).map(([key, axis]) =>
+    [key, score(`How far does the code review in \`review\` examine the change it pins on this axis: ${axis}`, AXIS_COVERAGE)])));
+  const rows = Object.keys(AXES).map((key) => {
+    const a = answers[key];
+    const level = Number(argmax(a.probabilities));
+    const verdict = a.confidence < T.safe ? "unclear" : level >= 2 ? "covered" : level === 1 ? "asserted" : "skipped";
+    return { axis: key, verdict, level, score: Number(a.score.toFixed(2)), confidence: a.confidence };
+  });
+  return { text: rows.map((r) => `${r.axis}\t${r.verdict}\t${r.level}\t${r.confidence}`).join("\n"), json: rows };
 }
 
 // The first JSON object in `text` that has every required key; else the first that parses; else null.
@@ -571,6 +601,7 @@ async function main(argv) {
     case "review-status": need(2, "<artifact.md> <claimed>"); result = await reviewStatus(rest[0], rest[1]); break;
     case "reproduction-status": need(2, "<artifact.md> <claimed>"); result = await reproductionStatus(rest[0], rest[1]); break;
     case "verification-status": need(2, "<artifact.md> <claimed>"); result = await verificationStatus(rest[0], rest[1]); break;
+    case "axis-coverage": need(1, "<artifact.md>"); result = await axisCoverage(rest[0]); break;
     case "extract-json": result = await extractJson(rest); break;
     case "route-workflow": result = await routeWorkflow(rest); break;
     case "size-children": { const childrenFile = flag(rest, "--children") ?? rest[0]; if (!childrenFile) usage("size-children needs --children <file.json>"); result = await sizeChildren(childrenFile); break; }
