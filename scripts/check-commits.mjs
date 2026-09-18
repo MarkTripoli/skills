@@ -2,6 +2,7 @@
 // Enforces the Conventional Commits subject rule from shared/CONVENTIONS.md.
 // Usage: node scripts/check-commits.mjs --message-file <path>          (commit-msg hook)
 //        node scripts/check-commits.mjs <base>..<head> [--title <text>] (CI: every non-merge commit in the range, plus the PR title)
+//        node scripts/check-commits.mjs --title <text>                  (describe-pr: the title alone, before the PR is opened)
 // Exit 1 with one line per failing subject.
 
 import fs from "node:fs";
@@ -50,7 +51,7 @@ function parseArgs(argv) {
     else if (arg.startsWith("--")) throw new Error(`unknown option ${arg}`);
     else options.range = arg;
   }
-  if (!options.messageFile && !options.range) throw new Error("expected --message-file <path> or a <base>..<head> range");
+  if (!options.messageFile && !options.range && options.title === null) throw new Error("expected --message-file <path>, a <base>..<head> range, or --title <text>");
   return options;
 }
 

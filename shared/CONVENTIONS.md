@@ -152,7 +152,7 @@ Every commit message follows [Conventional Commits](https://www.conventionalcomm
 - The body says why, not what the diff shows. Footers reference issues (`Refs: #123`, `Closes: #123`).
 - One type per commit: a `feat` and its `test` may share a commit; a `feat` and an unrelated `fix` never do.
 
-Validate the subject before committing: it must match `^(feat|fix|refactor|perf|test|docs|build|ci|chore|style|revert)(\([a-z0-9][a-z0-9-]*\))?!?: [a-z0-9][^\n]*[^.\n]$` and be at most 72 characters. A subject that fails is rewritten, never committed.
+Validate the subject before committing: it must match `^(feat|fix|refactor|perf|test|docs|build|ci|chore|style|revert)(\([a-z0-9][a-z0-9-]*\))?!?: [a-z0-9][^\n]*[^.\n]$` and be at most 72 characters. A subject that fails is rewritten, never committed. A pull request title is a subject under the same rule: the `Commits` workflow runs `check-commits.mjs --title` on it, and a title that fails is shortened or rewritten before the pull request is opened or retitled.
 
 ## Child workers
 

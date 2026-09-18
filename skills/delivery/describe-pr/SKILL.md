@@ -39,7 +39,9 @@ git diff <base>...HEAD
 
 On GitLab, `glab mr view` replaces the `gh pr view` line. `<base>` is the existing pull request's base, else `base:` from `task.md` when present, else the repository default branch (`git symbolic-ref --short refs/remotes/origin/HEAD`).
 
-If no PR exists, inspect branch status and committed changes. Commit and push only when required: code commits stage explicit code paths; uncommitted task artifacts go in their own `docs(task): <artifact type> artifact` commit per the conventions' Commits section. Then create the pull request with `gh pr create` or `glab mr create`. With neither CLI, print the branch and base for a manual pull request.
+If no PR exists, inspect branch status and committed changes. Commit and push only when required: code commits stage explicit code paths; uncommitted task artifacts go in their own `docs(task): <artifact type> artifact` commit per the conventions' Commits section. Then create the pull request with `gh pr create --title "<title>"` or `glab mr create --title "<title>"`. With neither CLI, print the branch and base for a manual pull request.
+
+The title is a Conventional Commits subject under the conventions' rule: `<type>(<scope>): <description>`, lower-case description, no trailing period, at most 72 characters including the type and scope. Write it for the change as a whole, not the first commit. Before creating or retitling, run `node scripts/check-commits.mjs --title "<title>"` when the repository has that script; otherwise count the characters and match the pattern yourself. A title that fails is shortened or rewritten; it is never sent to the host, because the `Commits` check fails the pull request on it.
 
 ### 3. Gather context
 
@@ -76,7 +78,7 @@ Save the file. When not run by the workflow engine, commit it with `git add <pat
 2. `glab` on PATH, GitLab MR: `glab mr update <number> --description "$(cat <path>)"` (new MR: `glab mr create --target-branch <base> --description "$(cat <path>)"`).
 3. Otherwise: print the branch, base, and description path for a manual pull request.
 
-Confirm URL, title, number, base, head.
+Confirm URL, title, number, base, head. An existing pull request whose title fails the rule above is retitled with `gh pr edit <number> --title "<title>"` (`glab mr update <number> --title "<title>"`).
 
 ### 6. Report
 
