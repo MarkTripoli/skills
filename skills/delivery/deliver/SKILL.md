@@ -1,13 +1,13 @@
 ---
 name: deliver
-description: Run for /deliver requests, or when a person has a request and does not know which delivery pack or skill starts it. Route the request to a pack and an autonomy level, then print the `archon workflow run` command or, without Archon, open the task directory and hand off to the chain's first skill.
+description: Run for /deliver requests, or when a person has a request and does not know which delivery pack or skill starts it. Route the request to a pack and an autonomy level, then start the `archon workflow run` (or print the command when asked) or, without Archon, open the task directory and hand off to the chain's first skill.
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
 
 # Deliver
 
-One command for a request whose pack is not yet chosen. You read the request, pick the pack and how many human gates it keeps, and hand the work to the engine that runs it: Archon when it is installed, the skills by hand otherwise. This skill implements nothing and writes no artifact; at most it opens the task directory.
+One command for a request whose pack is not yet chosen. You read the request, pick the pack and how many human gates it keeps, and hand the work to the engine that runs it: Archon when it is installed, the skills by hand otherwise. This skill implements nothing and writes no artifact; at most it starts the run or opens the task directory.
 
 ## Steps
 
@@ -36,12 +36,13 @@ One command for a request whose pack is not yet chosen. You read the request, pi
 
 3. **Confirm when the pick is soft.** When `confidence` is below 0.8, or the two highest `probabilities` are within 0.2 of each other, or your own reading finds two packs that fit, ask the user one question: the top two packs with one clause each on why, and the autonomy level you will use. Continue with the answer; a named pack takes confidence 1. Otherwise ask nothing.
 
-4. **With Archon** (`command -v archon` succeeds, `git rev-parse --is-inside-work-tree` succeeds, and `git remote get-url origin` prints a remote): compute the branch name and print the command; do not run it.
+4. **With Archon** (`command -v archon` succeeds, `git rev-parse --is-inside-work-tree` succeeds, and `git remote get-url origin` prints a remote): compute the branch name and the command, then start the run. Print the command without running it only when the request asks for that (`print the command`, `show me the command`, `don't run it`, `command only`).
 
    - Branch: the request's first line, lower-cased, every character outside `a-z0-9` and space replaced by a space, split into words, the stop words `a an the to of for in on and or with that this add make create please fix bug` dropped, the first four words joined with `-`. When no word survives, take the first four words without dropping any; `task` when the line is empty. `epic` and `program` prefix the result with `epic-`, because `start-epic-delivery` refuses to run on `main`, `master`, or a detached `HEAD`. This is the rule the `delivery-task` node applies, so the branch and the task slug match.
    - Command: `archon workflow run delivery-<pack> --branch <branch> --input gates=<gates> '<request>'`, the request in shell single quotes with every `'` written as `'\''`. Add `--input app_test=<web|ios|android>` when the request asks for the running application to be tested on one of those surfaces, and `--input app_target=<url, bundle id, or package>` when it names one; `epic` and `program` take neither. Omit `--input gates=` only when `gates` is `all`, the default.
+   - Start: run the command from the project root as a long-running process that outlives this reply (Archon refuses `--detach` for a pack with gates on; the process prints "Workflow paused" and exits at each gate, or runs to the end with `gates=none`). Do not wait for it. Take the run id from `archon workflow status --json`: the entry of `.runs[]` whose `workflow_name` is `delivery-<pack>` and whose `working_path` ends in `/<branch>`; retry once after two seconds when it is not there yet. A start that exits nonzero before that is reported as cause and fix (the first error line, and the command to rerun by hand); the reply then carries no run id.
    - Pauses: from the pack's gate list (full `design`, `plan`, `phases`, `pr`; lean `outline`, `phases`, `pr`; prd `prd`, `tdd`, `plan`, `phases`, `pr`; oneshot `pr`; bugfix `reproduce`, `pr`; epic `plan`; program `prd`, `tdd`, `plan`) keep the names `gates` leaves on; `none` leaves none.
-   - Reply with `references/deliver_archon_answer.md`, every `<...>` slot filled. The reply is terminal: the printed command starts the workflow, so no skill command follows.
+   - Reply with `references/deliver_archon_answer.md`, every `<...>` slot filled and the started or command-only sentences chosen. The reply is terminal: the run, started or to be started, owns the chain, so no skill command follows.
 
 5. **Without Archon**: open the task directory and hand off to the chain's first skill.
 
@@ -51,7 +52,7 @@ One command for a request whose pack is not yet chosen. You read the request, pi
 
 ## Rules
 
-- Never start a pack's phases by hand when Archon is present; the printed command is the whole deliverable. Never run the command for the user.
+- Never start a pack's phases by hand when Archon is present; the run is the whole deliverable. Start it unless the request asks for the command only, and then print the command and nothing else runs.
 - Route on the request alone: the helper receives the request text and nothing else. Do not read the repository to decide the pack.
 - One question at most (step 3), and only when the pick is soft. A named pack or gate list in the request is final.
 - `epic` stays `epic` and `prd` stays `prd`; `program` needs both a PRD word and a children word in the request, or the name itself.
