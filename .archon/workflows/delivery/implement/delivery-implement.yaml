@@ -108,32 +108,35 @@ nodes:
           depends_on: [intent]
           when: "$intent.output.intent == 'stop'"
 
-        # The phase to implement, named for the session so a plan whose boxes lag behind its receipts
-        # still advances: the helper's confident `next` when available, else the first `## Phase N` /
-        # `## Step N` section (heading level 2 or 3, outside code fences) with an open box, else empty.
+        # The phase to implement, named for the session. The box count is the floor here too: with no open
+        # box under any `## Phase N` / `## Step N` section (heading level 2 or 3, outside code fences) the
+        # answer is empty and the helper is not asked, because a confident but wrong `next` on a finished
+        # plan sends the session back to phase 1. With a box open, the helper's confident `next` wins (a
+        # plan whose boxes lag behind its receipts still advances), else the first open section.
         - id: next-phase
           bash: |
             set -eu
             plan=$(ls -1 $INPUTS.task_dir/??-plan-*.md $INPUTS.task_dir/??-structure-outline-*.md 2>/dev/null | sort | tail -1)
             next=""
             if [ -n "$plan" ]; then
-              skills=$INPUTS.skills_dir
-              judge="$skills/typed-judgment/judge.mjs"
-              if [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
-                judged=$(node "$judge" plan-remaining --json "$plan" 2>/dev/null) || judged=""
-                if [ -n "$judged" ]; then
-                  next=$(printf '%s' "$judged" | node -e 'let s="";process.stdin.on("data",d=>{s+=d}).on("end",()=>{const o=JSON.parse(s);process.stdout.write(o.next?String(o.next):"")})' 2>/dev/null) || next=""
+              first_open=$(awk '
+                /^[[:space:]]*```/ { infence = !infence; next }
+                infence { next }
+                /^##(#)? (Phase|Step) [0-9]+/ { if (open) exit; match($0, /^#+/); level = RLENGTH; title = substr($0, RLENGTH + 2); inphase = 1; next }
+                /^#+ / { match($0, /^#+/); if (inphase && RLENGTH <= level) { if (open) exit; inphase = 0 } next }
+                inphase && /^[[:space:]]*- \[ \]/ { open = 1 }
+                END { if (open) print title }
+              ' "$plan")
+              if [ -n "$first_open" ]; then
+                skills=$INPUTS.skills_dir
+                judge="$skills/typed-judgment/judge.mjs"
+                if [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+                  judged=$(node "$judge" plan-remaining --json "$plan" 2>/dev/null) || judged=""
+                  if [ -n "$judged" ]; then
+                    next=$(printf '%s' "$judged" | node -e 'let s="";process.stdin.on("data",d=>{s+=d}).on("end",()=>{const o=JSON.parse(s);process.stdout.write(o.next?String(o.next):"")})' 2>/dev/null) || next=""
+                  fi
                 fi
-              fi
-              if [ -z "$next" ]; then
-                next=$(awk '
-                  /^[[:space:]]*```/ { infence = !infence; next }
-                  infence { next }
-                  /^##(#)? (Phase|Step) [0-9]+/ { if (open) exit; match($0, /^#+/); level = RLENGTH; title = substr($0, RLENGTH + 2); inphase = 1; next }
-                  /^#+ / { match($0, /^#+/); if (inphase && RLENGTH <= level) { if (open) exit; inphase = 0 } next }
-                  inphase && /^[[:space:]]*- \[ \]/ { open = 1 }
-                  END { if (open) print title }
-                ' "$plan")
+                test -n "$next" || next=$first_open
               fi
             fi
             next_json=$(printf '%s' "$next" | tr '\t' ' ' | sed 's/\\/\\\\/g; s/"/\\"/g')
@@ -155,7 +158,7 @@ nodes:
             feedback: $LOOP_PREV.gate.output.text
             feedback intent: $intent.output.intent
 
-            When the decision above is empty or approve, or the feedback intent is proceed, read and follow $INPUTS.skills_dir/$INPUTS.skill/SKILL.md, the installed `$INPUTS.skill` skill, for task directory $INPUTS.task_dir: implement the first incomplete phase of the newest plan or outline, tick its boxes, write its receipt, commit with explicit paths, and stop after that one phase. The phase to implement when named: $next-phase.output.next; when empty, the first incomplete phase.
+            When the decision above is empty or approve, or the feedback intent is proceed, read and follow $INPUTS.skills_dir/$INPUTS.skill/SKILL.md, the installed `$INPUTS.skill` skill, for task directory $INPUTS.task_dir: implement the first incomplete phase of the newest plan or outline, tick its boxes, write its receipt, commit with explicit paths, and stop after that one phase. The phase to implement when named: $next-phase.output.next; when empty, the first phase with an unchecked box, and when no phase has one, write nothing, change nothing, and print one line saying every phase is complete.
             When the decision is reject and the feedback intent is not proceed, read and follow $INPUTS.skills_dir/iterate-implementation/SKILL.md, the installed `iterate-implementation` skill, for task directory $INPUTS.task_dir, applying the feedback to the implemented work; do not start the next phase.
 
             The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
@@ -258,23 +261,24 @@ nodes:
             plan=$(ls -1 $INPUTS.task_dir/??-plan-*.md $INPUTS.task_dir/??-structure-outline-*.md 2>/dev/null | sort | tail -1)
             next=""
             if [ -n "$plan" ]; then
-              skills=$INPUTS.skills_dir
-              judge="$skills/typed-judgment/judge.mjs"
-              if [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
-                judged=$(node "$judge" plan-remaining --json "$plan" 2>/dev/null) || judged=""
-                if [ -n "$judged" ]; then
-                  next=$(printf '%s' "$judged" | node -e 'let s="";process.stdin.on("data",d=>{s+=d}).on("end",()=>{const o=JSON.parse(s);process.stdout.write(o.next?String(o.next):"")})' 2>/dev/null) || next=""
+              first_open=$(awk '
+                /^[[:space:]]*```/ { infence = !infence; next }
+                infence { next }
+                /^##(#)? (Phase|Step) [0-9]+/ { if (open) exit; match($0, /^#+/); level = RLENGTH; title = substr($0, RLENGTH + 2); inphase = 1; next }
+                /^#+ / { match($0, /^#+/); if (inphase && RLENGTH <= level) { if (open) exit; inphase = 0 } next }
+                inphase && /^[[:space:]]*- \[ \]/ { open = 1 }
+                END { if (open) print title }
+              ' "$plan")
+              if [ -n "$first_open" ]; then
+                skills=$INPUTS.skills_dir
+                judge="$skills/typed-judgment/judge.mjs"
+                if [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+                  judged=$(node "$judge" plan-remaining --json "$plan" 2>/dev/null) || judged=""
+                  if [ -n "$judged" ]; then
+                    next=$(printf '%s' "$judged" | node -e 'let s="";process.stdin.on("data",d=>{s+=d}).on("end",()=>{const o=JSON.parse(s);process.stdout.write(o.next?String(o.next):"")})' 2>/dev/null) || next=""
+                  fi
                 fi
-              fi
-              if [ -z "$next" ]; then
-                next=$(awk '
-                  /^[[:space:]]*```/ { infence = !infence; next }
-                  infence { next }
-                  /^##(#)? (Phase|Step) [0-9]+/ { if (open) exit; match($0, /^#+/); level = RLENGTH; title = substr($0, RLENGTH + 2); inphase = 1; next }
-                  /^#+ / { match($0, /^#+/); if (inphase && RLENGTH <= level) { if (open) exit; inphase = 0 } next }
-                  inphase && /^[[:space:]]*- \[ \]/ { open = 1 }
-                  END { if (open) print title }
-                ' "$plan")
+                test -n "$next" || next=$first_open
               fi
             fi
             next_json=$(printf '%s' "$next" | tr '\t' ' ' | sed 's/\\/\\\\/g; s/"/\\"/g')
@@ -290,7 +294,7 @@ nodes:
           depends_on: [next-phase-auto]
           model: large
           prompt: |
-            Read and follow $INPUTS.skills_dir/$INPUTS.skill/SKILL.md, the installed `$INPUTS.skill` skill, for task directory $INPUTS.task_dir: implement the first incomplete phase of the newest plan or outline, tick its boxes, write its receipt, commit with explicit paths, and stop after that one phase. The phase to implement when named: $next-phase-auto.output.next; when empty, the first incomplete phase.
+            Read and follow $INPUTS.skills_dir/$INPUTS.skill/SKILL.md, the installed `$INPUTS.skill` skill, for task directory $INPUTS.task_dir: implement the first incomplete phase of the newest plan or outline, tick its boxes, write its receipt, commit with explicit paths, and stop after that one phase. The phase to implement when named: $next-phase-auto.output.next; when empty, the first phase with an unchecked box, and when no phase has one, write nothing, change nothing, and print one line saying every phase is complete.
 
             The workflow engine runs the next phase; ignore any instruction in the skill about opening a new session. Print the skill's final answer.
 

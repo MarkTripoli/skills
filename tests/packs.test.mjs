@@ -362,6 +362,12 @@ test("implement until_bash and next-phase: with the TypeSafe stub the helper's d
     assert.deepEqual(await runNextPhase(taskDir), { next: "Phase 2: [Phase title]" }, "no key: the first phase with an open box");
     fs.writeFileSync(path.join(taskDir, "03-plan-slug.md"), tickPhases(PLAN_TEMPLATE));
     assert.deepEqual(await runNextPhase(taskDir), { next: "" }, "nothing open: empty");
+    // A finished plan names no phase whatever the helper says: run bac80b17's loop was sent back to phase 1
+    // by a confident wrong `next` on a plan with every box ticked.
+    next = "phase-1"; remaining = 0.95;
+    const asked = stub.requests.length;
+    assert.deepEqual(await runNextPhase(taskDir, stub.env), { next: "" }, "nothing open with a confident wrong helper: still empty");
+    assert.equal(stub.requests.length, asked, "a finished plan does not ask the helper for a next phase");
     fs.writeFileSync(path.join(taskDir, "04-plan-slug.md"), "# Plan\n\n### Step 1: Say \"hi\"\n\n- [x] done\n\n#### Notes\n\n- [ ] a sub-heading box counts for its step\n\n```\n## Phase 9: quoted\n- [ ] quoted\n```\n\n### Step 2: Next\n\n- [ ] open\n");
     assert.deepEqual(await runNextPhase(taskDir), { next: 'Step 1: Say "hi"' }, "level 3 headings, a deeper sub-heading inside the step, quotes escaped");
     fs.rmSync(path.join(taskDir, "04-plan-slug.md"));
