@@ -43,6 +43,7 @@ test("judge plan-remaining: verdict from the probability bands, phase criteria b
     const keys = Object.keys(stub.requests[0].questions.next.criteria);
     assert.ok(keys.includes("phase-1") && keys.includes("step-9") && keys.at(-1) === "none" && !keys.includes("phase-77"), `criteria cover ## and ### headings outside fences plus none: ${keys}`);
     assert.equal(stub.requests[0].state.plan.length, fs.readFileSync(plan, "utf8").length, "the plan text is the state");
+    assert.ok(!("criteria" in stub.requests[0].questions.remaining), "a question with no stated boundary sends none");
     remaining = 0.95; next = "step-9";
     const full = JSON.parse((await judge(["plan-remaining", plan, "--json"], stub.env)).out);
     assert.equal(full.verdict, "remaining"); assert.equal(full.next, "Step 9: Extra");
@@ -61,6 +62,9 @@ test("judge review-status and reproduction-status: a claim only ever moves towar
   try {
     const review = tmp("08-code-review-x.md", "# Review\n\nR1 major: null deref at a.js:3\n");
     assert.equal((await judge(["review-status", review, "clean"], stub.env)).out, "findings", "clean with an open major finding becomes findings");
+    const gate = stub.requests[0].questions.open_major;
+    assert.deepEqual(Object.keys(gate), ["type", "instructions", "criteria"]);
+    assert.match(gate.criteria.false, /Only advisories remain/);
     open = 0.55;
     assert.equal((await judge(["review-status", review, "clean"], stub.env)).out, "findings", "a majority reading of an open major finding is enough to keep reviewing");
     open = 0.45;

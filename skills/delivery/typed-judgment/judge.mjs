@@ -111,7 +111,7 @@ export async function systemOne(state, questions) {
   }
 }
 
-const noul = (instructions) => ({ type: "noul", instructions });
+const noul = (instructions, criteria) => ({ type: "noul", instructions, ...(criteria ? { criteria } : {}) });
 const choice = (instructions, criteria) => ({ type: "choice", instructions, criteria });
 const score = (instructions, criteria) => ({ type: "score", instructions, criteria });
 
@@ -151,8 +151,14 @@ async function planRemaining(file) {
 async function reviewStatus(file, claimed) {
   const review = fs.readFileSync(file, "utf8");
   const answers = await systemOne({ review }, {
-    open_major: noul("The code review in `review` lists at least one finding of critical or major severity, or marked required or blocking, that is not recorded as fixed or declined."),
-    blocked: noul("The reviewer states the review could not be completed: a required check could not run, the diff could not be obtained, or the review is marked blocked."),
+    open_major: noul("The code review in `review` lists at least one finding of critical or major severity, or marked required or blocking, that is not recorded as fixed or declined.", {
+      true: "An entry under Critical and Required Findings is still open, or an advisory describes a defect that meets the critical or major bar.",
+      false: "Only advisories remain, or every gating finding is recorded as fixed or declined with evidence.",
+    }),
+    blocked: noul("The reviewer states the review could not be completed: a required check could not run, the diff could not be obtained, or the review is marked blocked.", {
+      true: "The scope could not be pinned or a required check could not run, so part of the change went unreviewed.",
+      false: "The pinned scope was reviewed; a check that ran and failed is a finding, not a block.",
+    }),
   });
   const open = answers.open_major.noul; const blocked = answers.blocked.noul;
   let status;
@@ -167,7 +173,10 @@ async function reviewStatus(file, claimed) {
 async function reproductionStatus(file, claimed) {
   const reproduction = fs.readFileSync(file, "utf8");
   const answers = await systemOne({ reproduction }, {
-    shown: noul("`reproduction` records a concrete attempt, a command or steps with their observed result, whose outcome exhibits the reported behavior, and names the code that causes it."),
+    shown: noul("`reproduction` records a concrete attempt, a command or steps with their observed result, whose outcome exhibits the reported behavior, and names the code that causes it.", {
+      true: "A command or steps are recorded with their observed result, the result exhibits the reported behavior, and the causing code is named.",
+      false: "The attempt is described but not run, the observed result does not show the reported behavior, or no causing code is named.",
+    }),
   });
   const shown = answers.shown.noul;
   const status = claimed === "reproduced" ? (shown < T.safe ? "not-reproduced" : "reproduced") : claimed === "not-reproduced" ? "not-reproduced" : shown >= T.yes ? "reproduced" : "not-reproduced";
@@ -180,8 +189,14 @@ async function reproductionStatus(file, claimed) {
 async function verificationStatus(file, claimed) {
   const verification = fs.readFileSync(file, "utf8");
   const answers = await systemOne({ verification }, {
-    open_fail: noul("The verification record in `verification` lists at least one repository check or acceptance item whose verdict is fail, or a finding that is not recorded as resolved."),
-    blocked: noul("The verifier states the checks could not be run for a reason outside the change: a missing toolchain, dependency, service, or credential, or the verification is marked blocked."),
+    open_fail: noul("The verification record in `verification` lists at least one repository check or acceptance item whose verdict is fail, or a finding that is not recorded as resolved.", {
+      true: "An item in the table has verdict fail, or a finding is recorded without a resolution.",
+      false: "Every item is pass, or the only non-pass items are untested and recorded as such, and no finding is left open.",
+    }),
+    blocked: noul("The verifier states the checks could not be run for a reason outside the change: a missing toolchain, dependency, service, or credential, or the verification is marked blocked.", {
+      true: "A toolchain, dependency, service, credential, or data the checks need is missing, so the checks could not run.",
+      false: "The checks ran; a check that ran and failed is a failure, not a block.",
+    }),
   });
   const open = answers.open_fail.noul; const blocked = answers.blocked.noul;
   let status;
