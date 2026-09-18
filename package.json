@@ -1,6 +1,6 @@
 {
   "name": "@marktripoli/skills",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "type": "module",
   "description": "Portable agent skills for research, design, planning, implementation, and pull request delivery",
