@@ -607,12 +607,12 @@ and `pack` joins the printed object and `output_format` (`required: [workflow, g
 
 #### Automated Verification:
 
-- [ ] `node scripts/build-packs.mjs` then `node scripts/build-packs.mjs --check` is clean
-- [ ] `node scripts/validate.mjs` passes (pack rules, joins, fixtures, archon load with no `parseWarnings`)
-- [ ] `archon workflow test delivery-adaptive` passes its four fixtures
-- [ ] `archon workflow test delivery` passes, every fixture used, none missing
-- [ ] `node --test tests/` passes
-- [ ] `archon workflow run delivery-adaptive --dry-run --json --default-stubs --input task_dir=.agents/tasks/fixture` shows `research` skipped when the decide stub says `false`
+- [x] `node scripts/build-packs.mjs` then `node scripts/build-packs.mjs --check` is clean
+- [x] `node scripts/validate.mjs` passes (pack rules, joins, fixtures, archon load with no `parseWarnings`)
+- [x] `archon workflow test delivery-adaptive` passes its four fixtures
+- [ ] `archon workflow test delivery` passes, every fixture used, none missing — 53 of 54 pass, no stub missing or unused; the one failure is `delivery/bugfix/fixtures/reproduced.stubs.yaml`, reproduced on a clean clone of `ff7bdb4` and so pre-existing and untouched by this phase. Phase 6 owns acceptance (a).
+- [ ] `node --test tests/` passes — 56 of 57 pass; the one failure is `tests/install.test.mjs`, `Cannot find package '@clack/prompts'`, declared in `package.json` but absent from `node_modules`, the same gap the Phase 1 and Phase 2 receipts recorded. Phase 6 owns acceptance (a).
+- [x] `archon workflow run delivery-adaptive --dry-run --json --stubs <fixture without its `fixture:` key> --input task_dir=.agents/tasks/fixture --input gates=none` shows `research` skipped when the decide stub says `false`. The plan's literal `--default-stubs` form cannot reach `decide-task`: the default stub for `task__create` is unstructured text, so `$task__create.output.task_dir` fails first (Archon 0.10.1).
 
 human-gated: false
 
