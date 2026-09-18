@@ -211,11 +211,11 @@ New `herd-next` skill: inside Herdr, it opens the next delivery phase in its own
 
 #### Automated Verification:
 
-- [ ] `npm test`
-- [ ] `node scripts/validate.mjs` reports no failure mentioning `herd-next`
-- [ ] `node scripts/sync-plugin.mjs --check` exits 0
-- [ ] `node -e 'const {scanSkills}=await import("./scripts/lib/layout.mjs");const s=scanSkills("skills");if(s.problems.length)throw new Error(JSON.stringify(s.problems));if(!s.skills.find(x=>x.name==="herd-next"&&x.group==="delivery"))throw new Error("herd-next not discovered in the delivery group")' --input-type=module`
-- [ ] `git grep -n "herd-next" workflows/delivery.md` prints the phase-table row and the by-hand list line
+- [x] `npm test`
+- [x] `node scripts/validate.mjs` reports no failure mentioning `herd-next`
+- [x] `node scripts/sync-plugin.mjs --check` exits 0
+- [x] `node -e 'const {scanSkills}=await import("./scripts/lib/layout.mjs");const s=scanSkills("skills");if(s.problems.length)throw new Error(JSON.stringify(s.problems));if(!s.skills.find(x=>x.name==="herd-next"&&x.group==="delivery"))throw new Error("herd-next not discovered in the delivery group")' --input-type=module`
+- [x] `git grep -n "herd-next" workflows/delivery.md` prints the phase-table row and the by-hand list line
 
 human-gated: false
 
