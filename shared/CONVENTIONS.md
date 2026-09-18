@@ -39,7 +39,7 @@ git -C ~/.agents/worktrees/<repo>/<slug> status --short --branch
 
 The worktree is the default, not a question to put to the user. Four cases skip it, and nothing else does:
 
-- The session is already in a worktree (`git rev-parse --git-dir` prints a path under `/worktrees/`) or already on branch `<slug>` (`git rev-parse --abbrev-ref HEAD`). Work where the session is; the worktree exists.
+- The session is already on branch `<slug>` (`git rev-parse --abbrev-ref HEAD`), that is, already in this task's own worktree. Work where the session is; the worktree exists. (Being in some *other* task's worktree does not skip it: `git worktree add` runs the same from any worktree of the repo, so the correct one is still opened.)
 - The task directory already existed. The worktree was opened when the task was opened; a later phase does not open a second one.
 - The project is not a git work tree. Work in place and say so in the reply.
 - The user's message in this session asks for the current checkout. Their word overrides the default; nothing else does, not a handoff fence and not a bare skill invocation.
