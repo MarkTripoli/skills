@@ -396,11 +396,11 @@ The hook records the parsed line and exits; it does not split a pane itself, bec
 
 #### Automated Verification:
 
-- [ ] `npm test`
-- [ ] `bash -n skills/delivery/herd-next/references/stop_hook.sh`
-- [ ] `printf '{"last_assistant_message":"done\\n\\n/create-plan @04-plan-herdr-plugin.md"}' | HERDR_ENV=1 TMPDIR=$(mktemp -d) bash skills/delivery/herd-next/references/stop_hook.sh; echo "exit=$?"` prints `exit=0` and writes `/create-plan @04-plan-herdr-plugin.md` to `$TMPDIR/herd-next-pending`
-- [ ] `printf '{}' | HERDR_ENV= bash skills/delivery/herd-next/references/stop_hook.sh; echo "exit=$?"` prints `exit=0` and writes no file
-- [ ] `git grep -n "herd-next" README.md docs/getting-started.md` prints both rows
+- [x] `npm test`
+- [x] `bash -n skills/delivery/herd-next/references/stop_hook.sh`
+- [x] `printf '{"last_assistant_message":"done\\n\\n/create-plan @04-plan-herdr-plugin.md"}' | HERDR_ENV=1 TMPDIR=$(mktemp -d) bash skills/delivery/herd-next/references/stop_hook.sh; echo "exit=$?"` prints `exit=0` and writes `/create-plan @04-plan-herdr-plugin.md` to `$TMPDIR/herd-next-pending`
+- [x] `printf '{}' | HERDR_ENV= bash skills/delivery/herd-next/references/stop_hook.sh; echo "exit=$?"` prints `exit=0` and writes no file
+- [x] `git grep -n "herd-next" README.md docs/getting-started.md` prints both rows
 
 human-gated: false
 
