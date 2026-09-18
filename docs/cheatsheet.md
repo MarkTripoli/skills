@@ -19,7 +19,7 @@ archon workflow run delivery-start --branch <slug> "Bug: add 1 2 prints NaN. Jus
 archon workflow run delivery-start --branch epic-billing "Write the PRD for usage billing; I want to review the PRD and design, then split it into epics and issues"
 ```
 
-The request decides the pack and the gates: hands-off wording runs unattended, "review the plan" keeps the planning gates, nothing said keeps every gate. `--input workflow=<pack>` and `--input gates=<...>` override. Unsure with gates on: the run pauses once at `confirm`; `archon workflow reject <id> "lean, outline"` names the pack and gates. In an agent session: `/deliver <request>`.
+The request decides the pack and the gates: hands-off wording runs unattended, "review the plan" keeps the planning gates, nothing said keeps every gate. `--input workflow=<pack>` and `--input gates=<...>` override. Unsure with gates on: the run pauses once at `confirm`; `archon workflow reject <id> "lean, outline"` names the pack and gates. In an agent session: `/deliver <request>` routes the same way, starts the run, and replies with the run id and the first pause.
 
 ## Pick a pack
 
