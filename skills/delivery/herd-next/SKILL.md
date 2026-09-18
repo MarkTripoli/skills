@@ -17,7 +17,7 @@ test "${HERDR_ENV:-}" = 1
 
 A failed guard prints `references/herd_next_skipped_answer.md` with the reason `not inside Herdr` and stops. This is not an error: the phase reply that came before already carries the command fence, and pasting it by hand is the documented flow (`workflows/delivery.md:252`).
 
-Step 2, the command to stage. Take the last line matching `^/[a-z0-9-]+( @[^ ]+)?$` from the caller's argument, or, when the skill was given none, from `${TMPDIR:-/tmp}/herd-next-pending` if the optional `Stop` hook below recorded one, deleting that file after reading it, or from the finishing reply in this session. When no such line exists, print the skipped reply with the reason `no handoff command found` and stop. Never invent the next skill.
+Step 2, the command to stage. Take the last line matching `^/[a-z0-9-]+( @[^ ]+)?$` from the caller's argument, or, when the skill was given none, from the finishing reply in this session. When no such line exists, print the skipped reply with the reason `no handoff command found` and stop. Never invent the next skill.
 
 Step 3, the slug and the phase. The slug is the task directory's `slug` from `task.md`; the phase is the skill name in the parsed command with any leading `create-`, `iterate-`, or `implement-` kept as written, so `/create-plan` labels the pane `<slug>/create-plan`.
 
@@ -124,4 +124,6 @@ The reply is `references/herd_next_gate_answer.md`, every `<...>` slot filled.
 
 ## Optional Stop hook
 
-`references/stop_hook.sh` is a Claude Code `Stop` hook that records the handoff line without being asked. Install it by hand in `~/.claude/settings.json`; this collection ships no `hooks` block and the installer never writes that file. Codex takes the same shape in its own `hooks.json`. Oh My Pi and Pi expose in-process extension callbacks rather than shell hooks, so they use the skill invocation only.
+`references/stop_hook.sh` is a Claude Code `Stop` hook that opens the pane without being asked. It parses the fence out of the payload's `last_assistant_message` and then runs steps 3 to 7 itself: the task directory from the artifact in the fence, the kind from `herdr pane current`, the split-or-tab choice, `agent start`, `pane rename`, `pane send-text`. It takes its working directory from the payload's `cwd`, stages with `send-text` and never submits, and writes no file anywhere.
+
+The hook cannot ask a question, so every branch where the skill would ask - an unreadable agent kind, two task directories holding the same artifact, an agent name already in use - exits 0 and changes nothing. Run `/herd-next` by hand for those. Install the hook by hand in `~/.claude/settings.json`; this collection ships no `hooks` block and the installer never writes that file. Codex takes the same shape in its own `hooks.json`. Oh My Pi and Pi expose in-process extension callbacks rather than shell hooks, so they use the skill invocation only.
