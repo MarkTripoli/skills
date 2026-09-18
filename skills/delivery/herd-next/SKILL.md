@@ -17,7 +17,7 @@ test "${HERDR_ENV:-}" = 1
 
 A failed guard prints `references/herd_next_skipped_answer.md` with the reason `not inside Herdr` and stops. This is not an error: the phase reply that came before already carries the command fence, and pasting it by hand is the documented flow (`workflows/delivery.md:252`).
 
-Step 2, the command to stage. Take the last line matching `^/[a-z0-9-]+( @[^ ]+)?$` from the caller's argument, or, when the skill was given none, from the finishing reply in this session. When no such line exists, print the skipped reply with the reason `no handoff command found` and stop. Never invent the next skill.
+Step 2, the command to stage. Take the last line matching `^/[a-z0-9-]+( @[^ ]+)?$` from the caller's argument, or, when the skill was given none, from `${TMPDIR:-/tmp}/herd-next-pending` if the optional `Stop` hook below recorded one, deleting that file after reading it, or from the finishing reply in this session. When no such line exists, print the skipped reply with the reason `no handoff command found` and stop. Never invent the next skill.
 
 Step 3, the slug and the phase. The slug is the task directory's `slug` from `task.md`; the phase is the skill name in the parsed command with any leading `create-`, `iterate-`, or `implement-` kept as written, so `/create-plan` labels the pane `<slug>/create-plan`.
 
@@ -121,3 +121,7 @@ archon workflow respond <run-id> <decision> "<what should change>"
 `respond` is the general form and covers every id in `decisions[]`, including any a pack authored beyond `approve` and `reject`. The tab-versus-split rule, the agent-name rule, the kind rule, and the stage-not-submit rule are the ones already stated for the handoff mode; the gate mode does not restate them.
 
 The reply is `references/herd_next_gate_answer.md`, every `<...>` slot filled.
+
+## Optional Stop hook
+
+`references/stop_hook.sh` is a Claude Code `Stop` hook that records the handoff line without being asked. Install it by hand in `~/.claude/settings.json`; this collection ships no `hooks` block and the installer never writes that file. Codex takes the same shape in its own `hooks.json`. Oh My Pi and Pi expose in-process extension callbacks rather than shell hooks, so they use the skill invocation only.
