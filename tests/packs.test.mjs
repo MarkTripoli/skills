@@ -378,6 +378,37 @@ test("implement until_bash and next-phase: with the TypeSafe stub the helper's d
   }
 });
 
+// The verify block's cross-check node, with the verifier's structured output substituted.
+async function runVerificationStatus(taskDir, artifact, claimed, env) {
+  const yaml = fs.readFileSync(path.join(NATIVE_DIR, "verify", "delivery-verify.yaml"), "utf8");
+  const body = /id: verification-status\n\s+depends_on: \[verify-implementation\]\n\s+bash: \|\n((?: {12}.*\n|\n)+?) {10}output_format:/.exec(yaml)[1].replace(/^ {12}/gm, "");
+  const script = substitute(body, taskDir).replaceAll("$verify-implementation.output.status", claimed).replaceAll("$verify-implementation.output.artifact", artifact);
+  const result = await bash(script, { env: { INPUTS_TASK_DIR: taskDir, INPUTS_SKILLS_DIR: SKILLS, ...env } });
+  assert.equal(result.code, 0, result.err);
+  return JSON.parse(result.out).status;
+}
+
+test("verify verification-status: the helper may tighten passed to failed, but a judged blocked needs a non-empty ## Missing list; the verifier's own blocked claim stands", async () => {
+  let blocked = 0.9; let openFail = 0.1;
+  const stub = await startStub((id) => (id === "blocked" ? noul(blocked) : noul(openFail)));
+  const taskDir = fs.mkdtempSync(path.join(os.tmpdir(), "skills-verify-status-"));
+  const passedEmpty = "---\nstatus: passed\n---\n\n## Items\n\n| A1 | x | pass |\n| A2 | y | untested |\n\n## Missing\n\n## Findings\n\nNone.\n";
+  try {
+    fs.writeFileSync(path.join(taskDir, "10-verification-x.md"), passedEmpty);
+    assert.equal(await runVerificationStatus(taskDir, "10-verification-x.md", "passed", stub.env), "passed", "a judged blocked with nothing under ## Missing does not cancel a passed verification");
+    fs.writeFileSync(path.join(taskDir, "10-verification-x.md"), passedEmpty.replace("## Missing\n", "## Missing\n\n- the staging database credentials\n"));
+    assert.equal(await runVerificationStatus(taskDir, "10-verification-x.md", "passed", stub.env), "blocked", "a judged blocked with a named missing item cancels");
+    fs.writeFileSync(path.join(taskDir, "10-verification-x.md"), passedEmpty);
+    assert.equal(await runVerificationStatus(taskDir, "10-verification-x.md", "blocked", stub.env), "blocked", "the verifier's own blocked claim stands whatever the list holds");
+    blocked = 0.1; openFail = 0.9;
+    assert.equal(await runVerificationStatus(taskDir, "10-verification-x.md", "passed", stub.env), "failed", "a passed claim with an open failure is tightened to failed");
+    assert.equal(await runVerificationStatus(taskDir, "10-verification-x.md", "passed"), "passed", "no key: the claim stands");
+  } finally {
+    stub.close();
+    fs.rmSync(taskDir, { recursive: true, force: true });
+  }
+});
+
 // A gated loop's `until_bash` with the gate's structured output substituted the way Archon does (shell-quoted).
 async function runGateCheck(block, loopId, decision, text, env) {
   const yaml = fs.readFileSync(path.join(NATIVE_DIR, block, `delivery-${block}.yaml`), "utf8");

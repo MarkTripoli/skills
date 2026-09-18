@@ -172,7 +172,7 @@ Where a pack once parsed prose, it now asks `typed-judgment/judge.mjs` (installe
 | Is the plan finished; which phase is next | `delivery-implement` `until_bash` (only its `done` ends the loop early; ticked boxes end it whatever it says), `next-phase`, `next-phase-auto` | `plan-remaining` | the `## Phase N` checkbox awk |
 | Is a review really clean | `delivery-review` `verify-review`; `delivery-implement` `verify-phase`, `verify-phase-auto` | `review-status` (only ever moves a claim toward `findings` or `blocked`) | the claimed status |
 | Was the bug really reproduced | `delivery-bugfix` `verify-reproduction`, `attempt-count` | `reproduction-status` | the claimed status |
-| Did the verification really pass | `delivery-verify` `verification-status` | `verification-status` (only ever moves a claim toward `failed` or `blocked`) | the claimed status |
+| Did the verification really pass | `delivery-verify` `verification-status` | `verification-status` (only ever moves a claim toward `failed`, or toward `blocked` when the artifact's `## Missing` list names something) | the claimed status |
 | Whether each review axis was examined or only asserted | `review-code` save step | `axis-coverage` | the session's own reading |
 | What a "request changes" text asks for | `delivery-gate-phase` and `delivery-implement` `until_bash` (`proceed` ends the loop) and `intent` (`stop` cancels through `stopped`) | `feedback-intent` | `revise` |
 | The task slug, complexity, and the pack the request reads like | `delivery-task` `create` (`complexity:` and `suggested_workflow:` in `task.md`, a stderr warning on a mismatch) | `slug`, `tier`, `route-workflow` | the word rule; no fields |
