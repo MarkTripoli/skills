@@ -120,7 +120,7 @@ pane=$(herdr tab create --workspace "$HERDR_WORKSPACE_ID" --cwd "$PWD" --label "
   | jq -r '.result.root_pane.pane_id')
 ```
 
-Step 6, the agent name. Build `<slug>-<phase>`, lower-case, every character outside `a-z0-9-` replaced by `-`, collapsed runs of `-` reduced to one, truncated to 32 characters, any trailing `-` stripped. When `herdr agent list` already holds that name, append `-2`, then `-3`, truncating the stem further so the result stays within 32 characters.
+Step 6, the agent name. Cut the slug to `32 - (length of the phase + 1)` characters first, so the phase always survives, then build `<cut slug>-<phase>`, lower-case, every character outside `a-z0-9-` replaced by `-`, collapsed runs of `-` reduced to one, truncated to 32 characters, any trailing `-` stripped. A phase longer than 31 characters leaves no room for a stem; cut the joined `<slug>-<phase>` to 32 characters in that case. When `herdr agent list` already holds the result, append `-2`, then `-3`, cutting the stem further so the name stays within 32 characters.
 
 Step 7, start, label, stage:
 
@@ -375,7 +375,7 @@ The guard runs before anything else, so with `HERDR_ENV` unset the hook executes
 - Step 3. The phase is the skill name in the fence. The task directory is the one holding the artifact the fence names: a `@path/to/NN-artifact.md` takes that directory, a bare `@NN-artifact.md` matches `$cwd/.agents/tasks/*/<artifact>` and stops when two directories hold it, and a fence with no `@file` takes the newest `.agents/tasks/*/task.md` by mtime. The slug is that file's `slug` key, falling back to its directory name.
 - Step 4. `kind` from `herdr pane current --current | jq -r '.result.pane.agent'`, accepted only as `claude`, `codex`, `omp`, or `pi`. The skill asks the user when the read yields nothing; a hook cannot ask, so it exits 0.
 - Step 5. The same `busy` read over `$HERDR_WORKSPACE_ID` and `$HERDR_TAB_ID`, then the `herdr pane layout --pane "$HERDR_PANE_ID"` direction read and `herdr pane split`, or `herdr tab create` when `busy` is non-empty. An unreadable direction falls back to `down`.
-- Step 6. `<slug>-<phase>` reduced to `[a-z][a-z0-9-]{0,31}`, with no `-2` collision walk: a name already in use fails `agent start` and the hook stops.
+- Step 6. `<slug>-<phase>` reduced to `[a-z][a-z0-9-]{0,31}`, the slug cut to `32 - (length of the phase + 1)` characters first so the phase survives the limit and only a phase longer than 31 characters falls back to cutting the joined name. No `-2` collision walk: a name already in use fails `agent start` and the hook stops.
 - Step 7. `herdr agent start`, then `herdr agent wait` only when the start response carries `agent_not_ready`, then `herdr pane rename "$pane" "$slug/$phase"` and `herdr pane send-text "$pane" "$cmd"`. Never `herdr agent prompt`: submitting the handoff would record approval of the artifact the finished phase produced.
 
 Every branch above that cannot be resolved without asking the user exits 0 and changes nothing, which is the hook's whole error contract.

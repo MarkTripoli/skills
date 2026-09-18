@@ -98,3 +98,4 @@ None in this phase. Phase 3 is the plan's highest numbered phase and all three p
 - `last_assistant_message` and `cwd` are unverified against a live payload, so a Claude Code release that renames either silently turns the hook into a no-op that still exits 0.
 - A fence with no `@file` picks the newest `.agents/tasks/*/task.md` by mtime, which is wrong when two tasks are in flight in one checkout and the other one was touched more recently.
 - Every check above drives a stub `herdr`. Nothing in the test suite or in this receipt exercises a real Herdr pane, a real `agent start`, or a real Archon gate.
+- Superseded in part by `09-implementation-herdr-plugin.md`: the agent name now cuts the slug rather than the phase, so the `agent start herdr-plugin-delivery-flow-creat` line recorded above is no longer what the hook produces.
