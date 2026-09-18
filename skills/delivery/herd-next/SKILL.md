@@ -62,12 +62,13 @@ Step 7, start, label, stage:
 ```bash
 herdr agent start "$name" --kind "$kind" --pane "$pane"
 herdr pane rename "$pane" "$slug/$phase"
+case "$kind" in codex) command="\$${command#/}" ;; esac
 herdr pane send-text "$pane" "$command"
 ```
 
-`agent start` returns `agent_not_ready` when the agent is blocked during startup while keeping the name usable; on that response, wait with `herdr agent wait "$name" --until idle --until done --timeout 30000` before staging, and report a still-blocked agent in the reply rather than sending input to it. `--until` is repeatable and a bare wait with none settles on `blocked` too, which is the one state this branch exists to sit out.
+`agent start` returns `agent_not_ready` when the agent is blocked during startup while keeping the name usable; on that response, wait with `herdr agent wait "$name" --until idle --until done --timeout 30000` before staging. `--until` is repeatable and a bare wait with none settles on `blocked` too, which is the one state this branch exists to sit out. A wait that fails (the 30-second timeout, or the agent settling on `blocked`) means it never became ready: close the pane this step opened, `herdr pane close "$pane"`, then print `references/herd_next_skipped_answer.md` with the reason `the agent in the new pane is still blocked`, and stop. Nothing was staged, so nothing is left half-open with a reply that claims otherwise.
 
-Step 8, stage or submit. `send-text` is the default and stages without Enter: a command that records approval is staged, never submitted, which is what keeps "running the next command records approval" true. A command that records no approval, such as the gate mode's `/deliver --run <run-id>`, may be submitted. Submit with `herdr agent prompt "$name" "$command" --wait --timeout 120000` only when the caller passed `--submit`.
+Step 8, stage or submit. `send-text` is the default and stages without Enter: a command that records approval is staged, never submitted, which is what keeps "running the next command records approval" true. A command that records no approval, such as the gate mode's `/deliver --run <run-id>`, may be submitted. Submit with `herdr agent prompt "$name" "$command" --wait --timeout 120000` only when the caller passed `--submit`. `$command` takes the prefix its own pane's kind uses, not the fence's literal `/`: `shared/CONVENTIONS.md`'s Handoff section fixes the printed fence at `/` for every kind because a Codex person retypes it as `$` before running it; a pane has no person doing that conversion, so step 7's `case "$kind"` does it, for `codex` only, before either `send-text` or this `agent prompt` line sees the string. The gate mode's submitted command below takes the same substitution.
 
 Step 9, the reply: `references/herd_next_answer.md`, every `<...>` slot filled.
 
@@ -89,11 +90,11 @@ Read the run's state; never guess a path or a decision id:
 
 ```bash
 run=$(archon workflow get "$run_id" --json) || { printf '%s\n' "$run" >&2; exit 1; }
-status=$(jq -r '.status' <<<"$run")
+run_status=$(jq -r '.status' <<<"$run")
 cwd=$(jq -r '.working_path' <<<"$run")
 node=$(jq -r '.metadata.approval.nodeId // empty' <<<"$run")
 msg=$(jq -r '.metadata.approval.message // empty' <<<"$run")
-decisions=$(jq -r '.metadata.approval.decisions[].id' <<<"$run")
+decisions=$(jq -r '.metadata.approval.decisions[]?.id // empty' <<<"$run")
 resolved=$(jq -r '.metadata.approval.resolved // empty' <<<"$run")
 ```
 
@@ -109,10 +110,12 @@ Get the pane and the name exactly as steps 4 through 6 do, with one substitution
 [ -n "$node" ] && herdr notification show "Gate: $slug/$phase" --body "$msg" --sound request
 herdr agent start "$name" --kind "$kind" --pane "$pane"
 herdr pane rename "$pane" "$slug/$phase gate"
-herdr agent prompt "$name" "/deliver --run $run_id"
+attach="/deliver --run $run_id"
+case "$kind" in codex) attach="\$deliver --run $run_id" ;; esac
+herdr agent prompt "$name" "$attach"
 ```
 
-The `agent_not_ready` handling is the one already stated in step 7; the gate mode does not restate it: wait with `herdr agent wait "$name" --until idle --until done --timeout 30000` before submitting the attach command, and report a still-blocked agent in the reply rather than sending input to it.
+The `agent_not_ready` handling is the one already stated in step 7, still-blocked branch included; the gate mode does not restate it: wait with `herdr agent wait "$name" --until idle --until done --timeout 30000` before submitting the attach command. A failed wait closes the pane and prints the skipped reply with the same reason, exactly as step 7 does, instead of submitting the attach command or printing the gate reply below. This is what keeps `deliver/SKILL.md`'s `No pane was opened` fallback reachable even though a pane was briefly opened here.
 
 `agent prompt` without `--wait` returns on submission, so the gate mode does not block for the length of the run. The pane's `deliver` reads the gated artifact, announces the pause, and resolves every decision itself, including any id a pack authored beyond `approve` and `reject`. Submitting here records no approval, so the stage-not-submit rule does not reach this line.
 

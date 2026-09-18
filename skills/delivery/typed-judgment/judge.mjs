@@ -79,10 +79,14 @@ const bool = (args, name) => { const i = args.indexOf(name); if (i < 0) return f
 const argmax = (probabilities) => Object.entries(probabilities).reduce((best, entry) => (entry[1] > best[1] ? entry : best))[0];
 
 // Archon and editor-spawned shells rarely carry an interactive shell's exports, so a key file is the
-// second source; the file is read whole and its first line is the key.
-export function apiKey(env = process.env) {
+// second source; the file is read whole and its first line is the key. With neither `HOME` nor
+// `XDG_CONFIG_HOME` set, there is no home to resolve the default path against: read no file, rather
+// than a relative `.config/typesafe/api_key` a repository could plant.
+export function apiKey() {
+  const env = process.env;
   if (env.TYPESAFE_API_KEY) return env.TYPESAFE_API_KEY;
-  const file = env.TYPESAFE_API_KEY_FILE || path.join(env.XDG_CONFIG_HOME || path.join(env.HOME || "", ".config"), "typesafe", "api_key");
+  const file = env.TYPESAFE_API_KEY_FILE || (env.XDG_CONFIG_HOME || env.HOME ? path.join(env.XDG_CONFIG_HOME || path.join(env.HOME, ".config"), "typesafe", "api_key") : null);
+  if (!file) return "";
   try {
     return fs.readFileSync(file, "utf8").split("\n")[0].trim();
   } catch {

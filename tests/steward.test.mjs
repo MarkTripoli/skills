@@ -27,12 +27,17 @@ const PAUSED = JSON.stringify({
   metadata: { approval: { nodeId: "design__cycle", message: "Review .agents/tasks/verbose-flag", decisions: [{ id: "approve" }, { id: "reject" }] } },
 });
 
+// The primary inside-Herdr shape: a running run, no gate live yet, so no approval metadata at all.
+const RUNNING = JSON.stringify({ status: "running", working_path: "/runs/x", metadata: {} });
+
 // A fake `archon`: logs its argv one line per argument, answers `get` with the fixture and `wait` with
 // an attention result, or fails the way the CLI fails outside a git work tree when FAKE_FAIL is set.
+// FAKE_FAIL_ON narrows the failure to one subcommand (`$2`, e.g. "respond" or "get"); unset, FAKE_FAIL
+// fails every call, the shape a run outside a git work tree takes since every call hits the same repo check.
 const FAKE_ARCHON = `#!/bin/bash
 printf '%s\\n' "$@" >> "$FAKE_LOG"
-if [ -n "\${FAKE_FAIL:-}" ]; then
-  printf '{ "ok": false, "error": "Error: Not in a git repository.\\nThe Archon CLI must be run from within a git repository." }\\n'
+if [ -n "\${FAKE_FAIL:-}" ] && { [ -z "\${FAKE_FAIL_ON:-}" ] || [ "$2" = "\${FAKE_FAIL_ON:-}" ]; }; then
+  printf '{ "ok": false, "error": "Error: Not in a git repository.\\\\nThe Archon CLI must be run from within a git repository." }\\n'
   exit 1
 fi
 case "$2" in
@@ -63,7 +68,7 @@ function bash(script, env = {}) {
   });
 }
 
-const REPORT = '\nprintf "%s|%s|%s|%s\\n" "$status" "$cwd" "$node" "$(echo $decisions)"\n';
+const REPORT = '\nprintf "%s|%s|%s|%s\\n" "$run_status" "$cwd" "$node" "$(echo $decisions)"\n';
 
 test("the state read takes status, working_path, the node, and every decision id from a paused run", async () => {
   const result = await bash(READ + REPORT);
@@ -86,17 +91,33 @@ test("herd-next's gate-mode read carries the same guard, so no pane is opened at
   assert.equal(failed.out, "");
 });
 
-test("respond and every wait chunk name the run's own worktree, and the loop breaks on a terminal status", async () => {
+test("both reads survive a running run with no approval metadata, the primary inside-Herdr shape", async () => {
+  const deliver = await bash(READ + REPORT, { FAKE_RUN: RUNNING });
+  assert.equal(deliver.code, 0, deliver.err);
+  assert.equal(deliver.out, "running|/runs/x||");
+  const herdNext = await bash(HERD_READ + REPORT, { FAKE_RUN: RUNNING });
+  assert.equal(herdNext.code, 0, herdNext.err);
+  assert.equal(herdNext.out, "running|/runs/x||");
+});
+
+test("respond and the wait chunk name the run's own worktree, and the fence holds one shell call", async () => {
   const result = await bash(RESPOND, { decision: "approve", text: "", cwd: "/runs/verbose-flag" });
   assert.equal(result.code, 0, result.err);
   const calls = result.argv.join(" ");
   assert.match(calls, /respond r1 approve.*--detach --cwd \/runs\/verbose-flag/s);
   assert.match(calls, /wait r1 --json --timeout 600 --cwd \/runs\/verbose-flag/s);
-  assert.equal(result.argv.filter((a) => a === "wait").length, 1, "a paused status breaks the loop after one chunk");
+  assert.equal(result.argv.filter((a) => a === "wait").length, 1, "the fence is straight-line: one respond and one wait, never a loop");
 });
 
 test("a get that fails inside the wait loop ends the steward instead of spinning", async () => {
-  const result = await bash(RESPOND, { decision: "approve", text: "", cwd: "/runs/verbose-flag", FAKE_FAIL: "1" });
+  const result = await bash(RESPOND, { decision: "approve", text: "", cwd: "/runs/verbose-flag", FAKE_FAIL: "1", FAKE_FAIL_ON: "get" });
   assert.notEqual(result.code, 0);
-  assert.equal(result.argv.filter((a) => a === "wait").length, 1);
+  assert.equal(result.argv.filter((a) => a === "wait").length, 1, "respond and wait both ran; only the trailing get failed");
+});
+
+test("a failing respond ends the steward before the wait, instead of dropping the decision silently", async () => {
+  const result = await bash(RESPOND, { decision: "approve", text: "", cwd: "/runs/verbose-flag", FAKE_FAIL: "1", FAKE_FAIL_ON: "respond" });
+  assert.notEqual(result.code, 0, "a dropped respond must not exit 0 and fall through to the wait");
+  assert.equal(result.argv.filter((a) => a === "wait").length, 0, "a failed respond never reaches the wait");
+  assert.match(result.err, /Not in a git repository/, "Archon's own output is what gets reported");
 });

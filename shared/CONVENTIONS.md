@@ -91,13 +91,15 @@ Under Archon the approval node records the decision; the reply's fence is ignore
 
 ## Archon gate ask
 
-A reply that announces a paused Archon gate ends with this sentence, byte-exact:
+A reply that announces a paused Archon gate carries this sentence, byte-exact, as its ask:
 
-`Say `approve`, or say what should change.`
+```text
+Say `approve`, or say what should change.
+```
 
-The agent that printed it resolves the gate itself with `archon workflow respond`; the person never
-runs that command. A gate that declares a decision beyond `approve` and `reject` names it in the line
-above the ask.
+The agent that printed it, or the agent it points at, resolves the gate itself with `archon workflow
+respond`; the person never runs that command. A gate that declares a decision beyond `approve` and
+`reject` names it in the line above the ask.
 
 ## Handoff
 

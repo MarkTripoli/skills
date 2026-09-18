@@ -42,17 +42,17 @@ One command for a request whose pack is not yet chosen. You read the request, pi
 
    - Branch: the request's first line, lower-cased, every character outside `a-z0-9` and space replaced by a space, split into words, the stop words `a an the to of for in on and or with that this add make create please fix bug` dropped, the first four words joined with `-`. When no word survives, take the first four words without dropping any; `task` when the line is empty. `epic` and `program` prefix the result with `epic-`, because `start-epic-delivery` refuses to run on `main`, `master`, or a detached `HEAD`. This is the rule the `delivery-task` node applies, so the branch and the task slug match.
    - Command: `archon workflow run delivery-<pack> --branch <branch> --input gates=<gates> '<request>'`, the request in shell single quotes with every `'` written as `'\''`. Add `--input app_test=<web|ios|android>` when the request asks for the running application to be tested on one of those surfaces, and `--input app_target=<url, bundle id, or package>` when it names one; `epic` and `program` take neither. Omit `--input gates=` only when `gates` is `all`, the default.
-   - Run it from the project root as a long-running process that outlives this reply: start it with the runtime's background or supervised long-running-process mechanism and never wait on it. No shell call is held for the length of a phase, here or later; step 6 does every read and every wait, in bounded chunks. Never add `--detach`: Archon refuses it for a workflow that can pause, and nothing here needs it, because the process is ours to leave running. Read the run id from the run list a few seconds after dispatch, taking the run whose `working_path` is the worktree for `<branch>`:
+   - Run it from the project root as a long-running process that outlives this reply: start it with the runtime's background or supervised long-running-process mechanism and never wait on it. No shell call is held for the length of a phase, here or later; step 6 does every read and every wait, in bounded chunks. Never add `--detach`: Archon refuses it for a workflow that can pause, and nothing here needs it, because the process is ours to leave running. Read the run id from the run list, polling it every few seconds for up to 30 seconds, taking the run whose `working_path` is the worktree for `<branch>`:
 
      ```bash
      archon workflow status --json | jq -r '.runs[] | "\(.id)\t\(.workflow_name)\t\(.status)\t\(.working_path)"'
      ```
 
-     A dispatch that never appears in that list is a start failure: report Archon's output as cause and fix, and retry nothing.
+     A dispatch still absent from that list after 30 seconds is a start failure: report the background process's own captured output (wherever the runtime's long-running-process mechanism recorded its stdout and stderr) as cause and fix, and retry nothing.
    - The command fails before dispatching when the worktree for `<branch>` is in use by an earlier run; its message names that run id. Attach to it by taking that run id into step 6 instead of starting a second run, and report that run. Any other failure is reported as cause and fix, verbatim from Archon's output, and nothing is retried.
    - Pauses: from the pack's gate list (full `design`, `plan`, `phases`, `pr`; lean `outline`, `phases`, `pr`; prd `prd`, `tdd`, `plan`, `phases`, `pr`; oneshot `pr`; bugfix `reproduce`, `pr`; epic `plan`; program `prd`, `tdd`, `plan`) keep the names `gates` leaves on; `none` leaves none. The pause the run stopped at comes first in the reply; the ones still ahead follow.
-   - Inside Herdr (`HERDR_ENV` is `1`): run `herd-next`'s Archon gate mode for this run id at once, without waiting for a pause; it opens the review pane at the run's `working_path` and submits `/deliver --run <run-id>` into it. Reply with `references/deliver_archon_answer.md`, its run line reading `is running` while the run has not paused yet and its last line filled with the pane pointer, and stop. The pane's steward owns every pause from here.
-   - Outside Herdr: go to step 6 now. The run is `running`, so the loop's running-run branch waits in bounded chunks for the first pause; this reply is `references/deliver_archon_answer.md` printed at that pause, its run line filled from the gated artifact's `summary`, `### Verify`, and `### Known limits` and its last line filled with the ask. Step 6's loop resumes on the user's answer.
+   - Inside Herdr (`HERDR_ENV` is `1`): run `herd-next`'s Archon gate mode for this run id at once, without waiting for a pause; it opens the review pane at the run's `working_path` and submits `/deliver --run <run-id>` into it. When its reply opens with `No pane was opened` instead (an unreadable agent kind, a name it cannot build, a `get` that failed, or an agent still blocked after the readiness wait: no pane opened, so no steward exists anywhere for this run), go to step 6 now and steward inline in this session, exactly as the outside-Herdr branch below does. Otherwise reply with `references/deliver_archon_answer.md`, its run line reading `is running` while the run has not paused yet and its last line filled with the pane pointer, and stop. The pane's steward owns every pause from here.
+   - Outside Herdr, or inside Herdr when the gate mode opened no pane: go to step 6 now. The run is `running`, so the loop's running-run branch waits in bounded chunks for the first pause; this reply is `references/deliver_archon_answer.md` printed at that pause, its run line filled from the gated artifact's `summary`, `### Verify`, and `### Known limits` and its last line filled with the ask. Step 6's loop resumes on the user's answer.
    - Either way the reply carries no command fence: the run is already going, so no skill command follows.
 
 5. **Without Archon**: open the task worktree, open the task directory in it, and hand off to the chain's first skill.
@@ -62,25 +62,25 @@ One command for a request whose pack is not yet chosen. You read the request, pi
    - `{next_command}` is the chain's first skill: bugfix `/reproduce-bug`; oneshot `/review-code`; lean, full, and epic `/create-research-questions`; prd and program `/create-research`. For `oneshot` the reply first says the change is small enough to implement in this session: on the user's go, implement, verify, and commit it per the `ci-commit` conventions, then the review runs from the fence.
    - Reply with `references/deliver_hand_answer.md`, every `<...>` slot filled: the pack, its confidence, the autonomy level and gates, the worktree path and branch, the task directory, and the chain as the table in `workflows/delivery.md` lists it. Fill `{run_location}` in the handoff sentence with that same worktree per the conventions' placeholder rule (`` `<worktree path>` on branch `<branch>` ``, or `this checkout` when the worktree was skipped), so the next session opens where the task's commits and each `@<file>` handoff resolve. The gates that stay on are the replies the user reviews before pasting the next command; later phases are the skills the chain names.
 
-6. **Steward the run** until it completes, fails, or is cancelled. Entered from step 1's attach branch, or from step 4 outside Herdr. Right after step 4 the run is `running` and has not paused yet, so the loop takes the running-run branch below: bounded `wait` chunks until the first pause. No shell call is held for the length of a phase, the first one included.
+6. **Steward the run** until it completes, fails, or is cancelled. Entered from step 1's attach branch, or from step 4 outside Herdr, or from step 4 inside Herdr when the gate mode opened no pane. Right after step 4 the run is `running` and has not paused yet, so the loop takes the running-run branch below: bounded `wait` chunks until the first pause. No shell call is held for the length of a phase, the first one included.
 
    Read the state; never guess a path or a decision id:
 
    ```bash
    run=$(archon workflow get "$run_id" --json) || { printf '%s\n' "$run" >&2; exit 1; }
-   status=$(jq -r '.status' <<<"$run")
+   run_status=$(jq -r '.status' <<<"$run")
    cwd=$(jq -r '.working_path' <<<"$run")
    node=$(jq -r '.metadata.approval.nodeId // empty' <<<"$run")
    msg=$(jq -r '.metadata.approval.message // empty' <<<"$run")
-   decisions=$(jq -r '.metadata.approval.decisions[].id' <<<"$run")
+   decisions=$(jq -r '.metadata.approval.decisions[]?.id // empty' <<<"$run")
    resolved=$(jq -r '.metadata.approval.resolved // empty' <<<"$run")
    ```
 
-   A `get` that exits nonzero ends the steward: report Archon's output as cause and fix, and retry nothing, the rule step 4 already applies to a failed dispatch. Outside a git work tree the body is an `ok: false` error whose raw newlines `jq` cannot parse, so an unguarded read leaves `$status` empty and the loop waits on a run it cannot see.
+   A `get` that exits nonzero ends the steward: report Archon's output as cause and fix, and retry nothing, the rule step 4 already applies to a failed dispatch. Outside a git work tree the body is a well-formed `ok: false` error with no `status` key, so an unguarded read leaves `$run_status` as the literal `null`, the loop takes the running-run branch, and it waits forever on a run it cannot read. The guard fires on the nonzero exit, not on a parse error. The variable is `run_status`, not `status`: zsh reserves `status` as a read-only alias for `$?`, and an assignment to it aborts the whole read under zsh, the default login shell on macOS.
 
    A gate is live only when `status` is `paused` and `resolved` is empty. `completed`, `failed`, and `cancelled` print `references/deliver_ended_answer.md` and stop. The running-run branch, taken on `running` or on `paused` with a non-empty `resolved`, waits in chunks (below) and reads again; it is the branch taken on the first read after step 4 and after every respond.
 
-   Announce the pause. `$phase` is `$node` with a trailing `__cycle` stripped. The gated artifact is the newest artifact of the phase's type in the task directory `$msg` names, resolved against `$cwd`; read its frontmatter `summary`, its `### Verify` list, and its `### Known limits` list. Inside Herdr, raise the notification first:
+   Announce the pause. `$phase` is `$node` with a trailing `__cycle` stripped. The gated artifact is the newest artifact of the phase's type in the task directory `$msg` names, resolved against `$cwd`; read its frontmatter `summary`, its `### Verify` list, and its `### Known limits` list. `$slug` is that directory's basename. Inside Herdr, raise the notification first:
 
    ```bash
    herdr notification show "Gate: $slug/$phase" --body "$msg" --sound request
@@ -88,31 +88,36 @@ One command for a request whose pack is not yet chosen. You read the request, pi
 
    Print `references/deliver_gate_answer.md` with every `<...>` slot filled and end the turn. The turn ends with the ask; the person's reply starts the next turn.
 
-   Map the reply. A reply that is exactly one word matching an id in `decisions` is that id, with no judgment call. Otherwise:
+   Map the reply. `$judge` is `<skills dir>/typed-judgment/judge.mjs` from step 2; `$reply` is the person's words, verbatim. A reply that is exactly one word matching an id in `decisions` is that id, with no judgment call. Otherwise:
 
    ```bash
    a=$(node "$judge" feedback-intent --json - <<<"$reply") || a=''
-   intent=$(jq -r '.intent // "revise"' <<<"${a:-{\}}")
-   suggested=$(jq -r '.suggested // "unclear"' <<<"${a:-{\}}")
+   [ -n "$a" ] || a='{}'
+   intent=$(jq -r '.intent // "revise"' <<<"$a")
+   suggested=$(jq -r '.suggested // "unclear"' <<<"$a")
    ```
 
-   `intent: proceed` is `approve`. `intent: revise` with `suggested: revise` is `reject`, with the person's words as the text. `suggested: unclear`, or a `suggested` of `proceed` or `stop` that the helper did not clear its own bar for, is one clarifying question naming the available ids, and no decision is sent; the bare word clamps below the bar to `revise`, which would reject a gate because the person asked what a phase does. `intent: stop` has no decision id: confirm once, in one sentence, and only on a repeated statement run `archon workflow abandon "$run_id"` and print the ended reply. A reply matching no declared id gets the clarifying question, never a guess.
+   `intent: proceed` is `approve`, `$text` empty. `intent: revise` with `suggested: revise` is `reject`, `$text` the person's words. `suggested: unclear`, or a `suggested` of `proceed` or `stop` that the helper did not clear its own bar for, is one clarifying question naming the available ids, and no decision is sent; the bare word clamps below the bar to `revise`, which would reject a gate because the person asked what a phase does. `intent: stop` has no decision id: confirm once, in one sentence, and only on a repeated statement run both commands below, in order, each guarded exactly like the two reads:
+
+   ```bash
+   out=$(archon workflow cancel "$run_id" --cwd "$cwd") || { printf '%s\n' "$out" >&2; exit 1; }
+   out=$(archon workflow abandon "$run_id" --cwd "$cwd") || { printf '%s\n' "$out" >&2; exit 1; }
+   ```
+
+   `cancel` stops the detached continuation the last `respond --detach` created; `abandon` alone would leave that child running while only flipping the run's own recorded status, so `cancel` runs first. End the step 4 dispatch process too, through the same runtime background or supervised long-running-process mechanism step 4 used to start it; nothing else here tracks that process, and leaving it running after `cancel` and `abandon` defeats the stop the person asked for. Print the ended reply after all three. A reply matching no declared id gets the clarifying question, never a guess.
 
    Helper unavailable (no `node`, exit 3, any nonzero exit): read the reply yourself and say once in the reply that judgments were skipped.
 
-   Resolve and wait. The decision returns at once and the wait is bounded, so no shell call is held for the length of a phase:
+   Resolve and wait one chunk. The decision returns at once and this one `wait` call is bounded by its own `--timeout`, so this fence holds one shell call for at most that long, never for the length of a phase. `respond` is guarded exactly like the two reads: a nonzero exit ends the steward, reporting Archon's output as cause and fix, before the wait ever starts, so a dropped decision does not silently re-ask the same gate:
 
    ```bash
-   archon workflow respond "$run_id" "$decision" "$text" --detach --cwd "$cwd"
-   while :; do
-     archon workflow wait "$run_id" --json --timeout 600 --cwd "$cwd" || true
-     run=$(archon workflow get "$run_id" --json --cwd "$cwd") || { printf '%s\n' "$run" >&2; exit 1; }
-     status=$(jq -r '.status' <<<"$run")
-     case "$status" in paused|completed|failed|cancelled) break ;; esac
-   done
+   out=$(archon workflow respond "$run_id" "$decision" "$text" --detach --cwd "$cwd") || { printf '%s\n' "$out" >&2; exit 1; }
+   archon workflow wait "$run_id" --json --timeout 600 --cwd "$cwd" || true
+   run=$(archon workflow get "$run_id" --json --cwd "$cwd") || { printf '%s\n' "$run" >&2; exit 1; }
+   run_status=$(jq -r '.status' <<<"$run")
    ```
 
-   A chunk that expires is not a failure; the loop re-reads and re-issues. `--cwd "$cwd"` names the run's own worktree on every call once the first read has returned it, so the steward reads the same run from whatever directory the person started it in; a read that still fails ends the steward, as above. `--detach` is accepted here because Archon refuses it only on a fresh launch of an interactive pack, not on a decision that continues one. Then loop back to the state read.
+   `run_status` of `paused`, `completed`, `failed`, or `cancelled` ends the wait. Anything else, most often `running`, is a chunk that expired, not a failure: run the `wait`, `get`, and `run_status` lines again, in a fresh shell call, dropping the `respond` line (already sent), and keep doing so until `run_status` is one of those four; this is also the fence the running-run branch runs on its own, with no `respond` line at all, right after step 4 and on the first read after step 1's attach. `--cwd "$cwd"` names the run's own worktree on every call once the first read has returned it, so the steward reads the same run from whatever directory the person started it in; a read that still fails ends the steward, as above. `--detach` is accepted here because Archon refuses it only on a fresh launch of an interactive pack, not on a decision that continues one. Once `run_status` is one of the four, loop back to the state read.
 
 ## Rules
 

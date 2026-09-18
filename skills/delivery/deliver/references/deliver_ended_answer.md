@@ -1,4 +1,4 @@
-Run `<run-id>` <`completed`, `failed at <node>`, `was cancelled`, or `has no gate waiting`>: <Archon's own reason or end state, verbatim>.
+Run `<run-id>` <`completed`, `failed at <node>`, or `was cancelled`>: <Archon's own reason or end state, verbatim>.
 
 Branch `<branch>`, worktree `<the run's working_path>`. <One line naming the pull request or the last artifact the run left, when Archon printed one; otherwise omit.>
 

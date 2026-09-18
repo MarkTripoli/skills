@@ -92,6 +92,10 @@ fi
 # cannot ask, so an unreadable kind ends the run rather than defaulting.
 kind=$(herdr pane current --current 2>/dev/null | jq -r '.result.pane.agent // empty' 2>/dev/null)
 case "$kind" in claude | codex | omp | pi) ;; *) exit 0 ;; esac
+# The fence above always shows `/`, per CONVENTIONS.md's Handoff section, on the
+# assumption a Codex person retypes it as `$`; this pane has no person doing that,
+# so convert before staging. phase/artifact parsing above already ran on the raw form.
+case "$kind" in codex) cmd="\$${cmd#/}" ;; esac
 
 # Step 5, the target pane: a sibling split, or a new tab when another task holds
 # this tab.
@@ -110,6 +114,9 @@ else
   created=$(herdr tab create --workspace "${HERDR_WORKSPACE_ID:-}" --cwd "$cwd" --label "$slug" --no-focus 2>/dev/null)
   pane=$(jq -r '.result.root_pane.pane_id // empty' <<<"$created" 2>/dev/null)
   created_tab=$(jq -r '.result.tab.tab_id // empty' <<<"$created" 2>/dev/null)
+  # Fall back to closing the pane alone if the tab id field name above ever stops matching a real
+  # response, so cleanup still closes something instead of leaking the tab.
+  test -z "$created_tab" && created_pane=$pane
 fi
 test -n "$pane" || exit 0
 
