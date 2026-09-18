@@ -148,9 +148,9 @@ Add one sentence to the paragraph after the fence (`:100`), before the live-gate
 
 #### Automated Verification:
 
-- [ ] `grep -n '|| { printf' skills/delivery/herd-next/SKILL.md` prints one line, inside the gate mode's fence
-- [ ] `grep -n 'the run could not be read' skills/delivery/herd-next/SKILL.md` prints one line
-- [ ] `npm test` (`validate.mjs:313-318` still resolves `references/herd_next_skipped_answer.md`, which exists and is unchanged)
+- [x] `grep -n '|| { printf' skills/delivery/herd-next/SKILL.md` prints one line, inside the gate mode's fence
+- [x] `grep -n 'the run could not be read' skills/delivery/herd-next/SKILL.md` prints one line
+- [x] `npm test` (`validate.mjs:313-318` still resolves `references/herd_next_skipped_answer.md`, which exists and is unchanged)
 
 human-gated: false
 
