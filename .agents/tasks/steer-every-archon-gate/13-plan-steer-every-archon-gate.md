@@ -343,8 +343,8 @@ One person runs the checklist once and the observed output is recorded. This pha
 
 #### Automated Verification:
 
-- [ ] `grep -rn 'archon workflow' skills/` shows no line that tells a person to run a command (acceptance (d); 14 lines across five files today, all commands a skill runs itself)
-- [ ] `npm test` (acceptance (e))
+- [x] `grep -rn 'archon workflow' skills/` shows no line that tells a person to run a command (acceptance (d); 14 lines across five files today, all commands a skill runs itself)
+- [x] `npm test` (acceptance (e))
 
 human-gated: false
 
