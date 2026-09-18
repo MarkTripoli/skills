@@ -6,8 +6,12 @@ description: |
   to that pack's gate names, else `all`); `confirm` pauses once, only when the pack was judged unsure,
   whatever the gates, and a "request changes" whose text names a pack, optionally followed by
   gates (`bugfix`, or `lean, outline`), overrides the pick; the task directory is created with the
-  chosen pack's name, and that pack runs as a child run on the same checkout (its gates pause this
-  run too; approve them by the child's run id, which the pause message names). `--input
+  judged pack's name (task.md always names oneshot, lean, full, prd, bugfix, epic, or program, never
+  `adaptive`), and the chosen pack runs as a child run on the same checkout (its gates pause this run
+  too; approve them by the child's run id, which the pause message names). A judged (not explicit) `oneshot`,
+  `lean`, `full`, or `prd` pick continues in `delivery-adaptive`, which re-decides the optional phases
+  at every boundary instead of running the fixed chain; naming the pack yourself, with `--input
+  workflow=<name>` or a "request changes" text, always runs that fixed pack. `--input
   workflow=program` picks the PRD-to-children program explicitly; an automatic `prd` route becomes
   `program` when the request also names epics, children, issues, or several pull requests.
 
@@ -22,7 +26,7 @@ interactive: true
 inputs:
   workflow:
     default: auto
-    description: "The pack to run: `auto` (judged from the request), or one of full, lean, prd, oneshot, bugfix, epic, program."
+    description: "The pack to run: `auto` (judged from the request, and a judged oneshot, lean, full, or prd continues in delivery-adaptive), or one of full, lean, prd, oneshot, bugfix, epic, program named explicitly, which always runs that fixed pack."
   gates:
     default: auto
     description: "Human gates to keep, passed to the chosen pack: `auto` (judged from the request), `all`, `none`, or a comma-separated subset of that pack's gate names."
@@ -42,11 +46,12 @@ inputs:
 # The chosen pack is a `workflow:` child run, not an include: Archon 0.10.1 drops the body of every
 # `loop_group` inside an include that is itself included (the body's composed boundary keeps the
 # inner file's node ids), and every pack loops. The task directory is created here so the child needs
-# no request text (`with:` and `input:` exclude each other on a `workflow:` node) and task.md names the
-# pack that runs. One `workflow:` node per pack under `when: "$resolve.output.workflow == '<name>'"`,
-# so exactly one runs, and the `done` join fires from it with `trigger_rule:
-# none_failed_min_one_success`. A dry run cannot execute a reachable `workflow:` node, so the pack's
-# fixtures expect a failure at the chosen pack's node and prove the routing before it.
+# no request text (`with:` and `input:` exclude each other on a `workflow:` node); `task` still takes
+# `resolve.output.workflow` (the judged pack, never `adaptive`), so task.md always names oneshot, lean,
+# full, prd, bugfix, epic, or program. One `workflow:` node per pack, including `adaptive`, under `when:
+# "$resolve.output.pack == '<name>'"`, so exactly one runs, and the `done` join fires from it with
+# `trigger_rule: none_failed_min_one_success`. A dry run cannot execute a reachable `workflow:` node,
+# so the pack's fixtures expect a failure at the chosen pack's node and prove the routing before it.
 nodes:
   # The request arrives as the ARGUMENTS environment variable, the inputs as INPUTS_*; nothing is
   # spliced into the script. Autonomy level to gates, per pack: `none` -> none, `pr` -> pr, `all` -> all,
@@ -129,7 +134,9 @@ nodes:
       esac
       confirm=false
       if [ "$confident" = false ]; then confirm=true; fi
-      printf '{"workflow":"%s","gates":"%s","suggested":"%s","confidence":"%s","confirm":"%s"}\n' "$workflow" "$gates" "$suggested" "$confidence" "$confirm"
+      explicit=false
+      if [ "$(printf '%s' "${INPUTS_WORKFLOW:-auto}" | tr -d ' ')" != auto ]; then explicit=true; fi
+      printf '{"workflow":"%s","gates":"%s","suggested":"%s","confidence":"%s","confirm":"%s","explicit":"%s"}\n' "$workflow" "$gates" "$suggested" "$confidence" "$confirm" "$explicit"
     output_format:
       type: object
       properties:
@@ -138,7 +145,8 @@ nodes:
         suggested: { type: string }
         confidence: { type: string }
         confirm: { type: string }
-      required: [workflow, gates, suggested, confidence, confirm]
+        explicit: { type: string }
+      required: [workflow, gates, suggested, confidence, confirm, explicit]
 
   - id: confirm
     depends_on: [route]
@@ -186,6 +194,26 @@ nodes:
         full) names="design plan phases pr" ;; prd) names="prd tdd plan phases pr" ;; program) names="prd tdd plan" ;;
         lean) names="outline phases pr" ;; bugfix) names="reproduce pr" ;; oneshot) names="pr" ;; epic) names="plan" ;;
       esac
+      # A person naming the pack (--input workflow=, or a reject text) gets that fixed pack; a judged
+      # oneshot, lean, full, or prd run gets the adaptive chain, which re-decides at every boundary.
+      explicit=$route.output.explicit
+      [ -z "$words" ] || explicit=true
+      pack=$workflow
+      if [ "$explicit" != true ]; then
+        case "$workflow" in oneshot|lean|full|prd) pack=adaptive ;; esac
+      fi
+      # `route` names the judged pack's gates; the adaptive pack gates its outline node with `plan`.
+      # Renamed a token at a time (not `sed`'s `\b`, a GNU extension BSD sed does not support) so
+      # "outline" only matches a whole gate name, never a substring.
+      if [ "$pack" = adaptive ]; then
+        renamed=""
+        for g in $(printf '%s' "$gates" | tr ',' ' '); do
+          [ "$g" = outline ] && g=plan
+          renamed="$renamed${renamed:+,}$g"
+        done
+        gates=$renamed
+        names="design prd tdd plan phases pr"
+      fi
       case "$gates" in
         all|none) ;;
         *)
@@ -196,13 +224,14 @@ nodes:
             esac
           done ;;
       esac
-      printf '{"workflow":"%s","gates":"%s"}\n' "$workflow" "$gates"
+      printf '{"workflow":"%s","gates":"%s","pack":"%s"}\n' "$workflow" "$gates" "$pack"
     output_format:
       type: object
       properties:
         workflow: { type: string }
         gates: { type: string }
-      required: [workflow, gates]
+        pack: { type: string }
+      required: [workflow, gates, pack]
 
   # The task directory, with the chosen pack's name in task.md; the child reuses it through
   # `task_dir` and its own task node writes nothing.
@@ -217,7 +246,7 @@ nodes:
   - id: full
     workflow: delivery-full-omp
     depends_on: [task]
-    when: "$resolve.output.workflow == 'full'"
+    when: "$resolve.output.pack == 'full'"
     with:
       skills_dir: $task.output.skills_dir
       task_dir: $task.output.task_dir
@@ -228,7 +257,7 @@ nodes:
   - id: lean
     workflow: delivery-lean-omp
     depends_on: [task]
-    when: "$resolve.output.workflow == 'lean'"
+    when: "$resolve.output.pack == 'lean'"
     with:
       skills_dir: $task.output.skills_dir
       task_dir: $task.output.task_dir
@@ -239,7 +268,7 @@ nodes:
   - id: prd
     workflow: delivery-prd-omp
     depends_on: [task]
-    when: "$resolve.output.workflow == 'prd'"
+    when: "$resolve.output.pack == 'prd'"
     with:
       skills_dir: $task.output.skills_dir
       task_dir: $task.output.task_dir
@@ -250,7 +279,7 @@ nodes:
   - id: oneshot
     workflow: delivery-oneshot-omp
     depends_on: [task]
-    when: "$resolve.output.workflow == 'oneshot'"
+    when: "$resolve.output.pack == 'oneshot'"
     with:
       skills_dir: $task.output.skills_dir
       task_dir: $task.output.task_dir
@@ -261,7 +290,7 @@ nodes:
   - id: bugfix
     workflow: delivery-bugfix-omp
     depends_on: [task]
-    when: "$resolve.output.workflow == 'bugfix'"
+    when: "$resolve.output.pack == 'bugfix'"
     with:
       skills_dir: $task.output.skills_dir
       task_dir: $task.output.task_dir
@@ -272,7 +301,7 @@ nodes:
   - id: epic
     workflow: delivery-epic-omp
     depends_on: [task]
-    when: "$resolve.output.workflow == 'epic'"
+    when: "$resolve.output.pack == 'epic'"
     with:
       skills_dir: $task.output.skills_dir
       task_dir: $task.output.task_dir
@@ -281,14 +310,25 @@ nodes:
   - id: program
     workflow: delivery-program-omp
     depends_on: [task]
-    when: "$resolve.output.workflow == 'program'"
+    when: "$resolve.output.pack == 'program'"
     with:
       skills_dir: $task.output.skills_dir
       task_dir: $task.output.task_dir
       gates: $resolve.output.gates
 
+  - id: adaptive
+    workflow: delivery-adaptive-omp
+    depends_on: [task]
+    when: "$resolve.output.pack == 'adaptive'"
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      gates: $resolve.output.gates
+      app_test: $INPUTS.app_test
+      app_target: $INPUTS.app_target
+
   - id: done
-    depends_on: [full, lean, prd, oneshot, bugfix, epic, program]
+    depends_on: [full, lean, prd, oneshot, bugfix, epic, program, adaptive]
     trigger_rule: none_failed_min_one_success
     bash: |
       set -eu

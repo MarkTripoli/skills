@@ -1,0 +1,45 @@
+# Every boundary's decide node judges every optional phase necessary: the run reaches every gated
+# phase, the implement loop with review_each_phase true, the app-test loop (app_test: web), and the
+# review loop, ending at pr-done. An include whose `when:` reads another node's output (every gated
+# phase here, and app-test) completes its nested loop_group in a dry run without descending into the
+# loop body (the archon binary this was verified against, 0.10.1, marks the body's first node
+# `skipped`/`trigger_rule` even though the loop itself is `completed`); `phase`/`gate`/`intent` stay
+# stubbed only because the unconditional `pr` node at the end of the chain reaches them for real, and
+# `test-app`/`test-done` are left unstubbed because nothing else in this pack reaches them.
+task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills"}'
+gates: '{"design":"true","prd":"true","tdd":"true","plan":"true","phases":"true","pr":"true"}'
+decide-task__decide: '{"research":"true","design":"true","prd":"true","tdd":"true","planning":"plan","implement_skill":"implement-plan","app_test":"web","review_each_phase":"true","autonomy":"all","available":"true"}'
+decide-research__decide: '{"research":"true","design":"true","prd":"true","tdd":"true","planning":"plan","implement_skill":"implement-plan","app_test":"web","review_each_phase":"true","autonomy":"all","available":"true"}'
+decide-design__decide: '{"research":"true","design":"true","prd":"true","tdd":"true","planning":"plan","implement_skill":"implement-plan","app_test":"web","review_each_phase":"true","autonomy":"all","available":"true"}'
+decide-plan__decide: '{"research":"true","design":"true","prd":"true","tdd":"true","planning":"plan","implement_skill":"implement-plan","app_test":"web","review_each_phase":"true","autonomy":"all","available":"true"}'
+research__questions: "research questions saved"
+research__research: "research saved"
+phase: "artifact saved"
+intent: '{"intent":"revise"}'
+next-phase: '{"next":""}'
+implement-phase: "phase implemented"
+review-phase: '{"status":"clean","artifact":"05-code-review-fixture.md","summary":"clean"}'
+verify-phase: '{"status":"clean"}'
+verify-implementation: '{"status":"passed","artifact":"06-verification-fixture.md","summary":"checks and acceptance items passed"}'
+verification-status: '{"status":"passed"}'
+review-code: '{"status":"clean","artifact":"08-code-review-fixture.md","summary":"clean"}'
+verify-review: '{"status":"clean"}'
+decide-task-done: ""
+research-done: ""
+decide-research-done: ""
+design-done: ""
+prd-done: ""
+spec-done: ""
+decide-design-done: ""
+plan-done: ""
+decide-plan-done: ""
+implement-done: ""
+verification-done: ""
+verify-done: ""
+app-test-done: ""
+review-done: ""
+pr-done: ""
+fixture:
+  expect: completed
+  reached: [research__questions, research__research, design__cycle, prd__cycle, tdd__cycle, plan__cycle, implement__phases, app-test__test, review__loop, pr__cycle, pr-done]
+exec-code: false

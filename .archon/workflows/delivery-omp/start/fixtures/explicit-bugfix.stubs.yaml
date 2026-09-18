@@ -1,8 +1,9 @@
-# `--input workflow=bugfix`: the pack is taken as given, nothing to confirm, the task directory is
+# `--input workflow=bugfix`: the pack is taken as given, nothing to confirm; bugfix is never one of
+# the adaptive-eligible packs, so `pack` stays bugfix regardless of `explicit`. The task directory is
 # opened for bugfix, and the run reaches the bugfix child alone (a dry run cannot start a `workflow:`
 # child, so it fails there).
-route: '{"workflow":"bugfix","gates":"all","suggested":"","confidence":"unknown","confirm":"false"}'
-resolve: '{"workflow":"bugfix","gates":"all"}'
+route: '{"workflow":"bugfix","gates":"all","suggested":"","confidence":"unknown","confirm":"false","explicit":"true"}'
+resolve: '{"workflow":"bugfix","gates":"all","pack":"bugfix"}'
 task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills","tier":"","suggested_workflow":""}'
 fixture:
   expect: failed

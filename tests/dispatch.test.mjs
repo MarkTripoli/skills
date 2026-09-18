@@ -32,20 +32,25 @@ function bash(script, env) {
 // The skills directory is the repository's own, which holds `typed-judgment/judge.mjs`; without a
 // TypeSafe key the helper exits 3 and the fallbacks apply.
 const route = (request, env) => bash(body("route"), { ARGUMENTS: request, INPUTS_SKILLS_DIR: SKILLS, ...env });
-const routed = (workflow, gates, suggested, confidence, confirm) => `{"workflow":"${workflow}","gates":"${gates}","suggested":"${suggested}","confidence":"${confidence}","confirm":"${confirm}"}`;
+// `explicit` defaults to "false" (an auto-judged route); every call that supplies INPUTS_WORKFLOW
+// passes "true" explicitly.
+const routed = (workflow, gates, suggested, confidence, confirm, explicit = "false") => `{"workflow":"${workflow}","gates":"${gates}","suggested":"${suggested}","confidence":"${confidence}","confirm":"${confirm}","explicit":"${explicit}"}`;
 
 // The resolve node with the route's fields and the gate's whole output substituted the way Archon does
 // (shell-quoted; a skipped gate is the empty string, a dry run's gate is `approved`).
 const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
-const resolve = (workflow, gates, confirm) => bash(body("resolve").replaceAll("$route.output.workflow", quote(workflow)).replaceAll("$route.output.gates", quote(gates)).replaceAll("$confirm.output", quote(confirm)));
+// `explicit` defaults to "false" (a judged, non-explicit route, `route.output.explicit`); pass "true"
+// to simulate an `--input workflow=` pick.
+const resolve = (workflow, gates, confirm, explicit = "false") =>
+  bash(body("resolve").replaceAll("$route.output.workflow", quote(workflow)).replaceAll("$route.output.gates", quote(gates)).replaceAll("$route.output.explicit", quote(explicit)).replaceAll("$confirm.output", quote(confirm)));
 const reject = (text) => JSON.stringify({ decision: "reject", text });
 
 test("route: an explicit workflow and gates pass through unjudged and never ask for confirmation", async () => {
   const explicit = await route("Anything at all", { INPUTS_WORKFLOW: "lean", INPUTS_GATES: "outline,pr" });
   assert.equal(explicit.code, 0, explicit.err);
-  assert.equal(explicit.out, routed("lean", "outline,pr", "", "unknown", "false"));
+  assert.equal(explicit.out, routed("lean", "outline,pr", "", "unknown", "false", "true"));
   // Spaces around the names are tolerated; `program` is a pack a caller may name.
-  assert.equal((await route("x", { INPUTS_WORKFLOW: " program ", INPUTS_GATES: "prd, tdd" })).out, routed("program", "prd,tdd", "", "unknown", "false"));
+  assert.equal((await route("x", { INPUTS_WORKFLOW: " program ", INPUTS_GATES: "prd, tdd" })).out, routed("program", "prd,tdd", "", "unknown", "false", "true"));
   // A pack name that is not one of the seven fails naming them.
   const bogus = await route("x", { INPUTS_WORKFLOW: "quick", INPUTS_GATES: "all" });
   assert.equal(bogus.code, 1);
@@ -78,7 +83,7 @@ test("route: with the TypeSafe stub a confident pack and a hands-off request run
     assert.equal((await route("Rework the whole settings area, hands off", stub.env)).out, routed("full", "none", "lean", "0.55", "true"));
     // An explicit workflow is taken as given and only the gates are judged.
     workflow = "oneshot"; confidence = 0.99; involvement = "pr"; involvementConfidence = 0.9;
-    assert.equal((await route("Add the flag; show me the pull request when done", { INPUTS_WORKFLOW: "lean", ...stub.env })).out, routed("lean", "pr", "", "unknown", "false"));
+    assert.equal((await route("Add the flag; show me the pull request when done", { INPUTS_WORKFLOW: "lean", ...stub.env })).out, routed("lean", "pr", "", "unknown", "false", "true"));
     assert.equal(Object.keys(stub.requests.at(-1).questions)[0], "involvement", "the pack was not judged");
   } finally {
     stub.close();
@@ -90,7 +95,7 @@ test("route: the `plan` autonomy level maps to each pack's planning gates", asyn
   try {
     for (const [pack, gates] of [["bugfix", "reproduce"], ["lean", "outline"], ["oneshot", "pr"], ["full", "design,plan"], ["prd", "prd,tdd,plan"], ["program", "prd,tdd,plan"], ["epic", "plan"]]) {
       const result = await route("Let me review the plan before you build it", { INPUTS_WORKFLOW: pack, ...stub.env });
-      assert.equal(result.out, routed(pack, gates, "", "unknown", "false"), `${pack}: plan gates`);
+      assert.equal(result.out, routed(pack, gates, "", "unknown", "false", "true"), `${pack}: plan gates`);
     }
   } finally {
     stub.close();
@@ -104,7 +109,7 @@ test("route: a judged prd whose request also asks for epics, children, issues, o
     assert.equal((await route("Write the requirements for billing, then GitHub issues for each piece", stub.env)).out, routed("program", "all", "prd", "0.9", "false"));
     assert.equal((await route("Write a PRD for billing", stub.env)).out, routed("prd", "all", "prd", "0.9", "false"));
     assert.equal((await route("Open an epic with children for billing", stub.env)).out, routed("prd", "all", "prd", "0.9", "false"), "the word check needs both halves");
-    assert.equal((await route("Write a PRD for billing and open an epic with children", { INPUTS_WORKFLOW: "prd", ...stub.env })).out, routed("prd", "all", "", "unknown", "false"), "an explicit pack is never remapped");
+    assert.equal((await route("Write a PRD for billing and open an epic with children", { INPUTS_WORKFLOW: "prd", ...stub.env })).out, routed("prd", "all", "", "unknown", "false", "true"), "an explicit pack is never remapped");
   } finally {
     stub.close();
   }
@@ -120,19 +125,24 @@ test("route: a gate name the chosen pack does not have fails naming the pack's g
   assert.equal(wrongPack.err, 'gates: unknown gate "outline" for delivery-oneshot; use auto, all, none, or a comma-separated subset of: pr');
 });
 
-test("resolve: an approved or skipped gate keeps the route, a request changes naming a pack and gates overrides it, and an unknown pack or gate fails", async () => {
-  assert.equal((await resolve("full", "all", "")).out, '{"workflow":"full","gates":"all"}', "skipped gate: route stands");
-  assert.equal((await resolve("full", "all", "approved")).out, '{"workflow":"full","gates":"all"}', "a dry run's gate answers `approved`");
-  assert.equal((await resolve("full", "all", JSON.stringify({ decision: "approve", text: "lean" }))).out, '{"workflow":"full","gates":"all"}', "approve text is not a redirect");
-  assert.equal((await resolve("full", "all", reject("lean, outline"))).out, '{"workflow":"lean","gates":"outline"}');
-  assert.equal((await resolve("full", "all", reject("lean outline pr"))).out, '{"workflow":"lean","gates":"outline,pr"}', "spaces work like commas");
-  assert.equal((await resolve("full", "all", reject("bugfix"))).out, '{"workflow":"bugfix","gates":"all"}', "no gates named: the route's gates stand");
-  assert.equal((await resolve("full", "design,plan", reject("  "))).out, '{"workflow":"full","gates":"design,plan"}', "blank reject text keeps the route");
-  assert.equal((await resolve("full", "all", reject("oneshot, none"))).out, '{"workflow":"oneshot","gates":"none"}');
+test("resolve: an approved or skipped gate keeps the judged (non-explicit) route, which lands on the adaptive pack; a request changes naming a pack pins that fixed pack instead; an unknown pack or gate fails", async () => {
+  assert.equal((await resolve("full", "all", "")).out, '{"workflow":"full","gates":"all","pack":"adaptive"}', "skipped gate: route stands, and since it was never pinned explicit, pack is adaptive");
+  assert.equal((await resolve("full", "all", "approved")).out, '{"workflow":"full","gates":"all","pack":"adaptive"}', "a dry run's gate answers `approved`");
+  assert.equal((await resolve("full", "all", JSON.stringify({ decision: "approve", text: "lean" }))).out, '{"workflow":"full","gates":"all","pack":"adaptive"}', "approve text is not a redirect");
+  assert.equal((await resolve("full", "all", reject("lean, outline"))).out, '{"workflow":"lean","gates":"outline","pack":"lean"}', "a reject text naming a pack pins that fixed pack, never adaptive");
+  assert.equal((await resolve("full", "all", reject("lean outline pr"))).out, '{"workflow":"lean","gates":"outline,pr","pack":"lean"}', "spaces work like commas");
+  assert.equal((await resolve("full", "all", reject("bugfix"))).out, '{"workflow":"bugfix","gates":"all","pack":"bugfix"}', "no gates named: the route's gates stand; bugfix is never adaptive anyway");
+  assert.equal((await resolve("full", "design,plan", reject("  "))).out, '{"workflow":"full","gates":"design,plan","pack":"adaptive"}', "blank reject text keeps the route and stays non-explicit");
+  assert.equal((await resolve("full", "all", reject("oneshot, none"))).out, '{"workflow":"oneshot","gates":"none","pack":"oneshot"}');
   const unknown = await resolve("full", "all", reject("quick, pr"));
   assert.equal(unknown.code, 1);
   assert.equal(unknown.err, 'confirm: unknown pack "quick"; request changes naming one of: oneshot bugfix lean full prd epic program');
   const badGate = await resolve("full", "all", reject("lean, design"));
   assert.equal(badGate.code, 1);
   assert.equal(badGate.err, 'confirm: unknown gate "design" for delivery-lean; name the pack, then all, none, or a comma-separated subset of: outline phases pr');
+});
+
+test("resolve: an explicit --input workflow= always pins that fixed pack, never adaptive, even for a pack the judged path would send to adaptive; a judged lean at autonomy plan lands on adaptive with its outline gate rewritten to plan", async () => {
+  assert.equal((await resolve("full", "all", "", "true")).out, '{"workflow":"full","gates":"all","pack":"full"}', "route.explicit=true (--input workflow=full): pack is the fixed pack, not adaptive");
+  assert.equal((await resolve("lean", "outline", "")).out, '{"workflow":"lean","gates":"plan","pack":"adaptive"}', "judged lean, not explicit: adaptive, and the outline gate delivery-start derived for autonomy plan is rewritten to the plan gate the adaptive outline node carries");
 });
