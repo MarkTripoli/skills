@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # Claude Code Stop hook: open the next delivery phase in its own Herdr pane.
 # Install by hand in ~/.claude/settings.json under "hooks" -> "Stop":
-#   {"hooks":[{"type":"command","command":"<path to this file>","timeout":30}]}
+#   {"hooks":[{"type":"command","command":"<path to this file>","timeout":90}]}
 # Not installed by this collection's installer, which never writes settings you own.
+# 90 covers the worst case below: up to 30s in `herdr agent start`'s own
+# readiness wait, plus up to another 30s in the `herdr agent wait` fallback,
+# plus the handful of other herdr round trips. Raise this alongside either
+# timeout below if either one grows.
 #
 # Does unprompted what /herd-next does: parses the handoff fence the finishing
 # phase printed, then runs steps 3 to 7 of the skill's handoff mode itself -
@@ -11,6 +15,24 @@
 # and writes no file: every path that the skill would resolve by asking the user
 # exits 0 and changes nothing, because a Stop hook must never block a session.
 set -u
+
+# Anything created below is torn down on the way out unless `done=1` is
+# reached at the bottom: leaving an empty or half-configured pane or tab
+# behind on every failure is worse than doing nothing.
+done=0
+created_pane=""
+created_tab=""
+# shellcheck disable=SC2329 # invoked indirectly, via the trap below
+cleanup() {
+  test "$done" = 1 && return
+  if test -n "$created_tab"; then
+    herdr tab close "$created_tab" >/dev/null 2>&1
+  elif test -n "$created_pane"; then
+    herdr pane close "$created_pane" >/dev/null 2>&1
+  fi
+}
+trap cleanup EXIT
+trap 'cleanup; exit 0' INT TERM HUP
 
 test "${HERDR_ENV:-}" = 1 || exit 0
 command -v jq >/dev/null 2>&1 || exit 0
@@ -25,6 +47,16 @@ cwd=$(jq -r '.cwd // empty' <<<"$payload" 2>/dev/null)
 test -n "$cwd" || cwd=$PWD
 test -d "$cwd" || exit 0
 
+# The task-directory lookup below walks up from $cwd to the nearest ancestor
+# holding .agents/tasks/, so a session started in a repo subdirectory still
+# finds it; panes and tabs are still opened at $cwd itself, unchanged.
+root=$cwd
+while ! test -d "$root/.agents/tasks" && test "$root" != "/"; do
+  root=${root%/*}
+  test -n "$root" || root=/
+done
+test -d "$root/.agents/tasks" || exit 0
+
 # Step 3, the slug and the phase. The artifact in the fence names the task
 # directory; a fence without one falls back to the most recently touched task.
 phase=${cmd#/}
@@ -35,10 +67,10 @@ task=""
 if test -n "$artifact"; then
   case "$artifact" in
     */*)
-      test -f "$cwd/${artifact%/*}/task.md" && task="$cwd/${artifact%/*}/task.md"
+      test -f "$root/${artifact%/*}/task.md" && task="$root/${artifact%/*}/task.md"
       ;;
     *)
-      for hit in "$cwd"/.agents/tasks/*/"$artifact"; do
+      for hit in "$root"/.agents/tasks/*/"$artifact"; do
         test -f "$hit" || continue
         test -z "$task" || exit 0 # two task directories hold this artifact
         task="${hit%/*}/task.md"
@@ -47,7 +79,7 @@ if test -n "$artifact"; then
   esac
 else
   # shellcheck disable=SC2012 # mtime order, and every path here is .agents/tasks/<slug>/task.md
-  task=$(ls -t "$cwd"/.agents/tasks/*/task.md 2>/dev/null | head -1)
+  task=$(ls -t "$root"/.agents/tasks/*/task.md 2>/dev/null | head -1)
 fi
 test -f "$task" || exit 0
 slug=$(sed -n 's/^slug: *//p' "$task" | tr -d '"' | head -1)
@@ -71,11 +103,13 @@ if test -z "$busy"; then
     jq -r --arg p "${HERDR_PANE_ID:-}" \
       '.result.layout.panes[] | select(.pane_id == $p) | if .rect.width >= .rect.height * 2 then "right" else "down" end' 2>/dev/null)
   case "$dir" in right | down) ;; *) dir=down ;; esac
-  pane=$(herdr pane split --current --direction "$dir" --cwd "$cwd" --no-focus 2>/dev/null |
-    jq -r '.result.pane.pane_id // empty' 2>/dev/null)
+  split=$(herdr pane split --current --direction "$dir" --cwd "$cwd" --no-focus 2>/dev/null)
+  pane=$(jq -r '.result.pane.pane_id // empty' <<<"$split" 2>/dev/null)
+  created_pane=$pane
 else
-  pane=$(herdr tab create --workspace "${HERDR_WORKSPACE_ID:-}" --cwd "$cwd" --label "$slug" --no-focus 2>/dev/null |
-    jq -r '.result.root_pane.pane_id // empty' 2>/dev/null)
+  created=$(herdr tab create --workspace "${HERDR_WORKSPACE_ID:-}" --cwd "$cwd" --label "$slug" --no-focus 2>/dev/null)
+  pane=$(jq -r '.result.root_pane.pane_id // empty' <<<"$created" 2>/dev/null)
+  created_tab=$(jq -r '.result.tab.tab_id // empty' <<<"$created" 2>/dev/null)
 fi
 test -n "$pane" || exit 0
 
@@ -96,10 +130,16 @@ case "$name" in [a-z]*) ;; *) exit 0 ;; esac
 
 # Step 7, start, label, stage. send-text only: submitting the handoff would
 # record approval of the artifact the finished phase produced.
-start=$(herdr agent start "$name" --kind "$kind" --pane "$pane" 2>/dev/null) || exit 0
+# CLI errors are JSON on stderr with exit status 1, so both streams are kept
+# together and the branch reads the code, not the exit status: agent_not_ready
+# can appear on a non-zero exit, and every other non-zero exit still stops.
+start=$(herdr agent start "$name" --kind "$kind" --pane "$pane" 2>&1)
+rc=$?
 case "$start" in
-  *agent_not_ready*) herdr agent wait "$name" --timeout 30000 >/dev/null 2>&1 || exit 0 ;;
+  *agent_not_ready*) herdr agent wait "$name" --until idle --until "done" --timeout 30000 >/dev/null 2>&1 || exit 0 ;;
+  *) test "$rc" = 0 || exit 0 ;;
 esac
 herdr pane rename "$pane" "$slug/$phase" >/dev/null 2>&1 || exit 0
 herdr pane send-text "$pane" "$cmd" >/dev/null 2>&1 || exit 0
+done=1
 exit 0

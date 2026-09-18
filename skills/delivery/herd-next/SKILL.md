@@ -15,7 +15,7 @@ Step 1, the guard. Nothing else runs until it passes:
 test "${HERDR_ENV:-}" = 1
 ```
 
-A failed guard prints `references/herd_next_skipped_answer.md` with the reason `not inside Herdr` and stops. This is not an error: the phase reply that came before already carries the command fence, and pasting it by hand is the documented flow (`workflows/delivery.md:252`).
+A failed guard prints `references/herd_next_skipped_answer.md` with the reason `not inside Herdr` and stops. This is not an error: the phase reply that came before already carries the command fence, and pasting it by hand is the documented flow (`workflows/delivery.md`, "Running skills by hand").
 
 Step 2, the command to stage. Take the last line matching `^/[a-z0-9-]+( @[^ ]+)?$` from the caller's argument, or, when the skill was given none, from the finishing reply in this session. When no such line exists, print the skipped reply with the reason `no handoff command found` and stop. Never invent the next skill.
 
@@ -44,6 +44,7 @@ With `busy` empty, split a sibling pane, choosing the direction from the caller'
 dir=$(herdr pane layout --pane "$HERDR_PANE_ID" \
   | jq -r --arg p "$HERDR_PANE_ID" \
     '.result.layout.panes[] | select(.pane_id == $p) | if .rect.width >= .rect.height * 2 then "right" else "down" end')
+case "$dir" in right|down) ;; *) dir=down ;; esac
 pane=$(herdr pane split --current --direction "$dir" --cwd "$PWD" --no-focus | jq -r '.result.pane.pane_id')
 ```
 
@@ -54,7 +55,7 @@ pane=$(herdr tab create --workspace "$HERDR_WORKSPACE_ID" --cwd "$PWD" --label "
   | jq -r '.result.root_pane.pane_id')
 ```
 
-Step 6, the agent name. Cut the slug to `32 - (length of the phase + 1)` characters first, so the phase always survives, then build `<cut slug>-<phase>`, lower-case, every character outside `a-z0-9-` replaced by `-`, collapsed runs of `-` reduced to one, truncated to 32 characters, any trailing `-` stripped. A phase longer than 31 characters leaves no room for a stem; cut the joined `<slug>-<phase>` to 32 characters in that case. When `herdr agent list` already holds the result, append `-2`, then `-3`, cutting the stem further so the name stays within 32 characters.
+Step 6, the agent name. Cut the slug to `32 - (length of the phase + 1)` characters first, so the phase always survives, then build `<cut slug>-<phase>`, lower-case, every character outside `a-z0-9-` replaced by `-`, collapsed runs of `-` reduced to one, truncated to 32 characters, any trailing `-` stripped. A phase longer than 31 characters leaves no room for a stem; cut the joined `<slug>-<phase>` to 32 characters in that case. When `herdr agent list` already holds the result, append `-2`, then `-3`, cutting the stem further so the name stays within 32 characters. The built name must start with a lowercase letter, exactly as `stop_hook.sh` checks after building it; when it does not (a slug beginning with a digit, most often), ask the user for a name and stop rather than guessing one.
 
 Step 7, start, label, stage:
 
@@ -64,9 +65,9 @@ herdr pane rename "$pane" "$slug/$phase"
 herdr pane send-text "$pane" "$command"
 ```
 
-`agent start` returns `agent_not_ready` when the agent is blocked during startup while keeping the name usable; on that response, wait with `herdr agent wait "$name" --timeout 30000` before staging, and report a still-blocked agent in the reply rather than sending input to it.
+`agent start` returns `agent_not_ready` when the agent is blocked during startup while keeping the name usable; on that response, wait with `herdr agent wait "$name" --until idle --until done --timeout 30000` before staging, and report a still-blocked agent in the reply rather than sending input to it. `--until` is repeatable and a bare wait with none settles on `blocked` too, which is the one state this branch exists to sit out.
 
-Step 8, stage or submit. `send-text` is the default and stages without Enter, which is what keeps "running the next command records approval" true. Submit with `herdr agent prompt "$name" "$command" --wait --timeout 120000` only when the caller passed `--submit`, or when the task's `task.md` carries `gates: none`, because that chain was already declared unattended.
+Step 8, stage or submit. `send-text` is the default and stages without Enter, which is what keeps "running the next command records approval" true. Submit with `herdr agent prompt "$name" "$command" --wait --timeout 120000` only when the caller passed `--submit`.
 
 Step 9, the reply: `references/herd_next_answer.md`, every `<...>` slot filled.
 
@@ -82,7 +83,7 @@ Find the run when the caller named none. One running or paused run for this proj
 archon workflow status --json | jq -r '.runs[] | "\(.id)\t\(.workflow_name)\t\(.status)\t\(.working_path)"'
 ```
 
-Block on the run in this pane. `--detach` is refused on a fresh launch of an interactive pack and the delivery packs declare `interactive: true` (`workflows/delivery.md:147`), so `wait` is a foreground process and this pane is held while it runs:
+Block on the run in this pane. `--detach` is refused on a fresh launch of an interactive pack and the delivery packs declare `interactive: true` (`workflows/delivery.md`, "Steering a run"), so `wait` is a foreground process and this pane is held while it runs:
 
 ```bash
 archon workflow wait "$run_id" --json
@@ -100,30 +101,35 @@ decisions=$(jq -r '.metadata.approval.decisions[].id' <<<"$run")
 resolved=$(jq -r '.metadata.approval.resolved // empty' <<<"$run")
 ```
 
-A gate is live when `status` is `paused` and `resolved` is empty; the key is absent while the gate waits and appears once it has been answered. Any other `status`, or a non-empty `resolved`, means the run moved on: print the skipped reply with the reason `the run is not paused at a gate` and stop. The phase label is `nodeId` with a trailing `__cycle` stripped, so `design__cycle` labels the pane `<slug>/design`.
+A gate is live when `status` is `paused` and `resolved` is empty; the key is absent while the gate waits and appears once it has been answered. Any other `status`, or a non-empty `resolved`, means the run moved on: print the skipped reply with the reason `the run is not paused at a gate` and stop. `$phase` is `$node` with a trailing `__cycle` stripped, so `design__cycle` labels the pane `<slug>/design`.
 
-Notify, then open the review pane at the run's own worktree:
+`$artifact` is the task directory named in `$msg`, resolved against `$cwd`; when the message names none, `$artifact` is `$cwd` itself. `$slug` is that directory's basename - the run's own task, never the caller's, because `$cwd` is the run's `working_path`, a different checkout from `$PWD` whenever the caller is not already inside it.
+
+Get the pane and the name exactly as steps 4 through 6 do, with one substitution throughout: `$cwd` in place of `$PWD` everywhere a pane or tab is opened, because the review pane lives in the run's worktree, not the caller's. The busy check still reads the caller's own tab and pane through `$HERDR_TAB_ID` and `$HERDR_PANE_ID`, since that geometry is unchanged; only the destination of the new pane or tab moves. That gives `$kind`, `$pane`, and `$name`. Notify, start the agent, and stage the read:
 
 ```bash
 herdr notification show "Gate: $slug/$phase" --body "$msg" --sound request
-pane=$(herdr pane split --current --direction "$dir" --cwd "$cwd" --no-focus | jq -r '.result.pane.pane_id')
 herdr agent start "$name" --kind "$kind" --pane "$pane"
 herdr pane rename "$pane" "$slug/$phase gate"
 herdr pane send-text "$pane" "Read $artifact and report whether it is ready to approve."
 ```
 
-`$artifact` is the task directory named in `metadata.approval.message`, resolved against `$cwd`; when the message names none, stage the task directory path itself. The decision command is reported in the reply rather than staged in the same input line, because a pane holds one staged line at a time:
+The `agent_not_ready` handling is the one already stated in step 7; the gate mode does not restate it: wait with `herdr agent wait "$name" --until idle --until done --timeout 30000` before staging the read, and report a still-blocked agent in the reply rather than sending input to it.
+
+The decision command is reported in the reply rather than staged in the same input line, because a pane holds one staged line at a time:
 
 ```text
 archon workflow respond <run-id> <decision> "<what should change>"
 ```
 
-`respond` is the general form and covers every id in `decisions[]`, including any a pack authored beyond `approve` and `reject`. The tab-versus-split rule, the agent-name rule, the kind rule, and the stage-not-submit rule are the ones already stated for the handoff mode; the gate mode does not restate them.
+`respond` is the general form and covers every id in `decisions[]`, including any a pack authored beyond `approve` and `reject`. The stage-not-submit rule is the one already stated for the handoff mode; the gate mode does not restate it.
 
 The reply is `references/herd_next_gate_answer.md`, every `<...>` slot filled.
 
 ## Optional Stop hook
 
-`references/stop_hook.sh` is a Claude Code `Stop` hook that opens the pane without being asked. It parses the fence out of the payload's `last_assistant_message` and then runs steps 3 to 7 itself: the task directory from the artifact in the fence, the kind from `herdr pane current`, the split-or-tab choice, `agent start`, `pane rename`, `pane send-text`. It takes its working directory from the payload's `cwd`, stages with `send-text` and never submits, and writes no file anywhere.
+`references/stop_hook.sh` is a Claude Code `Stop` hook that opens the pane without being asked. It parses the fence out of the payload's `last_assistant_message` and then runs steps 3 to 7 itself: the task directory from the artifact in the fence, the kind from `herdr pane current`, the split-or-tab choice, `agent start`, `pane rename`, `pane send-text`. It takes its working directory from the payload's `cwd`, walking up from `cwd` to the nearest ancestor holding `.agents/tasks/` before it looks for the task directory, stages with `send-text` and never submits, and writes no file anywhere.
 
 The hook cannot ask a question, so every branch where the skill would ask - an unreadable agent kind, two task directories holding the same artifact, an agent name already in use - exits 0 and changes nothing. Run `/herd-next` by hand for those. Install the hook by hand in `~/.claude/settings.json`; this collection ships no `hooks` block and the installer never writes that file. Codex takes the same shape in its own `hooks.json`. Oh My Pi and Pi expose in-process extension callbacks rather than shell hooks, so they use the skill invocation only.
+
+Because step 5's busy check never treats a same-slug pane as busy, a full chain of phases splits one new pane per phase into the same tab with no bound and nothing closes the finished ones; close them by hand when the tab gets crowded.
