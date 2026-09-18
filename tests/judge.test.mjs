@@ -303,13 +303,21 @@ test("judge compose: a phase is skipped only at the confident-no bar, the reason
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "skills-compose-"));
     fs.writeFileSync(path.join(dir, "task.md"), "---\nslug: x\nworkflow: full\n---\nAdd a --verbose flag\n");
     fs.writeFileSync(path.join(dir, "01-research-x.md"), '---\ntype: research\nsummary: "The flag lives in src/cli.mjs."\n---\nbody\n');
+    // A prior boundary's own execution-plan artifact is excluded from the state: it is this same
+    // judgment's earlier verdict, not evidence, and including it risks anchoring a re-judgment on its
+    // own past answer instead of judging afresh.
+    fs.writeFileSync(path.join(dir, "02-execution-plan-x.md"), '---\ntype: execution-plan\nsummary: "Execution plan at the task boundary: planning=plan, app_test=none, review_each_phase=false, autonomy=all, helper available=true."\n---\nbody\n');
     const out = JSON.parse((await judge(["compose", dir, "--json"], stub.env)).out);
     assert.deepEqual(out.phases.map((row) => `${row.phase}:${row.verdict}`), ["research:run", "design:skip", "prd:skip", "tdd:skip", "plan:skip", "outline:skip", "review_each_phase:skip", "app_test:skip"]);
+    // delivery-decide.yaml's field()/prob()/why() sed patterns match this exact key order positionally
+    // (ADV-002); reordering these keys would make them return empty with no test failing here otherwise.
+    assert.deepEqual(Object.keys(out.phases[0]), ["phase", "verdict", "probability", "bar", "reason", "reason_confidence"]);
     assert.equal(out.phases[1].bar, 0.2);
     assert.equal(out.phases[1].reason, "The change is too small and too bounded for this phase to change the outcome");
     assert.equal(out.autonomy, "all", "an unspecified involvement is the packs' default");
     const state = stub.requests.at(-1).state;
     assert.match(state.task, /Add a --verbose flag/);
+    // Only the research artifact reaches the state; the execution-plan artifact above is excluded.
     assert.deepEqual(state.artifacts, [{ file: "01-research-x.md", type: "research", summary: "The flag lives in src/cli.mjs." }]);
     p = 0.21;
     assert.ok(JSON.parse((await judge(["compose", dir, "--json"], stub.env)).out).phases.every((row) => row.verdict === "run"), "just above the bar runs the phase");

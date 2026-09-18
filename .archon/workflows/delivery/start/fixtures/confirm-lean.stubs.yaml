@@ -1,11 +1,14 @@
 # A judged lean pick below the confident bar: `confirm` pauses with the judged pack and gates in its
 # message (a dry run approves it). No reject text names a pack, so `resolve`'s pick stays judged, not
 # explicit, and the run continues in the adaptive chain rather than the fixed lean pack; the `outline`
-# gate `route` derived for autonomy `plan` is rewritten to `plan`, the gate the adaptive pack's outline
-# node carries. The run reaches the adaptive child alone (a dry run cannot start a `workflow:` child,
-# so it fails there).
-route: '{"workflow":"lean","gates":"outline","suggested":"lean","confidence":"0.55","confirm":"true","explicit":"false"}'
-resolve: '{"workflow":"lean","gates":"plan","pack":"adaptive"}'
+# gate `route` derived for autonomy `plan` has no adaptive equivalent, so `resolve` (gates_plan true)
+# replaces it with the adaptive pack's own planning gate set (design, prd, tdd, plan) rather than
+# renaming the one token. `route.output.pack` already names the swap (CR-001: `route` validates gate
+# names against `adaptive`, not the judged `lean`, and `resolve` reuses this pack instead of
+# recomputing it). The run reaches the adaptive child alone (a dry run cannot start a `workflow:`
+# child, so it fails there).
+route: '{"workflow":"lean","gates":"outline","suggested":"lean","confidence":"0.55","confirm":"true","explicit":"false","gates_plan":"true","pack":"adaptive"}'
+resolve: '{"workflow":"lean","gates":"design,prd,tdd,plan","pack":"adaptive"}'
 task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills","tier":"","suggested_workflow":""}'
 fixture:
   expect: failed

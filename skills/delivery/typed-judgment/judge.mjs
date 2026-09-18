@@ -528,7 +528,9 @@ const REASONS = {
 
 // `task.md` plus one `{file, type, summary}` per artifact already in the directory, so the same command
 // answers differently at each boundary. A path that is not a directory, `@file`, `-`, or plain text is
-// read as the task text with no artifacts.
+// read as the task text with no artifacts. `execution-plan` artifacts are excluded (ADV-002): each one
+// is this same boundary judgment's own prior verdict, not evidence, and a re-judgment that reads its
+// own earlier answer back as an artifact summary could anchor on it instead of judging afresh.
 export function composeState(argument) {
   const dir = argument && !argument.startsWith("@") && argument !== "-" && fs.existsSync(argument) && fs.statSync(argument).isDirectory() ? argument : null;
   if (!dir) return { task: textArg(argument ?? "-"), artifacts: [] };
@@ -536,7 +538,7 @@ export function composeState(argument) {
   const artifacts = fs.readdirSync(dir).filter((name) => /^\d{2}-.*\.md$/.test(name)).sort().map((file) => {
     const front = /^---\n([\s\S]*?)\n---/.exec(fs.readFileSync(path.join(dir, file), "utf8"))?.[1] ?? "";
     return { file, type: /^type: *(.+)$/m.exec(front)?.[1]?.trim() ?? "", summary: /^summary: *"?([\s\S]*?)"?$/m.exec(front)?.[1]?.trim() ?? "" };
-  });
+  }).filter((entry) => entry.type !== "execution-plan");
   return { task, artifacts };
 }
 

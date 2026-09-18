@@ -179,7 +179,7 @@ function runDecideNode(cwd, env) {
   const body = /bash: \|\n((?: {6}.*\n|\n)+?) {4}output_format:/.exec(yaml)[1].replace(/^ {6}/gm, "");
   return bash(body, {
     cwd,
-    env: { INPUTS_SKILLS_DIR: SKILLS, INPUTS_BOUNDARY: "task", INPUTS_GATES: "all", INPUTS_TIERS: DECIDE_TIERS, INPUTS_APP_TEST: "none", ...GIT_ENV, ...env },
+    env: { INPUTS_SKILLS_DIR: SKILLS, INPUTS_BOUNDARY: "task", INPUTS_GATES: "all", INPUTS_TIERS: DECIDE_TIERS, INPUTS_APP_TEST: "none", INPUTS_VERIFY: "true", ...GIT_ENV, ...env },
   });
 }
 
@@ -286,6 +286,59 @@ test("task node: with the TypeSafe stub the helper picks the slug among the word
   }
 });
 
+test("decide node: a confident-no on both plan and outline floors planning to plan, never none (CR-001)", async () => {
+  // The oneshot-shaped compose-samples.json entries read exactly this way: research/design/prd/tdd/
+  // plan/outline/review_each_phase/app_test all a confident no. `implement`'s until_bash requires a
+  // plan or outline artifact to exist; if `planning` ever resolved to "none" here, no phase node would
+  // write one and the implement loop would run out its max_iterations with nothing to do.
+  const skip = new Set(["research", "design", "prd", "tdd", "plan", "outline", "review_each_phase", "app_test"]);
+  const stub = await startStub((id, question) => (id.startsWith("why_") ? choice("small", question.criteria) : id === "autonomy" ? choice("unspecified", question.criteria) : noul(skip.has(id) ? 0.05 : 0.9)));
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "skills-decide-node-plan-floor-"));
+  const dir = ".agents/tasks/fixture";
+  try {
+    fs.mkdirSync(path.join(cwd, dir), { recursive: true });
+    fs.writeFileSync(path.join(cwd, dir, "task.md"), "---\nslug: fixture\nworkflow: oneshot\n---\nChange the empty-state text\n");
+    const result = await runDecideNode(cwd, { INPUTS_TASK_DIR: dir, ...stub.env });
+    assert.equal(result.code, 0, result.err);
+    assert.deepEqual(JSON.parse(result.out), {
+      research: "false", design: "false", prd: "false", tdd: "false", planning: "plan", implement_skill: "implement-plan",
+      app_test: "none", review_each_phase: "false", autonomy: "all", available: "true",
+    });
+    const artifact = fs.readFileSync(path.join(cwd, dir, "01-execution-plan-fixture.md"), "utf8");
+    assert.match(artifact, /^\| plan \| yes \| plan \| 0\.05 \| <= 0\.20 \|/m, "plan still runs (floor), even though its own probability read as a confident no");
+    assert.match(artifact, /^  class outline skipped$/m, "outline stays skipped: exactly one of plan/outline runs");
+    assert.doesNotMatch(artifact, /^  class plan skipped$/m);
+  } finally {
+    stub.close();
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("decide node: plan and outline both score above the bar, and plan is higher, floors planning to plan rather than outline (CR-001)", async () => {
+  // 15-verification's A21 recorded a live `compose` call against this task directory returning plan
+  // 0.92 (run) and outline 0.39 (also run, since 0.39 is not a confident no). Thresholding `outline`
+  // alone picked it over a confident `plan`; comparing the two picks whichever scores higher.
+  const probs = { plan: 0.92, outline: 0.39 };
+  const stub = await startStub((id, question) => (id.startsWith("why_") ? choice("small", question.criteria) : id === "autonomy" ? choice("unspecified", question.criteria) : noul(id in probs ? probs[id] : 0.05)));
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "skills-decide-node-plan-outline-tie-break-"));
+  const dir = ".agents/tasks/fixture";
+  try {
+    fs.mkdirSync(path.join(cwd, dir), { recursive: true });
+    fs.writeFileSync(path.join(cwd, dir, "task.md"), "---\nslug: fixture\nworkflow: full\n---\nA large, well-specified change\n");
+    const result = await runDecideNode(cwd, { INPUTS_TASK_DIR: dir, ...stub.env });
+    assert.equal(result.code, 0, result.err);
+    const out = JSON.parse(result.out);
+    assert.equal(out.planning, "plan", "plan (0.92) outranks outline (0.39), even though outline alone reads as unclear, not a confident no");
+    assert.equal(out.implement_skill, "implement-plan");
+    const artifact = fs.readFileSync(path.join(cwd, dir, "01-execution-plan-fixture.md"), "utf8");
+    assert.match(artifact, /^  class outline skipped$/m);
+    assert.doesNotMatch(artifact, /^  class plan skipped$/m);
+  } finally {
+    stub.close();
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("decide node: the TypeSafe stub skips a confident-no phase and writes the execution plan; without a key the canonical full chain runs", async () => {
   // design/prd/tdd/app_test/outline read as a confident no; research/plan/review_each_phase run, so
   // `planning` resolves to `plan` (not `outline`) without any ambiguity between the two.
@@ -339,6 +392,16 @@ test("decide node: the TypeSafe stub skips a confident-no phase and writes the e
     const tilde = await runDecideNode(cwd, { INPUTS_TASK_DIR: dir, HOME: path.dirname(SKILLS), INPUTS_SKILLS_DIR: `~/${path.basename(SKILLS)}`, ...stub.env });
     assert.equal(tilde.code, 0, tilde.err);
     assert.equal(JSON.parse(tilde.out).available, "true", "a `~` skills_dir reaches the helper");
+
+    // 5. `--input verify=false` reaches the artifact's own `verify` row (ADV-004): without threading the
+    // pack's `verify` input through, this row always read "yes" even though the pack would skip it.
+    const verifyOff = await runDecideNode(cwd, { INPUTS_TASK_DIR: dir, INPUTS_VERIFY: "false", ...stub.env });
+    assert.equal(verifyOff.code, 0, verifyOff.err);
+    const verifyOffArtifact = fs.readFileSync(artifactPath, "utf8");
+    assert.match(verifyOffArtifact, /^\| verification \| no \| - \| - \| - \| - \|/m, "verify=false draws the verify row as not running");
+    // The flowchart dims `verify` too (ADV-001): the table already said it does not run, but the
+    // drawn DAG above it used to show `verify` undimmed and in the chain regardless.
+    assert.match(verifyOffArtifact, /^  class verify skipped$/m, "verify=false dims the verify node in the flowchart, not just the table row");
   } finally {
     stub.close();
     fs.rmSync(cwd, { recursive: true, force: true });

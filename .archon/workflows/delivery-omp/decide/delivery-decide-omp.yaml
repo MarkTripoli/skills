@@ -29,6 +29,9 @@ inputs:
   app_test:
     default: none
     description: "The pack's manual-app-test surface (none, web, ios, android); a confident-no `app_test` judgment can turn a named surface off, never name one."
+  verify:
+    default: "true"
+    description: "The pack's own `verify` input, `true` or `false`; not judged, only reflected in the artifact's `verify` row so a `--input verify=false` run does not draw a phase that will not run."
 
 returns: decide
 
@@ -51,6 +54,7 @@ nodes:
       gates_requested=${INPUTS_GATES:-$INPUTS.gates}
       tiers=${INPUTS_TIERS:-$INPUTS.tiers}
       app_test_input=${INPUTS_APP_TEST:-$INPUTS.app_test}
+      verify_input=${INPUTS_VERIFY:-$INPUTS.verify}
 
       mkdir -p "$dir"
 
@@ -62,23 +66,33 @@ nodes:
 
       field() { printf '%s' "$judged" | sed -n "s/.*\"phase\":\"$1\",\"verdict\":\"\([a-z]*\)\".*/\1/p"; }
       prob()  { printf '%s' "$judged" | sed -n "s/.*\"phase\":\"$1\",\"verdict\":\"[a-z]*\",\"probability\":\([0-9.]*\).*/\1/p"; }
+      bar()   { printf '%s' "$judged" | sed -n "s/.*\"phase\":\"$1\",\"verdict\":\"[a-z]*\",\"probability\":[0-9.]*,\"bar\":\([0-9.]*\).*/\1/p"; }
       why()   { printf '%s' "$judged" | sed -n "s/.*\"phase\":\"$1\",[^}]*\"reason\":\"\([^\"]*\)\".*/\1/p"; }
       tf() { case "$1" in skip) printf false ;; *) printf true ;; esac; }
       verdict() { v=$(field "$1"); printf '%s' "${v:-run}"; }
 
       if [ -n "$judged" ]; then
         available=true
+        # `autonomy` and `available` are reported below (task.md:13 asks for the former; the `deliver`
+        # skill may read either), but `delivery-adaptive` does not: its `gates` node derives pauses from
+        # `$INPUTS.gates` alone. Nothing here is a dead field, only an unconsumed one.
         autonomy=$(printf '%s' "$judged" | sed -n 's/.*"autonomy":"\([a-z]*\)".*/\1/p'); autonomy=${autonomy:-all}
         research=$(tf "$(verdict research)")
         design=$(tf "$(verdict design)")
         prd=$(tf "$(verdict prd)")
         tdd=$(tf "$(verdict tdd)")
         review_each_phase=$(tf "$(verdict review_each_phase)")
-        plan_v=$(verdict plan)
-        outline_v=$(verdict outline)
-        if [ "$plan_v" = skip ]; then planning=none
-        elif [ "$outline_v" = run ]; then planning=outline
-        else planning=plan
+        # `plan` has a floor: it is the canonical default, so `implement` always has an artifact to
+        # read (its `until_bash` requires one). The two are compared against each other, not
+        # thresholded one-sidedly, so a merely-unclear `outline` can never outrank a confident `plan`
+        # (task.md's threshold rule: unclear runs the phase). A tie or a missing probability floors to
+        # `plan`; there is no third "neither" state.
+        plan_p=$(prob plan)
+        outline_p=$(prob outline)
+        if [ -n "$plan_p" ] && [ -n "$outline_p" ] && awk -v a="$outline_p" -v b="$plan_p" 'BEGIN{exit !(a>b)}'; then
+          planning=outline
+        else
+          planning=plan
         fi
         app_v=$(verdict app_test)
         if [ "$app_test_input" != none ] && [ "$app_v" != skip ]; then app_test=$app_test_input; else app_test=none; fi
@@ -120,6 +134,7 @@ nodes:
           plan) [ "$planning" = plan ] && printf true || printf false ;;
           outline) [ "$planning" = outline ] && printf true || printf false ;;
           app_test) [ "$app_test" = none ] && printf false || printf true ;;
+          verify) [ "$verify_input" = false ] && printf false || printf true ;;
           *) printf true ;;
         esac
       }
@@ -136,7 +151,7 @@ nodes:
         p=-; barcol=-; w=-
         case "$judged_ids" in
           *" $id "*)
-            pv=$(prob "$id"); if [ -n "$pv" ]; then p=$pv; barcol="<= 0.20"; fi
+            pv=$(prob "$id"); if [ -n "$pv" ]; then p=$pv; bv=$(bar "$id"); barcol="<= $(printf '%.2f' "${bv:-0.2}")"; fi
             wv=$(why "$id"); [ -n "$wv" ] && w=$wv
             ;;
         esac
@@ -161,9 +176,17 @@ nodes:
         node_line app_test "app test" -
         node_line review "review loop" -
         node_line pr "pull request" pr
-        printf '  research --> design --> prd --> tdd --> plan --> outline --> implement --> verify --> app_test --> review --> pr\n'
+        # `plan` and `outline` are siblings, not a dependency chain: both follow `tdd` and both feed
+        # `implement` under complementary `when:` guards (delivery-adaptive.yaml), so exactly one runs.
+        # The fan-out/fan-in below draws that branch instead of a linear edge between the two.
+        printf '  research --> design --> prd --> tdd\n'
+        printf '  tdd --> plan\n'
+        printf '  tdd --> outline\n'
+        printf '  plan --> implement\n'
+        printf '  outline --> implement\n'
+        printf '  implement --> verify --> app_test --> review --> pr\n'
         printf '  classDef skipped fill:#eee,stroke:#bbb,color:#999\n'
-        for id in research design prd tdd plan outline app_test; do
+        for id in research design prd tdd plan outline verify app_test; do
           if [ "$(runs_for "$id")" = false ]; then printf '  class %s skipped\n' "$id"; fi
         done
         printf '```\n\n'

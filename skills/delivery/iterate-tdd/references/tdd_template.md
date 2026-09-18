@@ -68,27 +68,27 @@ entrypoint
 
 ```mermaid
 flowchart LR
-  subgraph helper[Judgment helper]
-    w1["w1 compose command"] --> w2["w2 compose unit tests"]
+  subgraph track1[Track 1]
+    w1["w1 <first work item>"] --> w2["w2 <second work item>"]
   end
-  subgraph pack[Pack]
-    w3["w3 delivery-decide block"] --> w4["w4 delivery-adaptive wiring"]
+  subgraph track2[Track 2]
+    w3["w3 <third work item>"] --> w4["w4 <fourth work item>"]
   end
   w2 --> w4
-  w4 --> v1{{"v1 npm test"}}
-  v1 --> g1[["g1 plan gate"]]
+  w4 --> v1{{"v1 <verification step>"}}
+  v1 --> g1[["g1 <human gate>"]]
 ```
 
 Critical path: w1 -> w2 -> w4 -> v1 -> g1
 
 | Item | Depends on | Can run in parallel with | Proof it is done |
 |---|---|---|---|
-| w1 compose command | - | w3 | `node judge.mjs compose --json .agents/tasks/<slug>` prints eight phases with probabilities |
-| w2 compose unit tests | w1 | w3 | `npm test` passes the new `compose` cases with the stub and with no key |
-| w3 delivery-decide block | - | w1 | the extracted bash body runs under real bash and prints the fallback JSON |
-| w4 delivery-adaptive wiring | w2, w3 | - | `node scripts/build-packs.mjs --check` is clean and the four fixtures reach their expected node lists |
-| v1 npm test | w4 | - | the full suite passes on the branch |
-| g1 plan gate | v1 | - | the reviewer approves the plan gate |
+| w1 <first work item> | - | w3 | `<observable command or state>` |
+| w2 <second work item> | w1 | w3 | `<observable command or state>` |
+| w3 <third work item> | - | w1 | `<observable command or state>` |
+| w4 <fourth work item> | w2, w3 | - | `<observable command or state>` |
+| v1 <verification step> | w4 | - | `<observable command or state>` |
+| g1 <human gate> | v1 | - | `<observable command or state>` |
 
 ### Execution DAG
 

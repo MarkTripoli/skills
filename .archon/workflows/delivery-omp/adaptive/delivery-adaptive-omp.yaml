@@ -48,8 +48,9 @@ inputs:
 # `trigger_rule: none_failed_min_one_success`: one of its branches is always skipped. A plain `bash:`
 # node sits between every `delivery-decide` include and the gate-phase/implement include that follows
 # it (workflows/delivery.md, Archon note 1): `decide-task-done`, `decide-research-done`,
-# `decide-design-done`, `decide-plan-done`. The four `tiers` values below are one fixed string, kept
-# identical at every boundary so the artifact's Model tier column never disagrees with itself.
+# `decide-design-done`, `decide-plan-done`. None of the four `decide-*` includes below pass `tiers:`,
+# so all four take `delivery-decide`'s own default; the artifact's Model tier column holds by
+# construction instead of by four-way copy discipline.
 nodes:
   - id: task
     include: delivery-task-omp
@@ -102,7 +103,7 @@ nodes:
       boundary: task
       gates: $INPUTS.gates
       app_test: $INPUTS.app_test
-      tiers: "research=medium,design=large,prd=large,tdd=large,plan=large,outline=large,implement=large,verify=medium,app_test=large,review=large,pr=large"
+      verify: $INPUTS.verify
 
   - id: decide-task-done
     depends_on: [decide-task]
@@ -138,7 +139,7 @@ nodes:
       boundary: research
       gates: $INPUTS.gates
       app_test: $INPUTS.app_test
-      tiers: "research=medium,design=large,prd=large,tdd=large,plan=large,outline=large,implement=large,verify=medium,app_test=large,review=large,pr=large"
+      verify: $INPUTS.verify
 
   - id: decide-research-done
     depends_on: [decide-research]
@@ -220,7 +221,7 @@ nodes:
       boundary: design
       gates: $INPUTS.gates
       app_test: $INPUTS.app_test
-      tiers: "research=medium,design=large,prd=large,tdd=large,plan=large,outline=large,implement=large,verify=medium,app_test=large,review=large,pr=large"
+      verify: $INPUTS.verify
 
   - id: decide-design-done
     depends_on: [decide-design]
@@ -272,7 +273,7 @@ nodes:
       boundary: plan
       gates: $INPUTS.gates
       app_test: $INPUTS.app_test
-      tiers: "research=medium,design=large,prd=large,tdd=large,plan=large,outline=large,implement=large,verify=medium,app_test=large,review=large,pr=large"
+      verify: $INPUTS.verify
 
   - id: decide-plan-done
     depends_on: [decide-plan]
