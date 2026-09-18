@@ -52,11 +52,11 @@ test("route: an explicit workflow and gates pass through unjudged and never ask 
   assert.equal(bogus.err, 'workflow: unknown pack "quick"; use auto or one of: oneshot bugfix lean full prd epic program');
 });
 
-test("route: without the helper an automatic route is full with every gate and asks for confirmation, unless the run is unattended", async () => {
+test("route: without the helper an automatic route is full with every gate and asks for confirmation, even when the run is unattended", async () => {
   const auto = await route("Rework the whole settings area");
   assert.equal(auto.code, 0, auto.err);
   assert.equal(auto.out, routed("full", "all", "", "unknown", "true"));
-  assert.equal((await route("Rework the whole settings area", { INPUTS_GATES: "none" })).out, routed("full", "none", "", "unknown", "false"), "gates=none never pauses");
+  assert.equal((await route("Rework the whole settings area", { INPUTS_GATES: "none" })).out, routed("full", "none", "", "unknown", "true"), "gates=none still gets the one determination question when the pack is unsure");
   // A dead endpoint is the same as no key.
   const dead = await route("Rework the whole settings area", { TYPESAFE_API_KEY: "k", TYPESAFE_BASE_URL: "http://127.0.0.1:9", JUDGE_TIMEOUT: "2" });
   assert.equal(dead.out, routed("full", "all", "", "unknown", "true"));
@@ -73,9 +73,9 @@ test("route: with the TypeSafe stub a confident pack and a hands-off request run
     // Below the confident bar the helper answers full; the dispatcher reports the raw pick and asks.
     workflow = "lean"; confidence = 0.55; involvement = "unspecified";
     assert.equal((await route("Rework the whole settings area", stub.env)).out, routed("full", "all", "lean", "0.55", "true"));
-    // `none` below the decisive bar is `all`, so the unsure route still asks.
-    involvement = "none"; involvementConfidence = 0.85;
-    assert.equal((await route("Rework the whole settings area", stub.env)).out, routed("full", "all", "lean", "0.55", "true"));
+    // `none` at the decisive bar runs unattended after the one confirmation; the unsure pack still asks.
+    involvement = "none"; involvementConfidence = 0.95;
+    assert.equal((await route("Rework the whole settings area, hands off", stub.env)).out, routed("full", "none", "lean", "0.55", "true"));
     // An explicit workflow is taken as given and only the gates are judged.
     workflow = "oneshot"; confidence = 0.99; involvement = "pr"; involvementConfidence = 0.9;
     assert.equal((await route("Add the flag; show me the pull request when done", { INPUTS_WORKFLOW: "lean", ...stub.env })).out, routed("lean", "pr", "", "unknown", "false"));

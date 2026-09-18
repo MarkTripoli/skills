@@ -3,8 +3,8 @@ description: |
   Route a plain request to the delivery pack that fits it and run that pack: `route` picks the pack
   (`--input workflow=<name>` when given, else the typed-judgment helper's `route-workflow`, else
   `full`) and the gates (`--input gates=<names>` when given, else the helper's `autonomy` level mapped
-  to that pack's gate names, else `all`); `confirm` pauses only when the pack was judged unsure and
-  the run is not unattended, and a "request changes" whose text names a pack, optionally followed by
+  to that pack's gate names, else `all`); `confirm` pauses once, only when the pack was judged unsure,
+  whatever the gates, and a "request changes" whose text names a pack, optionally followed by
   gates (`bugfix`, or `lean, outline`), overrides the pick; the task directory is created with the
   chosen pack's name, and that pack runs as a child run on the same checkout (its gates pause this
   run too; approve them by the child's run id, which the pause message names). `--input
@@ -51,8 +51,9 @@ nodes:
   # spliced into the script. Autonomy level to gates, per pack: `none` -> none, `pr` -> pr, `all` -> all,
   # `plan` -> the pack's planning gates (full design,plan; prd and program prd,tdd,plan; lean outline;
   # bugfix reproduce; epic plan; oneshot pr, which has no plan gate). `confirm` is "true" only when the
-  # pack was judged below the helper's confident bar, or the helper was unavailable, and the run is
-  # not unattended (`gates` is not none); an explicit `workflow` never confirms. `confidence` is the
+  # pack was judged below the helper's confident bar, or the helper was unavailable; a hands-off request
+  # still gets this one question, because running the wrong pack unattended is the costly mistake.
+  # An explicit `workflow` never confirms. `confidence` is the
   # helper's number, or `unknown` when it did not answer.
   - id: route
     bash: |
@@ -126,7 +127,7 @@ nodes:
           done ;;
       esac
       confirm=false
-      if [ "$confident" = false ] && [ "$gates" != none ]; then confirm=true; fi
+      if [ "$confident" = false ]; then confirm=true; fi
       printf '{"workflow":"%s","gates":"%s","suggested":"%s","confidence":"%s","confirm":"%s"}\n' "$workflow" "$gates" "$suggested" "$confidence" "$confirm"
     output_format:
       type: object
