@@ -88,7 +88,7 @@ Read the run once. This pane is never held: the steward in the review pane does 
 Read the run's state; never guess a path or a decision id:
 
 ```bash
-run=$(archon workflow get "$run_id" --json)
+run=$(archon workflow get "$run_id" --json) || { printf '%s\n' "$run" >&2; exit 1; }
 status=$(jq -r '.status' <<<"$run")
 cwd=$(jq -r '.working_path' <<<"$run")
 node=$(jq -r '.metadata.approval.nodeId // empty' <<<"$run")
@@ -96,6 +96,8 @@ msg=$(jq -r '.metadata.approval.message // empty' <<<"$run")
 decisions=$(jq -r '.metadata.approval.decisions[].id' <<<"$run")
 resolved=$(jq -r '.metadata.approval.resolved // empty' <<<"$run")
 ```
+
+A `get` that exits nonzero opens no pane: print `references/herd_next_skipped_answer.md` with the reason `the run could not be read`, followed by Archon's output as cause and fix. Without the guard `$cwd` is the literal string `null` and the pane opens there.
 
 A gate is live when `status` is `paused` and `resolved` is empty; the key is absent while the gate waits and appears once it has been answered. `status` of `completed`, `failed`, or `cancelled` means the run is over: print the skipped reply with the reason `the run has ended` and stop. `running`, or `paused` with a non-empty `resolved`, still opens the pane: `$phase` is `run`, the notification is skipped because there is no gate to name, and the steward in the pane announces the pause when it arrives. `$phase` is `$node` with a trailing `__cycle` stripped when a gate is live, so `design__cycle` labels the pane `<slug>/design`.
 
