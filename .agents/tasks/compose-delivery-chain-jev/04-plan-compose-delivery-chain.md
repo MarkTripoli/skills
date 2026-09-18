@@ -282,10 +282,10 @@ Body: read the fixture, filter by any ids given, spawn `node skills/delivery/typ
 
 #### Automated Verification:
 
-- [ ] `node --test tests/judge.test.mjs` passes (both compose tests, including the sample-set mapping)
-- [ ] `node scripts/validate.mjs` passes
-- [ ] `printf 'Add a --verbose flag' | node skills/delivery/typed-judgment/judge.mjs compose --json -; test $? -eq 3` (no key: nothing printed, exit 3)
-- [ ] `node evals/compose-probe.mjs --json >/dev/null; test $? -eq 3` (no key: the probe reports unavailable rather than passing vacuously)
+- [x] `node --test tests/judge.test.mjs` passes (both compose tests, including the sample-set mapping)
+- [x] `node scripts/validate.mjs` passes
+- [x] `printf 'Add a --verbose flag' | node skills/delivery/typed-judgment/judge.mjs compose --json -; test $? -eq 3` (no key: nothing printed, exit 3)
+- [x] `node evals/compose-probe.mjs --json >/dev/null; test $? -eq 3` (no key: the probe reports unavailable rather than passing vacuously)
 
 #### Deferred human evidence (recorded, not a gate):
 
@@ -868,6 +868,7 @@ human-gated: false
 
 ### Known limits
 
+- Two of the four oneshot-shaped samples never reached the bar under the wording Phase 1 ships, measured live against `jev-1.13.0` after five rewrite rounds; recorded per 1.4 rather than worked around, and `T.no` was left at 0.2. `flag-stated-behavior` ("Add a --verbose flag to the CLI that prints each command before running it.") scores `research` 0.41 and `design` 0.60, both runs. `one-function-fix` ("Fix the off-by-one in `paginate()`...") scores `research` 0.70, a run; its `design` lands on 0.20, exactly the bar, so it skips only because the comparison is `<=` and it is unsettled under the borderline rule below. `copy-change` (0.07 / 0.08) and `config-edit` (0.07 / 0.08) pass cleanly, and all four full-shaped samples keep both phases (`research` 0.66-0.86, `design` 0.88-0.94). Acceptance criterion (d) is therefore met by a copy-change- or config-edit-shaped request, not by every oneshot shape; Phase 6 should pick its probe text accordingly, and a later wording round targeting bug-fix-shaped and flag-shaped requests is the open follow-up.
 - No probe has been run at a boundary later than the first; the per-boundary collapse is measured only with an empty `artifacts` list. Phase 6.1 is the first measurement with artifacts present.
 - The sample set is eight requests written by hand, not a corpus. Passing it means the wording separates these eight, not that no request lands mid-band; the design measured `research` at 0.43 for a one-line change under the earlier wording, which is what the necessity-test phrasing is meant to fix, and Phase 1's probe is the first evidence either way.
 - The probe scores one call per sample, and a `noul` answer is not deterministic; a borderline sample can pass one run and fail the next. Treat a probability within about 0.05 of the bar as unsettled and record it rather than declaring it fixed.
