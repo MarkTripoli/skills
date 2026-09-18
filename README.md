@@ -79,7 +79,7 @@ Delivery skills live in `skills/delivery/`; `show-me` is standalone in `skills/s
 | Implementation | `implement-plan`, `implement-outline`, `iterate-implementation`, `reproduce-bug`, `fix-bug` |
 | Review | `review-code`, `fix-code-review` |
 | Pull request | `describe-pr`, `resolve-pr-reviews`, `record-evidence` (video proof, by hand) |
-| Utilities | `ci-commit`, `review-artifact-comments`, `show-me` |
+| Utilities | `ci-commit`, `review-artifact-comments`, `show-me`, `herd-next` (Herdr pane handoff) |
 | Workers | `agent-codebase-locator`, `agent-codebase-analyzer`, `agent-codebase-pattern-finder`, `agent-web-search-researcher`, `agent-implementer`, `agent-outline-implementer`, `agent-implementation-reviewer` |
 
 ## Develop
