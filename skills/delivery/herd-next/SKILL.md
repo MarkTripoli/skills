@@ -67,7 +67,7 @@ herdr pane send-text "$pane" "$command"
 
 `agent start` returns `agent_not_ready` when the agent is blocked during startup while keeping the name usable; on that response, wait with `herdr agent wait "$name" --until idle --until done --timeout 30000` before staging, and report a still-blocked agent in the reply rather than sending input to it. `--until` is repeatable and a bare wait with none settles on `blocked` too, which is the one state this branch exists to sit out.
 
-Step 8, stage or submit. `send-text` is the default and stages without Enter, which is what keeps "running the next command records approval" true. Submit with `herdr agent prompt "$name" "$command" --wait --timeout 120000` only when the caller passed `--submit`.
+Step 8, stage or submit. `send-text` is the default and stages without Enter: a command that records approval is staged, never submitted, which is what keeps "running the next command records approval" true. A command that records no approval, such as the gate mode's `/deliver --run <run-id>`, may be submitted. Submit with `herdr agent prompt "$name" "$command" --wait --timeout 120000` only when the caller passed `--submit`.
 
 Step 9, the reply: `references/herd_next_answer.md`, every `<...>` slot filled.
 
@@ -83,13 +83,9 @@ Find the run when the caller named none. One running or paused run for this proj
 archon workflow status --json | jq -r '.runs[] | "\(.id)\t\(.workflow_name)\t\(.status)\t\(.working_path)"'
 ```
 
-Block on the run in this pane. `--detach` is refused on a fresh launch of an interactive pack and the delivery packs declare `interactive: true` (`workflows/delivery.md`, "Steering a run"), so `wait` is a foreground process and this pane is held while it runs:
+Read the run once. This pane is never held: the steward in the review pane does the waiting.
 
-```bash
-archon workflow wait "$run_id" --json
-```
-
-Read the paused state; never guess a path or a decision id:
+Read the run's state; never guess a path or a decision id:
 
 ```bash
 run=$(archon workflow get "$run_id" --json)
@@ -101,28 +97,22 @@ decisions=$(jq -r '.metadata.approval.decisions[].id' <<<"$run")
 resolved=$(jq -r '.metadata.approval.resolved // empty' <<<"$run")
 ```
 
-A gate is live when `status` is `paused` and `resolved` is empty; the key is absent while the gate waits and appears once it has been answered. Any other `status`, or a non-empty `resolved`, means the run moved on: print the skipped reply with the reason `the run is not paused at a gate` and stop. `$phase` is `$node` with a trailing `__cycle` stripped, so `design__cycle` labels the pane `<slug>/design`.
+A gate is live when `status` is `paused` and `resolved` is empty; the key is absent while the gate waits and appears once it has been answered. `status` of `completed`, `failed`, or `cancelled` means the run is over: print the skipped reply with the reason `the run has ended` and stop. `running`, or `paused` with a non-empty `resolved`, still opens the pane: `$phase` is `run`, the notification is skipped because there is no gate to name, and the steward in the pane announces the pause when it arrives. `$phase` is `$node` with a trailing `__cycle` stripped when a gate is live, so `design__cycle` labels the pane `<slug>/design`.
 
 `$artifact` is the task directory named in `$msg`, resolved against `$cwd`; when the message names none, `$artifact` is `$cwd` itself. `$slug` is that directory's basename - the run's own task, never the caller's, because `$cwd` is the run's `working_path`, a different checkout from `$PWD` whenever the caller is not already inside it.
 
-Get the pane and the name exactly as steps 4 through 6 do, with one substitution throughout: `$cwd` in place of `$PWD` everywhere a pane or tab is opened, because the review pane lives in the run's worktree, not the caller's. The busy check still reads the caller's own tab and pane through `$HERDR_TAB_ID` and `$HERDR_PANE_ID`, since that geometry is unchanged; only the destination of the new pane or tab moves. That gives `$kind`, `$pane`, and `$name`. Notify, start the agent, and stage the read:
+Get the pane and the name exactly as steps 4 through 6 do, with one substitution throughout: `$cwd` in place of `$PWD` everywhere a pane or tab is opened, because the review pane lives in the run's worktree, not the caller's. The busy check still reads the caller's own tab and pane through `$HERDR_TAB_ID` and `$HERDR_PANE_ID`, since that geometry is unchanged; only the destination of the new pane or tab moves. That gives `$kind`, `$pane`, and `$name`. Notify, start the agent, and submit the attach command:
 
 ```bash
-herdr notification show "Gate: $slug/$phase" --body "$msg" --sound request
+[ -n "$node" ] && herdr notification show "Gate: $slug/$phase" --body "$msg" --sound request
 herdr agent start "$name" --kind "$kind" --pane "$pane"
 herdr pane rename "$pane" "$slug/$phase gate"
-herdr pane send-text "$pane" "Read $artifact and report whether it is ready to approve."
+herdr agent prompt "$name" "/deliver --run $run_id"
 ```
 
-The `agent_not_ready` handling is the one already stated in step 7; the gate mode does not restate it: wait with `herdr agent wait "$name" --until idle --until done --timeout 30000` before staging the read, and report a still-blocked agent in the reply rather than sending input to it.
+The `agent_not_ready` handling is the one already stated in step 7; the gate mode does not restate it: wait with `herdr agent wait "$name" --until idle --until done --timeout 30000` before submitting the attach command, and report a still-blocked agent in the reply rather than sending input to it.
 
-The decision command is reported in the reply rather than staged in the same input line, because a pane holds one staged line at a time:
-
-```text
-archon workflow respond <run-id> <decision> "<what should change>"
-```
-
-`respond` is the general form and covers every id in `decisions[]`, including any a pack authored beyond `approve` and `reject`. The stage-not-submit rule is the one already stated for the handoff mode; the gate mode does not restate it.
+`agent prompt` without `--wait` returns on submission, so the gate mode does not block for the length of the run. The pane's `deliver` reads the gated artifact, announces the pause, and resolves every decision itself, including any id a pack authored beyond `approve` and `reject`. Submitting here records no approval, so the stage-not-submit rule does not reach this line.
 
 The reply is `references/herd_next_gate_answer.md`, every `<...>` slot filled.
 
