@@ -461,9 +461,9 @@ human-gated: false
 
 #### Automated Verification:
 
-- [ ] `node scripts/validate.mjs` (check 10 still finds every delivery skill named, and the phase table's column header is unchanged)
-- [ ] `npm test`
-- [ ] `grep -n 'records approval is staged' workflows/delivery.md skills/delivery/herd-next/SKILL.md` matches in both
+- [x] `node scripts/validate.mjs` (check 10 still finds every delivery skill named, and the phase table's column header is unchanged)
+- [x] `npm test`
+- [x] `grep -n 'records approval is staged' workflows/delivery.md skills/delivery/herd-next/SKILL.md` matches in both
 
 human-gated: false
 
