@@ -67,7 +67,7 @@ One command for a request whose pack is not yet chosen. You read the request, pi
    Read the state; never guess a path or a decision id:
 
    ```bash
-   run=$(archon workflow get "$run_id" --json)
+   run=$(archon workflow get "$run_id" --json) || { printf '%s\n' "$run" >&2; exit 1; }
    status=$(jq -r '.status' <<<"$run")
    cwd=$(jq -r '.working_path' <<<"$run")
    node=$(jq -r '.metadata.approval.nodeId // empty' <<<"$run")
@@ -75,6 +75,8 @@ One command for a request whose pack is not yet chosen. You read the request, pi
    decisions=$(jq -r '.metadata.approval.decisions[].id' <<<"$run")
    resolved=$(jq -r '.metadata.approval.resolved // empty' <<<"$run")
    ```
+
+   A `get` that exits nonzero ends the steward: report Archon's output as cause and fix, and retry nothing, the rule step 4 already applies to a failed dispatch. Outside a git work tree the body is an `ok: false` error whose raw newlines `jq` cannot parse, so an unguarded read leaves `$status` empty and the loop waits on a run it cannot see.
 
    A gate is live only when `status` is `paused` and `resolved` is empty. `completed`, `failed`, and `cancelled` print `references/deliver_ended_answer.md` and stop. The running-run branch, taken on `running` or on `paused` with a non-empty `resolved`, waits in chunks (below) and reads again; it is the branch taken on the first read after step 4 and after every respond.
 
@@ -101,15 +103,16 @@ One command for a request whose pack is not yet chosen. You read the request, pi
    Resolve and wait. The decision returns at once and the wait is bounded, so no shell call is held for the length of a phase:
 
    ```bash
-   archon workflow respond "$run_id" "$decision" "$text" --detach
+   archon workflow respond "$run_id" "$decision" "$text" --detach --cwd "$cwd"
    while :; do
-     archon workflow wait "$run_id" --json --timeout 600 || true
-     status=$(archon workflow get "$run_id" --json | jq -r '.status')
+     archon workflow wait "$run_id" --json --timeout 600 --cwd "$cwd" || true
+     run=$(archon workflow get "$run_id" --json --cwd "$cwd") || { printf '%s\n' "$run" >&2; exit 1; }
+     status=$(jq -r '.status' <<<"$run")
      case "$status" in paused|completed|failed|cancelled) break ;; esac
    done
    ```
 
-   A chunk that expires is not a failure; the loop re-reads and re-issues. `--detach` is accepted here because Archon refuses it only on a fresh launch of an interactive pack, not on a decision that continues one. Then loop back to the state read.
+   A chunk that expires is not a failure; the loop re-reads and re-issues. `--cwd "$cwd"` names the run's own worktree on every call once the first read has returned it, so the steward reads the same run from whatever directory the person started it in; a read that still fails ends the steward, as above. `--detach` is accepted here because Archon refuses it only on a fresh launch of an interactive pack, not on a decision that continues one. Then loop back to the state read.
 
 ## Rules
 
