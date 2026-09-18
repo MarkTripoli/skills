@@ -1,7 +1,7 @@
 ---
 type: implementation
 completed_phase: 1
-summary: "Phase 1 guards `deliver` step 6's state read so a failed `archon workflow get` ends the steward with Archon's own output instead of leaving `$status` empty and taking the running-run branch forever, and carries `--cwd \"$cwd\"` on the respond call, every wait chunk, and the in-loop read so the steward names the run's own worktree from wherever it was started. `npm test` stays 64/64 and the acceptance (d) grep is unchanged at 14 lines across five files. Phase 2 must repeat the same guard in `herd-next`'s gate-mode fence; phase 3's `tests/steward.test.mjs` extracts the two fences this phase leaves behind and asserts the guard, the `--cwd` flags, and the terminal-status break."
+summary: "Phase 1 guards `deliver` step 6's state read so a failed `archon workflow get` ends the steward with Archon's own output instead of leaving `$status` the literal `null` and taking the running-run branch forever, and carries `--cwd \"$cwd\"` on the respond call, every wait chunk, and the in-loop read so the steward names the run's own worktree from wherever it was started. `npm test` stays 64/64 and the acceptance (d) grep is unchanged at 14 lines across five files. Phase 2 must repeat the same guard in `herd-next`'s gate-mode fence; phase 3's `tests/steward.test.mjs` extracts the two fences this phase leaves behind and asserts the guard, the `--cwd` flags, and the terminal-status break."
 ---
 
 # Implementation Receipt
@@ -17,7 +17,7 @@ summary: "Phase 1 guards `deliver` step 6's state read so a failed `archon workf
 
 ## Completed Work
 - `skills/delivery/deliver/SKILL.md:70` (1.1): the state read is now `run=$(archon workflow get "$run_id" --json) || { printf '%s\n' "$run" >&2; exit 1; }`. The failure body goes to stderr because the CLI prints its `ok: false` error on stdout, which the assignment captures.
-- `skills/delivery/deliver/SKILL.md:78` (1.1): one sentence before the branch table sentence states that a nonzero `get` ends the steward, reported as cause and fix with nothing retried, the rule step 4 already applies to a failed dispatch, and names the cause: outside a git work tree the `ok: false` body's raw newlines defeat `jq`, so an unguarded read leaves `$status` empty and the loop waits on a run it cannot see.
+- `skills/delivery/deliver/SKILL.md:78` (1.1): one sentence before the branch table sentence states that a nonzero `get` ends the steward, reported as cause and fix with nothing retried, the rule step 4 already applies to a failed dispatch, and names the cause: outside a git work tree the `ok: false` body has no `status` key, so an unguarded read leaves `$status` as the literal `null` and the loop waits on a run it cannot read.
 - `skills/delivery/deliver/SKILL.md:106,108,109` (1.2): `--cwd "$cwd"` added to `respond`, to `wait`, and to the in-loop `get`; the in-loop read now captures `run` and guards it the same way, with `status` taken from `jq -r '.status' <<<"$run"`.
 - `skills/delivery/deliver/SKILL.md:115` (1.2): the paragraph after that fence now states that `--cwd "$cwd"` names the run's own worktree on every call once the first read returns it, and that a read which still fails ends the steward.
 - Diff is 8 insertions, 5 deletions in one file, matching the plan's diffs character for character. No other file changed. Nothing under `.agents/tasks/` was written by the child.

@@ -21,7 +21,7 @@ The loop lives in prose in `skills/delivery/deliver/SKILL.md:65-112`, and `skill
 
 ### Key Discoveries:
 
-- `deliver/SKILL.md:69-77` reads the run without checking the exit status. Outside a git work tree the CLI exits 1 and prints an `ok: false` body whose raw newlines `jq` cannot parse, so `$status` is empty, matches none of `completed`, `failed`, `cancelled`, or `paused`, and the loop takes its running-run branch at `:79` and waits in silent ten-minute chunks forever (design 12, the console block at `12:51-59`).
+- `deliver/SKILL.md:69-77` reads the run without checking the exit status. Outside a git work tree the CLI exits 1 and prints a well-formed `ok: false` body with no `status` key, so `$status` is the literal `null`, matches none of `completed`, `failed`, `cancelled`, or `paused`, and the loop takes its running-run branch at `:79` and waits in silent ten-minute chunks forever (design 12, the console block at `12:51-59`).
 - `herd-next/SKILL.md:91-98` has the same unguarded read, and `$cwd` supplies the pane's directory at `:104`, so the same failure opens a pane at the literal string `null`.
 - `deliver/SKILL.md:52` already fixes how a broken Archon call is handled: "Any other failure is reported as cause and fix, verbatim from Archon's output, and nothing is retried." The guard follows that sentence rather than inventing a second convention.
 - `archon workflow get` is not constrained to the run's own worktree; the boundary is a git work tree, and `--cwd <any repo path>` returns the full response from `/tmp` (design 12, third Resolved Design Question). That makes `--cwd "$cwd"` the fix for the only cause the loop can remove on its own once the first read succeeds.
@@ -75,7 +75,7 @@ Phases 1 and 2 are the two guards, one file each, independently readable and ind
 Add one sentence to the paragraph that follows the fence (`:79`), before the branch table sentence:
 
 ```diff
-+A `get` that exits nonzero ends the steward: report Archon's output as cause and fix, and retry nothing, the rule step 4 already applies to a failed dispatch. Outside a git work tree the body is an `ok: false` error whose raw newlines `jq` cannot parse, so an unguarded read leaves `$status` empty and the loop waits on a run it cannot see.
++A `get` that exits nonzero ends the steward: report Archon's output as cause and fix, and retry nothing, the rule step 4 already applies to a failed dispatch. Outside a git work tree the body is a well-formed `ok: false` error with no `status` key, so an unguarded read leaves `$status` as the literal `null`, the loop takes the running-run branch, and it waits forever on a run it cannot read. The guard fires on the nonzero exit, not on a parse error.
  A gate is live only when `status` is `paused` and `resolved` is empty.
 ```
 
