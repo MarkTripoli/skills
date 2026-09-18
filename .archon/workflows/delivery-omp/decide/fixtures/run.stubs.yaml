@@ -1,0 +1,7 @@
+# The block on its own: the decide node stubbed, nothing else to reach.
+decide: '{"research":"true","design":"false","prd":"false","tdd":"false","planning":"plan","implement_skill":"implement-plan","app_test":"none","review_each_phase":"false","autonomy":"all","available":"true"}'
+fixture:
+  expect: completed
+  inputs: { task_dir: .agents/tasks/fixture }
+  reached: [decide]
+exec-code: false

@@ -169,6 +169,20 @@ function runTaskNode(cwd, env) {
 }
 const created = (dir, tier = "", suggested = "") => `{"task_dir":"${dir}","skills_dir":"${SKILLS}","tier":"${tier}","suggested_workflow":"${suggested}"}`;
 
+// The decide block's own bash body, extracted the same way as the task node's. Every declared input is
+// given as an INPUTS_* environment variable (its own default unless the caller overrides it), the way a
+// real run delivers them; `$INPUTS.x` text is the include-time-only fallback (workflows/delivery.md,
+// Archon note 13) and is never touched here.
+const DECIDE_TIERS = "research=medium,design=large,prd=large,tdd=large,plan=large,outline=large,implement=large,verify=medium,app_test=large,review=large,pr=large";
+function runDecideNode(cwd, env) {
+  const yaml = fs.readFileSync(path.join(NATIVE_DIR, "decide", "delivery-decide.yaml"), "utf8");
+  const body = /bash: \|\n((?: {6}.*\n|\n)+?) {4}output_format:/.exec(yaml)[1].replace(/^ {6}/gm, "");
+  return bash(body, {
+    cwd,
+    env: { INPUTS_SKILLS_DIR: SKILLS, INPUTS_BOUNDARY: "task", INPUTS_GATES: "all", INPUTS_TIERS: DECIDE_TIERS, INPUTS_APP_TEST: "none", ...GIT_ENV, ...env },
+  });
+}
+
 test("task node: slugs follow the conventions, task.md carries the workflow, an existing task_dir is reused, a bogus one fails", async () => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "skills-task-node-"));
   try {
@@ -266,6 +280,58 @@ test("task node: with the TypeSafe stub the helper picks the slug among the word
     const dead = await runTaskNode(cwd, { ARGUMENTS: "Rework the whole settings area", INPUTS_WORKFLOW: "lean", TYPESAFE_API_KEY: "k", TYPESAFE_BASE_URL: "http://127.0.0.1:9", JUDGE_TIMEOUT: "2" });
     assert.equal(dead.out, created(".agents/tasks/rework-whole-settings-area"));
     assert.equal(dead.err, "");
+  } finally {
+    stub.close();
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("decide node: the TypeSafe stub skips a confident-no phase and writes the execution plan; without a key the canonical full chain runs", async () => {
+  // design/prd/tdd/app_test/outline read as a confident no; research/plan/review_each_phase run, so
+  // `planning` resolves to `plan` (not `outline`) without any ambiguity between the two.
+  const skip = new Set(["design", "prd", "tdd", "app_test", "outline"]);
+  const stub = await startStub((id, question) => (id.startsWith("why_") ? choice("small", question.criteria) : id === "autonomy" ? choice("unspecified", question.criteria) : noul(skip.has(id) ? 0.05 : 0.9)));
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "skills-decide-node-"));
+  const dir = ".agents/tasks/fixture";
+  try {
+    fs.mkdirSync(path.join(cwd, dir), { recursive: true });
+    fs.writeFileSync(path.join(cwd, dir, "task.md"), "---\nslug: fixture\nworkflow: full\n---\nAdd a --verbose flag\n");
+
+    // 1. stub answering a confident no for design/prd/tdd/app_test/outline: stdout has design/prd/tdd/app_test
+    // "false", research "true", planning "plan", available "true"; the artifact is written with the skip
+    // dimmed in the flowchart and the design row's probability and bar in the table.
+    const first = await runDecideNode(cwd, { INPUTS_TASK_DIR: dir, ...stub.env });
+    assert.equal(first.code, 0, first.err);
+    assert.deepEqual(JSON.parse(first.out), {
+      research: "true", design: "false", prd: "false", tdd: "false", planning: "plan", implement_skill: "implement-plan",
+      app_test: "none", review_each_phase: "true", autonomy: "all", available: "true",
+    });
+    const artifactPath = path.join(cwd, dir, "01-execution-plan-fixture.md");
+    assert.ok(fs.existsSync(artifactPath), "01-execution-plan-fixture.md exists");
+    const artifact = fs.readFileSync(artifactPath, "utf8");
+    assert.match(artifact, /^  class design skipped$/m);
+    assert.match(artifact, /^\| design discussion \| no \| design \| 0\.05 \| <= 0\.20 \|/m);
+
+    // 2. same directory, second run with a research artifact present: the file is rewritten, not renumbered.
+    fs.writeFileSync(path.join(cwd, dir, "02-research-fixture.md"), '---\ntype: research\nsummary: "The flag lives in src/cli.mjs."\n---\nbody\n');
+    const second = await runDecideNode(cwd, { INPUTS_TASK_DIR: dir, ...stub.env });
+    assert.equal(second.code, 0, second.err);
+    assert.deepEqual(
+      fs.readdirSync(path.join(cwd, dir)).filter((f) => /execution-plan/.test(f)),
+      ["01-execution-plan-fixture.md"],
+      "the same NN is rewritten, never a second execution-plan file",
+    );
+
+    // 3. no key: stdout is the canonical object with "available":"false" and every phase "true", and the
+    // artifact's table shows "-" for every probability.
+    const noKey = await runDecideNode(cwd, { INPUTS_TASK_DIR: dir });
+    assert.equal(noKey.code, 0, noKey.err);
+    assert.deepEqual(JSON.parse(noKey.out), {
+      research: "true", design: "true", prd: "true", tdd: "true", planning: "plan", implement_skill: "implement-plan",
+      app_test: "none", review_each_phase: "true", autonomy: "all", available: "false",
+    });
+    const rewritten = fs.readFileSync(artifactPath, "utf8");
+    assert.match(rewritten, /^\| design discussion \| yes \| design \| - \| - \| - \|/m, "unavailable: every probability and bar is -");
   } finally {
     stub.close();
     fs.rmSync(cwd, { recursive: true, force: true });
