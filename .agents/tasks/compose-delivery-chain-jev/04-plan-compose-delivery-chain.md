@@ -611,7 +611,7 @@ and `pack` joins the printed object and `output_format` (`required: [workflow, g
 - [x] `node scripts/validate.mjs` passes (pack rules, joins, fixtures, archon load with no `parseWarnings`)
 - [x] `archon workflow test delivery-adaptive` passes its four fixtures
 - [ ] `archon workflow test delivery` passes, every fixture used, none missing — 53 of 54 pass, no stub missing or unused; the one failure is `delivery/bugfix/fixtures/reproduced.stubs.yaml`, reproduced on a clean clone of `ff7bdb4` and so pre-existing and untouched by this phase. Phase 6 owns acceptance (a).
-- [ ] `node --test tests/` passes — 56 of 57 pass; the one failure is `tests/install.test.mjs`, `Cannot find package '@clack/prompts'`, declared in `package.json` but absent from `node_modules`, the same gap the Phase 1 and Phase 2 receipts recorded. Phase 6 owns acceptance (a).
+- [x] `node --test tests/` passes — 67 of 67 during Phase 4, after `npm install` supplied `@clack/prompts`, which `package.json` declared but `node_modules` lacked. No repository file changed for it; the earlier 56-of-57 result was an uninstalled-dependency gap in the environment, not in the tree.
 - [x] `archon workflow run delivery-adaptive --dry-run --json --stubs <fixture without its `fixture:` key> --input task_dir=.agents/tasks/fixture --input gates=none` shows `research` skipped when the decide stub says `false`. The plan's literal `--default-stubs` form cannot reach `decide-task`: the default stub for `task__create` is unstructured text, so `$task__create.output.task_dir` fails first (Archon 0.10.1).
 
 human-gated: false
@@ -728,9 +728,9 @@ Add the two counts to the summary line at `scripts/validate.mjs:635`.
 
 #### Automated Verification:
 
-- [ ] `node scripts/validate.mjs` passes
-- [ ] `node --test tests/` passes
-- [ ] The validator fails on a deliberately broken copy: `cp skills/delivery/create-tdd/references/tdd_template.md /tmp/t.bak && sed -i '' 's/^### Engineering Work Breakdown$/### Work/' skills/delivery/create-tdd/references/tdd_template.md && ! node scripts/validate.mjs; cp /tmp/t.bak skills/delivery/create-tdd/references/tdd_template.md`
+- [x] `node scripts/validate.mjs` passes — `4 execution-DAG templates, 2 work-breakdown templates` in the summary line. Run with the untracked `.backups/` tree moved aside: the banned-token scan reads every file in the repository, so a backup copy of `scripts/validate.mjs` matches its own regex literals. `.backups/` is untracked and local, so no CI run sees it.
+- [x] `node --test tests/` passes — 67 of 67, after `npm install` supplied the declared-but-uninstalled `@clack/prompts`
+- [x] The validator fails on a deliberately broken copy: `cp skills/delivery/create-tdd/references/tdd_template.md /tmp/t.bak && sed -i '' 's/^### Engineering Work Breakdown$/### Work/' skills/delivery/create-tdd/references/tdd_template.md && ! node scripts/validate.mjs; cp /tmp/t.bak skills/delivery/create-tdd/references/tdd_template.md`
 
 human-gated: false
 
