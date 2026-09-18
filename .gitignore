@@ -2,6 +2,12 @@
 dist/
 node_modules/
 
+# Backups made before large file changes, per CLAUDE.md.
+.backups/
+
+# Personal ripgrep preference (re-admits gitignored graft/ cards to search); not shared.
+/.ignore
+
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
 

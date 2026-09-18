@@ -17,7 +17,7 @@ const rootIndex = args.indexOf("--root");
 const root = rootIndex === -1 ? repoRoot : path.resolve(args[rootIndex + 1] ?? "");
 const generated = root !== repoRoot;
 
-const EXPECTED_SKILL_COUNT = 41;
+const EXPECTED_SKILL_COUNT = 42;
 const SHARED_LINKS = {
   "shared/WRITING.md": "https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md",
   "shared/CONVENTIONS.md": "https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md",
@@ -49,11 +49,16 @@ const ANSWER_INVENTORY = {
   "create-tdd/references/tdd_program_review_answer.md": "iterate-tdd",
   "create-tdd/references/tdd_system_review_answer.md": "iterate-tdd",
   "deliver/references/deliver_archon_answer.md": TERMINAL_ANSWER,
+  "deliver/references/deliver_ended_answer.md": TERMINAL_ANSWER,
+  "deliver/references/deliver_gate_answer.md": TERMINAL_ANSWER,
   "deliver/references/deliver_hand_answer.md": DELIVER_VARIANTS,
   "describe-pr/references/pr_description_final_answer.md": "resolve-pr-reviews",
   "fix-code-review/references/code_review_fixes_answer.md": "review-code",
   "fix-bug/references/fix_answer.md": "review-code",
   "gather-sources/references/sources_final_answer.md": SOURCES_VARIANTS,
+  "herd-next/references/herd_next_answer.md": TERMINAL_ANSWER,
+  "herd-next/references/herd_next_gate_answer.md": TERMINAL_ANSWER,
+  "herd-next/references/herd_next_skipped_answer.md": TERMINAL_ANSWER,
   "implement-outline/references/implementation_final_answer.md": "describe-pr",
   "implement-outline/references/implementation_phase_final_answer.md": "implement-outline",
   "implement-plan/references/implementation_final_answer.md": "describe-pr",
@@ -342,6 +347,24 @@ const FRESH_SESSION_RE = /^Open a new session in (.+), then run:$/m;
 const FRESH_SESSION_PREFIX = "Open a new session in ";
 const NEXT_ACTION_LABEL = "Next action:";
 
+// shared/CONVENTIONS.md's "Archon gate ask": a reply announcing a paused Archon gate carries this
+// sentence, byte-exact, as its ask. Read out of the convention's own fenced block rather than copied
+// here, so an edit to the convention that misses this file fails loudly instead of drifting silently.
+const conventionsFile = path.join(repoRoot, "shared", "CONVENTIONS.md");
+const conventionsLines = read(conventionsFile).split("\n");
+const gateAskHeading = conventionsLines.findIndex((line) => line.trim() === "## Archon gate ask");
+const gateAskSectionEnd = gateAskHeading === -1 ? -1 : conventionsLines.findIndex((line, i) => i > gateAskHeading && line.startsWith("## "));
+const gateAskSearchEnd = gateAskSectionEnd === -1 ? conventionsLines.length : gateAskSectionEnd;
+const gateAskFenceStart = gateAskHeading === -1 ? -1 : conventionsLines.findIndex((line, i) => i > gateAskHeading && i < gateAskSearchEnd && line.trim() === "```text");
+const gateAskFenceEnd = gateAskFenceStart === -1 ? -1 : conventionsLines.findIndex((line, i) => i > gateAskFenceStart && i < gateAskSearchEnd && line.trim() === "```");
+const GATE_ASK_SENTENCE = gateAskFenceStart === -1 || gateAskFenceEnd === -1 ? null : conventionsLines.slice(gateAskFenceStart + 1, gateAskFenceEnd).join("\n").trim();
+if (GATE_ASK_SENTENCE === null) fail("shared/CONVENTIONS.md", 0, "missing the Archon gate ask fenced sentence (## Archon gate ask, a fenced ```text block)");
+const GATE_ASK_ANSWERS = new Set([
+  "deliver/references/deliver_archon_answer.md",
+  "deliver/references/deliver_gate_answer.md",
+  "herd-next/references/herd_next_gate_answer.md",
+]);
+
 function checkHandoff(content, expectedSkill, label, { terminal = false, wantsArtifact = null } = {}) {
   const blocks = fences(content);
   const freshSentences = content.split(FRESH_SESSION_PREFIX).length - 1;
@@ -388,6 +411,9 @@ for (const [file, expected] of Object.entries(ANSWER_INVENTORY)) {
   if (expected === TERMINAL_ANSWER) {
     checkHandoff(raw, null, rel(skillFile(file)), { terminal: true });
     if (file in FENCE_ARTIFACT) fail(rel(skillFile(file)), 0, "terminal answer must not appear in FENCE_ARTIFACT");
+    if (GATE_ASK_SENTENCE && GATE_ASK_ANSWERS.has(file) && !raw.includes(GATE_ASK_SENTENCE)) {
+      fail(rel(skillFile(file)), 0, "must carry the Archon gate ask sentence, byte-exact (shared/CONVENTIONS.md's Archon gate ask)");
+    }
     continue;
   }
   if (!(file in FENCE_ARTIFACT)) {
@@ -647,8 +673,7 @@ if (fs.existsSync(path.join(packsRoot, "delivery"))) {
 }
 
 // 13. The commit subject rule the conventions document is the rule the commit-msg hook and CI enforce.
-const conventionsFile = path.join(repoRoot, "shared", "CONVENTIONS.md");
-const conventionsLines = read(conventionsFile).split("\n");
+// Reuses conventionsLines, already read above for the Archon gate ask sentence.
 const ruleIndex = conventionsLines.findIndex((line) => /^Validate the subject before committing: it must match `/.test(line));
 const rule = ruleIndex === -1 ? null : /must match `([^`]+)` and be at most (\d+) characters/.exec(conventionsLines[ruleIndex]);
 if (!rule) {

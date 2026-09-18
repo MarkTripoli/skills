@@ -163,7 +163,7 @@ Every skill runs in a plain agent session without Archon. Commands are written a
 
 5. `describe-pr` writes and publishes the pull request description. `resolve-pr-reviews` works through review threads until reviewers approve.
 
-Skills no pack invokes run this way only: `iterate-research-questions`, `iterate-research`, `record-evidence` (narrated video proof for the pull request), `ci-commit`, `review-artifact-comments`, `show-me`.
+Skills no pack invokes run this way only: `iterate-research-questions`, `iterate-research`, `record-evidence` (narrated video proof for the pull request), `ci-commit`, `review-artifact-comments`, `show-me`, `herd-next` (opens the next phase in a Herdr pane).
 
 ## When something looks wrong
 
