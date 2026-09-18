@@ -344,34 +344,51 @@ A user who wants the pane to open without invoking the skill can install one sni
 #### 3.1 The hook snippet
 
 **File**: `skills/delivery/herd-next/references/stop_hook.sh`
-**Changes**: New file. A Claude Code `Stop` hook reads one JSON object on stdin carrying `last_assistant_message`, which holds the printed fence. The script exits 0 in every path; a hook that fails must never block the session.
+**Changes**: New file. A Claude Code `Stop` hook reads one JSON object on stdin carrying `last_assistant_message`, which holds the printed fence, and `cwd`. It opens the pane itself, which is what the design's resolved trigger question states: the hook "does the same thing unprompted" (`03-design-discussion-herdr-plugin.md:93`), and the Desired End State has ending a phase inside Herdr open the next phase in its own pane. A hook that only recorded the line for a later `/herd-next` would still need a human to type the command, and a fixed temporary path would race between two panes finishing at once. The script exits 0 in every path; a hook that fails must never block the session, and it writes no file anywhere.
+
+The opening lines, verbatim:
 
 ```bash
 #!/usr/bin/env bash
-# Claude Code Stop hook: stage the next delivery phase in a new Herdr pane.
+# Claude Code Stop hook: open the next delivery phase in its own Herdr pane.
 # Install by hand in ~/.claude/settings.json under "hooks" -> "Stop":
 #   {"hooks":[{"type":"command","command":"<path to this file>","timeout":30}]}
 # Not installed by this collection's installer, which never writes settings you own.
 set -u
+
 test "${HERDR_ENV:-}" = 1 || exit 0
-payload=$(cat)
 command -v jq >/dev/null 2>&1 || exit 0
-message=$(jq -r '.last_assistant_message // empty' <<<"$payload")
-line=$(printf '%s\n' "$message" | grep -oE '^/[a-z0-9-]+( @[^ ]+)?$' | tail -1)
-test -n "$line" || exit 0
-printf '%s\n' "$line" > "${TMPDIR:-/tmp}/herd-next-pending"
-exit 0
+command -v herdr >/dev/null 2>&1 || exit 0
+
+payload=$(cat)
+message=$(jq -r '.last_assistant_message // empty' <<<"$payload" 2>/dev/null) || exit 0
+cmd=$(printf '%s\n' "$message" | grep -oE '^/[a-z0-9-]+( @[^ ]+)?$' | tail -1)
+test -n "$cmd" || exit 0
+
+cwd=$(jq -r '.cwd // empty' <<<"$payload" 2>/dev/null)
+test -n "$cwd" || cwd=$PWD
+test -d "$cwd" || exit 0
 ```
 
-The hook records the parsed line and exits; it does not split a pane itself, because the pane work belongs to the skill where it can ask the user a question and print a reply. The skill reads `${TMPDIR:-/tmp}/herd-next-pending` when it is given no command argument, and deletes the file after use.
+The guard runs before anything else, so with `HERDR_ENV` unset the hook executes no `herdr` command at all. After the parse it performs steps 3 to 7 of section 1.1's handoff mode, in that order and with those commands, against `$cwd`:
+
+- Step 3. The phase is the skill name in the fence. The task directory is the one holding the artifact the fence names: a `@path/to/NN-artifact.md` takes that directory, a bare `@NN-artifact.md` matches `$cwd/.agents/tasks/*/<artifact>` and stops when two directories hold it, and a fence with no `@file` takes the newest `.agents/tasks/*/task.md` by mtime. The slug is that file's `slug` key, falling back to its directory name.
+- Step 4. `kind` from `herdr pane current --current | jq -r '.result.pane.agent'`, accepted only as `claude`, `codex`, `omp`, or `pi`. The skill asks the user when the read yields nothing; a hook cannot ask, so it exits 0.
+- Step 5. The same `busy` read over `$HERDR_WORKSPACE_ID` and `$HERDR_TAB_ID`, then the `herdr pane layout --pane "$HERDR_PANE_ID"` direction read and `herdr pane split`, or `herdr tab create` when `busy` is non-empty. An unreadable direction falls back to `down`.
+- Step 6. `<slug>-<phase>` reduced to `[a-z][a-z0-9-]{0,31}`, with no `-2` collision walk: a name already in use fails `agent start` and the hook stops.
+- Step 7. `herdr agent start`, then `herdr agent wait` only when the start response carries `agent_not_ready`, then `herdr pane rename "$pane" "$slug/$phase"` and `herdr pane send-text "$pane" "$cmd"`. Never `herdr agent prompt`: submitting the handoff would record approval of the artifact the finished phase produced.
+
+Every branch above that cannot be resolved without asking the user exits 0 and changes nothing, which is the hook's whole error contract.
 
 #### 3.2 Hook section in the skill body
 
 **File**: `skills/delivery/herd-next/SKILL.md`
-**Changes**: Add a `## Optional Stop hook` section naming `references/stop_hook.sh`, the settings path, and the two-runtime limit.
+**Changes**: Add a `## Optional Stop hook` section naming `references/stop_hook.sh`, what it does, the branches it cannot resolve, the settings path, and the two-runtime limit.
 
 ```diff
-+ `references/stop_hook.sh` is a Claude Code `Stop` hook that records the handoff line without being asked. Install it by hand in `~/.claude/settings.json`; this collection ships no `hooks` block and the installer never writes that file. Codex takes the same shape in its own `hooks.json`. Oh My Pi and Pi expose in-process extension callbacks rather than shell hooks, so they use the skill invocation only.
++ `references/stop_hook.sh` is a Claude Code `Stop` hook that opens the pane without being asked. It parses the fence out of the payload's `last_assistant_message` and then runs steps 3 to 7 itself: the task directory from the artifact in the fence, the kind from `herdr pane current`, the split-or-tab choice, `agent start`, `pane rename`, `pane send-text`. It takes its working directory from the payload's `cwd`, stages with `send-text` and never submits, and writes no file anywhere.
++
++ The hook cannot ask a question, so every branch where the skill would ask - an unreadable agent kind, two task directories holding the same artifact, an agent name already in use - exits 0 and changes nothing. Run `/herd-next` by hand for those. Install the hook by hand in `~/.claude/settings.json`; this collection ships no `hooks` block and the installer never writes that file. Codex takes the same shape in its own `hooks.json`. Oh My Pi and Pi expose in-process extension callbacks rather than shell hooks, so they use the skill invocation only.
 ```
 
 #### 3.3 Documentation rows
@@ -398,15 +415,31 @@ The hook records the parsed line and exits; it does not split a pane itself, bec
 
 - [x] `npm test`
 - [x] `bash -n skills/delivery/herd-next/references/stop_hook.sh`
-- [x] `printf '{"last_assistant_message":"done\\n\\n/create-plan @04-plan-herdr-plugin.md"}' | HERDR_ENV=1 TMPDIR=$(mktemp -d) bash skills/delivery/herd-next/references/stop_hook.sh; echo "exit=$?"` prints `exit=0` and writes `/create-plan @04-plan-herdr-plugin.md` to `$TMPDIR/herd-next-pending`
-- [x] `printf '{}' | HERDR_ENV= bash skills/delivery/herd-next/references/stop_hook.sh; echo "exit=$?"` prints `exit=0` and writes no file
+- [x] Guard check. With the stub below first on `PATH` and `HERDR_ENV=` unset, a payload carrying a fence leaves the script exiting 0 and `$HERD_LOG` never created: no `herdr` command runs at all.
+- [x] Ordered-call check. With `HERDR_ENV=1 HERDR_WORKSPACE_ID=w1 HERDR_TAB_ID=t1 HERDR_PANE_ID=p1`, the same stub answering `pane current`, `pane list`, `pane layout`, `pane split`, `agent start`, `pane rename` and `pane send-text` with canned JSON, and a payload holding `/create-plan @04-plan-herdr-plugin.md` plus this repository's path as `cwd`, `$HERD_LOG` holds exactly those seven calls in that order and the `pane send-text` argument is the parsed command.
 - [x] `git grep -n "herd-next" README.md docs/getting-started.md` prints both rows
+
+The stub both checks use, written to a `mktemp -d` directory as `herdr` and made executable:
+
+```bash
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$HERD_LOG"
+case "$1 $2" in
+  "pane current") echo '{"result":{"pane":{"pane_id":"p1","agent":"omp"}}}' ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"p1","tab_id":"t1"}]}}' ;;
+  "pane layout") echo '{"result":{"layout":{"panes":[{"pane_id":"p1","rect":{"x":0,"y":0,"width":200,"height":50}}]}}}' ;;
+  "pane split") echo '{"result":{"pane":{"pane_id":"p2"}}}' ;;
+  "tab create") echo '{"result":{"root_pane":{"pane_id":"p9"}}}' ;;
+  "agent start") echo '{"result":{"agent":{"name":"a","status":"ready"}}}' ;;
+  *) echo '{"result":{"pane":{"pane_id":"p2"}}}' ;;
+esac
+```
 
 human-gated: false
 
 #### Deferred human evidence (recorded, not a gate):
 
-- The hook installed in a real `~/.claude/settings.json` and observed firing at the end of a phase. Recorded in the implementation artifact's evidence section.
+- The hook installed in a real `~/.claude/settings.json` and observed opening a pane with the command staged at the end of a phase, against a live `herdr` rather than a stub. Recorded in the implementation artifact's evidence section.
 
 ## Human Review
 
@@ -414,7 +447,7 @@ human-gated: false
 
 - Phase 1 section 1.2 and Phase 2 section 2.2: all three replies are terminal because a template reproducing the caller's fence cannot be registered in `ANSWER_INVENTORY`, whose values are fixed skill names. This is the reason the skipped reply points at the fence the previous phase printed rather than reprinting it, which is a change from the design's wording.
 - Phase 1 section 1.1 step 4 and step 5: the two corrections to the design against the installed CLI, the kind read and the split-direction read.
-- Phase 3 section 3.1: the hook records the line and exits rather than opening the pane, which keeps every pane decision inside the skill but adds a temporary file as the handoff between them.
+- Phase 3 section 3.1: the hook opens the pane itself, so the pane logic exists in two places, the skill body and the script, and they can drift. The script carries no `-2` name-collision walk and no user question; those branches exit 0 and leave the by-hand `/herd-next` as the way through.
 - Changed-file ownership: `scripts/validate.mjs` is edited in both Phase 1 and Phase 2, in the same object; the phases must land in order.
 
 ### Verify

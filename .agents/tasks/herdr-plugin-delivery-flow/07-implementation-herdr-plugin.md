@@ -70,6 +70,5 @@ The phase commit `1037f28` was created after all five automated checks passed. T
 ### Known limits
 
 - The `Stop` hook covers Claude Code and Codex only; Oh My Pi and Pi expose in-process extension callbacks, so their users invoke the skill by hand.
-- `${TMPDIR:-/tmp}/herd-next-pending` is a single fixed path with no per-session key, so two Herdr panes finishing phases at the same time overwrite each other's pending line and the second read loses one handoff.
-- The hook writes the line and exits; it never opens a pane, so a user who installs it still runs `/herd-next` to get the pane. It removes the copy-paste, not the invocation.
+- Superseded by `08-implementation-herdr-plugin.md`. The pending-file handoff this receipt describes, its fixed-path race between two panes, and the hook's stop-at-the-line behaviour were all removed under review: the hook now opens the pane itself and writes no file. Read 08 for the shipped Phase 3.
 - `last_assistant_message` is unverified against a live payload, so a Claude Code release that renames the field silently turns the hook into a no-op that still exits 0.
