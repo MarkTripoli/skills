@@ -37,6 +37,10 @@ summary: "Phase 6 closes all four Automated Verification boxes against commands 
 - result: pass
 - evidence: `4 passed, 0 failed` over `prd-path.stubs.yaml`, `skipped.stubs.yaml`, `helper-unavailable.stubs.yaml`, and `all-phases.stubs.yaml`.
 
+- command: `archon workflow test delivery`
+- result: fail, unchanged and not ticked
+- evidence: `53 passed, 1 failed`. The failure is `delivery/bugfix/fixtures/reproduced.stubs.yaml`, the box Phase 3 left open and handed to this phase. Every `adaptive` and `decide` fixture passes. The box stays open: fixing it would edit the `bugfix` pack that `## What We're NOT Doing` excludes, and acceptance (a) is `npm test`, which does not run this command.
+
 - command: `archon workflow status --json`
 - result: pass
 - evidence: before 6.1 and after 6.3 the list is the same two pre-existing runs, `a30667ac-f082-47b2-be62-524ad15249da delivery-tail running` and `f9db22fa-fdf6-421e-8b8f-d32023c69ee3 delivery-full running`. Neither was started by this phase, so neither was abandoned.
