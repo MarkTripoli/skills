@@ -147,6 +147,11 @@ test("judge systemOne: a rate limit or a 5xx is retried inside the timeout, an o
     assert.equal((await judge(["review-status", review, "clean"], { ...off.env, JUDGE_RETRIES: "0" })).code, 3);
     assert.equal(off.requests.length, 1, "JUDGE_RETRIES=0 sends one request");
   } finally { off.close(); }
+  const blank = await startStub(() => noul(0.1), { statuses: [500] });
+  try {
+    assert.equal((await judge(["review-status", review, "clean"], { ...blank.env, JUDGE_RETRIES: " " })).out, "clean");
+    assert.equal(blank.requests.length, 2, "a blank JUDGE_RETRIES reads as unset, not zero");
+  } finally { blank.close(); }
   const big = await startStub(() => noul(0.1), { statuses: [400] });
   try {
     const result = await judge(["review-status", review, "clean"], big.env);

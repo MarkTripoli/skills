@@ -63,7 +63,8 @@ const wait = (ms, signal) => new Promise((resolve) => {
   const timer = setTimeout(resolve, ms);
   signal?.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
 });
-// `retry-after` is seconds or an HTTP-date; a wait longer than 5s is not worth the attempt.
+// `retry-after` is seconds or an HTTP-date. The wait is capped at 5s and the attempt still goes out, so a
+// service asking for a long pause is re-asked early; the retry count and `JUDGE_TIMEOUT` bound the cost.
 const retryAfter = (response) => {
   const header = response.headers.get("retry-after");
   if (!header) return null;
@@ -81,7 +82,9 @@ export async function systemOne(state, questions) {
   if (!key) throw new Unavailable("TYPESAFE_API_KEY is not set");
   const base = (process.env.TYPESAFE_BASE_URL || "https://api.typesafe.ai").replace(/\/$/, "");
   const seconds = Number(process.env.JUDGE_TIMEOUT) || 20;
-  const retries = Number.isInteger(Number(process.env.JUDGE_RETRIES)) ? Number(process.env.JUDGE_RETRIES) : 2;
+  // A blank value reads as unset; `Number("")` is 0, which would silently disable retries.
+  const retriesEnv = Number((process.env.JUDGE_RETRIES ?? "").trim() || NaN);
+  const retries = Number.isInteger(retriesEnv) && retriesEnv >= 0 ? retriesEnv : 2;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), seconds * 1000);
   const request = {
