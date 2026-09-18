@@ -26,7 +26,8 @@
 //   neutral <questions.json>                     neutral | leading | unclear per question
 //   ask --state <json|@file> --questions <json|@file>             the raw answers object
 // Text arguments: `@path` reads a file, `-` reads stdin.
-// Env: TYPESAFE_API_KEY (required), TYPESAFE_BASE_URL, TYPESAFE_DEFAULT_MODEL, JUDGE_TIMEOUT (seconds, default 20).
+// Env: TYPESAFE_API_KEY, else the first line of TYPESAFE_API_KEY_FILE or $XDG_CONFIG_HOME/typesafe/api_key
+//      (default ~/.config/typesafe/api_key); TYPESAFE_BASE_URL, TYPESAFE_DEFAULT_MODEL, JUDGE_TIMEOUT (seconds, default 20).
 // Exit: 0 answered, 2 usage error, 3 unavailable.
 
 import fs from "node:fs";
@@ -53,9 +54,21 @@ const flag = (args, name) => { const i = args.indexOf(name); if (i < 0) return u
 const bool = (args, name) => { const i = args.indexOf(name); if (i < 0) return false; args.splice(i, 1); return true; };
 const argmax = (probabilities) => Object.entries(probabilities).reduce((best, entry) => (entry[1] > best[1] ? entry : best))[0];
 
+// Archon and editor-spawned shells rarely carry an interactive shell's exports, so a key file is the
+// second source; the file is read whole and its first line is the key.
+export function apiKey(env = process.env) {
+  if (env.TYPESAFE_API_KEY) return env.TYPESAFE_API_KEY;
+  const file = env.TYPESAFE_API_KEY_FILE || path.join(env.XDG_CONFIG_HOME || path.join(env.HOME || "", ".config"), "typesafe", "api_key");
+  try {
+    return fs.readFileSync(file, "utf8").split("\n")[0].trim();
+  } catch {
+    return "";
+  }
+}
+
 export async function systemOne(state, questions) {
-  const key = process.env.TYPESAFE_API_KEY;
-  if (!key) throw new Unavailable("TYPESAFE_API_KEY is not set");
+  const key = apiKey();
+  if (!key) throw new Unavailable("TYPESAFE_API_KEY is not set and no key file was found");
   const base = (process.env.TYPESAFE_BASE_URL || "https://api.typesafe.ai").replace(/\/$/, "");
   const seconds = Number(process.env.JUDGE_TIMEOUT) || 20;
   const controller = new AbortController();

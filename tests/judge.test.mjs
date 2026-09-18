@@ -24,14 +24,36 @@ function judge(args, env, input) {
 }
 const tmp = (name, content) => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), "skills-judge-")); const file = path.join(dir, name); fs.writeFileSync(file, content); return file; };
 
+// A missing key file named explicitly, so neither HOME nor XDG_CONFIG_HOME can hand the helper this machine's key.
+const NO_KEY = { TYPESAFE_API_KEY_FILE: path.join(os.tmpdir(), "skills-judge-no-key") };
+
 test("judge: without a key or with a dead endpoint every verdict command prints nothing and exits 3; extract-json prints its input", async () => {
   const plan = tmp("03-plan-x.md", PLAN);
-  assert.deepEqual(await judge(["plan-remaining", plan], {}), { code: 3, out: "", err: "judge: unavailable: TYPESAFE_API_KEY is not set" });
+  assert.deepEqual(await judge(["plan-remaining", plan], NO_KEY), { code: 3, out: "", err: "judge: unavailable: TYPESAFE_API_KEY is not set and no key file was found" });
   const dead = await judge(["feedback-intent", "looks good"], { TYPESAFE_API_KEY: "k", TYPESAFE_BASE_URL: "http://127.0.0.1:9", JUDGE_TIMEOUT: "2" });
   assert.equal(dead.code, 3); assert.equal(dead.out, "");
-  const passthrough = await judge(["extract-json", "--required", "status", "--enum", "status=clean,findings"], {}, "The review is clean.\n");
-  assert.deepEqual(passthrough, { code: 0, out: "The review is clean.", err: "judge: TYPESAFE_API_KEY is not set; printing the answer as is" });
-  assert.equal((await judge(["nonsense"], {})).code, 2);
+  const passthrough = await judge(["extract-json", "--required", "status", "--enum", "status=clean,findings"], NO_KEY, "The review is clean.\n");
+  assert.deepEqual(passthrough, { code: 0, out: "The review is clean.", err: "judge: TYPESAFE_API_KEY is not set and no key file was found; printing the answer as is" });
+  assert.equal((await judge(["nonsense"], NO_KEY)).code, 2);
+});
+
+test("judge: the key comes from TYPESAFE_API_KEY_FILE or ~/.config/typesafe/api_key when the environment has none", async () => {
+  const stub = await startStub((id) => noul(0.95));
+  try {
+    const { TYPESAFE_API_KEY: _, ...noEnvKey } = stub.env;
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "skills-judge-home-"));
+    fs.mkdirSync(path.join(home, ".config", "typesafe"), { recursive: true });
+    fs.writeFileSync(path.join(home, ".config", "typesafe", "api_key"), "test-key\n");
+    assert.equal((await judge(["feedback-intent", "looks good"], { ...noEnvKey, HOME: home, XDG_CONFIG_HOME: "" })).code, 0, "~/.config/typesafe/api_key is read");
+    const xdg = fs.mkdtempSync(path.join(os.tmpdir(), "skills-judge-xdg-"));
+    fs.mkdirSync(path.join(xdg, "typesafe"));
+    fs.writeFileSync(path.join(xdg, "typesafe", "api_key"), "test-key\n");
+    assert.equal((await judge(["feedback-intent", "looks good"], { ...noEnvKey, HOME: NO_KEY.TYPESAFE_API_KEY_FILE, XDG_CONFIG_HOME: xdg })).code, 0, "$XDG_CONFIG_HOME/typesafe/api_key wins over HOME");
+    const named = tmp("key", "test-key");
+    assert.equal((await judge(["feedback-intent", "looks good"], { ...noEnvKey, HOME: home, XDG_CONFIG_HOME: xdg, TYPESAFE_API_KEY_FILE: named })).code, 0, "TYPESAFE_API_KEY_FILE wins over both");
+    const wrong = tmp("key", "other-key\n");
+    assert.equal((await judge(["feedback-intent", "looks good"], { ...noEnvKey, TYPESAFE_API_KEY_FILE: wrong })).code, 3, "the file's first line is the bearer token; a wrong one is rejected");
+  } finally { stub.close(); }
 });
 
 test("judge plan-remaining: verdict from the probability bands, phase criteria built from the headings, next phase only when confident", async () => {

@@ -106,7 +106,8 @@ test("the generated bash recovers or passes through an omp answer under /bin/bas
     assert.deepEqual(JSON.parse(prose.stdout), { status: "findings", artifact: "08-code-review-x.md", summary: "I saved 08-code-review-x.md. Two findings remain open, both major." });
     assert.equal(stub.requests.length, 1);
 
-    const unkeyed = await run("I saved 08-code-review-x.md. Two findings remain open, both major.", { TYPESAFE_API_KEY: "" });
+    // A missing key file named explicitly, so neither HOME nor XDG_CONFIG_HOME can hand the helper this machine's key.
+    const unkeyed = await run("I saved 08-code-review-x.md. Two findings remain open, both major.", { TYPESAFE_API_KEY: "", TYPESAFE_API_KEY_FILE: path.join(dir, "no-key") });
     assert.equal(unkeyed.code, 0, unkeyed.stderr);
     assert.equal(unkeyed.stdout, "I saved 08-code-review-x.md. Two findings remain open, both major.\n", "the raw text is the node output");
     assert.equal(stub.requests.length, 1, "no key, no call");
