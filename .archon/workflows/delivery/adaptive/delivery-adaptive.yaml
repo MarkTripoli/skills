@@ -1,0 +1,384 @@
+name: delivery-adaptive
+description: |
+  Take a change from request to pull request with the optional phases judged at four boundaries
+  instead of fixed up front: after the task is opened, after research, after the design phases
+  (design discussion, prd, tdd), and after planning. Each boundary runs `delivery-decide`, which reads
+  task.md and the artifacts written so far, judges which of research, design discussion, prd, tdd,
+  plan vs. structure outline, per-phase review, and manual app testing the task still needs, and
+  writes or rewrites the task directory's `NN-execution-plan-<slug>.md` artifact with the chain it
+  drew. Order stays canonical (research, design or prd/tdd, plan or outline, implement, verify,
+  app-test, review, pr); the judgment decides inclusion, never order, because Archon cannot reorder a
+  static DAG. When the typed-judgment helper is unavailable, every decide node falls back to the
+  canonical full chain. Every phase runs in a fresh session and reads only the task directory;
+  artifacts are committed on the branch. The `gates` input picks which of the fixed pauses happen
+  (design, prd, tdd, plan, phases, pr); `review_each_phase` is not an input here, the judgment decides
+  it fresh at the plan boundary.
+
+  Use when: `delivery-start` routes a judged oneshot, lean, full, or prd request here.
+  NOT for: a bug with a reproduction (delivery-bugfix) or several children under one requirement
+  (delivery-epic), which stay fixed packs; usually reached through delivery-start rather than named
+  directly.
+
+interactive: true
+
+inputs:
+  skills_dir:
+    default: ~/.agents/skills
+    description: Directory holding the installed skills, one `<name>/SKILL.md` each.
+  task_dir:
+    default: ""
+    description: Reuse this existing task directory (an epic child, or one created by hand) instead of creating one.
+  gates:
+    default: all
+    description: "Human gates to keep: `all`, `none`, or a comma-separated subset of design, prd, tdd, plan, phases, pr."
+  app_test:
+    default: none
+    description: "Manual app testing after implementation: `none`, or the surface to drive, `web`, `ios`, or `android`; a confident-no judgment can turn a named surface off, never name one; see docs/app-testing.md."
+  app_target:
+    default: ""
+    description: What the app test launches; a URL for web, a bundle id or .app path for ios, a package or .apk for android. Empty lets the skill start the repository's own dev server or build.
+  verify:
+    default: "true"
+    description: "Run the verification phase after implementation: `true` (default) re-runs the repository's checks and the task's acceptance items in a fresh session, `false` skips it; see docs/verification.md."
+
+# The `*-done` nodes do two jobs: they commit the phase's artifacts, and they keep every loop body
+# runnable (Archon 0.10 drops a loop_group's body when the group belongs to an include whose dependency
+# is another include; see delivery-full). A join after a gated or `when:`-guarded include needs
+# `trigger_rule: none_failed_min_one_success`: one of its branches is always skipped. A plain `bash:`
+# node sits between every `delivery-decide` include and the gate-phase/implement include that follows
+# it (workflows/delivery.md, Archon note 1): `decide-task-done`, `decide-research-done`,
+# `decide-design-done`, `decide-plan-done`. None of the four `decide-*` includes below pass `tiers:`,
+# so all four take `delivery-decide`'s own default; the artifact's Model tier column holds by
+# construction instead of by four-way copy discipline.
+nodes:
+  - id: task
+    include: delivery-task
+    with:
+      skills_dir: $INPUTS.skills_dir
+      workflow: full
+      task_dir: $INPUTS.task_dir
+
+  - id: gates
+    depends_on: [task]
+    bash: |
+      set -eu
+      names="design prd tdd plan phases pr"
+      requested=$(printf '%s' "${INPUTS_GATES:-all}" | tr -d ' ')
+      case "$requested" in
+        all|'') on="$names" ;;
+        none) on="" ;;
+        *)
+          on=""
+          for g in $(printf '%s' "$requested" | tr ',' ' '); do
+            case " $names " in
+              *" $g "*) on="$on $g" ;;
+              *) printf 'gates: unknown gate "%s"; use all, none, or a comma-separated subset of: %s\n' "$g" "$names" >&2; exit 1 ;;
+            esac
+          done ;;
+      esac
+      out=""
+      for name in $names; do
+        case " $on " in *" $name "*) v=true ;; *) v=false ;; esac
+        out="$out${out:+,}\"$name\":\"$v\""
+      done
+      printf '{%s}\n' "$out"
+    output_format:
+      type: object
+      properties:
+        design: { type: string }
+        prd: { type: string }
+        tdd: { type: string }
+        plan: { type: string }
+        phases: { type: string }
+        pr: { type: string }
+      required: [design, prd, tdd, plan, phases, pr]
+
+  - id: decide-task
+    include: delivery-decide
+    depends_on: [task, gates]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      boundary: task
+      gates: $INPUTS.gates
+      app_test: $INPUTS.app_test
+      verify: $INPUTS.verify
+
+  - id: decide-task-done
+    depends_on: [decide-task]
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): decide artifacts" -- "$dir"
+
+  - id: research
+    include: delivery-research
+    depends_on: [decide-task-done]
+    when: "$decide-task.output.research == 'true'"
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+
+  - id: research-done
+    depends_on: [decide-task-done, research]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): research artifacts" -- "$dir"
+
+  - id: decide-research
+    include: delivery-decide
+    depends_on: [research-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      boundary: research
+      gates: $INPUTS.gates
+      app_test: $INPUTS.app_test
+      verify: $INPUTS.verify
+
+  - id: decide-research-done
+    depends_on: [decide-research]
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): decide artifacts" -- "$dir"
+
+  - id: design
+    include: delivery-gate-phase
+    depends_on: [decide-research-done]
+    when: "$decide-research.output.design == 'true'"
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: create-design-discussion
+      iterate: iterate-design-discussion
+      label: the design discussion
+      gate: $gates.output.design
+
+  - id: design-done
+    depends_on: [decide-research-done, design]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): design artifacts" -- "$dir"
+
+  - id: prd
+    include: delivery-gate-phase
+    depends_on: [design-done]
+    when: "$decide-research.output.prd == 'true'"
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: create-prd
+      iterate: iterate-prd
+      label: the product requirements document
+      gate: $gates.output.prd
+
+  - id: prd-done
+    depends_on: [design-done, prd]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): prd artifacts" -- "$dir"
+
+  - id: tdd
+    include: delivery-gate-phase
+    depends_on: [prd-done]
+    when: "$decide-research.output.tdd == 'true'"
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: create-tdd
+      iterate: iterate-tdd
+      label: the technical design document
+      gate: $gates.output.tdd
+
+  - id: spec-done
+    depends_on: [prd-done, tdd]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): tdd artifacts" -- "$dir"
+
+  - id: decide-design
+    include: delivery-decide
+    depends_on: [spec-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      boundary: design
+      gates: $INPUTS.gates
+      app_test: $INPUTS.app_test
+      verify: $INPUTS.verify
+
+  - id: decide-design-done
+    depends_on: [decide-design]
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): decide artifacts" -- "$dir"
+
+  - id: plan
+    include: delivery-gate-phase
+    depends_on: [decide-design-done]
+    when: "$decide-design.output.planning == 'plan'"
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: create-plan
+      iterate: iterate-plan
+      label: the plan
+      gate: $gates.output.plan
+
+  - id: outline
+    include: delivery-gate-phase
+    depends_on: [decide-design-done]
+    when: "$decide-design.output.planning == 'outline'"
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: create-structure-outline
+      iterate: iterate-structure-outline
+      label: the structure outline
+      gate: $gates.output.plan
+
+  - id: plan-done
+    depends_on: [decide-design-done, plan, outline]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): plan artifacts" -- "$dir"
+
+  - id: decide-plan
+    include: delivery-decide
+    depends_on: [plan-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      boundary: plan
+      gates: $INPUTS.gates
+      app_test: $INPUTS.app_test
+      verify: $INPUTS.verify
+
+  - id: decide-plan-done
+    depends_on: [decide-plan]
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): decide artifacts" -- "$dir"
+
+  - id: implement
+    include: delivery-implement
+    depends_on: [decide-plan-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: $decide-design.output.implement_skill
+      review: $decide-plan.output.review_each_phase
+      gate: $gates.output.phases
+
+  - id: implement-done
+    depends_on: [implement]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): implement artifacts" -- "$dir"
+
+  # Verification unless turned off: the include's `when` gates every node of the block, and the join fires
+  # from implement-done alone when the block is skipped.
+  - id: verify
+    include: delivery-verify
+    depends_on: [implement-done]
+    when: "$INPUTS.verify != 'false'"
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+
+  - id: verify-done
+    depends_on: [implement-done, verify]
+    trigger_rule: none_failed_min_one_success
+    # The block commits its own artifacts; this join picks up what the preceding phase left in the task directory.
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): implement artifacts" -- "$dir"
+
+  # Manual app testing when the plan boundary's decide node still names a surface: the include's `when`
+  # gates every node of the block, and the join fires from verify-done alone when the block is skipped.
+  - id: app-test
+    include: delivery-app-test
+    depends_on: [verify-done]
+    when: "$decide-plan.output.app_test != 'none'"
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      kind: $decide-plan.output.app_test
+      target: $INPUTS.app_target
+
+  - id: app-test-done
+    depends_on: [verify-done, app-test]
+    trigger_rule: none_failed_min_one_success
+    # The block commits its own artifacts; this join picks up what the preceding phase left in the task directory.
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): implement artifacts" -- "$dir"
+
+  - id: review
+    include: delivery-review
+    depends_on: [app-test-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+
+  - id: review-done
+    depends_on: [review]
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): review artifacts" -- "$dir"
+
+  - id: pr
+    include: delivery-gate-phase
+    depends_on: [review-done]
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      skill: describe-pr
+      iterate: describe-pr
+      label: the pull request description
+      gate: $gates.output.pr
+
+  # The pull request is the deliverable, so the branch must reach the remote: the join pushes its own
+  # commit when the branch has an upstream, and pushes the branch with one when `origin` exists and
+  # describe-pr did not (no `gh` or `glab`, or a remote it could not open a pull request on).
+  - id: pr-done
+    depends_on: [pr]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      set -eu
+      dir=$task.output.task_dir
+      git add -A -- "$dir"
+      git diff --cached --quiet -- "$dir" || git commit -q -m "docs(task): pr artifacts" -- "$dir"
+      if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then git push -q
+      elif git remote get-url origin >/dev/null 2>&1; then GIT_TERMINAL_PROMPT=0 git push -q -u origin HEAD; fi

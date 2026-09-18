@@ -1,0 +1,223 @@
+name: delivery-decide-omp
+description: |
+  Judge which optional phases the task still needs and draw the chain: run `compose` over `task.md`
+  and the artifact summaries already in the task directory, derive the single-valued fields the
+  adaptive pack's `when:` expressions compare against, fall back to the canonical full chain when the
+  helper is unavailable, and write or rewrite the task directory's `NN-execution-plan-<slug>.md`
+  artifact (a Mermaid flowchart with skipped phases dimmed, and a table of every probability, bar,
+  reason, and model tier). Included four times by `delivery-adaptive`, once per boundary (`task`,
+  `research`, `design`, `plan`).
+  NOT for: running on its own.
+  Oh My Pi flavor: every AI phase runs in `omp -p`; deterministic nodes, gates, and loops are unchanged.
+
+inputs:
+  skills_dir:
+    default: ~/.agents/skills
+    description: Directory holding the installed skills, one `<name>/SKILL.md` each.
+  task_dir:
+    required: true
+    description: The task directory (`.agents/tasks/<slug>`) `compose` reads and the execution-plan artifact is written into.
+  boundary:
+    default: task
+    description: "Which boundary this decide node sits at, recorded in the artifact: task, research, design, or plan."
+  tiers:
+    default: "research=medium,design=large,prd=large,tdd=large,plan=large,outline=large,implement=large,verify=medium,app_test=large,review=large,pr=large"
+    description: "Comma-separated `<phase>=<tier>` pairs naming the model tier the adaptive pack runs each phase on; only used for the artifact's Model tier column."
+  gates:
+    default: all
+    description: The adaptive pack's raw `gates` input, printed once in the artifact above the table.
+  app_test:
+    default: none
+    description: "The pack's manual-app-test surface (none, web, ios, android); a confident-no `app_test` judgment can turn a named surface off, never name one."
+  verify:
+    default: "true"
+    description: "The pack's own `verify` input, `true` or `false`; not judged, only reflected in the artifact's `verify` row so a `--input verify=false` run does not draw a phase that will not run."
+
+returns: decide
+
+nodes:
+  # `compose` over task.md and the artifact summaries, thresholded inside the helper; this node only
+  # reads its JSON, derives the single-valued fields `when:` compares against, and draws the chain. The
+  # floor is the canonical full chain: without a key, without `node`, or on any nonzero exit every
+  # optional phase runs, so a wrong judgment costs one session and never an incomplete chain. A field
+  # missing from the helper's JSON (a shape change) falls back to "run" the same way, so a shape change
+  # cannot silently skip a phase either. `${INPUTS_X:-$INPUTS.x}` reads the environment first and the
+  # include-time macro second, the pattern every other block in this tree uses (workflows/delivery.md,
+  # Archon note 13): this block is included by delivery-adaptive but is also run and tested on its own.
+  - id: decide
+    bash: |
+      set -eu
+      dir=${INPUTS_TASK_DIR:-$INPUTS.task_dir}
+      skills=${INPUTS_SKILLS_DIR:-$INPUTS.skills_dir}
+      case "$skills" in "~") skills="$HOME" ;; "~/"*) skills="$HOME${skills#\~}" ;; esac
+      boundary=${INPUTS_BOUNDARY:-$INPUTS.boundary}
+      gates_requested=${INPUTS_GATES:-$INPUTS.gates}
+      tiers=${INPUTS_TIERS:-$INPUTS.tiers}
+      app_test_input=${INPUTS_APP_TEST:-$INPUTS.app_test}
+      verify_input=${INPUTS_VERIFY:-$INPUTS.verify}
+
+      mkdir -p "$dir"
+
+      judge="${skills%/}/typed-judgment/judge.mjs"
+      judged=""
+      if [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
+        judged=$(node "$judge" compose --json "$dir" 2>/dev/null) || judged=""
+      fi
+
+      field() { printf '%s' "$judged" | sed -n "s/.*\"phase\":\"$1\",\"verdict\":\"\([a-z]*\)\".*/\1/p"; }
+      prob()  { printf '%s' "$judged" | sed -n "s/.*\"phase\":\"$1\",\"verdict\":\"[a-z]*\",\"probability\":\([0-9.]*\).*/\1/p"; }
+      bar()   { printf '%s' "$judged" | sed -n "s/.*\"phase\":\"$1\",\"verdict\":\"[a-z]*\",\"probability\":[0-9.]*,\"bar\":\([0-9.]*\).*/\1/p"; }
+      why()   { printf '%s' "$judged" | sed -n "s/.*\"phase\":\"$1\",[^}]*\"reason\":\"\([^\"]*\)\".*/\1/p"; }
+      tf() { case "$1" in skip) printf false ;; *) printf true ;; esac; }
+      verdict() { v=$(field "$1"); printf '%s' "${v:-run}"; }
+
+      if [ -n "$judged" ]; then
+        available=true
+        # `autonomy` and `available` are reported below (task.md:13 asks for the former; the `deliver`
+        # skill may read either), but `delivery-adaptive` does not: its `gates` node derives pauses from
+        # `$INPUTS.gates` alone. Nothing here is a dead field, only an unconsumed one.
+        autonomy=$(printf '%s' "$judged" | sed -n 's/.*"autonomy":"\([a-z]*\)".*/\1/p'); autonomy=${autonomy:-all}
+        research=$(tf "$(verdict research)")
+        design=$(tf "$(verdict design)")
+        prd=$(tf "$(verdict prd)")
+        tdd=$(tf "$(verdict tdd)")
+        review_each_phase=$(tf "$(verdict review_each_phase)")
+        # `plan` has a floor: it is the canonical default, so `implement` always has an artifact to
+        # read (its `until_bash` requires one). The two are compared against each other, not
+        # thresholded one-sidedly, so a merely-unclear `outline` can never outrank a confident `plan`
+        # (task.md's threshold rule: unclear runs the phase). A tie or a missing probability floors to
+        # `plan`; there is no third "neither" state.
+        plan_p=$(prob plan)
+        outline_p=$(prob outline)
+        if [ -n "$plan_p" ] && [ -n "$outline_p" ] && awk -v a="$outline_p" -v b="$plan_p" 'BEGIN{exit !(a>b)}'; then
+          planning=outline
+        else
+          planning=plan
+        fi
+        app_v=$(verdict app_test)
+        if [ "$app_test_input" != none ] && [ "$app_v" != skip ]; then app_test=$app_test_input; else app_test=none; fi
+      else
+        available=false
+        autonomy=all
+        research=true; design=true; prd=true; tdd=true; review_each_phase=true
+        planning=plan
+        app_test=$app_test_input
+      fi
+      if [ "$planning" = outline ]; then implement_skill=implement-outline; else implement_skill=implement-plan; fi
+
+      # Locate the existing execution-plan artifact (rewritten per the conventions' iteration rule) or
+      # allocate the next NN (01 when the directory has none); `10#` forces base-10 so a prefix like
+      # "08" is not read as an invalid octal literal.
+      existing=$(ls "$dir" 2>/dev/null | grep -E '^[0-9]{2}-execution-plan-.*\.md$' | sort | tail -1) || existing=""
+      slug=$(basename "$dir")
+      if [ -n "$existing" ]; then
+        file="$dir/$existing"
+      else
+        max=$(ls "$dir" 2>/dev/null | grep -E '^[0-9]{2}-' | cut -c1-2 | sort -n | tail -1) || max=""
+        if [ -z "$max" ]; then n=01; else n=$(printf '%02d' $((10#$max + 1))); fi
+        file="$dir/$n-execution-plan-$slug.md"
+      fi
+
+      repo=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null) || repo=""
+      branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || branch=""
+      sha=$(git rev-parse HEAD 2>/dev/null) || sha=""
+      summary="Execution plan at the $boundary boundary: planning=$planning, app_test=$app_test, review_each_phase=$review_each_phase, autonomy=$autonomy, helper available=$available."
+
+      # Phases are emitted from one fixed list in canonical order, so the flowchart and the table cannot
+      # disagree. "-" is not a gate name; research, verify, app_test, and review carry no gate.
+      runs_for() {
+        case "$1" in
+          research) printf '%s' "$research" ;;
+          design) printf '%s' "$design" ;;
+          prd) printf '%s' "$prd" ;;
+          tdd) printf '%s' "$tdd" ;;
+          plan) [ "$planning" = plan ] && printf true || printf false ;;
+          outline) [ "$planning" = outline ] && printf true || printf false ;;
+          app_test) [ "$app_test" = none ] && printf false || printf true ;;
+          verify) [ "$verify_input" = false ] && printf false || printf true ;;
+          *) printf true ;;
+        esac
+      }
+      judged_ids=" research design prd tdd plan outline app_test "
+      node_line() {
+        id=$1; label=$2; gate=$3
+        if [ "$gate" = - ]; then printf '  %s["%s"]\n' "$id" "$label"
+        else printf '  %s["%s<br/>gate: %s"]\n' "$id" "$label" "$gate"
+        fi
+      }
+      row() {
+        id=$1; label=$2; gate=$3
+        runs=$(runs_for "$id")
+        p=-; barcol=-; w=-
+        case "$judged_ids" in
+          *" $id "*)
+            pv=$(prob "$id"); if [ -n "$pv" ]; then p=$pv; bv=$(bar "$id"); barcol="<= $(printf '%.2f' "${bv:-0.2}")"; fi
+            wv=$(why "$id"); [ -n "$wv" ] && w=$wv
+            ;;
+        esac
+        tier=$(printf '%s' "$tiers" | tr ',' '\n' | sed -n "s/^$id=//p"); tier=${tier:--}
+        runsword=yes; [ "$runs" = false ] && runsword=no
+        printf '| %s | %s | %s | %s | %s | %s | %s |\n' "$label" "$runsword" "$gate" "$p" "$barcol" "$w" "$tier"
+      }
+
+      {
+        printf -- '---\ntask: %s\ntype: execution-plan\nsummary: "%s"\nrepo: %s\nbranch: %s\nsha: %s\nboundary: %s\n---\n\n' \
+          "$slug" "$summary" "$repo" "$branch" "$sha" "$boundary"
+        printf '# Execution Plan\n\n'
+        printf '```mermaid\nflowchart TD\n'
+        node_line research research -
+        node_line design "design discussion" design
+        node_line prd prd prd
+        node_line tdd tdd tdd
+        node_line plan plan plan
+        node_line outline "structure outline" plan
+        node_line implement implementation phases
+        node_line verify verification -
+        node_line app_test "app test" -
+        node_line review "review loop" -
+        node_line pr "pull request" pr
+        # `plan` and `outline` are siblings, not a dependency chain: both follow `tdd` and both feed
+        # `implement` under complementary `when:` guards (delivery-adaptive.yaml), so exactly one runs.
+        # The fan-out/fan-in below draws that branch instead of a linear edge between the two.
+        printf '  research --> design --> prd --> tdd\n'
+        printf '  tdd --> plan\n'
+        printf '  tdd --> outline\n'
+        printf '  plan --> implement\n'
+        printf '  outline --> implement\n'
+        printf '  implement --> verify --> app_test --> review --> pr\n'
+        printf '  classDef skipped fill:#eee,stroke:#bbb,color:#999\n'
+        for id in research design prd tdd plan outline verify app_test; do
+          if [ "$(runs_for "$id")" = false ]; then printf '  class %s skipped\n' "$id"; fi
+        done
+        printf '```\n\n'
+        printf 'Gates requested: %s\n\n' "$gates_requested"
+        printf '| Phase | Runs | Gate | p | Bar | Why | Model tier |\n|---|---|---|---|---|---|---|\n'
+        row research research -
+        row design "design discussion" design
+        row prd prd prd
+        row tdd tdd tdd
+        row plan plan plan
+        row outline "structure outline" plan
+        row implement implementation phases
+        row verify verification -
+        row app_test "app test" -
+        row review "review loop" -
+        row pr "pull request" pr
+      } > "$file"
+
+      printf '{"research":"%s","design":"%s","prd":"%s","tdd":"%s","planning":"%s","implement_skill":"%s","app_test":"%s","review_each_phase":"%s","autonomy":"%s","available":"%s"}\n' \
+        "$research" "$design" "$prd" "$tdd" "$planning" "$implement_skill" "$app_test" "$review_each_phase" "$autonomy" "$available"
+    output_format:
+      type: object
+      properties:
+        research: { type: string }
+        design: { type: string }
+        prd: { type: string }
+        tdd: { type: string }
+        planning: { type: string }
+        implement_skill: { type: string }
+        app_test: { type: string }
+        review_each_phase: { type: string }
+        autonomy: { type: string }
+        available: { type: string }
+      required: [research, design, prd, tdd, planning, implement_skill, app_test, review_each_phase, autonomy, available]

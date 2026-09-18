@@ -39,6 +39,7 @@ Expand the structure outline into a detailed implementation plan with concrete e
 - A phase's `human-gated: false` line may be edited to `true` when the user asks to gate that phase.
 - Include test additions or modified test examples following patterns from research.
 - Do not add manual validation just to fill a section.
+- When the primary input is a TDD, map each `## Phase N` to work-item ids from its `### Engineering Work Breakdown` table with a `**Work items**: w1, w2` line under the phase heading, and state in `## Execution Strategy` which dependency edge any reordering or merge crossed.
 
 ## Output
 

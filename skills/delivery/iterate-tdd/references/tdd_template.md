@@ -62,6 +62,46 @@ entrypoint
 
 [Relevant repository examples, cited with paths and compact excerpts.]
 
+### Engineering Work Breakdown
+
+[The work as planned: stable work-item ids, a `subgraph` per independent track, verification points and human gates as nodes of their own, one `Critical path:` line naming the item ids in order, and a table whose proof column names an observable command, request, state, or review decision, never "code written".]
+
+```mermaid
+flowchart LR
+  subgraph track1[Track 1]
+    w1["w1 <first work item>"] --> w2["w2 <second work item>"]
+  end
+  subgraph track2[Track 2]
+    w3["w3 <third work item>"] --> w4["w4 <fourth work item>"]
+  end
+  w2 --> w4
+  w4 --> v1{{"v1 <verification step>"}}
+  v1 --> g1[["g1 <human gate>"]]
+```
+
+Critical path: w1 -> w2 -> w4 -> v1 -> g1
+
+| Item | Depends on | Can run in parallel with | Proof it is done |
+|---|---|---|---|
+| w1 <first work item> | - | w3 | `<observable command or state>` |
+| w2 <second work item> | w1 | w3 | `<observable command or state>` |
+| w3 <third work item> | - | w1 | `<observable command or state>` |
+| w4 <fourth work item> | w2, w3 | - | `<observable command or state>` |
+| v1 <verification step> | w4 | - | `<observable command or state>` |
+| g1 <human gate> | v1 | - | `<observable command or state>` |
+
+### Execution DAG
+
+[How this work will be executed: the phases ahead, which pause for approval, what runs unattended, and what verification and review follow. When the task directory holds an execution-plan artifact (`NN-execution-plan-<slug>.md`), embed its Mermaid flowchart here and name the phases it dropped with their probabilities. When it does not, describe the fixed chain of `task.md`'s `workflow` value from the phases and gate set in workflows/delivery.md, with no flowchart and no probabilities.]
+
+```mermaid
+flowchart TD
+  research["research"] --> design["design discussion<br/>gate: design"]
+  design --> plan["plan<br/>gate: plan"]
+  plan --> implement["implement<br/>gate: phases"]
+  implement --> verify["verify"] --> review["review loop"] --> pr["pr<br/>gate: pr"]
+```
+
 ## Human Review
 
 ### Review targets

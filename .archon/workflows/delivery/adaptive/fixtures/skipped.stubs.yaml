@@ -1,0 +1,40 @@
+# `gates=none`: research/design/prd/tdd judged unnecessary at their boundaries, planning stays plan
+# (the default derivation with no outline evidence), so the run reaches only research's decide-done
+# join before the design phases, then the plan phase (unattended, `once`) and the implement loop's
+# unattended twin, ending at pr's unattended `once` branch. The three gated design/prd/tdd nodes and
+# their siblings get no stub at all: `archon workflow test` reports an unused stub for a node that
+# never reaches its body, so a skipped node's absence from this file is what proves it was skipped.
+task__create: '{"task_dir":".agents/tasks/fixture","skills_dir":"/home/me/.agents/skills"}'
+gates: '{"design":"false","prd":"false","tdd":"false","plan":"false","phases":"false","pr":"false"}'
+decide-task__decide: '{"research":"false","design":"false","prd":"false","tdd":"false","planning":"plan","implement_skill":"implement-plan","app_test":"none","review_each_phase":"false","autonomy":"all","available":"true"}'
+decide-research__decide: '{"research":"false","design":"false","prd":"false","tdd":"false","planning":"plan","implement_skill":"implement-plan","app_test":"none","review_each_phase":"false","autonomy":"all","available":"true"}'
+decide-design__decide: '{"research":"false","design":"false","prd":"false","tdd":"false","planning":"plan","implement_skill":"implement-plan","app_test":"none","review_each_phase":"false","autonomy":"all","available":"true"}'
+decide-plan__decide: '{"research":"false","design":"false","prd":"false","tdd":"false","planning":"plan","implement_skill":"implement-plan","app_test":"none","review_each_phase":"false","autonomy":"all","available":"true"}'
+plan__once: "plan saved"
+implement-phase-auto: "phase implemented"
+pr__once: "pull request described"
+next-phase-auto: '{"next":""}'
+review-code: '{"status":"clean","artifact":"05-code-review-fixture.md","summary":"clean"}'
+verify-review: '{"status":"clean"}'
+verify-implementation: '{"status":"passed","artifact":"06-verification-fixture.md","summary":"checks and acceptance items passed"}'
+verification-status: '{"status":"passed"}'
+decide-task-done: ""
+research-done: ""
+decide-research-done: ""
+design-done: ""
+prd-done: ""
+spec-done: ""
+decide-design-done: ""
+plan-done: ""
+decide-plan-done: ""
+implement-done: ""
+verification-done: ""
+verify-done: ""
+app-test-done: ""
+review-done: ""
+pr-done: ""
+fixture:
+  expect: completed
+  inputs: { gates: none }
+  reached: [decide-task-done, research-done, decide-research-done, spec-done, plan__once, implement__phases-auto]
+exec-code: false

@@ -54,18 +54,20 @@ archon workflow test delivery-bugfix   # one pack
 archon workflow test delivery          # every fixture in the delivery folder
 ```
 
-`archon workflow test` never creates a run or contacts a provider. Installed packs carry their fixtures, so the same command works from any project against `~/.archon/workflows/`. The generator copies every fixture into the OMP flavor (node ids are identical), so `archon workflow test delivery-omp` runs the same 29. The fixtures in the tree (29):
+`archon workflow test` never creates a run or contacts a provider. Installed packs carry their fixtures, so the same command works from any project against `~/.archon/workflows/`. The generator copies every fixture into the OMP flavor (node ids are identical), so `archon workflow test delivery-omp` runs the same 54. The fixtures in the tree (54, `node -e 'console.log(require("fs").readdirSync(".archon/workflows/delivery",{recursive:true}).filter(f=>f.endsWith(".stubs.yaml")).length)'`):
 
 | Workflow | Fixtures |
 |---|---|
 | `delivery-task` | `create` (exec-code: slug, `task.md`, commit in the scratch worktree), `missing-task-dir` (exec-code; a `task_dir` without `task.md` fails) |
 | `delivery-research` | `run` |
+| `delivery-decide` | `run` |
 | `delivery-gate-phase` | `gated` (`cycle` pauses), `unattended` (`once`) |
 | `delivery-implement` | `gated`, `unattended`, `review-each-phase` |
 | `delivery-review` | `clean`, `findings`, `blocked` (cancels) |
 | `delivery-full` | `gated`, `unattended`, `review-each-phase`, `review-findings`, `review-blocked` |
 | `delivery-lean`, `delivery-prd`, `delivery-oneshot`, `delivery-epic` | `gated`, `unattended` |
 | `delivery-bugfix` | `gated`, `unattended`, `reproduced` (exec-code), `not-reproduced` (cancels after the fourth reproduction session) |
+| `delivery-adaptive` | `all-phases` (every optional phase runs), `skipped` (research, design, prd, tdd all skipped), `prd-path` (design skipped, prd/tdd run, structure outline), `helper-unavailable` (canonical full chain, `available: false`) |
 | `delivery-resolve-reviews` | `round` |
 
 ### A raw dry run
@@ -88,10 +90,13 @@ Archon resolves a workflow name by exact, then case-insensitive, suffix, and sub
   - the generator: refs hoisted into shell variables, inputs read from `INPUTS_*`, the workflow and its includes renamed, the flavor note appended, the committed `delivery-omp/` tree byte-identical to a fresh build;
   - the generated bash executed under `/bin/bash` 3.2 with a fake `omp` on `PATH`, including a prompt with an unpaired apostrophe, checking the flags (`-p --auto-approve --no-session --max-time=45m`) and the expanded prompt `omp` receives;
   - the task node's bash body run with `ARGUMENTS` and `INPUTS_*` in a temporary git repository: slugs per the conventions, `task.md` fields, the `docs(task): open <slug>` commit, removal of a stale `.agents/tasks/` ignore line, reuse of an existing `task_dir`, failure on a bogus one;
+  - the decide node's bash body run the same way against the TypeSafe stub: a confident-no phase reads `false` in the flat decision object, `NN-execution-plan-<slug>.md` is written with the skipped phase dimmed in the flowchart and its probability and bar in the table, a second run with a new artifact present rewrites the same file rather than allocating a new number, and without a key every phase reads `true`, `available` is `false`, and the table shows `-` for every probability;
   - the `until_bash` of `delivery-implement` against the plan and outline templates, without a key (open boxes under `## Phase N` or `## Step N` keep the loop running, boxes under `## Human Review` do not) and against the stub (`done` ends the loop over an open box, `remaining` keeps it over ticked ones, `unclear` defers to the awk); the task node's judged slug, `complexity:`, `suggested_workflow:`, and the mismatch warning;
   - with an Archon 0.10+ on `PATH`: every pack loads without `parseWarnings`, resolves to its own name, and dry-runs in a scratch repository, with `--input gates=none` (both twins' unattended branches run and the final join executes, no pause), `delivery-full` with `--input gates=plan --pause-at-gates` (pauses once, at the plan gate), and `--input gates=bogus` (fails at node `gates` naming the valid set);
   - `archon workflow test delivery --cwd <scratch> --json --quiet`: every fixture ran, no unused or missing stub, the scratch repository keeps only its initial commit (exec-code fixtures commit in Archon's worktree), and a fixture with a wrong `expect` exits 1;
   - a real Archon run (no `--dry-run`) of the OMP flavor under a scratch `HOME`, with a fake `omp` that plays the skills: `delivery-lean-omp --input gates=none` runs seven fresh sessions, every node (included or not) reads the skills directory with `~` expanded, the review node's prompt carries its schema, a fenced answer with prose around it is filtered to the JSON object, `until_bash` ends the implementation loop after the two real steps, and the branch ends with one `docs(task)` commit per phase and nothing uncommitted; `delivery-bugfix-omp --input gates=none` with a reproduction that never succeeds makes four reproduction sessions, each seeing the previous answer through `$LOOP_PREV`, commits each artifact, and cancels naming the count; `delivery-lean-omp --input gates=outline` exits at the gate, `archon workflow reject <id> --detach "<text>"` re-runs the phase with that text in the prompt, and `archon workflow approve <id> --detach` finishes the run unattended. Archon's database and workspace registry are created under the scratch `HOME` and discarded.
+
+`tests/fixtures/compose-samples.json` is the sample set the `compose` command's phase questions are measured against: eight requests, four oneshot-shaped and four full-shaped, each with the phases it expects skipped; `tests/judge.test.mjs` checks the threshold mapping against it without a key. `node evals/compose-probe.mjs [sample-id ...]` is the live probe that scores every sample against a real model and prints each phase's probability against its bar. It needs `TYPESAFE_API_KEY`, is never part of `npm test`, and is the thing to run after any edit to `PHASES` in `judge.mjs`.
 
 ## Evals
 

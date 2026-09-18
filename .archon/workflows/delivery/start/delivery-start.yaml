@@ -6,8 +6,12 @@ description: |
   to that pack's gate names, else `all`); `confirm` pauses once, only when the pack was judged unsure,
   whatever the gates, and a "request changes" whose text names a pack, optionally followed by
   gates (`bugfix`, or `lean, outline`), overrides the pick; the task directory is created with the
-  chosen pack's name, and that pack runs as a child run on the same checkout (its gates pause this
-  run too; approve them by the child's run id, which the pause message names). `--input
+  judged pack's name (task.md always names oneshot, lean, full, prd, bugfix, epic, or program, never
+  `adaptive`), and the chosen pack runs as a child run on the same checkout (its gates pause this run
+  too; approve them by the child's run id, which the pause message names). A judged (not explicit) `oneshot`,
+  `lean`, `full`, or `prd` pick continues in `delivery-adaptive`, which re-decides the optional phases
+  at every boundary instead of running the fixed chain; naming the pack yourself, with `--input
+  workflow=<name>` or a "request changes" text, always runs that fixed pack. `--input
   workflow=program` picks the PRD-to-children program explicitly; an automatic `prd` route becomes
   `program` when the request also names epics, children, issues, or several pull requests.
 
@@ -21,7 +25,7 @@ interactive: true
 inputs:
   workflow:
     default: auto
-    description: "The pack to run: `auto` (judged from the request), or one of full, lean, prd, oneshot, bugfix, epic, program."
+    description: "The pack to run: `auto` (judged from the request, and a judged oneshot, lean, full, or prd continues in delivery-adaptive), or one of full, lean, prd, oneshot, bugfix, epic, program named explicitly, which always runs that fixed pack."
   gates:
     default: auto
     description: "Human gates to keep, passed to the chosen pack: `auto` (judged from the request), `all`, `none`, or a comma-separated subset of that pack's gate names."
@@ -41,11 +45,12 @@ inputs:
 # The chosen pack is a `workflow:` child run, not an include: Archon 0.10.1 drops the body of every
 # `loop_group` inside an include that is itself included (the body's composed boundary keeps the
 # inner file's node ids), and every pack loops. The task directory is created here so the child needs
-# no request text (`with:` and `input:` exclude each other on a `workflow:` node) and task.md names the
-# pack that runs. One `workflow:` node per pack under `when: "$resolve.output.workflow == '<name>'"`,
-# so exactly one runs, and the `done` join fires from it with `trigger_rule:
-# none_failed_min_one_success`. A dry run cannot execute a reachable `workflow:` node, so the pack's
-# fixtures expect a failure at the chosen pack's node and prove the routing before it.
+# no request text (`with:` and `input:` exclude each other on a `workflow:` node); `task` still takes
+# `resolve.output.workflow` (the judged pack, never `adaptive`), so task.md always names oneshot, lean,
+# full, prd, bugfix, epic, or program. One `workflow:` node per pack, including `adaptive`, under `when:
+# "$resolve.output.pack == '<name>'"`, so exactly one runs, and the `done` join fires from it with
+# `trigger_rule: none_failed_min_one_success`. A dry run cannot execute a reachable `workflow:` node,
+# so the pack's fixtures expect a failure at the chosen pack's node and prove the routing before it.
 nodes:
   # The request arrives as the ARGUMENTS environment variable, the inputs as INPUTS_*; nothing is
   # spliced into the script. Autonomy level to gates, per pack: `none` -> none, `pr` -> pr, `all` -> all,
@@ -65,6 +70,8 @@ nodes:
       judge="${skills_dir%/}/typed-judgment/judge.mjs"
       have_judge=false
       if [ -f "$judge" ] && command -v node >/dev/null 2>&1; then have_judge=true; fi
+      explicit=false
+      if [ "$(printf '%s' "${INPUTS_WORKFLOW:-auto}" | tr -d ' ')" != auto ]; then explicit=true; fi
       workflow=$(printf '%s' "${INPUTS_WORKFLOW:-auto}" | tr -d ' ')
       suggested=""; confidence="unknown"; confident=true
       if [ "$workflow" = auto ]; then
@@ -91,7 +98,15 @@ nodes:
         *" $workflow "*) ;;
         *) printf 'workflow: unknown pack "%s"; use auto or one of: %s\n' "$workflow" "$packs" >&2; exit 1 ;;
       esac
+      # A judged (not explicit) oneshot, lean, full, or prd pick continues in delivery-adaptive
+      # (`resolve` applies the same swap); gate names are validated against the pack that will
+      # actually run, computed here, not against the judged pack `resolve` is about to discard (CR-001).
+      pack=$workflow
+      if [ "$explicit" != true ]; then
+        case "$workflow" in oneshot|lean|full|prd) pack=adaptive ;; esac
+      fi
       gates=$(printf '%s' "${INPUTS_GATES:-auto}" | tr -d ' ')
+      gates_plan=false
       if [ "$gates" = auto ]; then
         level=""
         if [ "$have_judge" = true ]; then
@@ -101,6 +116,7 @@ nodes:
           none) gates=none ;;
           pr) gates=pr ;;
           plan)
+            gates_plan=true
             case "$workflow" in
               full) gates=design,plan ;;
               prd|program) gates=prd,tdd,plan ;;
@@ -116,19 +132,41 @@ nodes:
         full) names="design plan phases pr" ;; prd) names="prd tdd plan phases pr" ;; program) names="prd tdd plan" ;;
         lean) names="outline phases pr" ;; bugfix) names="reproduce pr" ;; oneshot) names="pr" ;; epic) names="plan" ;;
       esac
-      case "$gates" in
+      # `gates` (and `route.output.gates`) stay exactly as judged, in the judged pack's own vocabulary:
+      # `resolve` and the `confirm` message both still need that pre-swap value (`resolve` does its own
+      # rename-then-widen onto `adaptive`'s vocabulary once it applies the swap). Validation here checks
+      # a translated copy against the pack that will actually run, not `route.output.gates` itself, so a
+      # gate `adaptive` has but the judged pack lacks is not rejected in the judged pack's name (CR-001);
+      # `resolve` repeats the same rename for real when it copies this pack's swap decision.
+      check_gates=$gates
+      check_names=$names
+      if [ "$pack" = adaptive ]; then
+        check_names="design prd tdd plan phases pr"
+        case "$check_gates" in
+          all|none) ;;
+          *)
+            translated=""
+            for g in $(printf '%s' "$check_gates" | tr ',' ' '); do
+              [ "$g" = outline ] && g=plan
+              translated="${translated:+$translated,}$g"
+            done
+            check_gates=$translated
+            ;;
+        esac
+      fi
+      case "$check_gates" in
         all|none) ;;
         *)
-          for g in $(printf '%s' "$gates" | tr ',' ' '); do
-            case " $names " in
+          for g in $(printf '%s' "$check_gates" | tr ',' ' '); do
+            case " $check_names " in
               *" $g "*) ;;
-              *) printf 'gates: unknown gate "%s" for delivery-%s; use auto, all, none, or a comma-separated subset of: %s\n' "$g" "$workflow" "$names" >&2; exit 1 ;;
+              *) printf 'gates: unknown gate "%s" for delivery-%s; use auto, all, none, or a comma-separated subset of: %s\n' "$g" "$pack" "$check_names" >&2; exit 1 ;;
             esac
           done ;;
       esac
       confirm=false
       if [ "$confident" = false ]; then confirm=true; fi
-      printf '{"workflow":"%s","gates":"%s","suggested":"%s","confidence":"%s","confirm":"%s"}\n' "$workflow" "$gates" "$suggested" "$confidence" "$confirm"
+      printf '{"workflow":"%s","gates":"%s","suggested":"%s","confidence":"%s","confirm":"%s","explicit":"%s","gates_plan":"%s","pack":"%s"}\n' "$workflow" "$gates" "$suggested" "$confidence" "$confirm" "$explicit" "$gates_plan" "$pack"
     output_format:
       type: object
       properties:
@@ -137,7 +175,10 @@ nodes:
         suggested: { type: string }
         confidence: { type: string }
         confirm: { type: string }
-      required: [workflow, gates, suggested, confidence, confirm]
+        explicit: { type: string }
+        gates_plan: { type: string }
+        pack: { type: string }
+      required: [workflow, gates, suggested, confidence, confirm, explicit, gates_plan, pack]
 
   - id: confirm
     depends_on: [route]
@@ -145,8 +186,11 @@ nodes:
     approval:
       message: >-
         This request reads like delivery-$route.output.workflow (confidence $route.output.confidence)
-        with gates $route.output.gates. Approve to run it, or request changes naming the pack and
-        optionally the gates, for example `bugfix` or `lean, outline`.
+        with gates $route.output.gates. If you approve a judged oneshot, lean, full, or prd pick, it
+        runs as delivery-adaptive instead, which re-decides the optional phases at each boundary and
+        pauses at that pack's own gates (design, prd, tdd, plan, phases, pr), not $route.output.gates;
+        a judged bugfix, epic, or program runs exactly as shown. Approve to run it, or request changes
+        naming the pack and optionally the gates, for example `bugfix` or `lean, outline`.
       decisions:
         - { id: approve, label: Approve }
         - { id: reject, label: Request changes }
@@ -185,23 +229,53 @@ nodes:
         full) names="design plan phases pr" ;; prd) names="prd tdd plan phases pr" ;; program) names="prd tdd plan" ;;
         lean) names="outline phases pr" ;; bugfix) names="reproduce pr" ;; oneshot) names="pr" ;; epic) names="plan" ;;
       esac
+      # A person naming the pack (--input workflow=, or a reject text) gets that fixed pack; a judged
+      # oneshot, lean, full, or prd run gets the adaptive chain `route` already decided (`route.output.pack`,
+      # CR-001: `route` validates gate names against this same pack, so the swap is not recomputed here).
+      pack=$route.output.pack
+      [ -z "$words" ] || pack=$workflow
+      # `route` names the judged pack's own gates, which do not all exist on `adaptive` (`oneshot` has
+      # only `pr`; `lean` names its planning gate `outline`). Every token is renamed into `adaptive`'s
+      # own vocabulary first (only `outline` differs; everything else is shared), so a caller-supplied
+      # gate set survives the pack swap instead of aborting; a `plan`-autonomy request (asked to review
+      # planning) then widens on top of that to the adaptive pack's own planning gate set, so the review
+      # still pauses even though the judged pack's phases and the adaptive pack's phases differ. `words`
+      # is empty whenever pack is adaptive (a reject text naming gates always names a pack too, which
+      # pins a fixed pack instead), so `gates` here is still exactly `route.output.gates`.
+      if [ "$pack" = adaptive ]; then
+        names="design prd tdd plan phases pr"
+        case "$gates" in
+          all|none) ;;
+          *)
+            translated=""
+            for g in $(printf '%s' "$gates" | tr ',' ' '); do
+              [ "$g" = outline ] && g=plan
+              translated="${translated:+$translated,}$g"
+            done
+            gates=$translated
+            ;;
+        esac
+        gates_plan=$route.output.gates_plan
+        [ "$gates_plan" = true ] && gates="design,prd,tdd,plan"
+      fi
       case "$gates" in
         all|none) ;;
         *)
           for g in $(printf '%s' "$gates" | tr ',' ' '); do
             case " $names " in
               *" $g "*) ;;
-              *) printf 'confirm: unknown gate "%s" for delivery-%s; name the pack, then all, none, or a comma-separated subset of: %s\n' "$g" "$workflow" "$names" >&2; exit 1 ;;
+              *) printf 'confirm: unknown gate "%s" for delivery-%s; name the pack, then all, none, or a comma-separated subset of: %s\n' "$g" "$pack" "$names" >&2; exit 1 ;;
             esac
           done ;;
       esac
-      printf '{"workflow":"%s","gates":"%s"}\n' "$workflow" "$gates"
+      printf '{"workflow":"%s","gates":"%s","pack":"%s"}\n' "$workflow" "$gates" "$pack"
     output_format:
       type: object
       properties:
         workflow: { type: string }
         gates: { type: string }
-      required: [workflow, gates]
+        pack: { type: string }
+      required: [workflow, gates, pack]
 
   # The task directory, with the chosen pack's name in task.md; the child reuses it through
   # `task_dir` and its own task node writes nothing.
@@ -216,7 +290,7 @@ nodes:
   - id: full
     workflow: delivery-full
     depends_on: [task]
-    when: "$resolve.output.workflow == 'full'"
+    when: "$resolve.output.pack == 'full'"
     with:
       skills_dir: $task.output.skills_dir
       task_dir: $task.output.task_dir
@@ -227,7 +301,7 @@ nodes:
   - id: lean
     workflow: delivery-lean
     depends_on: [task]
-    when: "$resolve.output.workflow == 'lean'"
+    when: "$resolve.output.pack == 'lean'"
     with:
       skills_dir: $task.output.skills_dir
       task_dir: $task.output.task_dir
@@ -238,7 +312,7 @@ nodes:
   - id: prd
     workflow: delivery-prd
     depends_on: [task]
-    when: "$resolve.output.workflow == 'prd'"
+    when: "$resolve.output.pack == 'prd'"
     with:
       skills_dir: $task.output.skills_dir
       task_dir: $task.output.task_dir
@@ -249,7 +323,7 @@ nodes:
   - id: oneshot
     workflow: delivery-oneshot
     depends_on: [task]
-    when: "$resolve.output.workflow == 'oneshot'"
+    when: "$resolve.output.pack == 'oneshot'"
     with:
       skills_dir: $task.output.skills_dir
       task_dir: $task.output.task_dir
@@ -260,7 +334,7 @@ nodes:
   - id: bugfix
     workflow: delivery-bugfix
     depends_on: [task]
-    when: "$resolve.output.workflow == 'bugfix'"
+    when: "$resolve.output.pack == 'bugfix'"
     with:
       skills_dir: $task.output.skills_dir
       task_dir: $task.output.task_dir
@@ -271,7 +345,7 @@ nodes:
   - id: epic
     workflow: delivery-epic
     depends_on: [task]
-    when: "$resolve.output.workflow == 'epic'"
+    when: "$resolve.output.pack == 'epic'"
     with:
       skills_dir: $task.output.skills_dir
       task_dir: $task.output.task_dir
@@ -280,14 +354,25 @@ nodes:
   - id: program
     workflow: delivery-program
     depends_on: [task]
-    when: "$resolve.output.workflow == 'program'"
+    when: "$resolve.output.pack == 'program'"
     with:
       skills_dir: $task.output.skills_dir
       task_dir: $task.output.task_dir
       gates: $resolve.output.gates
 
+  - id: adaptive
+    workflow: delivery-adaptive
+    depends_on: [task]
+    when: "$resolve.output.pack == 'adaptive'"
+    with:
+      skills_dir: $task.output.skills_dir
+      task_dir: $task.output.task_dir
+      gates: $resolve.output.gates
+      app_test: $INPUTS.app_test
+      app_target: $INPUTS.app_target
+
   - id: done
-    depends_on: [full, lean, prd, oneshot, bugfix, epic, program]
+    depends_on: [full, lean, prd, oneshot, bugfix, epic, program, adaptive]
     trigger_rule: none_failed_min_one_success
     bash: |
       set -eu

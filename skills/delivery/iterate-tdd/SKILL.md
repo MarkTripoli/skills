@@ -42,7 +42,7 @@ If user asks to keep working through questions: read TDD fully, identify unresol
 
 4. **Start child research when needed**: Start a child worker for role `agent-codebase-locator` (files/tests), `agent-codebase-analyzer` (behavior), `agent-codebase-pattern-finder` (precedents), or `agent-web-search-researcher` (external docs) with the assignment (see the conventions' Child workers section) when a missing fact would change artifact; wait for it; read its final message. Use only findings you have read from the worker's final message. If child/direct read discovers current-state facts missing/stale in completed research, fold into research artifact before finalizing TDD.
 
-5. **Update in place**: Preserve frontmatter/major sections. Rework System/Program Design per feedback. Express current/target behavior inside System Design. Update diagrams, contracts, trees, Patterns to Follow. Keep coherent; no outdated branches/logs.
+5. **Update in place**: Preserve frontmatter/major sections. Rework System/Program Design per feedback. Express current/target behavior inside System Design. Update diagrams, contracts, trees, Patterns to Follow. Keep coherent; no outdated branches/logs. Rewrite `### Execution DAG` from the newest `execution-plan` artifact in the task directory on every revision, because a later decide node may have changed the chain.
 
 6. **Update PRD or mockups if technical findings affect product behavior**: If decision changes UX/scope/availability/states/permissions/workflow, update product artifact when present.
 

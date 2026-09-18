@@ -30,6 +30,7 @@ const NO_KEY = { TYPESAFE_API_KEY_FILE: path.join(os.tmpdir(), "skills-judge-no-
 test("judge: without a key or with a dead endpoint every verdict command prints nothing and exits 3; extract-json prints its input", async () => {
   const plan = tmp("03-plan-x.md", PLAN);
   assert.deepEqual(await judge(["plan-remaining", plan], NO_KEY), { code: 3, out: "", err: "judge: unavailable: TYPESAFE_API_KEY is not set and no key file was found" });
+  assert.deepEqual(await judge(["compose", "-"], NO_KEY, "text"), { code: 3, out: "", err: "judge: unavailable: TYPESAFE_API_KEY is not set and no key file was found" });
   const dead = await judge(["feedback-intent", "looks good"], { TYPESAFE_API_KEY: "k", TYPESAFE_BASE_URL: "http://127.0.0.1:9", JUDGE_TIMEOUT: "2" });
   assert.equal(dead.code, 3); assert.equal(dead.out, "");
   const passthrough = await judge(["extract-json", "--required", "status", "--enum", "status=clean,findings"], NO_KEY, "The review is clean.\n");
@@ -314,6 +315,57 @@ test("judge size-children: each sizing test is read against its own bar, a decla
     assert.ok(row.tests.vertical_slice === 0.1, "the vertical probability is still reported for the reader");
 
     assert.equal((await judge(["size-children"], stub.env)).code, 2);
+  } finally { stub.close(); }
+});
+
+test("judge compose: a phase is skipped only at the confident-no bar, the reason comes from the paired choice, and the state carries task.md plus the artifact summaries", async () => {
+  let p = 0.05; let why = "small";
+  const stub = await startStub((id, question) => (id.startsWith("why_") ? choice(why, question.criteria) : id === "autonomy" ? choice("unspecified", question.criteria) : noul(id === "research" ? 0.9 : p)));
+  try {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "skills-compose-"));
+    fs.writeFileSync(path.join(dir, "task.md"), "---\nslug: x\nworkflow: full\n---\nAdd a --verbose flag\n");
+    fs.writeFileSync(path.join(dir, "01-research-x.md"), '---\ntype: research\nsummary: "The flag lives in src/cli.mjs."\n---\nbody\n');
+    // A prior boundary's own execution-plan artifact is excluded from the state: it is this same
+    // judgment's earlier verdict, not evidence, and including it risks anchoring a re-judgment on its
+    // own past answer instead of judging afresh.
+    fs.writeFileSync(path.join(dir, "02-execution-plan-x.md"), '---\ntype: execution-plan\nsummary: "Execution plan at the task boundary: planning=plan, app_test=none, review_each_phase=false, autonomy=all, helper available=true."\n---\nbody\n');
+    const out = JSON.parse((await judge(["compose", dir, "--json"], stub.env)).out);
+    assert.deepEqual(out.phases.map((row) => `${row.phase}:${row.verdict}`), ["research:run", "design:skip", "prd:skip", "tdd:skip", "plan:skip", "outline:skip", "review_each_phase:skip", "app_test:skip"]);
+    // delivery-decide.yaml's field()/prob()/why() sed patterns match this exact key order positionally
+    // (ADV-002); reordering these keys would make them return empty with no test failing here otherwise.
+    assert.deepEqual(Object.keys(out.phases[0]), ["phase", "verdict", "probability", "bar", "reason", "reason_confidence"]);
+    assert.equal(out.phases[1].bar, 0.2);
+    assert.equal(out.phases[1].reason, "The change is too small and too bounded for this phase to change the outcome");
+    assert.equal(out.autonomy, "all", "an unspecified involvement is the packs' default");
+    const state = stub.requests.at(-1).state;
+    assert.match(state.task, /Add a --verbose flag/);
+    // Only the research artifact reaches the state; the execution-plan artifact above is excluded.
+    assert.deepEqual(state.artifacts, [{ file: "01-research-x.md", type: "research", summary: "The flag lives in src/cli.mjs." }]);
+    p = 0.21;
+    assert.ok(JSON.parse((await judge(["compose", dir, "--json"], stub.env)).out).phases.every((row) => row.verdict === "run"), "just above the bar runs the phase");
+    const text = (await judge(["compose", "-"], stub.env, "Add a --verbose flag\n")).out;
+    assert.match(text, /^research\trun\t/m, "stdin is read as the task text");
+    assert.equal(stub.requests.at(-1).state.artifacts.length, 0);
+    fs.rmSync(dir, { recursive: true, force: true });
+  } finally { stub.close(); }
+});
+
+test("judge compose: every committed sample maps its probabilities to the skip set it declares, and the sample set covers both shapes", async () => {
+  const samples = JSON.parse(fs.readFileSync(path.join(REPO, "tests", "fixtures", "compose-samples.json"), "utf8")).samples;
+  const byShape = (shape) => samples.filter((s) => s.shape === shape);
+  assert.ok(byShape("oneshot").length >= 4 && byShape("full").length >= 4, "at least four samples of each shape");
+  assert.deepEqual(byShape("oneshot").map((s) => s.id).slice(0, 4), ["copy-change", "flag-stated-behavior", "config-edit", "one-function-fix"]);
+  for (const s of byShape("oneshot")) assert.ok(s.skip.includes("research") && s.skip.includes("design"), `${s.id} must expect research and design skipped`);
+  for (const s of byShape("full")) assert.ok(!s.skip.includes("research") && !s.skip.includes("design"), `${s.id} must expect research and design kept`);
+  let sample = samples[0];
+  // 0.05 is a confident no, 0.9 a confident yes; only the bar decides which becomes a skip.
+  const stub = await startStub((id, question) => (id.startsWith("why_") ? choice("small", question.criteria) : id === "autonomy" ? choice("unspecified", question.criteria) : noul(sample.skip.includes(id) ? 0.05 : 0.9)));
+  try {
+    for (sample of samples) {
+      const out = JSON.parse((await judge(["compose", "--json", "-"], stub.env, sample.task)).out);
+      assert.deepEqual(out.phases.filter((row) => row.verdict === "skip").map((row) => row.phase), sample.skip, sample.id);
+      assert.equal(stub.requests.at(-1).state.task, sample.task, `${sample.id} sends the sample text as the task`);
+    }
   } finally { stub.close(); }
 });
 

@@ -4,6 +4,7 @@ Review artifact: {artifact_link}
 
 Check:
 - {review_check}
+- The `### Execution DAG` section names the phases ahead, which are gated, and what runs unattended
 - Known limits: {known_limits}
 
 Reply with the changes you want, or run `/iterate-design-discussion @{artifact_file}`.
