@@ -49,8 +49,11 @@ nodes:
 
         # The claimed status checked against the artifact by the typed-judgment helper, which only ever
         # moves a claim toward failed or blocked: a `passed` whose table carries a failed item is not one.
-        # Without the helper (not installed, no TypeSafe key, no node) or without the artifact file, the
-        # claim stands. The loop and the nodes below read this status, not the claim.
+        # A judged `blocked` needs deterministic evidence: the artifact's `## Missing` list must name
+        # something, because the cancel it triggers tells the person to supply what that list names, and
+        # an artifact whose rows are merely `untested` is not a blocked verification (a verifier that is
+        # blocked claims `blocked` itself). Without the helper (not installed, no TypeSafe key, no node) or
+        # without the artifact file, the claim stands. The loop and the nodes below read this status, not the claim.
         - id: verification-status
           depends_on: [verify-implementation]
           bash: |
@@ -65,7 +68,14 @@ nodes:
             if [ -n "$artifact" ] && [ -f "$file" ] && [ -f "$judge" ] && command -v node >/dev/null 2>&1; then
               verdict=$(node "$judge" verification-status "$file" "$status" 2>/dev/null) || verdict=""
             fi
-            case "$verdict" in passed|failed|blocked) status=$verdict ;; esac
+            missing=0
+            if [ -f "$file" ]; then
+              missing=$(awk '/^## Missing/ { on = 1; next } /^## / { on = 0 } on && /^[[:space:]]*- / { n++ } END { print n + 0 }' "$file")
+            fi
+            case "$verdict" in
+              blocked) if [ "$status" = blocked ] || [ "$missing" -gt 0 ]; then status=blocked; fi ;;
+              passed|failed) status=$verdict ;;
+            esac
             printf '{"status":"%s"}\n' "$status"
           output_format:
             type: object

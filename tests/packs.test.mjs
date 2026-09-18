@@ -334,7 +334,7 @@ test("implement until_bash: the loop ends when every `## Phase N`/`## Step N` bo
   }
 });
 
-test("implement until_bash and next-phase: with the TypeSafe stub the helper's done and remaining verdicts decide, unclear defers to the boxes, and the named next phase reaches the prompt", async () => {
+test("implement until_bash and next-phase: with the TypeSafe stub the helper's done verdict ends the loop early, ticked boxes end it whatever the helper says, unclear defers to the boxes, and the named next phase reaches the prompt", async () => {
   let remaining = 0.1; let next = "none";
   const stub = await startStub((id, question) => (id === "remaining" ? noul(remaining) : id === "has_phases" ? noul(0.99) : choice(next, question.criteria)));
   const taskDir = fs.mkdtempSync(path.join(os.tmpdir(), "skills-plan-judged-"));
@@ -344,7 +344,9 @@ test("implement until_bash and next-phase: with the TypeSafe stub the helper's d
     assert.equal(await runPlanCheck(taskDir, stub.env), 0, "done: the loop ends although a box is open");
     remaining = 0.95;
     fs.writeFileSync(path.join(taskDir, "03-plan-slug.md"), tickPhases(PLAN_TEMPLATE));
-    assert.notEqual(await runPlanCheck(taskDir, stub.env), 0, "remaining: the loop goes on although every box is ticked");
+    const calls = stub.requests.length;
+    assert.equal(await runPlanCheck(taskDir, stub.env), 0, "remaining with every box ticked: the boxes are the floor and the loop ends (a wrongly prolonged loop burns sixteen sessions; the verify loop catches missed work)");
+    assert.equal(stub.requests.length, calls, "ticked boxes end the loop without asking the helper");
     remaining = 0.5;
     assert.equal(await runPlanCheck(taskDir, stub.env), 0, "unclear with every box ticked: the boxes decide");
     fs.writeFileSync(path.join(taskDir, "03-plan-slug.md"), open);
@@ -360,10 +362,47 @@ test("implement until_bash and next-phase: with the TypeSafe stub the helper's d
     assert.deepEqual(await runNextPhase(taskDir), { next: "Phase 2: [Phase title]" }, "no key: the first phase with an open box");
     fs.writeFileSync(path.join(taskDir, "03-plan-slug.md"), tickPhases(PLAN_TEMPLATE));
     assert.deepEqual(await runNextPhase(taskDir), { next: "" }, "nothing open: empty");
+    // A finished plan names no phase whatever the helper says: run bac80b17's loop was sent back to phase 1
+    // by a confident wrong `next` on a plan with every box ticked.
+    next = "phase-1"; remaining = 0.95;
+    const asked = stub.requests.length;
+    assert.deepEqual(await runNextPhase(taskDir, stub.env), { next: "" }, "nothing open with a confident wrong helper: still empty");
+    assert.equal(stub.requests.length, asked, "a finished plan does not ask the helper for a next phase");
     fs.writeFileSync(path.join(taskDir, "04-plan-slug.md"), "# Plan\n\n### Step 1: Say \"hi\"\n\n- [x] done\n\n#### Notes\n\n- [ ] a sub-heading box counts for its step\n\n```\n## Phase 9: quoted\n- [ ] quoted\n```\n\n### Step 2: Next\n\n- [ ] open\n");
     assert.deepEqual(await runNextPhase(taskDir), { next: 'Step 1: Say "hi"' }, "level 3 headings, a deeper sub-heading inside the step, quotes escaped");
     fs.rmSync(path.join(taskDir, "04-plan-slug.md"));
     assert.deepEqual(await runNextPhase(taskDir), { next: "" }, "a ticked plan with no phase named");
+  } finally {
+    stub.close();
+    fs.rmSync(taskDir, { recursive: true, force: true });
+  }
+});
+
+// The verify block's cross-check node, with the verifier's structured output substituted.
+async function runVerificationStatus(taskDir, artifact, claimed, env) {
+  const yaml = fs.readFileSync(path.join(NATIVE_DIR, "verify", "delivery-verify.yaml"), "utf8");
+  const body = /id: verification-status\n\s+depends_on: \[verify-implementation\]\n\s+bash: \|\n((?: {12}.*\n|\n)+?) {10}output_format:/.exec(yaml)[1].replace(/^ {12}/gm, "");
+  const script = substitute(body, taskDir).replaceAll("$verify-implementation.output.status", claimed).replaceAll("$verify-implementation.output.artifact", artifact);
+  const result = await bash(script, { env: { INPUTS_TASK_DIR: taskDir, INPUTS_SKILLS_DIR: SKILLS, ...env } });
+  assert.equal(result.code, 0, result.err);
+  return JSON.parse(result.out).status;
+}
+
+test("verify verification-status: the helper may tighten passed to failed, but a judged blocked needs a non-empty ## Missing list; the verifier's own blocked claim stands", async () => {
+  let blocked = 0.9; let openFail = 0.1;
+  const stub = await startStub((id) => (id === "blocked" ? noul(blocked) : noul(openFail)));
+  const taskDir = fs.mkdtempSync(path.join(os.tmpdir(), "skills-verify-status-"));
+  const passedEmpty = "---\nstatus: passed\n---\n\n## Items\n\n| A1 | x | pass |\n| A2 | y | untested |\n\n## Missing\n\n## Findings\n\nNone.\n";
+  try {
+    fs.writeFileSync(path.join(taskDir, "10-verification-x.md"), passedEmpty);
+    assert.equal(await runVerificationStatus(taskDir, "10-verification-x.md", "passed", stub.env), "passed", "a judged blocked with nothing under ## Missing does not cancel a passed verification");
+    fs.writeFileSync(path.join(taskDir, "10-verification-x.md"), passedEmpty.replace("## Missing\n", "## Missing\n\n- the staging database credentials\n"));
+    assert.equal(await runVerificationStatus(taskDir, "10-verification-x.md", "passed", stub.env), "blocked", "a judged blocked with a named missing item cancels");
+    fs.writeFileSync(path.join(taskDir, "10-verification-x.md"), passedEmpty);
+    assert.equal(await runVerificationStatus(taskDir, "10-verification-x.md", "blocked", stub.env), "blocked", "the verifier's own blocked claim stands whatever the list holds");
+    blocked = 0.1; openFail = 0.9;
+    assert.equal(await runVerificationStatus(taskDir, "10-verification-x.md", "passed", stub.env), "failed", "a passed claim with an open failure is tightened to failed");
+    assert.equal(await runVerificationStatus(taskDir, "10-verification-x.md", "passed"), "passed", "no key: the claim stands");
   } finally {
     stub.close();
     fs.rmSync(taskDir, { recursive: true, force: true });

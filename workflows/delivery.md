@@ -114,7 +114,7 @@ The phase runs before the review so that a fix it triggers is reviewed, the same
 
 `delivery-implement` runs one iteration per plan phase. With `gate=true` the `phases` loop runs. Its `implement-phase` prompt reads the previous gate's decision: empty or `approve` runs `skill` (implement the first incomplete phase of the newest plan or outline, tick its boxes, write its receipt, commit with explicit paths, stop); `reject` runs `iterate-implementation` with the reviewer's text and does not start the next phase. With `review=true`, `review-phase` (review-code, JSON answer) and `fix-phase` (fix-code-review, when `status == 'findings'`) run once between the implementation and the gate; the gate's `trigger_rule: none_failed_min_one_success` lets it fire whether or not those optional nodes ran.
 
-`until_bash` ends the loop when the decision is `approve` and the newest `??-plan-*.md` or `??-structure-outline-*.md` in the task directory has no unchecked `- [ ]` box under any `## Phase N` or `## Step N` heading (boxes under other headings, such as `## Human Review`, do not count). Approve with phases remaining starts the next phase; sixteen iterations fail the node.
+`until_bash` ends the loop when the decision is `approve` and the newest `??-plan-*.md` or `??-structure-outline-*.md` in the task directory has no unchecked `- [ ]` box under any `## Phase N` or `## Step N` heading (boxes under other headings, such as `## Human Review`, do not count). With boxes still open, the helper's `plan-remaining` verdict `done` ends the loop early (a plan whose boxes lag its receipts); no verdict ever prolongs the loop past ticked boxes, because the verify loop catches missed work while a prolonged loop burns its sixteen sessions and fails the node. Approve with phases remaining starts the next phase; sixteen iterations fail the node.
 
 With `gate=false` the `phases-auto` loop runs instead: body `implement-phase-auto`, `review-phase-auto`, `fix-phase-auto`, no approval, and an `until_bash` that is the checkbox test alone. The body is duplicated because Archon cannot share a loop body between two `loop_group`s.
 
@@ -169,10 +169,10 @@ Where a pack once parsed prose, it now asks `typed-judgment/judge.mjs` (installe
 
 | Decision | Node | Command | Fallback |
 |---|---|---|---|
-| Is the plan finished; which phase is next | `delivery-implement` `until_bash`, `next-phase`, `next-phase-auto` | `plan-remaining` | the `## Phase N` checkbox awk |
+| Is the plan finished; which phase is next | `delivery-implement` `until_bash` (only its `done` ends the loop early; ticked boxes end it whatever it says), `next-phase`, `next-phase-auto` | `plan-remaining` | the `## Phase N` checkbox awk |
 | Is a review really clean | `delivery-review` `verify-review`; `delivery-implement` `verify-phase`, `verify-phase-auto` | `review-status` (only ever moves a claim toward `findings` or `blocked`) | the claimed status |
 | Was the bug really reproduced | `delivery-bugfix` `verify-reproduction`, `attempt-count` | `reproduction-status` | the claimed status |
-| Did the verification really pass | `delivery-verify` `verification-status` | `verification-status` (only ever moves a claim toward `failed` or `blocked`) | the claimed status |
+| Did the verification really pass | `delivery-verify` `verification-status` | `verification-status` (only ever moves a claim toward `failed`, or toward `blocked` when the artifact's `## Missing` list names something) | the claimed status |
 | Whether each review axis was examined or only asserted | `review-code` save step | `axis-coverage` | the session's own reading |
 | What a "request changes" text asks for | `delivery-gate-phase` and `delivery-implement` `until_bash` (`proceed` ends the loop) and `intent` (`stop` cancels through `stopped`) | `feedback-intent` | `revise` |
 | The task slug, complexity, and the pack the request reads like | `delivery-task` `create` (`complexity:` and `suggested_workflow:` in `task.md`, a stderr warning on a mismatch) | `slug`, `tier`, `route-workflow` | the word rule; no fields |
