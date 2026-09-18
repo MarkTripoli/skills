@@ -23,6 +23,8 @@ Read `task.md`/`ticket.md`, the newest artifact of the implementation source typ
 
 When `task.md` lists acceptance criteria, decide each one against the diff and its tests. A criterion nothing in the change proves is a major-severity finding that names the missing check; a criterion the change contradicts is critical. When the task directory holds a `verification` artifact (newest `NN-verification-*.md`), read its items table first: a criterion it records as `pass` with a command and quoted output is proven and is not re-run here; its `fail` and `untested` items are findings to confirm against the diff, and its `## Findings` name the checks to read.
 
+When the task directory holds an earlier `NN-code-review-*.md`, read only the `### CR-...` heading lines under its `## Critical and Required Findings`, and no finding body. Record each one in `## Previous Round` as `fixed`, `still open`, or `declined`, decided from the current diff and the fix round's recorded reason, never from the previous reviewer's reasoning. A `still open` entry is raised again under `## Critical and Required Findings` with a new identifier so the gate counts it; a finding the previous round did not raise is judged on its own.
+
 ## Review
 
 Trace behavior through callers/tests. Evaluate every applicable axis:

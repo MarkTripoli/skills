@@ -20,6 +20,13 @@ summary: "State the reviewed scope, the highest-risk result, and what the next p
 - task-owned untracked files:
 - excluded changes:
 
+## Previous Round
+
+- previous artifact:
+- CR-001 Short title: fixed | still open | declined
+
+`None.` in the first round. Identifiers and titles only, from the previous artifact's `## Critical and Required Findings`; a finding still open is raised again below under a new identifier.
+
 ## Requirements and Standards
 
 - task or ticket:
