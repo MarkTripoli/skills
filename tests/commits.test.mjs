@@ -127,6 +127,11 @@ describe("cli", () => {
     assert.equal(titled.status, 1);
     assert.match(titled.stderr, /pull request title: "Feature: one"/);
     assert.equal(run(dir, `${base}..HEAD~1`, "--title", "feat: one").status, 0);
+
+    const alone = run(dir, "--title", "feat(typed-judgment): retry transient failures, score review axis coverage");
+    assert.equal(alone.status, 1, "--title alone is a valid invocation");
+    assert.match(alone.stderr, /pull request title: .*74 characters; the limit is 72/);
+    assert.equal(run(dir, "--title", "feat: one").status, 0);
   });
 
   test("the committed hook blocks a bad commit through core.hooksPath and lets a good one through", () => {
