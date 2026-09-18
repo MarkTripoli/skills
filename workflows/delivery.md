@@ -148,7 +148,7 @@ archon workflow wait <run-id>
 - `--quiet` hides the JSON log lines on stdout; `--json` on `get`, `wait`, `runs`, `approve`, `reject` prints machine-readable output.
 - Gates are fixed per run: `--input` and `--resume` are mutually exclusive, so `gates` cannot change mid-run. To go unattended from a gate onward, approve the remaining gates as they come. To add gates, start a new run with `--input task_dir=.agents/tasks/<slug> --input gates=<names>` on the same `--branch`; the run reuses the task directory and its committed artifacts.
 - Continue after a failure: `archon workflow resume <run-id>` (or `archon workflow run delivery-<type> --resume` for the most recent failed or paused run of that pack in this directory) skips completed nodes and re-runs the failed one against the task directory as it stands.
-- Dead run: `archon workflow abandon <run-id>` marks it cancelled without stopping host work. `archon workflow cancel <run-id>` stops a detached continuation only.
+- Dead run: `archon workflow abandon <run-id>` marks it cancelled without stopping host work. `archon workflow cancel <run-id>` stops a detached continuation only. An abandoned run's worktree stays under `~/.archon/workspaces/`: Archon owns its workspace directories and no skill removes one, the same ownership `shared/CONVENTIONS.md` states for by-hand task worktrees. Remove one with `git worktree remove <path>` once its branch is merged or dropped.
 - Find a run: `archon workflow runs` lists recent runs, `archon workflow status` only running and paused ones, `archon workflow get <run-id>` one run.
 - Pick a pack: name it, or give the request to Archon's router (`archon chat`, Slack, the web UI), which matches the "Use when / NOT for" lines in each pack description.
 
