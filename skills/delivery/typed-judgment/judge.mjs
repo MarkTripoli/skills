@@ -137,7 +137,7 @@ async function planRemaining(file) {
   const plan = fs.readFileSync(file, "utf8");
   const phases = planPhases(plan);
   const questions = {
-    remaining: noul("At least one implementation phase or step in `plan` still has implementation work that is not marked complete. Judge only the phase sections and the phase checklist; ignore reviewer checklists under Human Review or Verify headings, which are for a person, not the implementer."),
+    remaining: noul("At least one implementation phase or step in `plan` still has implementation work that is not marked complete. Judge only the checkbox items under each phase heading: a phase whose boxes are all ticked is complete. Ignore reviewer checklists under Human Review or Verify headings, `human-gated` fields, success-criteria commands, and lines recorded as deferred human evidence; those are for a person, not the implementer, and are not remaining work."),
     has_phases: noul("The `plan` is organised into numbered implementation phases or steps that an implementer works through in order."),
   };
   if (phases.length) {

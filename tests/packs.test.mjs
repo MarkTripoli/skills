@@ -334,7 +334,7 @@ test("implement until_bash: the loop ends when every `## Phase N`/`## Step N` bo
   }
 });
 
-test("implement until_bash and next-phase: with the TypeSafe stub the helper's done and remaining verdicts decide, unclear defers to the boxes, and the named next phase reaches the prompt", async () => {
+test("implement until_bash and next-phase: with the TypeSafe stub the helper's done verdict ends the loop early, ticked boxes end it whatever the helper says, unclear defers to the boxes, and the named next phase reaches the prompt", async () => {
   let remaining = 0.1; let next = "none";
   const stub = await startStub((id, question) => (id === "remaining" ? noul(remaining) : id === "has_phases" ? noul(0.99) : choice(next, question.criteria)));
   const taskDir = fs.mkdtempSync(path.join(os.tmpdir(), "skills-plan-judged-"));
@@ -344,7 +344,9 @@ test("implement until_bash and next-phase: with the TypeSafe stub the helper's d
     assert.equal(await runPlanCheck(taskDir, stub.env), 0, "done: the loop ends although a box is open");
     remaining = 0.95;
     fs.writeFileSync(path.join(taskDir, "03-plan-slug.md"), tickPhases(PLAN_TEMPLATE));
-    assert.notEqual(await runPlanCheck(taskDir, stub.env), 0, "remaining: the loop goes on although every box is ticked");
+    const calls = stub.requests.length;
+    assert.equal(await runPlanCheck(taskDir, stub.env), 0, "remaining with every box ticked: the boxes are the floor and the loop ends (a wrongly prolonged loop burns sixteen sessions; the verify loop catches missed work)");
+    assert.equal(stub.requests.length, calls, "ticked boxes end the loop without asking the helper");
     remaining = 0.5;
     assert.equal(await runPlanCheck(taskDir, stub.env), 0, "unclear with every box ticked: the boxes decide");
     fs.writeFileSync(path.join(taskDir, "03-plan-slug.md"), open);

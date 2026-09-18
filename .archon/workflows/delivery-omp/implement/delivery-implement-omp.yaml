@@ -32,8 +32,11 @@ nodes:
   # approved (or requested changes with text that only asks to proceed, judged by the typed-judgment
   # helper when it is installed and the TypeSafe key is set) and no `## Phase N` / `## Step N` section
   # of the newest plan or outline holds an unchecked box (boxes under `## Human Review` do not count).
-  # The helper reads the plan first; its `done` and `remaining` verdicts decide, anything else defers
-  # to the box count. Approve with phases remaining continues with the next phase. The gate stays the
+  # The box count is the floor: every phase box ticked ends the loop whatever the helper says, because
+  # the verify loop downstream catches missed work while a wrongly prolonged loop burns sixteen
+  # sessions and fails the run. With boxes still open the helper's `done` verdict ends the loop early
+  # (a plan whose boxes lag its receipts); anything else keeps looping. Approve with phases remaining
+  # continues with the next phase. The gate stays the
   # body's only terminal sink, which is what lets it pause the loop (Archon #2707), so the intent
   # judgment sits in `until_bash` and in the node that opens the next pass. The unattended twin below
   # duplicates the body: Archon 0.10 cannot share a loop body between two loop_groups.
@@ -56,17 +59,20 @@ nodes:
         fi
         plan=$(ls -1 $INPUTS.task_dir/??-plan-*.md $INPUTS.task_dir/??-structure-outline-*.md 2>/dev/null | sort | tail -1)
         test -n "$plan" || exit 1
+        boxes() {
+          awk '
+            /^[[:space:]]*```/ { infence = !infence; next }
+            infence { next }
+            /^## (Phase|Step) [0-9]+/ { seen = 1; inphase = 1; next }
+            /^## / { inphase = 0; next }
+            inphase && /^[[:space:]]*- \[ \]/ { open = 1 }
+            END { exit (seen && !open) ? 0 : 1 }
+          ' "$plan"
+        }
+        boxes && exit 0
         verdict=""
         if [ -f "$judge" ] && command -v node >/dev/null 2>&1; then verdict=$(node "$judge" plan-remaining "$plan" 2>/dev/null) || verdict=""; fi
-        case "$verdict" in done) exit 0 ;; remaining) exit 1 ;; esac
-        awk '
-          /^[[:space:]]*```/ { infence = !infence; next }
-          infence { next }
-          /^## (Phase|Step) [0-9]+/ { seen = 1; inphase = 1; next }
-          /^## / { inphase = 0; next }
-          inphase && /^[[:space:]]*- \[ \]/ { open = 1 }
-          END { exit (seen && !open) ? 0 : 1 }
-        ' "$plan"
+        test "$verdict" = done
       nodes:
         # What the previous pass's "request changes" text asks for: `revise` (the default, also for
         # the first pass, an approve, or an unavailable helper) runs iterate-implementation as before,
@@ -257,8 +263,8 @@ nodes:
               - { id: approve, label: Approve }
               - { id: reject, label: Request changes }
 
-  # Unattended branch: the same body without the pause; the plan's boxes (or the helper's verdict on
-  # the plan) are the only completion channel.
+  # Unattended branch: the same body without the pause; the plan's boxes are the completion floor and
+  # the helper's `done` verdict the only early exit, as above.
   - id: phases-auto
     when: "$INPUTS.gate != 'true'"
     loop_group:
@@ -269,17 +275,20 @@ nodes:
         test -n "$plan" || exit 1
         skills=$INPUTS.skills_dir
         judge="$skills/typed-judgment/judge.mjs"
+        boxes() {
+          awk '
+            /^[[:space:]]*```/ { infence = !infence; next }
+            infence { next }
+            /^## (Phase|Step) [0-9]+/ { seen = 1; inphase = 1; next }
+            /^## / { inphase = 0; next }
+            inphase && /^[[:space:]]*- \[ \]/ { open = 1 }
+            END { exit (seen && !open) ? 0 : 1 }
+          ' "$plan"
+        }
+        boxes && exit 0
         verdict=""
         if [ -f "$judge" ] && command -v node >/dev/null 2>&1; then verdict=$(node "$judge" plan-remaining "$plan" 2>/dev/null) || verdict=""; fi
-        case "$verdict" in done) exit 0 ;; remaining) exit 1 ;; esac
-        awk '
-          /^[[:space:]]*```/ { infence = !infence; next }
-          infence { next }
-          /^## (Phase|Step) [0-9]+/ { seen = 1; inphase = 1; next }
-          /^## / { inphase = 0; next }
-          inphase && /^[[:space:]]*- \[ \]/ { open = 1 }
-          END { exit (seen && !open) ? 0 : 1 }
-        ' "$plan"
+        test "$verdict" = done
       nodes:
         - id: next-phase-auto
           bash: |
