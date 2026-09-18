@@ -415,10 +415,10 @@ The gate mode reads the run once, opens the pane at the run's `working_path`, an
 
 #### Automated Verification:
 
-- [ ] `node scripts/validate.mjs`
-- [ ] `npm test`
-- [ ] `grep -n 'archon workflow respond\|archon workflow wait' skills/delivery/herd-next/SKILL.md` returns nothing
-- [ ] `grep -rn 'archon workflow' skills/*/references skills/*/SKILL.md skills/*/*/references skills/*/*/SKILL.md` shows no line that tells a person to run a command (acceptance (d))
+- [x] `node scripts/validate.mjs`
+- [x] `npm test`
+- [x] `grep -n 'archon workflow respond\|archon workflow wait' skills/delivery/herd-next/SKILL.md` returns nothing
+- [x] `grep -rn 'archon workflow' skills/*/references skills/*/SKILL.md skills/*/*/references skills/*/*/SKILL.md` shows no line that tells a person to run a command (acceptance (d))
 
 human-gated: false
 
