@@ -1,0 +1,29 @@
+{
+  "bar": "oneshot-shaped samples must score research and design at or below T.no; full-shaped samples must keep both",
+  "samples": [
+    { "id": "copy-change", "shape": "oneshot",
+      "task": "Change the empty-state text on the projects list from \"No projects\" to \"Nothing here yet - create your first project.\"",
+      "skip": ["research", "design", "prd", "tdd", "plan", "outline", "review_each_phase", "app_test"] },
+    { "id": "flag-stated-behavior", "shape": "oneshot",
+      "task": "Add a --verbose flag to the CLI that prints each command before running it.",
+      "skip": ["research", "design", "prd", "tdd", "plan", "outline", "review_each_phase", "app_test"] },
+    { "id": "config-edit", "shape": "oneshot",
+      "task": "Set the request timeout in config/http.json from 5s to 30s.",
+      "skip": ["research", "design", "prd", "tdd", "plan", "outline", "review_each_phase", "app_test"] },
+    { "id": "one-function-fix", "shape": "oneshot",
+      "task": "Fix the off-by-one in paginate() in src/paginate.mjs: the last page is dropped when the total is an exact multiple of the page size.",
+      "skip": ["research", "design", "prd", "tdd", "plan", "outline", "review_each_phase", "app_test"] },
+    { "id": "new-subsystem", "shape": "full",
+      "task": "Add multi-tenant support: every record is scoped to an organization, and a person can belong to several.",
+      "skip": ["outline"] },
+    { "id": "open-product-goal", "shape": "full",
+      "task": "Make onboarding better for new teams.",
+      "skip": ["outline"] },
+    { "id": "cross-module-refactor", "shape": "full",
+      "task": "Replace the ad-hoc auth checks scattered through the route handlers with one authorization layer, keeping every permission the app grants today.",
+      "skip": ["prd", "outline"] },
+    { "id": "risky-migration", "shape": "full",
+      "task": "Move billing from Stripe Checkout to the Payment Intents API without dropping any in-flight subscription.",
+      "skip": ["outline"] }
+  ]
+}
