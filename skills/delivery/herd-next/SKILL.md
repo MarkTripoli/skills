@@ -54,7 +54,7 @@ pane=$(herdr tab create --workspace "$HERDR_WORKSPACE_ID" --cwd "$PWD" --label "
   | jq -r '.result.root_pane.pane_id')
 ```
 
-Step 6, the agent name. Build `<slug>-<phase>`, lower-case, every character outside `a-z0-9-` replaced by `-`, collapsed runs of `-` reduced to one, truncated to 32 characters, any trailing `-` stripped. When `herdr agent list` already holds that name, append `-2`, then `-3`, truncating the stem further so the result stays within 32 characters.
+Step 6, the agent name. Cut the slug to `32 - (length of the phase + 1)` characters first, so the phase always survives, then build `<cut slug>-<phase>`, lower-case, every character outside `a-z0-9-` replaced by `-`, collapsed runs of `-` reduced to one, truncated to 32 characters, any trailing `-` stripped. A phase longer than 31 characters leaves no room for a stem; cut the joined `<slug>-<phase>` to 32 characters in that case. When `herdr agent list` already holds the result, append `-2`, then `-3`, cutting the stem further so the name stays within 32 characters.
 
 Step 7, start, label, stage:
 

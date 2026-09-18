@@ -79,10 +79,18 @@ else
 fi
 test -n "$pane" || exit 0
 
-# Step 6, the agent name: <slug>-<phase> reduced to [a-z][a-z0-9-]{0,31}.
-# ponytail: no -2 / -3 collision walk here; a name already in use fails the
-# start below and the hook stops. Run /herd-next by hand for that case.
-name=$(printf '%s-%s' "$slug" "$phase" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | tr -s '-' | cut -c1-32)
+# Step 6, the agent name: <slug>-<phase> reduced to [a-z][a-z0-9-]{0,31}. The
+# slug is cut to leave room for the phase, so the name still says which phase
+# this is; only a phase longer than 31 characters falls back to cutting both.
+# No -2 / -3 collision walk here: a name already in use fails the start below
+# and the hook stops. Run /herd-next by hand for that case.
+stem=$((32 - ${#phase} - 1))
+if test "$stem" -ge 1; then
+  name="${slug:0:stem}-$phase"
+else
+  name="$slug-$phase"
+fi
+name=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | tr -s '-' | cut -c1-32)
 name=${name%-}
 case "$name" in [a-z]*) ;; *) exit 0 ;; esac
 
