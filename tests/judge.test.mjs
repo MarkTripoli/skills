@@ -97,6 +97,41 @@ test("judge verification-status: a passed claim with a failed item becomes faile
   } finally { stub.close(); }
 });
 
+test("judge systemOne: a rate limit or a 5xx is retried inside the timeout, an oversized request is not, and an answered call names its model", async () => {
+  const review = tmp("08-code-review-x.md", "# Review\n");
+  const once = await startStub(() => noul(0.1), { statuses: [429], retryAfter: 0 });
+  try {
+    const result = await judge(["review-status", review, "clean"], once.env);
+    assert.equal(result.out, "clean");
+    assert.equal(once.requests.length, 2, "the rate-limited attempt is sent again");
+    assert.match(result.err, /judge: model jev-stub, tokens 1 in \/ 1 out/);
+  } finally { once.close(); }
+  const twice = await startStub(() => noul(0.1), { statuses: [500, 503] });
+  try {
+    assert.equal((await judge(["review-status", review, "clean"], twice.env)).out, "clean");
+    assert.equal(twice.requests.length, 3, "two retries by default");
+  } finally { twice.close(); }
+  const exhausted = await startStub(() => noul(0.1), { statuses: [500, 500, 500] });
+  try {
+    const result = await judge(["review-status", review, "clean"], exhausted.env);
+    assert.equal(result.code, 3);
+    assert.match(result.err, /judge: unavailable: HTTP 500/);
+    assert.equal(exhausted.requests.length, 3, "the attempt count bounds the retries");
+  } finally { exhausted.close(); }
+  const off = await startStub(() => noul(0.1), { statuses: [429] });
+  try {
+    assert.equal((await judge(["review-status", review, "clean"], { ...off.env, JUDGE_RETRIES: "0" })).code, 3);
+    assert.equal(off.requests.length, 1, "JUDGE_RETRIES=0 sends one request");
+  } finally { off.close(); }
+  const big = await startStub(() => noul(0.1), { statuses: [400] });
+  try {
+    const result = await judge(["review-status", review, "clean"], big.env);
+    assert.equal(result.code, 3);
+    assert.match(result.err, /request too large/);
+    assert.equal(big.requests.length, 1, "an oversized request is never retried");
+  } finally { big.close(); }
+});
+
 test("judge extract-json: a contained object needs no call; prose is recovered by enum choice plus the one artifact name; unclear falls back to the text", async () => {
   let status = "findings"; let confidence = 0.95;
   const stub = await startStub((id, question) => choice(id === "artifact_name" ? Object.keys(question.criteria)[1] : status, question.criteria, confidence));
@@ -114,7 +149,9 @@ test("judge extract-json: a contained object needs no call; prose is recovered b
     assert.equal(JSON.parse(none.out).artifact, "09-code-review-x.md", "no name in the text: the newest artifact in --dir");
     status = "unclear";
     const unclear = await judge(["extract-json", "--required", "status", "--enum", "status=clean,findings,blocked"], stub.env, "Something else entirely\n");
-    assert.deepEqual(unclear, { code: 0, out: "Something else entirely", err: "judge: status could not be recovered from the answer" });
+    assert.equal(unclear.code, 0);
+    assert.equal(unclear.out, "Something else entirely");
+    assert.match(unclear.err, /judge: status could not be recovered from the answer/);
     status = "clean"; confidence = 0.6;
     assert.equal((await judge(["extract-json", "--required", "status", "--enum", "status=clean,findings,blocked"], stub.env, "meh\n")).out, "meh", "a low-confidence recovery is not trusted");
   } finally { stub.close(); }

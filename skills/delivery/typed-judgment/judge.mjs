@@ -26,7 +26,8 @@
 //   neutral <questions.json>                     neutral | leading | unclear per question
 //   ask --state <json|@file> --questions <json|@file>             the raw answers object
 // Text arguments: `@path` reads a file, `-` reads stdin.
-// Env: TYPESAFE_API_KEY (required), TYPESAFE_BASE_URL, TYPESAFE_DEFAULT_MODEL, JUDGE_TIMEOUT (seconds, default 20).
+// Env: TYPESAFE_API_KEY (required), TYPESAFE_BASE_URL, TYPESAFE_DEFAULT_MODEL, JUDGE_TIMEOUT (seconds,
+// default 20, the bound on the whole call), JUDGE_RETRIES (transient retries, default 2).
 // Exit: 0 answered, 2 usage error, 3 unavailable.
 
 import fs from "node:fs";
@@ -47,6 +48,27 @@ const WORKFLOWS = {
 };
 
 class Unavailable extends Error {}
+// A request the service rejected as too large. Exits 3 like any other unavailability; the message names
+// the cause so the caller splits its input instead of checking the key.
+class TooLarge extends Unavailable {}
+
+// Model version and token counts of the most recent answered call, for the artifact that records the judgment.
+export let lastCall = null;
+
+// The vendor's transient set: rate limits, its own 529, and any server error.
+const retryable = (status) => status === 429 || status >= 500;
+// Resolves early when the call's deadline fires, so `JUDGE_TIMEOUT` still bounds the whole call.
+const wait = (ms, signal) => new Promise((resolve) => {
+  const timer = setTimeout(resolve, ms);
+  signal?.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+});
+// `retry-after` is seconds or an HTTP-date; a wait longer than 5s is not worth the attempt.
+const retryAfter = (response) => {
+  const header = response.headers.get("retry-after");
+  if (!header) return null;
+  const ms = Number.isFinite(Number(header)) ? Number(header) * 1000 : Date.parse(header) - Date.now();
+  return Number.isFinite(ms) && ms >= 0 ? Math.min(ms, 5000) : null;
+};
 const usage = (message) => { process.stderr.write(`judge: ${message}\n`); process.exit(2); };
 const textArg = (value) => (value === "-" ? fs.readFileSync(0, "utf8") : value?.startsWith("@") ? fs.readFileSync(value.slice(1), "utf8") : value ?? "");
 const flag = (args, name) => { const i = args.indexOf(name); if (i < 0) return undefined; const [value] = args.splice(i, 2).slice(1); return value; };
@@ -58,19 +80,29 @@ export async function systemOne(state, questions) {
   if (!key) throw new Unavailable("TYPESAFE_API_KEY is not set");
   const base = (process.env.TYPESAFE_BASE_URL || "https://api.typesafe.ai").replace(/\/$/, "");
   const seconds = Number(process.env.JUDGE_TIMEOUT) || 20;
+  const retries = Number.isInteger(Number(process.env.JUDGE_RETRIES)) ? Number(process.env.JUDGE_RETRIES) : 2;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), seconds * 1000);
+  const request = {
+    method: "POST",
+    headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+    body: JSON.stringify({ state, model: process.env.TYPESAFE_DEFAULT_MODEL || "jev-latest", questions }),
+    signal: controller.signal,
+  };
   try {
-    const response = await fetch(`${base}/v1/systemone`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-      body: JSON.stringify({ state, model: process.env.TYPESAFE_DEFAULT_MODEL || "jev-latest", questions }),
-      signal: controller.signal,
-    });
-    if (!response.ok) throw new Unavailable(`HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
-    const body = await response.json();
-    if (!body || typeof body.answers !== "object") throw new Unavailable("response has no answers");
-    return body.answers;
+    for (let attempt = 0; ; attempt++) {
+      const response = await fetch(`${base}/v1/systemone`, request);
+      if (!response.ok) {
+        const text = (await response.text()).slice(0, 300);
+        if (response.status === 400 && text.includes("max_tokens_exceeded")) throw new TooLarge(`request too large for the model: ${text}`);
+        if (retryable(response.status) && attempt < retries) { await wait(retryAfter(response) ?? 250 * 2 ** attempt, controller.signal); continue; }
+        throw new Unavailable(`HTTP ${response.status}: ${text}`);
+      }
+      const body = await response.json();
+      if (!body || typeof body.answers !== "object") throw new Unavailable("response has no answers");
+      lastCall = { model: body.model ?? null, usage: body.usage ?? null };
+      return body.answers;
+    }
   } catch (error) {
     if (error instanceof Unavailable) throw error;
     throw new Unavailable(error.name === "AbortError" ? `no answer within ${seconds}s` : error.message);
@@ -541,6 +573,7 @@ async function main(argv) {
     case "ask": result = await ask(rest); break;
     default: usage(`unknown command ${command ?? "(none)"}; see the header of ${path.basename(process.argv[1])}`);
   }
+  if (lastCall) process.stderr.write(`judge: model ${lastCall.model ?? "unknown"}, tokens ${lastCall.usage?.input_tokens ?? "?"} in / ${lastCall.usage?.output_tokens ?? "?"} out\n`);
   process.stdout.write(`${json && result.json !== null ? JSON.stringify(result.json) : result.text}\n`);
 }
 

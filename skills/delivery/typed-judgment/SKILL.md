@@ -7,7 +7,7 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 # Typed Judgment
 
-`judge.mjs` in this directory turns a decision the workflow needs about agent or human prose into a typed question for the TypeSafe System One model (`jev`): a probability for a yes/no, one option out of a defined set with a confidence, or a level on a described scale. Code keeps the thresholds and the fallback; the model supplies the reading of the text. Calls take well under a second and a few thousand tokens.
+`judge.mjs` in this directory turns a decision the workflow needs about agent or human prose into a typed question for the TypeSafe System One model (`jev`): a probability for a yes/no, one option out of a defined set with a confidence, or a level on a described scale. Code keeps the thresholds and the fallback; the model supplies the reading of the text. One attempt takes well under a second and a few thousand tokens; a rate-limited or failing attempt is retried inside `JUDGE_TIMEOUT`, so the worst case is the timeout, 20 seconds by default, and not the round trip.
 
 ## When it runs
 
@@ -17,7 +17,7 @@ Only when a skill step or a pack node names it. The packs call it from bash node
 
 The helper needs `TYPESAFE_API_KEY` in the environment (from [console.typesafe.ai](https://console.typesafe.ai/settings/keys)). Without it, or when the service does not answer, every command prints nothing and exits 3; `extract-json` prints its input unchanged instead. A caller then applies its own rule: the pack's deterministic check, or the agent's own reading in a skill step. Never fail a step because the helper was unavailable, and never ask the user for the key mid-run: mention once in the reply that judgments were skipped.
 
-`TYPESAFE_BASE_URL` points the helper at another endpoint (tests use a stub); `TYPESAFE_DEFAULT_MODEL` picks the model; `JUDGE_TIMEOUT` is seconds, default 20.
+`TYPESAFE_BASE_URL` points the helper at another endpoint (tests use a stub); `TYPESAFE_DEFAULT_MODEL` picks the model; `JUDGE_TIMEOUT` is seconds, default 20, and bounds the whole call; `JUDGE_RETRIES` is how many transient failures (429, 529, any 5xx) are retried with `retry-after` or exponential backoff, default 2. A request the service rejects as too large exits 3 with `request too large for the model`, is never retried, and means the caller should send fewer questions.
 
 ## Commands
 

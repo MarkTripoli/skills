@@ -165,7 +165,7 @@ Why: an Archon run works in a disposable worktree, so an uncommitted task direct
 
 ## Typed judgments
 
-Where a pack once parsed prose, it now asks `typed-judgment/judge.mjs` (installed beside the skills) a typed question and branches on the answer; the deterministic rule stays as the fallback, so a machine without `TYPESAFE_API_KEY` runs exactly as before. Calls take under a second. Where each sits:
+Where a pack once parsed prose, it now asks `typed-judgment/judge.mjs` (installed beside the skills) a typed question and branches on the answer; the deterministic rule stays as the fallback, so a machine without `TYPESAFE_API_KEY` runs exactly as before. One attempt takes under a second; a rate-limited or failing attempt is retried twice (`JUDGE_RETRIES`) inside `JUDGE_TIMEOUT`, so the worst case is the timeout, 20 seconds by default, and not the round trip. Where each sits:
 
 | Decision | Node | Command | Fallback |
 |---|---|---|---|
