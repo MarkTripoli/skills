@@ -526,10 +526,10 @@ rm -rf "$repo" "$remote"
 
 #### Automated Verification:
 
-- [ ] The run reaches `status: paused` with a non-empty `metadata.approval.nodeId` and an empty `resolved`
-- [ ] `archon workflow respond "$run_id" approve --detach` exits 0 and returns before the run's next pause
-- [ ] After the respond, `archon workflow get "$run_id" --json | jq -r '.status'` is no longer `paused` with an empty `resolved`
-- [ ] `npm test`
+- [x] The run reaches `status: paused` with a non-empty `metadata.approval.nodeId` and an empty `resolved`
+- [x] `archon workflow respond "$run_id" approve --detach` exits 0 and returns before the run's next pause
+- [x] After the respond, `archon workflow get "$run_id" --json | jq -r '.status'` is no longer `paused` with an empty `resolved`
+- [x] `npm test`
 
 #### Deferred human evidence (recorded, not a gate):
 
