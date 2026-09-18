@@ -584,9 +584,9 @@ When the task directory holds an earlier `NN-code-review-*.md`, read only the `#
 
 #### Automated Verification:
 
-- [ ] `node scripts/validate.mjs`
-- [ ] `grep -q '## Previous Round' skills/delivery/review-code/references/code_review_template.md`
-- [ ] `npm test`
+- [x] `node scripts/validate.mjs`
+- [x] `grep -q '## Previous Round' skills/delivery/review-code/references/code_review_template.md`
+- [x] `npm test`
 
 human-gated: false
 
