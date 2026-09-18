@@ -50,6 +50,8 @@ A worktree outlives the task's sessions and is removed by the user with `git wor
 
 Artifacts are `NN-<type>-<slug>.md` in the task directory. `NN` is two digits: list the directory, take the highest existing prefix, add one; use `01` when there is none.
 
+`NN-execution-plan-<slug>.md` (`type: execution-plan`) is the one artifact no skill writes: a delivery pack's `delivery-decide` node writes or rewrites it at every phase boundary, holding the chain as composed for this task so far: a Mermaid flowchart with the skipped phases dimmed and a table of every judgment's probability, bar, and reason. A design discussion's or a TDD's `### Execution DAG` section embeds it.
+
 Keep each template's frontmatter, including `summary`. Later phases read only `summary` from artifacts they did not select as primary inputs.
 
 "The newest artifact of type X" is the file with the highest `NN` whose frontmatter `type` is `X`.
@@ -133,7 +135,7 @@ Pull request target resolution is the existing pull request base, then `task.md`
 
 `.agents/tasks/` is committed history. An Archon run works in a disposable worktree; the branch carries the task's memory, so `task.md` and every artifact travel with the code to the pull request, where a reviewer can open them, and to `delivery-resolve-reviews`, which adopts the run's branch and reads them.
 
-Artifacts under `.agents/tasks/` are committed on the task branch. Under Archon the pack's join node after each phase stages only the run's task directory and commits as `docs(task): <phase> artifacts`, where `<phase>` is `research`, `design`, `prd`, `tdd`, `plan`, `outline`, `implement`, `review`, `reproduce`, `fix`, `pr`, or `review-round`. A skill that is not run by the workflow engine commits its own artifact with an explicit `git add <path>` as `docs(task): <artifact type> artifact`, for example `docs(task): plan artifact`. Code commits stage explicit code paths and never mix artifact files in. Never `git add -A` or `git add .` for code.
+Artifacts under `.agents/tasks/` are committed on the task branch. Under Archon the pack's join node after each phase stages only the run's task directory and commits as `docs(task): <phase> artifacts`, where `<phase>` is `decide`, `research`, `design`, `prd`, `tdd`, `plan`, `outline`, `implement`, `review`, `reproduce`, `fix`, `pr`, or `review-round`. A skill that is not run by the workflow engine commits its own artifact with an explicit `git add <path>` as `docs(task): <artifact type> artifact`, for example `docs(task): plan artifact`. Code commits stage explicit code paths and never mix artifact files in. Never `git add -A` or `git add .` for code.
 
 Every commit message follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
 

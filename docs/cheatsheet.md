@@ -19,7 +19,7 @@ archon workflow run delivery-start --branch <slug> "Bug: add 1 2 prints NaN. Jus
 archon workflow run delivery-start --branch epic-billing "Write the PRD for usage billing; I want to review the PRD and design, then split it into epics and issues"
 ```
 
-The request decides the pack and the gates: hands-off wording runs unattended, "review the plan" keeps the planning gates, nothing said keeps every gate. `--input workflow=<pack>` and `--input gates=<...>` override. Unsure about the pack: the run pauses once at `confirm`, even hands-off; `archon workflow reject <id> "lean, outline"` names the pack and gates. In an agent session: `/deliver <request>` routes the same way, starts the run, and replies with the run id and the first pause.
+The request decides the pack and the gates: hands-off wording runs unattended, "review the plan" keeps the planning gates, nothing said keeps every gate. `--input workflow=<pack>` and `--input gates=<...>` override. Unsure about the pack: the run pauses once at `confirm`, even hands-off; `archon workflow reject <id> "lean, outline"` names the pack and gates. An `auto` route to `oneshot`, `lean`, `full`, or `prd` runs the adaptive chain (`delivery-adaptive`), which re-decides which optional phases run at every boundary instead of committing to one shape up front; `--input workflow=<pack>` still runs that fixed pack. In an agent session: `/deliver <request>` routes the same way, starts the run, and replies with the run id and the first pause.
 
 ## Pick a pack
 
@@ -27,6 +27,7 @@ The request decides the pack and the gates: hands-off wording runs unattended, "
 |---|---|---|---|
 | `delivery-oneshot` | small, fully specified, no design choice | `pr` | `archon workflow run delivery-oneshot --branch verbose-flag "Add a --verbose flag to the CLI"` |
 | `delivery-bugfix` | observed differs from expected; no product code is edited before it reproduces | `reproduce`, `pr` | `archon workflow run delivery-bugfix --branch config-exit-code "Missing config file: the CLI exits 0; it should exit 2 and name the file"` |
+| `delivery-adaptive` | the judged default for a request that reads `oneshot`, `lean`, `full`, or `prd`-shaped; a `delivery-decide` judgment picks which optional phases run at every boundary instead of committing up front | `design`, `prd`, `tdd`, `plan`, `phases`, `pr` | usually reached through `delivery-start`; named directly: `archon workflow run delivery-adaptive --branch verbose-flag "Add a --verbose flag to the CLI"` |
 | `delivery-lean` | shape is clear; several files and an ordering | `outline`, `phases`, `pr` | `archon workflow run delivery-lean --branch split-loader "Split the config loader into parser and validator modules"` |
 | `delivery-full` | competing approaches, cross-module impact, a shared interface | `design`, `plan`, `phases`, `pr` | `archon workflow run delivery-full --branch plugin-formatters "Add a plugin system for output formatters"` |
 | `delivery-prd` | the requirement itself is open; product-facing | `prd`, `tdd`, `plan`, `phases`, `pr` | `archon workflow run delivery-prd --branch csv-export "Export reports as CSV from the dashboard"` |
