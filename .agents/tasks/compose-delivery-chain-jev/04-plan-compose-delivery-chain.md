@@ -773,9 +773,9 @@ The artifact type, the pack, the block, and the floor-and-direction rule are wri
 
 #### Automated Verification:
 
-- [ ] `node scripts/validate.mjs` passes (check 10 requires every delivery skill named in `workflows/delivery.md`)
-- [ ] `npm test` passes
-- [ ] `grep -c 'delivery-adaptive' workflows/delivery.md docs/cheatsheet.md` is non-zero for both
+- [x] `node scripts/validate.mjs` passes (check 10 requires every delivery skill named in `workflows/delivery.md`) — `ok: 41 skills, 54 answer templates, 20 human-review templates, 4 execution-DAG templates, 2 work-breakdown templates, 0 banned tokens`, exit 0, run with the untracked `.backups/` tree moved aside
+- [x] `npm test` passes — exit 0, `pass 67 / fail 0`
+- [x] `grep -c 'delivery-adaptive' workflows/delivery.md docs/cheatsheet.md` is non-zero for both — `workflows/delivery.md:6`, `docs/cheatsheet.md:2`
 
 human-gated: false
 
