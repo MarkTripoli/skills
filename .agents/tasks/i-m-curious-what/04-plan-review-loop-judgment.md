@@ -402,10 +402,10 @@ Each answered run writes one line to stderr, `judge: model <model>, tokens <n> i
 
 #### Automated Verification:
 
-- [ ] `node scripts/validate.mjs`
-- [ ] `grep -q 'tokens' skills/delivery/verify-implementation/references/verification_template.md`
-- [ ] `grep -q 'tokens' skills/delivery/resolve-pr-reviews/references/pr_review_template.md`
-- [ ] `npm test`
+- [x] `node scripts/validate.mjs`
+- [x] `grep -q 'tokens' skills/delivery/verify-implementation/references/verification_template.md`
+- [x] `grep -q 'tokens' skills/delivery/resolve-pr-reviews/references/pr_review_template.md`
+- [x] `npm test`
 
 human-gated: false
 
