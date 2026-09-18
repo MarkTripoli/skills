@@ -147,7 +147,7 @@ Every skill runs in a plain agent session without Archon. Commands are written a
    /create-research-questions Add a --verbose flag to the CLI that prints each command before running it
    ```
 
-   The skill opens the task worktree first, `git worktree add ~/.agents/worktrees/<repo>/verbose-flag-cli-prints -b verbose-flag-cli-prints`, and names its path in the reply. This is the default and it is not asked about: the phases that follow commit on the task branch, and the checkout you started from stays where it is. Only the cases in the conventions' [Task worktree](../shared/CONVENTIONS.md) section skip it, one of them your own "work in this checkout" in the same session. Remove the worktree with `git worktree remove <path>` once the pull request merges.
+   The skill opens the task worktree first, `git worktree add ~/.agents/worktrees/<repo>/verbose-flag-cli-prints -b verbose-flag-cli-prints main`, and names its path in the reply. This is the default and it is not asked about: the phases that follow commit on the task branch, and the checkout you started from stays where it is. Only the cases in the conventions' [Task worktree](../shared/CONVENTIONS.md) section skip it, one of them your own "work in this checkout" in the same session. Remove the worktree with `git worktree remove <path>` once the pull request merges.
 
    In that worktree the skill creates and commits `.agents/tasks/verbose-flag-cli-prints/task.md`, writes `01-research-questions-verbose-flag-cli-prints.md`, commits it as `docs(task): research-questions artifact`, and ends with a fenced command:
 

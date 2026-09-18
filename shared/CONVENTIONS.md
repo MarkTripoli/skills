@@ -31,15 +31,15 @@ Add a --verbose flag to the CLI that prints each command before running it.
 Every task works in its own git worktree on its own branch. Under Archon the run gets one from `--branch`. A skill run by hand opens it, before `task.md` is written, so the task directory and every later commit land on the task branch and the checkout the user works in stays untouched:
 
 ```bash
-git worktree add ~/.agents/worktrees/<repo>/<slug> -b <slug>
+git worktree add ~/.agents/worktrees/<repo>/<slug> -b <slug> <target>
 git -C ~/.agents/worktrees/<repo>/<slug> status --short --branch
 ```
 
-`<repo>` is the basename of the project root, `<slug>` the task slug; a skill whose own rule names the branch (`deliver` prefixes an epic branch with `epic-`) passes that name to `-b` and keeps the slug in the path. Reuse the worktree instead of creating it when `git worktree list` already prints that path, and drop `-b` when the branch already exists. The rest of the task runs from that path: the task directory is created there, and each later phase starts there. Report the path and the branch in the reply.
+`<repo>` is the basename of the main worktree, `basename "$(git worktree list --porcelain | sed -n '1s/^worktree //p')"`, which prints the same name from the main checkout and from any of its worktrees; the project root (`git rev-parse --show-toplevel`) is the current worktree and names the wrong directory from inside another task's. `<slug>` is the task slug; a skill whose own rule names the branch (`deliver` prefixes an epic branch with `epic-`) passes that name to `-b` and keeps the slug in the path. `<target>` is the merge target in the order the Commits section states: the existing pull request base, then `task.md` `base:`, then the repository default branch (`origin/HEAD`, or `main` without a remote). Without it `-b` cuts from the current HEAD, and a task opened from another task's worktree or from a feature branch carries that branch's commits into its pull request. Reuse the worktree instead of creating it when `git worktree list` already prints that path; when the branch already exists, check it out instead of creating it: `git worktree add ~/.agents/worktrees/<repo>/<slug> <slug>`. The rest of the task runs from that path: the task directory is created there, and each later phase starts there. Report the path and the branch in the reply.
 
 The worktree is the default, not a question to put to the user. Four cases skip it, and nothing else does:
 
-- The session is already on branch `<slug>` (`git rev-parse --abbrev-ref HEAD`), that is, already in this task's own worktree. Work where the session is; the worktree exists. (Being in some *other* task's worktree does not skip it: `git worktree add` runs the same from any worktree of the repo, so the correct one is still opened.)
+- The session is already on the task's branch, the name passed to `-b` (`<slug>`, or `epic-<slug>` for an epic; check with `git rev-parse --abbrev-ref HEAD`), that is, already in this task's own worktree. Work where the session is; the worktree exists. (Being in some *other* task's worktree does not skip it: `<repo>` and `<target>` resolve the same from any worktree of the repo, so the correct one is still opened.)
 - The task directory already existed. The worktree was opened when the task was opened; a later phase does not open a second one.
 - The project is not a git work tree. Work in place and say so in the reply.
 - The user's message in this session asks for the current checkout. Their word overrides the default; nothing else does, not a handoff fence and not a bare skill invocation.
