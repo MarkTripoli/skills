@@ -52,5 +52,5 @@ Input shapes: `--children` is `[{name, prompt}]` for `route-workflow` and `[{nam
 ## Rules
 
 - What the command sends leaves the machine: the named artifact, request, feedback, thread bodies, or step observations, nothing else. Do not add repository code, diffs, or secrets to the state.
-- Record the judgment where the skill's template has a place for it (the answer word and its probability or confidence), so a reader can see why the workflow branched.
+- Record the judgment where the skill's template has a place for it (the answer word and its probability or confidence), so a reader can see why the workflow branched. An answered call writes `judge: model <model>, tokens <n> in / <m> out` to stderr; record that model and those counts on the same line, so two artifacts that disagree can be compared by version. `jev-latest` resolves to a moving version, which is the reason to pin it in the record.
 - Thresholds live in the helper; a skill step overrides none of them. When a printed verdict is `unclear` or `undecided`, the step's own rule decides.
