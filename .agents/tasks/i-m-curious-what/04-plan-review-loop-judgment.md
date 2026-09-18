@@ -537,9 +537,9 @@ test("judge axis-coverage: one level per review axis, an unsure level goes back 
 
 #### Automated Verification:
 
-- [ ] `node --test tests/judge.test.mjs`
-- [ ] `node scripts/validate.mjs`
-- [ ] `npm test`
+- [x] `node --test tests/judge.test.mjs`
+- [x] `node scripts/validate.mjs`
+- [x] `npm test`
 
 human-gated: false
 
