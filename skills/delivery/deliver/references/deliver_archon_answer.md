@@ -1,14 +1,14 @@
-<When the run was started: "Run `<run-id>` of `delivery-<pack>` is running on branch `<branch>`; it pauses first at `<first gate>`." With no gates: "Run `<run-id>` of `delivery-<pack>` is running unattended on branch `<branch>`." When the request asked for the command only: "Routing is complete. Nothing has started." When the start failed: "The start failed: <first error line>.">
+Routing is complete. The workflow is running.
 
 Routed to `delivery-<pack>` (route confidence <confidence>, autonomy <level>): gates `<gates>`.
 
-<When the run was started: "Archon created the task directory in a worktree of the branch and drives every phase from this command:" Otherwise: "Run from the project root; Archon creates the task directory, works in a worktree of the branch, and drives every phase:">
+Started from the project root:
 
 `archon workflow run delivery-<pack> --branch <branch> --input gates=<gates> '<request>'`
 
-Pauses:
-- <one line per gate left on: its name and what it reviews; or `none: the run is unattended`>
+Run `<run-id>` on branch `<branch>`, worktree `<path Archon printed>`: <`paused at <gate>`, followed by what that gate reviews and the artifact it points at; or `completed`, followed by the pull request or end state Archon printed; or `failed at <node>`, followed by Archon's reason>.
 
-`archon workflow wait <run-id>` blocks until the next pause or the end. At a pause, `archon workflow approve <run-id>` continues and `archon workflow reject <run-id> "<what should change>"` revises the artifact it paused on. <One sentence when judgments were skipped and the pack was picked by hand; otherwise omit.>
+Pauses still ahead:
+- <one line per gate left on after the current one: its name and what it reviews; or `none: the run continues to the end without a pause`>
 
-<When the run was started: "The run owns the chain; nothing follows this reply." Otherwise: "Run the command above to start the workflow.">
+`archon workflow approve <run-id>` continues, `archon workflow reject <run-id> "<what should change>"` revises the artifact it paused on, `archon workflow wait <run-id>` blocks until the next pause or the end. <One sentence when judgments were skipped and the pack was picked by hand; otherwise omit.>

@@ -4,6 +4,7 @@
 
 Invoke a skill by typing `/<name>` in the Oh My Pi prompt, for example `/create-plan @03-plan-verbose-flag-cli.md`.
 Child workers: call the `task` tool with one item `{ "agent": "agent-<role>", "task": "<assignment>" }`; the result auto-delivers when the worker yields. Read its final message before using any claim.
+Long-running commands (an `archon workflow run` that exits at its first gate): start them with the `hub` tool, `op: "start"` with the executable and its arguments, then `op: "wait"` on the same `name` with `for: "exit"` and a timeout of at least 3600 seconds; `op: "logs"` returns the output. Never `--detach`.
 
 ## Install
 

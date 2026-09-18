@@ -12,7 +12,7 @@ A task lives in `.agents/tasks/<slug>/` under the project root. `<slug>` is two 
 
 `workflow` is one of `full`, `lean`, `prd`, `oneshot`, `bugfix`, `epic`; the default is `full`. It records the delivery pack that created the task; the chains are in [workflows/delivery.md](../workflows/delivery.md).
 
-Under Archon the `delivery-task` block writes this file and commits it as `docs(task): open <slug>`. A skill run by hand that is given no task directory and finds none whose `task.md` matches the request creates one the same way: pick a slug, write `task.md` from the user's message, `git add .agents/tasks/<slug>/task.md`, commit with subject `docs(task): open <slug>`, and report the path in the reply. When `git check-ignore -q .agents/tasks/<slug>/task.md` reports the file ignored, remove the exact `.agents/tasks/` line that earlier versions of this collection added to the project `.gitignore`, stage that edit with the same commit, and stop with a one-line instruction when the path is still ignored.
+Under Archon the `delivery-task` block writes this file and commits it as `docs(task): open <slug>`. A skill run by hand that is given no task directory and finds none whose `task.md` matches the request opens the task worktree first, then creates the directory the same way: pick a slug, write `task.md` from the user's message, `git add .agents/tasks/<slug>/task.md`, commit with subject `docs(task): open <slug>`, and report the path in the reply. When `git check-ignore -q .agents/tasks/<slug>/task.md` reports the file ignored, remove the exact `.agents/tasks/` line that earlier versions of this collection added to the project `.gitignore`, stage that edit with the same commit, and stop with a one-line instruction when the path is still ignored.
 
 Example:
 
@@ -25,6 +25,26 @@ created: 2026-09-15
 ---
 Add a --verbose flag to the CLI that prints each command before running it.
 ```
+
+## Task worktree
+
+Every task works in its own git worktree on its own branch. Under Archon the run gets one from `--branch`. A skill run by hand opens it, before `task.md` is written, so the task directory and every later commit land on the task branch and the checkout the user works in stays untouched:
+
+```bash
+git worktree add ~/.agents/worktrees/<repo>/<slug> -b <slug> <target>
+git -C ~/.agents/worktrees/<repo>/<slug> status --short --branch
+```
+
+`<repo>` is the basename of the main worktree, `basename "$(git worktree list --porcelain | sed -n '1s/^worktree //p')"`, which prints the same name from the main checkout and from any of its worktrees; the project root (`git rev-parse --show-toplevel`) is the current worktree and names the wrong directory from inside another task's. `<slug>` is the task slug; a skill whose own rule names the branch (`deliver` prefixes an epic branch with `epic-`) passes that name to `-b` and keeps the slug in the path. `<target>` is the merge target in the order the Commits section states: the existing pull request base, then `task.md` `base:`, then the repository default branch (`origin/HEAD`, or `main` without a remote). Without it `-b` cuts from the current HEAD, and a task opened from another task's worktree or from a feature branch carries that branch's commits into its pull request. Reuse the worktree instead of creating it when `git worktree list` already prints that path; when the branch already exists, check it out instead of creating it: `git worktree add ~/.agents/worktrees/<repo>/<slug> <slug>`. The rest of the task runs from that path: the task directory is created there, and each later phase starts there. Report the path and the branch in the reply.
+
+The worktree is the default, not a question to put to the user. Four cases skip it, and nothing else does:
+
+- The session is already on the task's branch, the name passed to `-b` (`<slug>`, or `epic-<slug>` for an epic; check with `git rev-parse --abbrev-ref HEAD`), that is, already in this task's own worktree. Work where the session is; the worktree exists. (Being in some *other* task's worktree does not skip it: `<repo>` and `<target>` resolve the same from any worktree of the repo, so the correct one is still opened.)
+- The task directory already existed. The worktree was opened when the task was opened; a later phase does not open a second one.
+- The project is not a git work tree. Work in place and say so in the reply.
+- The user's message in this session asks for the current checkout. Their word overrides the default; nothing else does, not a handoff fence and not a bare skill invocation.
+
+A worktree outlives the task's sessions and is removed by the user with `git worktree remove <path>` once the pull request merges.
 
 ## Artifacts
 
@@ -60,7 +80,7 @@ Known limits:
 Reply with the changes you want, or run `/iterate-<phase> @NN-type-slug.md`. Running the next command records approval.
 
 Next action:
-Open a new session, then run:
+Open a new session in {run_location}, then run:
 
 ```text
 /<next-skill> @NN-type-slug.md
@@ -75,9 +95,9 @@ A reply that hands off to another skill ends with exactly one fenced `text` bloc
 
 The two lines before the fence are always `Next action:` and `Open a new session in {run_location}, then run:`. A terminal reply contains no command fence; it ends with the current state and any prerequisite action in plain prose.
 
-The new session must open in the same git checkout, on the same branch, as the phase that printed the reply: the task directory and every artifact are committed there and travel with the branch, and the `@<file>` argument is a path relative to that checkout's root. `{run_location}` names that checkout and branch, so the reply cannot drop where to run. Fill it from observed git state, never a guess: in a git work tree, `` `<root>` on branch `<branch>` `` where `<root>` is `git rev-parse --show-toplevel` and `<branch>` is `git rev-parse --abbrev-ref HEAD`; outside a git work tree, `this checkout`. A reply states only the checkout and branch it is actually in.
+The new session must open in the task worktree, on the task branch, where the phase that printed the reply ran: the task directory and every artifact are committed there and travel with the branch, and the `@<file>` argument is a path relative to that worktree's root. `{run_location}` names that worktree and branch, so the reply cannot drop where to run. Fill it from observed git state, never a guess: in a git work tree, `` `<root>` on branch `<branch>` `` where `<root>` is `git rev-parse --show-toplevel` (the task worktree, since every phase runs from it) and `<branch>` is `git rev-parse --abbrev-ref HEAD`; when the worktree was skipped and the project is not a git work tree, `this checkout`. A reply states only the worktree and branch it is actually in.
 
-The command fence is for manual mode: the user pastes it into a new session in that same checkout and branch. Archon ignores it and runs the next node itself in the run's worktree.
+The command fence is for manual mode: the user pastes it into a new session in that same worktree on that branch. Archon ignores it and runs the next node itself in the run's worktree.
 
 ## Running under Archon
 
@@ -95,7 +115,7 @@ An iterate skill run by a pack receives the reviewer's text in the prompt as its
 
 Answer templates under `references/` use these placeholders; fill every one before printing.
 
-- `{run_location}`: where the next session runs, in the fixed handoff sentence `Open a new session in {run_location}, then run:`. Observed, never guessed: in a git work tree, `` `<root>` on branch `<branch>` `` (`<root>` from `git rev-parse --show-toplevel`, `<branch>` from `git rev-parse --abbrev-ref HEAD`); outside one, `this checkout`. Under Archon the reply is ignored, so the value is unused; a by-hand run fills it so the user opens the next session where the committed task directory and each `@<file>` resolve.
+- `{run_location}`: where the next session runs, in the fixed handoff sentence `Open a new session in {run_location}, then run:`. Observed, never guessed: the task worktree and branch the phase ran in, `` `<root>` on branch `<branch>` `` (`<root>` from `git rev-parse --show-toplevel`, `<branch>` from `git rev-parse --abbrev-ref HEAD`); `this checkout` when the worktree was skipped and the project is not a git work tree. Under Archon the reply is ignored, so the value is unused; a by-hand run fills it so the user opens the next session in the worktree where the committed task directory and each `@<file>` resolve.
 - `{artifact_link}`: relative Markdown link to the file this phase saved, `[NN-type-slug.md](.agents/tasks/<slug>/NN-type-slug.md)`; `none` when nothing was saved.
 - `{artifact_file}`: that file's name only, for example `04-plan-verbose-flag-cli.md`. Templates write `@{artifact_file}` in commands; the `@` is already there, so fill nothing but the name, never a path.
 - `{summary}`: the saved artifact's frontmatter `summary`.
