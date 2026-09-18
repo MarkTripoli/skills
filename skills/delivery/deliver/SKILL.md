@@ -43,15 +43,17 @@ One command for a request whose pack is not yet chosen. You read the request, pi
    - Pauses: from the pack's gate list (full `design`, `plan`, `phases`, `pr`; lean `outline`, `phases`, `pr`; prd `prd`, `tdd`, `plan`, `phases`, `pr`; oneshot `pr`; bugfix `reproduce`, `pr`; epic `plan`; program `prd`, `tdd`, `plan`) keep the names `gates` leaves on; `none` leaves none.
    - Reply with `references/deliver_archon_answer.md`, every `<...>` slot filled. The reply is terminal: the printed command starts the workflow, so no skill command follows.
 
-5. **Without Archon**: open the task directory and hand off to the chain's first skill.
+5. **Without Archon**: open the task worktree, open the task directory in it, and hand off to the chain's first skill.
 
-   - Create `.agents/tasks/<slug>/task.md` per the conventions (slug from the branch rule above, `-2`, `-3` suffix when the directory exists; no `epic-` prefix on a slug), with frontmatter `slug`, `title`, `workflow: <pack>`, `gates: <gates>`, `routed_by: deliver`, `route_confidence: <confidence>` (omit the line when the helper did not run), `created`, and the request as the body. `git add .agents/tasks/<slug>/task.md` and commit as `docs(task): open <slug>`, applying the conventions' `.gitignore` rule. Outside a git work tree, write the file and say it is uncommitted.
+   - Open the worktree per the conventions' Task worktree section, with the branch from step 4 and the path `~/.agents/worktrees/<repo>/<slug>`. It is the default here for the same reason Archon uses one: the phases that follow commit code and artifacts on the task branch, and the checkout the user is in stays on its own branch. Ask nothing; the section names the cases that skip it.
+   - Create `.agents/tasks/<slug>/task.md` in the worktree per the conventions (slug from the branch rule above, `-2`, `-3` suffix when the directory exists; no `epic-` prefix on a slug), with frontmatter `slug`, `title`, `workflow: <pack>`, `gates: <gates>`, `routed_by: deliver`, `route_confidence: <confidence>` (omit the line when the helper did not run), `created`, and the request as the body. `git add .agents/tasks/<slug>/task.md` and commit as `docs(task): open <slug>`, applying the conventions' `.gitignore` rule. Outside a git work tree, write the file, skip the worktree, and say both are uncommitted.
    - `{next_command}` is the chain's first skill: bugfix `/reproduce-bug`; oneshot `/review-code`; lean, full, and epic `/create-research-questions`; prd and program `/create-research`. For `oneshot` the reply first says the change is small enough to implement in this session: on the user's go, implement, verify, and commit it per the `ci-commit` conventions, then the review runs from the fence.
-   - Reply with `references/deliver_hand_answer.md`, every `<...>` slot filled: the pack, its confidence, the autonomy level and gates, the task directory, and the chain as the table in `workflows/delivery.md` lists it. The gates that stay on are the replies the user reviews before pasting the next command; later phases are the skills the chain names.
+   - Reply with `references/deliver_hand_answer.md`, every `<...>` slot filled: the pack, its confidence, the autonomy level and gates, the worktree path and branch, the task directory, and the chain as the table in `workflows/delivery.md` lists it. The gates that stay on are the replies the user reviews before pasting the next command; later phases are the skills the chain names.
 
 ## Rules
 
 - Never start a pack's phases by hand when Archon is present; the printed command is the whole deliverable. Never run the command for the user.
+- The by-hand path opens a worktree every time, without asking. Only the cases the conventions' Task worktree section lists skip it.
 - Route on the request alone: the helper receives the request text and nothing else. Do not read the repository to decide the pack.
 - One question at most (step 3), and only when the pick is soft. A named pack or gate list in the request is final.
 - `epic` stays `epic` and `prd` stays `prd`; `program` needs both a PRD word and a children word in the request, or the name itself.

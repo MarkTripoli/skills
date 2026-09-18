@@ -99,7 +99,7 @@ Same packs with an `-omp` suffix (`archon workflow run delivery-full-omp --branc
 - Oh My Pi: `/create-plan @.agents/tasks/<slug>`; new session with `/new`.
 - Pi: `/create-plan @.agents/tasks/<slug>`; new session with `/new`; worker roles run inline.
 
-A skill given no task directory creates one and commits `docs(task): open <slug>`; a by-hand run commits its artifact as `docs(task): <type> artifact`. Paste the reply's fenced command into the next session.
+A skill given no task directory opens the task worktree (`git worktree add ~/.agents/worktrees/<repo>/<slug> -b <slug>`, the default, never asked about; skip cases in [CONVENTIONS.md](../shared/CONVENTIONS.md), Task worktree), creates the directory there, and commits `docs(task): open <slug>`; a by-hand run commits its artifact as `docs(task): <type> artifact`. Run every later session from the worktree and paste the reply's fenced command into it. `git worktree remove <path>` after the merge.
 
 ## Develop / test
 
