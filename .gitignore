@@ -16,3 +16,4 @@ node_modules/
 
 # Atomic's session-local todo state is not a task artifact.
 /.atomic/todos/
+/.atomic-delivery/

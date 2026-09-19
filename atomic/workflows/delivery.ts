@@ -2,7 +2,7 @@ import { workflow } from '@bastani/atomic/workflows';
 import { Type } from 'typebox';
 import { observeArtifacts, frontmatter, planProgress } from '../lib/artifacts.mjs';
 import { ensureTask, revision, saveRecord, childrenFor, childWave, prepareChild, expandPath } from '../lib/workspace.mjs';
-import { MODES, SKILLS, judgment, eligible, initialState, runSkill, artifactGate, boundaryState } from '../lib/controller.mjs';
+import { MODES, SKILLS, judgment, eligible, initialState, runSkill, artifactGate, boundaryState, recoveryDiagnostic, reconcileRecovery } from '../lib/controller.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -67,6 +67,7 @@ const delivery = workflow({
     }, { timeoutMs: 90_000 });
     const taskInputs = { ...persistedInputs, request: task.request, workflow: task.mode };
     let state = await ctx.tool('observe-initial-artifacts', { task_dir: task.taskDir }, async () => initialState(observeArtifacts(task.taskDir), revision(task.cwd)));
+    state = { ...state, recovery: recoveryDiagnostic(state) };
     let steps = 0;
     let forced: { skill: string; feedback: string } | null = null;
     const launched: string[] = [];
@@ -96,6 +97,7 @@ const delivery = workflow({
         || Object.entries(observedHashes).some(([file, hash]) => hashes[file] !== hash);
       const proofs = artifactsChanged || state.revision !== boundary.revision ? {} : state.proofs;
       state = { ...state, ...boundary, proofs };
+      state = reconcileRecovery(state);
       // Reused artifacts still need the selected human approval policy. Approvals
       // are tied to content hashes, not an artifact filename or a claimed status.
       if (!forced) {
@@ -125,6 +127,8 @@ const delivery = workflow({
       if (!candidates.includes(decision.choice)) throw new Error(`Unsafe transition: ${decision.choice} was not eligible`);
       if (decision.choice === 'complete') return finish('completed', 'Implementation, required independent verification, clean code review and pull request description are complete.');
       if (decision.choice === 'blocked') {
+        const recovery = recoveryDiagnostic(state);
+        if (recovery) return finish('blocked', `Implementation recovery remains unresolved. Receipt ${recovery.receipt.file} (${recovery.receipt.hash}); source ${recovery.source.file} (${recovery.source.hash}). Reason: ${recovery.reason}. Legal next actions are iterate-plan or iterate-implementation; no completion claim is accepted.`);
         const source = state.latest.plan || state.latest['structure-outline'];
         const missingReceipt = source && !state.latest.implementation && planProgress(source.text).complete;
         return finish('blocked', missingReceipt ? `Implementation source ${source.file} is complete but has no implementation receipt; missing receipt evidence cannot be recovered by decreasing checkboxes. Resume with genuine validation evidence or inspect the task.` : `Required evidence is not ready: ${Object.values(state.latest).filter(artifact => ['blocked', 'failed', 'not-reproduced', 'pending'].includes(artifact.status)).map(artifact => `${artifact.file}: ${artifact.status}`).join('; ') || 'unmet task prerequisites'}. Correct the prerequisite and resume the native stage or rerun with this task_dir.`);
@@ -162,6 +166,8 @@ const delivery = workflow({
     // Completion is still evaluated after the last allowed stage. Reaching the
     // bound can never turn unfinished implementation or a dirty review green.
     if (!forced && eligible(state, taskInputs, task.mode, adaptive).includes('complete')) return finish('completed', 'All required delivery evidence is complete.');
+    const recovery = recoveryDiagnostic(state);
+    if (recovery) return finish('blocked', `Implementation recovery remains unresolved. Receipt ${recovery.receipt.file} (${recovery.receipt.hash}); source ${recovery.source.file} (${recovery.source.hash}). Reason: ${recovery.reason}. Resume with iterate-plan or iterate-implementation, or stop as blocked.`);
     return finish('blocked', `Reached max_steps=${taskInputs.max_steps} with delivery work remaining. Inspect the last artifact before resuming with an explicit larger bound.`);
   },
 });

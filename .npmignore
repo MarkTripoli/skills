@@ -3,6 +3,7 @@ dist/
 node_modules/
 .agents/
 .atomic/
+.atomic-delivery/
 .claude/
 .codegraph
 evals/results/
