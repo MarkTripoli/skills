@@ -49,6 +49,7 @@ One rule shapes every step: a receipt, a summary, a ticked checkbox, or a senten
 - Keep credentials out of the artifact and `steps.json`. An item that would need a secret this environment lacks is `untested` and names the secret's purpose, not its value.
 - Stop the servers, containers, or emulators you started; leave running ones you found as they were.
 - Preserve acceptance and reproduction receipts, screenshots, and recordings under the task directory's `evidence/`, including failed and blocked attempts. Before removing temporary worktrees or scratch directories, copy any durable evidence out and update the verification artifact's links to the retained copies. Remove only disposable working files; do not delete cited evidence.
+- If a check unexpectedly writes new runtime evidence inside product source, preserve byte-identical copies under the task's `evidence/`, record the original paths and failure, then remove only those new source copies before finishing. Leave pre-existing outputs, implementation and test files, staged work, and documented build outputs alone. This relocation is cleanup, not a repair: the failed check remains failed.
 
 ## References
 
