@@ -15,8 +15,6 @@ Child workers: Pi has no worker tool of its own. Perform the role inline after r
 
 ## Optional Atomic orchestration
 
-Pi skills work without Atomic. `npx github:MarkTripoli/skills pi --atomic` additionally installs canonical portable skills and the optional `delivery` workflow. Pi remains an independent manual runtime.
+Skills do not need Atomic. Add `--atomic` to install all portable skills and its optional `delivery` workflow. Ordinary Pi sessions still use the handoffs above.
 
-Open Atomic in the project and use `/workflow delivery request="<request>" workflow=full gates=all`. Native stages run inside Atomic with fresh contexts and read the canonical skills; there is no Pi-specific workflow fork. Ordinary Pi sessions still use the manual skill handoffs above.
-
-Answer approvals in Atomic's native UI via `/workflow connect <run-id>`. Use `/workflow status <run-id>`, `/workflow pause <run-id>`, `/workflow quit <run-id>`, and `/workflow resume <run-id>` for inspection and resumable control. Headless runs require `gates=none`. Inputs and installation paths are in [workflows/delivery.md](../workflows/delivery.md).
+Follow [Atomic setup](../docs/getting-started.md#add-optional-atomic-orchestration) to launch. Atomic runs the shared skills in new sessions. Answer approvals with `/workflow connect <run-id>`. Runs without an interactive screen need `gates=none`. See [pause, quit, and resume](../workflows/delivery.md#gates-and-native-controls).

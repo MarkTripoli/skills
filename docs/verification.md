@@ -1,53 +1,65 @@
 # Verification
 
-The `verify-implementation` phase re-runs what the implementation claims. A session that never saw the implementer's context runs the repository's own checks and every acceptance item the task's artifacts promise, records what each returned, grades the record, and saves a `verification` artifact. The optional Atomic controller runs it after implementation and before review; by hand invoke `/verify-implementation` in a fresh session.
+`verify-implementation` checks the work in a separate session. It runs the project's checks, checks each promised outcome, and saves a report. Atomic runs it after implementation and before review unless disabled. By hand, run `/verify-implementation` in a new session.
 
-The reason it exists is in [research/llm-output-verification.md](research/llm-output-verification.md): agents believe they have succeeded when hidden tests say otherwise, describe checks they did not run, and, under pressure, weaken the tests they were given. The verifier treats the receipts as a list of claims, not as results.
+An implementation report is a list of claims, not proof. Agents can report checks they did not run or weaken tests. See the [supporting research](research/llm-output-verification.md).
 
 ## What the phase does
 
-1. Reads `task.md` (its `## Acceptance criteria` when present), the newest plan or structure outline (`## Desired End State`, every phase's `### Verify` list), every implementation receipt (`### Verify` lines), and for a bugfix the reproduction artifact.
-2. Records the revision and diffs the change against the merge target; every changed test file is read for deleted, skipped, or loosened tests and for product code that special-cases test inputs (`T` items).
-3. Discovers the repository's checks from the manifest and CI (`package.json` scripts, `Makefile`, `Cargo.toml`, `go.mod`, `pyproject.toml`, the CI file), never from the receipts (`C` items).
-4. Collects the acceptance items with their source lines, whether a receipt claimed each one, and how each is decided: a command, a request, or an observation (`A` items). Items nothing on the machine can decide are marked `untested`.
-5. Runs every command itself and records exit codes and the decisive output lines; a receipt, a summary, or a CI badge is never a result.
-6. Grades: exit codes and exact strings decide first; the rest goes to `judge.mjs grade-steps --kind command`, which returns `pass`, `fail`, or `unclear` with a probability and a severity per item. `unclear` rows are decided by hand and listed for a person.
-7. Saves `NN-verification-<slug>.md` with `status: passed`, `failed`, or `blocked`.
+1. Read `task.md` and its `## Acceptance criteria`, the newest plan or structure outline (`## Desired End State` and each `### Verify` list), every implementation receipt (`### Verify` lines), and the reproduction artifact for a bugfix.
+2. Record the revision and diff against the merge target. Read every changed test file for deleted, skipped, or loosened checks and product code that special-cases test inputs (`T` items).
+3. Discover checks from the manifest and CI (`package.json`, `Makefile`, `Cargo.toml`, `go.mod`, `pyproject.toml`, and the CI file), never from receipts (`C` items).
+4. List promised outcomes with source lines, whether the implementation report claimed them, and how to check them: command, request, or observation (`A` items). Mark outcomes that cannot be checked here as `untested`.
+5. Run every command and record exit codes and decisive output lines. A receipt, summary, or CI badge is not a result.
+6. Grade with exact exit codes and strings first. Other rows go to `judge.mjs grade-steps --kind command`, which returns `pass`, `fail`, or `unclear` with probability and severity. Decide `unclear` rows by hand and list them for a person.
+7. Save `NN-verification-<slug>.md` with `status: passed`, `failed`, or `blocked`.
 
 ## Optional workflow input
 
-The Atomic `delivery` workflow verifies implementation by default. Inside Atomic:
+The Atomic `delivery` workflow verifies by default:
 
 ```text
 /workflow delivery request="Add a --verbose flag" workflow=lean branch=verbose-flag
 /workflow delivery request="Add a --verbose flag" workflow=lean branch=verbose-flag verify=false
 ```
 
-The second command deliberately skips independent verification. It does not turn an unverified result into a passed result. Standalone skill use needs no Atomic installation.
+`verify=false` deliberately skips independent verification. It does not turn an unverified result into a pass. Standalone use needs no Atomic installation.
 
 ## What the artifact records
 
-`NN-verification-<slug>.md` carries frontmatter `task`, `type: verification`, `summary`, `status`, `revision`, `target`, then `## Run` (revision, target, where the checks came from, a coverage line saying how many acceptance items the receipts claimed and how many none did, how the grading was done), an items table (id, item, decided by, expected, observed, verdict, confidence, severity), `## Findings` (one entry per failed item: command, expected with its source line, observed, severity), `## Missing` (blocked only), and `## Human Review` with the commands a reviewer re-runs and the untested or hand-decided items a person re-decides.
+`NN-verification-<slug>.md` has frontmatter `task`, `type: verification`, `summary`, `status`, `revision`, and `target`, followed by:
 
-Verdicts are `pass`, `fail`, or `untested`. Confidence is the helper's probability for the verdict, `1.00` for a deterministic result, `hand` when decided without the helper, so a later calibration pass can read the record. Severity is 0 none, 1 cosmetic, 2 functional, 3 blocking.
+- `## Run`: revision, target, check sources, receipt coverage counts, and grading method;
+- an items table: id, item, deciding method, expected, observed, verdict, confidence, and severity;
+- `## Findings`: one entry per failed item with command, source line, expected, observed, and severity;
+- `## Missing`: only for blocked runs;
+- `## Human Review`: commands to rerun and untested or hand-decided items to reconsider.
+
+Verdicts are `pass`, `fail`, and `untested`. Confidence is the helper's probability, `1.00` for an exact check, or `hand` when decided without the helper. Severity is 0 none, 1 cosmetic, 2 functional, or 3 blocking.
 
 ## How failures loop back
 
-The Atomic controller reads the saved verification artifact before selecting the next step. A `failed` result routes to `iterate-implementation` with the findings, then a fresh verification stage rechecks the work. A `passed` result continues toward optional app testing and review. A `blocked` result names the external prerequisite rather than silently continuing. The workflow's `max_steps` bounds repair sessions; native run status and the artifact explain why work stopped. Supply missing prerequisites before using native resume or starting a new run with the existing `task_dir`.
+Atomic reads the saved artifact before choosing the next step:
 
-By hand the same routing is the reply's command fence: `/review-code` after a pass, `/iterate-implementation @<plan file>` after a failure, `/show-me` when blocked.
+- `failed` routes to `iterate-implementation`, then a fresh verification stage checks the repair;
+- `passed` continues toward optional app testing and review;
+- `blocked` names the external prerequisite and does not continue silently.
+
+`max_steps` bounds repair sessions. Supply missing prerequisites before native resume or a new run with the existing `task_dir`.
+
+By hand, use `/review-code` after a pass, `/iterate-implementation @<plan file>` after a failure, and `/show-me` when blocked.
 
 ## Blocked versus failed
 
-A build or test that fails because of the code is `fail`; the next round fixes it. `blocked` is reserved for reasons outside the change: a runtime or toolchain missing from the machine, a dependency install that needs a credential, a service the tests need that is not reachable. The distinction keeps the fix loop from spinning on something no code change can settle.
+A build or test failure caused by the change is `fail` and returns to the fix loop. `blocked` means an outside prerequisite is missing, such as a runtime or toolchain, a credentialed dependency install, or an unreachable service. Code cannot settle a blocked condition.
 
 ## Rules the phase keeps
 
-- It never edits product code, configuration, or tests, and never commits code; only its artifact is committed (`docs(task): verification artifacts`).
-- It runs each check as the repository defines it, never a narrowed variant that leaves out the failing part.
-- It sends the typed-judgment helper `expected` and trimmed `observed` text only; repository code, diffs, and secrets stay on the machine.
-- It quotes output; an error message or a printed value is never paraphrased in `observed`.
+- It never edits product code, configuration, or tests and never commits code. Only its artifact is committed: `docs(task): verification artifacts`.
+- It runs each repository-defined check, never a narrowed variant that omits the failing part.
+- It sends the typed-judgment helper only `expected` and trimmed `observed` text. Repository code, diffs, and secrets stay on the machine.
+- It quotes output. `observed` never paraphrases an error or printed value.
 
 ## Where the shape comes from
 
-Each rule maps to a source in [research/llm-output-verification.md](research/llm-output-verification.md), "Implications for a verify node": run the checks yourself (SWE-bench grades by running the tests; Anthropic separates the outcome in the environment from the transcript), treat self-reported success as a claim (Anthropic's SWE-bench and long-running-agent posts, METR's reward-hacking reports), fail on tampered checks (the Claude 4 system card), keep the verifier a separate session (self-preference in LLM judges, factored verification in Chain-of-Verification), grade one item against named evidence (FActScore, SAFE, process reward models), deterministic before model judgment (Anthropic and OpenAI grader guidance), give the judge a reference and an `unclear` exit (reference-guided grading in MT-Bench), record probabilities and thresholds (G-Eval, OpenAI `pass_threshold`), and route low confidence to a person (METR's monitors as triage).
+[research/llm-output-verification.md](research/llm-output-verification.md), "Implications for a verify node," maps the rules to evidence: run checks yourself (SWE-bench and Anthropic's environment/transcript separation); treat self-reported success as a claim (Anthropic, METR); reject tampered checks (the Claude 4 system card); use a separate verifier session (self-preference research and Chain-of-Verification); grade each item against named evidence (FActScore, SAFE, process reward models); use deterministic checks before model judgment (Anthropic and OpenAI grader guidance); give the judge a reference and an `unclear` result (MT-Bench); record probabilities and thresholds (G-Eval and OpenAI `pass_threshold`); and route low-confidence results to a person (METR monitors).

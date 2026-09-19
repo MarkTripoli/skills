@@ -11,13 +11,11 @@ Child workers: use the multi-agent spawn tool with the custom agent `agent-<role
 
 1. Build the tree: `npm run build -- --runtime codex` (writes `dist/codex/`).
 2. Skills: `cp -R dist/codex/skills/* ~/.agents/skills/` for every project, or `cp -R dist/codex/skills/* <repo>/.agents/skills/` for one project. Each skill ships `agents/openai.yaml` with its display name.
-3. Workers: `cp dist/codex/agents/*.toml ~/.codex/agents/` (or `<repo>/.codex/agents/`). Current Codex releases load every TOML file in that directory; if your `~/.codex/config.toml` registers agents with `[agents.<name>] config_file = ...` tables, append `dist/codex/config.snippet.toml` to it.
+3. Workers: `cp dist/codex/agents/*.toml ~/.codex/agents/` (or `<repo>/.codex/agents/`). Current Codex releases load every TOML file in that directory. If `~/.codex/config.toml` registers agents with `[agents.<name>] config_file = ...` tables, append `dist/codex/config.snippet.toml` to it.
 4. Confirm `[features] multi_agent = true` (the default) in `~/.codex/config.toml`, then start a new session and type `$` to see the skills.
 
 ## Optional Atomic orchestration
 
-Codex skills and workers work without Atomic. `npx github:MarkTripoli/skills codex --atomic` additionally installs the optional `delivery` workflow. The shared `.agents/skills` destination holds canonical portable skills when Atomic is selected; standalone Codex installs keep their runtime notes.
+Skills and workers do not need Atomic. Add `--atomic` to install all portable skills and its optional `delivery` workflow. Atomic reads the portable `.agents/skills` tree; standalone Codex installs keep their Codex notes.
 
-Open Atomic in the project and use `/workflow delivery request="<request>" workflow=full gates=all`. Native stages run inside Atomic with fresh contexts and read the canonical skills; there is no Codex-specific workflow fork. Ordinary Codex sessions still use the manual `$<name>` skill handoffs above.
-
-Answer approvals in Atomic's native UI via `/workflow connect <run-id>`. Use `/workflow status <run-id>`, `/workflow pause <run-id>`, `/workflow quit <run-id>`, and `/workflow resume <run-id>` for inspection and resumable control. Headless runs require `gates=none`. Inputs and installation paths are in [workflows/delivery.md](../workflows/delivery.md).
+Follow [Atomic setup](../docs/getting-started.md#add-optional-atomic-orchestration) to launch. Atomic runs the shared skills in new sessions; there is no Codex-specific workflow. Answer approvals with `/workflow connect <run-id>`. Runs without an interactive screen need `gates=none`. See [pause, quit, and resume](../workflows/delivery.md#gates-and-native-controls).

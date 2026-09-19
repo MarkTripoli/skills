@@ -1,12 +1,12 @@
 # Delivery workflow
 
-The optional Atomic workflow registered as `delivery` coordinates the same independent skills that a person can invoke by hand. Source: `atomic/workflows/delivery.ts`, with deterministic and typed-judgment helpers in `atomic/lib/`. Ordinary phase skills remain in `skills/delivery/<name>/`; they do not import Atomic or require a workflow run.
+Atomic can run skills for you through its optional `delivery` workflow. Each step runs one skill in a new session and saves a task document, called an **artifact**. You can also run every skill by hand without Atomic.
 
-The controller examines the request and saved task artifacts at each boundary, selects a skill, runs it in a fresh native Atomic stage, and records the result before deciding again. A fixed `workflow` selects a known chain; `auto` uses JEV judgments to choose the next phase from the current evidence. This is dynamic control flow, not generated per-runtime workflow copies.
+Choose a fixed `workflow` for a known sequence, or `workflow=auto` to let JEV choose the next step. JEV is a TypeSafe service that reads the request and saved documents. Source: `atomic/workflows/delivery.ts` and `atomic/lib/`; skills: `skills/delivery/<name>/`.
 
 ## Install and launch
 
-Install Atomic separately from its [official installation guide](https://docs.bastani.ai/getting-started/installation), configure provider credentials, and install this optional integration:
+Install Atomic using its [official guide](https://docs.bastani.ai/getting-started/installation), configure provider credentials, then install this optional integration:
 
 ```sh
 npx github:MarkTripoli/skills portable --atomic --yes
@@ -14,11 +14,11 @@ npx github:MarkTripoli/skills portable --atomic --yes
 npx github:MarkTripoli/skills portable --atomic --project --yes
 ```
 
-`--atomic` requires every skill. Without it the installer installs skills and runtime worker definitions only. Selecting individual skills never adds an orchestration dependency.
+`--atomic` installs all skills and the workflow. Without it, the installer installs skills and runtime worker definitions only. Selecting individual skills never adds an Atomic dependency.
 
-Workflow resources live under `<Atomic agentDir>/workflows/skills-delivery/` (default `~/.atomic/agent/workflows/skills-delivery/`, respecting `ATOMIC_CODING_AGENT_DIR`) or project `.atomic/workflows/skills-delivery/`, with a discovery entry installed alongside them. The workflow reads a full portable skill installation: `~/.agents/skills` for a user install, `.agents/skills` for a project install, or the explicit `skills_dir` input.
+Workflow resources are under `<Atomic agentDir>/workflows/skills-delivery/` (default `~/.atomic/agent/workflows/skills-delivery/`, respecting `ATOMIC_CODING_AGENT_DIR`) or project `.atomic/workflows/skills-delivery/`, with a discovery entry beside them. The workflow reads a complete portable skill installation: `~/.agents/skills`, `.agents/skills`, or the explicit `skills_dir` input.
 
-Start Atomic from the target repository. The following commands are **Atomic chat commands**, not commands to append after `atomic` in a shell:
+Start Atomic from the target repository. These are **Atomic chat commands**, not shell arguments to append after `atomic`:
 
 ```text
 /workflow reload
@@ -27,56 +27,56 @@ Start Atomic from the target repository. The following commands are **Atomic cha
 /workflow delivery request="Add a --verbose flag to the CLI" workflow=oneshot gates=all branch=verbose-flag
 ```
 
-Official command and lifecycle reference: [Atomic workflow operations](https://docs.bastani.ai/workflows/operations). TypeScript workflow contract: [Atomic authoring](https://docs.bastani.ai/workflows/authoring). Documentation examples describe the contract; discovering a workflow is not proof of a completed live delivery run.
+See [Atomic workflow operations](https://docs.bastani.ai/workflows/operations) and [Atomic authoring](https://docs.bastani.ai/workflows/authoring). Discovering a workflow is not proof of a completed live delivery run.
 
 ## Inputs
 
-Use bare `key=value` tokens, not shell-style `--input` flags. Atomic parses JSON values, so `verify=false` is a boolean and `max_steps=40` a number.
+Use bare `key=value` tokens, not shell-style `--input` flags. Atomic parses JSON values, so `verify=false` is a boolean and `max_steps=40` is a number.
 
 | Input | Type/default | Meaning |
 |---|---|---|
-| `request` | required string | The requested outcome; keep credentials out of it |
-| `task_dir` | optional string | Reuse an existing task; read `task.md` and preserve its request, `slug`, `workflow`, `base`, branch, and artifacts |
-| `skills_dir` | optional string | Complete portable skill root; installation defaults described above |
+| `request` | required string | Requested outcome; keep credentials out |
+| `task_dir` | optional string | Reuse an existing task; preserve its `task.md`, `slug`, `workflow`, `base`, branch, and artifacts |
+| `skills_dir` | optional string | Complete portable skill root; see install paths above |
 | `workflow` | string, `auto` | `auto`, `oneshot`, `lean`, `full`, `prd`, `bugfix`, `epic`, `program`, `resolve-reviews`, or `epic-wave` |
-| `gates` | string, `all` | `all`, `none`, `plan`, or `pr`; no comma-separated gate list |
-| `model` | string, `openai-codex/gpt-5.6-luna-fast` | Ordinary economical stage model; explicit values are honored and it is mandatory for code-writing and unknown phases |
-| `model_routing` | string, `auto` | `auto` asks JEV whether `model` suffices or `reasoning_model` is required for eligible non-writing phases; `fixed` selects `model` directly with no JEV call |
-| `reasoning_model` | string, `openai-codex/gpt-5.6-sol` | Stronger reasoning candidate considered only by eligible phases in `model_routing=auto` |
+| `gates` | string, `all` | `all`, `none`, `plan`, or `pr`; no comma-separated list |
+| `model` | string, `openai-codex/gpt-5.6-luna-fast` | Ordinary model; required for code-writing and unknown phases |
+| `model_routing` | string, `auto` | `auto` asks JEV whether an eligible non-writing phase needs `reasoning_model`; `fixed` selects `model` without a JEV call |
+| `reasoning_model` | string, `openai-codex/gpt-5.6-sol` | Stronger candidate for eligible phases in `model_routing=auto` |
 | `app_test` | string, `none` | `none`, `web`, `ios`, or `android` |
 | `app_target` | optional string | URL, bundle id, package, or app path for UI testing |
 | `verify` | boolean, `true` | Run independent implementation verification before review |
-| `max_steps` | number, `40` | Bound skill sessions, including revisions and repair attempts |
-| `branch` | optional string | Task branch for a new task worktree |
-| `base` | optional string | Base branch for task worktree and pull request |
+| `max_steps` | number, `40` | Bound fresh skill sessions, including revisions and repairs |
+| `branch` | optional string | Branch for a new task worktree |
+| `base` | optional string | Base branch for the task worktree and pull request |
 
 ## Workflow choices and manual chains
 
-These are values of one workflow's `workflow` input, not separately registered workflow names. `auto` revisits phase selection from artifacts; an explicit choice follows its chain. An explicit workflow does not disable stage-model JEV; add `model_routing=fixed` when the whole run must be JEV-free. In stage-model `auto`, JEV choices are `economy` (the ordinary `model`) and `reasoning` (the configured `reasoning_model`); code-writing and unknown phases always use `model`. Verification can be disabled only with `verify=false`; application testing is requested separately.
+Choose a sequence below. `auto` chooses again after each saved result. An explicit workflow does not disable automatic model selection; also set `model_routing=fixed` to avoid JEV routing. Code-writing and unknown steps always use `model`. Only `verify=false` disables independent verification; request app testing separately with `app_test`.
 
 | Choice | Chain | Use when |
 |---|---|---|
-| `auto` | Judge the next phase at artifact boundaries, then execute it in a fresh stage | Let evidence determine the amount of research, design, and planning |
-| `oneshot` | Small implementation, verify-implementation, review-code/fix-code-review, describe-pr | Fully specified change with no open design choice |
-| `lean` | create-research-questions → create-research → create-structure-outline → implement-outline → verify-implementation → review loop → describe-pr | Shape known; several files and ordered steps |
-| `full` | create-research-questions → create-research → create-design-discussion → create-structure-outline → create-plan → implement-plan → verify-implementation → review loop → describe-pr | Competing designs or cross-module impact |
-| `prd` | create-research → create-prd → create-tdd → create-structure-outline → create-plan → implement-plan → verify-implementation → review loop → describe-pr | Requirements need product and technical design |
-| `bugfix` | reproduce-bug → fix-bug → verify-implementation → review loop → describe-pr | Observed behavior differs from expected behavior; fix waits for reproduction |
-| `epic` | Research → create-epic-plan → start-epic-delivery → ready children | Independently mergeable deliverables with dependencies |
-| `program` | Research → create-prd → create-tdd → create-epic-plan → start-epic-delivery → ready children | Requirements through an initiative of child pull requests |
-| `resolve-reviews` | resolve-pr-reviews | Address review feedback on an existing task and PR |
-| `epic-wave` | Recheck an existing epic's dependencies and run ready children | Start the next wave after prerequisite branches merge |
+| `auto` | Judge the next phase at artifact boundaries, then execute it in a fresh stage | Evidence should determine research, design, and planning |
+| `oneshot` | Small implementation, verify-implementation, review loop, describe-pr | The change is fully specified |
+| `lean` | create-research-questions → create-research → create-structure-outline → implement-outline → verify-implementation → review loop → describe-pr | Shape is known; several files need ordered work |
+| `full` | create-research-questions → create-research → create-design-discussion → create-structure-outline → create-plan → implement-plan → verify-implementation → review loop → describe-pr | Designs compete or modules cross boundaries |
+| `prd` | create-research → create-prd → create-tdd → create-structure-outline → create-plan → implement-plan → verify-implementation → review loop → describe-pr | Product and technical design are required |
+| `bugfix` | reproduce-bug → fix-bug → verify-implementation → review loop → describe-pr | Observed behavior differs from expected behavior |
+| `epic` | Research → create-epic-plan → start-epic-delivery → ready children | Deliverables are independently mergeable and have dependencies |
+| `program` | Research → create-prd → create-tdd → create-epic-plan → start-epic-delivery → ready children | Requirements span an initiative of child pull requests |
+| `resolve-reviews` | resolve-pr-reviews | Existing task and PR need review feedback addressed |
+| `epic-wave` | Recheck an existing epic's dependencies and run ready children | The next wave follows prerequisite merges |
 
-Run `gather-sources` first when the request names external material that later phases need. Run `record-evidence` when narrated video proof is needed. Neither requires optional orchestration.
+Run `gather-sources` first when a request names external material. Run `record-evidence` when narrated video proof is needed. Neither requires Atomic.
 
 ## Gates and native controls
 
 - `all`: review artifact and implementation boundaries.
-- `plan`: review planning boundaries: design discussion, PRD, TDD, plan, structure outline, epic plan, and reproduction.
-- `pr`: review the pull request description only.
-- `none`: no human UI calls. This is the only supported mode for headless execution.
+- `plan`: review design discussion, PRD, TDD, plan, structure outline, epic plan, and reproduction boundaries.
+- `pr`: review only the pull request description.
+- `none`: show no human UI prompts. This is the only supported headless mode.
 
-Gates appear in Atomic's native workflow UI. Connect to the run, read the artifact and its verification/known-limits sections, then answer the prompt. Requesting changes passes feedback to a fresh revision stage; approval continues. Model judgments never impersonate human approval.
+A **gate** is an approval step. Connect to the run, read the saved document and its checks and limits, then answer the prompt. Requested changes start a new revision session. Only a person can approve.
 
 ```text
 /workflow status
@@ -87,40 +87,47 @@ Gates appear in Atomic's native workflow UI. Connect to the run, read the artifa
 /workflow resume <run-id>
 ```
 
-`connect` opens the graph and pending human prompts. `pause` holds work resumably; `quit` gracefully pauses while preserving durable progress rather than deleting the task. `resume` uses Atomic's saved run state when available. Use the exact run id shown by Atomic. Do not invent shell `approve`, `reject`, `wait`, or `connect` subcommands.
+`connect` opens the graph and pending prompts. `pause` holds resumable work. `quit` pauses gracefully and preserves durable progress; it does not delete the task. `resume` uses Atomic's saved run state when available. Use the exact run id shown by Atomic. Do not invent shell `approve`, `reject`, `wait`, or `connect` commands.
 
-Headless dispatch can reach a human prompt only to fail: Atomic's `ctx.ui` interaction is unavailable there. Choose `gates=none` before launching headlessly; a missing JEV key or blocked artifact remains an error/blocker, not permission to bypass a required check.
+Headless dispatch cannot answer a human prompt because `ctx.ui` is unavailable. Set `gates=none` before launch. Missing JEV credentials and blocked artifacts remain errors or blockers; they do not bypass required checks.
 
 ## Controller decisions and JEV
 
-The controller uses the existing `skills/delivery/typed-judgment/judge.mjs` System One/`ask` integration for JEV. Its credential order is `TYPESAFE_API_KEY`, then the file named by `TYPESAFE_API_KEY_FILE`, then `~/.config/typesafe/api_key`. Keep the key outside the repository. See the [typed-judgment skill](../skills/delivery/typed-judgment/SKILL.md) for the helper's timeout, retry, and evidence contract.
+The controller uses `skills/delivery/typed-judgment/judge.mjs` through its System One/`ask` integration. Credential order is `TYPESAFE_API_KEY`, then the file named by `TYPESAFE_API_KEY_FILE`, then `~/.config/typesafe/api_key`. Keep the key outside the repository. The [typed-judgment skill](../skills/delivery/typed-judgment/SKILL.md) documents timeout, retry, and evidence rules.
 
-`workflow=auto` requires an available typed judgment for phase selection. Stage-model routing also defaults to `model_routing=auto`, so an explicit workflow choice alone does not make a run JEV-free. Use `model_routing=fixed` to select the caller's `model` directly and skip JEV for stage-model selection; missing credentials or an unavailable service then cannot affect that fixed stage path. Individual skills retain their documented deterministic fallback where typed judgments are optional. Atomic's own routing records preserve the selected model and native stage records preserve actual `modelAttempts`.
+`workflow=auto` requires JEV for phase selection. `model_routing=auto` is independent and is also the default, so choosing an explicit workflow does not make the run JEV-free. `model_routing=fixed` selects the caller's `model` directly and skips JEV for stage-model selection; missing credentials or service availability cannot affect that fixed model path. Individual skills keep their documented deterministic fallback when their own judgment is optional. Atomic records the selected model, and native stages record actual `modelAttempts`.
 
-The controller-owned `NN-execution-plan-<slug>.md` artifact records phase decisions. Research and design artifacts remain the source of truth; stage conversations are not cross-stage memory. `max_steps` limits the total skill sessions so a repeatedly failing review or revision cannot run forever. A blocked phase reports the missing prerequisite; it is not counted as successful completion.
+`NN-execution-plan-<slug>.md` records controller phase decisions. Research and design artifacts remain authoritative; stage conversations are not cross-stage memory. `max_steps` bounds all skill sessions, including failing review or revision loops. A blocked phase reports its missing prerequisite and is not successful completion.
 
 ## Verification, app testing, and review
 
-Implementation runs one plan phase or outline step at a time. The controller reads saved artifacts rather than treating a stage's prose claim as completion. Each new skill or revision runs with `context: "fresh"`.
-If the authoritative plan or structure outline is malformed, the controller preserves source precedence and routes to `iterate-plan` or `iterate-structure-outline` rather than recreating preparation or falling back to an older source. Its boundary observation reports the parse error; the revision must restore numbered phases with executable checklists before implementation resumes.
+Implementation runs one plan phase or outline step per fresh stage. The controller reads saved artifacts, not a stage's prose claim. Every skill and revision uses `context: "fresh"`.
 
-When a native implementation stage creates a fresh receipt while the authoritative checklist does not advance, the controller records a persisted fail-closed recovery diagnostic instead of throwing or accepting the stage's completion claim. This native before/after observation is authoritative; receipt prose is not used to infer a blocker. The boundary exposes the receipt and source filenames/hashes, reason, and only `iterate-plan`, `iterate-implementation`, or `blocked` choices. A revised authoritative plan may clear the diagnostic even when its remaining count is unchanged; a stalled implementation repair does not. Code mutations still invalidate verification and review proofs, and no completion is possible until a truthful implementation receipt replaces the recovery receipt.
+If the current plan or outline cannot be read, the workflow records the error and runs `iterate-plan` or `iterate-structure-outline`. It does not use an older document or restart planning. The revision must restore numbered phases and usable checklists.
 
-Unless `verify=false`, `verify-implementation` independently runs repository checks and the promised acceptance items. An enabled `test-app` phase exercises the real application surface. Failures return to `iterate-implementation`; a new verification/testing stage checks the repair. `review-code` and `fix-code-review` repeat until the review is clean or the run reaches a blocker or its step bound. These checks precede the final pull request description. See [verification](../docs/verification.md) and [app testing](../docs/app-testing.md).
+If an implementation step saves a new report without advancing the checklist, the workflow records the stalled work instead of accepting success:
+
+- The before/after comparison decides this, not the report's wording.
+- The record includes the report, source filenames and hashes, and reason. Next choices are only `iterate-plan`, `iterate-implementation`, or `blocked`.
+- A revised plan may clear the record even if the number of remaining items stays unchanged. An implementation repair that still makes no progress cannot.
+
+Code changes require new verification and review. Completion needs a truthful implementation report to replace the stalled-work report.
+
+Unless `verify=false`, `verify-implementation` runs repository checks and promised acceptance items independently. Enabled `test-app` exercises the real application. Failures route to `iterate-implementation`, followed by a new verification or app-test stage. `review-code` and `fix-code-review` repeat until clean, blocked, or bounded by `max_steps`. These checks precede the pull request description. See [verification](../docs/verification.md) and [app testing](../docs/app-testing.md).
 
 ## Task, artifact, and worktree ownership
 
-A task is `.agents/tasks/<slug>/task.md` plus numbered artifacts. `.agents/tasks/` is committed project history, not disposable workflow state. Revisions edit their existing artifact; new phases take the next number. `pr-description.md` is unnumbered and has no frontmatter because it is the PR body. The [collection conventions](../shared/CONVENTIONS.md) define the exact formats and commit ownership.
+A task is `.agents/tasks/<slug>/task.md` plus numbered artifacts. `.agents/tasks/` is committed project history, not temporary controller state. Revisions edit their existing artifact; new phases take the next number. `pr-description.md` is unnumbered and has no frontmatter because it is the PR body. [Collection conventions](../shared/CONVENTIONS.md) define exact formats and commit ownership.
 
-A new task opens its own persistent worktree and branch; an explicit existing `task_dir` reuses the task and its artifacts. Continue later manual sessions in the checkout and branch printed in the handoff. Stage code commits use explicit paths; artifact commits stage only the task's files. A workflow-owned operation does not authorize committing unrelated staged work.
+A new task gets its own persistent worktree and branch. An explicit existing `task_dir` reuses its task and artifacts. Continue manual sessions in the checkout and branch printed in the handoff. Code commits stage explicit code paths; artifact commits stage only task files. A workflow operation never authorizes committing unrelated staged work.
 
-Atomic owns its run state; the user owns task branches, artifacts, and worktrees. Pausing, quitting, uninstalling skills, or replacing orchestration does not authorize deleting old task records or cancelled-run worktrees. Historical engine checkpoints are not imported as Atomic checkpoints: continue from preserved artifacts in a new `delivery` run when necessary.
+Atomic owns run state. The user owns task branches, artifacts, and worktrees. Pausing, quitting, uninstalling skills, or replacing the controller does not authorize deleting task records or cancelled-run worktrees. Historical engine checkpoints are not Atomic checkpoints; continue from preserved artifacts in a new `delivery` run when necessary.
 
 ## Epics
 
-Epic plans describe one independently mergeable obligation per child, with `workflow`, `depends_on`, acceptance criteria, and prompt. `start-epic-delivery` creates the child task directories and, when GitHub prerequisites are available, their issues. See [shared/SLICING.md](../shared/SLICING.md).
+An **epic** splits work into child tasks that can each merge separately. Each child needs `workflow`, `depends_on`, acceptance criteria, and a prompt. `start-epic-delivery` creates their task directories and GitHub issues when access is available. See [task-sizing rules](../shared/SLICING.md).
 
-Ready children run as child workflows in separate worktrees. Readiness requires prerequisite branch merge ancestry, not merely the presence of a PR-description artifact. The workflow does not merge pull requests. Unmerged dependencies block later waves; merge/review externally, then invoke the same registered workflow with `workflow=epic-wave` and the existing epic `task_dir`.
+Ready children run in separate worktrees. Prerequisite branches must have merged; a pull request description is not proof. The workflow does not merge pull requests. Merge them separately, then run `workflow=epic-wave` with the same epic `task_dir`.
 
 ```text
 /workflow delivery request="Build usage billing" workflow=program branch=epic-billing gates=plan
@@ -130,7 +137,7 @@ Ready children run as child workflows in separate worktrees. Readiness requires 
 
 ## Phase table
 
-Artifact type is the template's frontmatter `type`. Human gates below apply when enabled by the workflow; every skill is also usable by hand. Worker-role skills are listed separately in the source tree.
+Artifact type is the template's frontmatter `type`. Human gates apply only when enabled; every skill also works by hand. Worker-role skills are listed separately in the source tree.
 
 | Skill | Artifact type | Human gate | Runs in |
 |---|---|---|---|
@@ -172,9 +179,9 @@ Artifact type is the template's frontmatter `type`. Human gates below apply when
 
 ## Running skills by hand
 
-Invoke `/<skill> @<artifact or task directory>` in Claude Code, OMP, Pi, or another compatible host; use `$<skill>` in Codex. An individual skill needs no Atomic installation or running controller. The task conventions open a worktree for a new task unless an explicit exception applies. Later phases use that same checkout and branch.
+Invoke `/<skill> @<artifact or task directory>` in Claude Code, OMP, Pi, or another compatible host; use `$<skill>` in Codex. An individual skill needs no Atomic installation or running controller. Unless an exception applies, task conventions open a worktree for a new task. Later phases use that checkout and branch.
 
-Use the chain table above as a guide, not a requirement to install every phase. A normal handoff names the saved artifact and ends with:
+Use the phase table as a guide, not a requirement to install every phase. A manual handoff names the saved artifact and ends with:
 
 ````markdown
 Next action:
@@ -185,4 +192,4 @@ Open a new session in {run_location}, then run:
 ```
 ````
 
-Running the next phase records approval in a manual chain. To revise first, start a new session with the appropriate `iterate-*` skill and your feedback. A terminal reply has no next-command fence. Atomic orchestration consumes the same artifacts while its stage prompt supplies orchestration context; the ordinary human invocation contract stays intact.
+Running the next phase records approval in a manual chain. To revise first, start a new session with the appropriate `iterate-*` skill and feedback. A terminal reply has no command fence. Atomic uses the same artifacts and supplies controller context in its stage prompt; the standalone human invocation contract remains unchanged.
