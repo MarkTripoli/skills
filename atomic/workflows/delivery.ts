@@ -38,7 +38,7 @@ const delivery = workflow({
     const persistedInputs = JSON.parse(JSON.stringify(inputs));
     const cwd = ctx.cwd || process.cwd();
     const runId = ctx.runId;
-    if (!runId) throw new Error('Atomic must supply its stable ctx.runId for durable delivery records');
+    if (!runId) throw new Error('Atomic must supply its ctx.runId for durable delivery records');
     const existing = inputs.task_dir ? frontmatter(fs.readFileSync(path.join(path.resolve(cwd, expandPath(inputs.task_dir)), 'task.md'), 'utf8'), 'task.md') : null;
     const routeRequest = existing?.body || inputs.request;
     const routeWorkflow = existing?.metadata?.workflow || inputs.workflow;
@@ -59,7 +59,7 @@ const delivery = workflow({
       });
       return { ...decision, source: 'jev' };
     }, { timeoutMs: 90_000 });
-    const task = await ctx.tool('open-task-workspace', { inputs: { ...persistedInputs, request: routeRequest, workflow: routeWorkflow }, cwd, run_id: runId, mode: route.choice }, async () => {
+    const task = await ctx.tool('open-task-workspace', { inputs: { ...persistedInputs, request: routeRequest, workflow: routeWorkflow }, cwd, mode: route.choice }, async () => {
       const opened = ensureTask(inputs, cwd, runId, route.choice);
       saveRecord(opened, 'route', route);
       saveRecord(opened, 'inputs', { ...persistedInputs, request: opened.request, workflow: opened.mode });
