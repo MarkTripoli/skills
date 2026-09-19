@@ -7,7 +7,7 @@ export default {
   title: "Verify a package build with a required runtime argument",
   workflow: "oneshot",
   fixtures: ["verify-required-arguments"],
-  request: `Verify the existing greeting CLI against the task plan and repository checks. Preserve implementation and configuration.`,
+  request: `Verify the existing notification CLI against the task plan and repository checks. Preserve implementation and configuration.`,
   phases: [
     {
       skill: "verify-implementation",
