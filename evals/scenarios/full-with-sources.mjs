@@ -24,7 +24,6 @@ export default {
       // A gate phase: with decisions open it hands off to its iterate skill and the human decides (the review gate); with everything resolved it proceeds. The expectation follows the artifact, and the check below requires that decisions are in fact open. The eval then continues to the plan as an unattended run (`gates=none`) would.
       next: ({ artifact }) => (/^#### /m.test(section(artifact?.text ?? "", "### Design Questions") ?? "") ? "iterate-design-discussion" : "create-plan"),
       handoffNamesArtifact: true,
-      commit: "docs(task): design-discussion artifact",
       check: ({ artifact }) => {
         const text = artifact?.text ?? "";
         const open = (section(text, "### Design Questions") ?? "").split(/^#### /m).slice(1);
@@ -45,7 +44,6 @@ export default {
       template: "plan_template.md",
       next: "implement-plan",
       handoffNamesArtifact: true,
-      commit: "docs(task): plan artifact",
       check: ({ artifact }) => {
         const text = artifact?.text ?? "";
         const body = text.split(HUMAN_REVIEW)[0];

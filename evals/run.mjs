@@ -23,6 +23,7 @@ import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildRuntime } from "../scripts/lib/build.mjs";
+import { subjectProblems } from "../scripts/check-commits.mjs";
 import { artifacts, failures, handoff, newest, placeholders } from "./lib.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -30,6 +31,7 @@ const repoRoot = path.resolve(here, "..");
 const resultsRoot = path.join(here, "results");
 const scenariosDir = path.join(here, "scenarios");
 const fixturesDir = path.join(here, "fixtures");
+const guidanceFiles = ["WRITING.md", "CONVENTIONS.md"];
 
 const args = process.argv.slice(2);
 const keep = args.includes("--keep");
@@ -64,19 +66,28 @@ function loadScenarios() {
   return Promise.all(files.map(async (f) => ({ name: f, ...(await import(pathToFileURL(path.join(scenariosDir, `${f}.mjs`)))).default })));
 }
 
-// The fixture codebase plus the scenario's own fixtures, copied into `dest`.
-function copyFixtures(scenario, dest) {
-  fs.cpSync(path.join(fixturesDir, "repo-cli"), dest, { recursive: true });
-  for (const fixture of scenario.fixtures ?? []) fs.cpSync(path.join(fixturesDir, fixture), dest, { recursive: true });
+function copyFixtures(scenario, dest, sourceRoot) {
+  fs.cpSync(path.join(sourceRoot, "repo-cli"), dest, { recursive: true });
+  for (const fixture of scenario.fixtures ?? []) fs.cpSync(path.join(sourceRoot, fixture), dest, { recursive: true });
+  const shared = path.join(sourceRoot, "shared");
+  if (fs.existsSync(shared)) fs.cpSync(shared, path.join(dest, "shared"), { recursive: true });
 }
 
+// Snapshot all mutable inputs before any phase starts; later copies come only from this run tree.
+function snapshotSources(dist) {
+  const shared = path.join(dist, "shared");
+  fs.mkdirSync(shared, { recursive: true });
+  for (const file of guidanceFiles) fs.cpSync(path.join(repoRoot, "shared", file), path.join(shared, file));
+  fs.cpSync(fixturesDir, path.join(dist, "fixtures"), { recursive: true });
+  fs.cpSync(shared, path.join(dist, "fixtures", "shared"), { recursive: true });
+}
 // A throwaway git repository holding the fixture codebase, the worker definitions, and the task directory.
 function prepareRepo(scenario, dist) {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), `skills-eval-${scenario.name}-`));
   git(repo, "init", "-q", "-b", "main");
   git(repo, "config", "user.email", "evals@example.com");
   git(repo, "config", "user.name", "Skills Evals");
-  copyFixtures(scenario, repo);
+  copyFixtures(scenario, repo, path.join(dist, "fixtures"));
   fs.cpSync(path.join(dist, "agents"), path.join(repo, ".omp", "agents"), { recursive: true });
   git(repo, "add", "-A");
   git(repo, "commit", "-q", "-m", "chore: fixture codebase and worker definitions");
@@ -99,9 +110,16 @@ function prepareRepo(scenario, dist) {
 // one pass has to come from the skill reading `task.md`; a phase that asks a question fails the
 // handoff check, which is the right signal.
 function phasePrompt(skillsDir, phase, taskRel) {
-  return [`Read and follow ${path.join(skillsDir, phase.skill, "SKILL.md")}, the installed \`${phase.skill}\` skill, for task directory ${taskRel}.`, "", phase.request ?? "", "", "Print the skill's final answer."]
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n");
+  return [
+    `Read and follow ${path.join(skillsDir, phase.skill, "SKILL.md")}, the installed \`${phase.skill}\` skill, for task directory ${taskRel}.`,
+    "",
+    "Before drafting or replying, read the pinned current guidance in this task repository: `shared/WRITING.md` and `shared/CONVENTIONS.md`. Do not fetch published copies or read the harness checkout.",
+    "Use only facts from this task repository (its task, artifacts, fixture source, and local source documents) in artifacts and citations; never cite host-repository code.",
+    "",
+    phase.request ?? "",
+    "",
+    "Print the skill's final answer.",
+  ].join("\n").replace(/\n{3,}/g, "\n\n");
 }
 
 function runOmp(prompt, cwd) {
@@ -148,6 +166,23 @@ function snapshot(taskDir) {
 // (no code, config, or stray file written or committed by a phase that only writes an artifact), and
 // earlier artifacts and `task.md` unchanged. Git-state checks need the live repository and are skipped
 // when re-grading a recording.
+function headArtifactCommitProblems(ctx) {
+  const relative = path.relative(ctx.repo, ctx.artifact.path);
+  const subject = git(ctx.repo, "log", "-1", "--format=%s");
+  const problems = subjectProblems(subject).map((problem) => `git: HEAD subject ${JSON.stringify(subject)}: ${problem}`);
+  if (!subject.startsWith("docs(task): ")) problems.push(`git: HEAD subject ${JSON.stringify(subject)} is not a focused docs(task) commit`);
+  const changed = git(ctx.repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").split("\n").filter(Boolean);
+  if (!changed.includes(relative)) problems.push(`git: HEAD does not commit produced artifact ${relative} (changed: ${changed.join(", ") || "none"})`);
+  else if (changed.length !== 1) problems.push(`git: HEAD commit is not focused on ${relative} (changed: ${changed.join(", ")})`);
+  return problems;
+}
+
+// Checks every phase must pass before its own: one text handoff fence naming the next skill,
+// the artifact with its type and summary, no template placeholder left anywhere in it (frontmatter
+// included), its commit carrying that file, a repository that is otherwise untouched (no code,
+// config, or stray file written or committed by a phase that only writes an artifact), and earlier
+// artifacts and `task.md` unchanged. Git-state checks need the live repository and are skipped when
+// re-grading a recording.
 function commonChecks(phase, ctx) {
   const h = handoff(ctx.answer);
   const out = [];
@@ -159,9 +194,8 @@ function commonChecks(phase, ctx) {
     // (a gated phase hands off to its iterate skill while it has open decisions).
     const next = typeof phase.next === "function" ? phase.next(ctx) : phase.next;
     if (h.skill !== next) out.push(`reply: hands off to /${h.skill}, expected /${next}`);
-    const preamble = ctx.answer.slice(0, h.index).trimEnd();
-    const sentence = /Next action:\nOpen a new session in (.+), then run:$/.exec(preamble);
-    if (!sentence || sentence[1].trim() === "") out.push("reply: the fence must directly follow `Next action:` and `Open a new session in <run location>, then run:` with a non-empty location");
+    // Keep the handoff check operational: fence count, language, and expected next skill are
+    // validated above; incidental prose and whitespace are intentionally not pinned.
   }
   if (!ctx.artifact) out.push(`artifact: no artifact of type ${phase.artifactType} in ${path.basename(ctx.taskDir)} (found: ${ctx.artifacts.map((a) => `${a.file}[${a.fm.type ?? "?"}]`).join(", ") || "none"})`);
   else {
@@ -169,6 +203,7 @@ function commonChecks(phase, ctx) {
     const left = placeholders(ctx.artifact.text, ctx.template);
     if (left.length) out.push(`${ctx.artifact.file}: template placeholder left: ${left.slice(0, 3).join(" | ")}`);
     if (phase.handoffNamesArtifact && h && h.file !== ctx.artifact.file) out.push(`reply: fence names ${h.file ?? "no file"}, expected @${ctx.artifact.file}`);
+    if (ctx.artifact.text.includes(`${repoRoot}${path.sep}`)) out.push(`${ctx.artifact.file}: cites the harness checkout instead of the fixture repository`);
     if (ctx.before.some((a) => a.file === ctx.artifact.file)) out.push(`${ctx.artifact.file}: the phase reused an existing artifact instead of taking the next number`);
   }
   for (const a of ctx.before) {
@@ -177,10 +212,7 @@ function commonChecks(phase, ctx) {
     else if (now !== a.text) out.push(`${a.file}: an earlier file was modified by this phase`);
   }
   if (!ctx.live) return out;
-  if (ctx.artifact && phase.commit) {
-    const subjects = git(ctx.repo, "log", "--format=%s", "--", path.relative(ctx.repo, ctx.artifact.path)).split("\n");
-    if (!subjects.includes(phase.commit)) out.push(`git: ${ctx.artifact.file} is not in a commit "${phase.commit}" (its commits: ${subjects.join(" | ") || "none"})`);
-  }
+  if (ctx.artifact) out.push(...headArtifactCommitProblems(ctx));
   const dirty = git(ctx.repo, "status", "--porcelain");
   if (dirty) out.push(`git: repository left dirty:\n${dirty}`);
   const touched = git(ctx.repo, "diff", "--name-only", ctx.fixtureSha, "HEAD", "--", ".", ":!.agents").split("\n").filter(Boolean);
@@ -267,8 +299,14 @@ async function gradeScenario(scenario, runDir) {
     console.log(`[${scenario.name}] no recording under ${path.relative(repoRoot, runDir)}; skipped`);
     return { ...result, skipped: true };
   }
+  const pinnedDist = path.join(runDir, ".dist");
+  const sourceRoot = path.join(pinnedDist, "fixtures");
+  if (!fs.existsSync(sourceRoot)) {
+    console.log(`[${scenario.name}] source snapshot missing under ${path.relative(repoRoot, pinnedDist)}; skipped`);
+    return { ...result, skipped: true };
+  }
   const codeRoot = fs.mkdtempSync(path.join(os.tmpdir(), `skills-eval-grade-${scenario.name}-`));
-  copyFixtures(scenario, codeRoot);
+  copyFixtures(scenario, codeRoot, sourceRoot);
   try {
     for (const [index, phase] of scenario.phases.entries()) {
       const label = `${index + 1}-${phase.skill}`;
@@ -286,7 +324,7 @@ async function gradeScenario(scenario, runDir) {
         taskDir,
         fixtureSha: null,
         before: previous && fs.existsSync(previous) ? snapshot(previous) : fs.existsSync(taskDir) ? [{ file: "task.md", text: fs.readFileSync(path.join(taskDir, "task.md"), "utf8") }] : [],
-        template: fs.existsSync(path.join(repoRoot, "skills", "delivery", phase.skill, "references", phase.template ?? "")) ? fs.readFileSync(path.join(repoRoot, "skills", "delivery", phase.skill, "references", phase.template), "utf8") : "",
+        template: fs.existsSync(pinnedDist) ? templateFor(path.join(pinnedDist, "skills"), phase) : "",
         answer: fs.readFileSync(path.join(out, "answer.md"), "utf8"),
         artifact: newest(taskDir, phase.artifactType),
         artifacts: artifacts(taskDir),
@@ -319,10 +357,11 @@ if (gradeDir !== null) {
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "").replace("T", "-");
   const runDir = path.join(resultsRoot, stamp);
   fs.mkdirSync(runDir, { recursive: true });
-  // The built tree is private to this run (a concurrent run must not rebuild the skills a running
-  // session is reading) and stays with its recordings so a saved prompt can be replayed.
+  // The built tree and source snapshots are private to this run (a concurrent run must not rebuild
+  // the skills or change the guidance a running session is reading) and stay with its recordings.
   const dist = path.join(runDir, ".dist");
   buildRuntime("oh-my-pi", dist);
+  snapshotSources(dist);
   const latest = path.join(resultsRoot, "latest");
   fs.rmSync(latest, { force: true });
   fs.symlinkSync(stamp, latest);

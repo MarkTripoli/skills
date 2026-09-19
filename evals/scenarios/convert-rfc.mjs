@@ -32,7 +32,6 @@ export default {
       artifactType: "sources",
       template: "sources_template.md",
       next: "create-tdd",
-      commit: "docs(task): sources artifact",
       check: ({ artifact }) => {
         const text = artifact?.text ?? "";
         return failures(
@@ -50,7 +49,6 @@ export default {
       template: "tdd_template.md",
       next: "create-plan",
       handoffNamesArtifact: true,
-      commit: "docs(task): tdd artifact",
       check: ({ artifact, answer, codeRoot }) => {
         const text = artifact?.text ?? "";
         const body = text.split(HUMAN_REVIEW)[0];

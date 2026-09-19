@@ -38,7 +38,6 @@ export default {
       artifactType: "sources",
       template: "sources_template.md",
       next: "create-prd",
-      commit: "docs(task): sources artifact",
       check: ({ artifact }) => {
         const text = artifact?.text ?? "";
         const sources = section(text, "## Sources");
@@ -59,7 +58,6 @@ export default {
       template: "prd_template.md",
       next: "create-tdd",
       handoffNamesArtifact: true,
-      commit: "docs(task): prd artifact",
       check: ({ artifact, answer, taskDir }) => {
         const text = artifact?.text ?? "";
         const details = section(text, "### Solution Details");
