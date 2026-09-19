@@ -72,7 +72,7 @@ Do not include walkthrough artifacts in the PR body unless asked. When requested
 
 Write `.agents/tasks/<task-slug>/pr-description.md` (no task dir: `.agents/tasks/pr-<number>/description.md`).
 
-Save the file. When not run by the workflow engine, commit it with `git add <path>` as `docs(task): pr-description artifact` and push before publishing. Publish:
+Save the file. Commit it with `git add <path>` as `docs(task): pr-description artifact` and push before publishing. Publish:
 
 1. `gh` on PATH, GitHub PR: `gh pr edit <number> --body-file <path>` (new PR: `gh pr create --base <base> --body-file <path>`).
 2. `glab` on PATH, GitLab MR: `glab mr update <number> --description "$(cat <path>)"` (new MR: `glab mr create --target-branch <base> --description "$(cat <path>)"`).

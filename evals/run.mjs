@@ -4,10 +4,11 @@
 // the commit, and the handoff fence naming the next skill. Nothing here is mocked; a run costs
 // model time and needs `omp` on PATH with a configured provider, so it is `npm run evals`, not `npm test`.
 //
-// Usage: node evals/run.mjs [scenario ...] [--keep] [--max-time <minutes>]
+// Usage: node evals/run.mjs [scenario ...] [--keep] [--model <model>] [--max-time <minutes>]
 //        node evals/run.mjs [scenario ...] --grade <run dir>
 //   scenario   names under evals/scenarios/ (default: all)
 //   --keep     keep every scenario's temporary repository (failed ones are kept regardless)
+//   --model    pass an explicit model selector through to each spawned `omp` session
 //   --grade    no model: re-grade the recordings of an earlier run (`evals/results/<stamp>` or `latest`)
 //              with the current checks; git-state checks are skipped, everything else runs.
 //
@@ -36,13 +37,19 @@ const flagValue = (flag) => {
   const i = args.indexOf(flag);
   return i === -1 ? null : (args[i + 1] ?? "");
 };
+const modelIndex = args.indexOf("--model");
+if (modelIndex !== -1 && (!args[modelIndex + 1] || args[modelIndex + 1].startsWith("--"))) {
+  console.error("--model needs a value");
+  process.exit(2);
+}
+const model = modelIndex === -1 ? null : args[modelIndex + 1];
 const maxMinutes = flagValue("--max-time") === null ? 25 : Number(flagValue("--max-time"));
 if (!Number.isFinite(maxMinutes) || maxMinutes <= 0) {
   console.error("--max-time needs a positive number of minutes");
   process.exit(2);
 }
 const gradeDir = flagValue("--grade");
-const names = args.filter((a, i) => !a.startsWith("--") && !["--max-time", "--grade"].includes(args[i - 1]));
+const names = args.filter((a, i) => !a.startsWith("--") && !["--max-time", "--grade", "--model"].includes(args[i - 1]));
 
 const git = (cwd, ...argv) => execFileSync("git", argv, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 
@@ -86,8 +93,8 @@ function prepareRepo(scenario, dist) {
   return { repo, taskDir };
 }
 
-// The shape of a pack node prompt (read the skill, name the task directory, print the final answer),
-// minus the sentence that tells the skill the engine runs the next phase: the handoff fence is part of
+// The shape of a delivery-stage prompt (read the skill, name the task directory, print the final answer),
+// minus the sentence that tells the skill the controller runs the next phase: the handoff fence is part of
 // what a phase is graded on. Nothing else is added. Whether a phase runs an interview or converts in
 // one pass has to come from the skill reading `task.md`; a phase that asks a question fails the
 // handoff check, which is the right signal.
@@ -100,7 +107,10 @@ function phasePrompt(skillsDir, phase, taskRel) {
 function runOmp(prompt, cwd) {
   return new Promise((resolve) => {
     // Its own process group, so a kill on timeout reaches the child workers omp spawned.
-    const child = spawn("omp", ["-p", "--auto-approve", "--no-session", `--max-time=${maxMinutes}m`, prompt], {
+    const ompArgs = ["-p", "--auto-approve", "--no-session", `--max-time=${maxMinutes}m`];
+    if (model !== null) ompArgs.push("--model", model);
+    ompArgs.push(prompt);
+    const child = spawn("omp", ompArgs, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,

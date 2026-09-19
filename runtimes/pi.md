@@ -4,7 +4,6 @@
 
 Invoke a skill by typing `/<name>` in the Pi prompt, for example `/create-plan @03-plan-verbose-flag-cli.md`.
 Child workers: Pi has no worker tool of its own. Perform the role inline after reading the installed `agent-<role>` skill, and say so in the reply; when a subagent tool has been added to Pi, give it the same assignment text and read its final message before using any claim.
-Long-running commands (an `archon workflow run` that exits at its first gate): run them in the foreground with the bash tool's timeout raised to at least an hour and read the output when the command exits. Never `--detach`.
 
 ## Install
 
@@ -14,8 +13,10 @@ Long-running commands (an `archon workflow run` that exits at its first gate): r
 2. Workers: none are generated; the notes above tell each phase to perform worker roles inline.
 3. Restart Pi or `/reload`; `/` lists the skills.
 
-## Archon
+## Optional Atomic orchestration
 
-Pi is an Archon provider: the native packs under `.archon/workflows/delivery/` run each `prompt:` node in a fresh Pi session. Set it as the default assistant with `archon setup`, which also picks Pi's backend and model. Pi reads `~/.agents/skills/`, the packs' `skills_dir` default, so the portable install is enough; pass `--input skills_dir=~/.pi/agent/skills` to use the tree built for Pi.
+Pi skills work without Atomic. `npx github:MarkTripoli/skills pi --atomic` additionally installs canonical portable skills and the optional `delivery` workflow. Pi remains an independent manual runtime.
 
-Start a run with `archon workflow run delivery-<type> --branch <name> "<request>"`; it exits at each gate, `archon workflow approve <run-id> --detach` or `reject <run-id> --detach "<text>"` continues it, and `archon workflow wait <run-id>` blocks until the next decision. `--input gates=none` runs unattended. The task directory is committed on the branch. The loop and the gate names are in [workflows/delivery.md](../workflows/delivery.md#steering-a-run).
+Open Atomic in the project and use `/workflow delivery request="<request>" workflow=full gates=all`. Native stages run inside Atomic with fresh contexts and read the canonical skills; there is no Pi-specific workflow fork. Ordinary Pi sessions still use the manual skill handoffs above.
+
+Answer approvals in Atomic's native UI via `/workflow connect <run-id>`. Use `/workflow status <run-id>`, `/workflow pause <run-id>`, `/workflow quit <run-id>`, and `/workflow resume <run-id>` for inspection and resumable control. Headless runs require `gates=none`. Inputs and installation paths are in [workflows/delivery.md](../workflows/delivery.md).

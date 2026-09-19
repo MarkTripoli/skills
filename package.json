@@ -17,14 +17,11 @@
   },
   "scripts": {
     "postinstall": "node scripts/prepare.mjs",
-    "test": "node scripts/validate.mjs && node scripts/sync-plugin.mjs --check && node scripts/build-packs.mjs --check && node --test tests/",
+    "test": "node scripts/validate.mjs && node scripts/sync-plugin.mjs --check && node --test tests/",
     "validate": "node scripts/validate.mjs",
     "evals": "node evals/run.mjs",
     "check-commits": "node scripts/check-commits.mjs",
     "build": "node scripts/build-runtimes.mjs",
-    "build-packs": "node scripts/build-packs.mjs",
-    "check-packs": "node scripts/build-packs.mjs --check",
-    "metrics": "node scripts/metrics.mjs",
     "changeset": "changeset",
     "version": "changeset version && node scripts/sync-plugin.mjs",
     "check-plugin": "node scripts/sync-plugin.mjs --check",
@@ -35,6 +32,7 @@
     "@changesets/cli": "^2.30.0"
   },
   "dependencies": {
-    "@clack/prompts": "^1.8.1"
+    "@clack/prompts": "^1.8.1",
+    "yaml": "2.9.0"
   }
 }

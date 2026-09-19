@@ -13,3 +13,6 @@ node_modules/
 
 # Eval runs: transcripts, answers, and built skills from `npm run evals`.
 /evals/results/
+
+# Atomic's session-local todo state is not a task artifact.
+/.atomic/todos/

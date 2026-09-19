@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Typed judgments over text through the TypeSafe System One API, one command per decision the
-// delivery packs and skills make over agent or human prose. Each command owns its thresholds and
+// delivery workflow and skills make over agent or human prose. Each command owns its thresholds and
 // prints a small answer code can branch on; when the service is unavailable (no key, network,
 // HTTP error, timeout) it prints nothing and exits 3 so the caller falls back to its own rule.
 // `extract-json` is the exception: it always prints something usable and exits 0.
@@ -79,7 +79,7 @@ const flag = (args, name) => { const i = args.indexOf(name); if (i < 0) return u
 const bool = (args, name) => { const i = args.indexOf(name); if (i < 0) return false; args.splice(i, 1); return true; };
 const argmax = (probabilities) => Object.entries(probabilities).reduce((best, entry) => (entry[1] > best[1] ? entry : best))[0];
 
-// Archon and editor-spawned shells rarely carry an interactive shell's exports, so a key file is the
+// Agent and editor-spawned shells rarely carry an interactive shell's exports, so a key file is the
 // second source; the file is read whole and its first line is the key. With neither `HOME` nor
 // `XDG_CONFIG_HOME` set, there is no home to resolve the default path against: read no file, rather
 // than a relative `.config/typesafe/api_key` a repository could plant.
@@ -443,9 +443,9 @@ async function feedbackIntent(text) {
   return { text: intent, json: { intent, suggested: a.choice, confidence: a.confidence, probabilities: a.probabilities } };
 }
 
-// The same stop list as the task node's slug pipeline; the candidates are what code can propose.
+// The same stop list as the task-slug pipeline; the candidates are what code can propose.
 const STOP = new Set("a an the to of for in on and or with that this add make create please fix bug".split(" "));
-// Function words the task node keeps; dropping them gives the judge one more candidate to weigh.
+// Function words the task-slug pipeline keeps; dropping them gives the judge one more candidate to weigh.
 const FILLER = new Set([...STOP, ..."where when which who is are was does do so into from by as at be it its we our users report since after".split(" ")]);
 export function slugCandidates(request) {
   const words = request.split("\n")[0].toLowerCase().replace(/[^a-z0-9 -]/g, " ").replace(/-/g, " ").split(/\s+/).filter(Boolean);
@@ -491,7 +491,7 @@ const INVOLVEMENT = {
 
 // How much human involvement the request asks for, from none (hands-off) to all (every gate). Unattended
 // is the risky direction, so `none` needs the decisive bar and `pr`/`plan` the confident one; anything
-// less, or nothing said, is `all`, the packs' default.
+// less, or nothing said, is `all`, the default for a gated delivery.
 async function autonomy(text) {
   const request = textArg(text);
   const answers = await systemOne({ request }, { involvement: choice("How much does the `request` want a person involved while the work is done", INVOLVEMENT) });

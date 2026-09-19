@@ -2,17 +2,23 @@
 
 These conventions apply to every skill in this collection.
 
+## Portable skills, optional orchestration
+
+Every skill runs independently in Claude Code, Codex, Oh My Pi, Pi, or a portable skill installation. Runtime adapters supply invocation and worker mechanics, not a separate delivery process. Missing worker support means performing the role inline after reading its skill. No phase requires Atomic, a workflow installation, or a sibling helper.
+
+The optional Atomic workflow is registered as `delivery`. Install it explicitly with `--atomic`; ordinary installs copy skills only. It loads the same canonical skills, with portable `~/.agents/skills` as the default `skills_dir` and an explicit project-local path for project installs. Workflow source and helpers live under `atomic/`; there are no runtime-specific workflow forks. See [workflows/delivery.md](../workflows/delivery.md) for inputs and launch instructions.
+
 ## Task directory
 
 A task lives in `.agents/tasks/<slug>/` under the project root. `<slug>` is two to four kebab-case words that name the task, for example `verbose-flag-cli` (from "Add a --verbose flag to the CLI"). `.agents/skills/` may sit beside it; skill scanners never read `.agents/tasks/`.
 
 ## task.md
 
-`task.md` is the only required file in a task directory. Frontmatter keys: `slug`, `title`, `workflow`, `created` (ISO date); epic children also carry `parent`, `base`, and `depends_on`. Optional keys: `issue` (the GitHub issue number a child task tracks, written by `start-epic-delivery` and closed by its pull request) and `routed_by` with `route_confidence` (the pack the `deliver` skill chose and how sure the judgment was). The body is the user's request verbatim.
+`task.md` is the only required file in a task directory. Frontmatter keys: `slug`, `title`, `workflow`, `created` (ISO date); epic children also carry `parent`, `base`, and `depends_on`. Optional keys: `issue` (the GitHub issue number a child task tracks, written by `start-epic-delivery` and closed by its pull request) and `routed_by` with `route_confidence` (the workflow the `deliver` skill chose and how sure the judgment was). The body is the user's request verbatim.
 
-`workflow` is one of `full`, `lean`, `prd`, `oneshot`, `bugfix`, `epic`; the default is `full`. It records the delivery pack that created the task; the chains are in [workflows/delivery.md](../workflows/delivery.md).
+`workflow` records the delivery chain: `full`, `lean`, `prd`, `oneshot`, `bugfix`, `epic`, or `program`; the default is `full`. `resolve-reviews` and `epic-wave` are continuation routes over existing tasks, not new task kinds. The chains are in [workflows/delivery.md](../workflows/delivery.md).
 
-Under Archon the `delivery-task` block writes this file and commits it as `docs(task): open <slug>`. A skill run by hand that is given no task directory and finds none whose `task.md` matches the request opens the task worktree first, then creates the directory the same way: pick a slug, write `task.md` from the user's message, `git add .agents/tasks/<slug>/task.md`, commit with subject `docs(task): open <slug>`, and report the path in the reply. When `git check-ignore -q .agents/tasks/<slug>/task.md` reports the file ignored, remove the exact `.agents/tasks/` line that earlier versions of this collection added to the project `.gitignore`, stage that edit with the same commit, and stop with a one-line instruction when the path is still ignored.
+A skill given no task directory, and finding none whose `task.md` matches the request, opens the task worktree first. Then create the directory: pick a slug, write `task.md` from the user's message, `git add .agents/tasks/<slug>/task.md`, commit as `docs(task): open <slug>`, and report the path. The optional workflow prepares the same file before its first skill stage; stages reuse it. When `git check-ignore -q .agents/tasks/<slug>/task.md` reports the file ignored, remove only the exact `.agents/tasks/` line that earlier versions of this collection added to the project `.gitignore`, stage that edit with the same commit, and stop with a one-line instruction when the path remains ignored. Outside git, save artifacts in place and report that they are uncommitted.
 
 Example:
 
@@ -28,7 +34,7 @@ Add a --verbose flag to the CLI that prints each command before running it.
 
 ## Task worktree
 
-Every task works in its own git worktree on its own branch. Under Archon the run gets one from `--branch`. A skill run by hand opens it, before `task.md` is written, so the task directory and every later commit land on the task branch and the checkout the user works in stays untouched:
+Every task works in its own git worktree on its own branch. A manual skill opens it before writing `task.md`, so every later commit lands on the task branch and the user's checkout stays untouched. Optional orchestration prepares or reuses the same task worktree before starting skill stages:
 
 ```bash
 git worktree add ~/.agents/worktrees/<repo>/<slug> -b <slug> <target>
@@ -40,7 +46,7 @@ git -C ~/.agents/worktrees/<repo>/<slug> status --short --branch
 The worktree is the default, not a question to put to the user. Four cases skip it, and nothing else does:
 
 - The session is already on the task's branch, the name passed to `-b` (`<slug>`, or `epic-<slug>` for an epic; check with `git rev-parse --abbrev-ref HEAD`), that is, already in this task's own worktree. Work where the session is; the worktree exists. (Being in some *other* task's worktree does not skip it: `<repo>` and `<target>` resolve the same from any worktree of the repo, so the correct one is still opened.)
-- The task directory already existed. The worktree was opened when the task was opened; a later phase does not open a second one.
+- The task directory already existed in this task's worktree. A later phase reuses it. An epic child directory committed on its parent's branch is not yet a child worktree: open the child's own worktree from the `base` recorded in its `task.md` before starting its first phase.
 - The project is not a git work tree. Work in place and say so in the reply.
 - The user's message in this session asks for the current checkout. Their word overrides the default; nothing else does, not a handoff fence and not a bare skill invocation.
 
@@ -50,7 +56,7 @@ A worktree outlives the task's sessions and is removed by the user with `git wor
 
 Artifacts are `NN-<type>-<slug>.md` in the task directory. `NN` is two digits: list the directory, take the highest existing prefix, add one; use `01` when there is none.
 
-`NN-execution-plan-<slug>.md` (`type: execution-plan`) is the one artifact no skill writes: a delivery pack's `delivery-decide` node writes or rewrites it at every phase boundary, holding the chain as composed for this task so far: a Mermaid flowchart with the skipped phases dimmed and a table of every judgment's probability, bar, and reason. A design discussion's or a TDD's `### Execution DAG` section embeds it.
+`NN-execution-plan-<slug>.md` (`type: execution-plan`) is optional orchestration evidence: the delivery workflow records the selected chain, skipped phases, judgment probabilities, thresholds, and reasons. A design discussion's or TDD's `### Execution DAG` section embeds it when present. Manual skills do not need this artifact; without one they describe the selected chain from `task.md`.
 
 Keep each template's frontmatter, including `summary`. Later phases read only `summary` from artifacts they did not select as primary inputs.
 
@@ -62,7 +68,7 @@ Revise an artifact by editing its file in place. Never allocate a new number for
 
 ## Feedback
 
-Feedback comes from the user's message, from a file the user names, or, under Archon, from the reviewer text of a rejected gate that the node prompt passes in. There are no comment identifiers, no resolve step, and no delete step: apply the change, or say why it was not applied.
+Feedback comes from the user's message, a named file, or reviewer text explicitly supplied to a revision stage. There are no comment identifiers, resolve step, or delete step: apply each change or state why it was not applied.
 
 ## Human gate reply
 
@@ -89,19 +95,13 @@ Open a new session in {run_location}, then run:
 ```
 ````
 
-Under Archon the approval node records the decision; the reply's fence is ignored.
+In manual mode, running the next skill records approval. Under optional Atomic orchestration, its native human-input prompt records approval; the skill's handoff fence does not.
 
-## Archon gate ask
+## Atomic approval and run control
 
-A reply that announces a paused Archon gate carries this sentence, byte-exact, as its ask:
+Human approvals belong to Atomic's native UI. Inspect `/workflow status <run-id>` and use `/workflow connect <run-id>` to open the graph and answer a pending prompt. A phase's final answer still names its artifact, checks, and known limits, but neither that answer nor an ordinary chat response automatically approves anything.
 
-```text
-Say `approve`, or say what should change.
-```
-
-The agent that printed it, or the agent it points at, resolves the gate itself with `archon workflow
-respond`; the person never runs that command. A gate that declares a decision beyond `approve` and
-`reject` names it in the line above the ask.
+Use native `/workflow pause <run-id>`, `/workflow quit <run-id>`, and `/workflow resume <run-id>` for resumable run control. Quit gracefully pauses saved work; it does not delete a run or its worktree. These are Atomic commands, not shell subcommands. There is no collection-owned gate watcher or response-command loop. Headless delivery requires `gates=none`.
 
 ## Handoff
 
@@ -111,25 +111,23 @@ The two lines before the fence are always `Next action:` and `Open a new session
 
 The new session must open in the task worktree, on the task branch, where the phase that printed the reply ran: the task directory and every artifact are committed there and travel with the branch, and the `@<file>` argument is a path relative to that worktree's root. `{run_location}` names that worktree and branch, so the reply cannot drop where to run. Fill it from observed git state, never a guess: in a git work tree, `` `<root>` on branch `<branch>` `` where `<root>` is `git rev-parse --show-toplevel` (the task worktree, since every phase runs from it) and `<branch>` is `git rev-parse --abbrev-ref HEAD`; when the worktree was skipped and the project is not a git work tree, `this checkout`. A reply states only the worktree and branch it is actually in.
 
-The command fence is for manual mode: the user pastes it into a new session in that same worktree on that branch. Archon ignores it and runs the next node itself in the run's worktree.
+The command fence is for manual mode: the user pastes it into a new session in the same task worktree. Optional orchestration starts the next stage itself; it never executes the printed fence.
 
-## Running under Archon
+## Running as an Atomic stage
 
-A delivery pack node prompt reads: "Read and follow `<skills_dir>/<skill>/SKILL.md`, the installed `<skill>` skill, for task directory `<task dir>`." It then states that the workflow engine runs the next phase, tells the skill to ignore any instruction about opening a new session, and asks it to print the skill's final answer. The skill does its normal work, writes its artifact, and prints its normal reply; nothing in the skill needs to know it is under Archon. The one rule that depends on it, "when not run by the workflow engine, commit the saved file", is decided by that sentence alone: a prompt that does not say the workflow engine runs the next phase is a by-hand run, whatever else it looks like, and the skill commits its artifact.
+A native stage reads and follows `<skills_dir>/<skill>/SKILL.md` for the supplied task directory. The stage prompt states its scope and primary artifacts, supplies any accepted reviewer feedback, and asks for the skill's normal artifact and final answer. Skills retain their own artifact and code commit rules; orchestration reads persisted artifacts to route later work.
 
-Some nodes end the prompt with a JSON-only requirement instead of "Print the skill's final answer": `review-code` answers `{status, artifact, summary}` and `reproduce-bug` answers `{status, summary, artifact}`, each field copied from the artifact's frontmatter. The artifact is still written first; the JSON replaces the printed reply, and the pack routes on `status`. The requirement lives in the pack prompt, not in the skill.
-
-An iterate skill run by a pack receives the reviewer's text in the prompt as its feedback and revises the newest artifact it owns in place.
+The workflow may collect structured results from artifact frontmatter, but it must not require a runtime-specific output format inside the ordinary skill. A revision stage applies supplied reviewer text to the newest artifact it owns in place.
 
 ## Typed judgments
 
-`typed-judgment/judge.mjs`, installed beside the other skills, asks the TypeSafe System One model a typed question about prose (one option out of a set, a yes/no probability, a graded level) and prints one word, or JSON with `--json`; the thresholds live in the helper. Only a skill step or a pack node that names the command calls it; no other step adds a call. The helper is optional: without a key (`TYPESAFE_API_KEY`, or the key file its skill names), without `node`, or on any nonzero exit the caller applies its own rule, the pack's deterministic check or the skill's own reading, never fails the step, and says once in the reply that judgments were skipped. Only what the step names leaves the machine: the artifact, request, feedback, thread bodies with the few lines of code they point at, or step observations; never other repository code, diffs, or secrets. Where a template has a place for it, the step records the answer word and its confidence in the artifact so a reader can see why the workflow branched.
+`typed-judgment/judge.mjs`, installed beside the other skills, asks the TypeSafe System One model a typed question about prose (one option out of a set, a yes/no probability, a graded level) and prints one word, or JSON with `--json`; the thresholds live in the helper. Only a skill step or the optional Atomic controller that names the command calls it; no other step adds a call. The helper is optional: without a key (`TYPESAFE_API_KEY`, or the key file its skill names), without `node`, or on any nonzero exit the caller applies its own rule, the deterministic workflow check or the skill's own reading, never fails the step, and says once in the reply that judgments were skipped. Only what the step names leaves the machine: the artifact, request, feedback, thread bodies with the few lines of code they point at, or step observations; never other repository code, diffs, or secrets. Where a template has a place for it, the step records the answer word and its confidence in the artifact so a reader can see why the workflow branched.
 
 ## Answer template placeholders
 
 Answer templates under `references/` use these placeholders; fill every one before printing.
 
-- `{run_location}`: where the next session runs, in the fixed handoff sentence `Open a new session in {run_location}, then run:`. Observed, never guessed: the task worktree and branch the phase ran in, `` `<root>` on branch `<branch>` `` (`<root>` from `git rev-parse --show-toplevel`, `<branch>` from `git rev-parse --abbrev-ref HEAD`); `this checkout` when the worktree was skipped and the project is not a git work tree. Under Archon the reply is ignored, so the value is unused; a by-hand run fills it so the user opens the next session in the worktree where the committed task directory and each `@<file>` resolve.
+- `{run_location}`: observed task worktree and branch in the fixed handoff sentence `Open a new session in {run_location}, then run:`. Fill `` `<root>` on branch `<branch>` `` from `git rev-parse --show-toplevel` and `git rev-parse --abbrev-ref HEAD`; use `this checkout` outside git. Fill it even when orchestration owns the next stage, so the reply remains usable manually.
 - `{artifact_link}`: relative Markdown link to the file this phase saved, `[NN-type-slug.md](.agents/tasks/<slug>/NN-type-slug.md)`; `none` when nothing was saved.
 - `{artifact_file}`: that file's name only, for example `04-plan-verbose-flag-cli.md`. Templates write `@{artifact_file}` in commands; the `@` is already there, so fill nothing but the name, never a path.
 - `{summary}`: the saved artifact's frontmatter `summary`.
@@ -138,16 +136,16 @@ Answer templates under `references/` use these placeholders; fill every one befo
 - `{next_command}`: in research replies, `/create-design-discussion` for `full`, `/create-structure-outline` for `lean`, `/create-prd` for `prd`; in sources replies, `/create-prd` or `/create-tdd` when the request converts an existing product or technical document the sources hold, otherwise the chain's first skill for the task's `workflow`: `/create-research-questions` for `full`, `lean`, `epic`; `/create-research` for `prd`, `program`, `oneshot`; `/reproduce-bug` for `bugfix`.
 - `{implementation_command}`: `/implement-outline` for `lean`, `/implement-plan` otherwise; used by the plan, outline, and `iterate-implementation` replies.
 - `{completed_phase}` and `{next_phase}`: phase numbers in implementation replies.
-- `{child_slug}`, `{child_issue}`, `{child_start_command}`: epic delivery; see `start-epic-delivery`. `{child_issue}` is `#<number>` of the child's GitHub issue, or `no issue`. `{child_start_command}` is `archon workflow run delivery-<workflow> --base <epic branch> --input task_dir=.agents/tasks/<child slug> '<child prompt>'`, with every `'` in the prompt written as `'\''`, run from the project root on the epic branch; it appears in the terminal reply body.
+- `{child_slug}`, `{child_issue}`, `{child_start_command}`: epic delivery; see `start-epic-delivery`. `{child_issue}` is `#<number>` or `no issue`. `{child_start_command}` is the child's first manual skill followed by `.agents/tasks/<child slug>/`; for a oneshot child it is `/deliver .agents/tasks/<child slug>/` with an explicit instruction to use manual mode and implement before review. Each child starts in its own worktree cut from the epic branch in `task.md` `base:`.
 - `{needed}`: one line per item of the artifact's `## Missing` list (the reproduction artifact in `reproduce-bug`, the app-test artifact in `test-app`).
 
 ## Commits
 
 Pull request target resolution is the existing pull request base, then `task.md` `base:`, then the repository default branch.
 
-`.agents/tasks/` is committed history. An Archon run works in a disposable worktree; the branch carries the task's memory, so `task.md` and every artifact travel with the code to the pull request, where a reviewer can open them, and to `delivery-resolve-reviews`, which adopts the run's branch and reads them.
+`.agents/tasks/` is committed history. The task branch carries `task.md` and every artifact with the code to the pull request. Review-resolution sessions use the existing pull-request branch and its committed task directory.
 
-Artifacts under `.agents/tasks/` are committed on the task branch. Under Archon the pack's join node after each phase stages only the run's task directory and commits as `docs(task): <phase> artifacts`, where `<phase>` is `decide`, `research`, `design`, `prd`, `tdd`, `plan`, `outline`, `implement`, `review`, `reproduce`, `fix`, `pr`, or `review-round`. A skill that is not run by the workflow engine commits its own artifact with an explicit `git add <path>` as `docs(task): <artifact type> artifact`, for example `docs(task): plan artifact`. Code commits stage explicit code paths and never mix artifact files in. Never `git add -A` or `git add .` for code.
+Every skill commits its saved artifacts with explicit `git add <path>` as `docs(task): <artifact type> artifact`, for example `docs(task): plan artifact`. Optional orchestration may commit remaining task-directory changes after a stage, but this never replaces the skill's standalone commit rule. Code commits stage explicit code paths and never mix artifact files in. Never `git add -A` or `git add .` for code.
 
 Every commit message follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
 
@@ -176,7 +174,7 @@ The runtime section in an installed skill names the exact mechanism. When no sub
 
 ## Phase isolation and context budget
 
-A phase skill reads only `task.md` and the artifacts it selects. It never relies on earlier conversation. Each phase runs in a fresh context: an Archon node with `context: fresh`, or a new session the user opens by hand and pastes the handoff command into.
+A phase skill reads only `task.md` and its selected artifacts. It never relies on earlier conversation. Every newly dispatched phase gets a fresh context: an Atomic native stage with `context: "fresh"`, or a new manual session. Resuming an interrupted active Atomic stage may restore that stage's own saved session; this does not carry its conversation into a different phase.
 
 The artifact is the memory between phases; the conversation is not. Everything the next phase needs is in the task directory before the reply is printed. A compaction summary is not a substitute: it drops the exact file paths, checks, and limits the artifact keeps.
 
@@ -184,4 +182,4 @@ Read budget for one phase, in this order: `task.md` frontmatter and body; the se
 
 Signs that the context has degraded: re-reading a file already read this session, contradicting the artifact or `task.md`, dropping a constraint the user stated, repeating a question the user answered, or losing track of which numbered step is running. On the first sign: save the artifact in its current state, print the reply with the handoff fence, and stop. The next session resumes from the file with `/iterate-<phase> @<file>` or the next command.
 
-Interactive phases (every `iterate-*` skill, `create-prd`, `create-tdd`, `review-artifact-comments`) accumulate the whole exchange in one window when run by hand. Save the artifact after every accepted change so nothing is lost when the session ends. After about ten rounds of feedback, say so and suggest continuing from the saved file in a new session with the matching `/iterate-*` command. Under Archon each round is its own fresh session: the gate collects the feedback and the iterate skill applies it.
+Interactive phases (every `iterate-*` skill, `create-prd`, `create-tdd`, `review-artifact-comments`) accumulate the exchange in one window when run by hand. Save the artifact after every accepted change. After about ten feedback rounds, suggest continuing from that file in a new session with the matching `/iterate-*` command. Optional orchestration supplies accepted feedback to a new revision stage; an interrupted active stage follows the resume exception above.

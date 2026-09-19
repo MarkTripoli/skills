@@ -9,7 +9,7 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 Inspect current branch's PR/MR, repair actionable feedback, reply to every handled review thread, record approval state. External replies and resolutions require user's action-time confirmation.
 
-Under Archon this skill runs in the worktree of the delivery run that opened the pull request (`archon workflow run delivery-resolve-reviews --adopt <run-id>`, or `--branch <pr branch>`), so the PR branch is checked out and the task directory with its committed artifacts is present.
+Run in the existing pull request's worktree, with its branch checked out and its committed task directory present. Reuse that branch and merge target; do not create a new task branch for review resolution.
 
 ## Setup
 
@@ -35,7 +35,7 @@ After confirmation: smallest root-cause fixes, add regressions, run checks/gates
 
 ## Save
 
-Fetch state after push/replies. Take the next artifact number. Write `NN-pr-review-<summary>.md` using template. Record ids, dispositions, replies, SHA, tests, review threads, checks, approval. Save the file. When not run by the workflow engine, commit it with `git add <path>` as `docs(task): pr-review artifact`.
+Fetch state after push/replies. Take the next artifact number. Write `NN-pr-review-<summary>.md` using template. Record ids, dispositions, replies, SHA, tests, review threads, checks, approval. Save the file. Commit it with `git add <path>` as `docs(task): pr-review artifact`.
 
 ## Next
 

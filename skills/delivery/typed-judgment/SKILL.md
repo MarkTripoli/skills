@@ -11,11 +11,11 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 ## When it runs
 
-Only when a skill step or a pack node names it. The packs call it from bash nodes; skills such as `create-epic-plan`, `resolve-pr-reviews`, `review-code`, `test-app`, and `verify-implementation` name the command to run in their steps. Never add a call the step does not ask for.
+Only when a skill step or the optional Atomic controller names it. Skills such as `create-epic-plan`, `resolve-pr-reviews`, `review-code`, `test-app`, and `verify-implementation` name the command to run in their steps. Never add a call the step does not ask for.
 
 ## Availability and fallback
 
-The helper needs a TypeSafe key (from [console.typesafe.ai](https://console.typesafe.ai/settings/keys)): `TYPESAFE_API_KEY` in the environment, else the first line of the file `TYPESAFE_API_KEY_FILE` names, else `~/.config/typesafe/api_key` (under `$XDG_CONFIG_HOME` when set). The file exists because Archon nodes, hooks, and agent-spawned shells do not inherit an interactive shell's exports; write it once with `umask 077; mkdir -p ~/.config/typesafe; printf '%s\n' "$TYPESAFE_API_KEY" > ~/.config/typesafe/api_key`. Without a key, or when the service does not answer, every command prints nothing and exits 3; `extract-json` prints its input unchanged instead. A caller then applies its own rule: the pack's deterministic check, or the agent's own reading in a skill step. Never fail a step because the helper was unavailable, and never ask the user for the key mid-run: mention once in the reply that judgments were skipped.
+The helper needs a TypeSafe key (from [console.typesafe.ai](https://console.typesafe.ai/settings/keys)): `TYPESAFE_API_KEY` in the environment, else the first line of the file `TYPESAFE_API_KEY_FILE` names, else `~/.config/typesafe/api_key` (under `$XDG_CONFIG_HOME` when set). Hooks and agent-spawned shells may not inherit interactive shell exports; write the key file once with `umask 077; mkdir -p ~/.config/typesafe; printf '%s\n' "$TYPESAFE_API_KEY" > ~/.config/typesafe/api_key`. Without a key, or when the service does not answer, every command prints nothing and exits 3; `extract-json` prints its input unchanged instead. A caller then applies its own deterministic check or the agent's reading in a skill step. Never fail a step because the helper was unavailable, and never ask the user for the key mid-run: mention once in the reply that judgments were skipped.
 
 `TYPESAFE_BASE_URL` points the helper at another endpoint (tests use a stub); `TYPESAFE_DEFAULT_MODEL` picks the model; `JUDGE_TIMEOUT` is seconds, default 20, and bounds the whole call; `JUDGE_RETRIES` is how many transient failures (429, 529, any 5xx) are retried with `retry-after` or exponential backoff, default 2. A request the service rejects as too large exits 3 with `request too large for the model`, is never retried, and means the caller should send fewer questions.
 
@@ -25,19 +25,19 @@ Run from the skill's directory under the installed skills (`<skills dir>/typed-j
 
 | Command | Prints | Used by |
 | --- | --- | --- |
-| `plan-remaining <plan.md>` | `done`, `remaining`, `no-phases`, `unclear`; `--json` adds `next` | implement block |
-| `review-status <artifact.md> <claimed>` | effective `clean`, `findings`, `blocked`; moves a claim only toward the safer status | review block |
-| `reproduction-status <artifact.md> <claimed>` | `reproduced` or `not-reproduced` | bugfix pack |
-| `verification-status <artifact.md> <claimed>` | effective `passed`, `failed`, `blocked`; moves a claim only toward the safer status | verify block |
+| `plan-remaining <plan.md>` | `done`, `remaining`, `no-phases`, `unclear`; `--json` adds `next` | implementation step |
+| `review-status <artifact.md> <claimed>` | effective `clean`, `findings`, `blocked`; moves a claim only toward the safer status | code-review step |
+| `reproduction-status <artifact.md> <claimed>` | `reproduced` or `not-reproduced` | bugfix workflow |
+| `verification-status <artifact.md> <claimed>` | effective `passed`, `failed`, `blocked` | verify-implementation step |
 | `axis-coverage <artifact.md>` | `covered`, `asserted`, `skipped`, or `unclear` per review axis, with a level 0 to 3 | `review-code` |
-| `extract-json --required a,b --enum status=x,y [--dir d] [file]` | the JSON object an answer contains or implies, else the answer as is | generated omp packs |
-| `route-workflow [--children file.json] [text]` | the pack that fits a request, or one per epic child | task node, `create-epic-plan` |
+| `extract-json --required a,b --enum status=x,y [--dir d] [file]` | the JSON object an answer contains or implies, else the answer as is | skills that parse structured answers |
+| `route-workflow [--children file.json] [text]` | the workflow that fits a request, or one per epic child | `deliver`, `create-epic-plan`, and Atomic routing |
 | `size-children --children file.json` | `ok`, `split`, or `unclear` per epic child, with its weakest sizing test and the split to apply | `create-epic-plan` |
 | `triage-threads <threads.json>` | `fix`, `discuss`, `decline`, `clarify`, or `undecided` per thread | `resolve-pr-reviews` |
-| `feedback-intent [text]` | `revise`, `proceed`, `stop` | gate blocks |
-| `slug [request]` | the directory slug picked from code-proposed candidates | task node |
-| `tier [text]` | `small`, `medium`, `large` | task node, launch scripts |
-| `autonomy [text]` | `none`, `pr`, `plan`, `all`: how much the request wants a person involved | `delivery-start`, `deliver` |
+| `feedback-intent [text]` | `revise`, `proceed`, `stop` | human-review steps |
+| `slug [request]` | the directory slug picked from code-proposed candidates | `deliver` and task setup |
+| `tier [text]` | `small`, `medium`, `large` | delivery routing |
+| `autonomy [text]` | `none`, `pr`, `plan`, `all`: how much the request wants a person involved | `delivery` and `deliver` |
 | `grade-steps [--kind screen\|command\|diff] <steps.json>` | `pass`, `fail`, `unclear` and a severity level per step; `screen` (default) grades what a screen showed, `command` what a command, request, or file read returned, `diff` whether a test file's diff against the merge target keeps its strength | `test-app`, `verify-implementation` |
 | `rerank --query <text> <candidates.json>` | candidates ordered by how well they answer the question, with a level 0 to 3 | `create-research`, `iterate-research` |
 | `coverage <questions.json> <artifact.md>` | `answered`, `partial`, `missing` per research question | `create-research`, `iterate-research` |

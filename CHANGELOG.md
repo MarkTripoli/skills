@@ -1,5 +1,7 @@
 # @marktripoli/skills
 
+Published entries below describe their releases, including retired orchestration and metrics features. They are historical records, not current installation or operation instructions; use [README.md](README.md) and [workflows/delivery.md](workflows/delivery.md) for the current optional Atomic integration and independent skills.
+
 ## 2.1.0
 
 ### Minor Changes

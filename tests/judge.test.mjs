@@ -222,7 +222,7 @@ test("judge feedback-intent, route-workflow, slug, tier, triage-threads, grade-s
     picked = "bugfix";
     assert.equal((await judge(["route-workflow", "Fix the crash on empty names"], stub.env)).out, "bugfix");
     confidence = 0.6;
-    assert.equal((await judge(["route-workflow", "something"], stub.env)).out, "full", "an unsure route is the gated pack");
+    assert.equal((await judge(["route-workflow", "something"], stub.env)).out, "full", "an unsure route is the gated workflow");
     const children = tmp("children.json", JSON.stringify([{ name: "one", prompt: "Fix it" }, { name: "two", prompt: "Add it" }]));
     const rows = JSON.parse((await judge(["route-workflow", "--children", children, "--json"], stub.env)).out);
     assert.deepEqual(rows.map((row) => [row.name, row.workflow, row.suggested]), [["one", "full", "bugfix"], ["two", "full", "bugfix"]]);
@@ -336,7 +336,7 @@ test("judge compose: a phase is skipped only at the confident-no bar, the reason
     assert.deepEqual(Object.keys(out.phases[0]), ["phase", "verdict", "probability", "bar", "reason", "reason_confidence"]);
     assert.equal(out.phases[1].bar, 0.2);
     assert.equal(out.phases[1].reason, "The change is too small and too bounded for this phase to change the outcome");
-    assert.equal(out.autonomy, "all", "an unspecified involvement is the packs' default");
+    assert.equal(out.autonomy, "all", "an unspecified involvement is the default for a gated delivery");
     const state = stub.requests.at(-1).state;
     assert.match(state.task, /Add a --verbose flag/);
     // Only the research artifact reaches the state; the execution-plan artifact above is excluded.

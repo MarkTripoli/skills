@@ -4,7 +4,6 @@
 
 Invoke a skill by typing `/<name>` in the Claude Code prompt, for example `/create-plan @03-plan-verbose-flag-cli.md`.
 Child workers: call the `Task` tool with `subagent_type: "agent-<role>"` and the assignment text as `prompt`. The worker's final message is the tool result; read it before using any claim.
-Long-running commands (an `archon workflow run` that exits at its first gate): run them with `Bash` and `run_in_background: true`, then read the result with `BashOutput` until the command exits. Never `--detach`.
 
 ## Install
 
@@ -15,8 +14,10 @@ Long-running commands (an `archon workflow run` that exits at its first gate): r
 3. Workers: `cp dist/claude-code/agents/*.md ~/.claude/agents/` (or `<repo>/.claude/agents/`). Claude Code lists them under `/agents`.
 4. Start a new session; type `/` to see the skills.
 
-## Archon
+## Optional Atomic orchestration
 
-Claude Code is an Archon provider: the native packs under `.archon/workflows/delivery/` run each `prompt:` node in a fresh Claude Code session. Set it as the default assistant with `archon setup` or `archon ai default claude`. The packs read skills from `skills_dir` (`~/.agents/skills` by default); point it at `~/.claude/skills` with `--input skills_dir=~/.claude/skills` to use the tree built for Claude Code, whose worker calls use the `Task` tool.
+Claude Code skills and workers work without Atomic. `npx github:MarkTripoli/skills claude-code --atomic` additionally installs the canonical portable skills and the optional `delivery` workflow; it does not make Claude Code an Atomic stage provider.
 
-Start a run with `archon workflow run delivery-<type> --branch <name> "<request>"`; it exits at each gate, `archon workflow approve <run-id> --detach` or `reject <run-id> --detach "<text>"` continues it, and `archon workflow wait <run-id>` blocks until the next decision. `--input gates=none` runs unattended. The task directory is committed on the branch. The loop and the gate names are in [workflows/delivery.md](../workflows/delivery.md#steering-a-run).
+Open Atomic in the project and use `/workflow delivery request="<request>" workflow=full gates=all`. Native stages run inside Atomic with fresh contexts and read the canonical skills; there is no Claude-specific workflow fork. Ordinary Claude Code sessions still use the manual skill handoffs above.
+
+Answer approvals in Atomic's native UI via `/workflow connect <run-id>`. Use `/workflow status <run-id>`, `/workflow pause <run-id>`, `/workflow quit <run-id>`, and `/workflow resume <run-id>` for inspection and resumable control. Headless runs require `gates=none`. Inputs and installation paths are in [workflows/delivery.md](../workflows/delivery.md).

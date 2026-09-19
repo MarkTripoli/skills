@@ -69,7 +69,7 @@ Take the next artifact number. Write `NN-code-review-<summary>.md` using templat
 
 Then run `node <skills dir>/typed-judgment/judge.mjs axis-coverage <the saved file> --json`, where `<skills dir>` is the directory that holds this skill (in a checkout, `skills/delivery`). Record each row's verdict, level, and confidence on that axis's `helper coverage` line, and the stderr provenance line under the heading. An axis that comes back `skipped` or `asserted` was not examined against the pinned scope: examine it, rewrite that section with evidence from the changed code or the reason the axis does not apply, save again, and run the command once more. Run it at most twice and record what the second run says. A finding the second pass turns up is a finding like any other and can change the status. Exit 3, no `node`, no `TYPESAFE_API_KEY`, or an `unclear` row: write `unavailable` on the lines it would have filled, decide those axes yourself, and say under `## Review Limits` that judgments were skipped.
 
-When not run by the workflow engine, commit it with `git add <path>` as `docs(task): code-review artifact`.
+Commit it with `git add <path>` as `docs(task): code-review artifact`.
 
 ## Next
 

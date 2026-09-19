@@ -1,175 +1,89 @@
 # Getting started
 
-This guide takes one request from idea to pull request with the delivery packs, then shows the same phases by hand. The short form is [cheatsheet.md](cheatsheet.md).
+Start with independent skills. Add Atomic only if you want automated phase selection, fresh-stage execution, and native approval gates. Manual invocation and handoff remain available without Atomic. Neither choice changes the task/artifact format.
 
-## Setup
+## Install only what you need
 
-1. Install Archon 0.10 or later: `curl -fsSL https://archon.diy/install | bash`.
-2. `archon setup` picks the provider (Claude Code, Codex, or Pi) and its credentials; `archon doctor` confirms the binaries and `gh` auth. Oh My Pi users skip the provider and use the `-omp` packs.
-3. Install the skills and packs: `npx github:MarkTripoli/skills` (see the [README install section](../README.md#install)). The menu preselects detected harnesses and lets you install all skills or search for specific ones. A full install writes portable skills to `~/.agents/skills/`, the packs' `skills_dir` default, and packs to `~/.archon/workflows/`; `--project` puts packs in the current repository but still writes the `~/.agents/skills` copy. A partial skill selection skips packs because the workflow chain requires every delivery skill.
-4. From a git checkout of the project you want to change, check the packs are visible:
+The installer requires Node 20.12+:
+
+```sh
+npx github:MarkTripoli/skills
+# Or choose one runtime and one skill without menus:
+npx github:MarkTripoli/skills oh-my-pi --skill create-research --yes
+```
+
+Choose Claude Code, Codex, Oh My Pi, Pi, or portable. `--skill` is repeatable; `--project` writes a project-local installation. Ordinary installation adds no Atomic dependency and no workflow. See the [README destination table](../README.md#install).
+
+## Run a phase by hand
+
+1. Open your coding agent in the repository you want to change.
+2. Invoke a skill with the request, such as `/create-research-questions` (Codex: `$create-research-questions`). You can also pass an existing task directory or the artifact that phase consumes.
+3. Read its saved artifact and the reply's verification and known-limits sections. A new task normally gets its own worktree; the reply gives the actual checkout and branch.
+4. Open a fresh session at that location and run the fenced next command. For revisions, invoke the matching `iterate-*` skill with the artifact and feedback instead.
+
+A phase's saved artifact, not its conversation, carries memory forward. The [manual chains](../workflows/delivery.md#workflow-choices-and-manual-chains) give common sequences; you do not need every phase for every task. Install a suggested next skill only when you need it.
+
+## Add optional Atomic orchestration
+
+1. Install and authenticate Atomic using its [installation](https://docs.bastani.ai/getting-started/installation) and [authentication](https://docs.bastani.ai/getting-started/authentication) guides.
+2. Install the entire skill collection plus the integration:
 
    ```sh
-   archon workflow list
+   npx github:MarkTripoli/skills portable --atomic --yes
    ```
 
-   The list shows `delivery-full`, `delivery-lean`, `delivery-prd`, `delivery-oneshot`, `delivery-bugfix`, `delivery-epic`, `delivery-resolve-reviews`, and their `-omp` twins.
+   Add `--project` for project-local `.agents/skills/` and `.atomic/workflows/` resources. The global workflow tree goes to `~/.atomic/agent/workflows/skills-delivery/` unless `ATOMIC_CODING_AGENT_DIR` overrides the agent directory. The adjacent managed `skills-delivery.mjs` entry makes the nested source discoverable.
 
-## The one rule
+3. Start `atomic` from the target repository. In its chat, inspect the installed workflow before launching:
 
-Every phase runs in its own session. A phase reads `task.md` and the artifacts it needs from disk, writes one artifact, and stops. Under Archon every AI node is `context: fresh`, so this happens without you doing anything; by hand, you open a new session per phase. You never carry a conversation from one phase into the next. [Context management](context-management.md) explains why and what goes wrong when you skip it.
-
-## First run
-
-1. Start a small, fully specified change on its own branch:
-
-   ```sh
-   archon workflow run delivery-oneshot --branch verbose-flag "Add a --verbose flag to the CLI that prints each command before running it"
+   ```text
+   /workflow reload
+   /workflow list
+   /workflow inputs delivery
    ```
 
-   Always pass `--branch`; without it Archon names the branch `archon/task-<hash>`. Archon creates a worktree for the branch, cut from the remote's base branch, so the checkout needs a git remote (`--no-worktree` works in the live checkout without one). The first node writes `.agents/tasks/verbose-flag-cli-prints/task.md` (the slug is the request's first line with stop words dropped, four words at most) and commits it as `docs(task): open verbose-flag-cli-prints`. The next node implements, verifies, and commits in one fresh session. The review loop then runs `review-code` and `fix-code-review` in fresh sessions until a review is clean, and a join commits the review artifacts as `docs(task): review artifacts`.
+   Confirm the registered name is `delivery`. Discovery checks registration, not live provider access or completion of a delivery task.
 
-2. The run pauses at the pull request gate and exits. The last lines print the run id and the gate message: "Review the pull request description in .agents/tasks/verbose-flag-cli-prints. Approve to continue, or request changes with the changes you want and the phase revises the artifact." Read `pr-description.md` in the worktree's task directory, then decide:
+4. For a small specified change, choose an explicit chain:
 
-   ```sh
-   archon workflow approve <run-id> --detach
-   archon workflow reject <run-id> --detach "Mention the new flag in the README section on logging"
-   archon workflow wait <run-id>
+   ```text
+   /workflow delivery request="Add a --verbose flag to the CLI" workflow=oneshot gates=all branch=verbose-flag
    ```
 
-   A reject runs `describe-pr` again in a fresh session with your text as feedback and reopens the gate; `wait` returns when it does. An approve ends the run: the pull request is open and the `pr-done` join has pushed the artifact commit. Without `--detach` the approve or reject command runs the continuation in your terminal until the next gate. The web UI and chat adapters offer the same Approve and Request changes buttons.
+   These are native Atomic chat commands. There is no shell `atomic workflow run` wrapper in this collection.
 
-3. When reviewers comment on the pull request, adopt the run that opened it:
+## Automatic phase selection
 
-   ```sh
-   archon workflow run delivery-resolve-reviews --adopt <run-id> --input task_dir=.agents/tasks/verbose-flag-cli-prints "address the review comments"
-   ```
+`workflow=auto` (the default) asks JEV what phase to run next from the request and current artifacts. It needs the existing typed-judgment helper's TypeSafe key: `TYPESAFE_API_KEY`, the file named by `TYPESAFE_API_KEY_FILE`, or `~/.config/typesafe/api_key`. Store secrets outside the project. Missing or unavailable JEV judgment stops automatic routing visibly; choose an explicit workflow for a deterministic phase chain rather than expecting a fabricated fallback decision.
 
-   `--adopt` reuses that run's worktree and branch, where the task directory and its committed artifacts already are (`--branch verbose-flag` works too). One round per invocation; run it again when reviewers respond.
+Stage-model routing is separate. `model` defaults to `openai-codex/gpt-5.6-luna-fast` as the ordinary economical baseline and is mandatory for code-writing and unknown phases. `reasoning_model` defaults to `openai-codex/gpt-5.6-sol`; `model_routing=auto` (the default) may ask JEV to choose `economy` (the ordinary model) or `reasoning` for eligible non-writing phases. For an explicit non-`auto` workflow, use `model_routing=fixed` to select `model` directly with no stage-model JEV call. Explicit `model` and `reasoning_model` values are honored where permitted; an explicit `workflow` alone does not make stage selection JEV-free. Full [inputs and controller contract](../workflows/delivery.md#inputs).
 
-## Steering a run
-
-The loop is: run, exit at a gate, decide with `--detach`, `wait`, repeat.
-
-```sh
-archon workflow run delivery-full --branch plugin-formatters "Add a plugin system for output formatters"
-archon workflow wait <run-id>        # after a --detach decision: blocks until the next gate or the end
-archon workflow approve <run-id> --detach
-archon workflow reject <run-id> --detach "<what should change>"
-```
-
-- `archon workflow runs` lists runs; `archon workflow get <run-id>` shows one, `--verbose` adds the per-node summary, `--json` the machine-readable form.
-- `--quiet` on any command hides the JSON log lines.
-- A fresh launch of an interactive pack refuses `--detach`; only `approve`, `reject`, `respond`, and `resume` take it.
-- Failure: `archon workflow resume <run-id>` skips completed nodes and re-runs the failed one against the task directory as it stands.
-- Dead run: `archon workflow abandon <run-id>`. `archon workflow cancel <run-id>` stops a detached continuation only.
-- Review blocked: the review loop cancels the run with the blocker recorded in the newest code-review artifact. Resolve it, then run the pack again with `--input task_dir=<task dir>` on the same branch.
-
-## A full run
-
-`delivery-full` adds research and design before implementation:
-
-```sh
-archon workflow run delivery-full --branch plugin-formatters "Add a plugin system for output formatters"
-```
-
-Task directory: `.agents/tasks/plugin-system-output-formatters/`. Gates, in order: `design`, `plan`, `phases` (every implementation phase), `pr`. At an implementation gate the receipt is the newest `NN-implementation-*.md`; approve to start the next plan phase, reject with text to run `iterate-implementation` before the next phase begins. The loop ends when you approve and the plan has no unchecked box left under its `## Phase N` headings. `--input review_each_phase=true` adds a review-code, fix-code-review pass before each implementation gate.
-
-`delivery-lean` (structure outline instead of design discussion and plan; gates `outline`, `phases`, `pr`) and `delivery-prd` (PRD and TDD before the plan; gates `prd`, `tdd`, `plan`, `phases`, `pr`) follow the same shape; the chains are in [workflows/delivery.md](../workflows/delivery.md).
-
-## Choosing the gates
-
-The `gates` input picks which pauses happen. It is fixed for the life of the run.
-
-```sh
-archon workflow run delivery-full --branch plugin-formatters --input gates=none "Add a plugin system for output formatters"
-archon workflow run delivery-full --branch plugin-formatters --input gates=plan,pr "Add a plugin system for output formatters"
-```
-
-- `none`: unattended. The design and plan skills run once, implementation phases run back to back until the plan has no unchecked box, the verification re-runs the checks and acceptance items in a fresh session (fixing and re-verifying up to three times), the review loop runs until clean, and the pull request opens without a pause. Read what happened with `archon workflow get <run-id> --json` and the `docs(task): <phase> artifacts` commits on the branch.
-- `plan,pr`: the run pauses only at the plan and the pull request description; unknown names fail the run at node `gates`.
-- To go unattended after a run has started, approve the remaining gates as they come. To add gates, start a new run on the same branch with `--input task_dir=.agents/tasks/<slug> --input gates=<names>`; it reuses the task directory. `--input` and `--resume` are mutually exclusive.
-
-Gate names per pack and what each reviews: [workflows/delivery.md, Gates](../workflows/delivery.md#gates).
-
-## A bugfix
-
-```sh
-archon workflow run delivery-bugfix --branch missing-config-exit "Missing config file: the CLI exits 0; it should exit 2 and name the file"
-```
-
-Task directory: `.agents/tasks/missing-config-file-cli/`. `reproduce-bug` runs first and writes a reproduction artifact whose frontmatter `status` is `reproduced` or `not-reproduced`. The gate message shows that status and the artifact's summary.
-
-- Reproduced: approve to fix; reject with text to correct the reproduction.
-- Not reproduced: the gate is the escalation. Approve or reject with the missing information (steps, data, environment) and `reproduce-bug` tries again with it, revising the artifact in place; abandon the run when nothing more is known. The loop ends only on approve of a reproduced bug.
-
-With `--input gates=none` the pack tries up to four reproduction sessions on its own, each reading the previous artifact's `## Missing` list, then cancels the run with a pointer to that list when none reproduced the bug.
-
-The `fix-bug` node reads the artifact's `## Fix` steps, makes the reproduction pass, keeps it as a regression test when it is one, and commits. Then the verification (the reproduction is re-run and the regression test is checked against the merge target), the review loop, and the pull request gate.
-
-## An epic
-
-```sh
-archon workflow run delivery-epic --branch epic-build-billing-module "Build the billing module"
-```
-
-Task directory: `.agents/tasks/build-billing-module/`. `create-epic-plan` sizes every child against [shared/SLICING.md](../shared/SLICING.md) (one obligation, one vertical slice, one day of work, safe to merge alone), gives each one EARS acceptance criteria, writes the plan, and gates (`plan`); `start-epic-delivery` rejects a child that breaks those rules, creates one task directory per child with the criteria in its `task.md`, commits them as `docs(task): open epic children` on the epic branch, and prints one start command per wave-1 child:
-
-```sh
-archon workflow run delivery-<child workflow> --base epic-build-billing-module --input task_dir=.agents/tasks/<child slug> '<child prompt>'
-```
-
-The parent run ends there. Run each child command from the project root on the epic branch; write prompt apostrophes as ` '\'' `, and `--base` cuts the child's worktree from the epic branch and targets the child's pull request at it. An existing pull request wins as the target, then `task.md` `base:`, then the repository default branch. Later waves start after their dependencies have merged into the epic branch. The skill refuses to run on `main`, `master`, or a detached `HEAD`.
-
-## Where things land
+## Answer gates and inspect progress
 
 ```text
-.agents/tasks/verbose-flag-cli-prints/
-  task.md                                              request, slug, workflow, created
-  01-research-questions-verbose-flag-cli-prints.md
-  02-research-verbose-flag-cli-prints.md
-  03-design-discussion-verbose-flag-cli-prints.md
-  04-plan-verbose-flag-cli-prints.md
-  05-implementation-verbose-flag-cli-prints.md        one per completed implementation phase
-  06-code-review-verbose-flag-cli-prints.md           one per review pass
-  pr-description.md
+/workflow status
+/workflow connect <run-id>
+/workflow pause <run-id>
+/workflow quit <run-id>
+/workflow resume <run-id>
 ```
 
-Artifacts are the memory between phases. Each has frontmatter with `type` and `summary`; later phases read the full text of the artifacts they select and only `summary` from the rest. Revisions edit a file in place; numbers are never reused for a revision. The directory is committed on the branch: `task.md` as `docs(task): open <slug>`, each phase's artifacts as `docs(task): <phase> artifacts`, so they reach the pull request and any later run that adopts the branch. With a worktree, the task directory lives in that worktree; Archon prints its path when the run starts.
+Connect opens the graph and pending human prompts. Review the named artifact before approving; request changes in the native prompt to run a revision stage. Pause and quit preserve resumable work; neither deletes a task worktree. Resume depends on saved Atomic run state, not just the existence of task files. See [official operations](https://docs.bastani.ai/workflows/operations).
 
-## Running skills by hand
+`gates=all` is the default. `plan` retains planning/reproduction review, `pr` retains only PR-description review, and `none` performs no human UI calls. **Headless execution requires `gates=none`.** Gates are not a comma-separated list.
 
-Every skill runs in a plain agent session without Archon. Commands are written as `/name`; Codex users type `$name`.
+## Verification and application testing
 
-1. Start a session and run the first phase with your request:
+`verify=true` independently checks implementation before code review. `app_test=web|ios|android` adds UI testing; `app_target` supplies a URL, app path, or application id. The machine running the stage needs the actual browser, simulator, or emulator. A missing prerequisite is blocked work, not a pass.
 
-   ```text
-   /create-research-questions Add a --verbose flag to the CLI that prints each command before running it
-   ```
+```text
+/workflow delivery request="Add a settings toggle" workflow=lean app_test=web app_target="http://localhost:3000" branch=settings-toggle
+```
 
-   The skill opens the task worktree first, `git worktree add ~/.agents/worktrees/<repo>/verbose-flag-cli-prints -b verbose-flag-cli-prints main`, and names its path in the reply. This is the default and it is not asked about: the phases that follow commit on the task branch, and the checkout you started from stays where it is. Only the cases in the conventions' [Task worktree](../shared/CONVENTIONS.md) section skip it, one of them your own "work in this checkout" in the same session. Remove the worktree with `git worktree remove <path>` once the pull request merges.
+Read [verification](verification.md) and [app testing](app-testing.md) for the evidence each phase records.
 
-   In that worktree the skill creates and commits `.agents/tasks/verbose-flag-cli-prints/task.md`, writes `01-research-questions-verbose-flag-cli-prints.md`, commits it as `docs(task): research-questions artifact`, and ends with a fenced command:
+## Continue existing work
 
-   ```text
-   /create-research
-   ```
+Pass `task_dir=.agents/tasks/<slug>` to reuse saved task artifacts. Run it from the correct checkout and branch; do not start a second task merely because an earlier chat ended. `workflow=resolve-reviews` handles an existing PR round; `workflow=epic-wave` revisits an epic after prerequisite branches have merged. Children run in separate worktrees; the workflow does not merge their PRs.
 
-2. Open a new session (`/clear` in Claude Code, `/new` in Codex, Oh My Pi, and Pi) in the worktree and paste the command. With several tasks in flight, add the task directory: `/create-research @.agents/tasks/verbose-flag-cli-prints`.
-
-3. At a human gate the reply links the artifact, lists its `### Verify` checks and known limits, and names the iterate skill. To approve, run the fenced command in a new session. To change it, reply in the same session for one or two rounds, or run `/iterate-plan @04-plan-verbose-flag-cli-prints.md` in a new session after a long review. `/review-artifact-comments @<artifact file>` applies a list of notes one at a time.
-
-4. Implementation runs phase by phase: `implement-plan` (or `implement-outline` for `lean`) implements the first unchecked phase, ticks its boxes, commits code with explicit paths, and stops with a receipt. Run the same command again in a new session for the next phase; the last phase hands off to `/describe-pr`. Run `/verify-implementation` after the last phase to re-run the checks and acceptance items in a session that did not write the code, then `/review-code` and `/fix-code-review` before `/describe-pr`, when you want the verification and the review loop by hand.
-
-5. `describe-pr` writes and publishes the pull request description. `resolve-pr-reviews` works through review threads until reviewers approve.
-
-Skills no pack invokes run this way only: `iterate-research-questions`, `iterate-research`, `record-evidence` (narrated video proof for the pull request), `ci-commit`, `review-artifact-comments`, `show-me`, `herd-next` (opens the next phase in a Herdr pane).
-
-## When something looks wrong
-
-- **The gate message names a run id you lost.** `archon workflow runs` lists it; `archon workflow status` shows only running and paused runs.
-- **A phase cannot find the skill it names.** The skills are not in `skills_dir` (`~/.agents/skills` by default). Install the portable copy or pass `--input skills_dir=<dir>`.
-- **The run fails at `task` with "is ignored by git".** An older version of this collection added `.agents/tasks/` to the project `.gitignore`; the node removes that exact line itself, so another rule still matches. Remove it and run again.
-- **The reply has no command fence (by hand).** The phase did not finish its template. Ask it to "print the final answer from the template" in the same session, then continue from the fence.
-- **The agent asks you to restate the task.** It is reading conversation instead of `task.md`. Point it at the task directory: `/create-plan @.agents/tasks/<slug>`.
-- **The session feels slow, repetitive, or forgetful.** You are in a degraded context. Save and restart: see [Context management](context-management.md#recognizing-a-degraded-context).
+Older engine checkpoints are not Atomic checkpoints. Preserve their task artifacts and worktrees, then start a new Atomic run from those artifacts if desired. Published changelog entries and `.agents/tasks/` are deliberate historical records, not current operating instructions. Installation changes do not authorize a global worktree or state-directory purge.

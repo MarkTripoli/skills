@@ -1,112 +1,97 @@
 # Cheat sheet
 
-Commands for the delivery packs, run from a git checkout of the project. Long form: [getting-started.md](getting-started.md), [workflows/delivery.md](../workflows/delivery.md).
+Independent skills first; optional Atomic orchestration second. Long form: [getting started](getting-started.md) and [delivery reference](../workflows/delivery.md).
 
 ## Install
 
 ```sh
-curl -fsSL https://archon.diy/install | bash   # Archon 0.10 or later
-archon setup                                   # provider: Claude Code, Codex, or Pi (Oh My Pi: skip, use the -omp packs)
-npx github:MarkTripoli/skills                  # choose harnesses and all or specific skills, then install
+npx github:MarkTripoli/skills
+npx github:MarkTripoli/skills codex --skill create-plan --yes
+npx github:MarkTripoli/skills portable --atomic --yes
+npx github:MarkTripoli/skills portable --atomic --project --yes
 ```
 
-The terminal menu preselects detected harnesses and offers a searchable skill picker. `--skill <name>` is the non-interactive equivalent; repeat it for more. A partial skill selection skips the Archon packs because their workflows require the complete collection. `--project` installs into the current repository but still writes the `~/.agents/skills` copy the packs read; `--no-packs` skips the packs, `--dry-run` prints the plan, and `--yes` skips menus and confirmation.
+- Default: skills/workers only; no Atomic requirement.
+- `--skill <name>`: repeatable independent selection.
+- `--atomic`: opt into the workflow; requires all skills and a separately installed Atomic runtime.
+- `--project`: local skills and workflow resources, not a hidden dependency on home-directory skills.
+- `--dry-run`: inspect the plan; `--yes`: skip menus and confirmation.
+- `--uninstall`: select the managed resources to remove; add `--atomic` to select the optional workflow entry and tree. It does not delete task artifacts or worktrees.
 
-## One command
+## Manual phases
 
-```sh
-archon workflow run delivery-start --branch <slug> "Bug: add 1 2 prints NaN. Just fix it, no need to check with me."
-archon workflow run delivery-start --branch epic-billing "Write the PRD for usage billing; I want to review the PRD and design, then split it into epics and issues"
+```text
+/create-research-questions
+/create-research @01-research-questions-example.md
+/create-design-discussion @02-research-example.md
+/create-plan @03-design-discussion-example.md
+/implement-plan @04-plan-example.md
+/verify-implementation
+/review-code
+/describe-pr
 ```
 
-The request decides the pack and the gates: hands-off wording runs unattended, "review the plan" keeps the planning gates, nothing said keeps every gate. `--input workflow=<pack>` and `--input gates=<...>` override. Unsure about the pack: the run pauses once at `confirm`, even hands-off; `archon workflow reject <id> "lean, outline"` names the pack and gates. An `auto` route to `oneshot`, `lean`, `full`, or `prd` runs the adaptive chain (`delivery-adaptive`), which re-decides which optional phases run at every boundary instead of committing to one shape up front; `--input workflow=<pack>` still runs that fixed pack. In an agent session: `/deliver <request>` judges the same pack and autonomy level but starts that fixed pack directly, never `delivery-adaptive`; run `archon workflow run delivery-start "<request>"` instead of `/deliver` for the adaptive chain from an agent session.
+Use the actual artifact names from the preceding handoff, not these example names. Codex uses `$skill-name`. Open a fresh session in the handoff's checkout and branch each time. To change an artifact first, use its `iterate-*` skill with feedback.
 
-## Pick a pack
+## Atomic launch
 
-| Pack | When | Gates | Start |
-|---|---|---|---|
-| `delivery-oneshot` | small, fully specified, no design choice | `pr` | `archon workflow run delivery-oneshot --branch verbose-flag "Add a --verbose flag to the CLI"` |
-| `delivery-bugfix` | observed differs from expected; no product code is edited before it reproduces | `reproduce`, `pr` | `archon workflow run delivery-bugfix --branch config-exit-code "Missing config file: the CLI exits 0; it should exit 2 and name the file"` |
-| `delivery-adaptive` | the judged default for a request that reads `oneshot`, `lean`, `full`, or `prd`-shaped; a `delivery-decide` judgment picks which optional phases run at every boundary instead of committing up front | `design`, `prd`, `tdd`, `plan`, `phases`, `pr` | usually reached through `delivery-start`; named directly: `archon workflow run delivery-adaptive --branch verbose-flag "Add a --verbose flag to the CLI"` |
-| `delivery-lean` | shape is clear; several files and an ordering | `outline`, `phases`, `pr` | `archon workflow run delivery-lean --branch split-loader "Split the config loader into parser and validator modules"` |
-| `delivery-full` | competing approaches, cross-module impact, a shared interface | `design`, `plan`, `phases`, `pr` | `archon workflow run delivery-full --branch plugin-formatters "Add a plugin system for output formatters"` |
-| `delivery-prd` | the requirement itself is open; product-facing | `prd`, `tdd`, `plan`, `phases`, `pr` | `archon workflow run delivery-prd --branch csv-export "Export reports as CSV from the dashboard"` |
-| `delivery-epic` | several mergeable deliverables, or more than about eight phases | `plan` | `archon workflow run delivery-epic --branch epic-build-billing-module "Build the billing module"` |
-| `delivery-program` | requirements first, then epics and issues, then the children run | `prd`, `tdd`, `plan` | `archon workflow run delivery-program --branch epic-billing "Usage-based billing for teams"` |
-| `delivery-epic-wave` | the next wave of an epic after its pull requests merged | none | `archon workflow run delivery-epic-wave --branch epic-billing --input epic_dir=.agents/tasks/epic-billing "next wave"` |
-| `delivery-resolve-reviews` | reviewers commented on a pull request a run opened | none | [PR review rounds](#epics-and-pr-review-rounds) |
+Install/authenticate Atomic from its [official guide](https://docs.bastani.ai/getting-started/installation). Run `atomic` in the project, then use these **chat commands**:
 
-Other inputs: `--input review_each_phase=true` (full, lean, prd: one review pass after every phase), `--input task_dir=.agents/tasks/<slug>` (reuse a task directory), `--input skills_dir=<dir>` (default `~/.agents/skills`).
-
-## Run and steer
-
-```sh
-archon workflow run delivery-full --branch plugin-formatters "Add a plugin system for output formatters"   # exits at the first gate, prints the run id
-archon workflow approve <run-id> --detach
-archon workflow reject <run-id> --detach "<what should change>"   # runs the iterate skill with this text, gates again
-archon workflow wait <run-id>                                     # blocks until the next gate or the end
-archon workflow get <run-id> --json                               # every node's state and output; --verbose adds summaries
-archon workflow abandon <run-id>                                  # dead run; `runs` lists ids, `resume <run-id>` re-runs the failed node
+```text
+/workflow reload
+/workflow list
+/workflow inputs delivery
+/workflow delivery request="Add a --verbose flag" workflow=oneshot branch=verbose-flag gates=all
+/workflow delivery request="Diagnose and fix the missing config exit code" workflow=bugfix branch=config-exit-code
+/workflow delivery request="Compare and implement plugin loading approaches" workflow=full branch=plugin-loader gates=plan
 ```
 
-`--quiet` on any command hides the JSON log lines. A fresh `run` of a pack refuses `--detach`; `approve`, `reject`, `respond`, and `resume` take it. `--branch` needs a git remote whose base branch exists (Archon cuts the worktree from it); `--no-worktree` runs in the live checkout instead.
+`workflow` choices: `auto`, `oneshot`, `lean`, `full`, `prd`, `bugfix`, `epic`, `program`, `resolve-reviews`, `epic-wave`.
 
-## Model tiers
+| Input | Default | Purpose |
+|---|---|---|
+| `request` | required | Task outcome |
+| `task_dir` | new task or existing directory | Reuse `task.md` and artifacts; preserve its request, `slug`, `workflow`, `base`, and branch |
+| `skills_dir` | install-specific portable root | Complete skill collection |
+| `workflow` | `auto` | Dynamic JEV selection or explicit chain |
+| `gates` | `all` | `all`, `none`, `plan`, `pr` |
+| `model` | `openai-codex/gpt-5.6-luna-fast` for code-writing stages | Stage model override; other blank values use Atomic's configured model |
+| `verify` | `true` | Independent implementation verification |
+| `app_test` | `none` | `web`, `ios`, `android`, or `none` |
+| `app_target` | optional | URL/app id/path |
+| `max_steps` | `40` | Skill-session bound including revisions |
+| `branch`, `base` | optional | New task's branch and merge base |
 
-```sh
-archon ai tier list                                                     # what small, medium, large resolve to (defaults: claude/haiku, sonnet, opus)
-archon ai tier set large claude opus --effort high                      # persistent binding
-archon workflow run delivery-lean --branch split-loader --model large=claude/sonnet "..."   # rebind for one run; repeat per tier
+Use `key=value`, not `--input`. Headless mode requires `gates=none`. `auto` requires a working JEV helper key; an explicit chain does not require JEV routing. The helper reads `TYPESAFE_API_KEY`, `TYPESAFE_API_KEY_FILE`, or `~/.config/typesafe/api_key`.
+
+## Atomic inspect and steer
+
+```text
+/workflow status
+/workflow status <run-id>
+/workflow connect <run-id>
+/workflow pause <run-id>
+/workflow quit <run-id>
+/workflow resume <run-id>
 ```
 
-Every prompt node names its tier (`model: large` for authoring, implementing, and reviewing; `medium` for research, fixes, and reproduction); the `-omp` flavor reads `OMP_MODEL_SMALL|MEDIUM|LARGE` instead. Table, reasons, and routing by request: [model-routing.md](model-routing.md).
+Answer human prompts through the native UI reached by `connect`. `quit` pauses gracefully and preserves resumable progress; it is not deletion. There are no repository shell approve/reject/wait commands. See [official command semantics](https://docs.bastani.ai/workflows/operations#workflow-commands).
 
-## Gates
+## Existing tasks, PR feedback, and epic waves
 
-`--input gates=all` (default) | `none` | `plan,pr` (comma list of the pack's names; an unknown name fails the run at node `gates`). With a gate off:
-- `design`, `outline`, `prd`, `tdd`, `plan`, `pr`: the create skill runs once, no revision pass.
-- `phases`: phases run back to back until the newest plan or outline has no `- [ ]` under a `## Phase N` or `## Step N` heading; 16 iterations fail the node.
-- `reproduce`: up to 4 reproduction sessions, then the run cancels pointing at the artifact's `## Missing` list. The verification (every implementing pack, never gated, `--input verify=false` skips it) re-runs the repository's checks and the acceptance items in a fresh session, `iterate-implementation` on `failed`, at most 3 rounds; `blocked` cancels the run ([verification.md](verification.md)). The review loop (every pack, never gated) runs review-code, fix-code-review until `clean`, at most 4 rounds; `blocked` cancels the run.
-
-Gates are fixed per run (`--input` and `--resume` are mutually exclusive); to add gates, start a new run on the same `--branch` with `--input task_dir=.agents/tasks/<slug> --input gates=<names>`.
-
-## Where things go
-
-`.agents/tasks/<slug>/` is committed on the run's branch: `task.md` as `docs(task): open <slug>`, each phase's artifacts as `docs(task): <phase> artifacts` (`research`, `design`, `outline`, `prd`, `tdd`, `plan`, `implement`, `review`, `reproduce`, `fix`, `pr`, `review-round`).
-
-Slug: the request's first line, lower-cased, punctuation and hyphens to spaces, stop words dropped (`a an the to of for in on and or with that this add make create please fix bug`), first four words, `-2` when the directory exists: "Missing config file: the CLI exits 0; ..." gives `missing-config-file-cli`, "Add a plugin system for output formatters" gives `plugin-system-output-formatters`.
-
-Artifacts are `NN-<type>-<slug>.md` (`04-plan-plugin-system-output-formatters.md`): `NN` is the highest present plus one, a revision edits the file in place. `pr-description.md` is unnumbered and published verbatim as the pull request body.
-
-## Epics and PR review rounds
-
-```sh
-archon workflow run delivery-epic --branch epic-build-billing-module "Build the billing module"   # .agents/tasks/build-billing-module/, gate: plan
-archon workflow approve <run-id> --detach   # start-epic-delivery creates one task dir per child, commits `docs(task): open epic children`, prints:
-archon workflow run delivery-<child workflow> --base epic-build-billing-module --input task_dir=.agents/tasks/<child slug> '<child prompt>'
-archon workflow run delivery-resolve-reviews --adopt <run-id> --input task_dir=.agents/tasks/<slug> "address the review comments"   # one review round
+```text
+/workflow delivery request="Continue implementation" workflow=lean task_dir=.agents/tasks/example
+/workflow delivery request="Address PR feedback" workflow=resolve-reviews task_dir=.agents/tasks/example
+/workflow delivery request="Start ready children" workflow=epic-wave task_dir=.agents/tasks/example-epic gates=none
 ```
 
-Run each child command from the project root on the epic branch; write prompt apostrophes as ` '\'' `, and a later wave starts after its dependencies merge into that branch. `--base` is the child's pull request target unless its existing pull request or `task.md` `base:` says otherwise. `--adopt` reuses the worktree and branch of the run that opened the pull request (`--branch <pr branch>` also works); run it again when reviewers respond.
+The workflow reuses existing task artifacts. Epic children need actual merged dependencies; a PR description alone is not merge evidence. Review and merge externally before starting the next wave.
 
-## Oh My Pi
+## Where things live
 
-Same packs with an `-omp` suffix (`archon workflow run delivery-full-omp --branch ...`), installed when `oh-my-pi` is an install target; every AI node runs `omp -p --auto-approve --no-session --max-time=45m`, so `omp` must be on `PATH`. The flavor has no per-node cost, retry, or idle timeout: `--max-time=45m` is the only bound on a stuck session.
-
-## Skills by hand
-
-- Claude Code: `/create-plan @.agents/tasks/<slug>`; new session per phase with `/clear`.
-- Codex: `$create-plan @.agents/tasks/<slug>`; fences show `/`, type `$`; new session with `/new`.
-- Oh My Pi: `/create-plan @.agents/tasks/<slug>`; new session with `/new`.
-- Pi: `/create-plan @.agents/tasks/<slug>`; new session with `/new`; worker roles run inline.
-
-A skill given no task directory opens the task worktree (`git worktree add ~/.agents/worktrees/<repo>/<slug> -b <slug> <target>`, the default, never asked about; skip cases in [CONVENTIONS.md](../shared/CONVENTIONS.md), Task worktree), creates the directory there, and commits `docs(task): open <slug>`; a by-hand run commits its artifact as `docs(task): <type> artifact`. Run every later session from the worktree and paste the reply's fenced command into it. `git worktree remove <path>` after the merge.
-
-## Develop / test
-
-```sh
-npm test                                # validator, plugin manifest check, node --test tests/
-archon workflow test delivery           # every pack's fixtures/*.stubs.yaml; no agent, no run
-node scripts/build-packs.mjs --check    # exit 1 when the OMP flavor is stale; drop --check to regenerate
-npm run metrics -- --serve 9464          # serve Archon metrics for Prometheus
-```
+- Canonical source: `skills/delivery/<name>/SKILL.md`, `skills/show-me/`.
+- Portable install: `~/.agents/skills/`; project install: `.agents/skills/`.
+- Optional workflow source: `atomic/workflows/delivery.ts`, helpers `atomic/lib/`.
+- Installed workflow: `<agentDir>/workflows/skills-delivery/` plus sibling `skills-delivery.mjs`; default agentDir `~/.atomic/agent`, override `ATOMIC_CODING_AGENT_DIR`. Project location: `.atomic/workflows/`.
+- Task history: `.agents/tasks/<slug>/task.md` and numbered artifacts on the task branch.
+- Worktrees persist until their owner deliberately removes them after inspecting/merging their work. Historical cancelled-run worktrees are not migration cleanup targets.

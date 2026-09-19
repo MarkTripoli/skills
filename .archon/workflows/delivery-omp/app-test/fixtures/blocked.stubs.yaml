@@ -1,8 +1,0 @@
-# A blocked test commits the artifact, then `test-blocked` cancels the run; `iterate-app` never runs.
-test-app: '{"status":"blocked","artifact":"06-app-test-fixture.md","summary":"no Android emulator is running"}'
-test-done: ""
-fixture:
-  expect: cancelled
-  inputs: { task_dir: .agents/tasks/fixture, kind: android }
-  reached: [test-app, test-done, test-blocked]
-exec-code: false

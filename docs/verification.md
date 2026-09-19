@@ -1,6 +1,6 @@
 # Verification
 
-The `verify-implementation` phase re-runs what the implementation claims. A session that never saw the implementer's context runs the repository's own checks and every acceptance item the task's artifacts promise, records what each returned, grades the record, and saves a `verification` artifact. It runs after implementation and before the review in every pack that implements code; by hand it is `/verify-implementation` in a fresh session.
+The `verify-implementation` phase re-runs what the implementation claims. A session that never saw the implementer's context runs the repository's own checks and every acceptance item the task's artifacts promise, records what each returned, grades the record, and saves a `verification` artifact. The optional Atomic controller runs it after implementation and before review; by hand invoke `/verify-implementation` in a fresh session.
 
 The reason it exists is in [research/llm-output-verification.md](research/llm-output-verification.md): agents believe they have succeeded when hidden tests say otherwise, describe checks they did not run, and, under pressure, weaken the tests they were given. The verifier treats the receipts as a list of claims, not as results.
 
@@ -14,16 +14,16 @@ The reason it exists is in [research/llm-output-verification.md](research/llm-ou
 6. Grades: exit codes and exact strings decide first; the rest goes to `judge.mjs grade-steps --kind command`, which returns `pass`, `fail`, or `unclear` with a probability and a severity per item. `unclear` rows are decided by hand and listed for a person.
 7. Saves `NN-verification-<slug>.md` with `status: passed`, `failed`, or `blocked`.
 
-## Pack input
+## Optional workflow input
 
-Every pack that implements code (`delivery-full`, `delivery-lean`, `delivery-prd`, `delivery-oneshot`, `delivery-bugfix`) runs the `delivery-verify` block by default. `--input verify=false` skips it:
+The Atomic `delivery` workflow verifies implementation by default. Inside Atomic:
 
-```sh
-archon workflow run delivery-lean --branch verbose-flag "Add a --verbose flag"                      # verifies
-archon workflow run delivery-lean --branch verbose-flag --input verify=false "Add a --verbose flag"  # skips
+```text
+/workflow delivery request="Add a --verbose flag" workflow=lean branch=verbose-flag
+/workflow delivery request="Add a --verbose flag" workflow=lean branch=verbose-flag verify=false
 ```
 
-Epic children are launched with the pack defaults, so they verify.
+The second command deliberately skips independent verification. It does not turn an unverified result into a passed result. Standalone skill use needs no Atomic installation.
 
 ## What the artifact records
 
@@ -33,7 +33,7 @@ Verdicts are `pass`, `fail`, or `untested`. Confidence is the helper's probabili
 
 ## How failures loop back
 
-The `delivery-verify` block is a `loop_group` of three rounds. The session's claimed status is first checked against the artifact by the `verification-status` node (`judge.mjs verification-status`, which only ever moves `passed` toward `failed` or `blocked`; without the helper the claim stands). A `failed` round runs `iterate-implementation` with the artifact's `## Findings` as feedback, commits the artifact, and verifies again in a fresh session, which revises the same artifact in place and re-runs every item. `passed` ends the loop and the pack continues to `app-test` (when asked) and the review. `blocked` commits the artifact and cancels the run; supply what `## Missing` names and start the run again with the same `--input task_dir=`. Three failed rounds fail the node.
+The Atomic controller reads the saved verification artifact before selecting the next step. A `failed` result routes to `iterate-implementation` with the findings, then a fresh verification stage rechecks the work. A `passed` result continues toward optional app testing and review. A `blocked` result names the external prerequisite rather than silently continuing. The workflow's `max_steps` bounds repair sessions; native run status and the artifact explain why work stopped. Supply missing prerequisites before using native resume or starting a new run with the existing `task_dir`.
 
 By hand the same routing is the reply's command fence: `/review-code` after a pass, `/iterate-implementation @<plan file>` after a failure, `/show-me` when blocked.
 

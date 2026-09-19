@@ -1,62 +1,41 @@
 # Model routing
 
-Every `prompt:` node in the native packs names a tier, `model: small`, `model: medium`, or `model: large`, and Archon resolves the word to a provider and model when the node runs. The packs never name a model, so one binding change moves every run; `scripts/validate.mjs` (section 12) fails a prompt node without a tier word. Archon 0.10.1 ships `small` as `claude/haiku`, `medium` as `claude/sonnet`, and `large` as `claude/opus`; `archon ai tier list` shows the effective binding.
+Atomic delivery keeps phase selection separate from stage-model selection. `workflow=auto` asks JEV which eligible phase to run; stage-model routing separately asks the installed typed-judgment helper whether an eligible non-code phase can use the ordinary model or needs the stronger reasoning model.
 
-## Tier per phase
+## Two configured models
 
-| Node | Tier | Reason |
-|---|---|---|
-| `delivery-research`: `create-research-questions`, `create-research`; `delivery-prd` `research` | medium | Reads code and writes it down; breadth over reasoning depth. |
-| `delivery-gate-phase`: create and iterate authoring (design discussion, PRD, TDD, structure outline, plan, epic plan) and `describe-pr` | large, `effort: high` | Every later phase builds on the artifact; a wrong plan costs the rest of the run. |
-| `delivery-implement`: `implement-phase`, `implement-phase-auto` | large | Multi-file code changes against a plan, one phase per fresh session. |
-| `delivery-implement`: `review-phase`, `review-phase-auto`; `delivery-review`: `review-code` | large | A missed finding ships; the reviewer needs the strongest reader. |
-| `delivery-implement`: `fix-phase`, `fix-phase-auto`; `delivery-review`: `fix-review` | medium | The findings are enumerated; the fix is scoped by the review artifact. |
-| `delivery-bugfix`: `attempt`, `attempt-auto` | medium | Follows reproduction steps and records what happened. |
-| `delivery-bugfix`: `fix` | large | Root cause and fix from the reproduction; the session commits its own code. |
-| `delivery-oneshot`: `implement` | large | The only session doing the work; no plan to lean on. It commits itself, so there is no commit prompt. |
-| `delivery-app-test`: `test-app`, `iterate-app` | large | Writes the test charter and grades what it observed; the iterate node changes code like `implement-phase`. |
-| `delivery-verify`: `verify-implementation`, `iterate-verify` | large | Decides pass or fail per acceptance item from command output and reads test diffs for weakened checks; the iterate node changes code like `implement-phase`. Where the machine has two providers, bind `large` for a verifying run to a different family than the implementer's (`--model large=<provider>/<model>`): judges favor their own output. |
-| `delivery-epic`: `start` | medium | Creates child task directories from an approved plan. |
-| `delivery-resolve-reviews`: `round` | medium | Answers enumerated review threads one by one. |
+The ordinary `model` defaults to `openai-codex/gpt-5.6-luna-fast`. It is the economical baseline and is mandatory for every code-writing and unknown phase. The stronger `reasoning_model` defaults to `openai-codex/gpt-5.6-sol`; JEV may select it only for an allowed non-code phase. This is a preference between these two explicitly configured, live-verified providers; actual account billing and subscription pricing are not observable, so the policy makes no numeric price claim.
 
-Workflow-level `model:` stays unset in every pack, so `archon ai tier set` and `--model` decide what a tier means.
+Code-writing stages always use `model`, including `implement-task`, `implement-plan`, `implement-outline`, `agent-implementer`, `iterate-implementation`, `fix-bug`, `fix-code-review`, and `resolve-pr-reviews`. Unknown or ambiguous stages also use `model`. `reproduce-bug`, `test-app`, and `record-evidence` remain on `model` because they can write reproduction, driver, or recording scripts. Explicit `model` and `reasoning_model` values are respected where the policy permits them.
 
-## Effort
+Known research, planning, documentation, verification, and review phases may ask JEV to choose `economy` (the ordinary `model`) or `reasoning` (the configured `reasoning_model`) from the exact request and supplied artifact summaries. A valid candidate choice is used without an arbitrary confidence threshold, so moderate confidence is not rejected. The routing record retains the selected model, source, confidence, full probabilities, and helper usage when available.
 
-`effort:` is Archon's reasoning-depth field. The loader accepts `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `ultra` (its error for anything else lists exactly these); a provider without a rung clamps to its nearest one (`ultra` to `max` on Claude and Pi, `xhigh` on Copilot; `minimal` to `low` on Claude and Copilot). Only the gate-phase authoring nodes set it (`high`); the other nodes take the provider's default.
+## Inputs and overrides
 
-## Bind a tier
+The delivery workflow exposes these inputs:
 
-```sh
-archon ai tier list                                   # effective binding per tier; --json for scripts
-archon ai tier set large claude opus --effort high    # persistent; --scope user or --scope install
-archon ai tier unset large                            # back to the built-in default
-archon workflow run delivery-lean --branch split-loader --model large=claude/sonnet "Split the config loader"   # this run only
+```text
+model=openai-codex/gpt-5.6-luna-fast
+model_routing=auto|fixed
+reasoning_model=openai-codex/gpt-5.6-sol
 ```
 
-`--model <tier>=<provider>/<model>` repeats per tier and accepts only `small`, `medium`, `large`, or a `@alias` from `archon ai alias set`. Archon passes the model string to the provider SDK unchanged, so a misspelled model fails at the node, not at load.
+`model_routing=auto` is the default and allows the stage-model judgment for eligible phases. `model_routing=fixed` selects `model` directly for every phase and does not load or call JEV for stage-model selection. In `auto`, a missing helper, unavailable service, or malformed judgment fails visibly; Atomic never silently upgrades to another provider or falls back to an unrecorded model.
 
-## Oh My Pi flavor
+## Evidence and authenticated models
 
-Archon has no provider for Oh My Pi, so `-omp` nodes are `bash:` nodes and Archon's tiers do not reach them. The generator maps the fields instead: `model: <tier>` becomes `--model="$OMP_MODEL_<TIER>"` on the `omp -p` command when `OMP_MODEL_SMALL`, `OMP_MODEL_MEDIUM`, or `OMP_MODEL_LARGE` is set in the environment (unset: `omp` uses its own default); `effort: <level>` becomes `--thinking=<level>`, with `ultra` written as `max`. Neither field survives on the generated bash node, so Archon has nothing to warn about.
+Each selection is recorded with the stage decision under `.agents/tasks/<slug>/.atomic-delivery/<run-id>/` alongside the other delivery records. Stage execution still validates provider availability. A catalog listing is not proof that a model is usable with the current provider or account: a previously listed Spark candidate failed live native use for Codex with a ChatGPT account, so it is not a default or fallback here. Authentication and availability remain Atomic and stage-execution concerns.
 
-```sh
-OMP_MODEL_LARGE=<provider/model> OMP_MODEL_MEDIUM=<provider/model> archon workflow run delivery-lean-omp --branch split-loader "Split the config loader"
-```
+The router does not import a provider registry, private SDK internals, or scrape a catalog. It uses only the two configured defaults unless a caller explicitly supplies another model value. The published 0.9.19 main SDK model-registry export is broken in isolated direct import because dependencies are missing.
 
-## Route a run by the request
+## Phase selection with JEV
 
-The static table assumes a request the pack was chosen for. A small request on `delivery-full` still runs its design and plan on `large`; rebind for that run when a cheaper tier is enough. `judge.mjs tier` (the `typed-judgment` skill) grades a request `small`, `medium`, or `large` from its complexity; it prints nothing and exits 3 without `TYPESAFE_API_KEY` or when the service is unreachable, so the `case` below falls through to no rebinding.
+`workflow=auto` selects the next phase at artifact boundaries using the existing `typed-judgment/judge.mjs` helper (`systemOne`/`ask`). The execution model performs the phase; typed judgment does not write its artifact or implement code.
 
-```sh
-request="Add a --verbose flag to the CLI"
-tier=$(node ~/.agents/skills/typed-judgment/judge.mjs tier "$request" 2>/dev/null) || tier=""
-case "$tier" in
-  small)  set -- --model large=claude/sonnet --model medium=claude/haiku ;;   # authoring and review on sonnet, research and fixes on haiku
-  medium) set -- --model large=claude/sonnet ;;                              # authoring and review on sonnet, the rest as bound
-  *)      set -- ;;                                                          # large or unknown: the bindings as configured
-esac
-archon workflow run delivery-lean --branch verbose-flag "$@" "$request"
-```
+The helper reads credentials in this order:
 
-The `delivery-task` block records the same grade as `complexity:` in `task.md` frontmatter (omitted when the helper is unavailable), which shows afterwards whether the run's bindings matched the request. `scripts/metrics.mjs` labels every node's duration, tokens, and cost with the resolved `model`, so a query on that label compares cost per tier ([observability.md](observability.md)).
+1. `TYPESAFE_API_KEY`.
+2. The file named by `TYPESAFE_API_KEY_FILE`.
+3. `~/.config/typesafe/api_key`.
+
+See [typed-judgment](../skills/delivery/typed-judgment/SKILL.md) for submitted state, timeout/retry controls, probabilities, and evidence recording. Do not put credentials in task artifacts or workflow inputs.

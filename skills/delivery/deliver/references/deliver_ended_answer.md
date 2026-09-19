@@ -1,5 +1,5 @@
-Run `<run-id>` <`completed`, `failed at <node>`, or `was cancelled`>: <Archon's own reason or end state, verbatim>.
+Run `<run-id>`: <Atomic's reported terminal status and result or failure reason>.
 
-Branch `<branch>`, worktree `<the run's working_path>`. <One line naming the pull request or the last artifact the run left, when Archon printed one; otherwise omit.>
+<Observed branch and worktree when reported. Name the pull request or last artifact when available; otherwise omit.>
 
-Nothing is waiting on you here. <One sentence naming the one thing left, when there is one: the pull request to merge, or `/deliver --run <run-id>` after the run is resumed; otherwise omit.>
+<The remaining prerequisite or action, if any. Do not describe a paused or gracefully quit run as terminal: inspect it with `/workflow status <run-id>` and resume saved work with `/workflow resume <run-id>` in Atomic.>
