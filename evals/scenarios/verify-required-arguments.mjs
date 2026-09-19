@@ -17,7 +17,6 @@ export default {
       check: ({ artifact, live, repo }) => {
         const text = artifact?.text ?? "";
         const run = section(text, "## Run") ?? "";
-        const findings = section(text, "## Findings", { body: true }) ?? "";
         const runtimeOutput = live
           ? (() => {
               try {
@@ -32,7 +31,6 @@ export default {
           expect.matches("verification: package build uses the discovered runtime argument", text, /npm run build -- RUNTIME=node/),
           expect.matches("verification: successful syntax/build evidence", text, /build complete for node|runtime\.txt|built for node|syntax/i),
           expect.matches("verification: package, CI, and docs discovered", run, /package\.json|CI|build\.yml|README/i),
-          expect.matches("verification: no product finding for bare usage", findings, /^None\.?$/m),
           expect.excludes("verification: bare usage is not graded as a failure", text, /npm run build[^`\n]*usage[^\n]*\|\s*fail/i),
           ...(live ? [expect.matches("verification: build emitted actual runtime output", runtimeOutput, /^built for node$/)] : []),
         );

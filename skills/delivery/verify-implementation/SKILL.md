@@ -47,7 +47,8 @@ One rule shapes every step: a receipt, a summary, a ticked checkbox, or a senten
 - Do not send repository code, diffs, or secrets to the helper; `steps.json` carries `expected` and trimmed `observed` text only.
 - Quote what the command printed; never paraphrase an error message, a test name, or a printed value in `observed`.
 - Keep credentials out of the artifact and `steps.json`. An item that would need a secret this environment lacks is `untested` and names the secret's purpose, not its value.
-- Stop the servers, containers, or emulators you started; leave running ones you found as they were. Remove the temporary worktree and directory.
+- Stop the servers, containers, or emulators you started; leave running ones you found as they were.
+- Preserve acceptance and reproduction receipts, screenshots, and recordings under the task directory's `evidence/`, including failed and blocked attempts. Before removing temporary worktrees or scratch directories, copy any durable evidence out and update the verification artifact's links to the retained copies. Remove only disposable working files; do not delete cited evidence.
 
 ## References
 
