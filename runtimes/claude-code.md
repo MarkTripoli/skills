@@ -16,8 +16,6 @@ Child workers: call the `Task` tool with `subagent_type: "agent-<role>"` and the
 
 ## Optional Atomic orchestration
 
-Claude Code skills and workers work without Atomic. `npx github:MarkTripoli/skills claude-code --atomic` additionally installs the canonical portable skills and the optional `delivery` workflow; it does not make Claude Code an Atomic stage provider.
+Skills and workers do not need Atomic. Add `--atomic` to install all portable skills and its optional `delivery` workflow. This does not make Claude Code an Atomic stage provider.
 
-Open Atomic in the project and use `/workflow delivery request="<request>" workflow=full gates=all`. Native stages run inside Atomic with fresh contexts and read the canonical skills; there is no Claude-specific workflow fork. Ordinary Claude Code sessions still use the manual skill handoffs above.
-
-Answer approvals in Atomic's native UI via `/workflow connect <run-id>`. Use `/workflow status <run-id>`, `/workflow pause <run-id>`, `/workflow quit <run-id>`, and `/workflow resume <run-id>` for inspection and resumable control. Headless runs require `gates=none`. Inputs and installation paths are in [workflows/delivery.md](../workflows/delivery.md).
+Follow [Atomic setup](../docs/getting-started.md#add-optional-atomic-orchestration) to launch. Atomic runs the shared skills in new sessions; there is no Claude Code-specific workflow. Answer approvals with `/workflow connect <run-id>`. Runs without an interactive screen need `gates=none`. See [pause, quit, and resume](../workflows/delivery.md#gates-and-native-controls).

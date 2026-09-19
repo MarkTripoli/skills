@@ -16,8 +16,6 @@ Child workers: call the `task` tool with one item `{ "agent": "agent-<role>", "t
 
 ## Optional Atomic orchestration
 
-Oh My Pi skills and workers work without Atomic. `npx github:MarkTripoli/skills oh-my-pi --atomic` additionally installs canonical portable skills and the optional `delivery` workflow; it does not launch `omp` subprocess stages.
+Skills and workers do not need Atomic. Add `--atomic` to install all portable skills and its optional `delivery` workflow. It does not launch `omp` subprocess stages.
 
-Open Atomic in the project and use `/workflow delivery request="<request>" workflow=full gates=all`. Native stages run inside Atomic with fresh contexts and read the canonical skills; there is no Oh My Pi-specific workflow fork. Ordinary Oh My Pi sessions still use the manual skill handoffs and `task` workers above.
-
-Answer approvals in Atomic's native UI via `/workflow connect <run-id>`. Use `/workflow status <run-id>`, `/workflow pause <run-id>`, `/workflow quit <run-id>`, and `/workflow resume <run-id>` for inspection and resumable control. Headless runs require `gates=none`. Inputs and installation paths are in [workflows/delivery.md](../workflows/delivery.md).
+Follow [Atomic setup](../docs/getting-started.md#add-optional-atomic-orchestration) to launch. Atomic runs the shared skills in new sessions; there is no Oh My Pi-specific workflow. Ordinary sessions still use the handoffs and `task` workers above. Answer approvals with `/workflow connect <run-id>`. Runs without an interactive screen need `gates=none`. See [pause, quit, and resume](../workflows/delivery.md#gates-and-native-controls).

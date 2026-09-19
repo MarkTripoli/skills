@@ -1,22 +1,51 @@
 # Cheat sheet
 
-Independent skills first; optional Atomic orchestration second. Long form: [getting started](getting-started.md) and [delivery reference](../workflows/delivery.md).
+First run? Use [getting started](getting-started.md). Full workflow details: [delivery reference](../workflows/delivery.md).
 
 ## Install
+
+Requires Node 20.12 or newer. Run in your terminal:
 
 ```sh
 npx github:MarkTripoli/skills
 npx github:MarkTripoli/skills codex --skill create-plan --yes
-npx github:MarkTripoli/skills portable --atomic --yes
 npx github:MarkTripoli/skills portable --atomic --project --yes
 ```
 
-- Default: skills/workers only; no Atomic requirement.
-- `--skill <name>`: repeatable independent selection.
-- `--atomic`: opt into the workflow; requires all skills and a separately installed Atomic runtime.
-- `--project`: local skills and workflow resources, not a hidden dependency on home-directory skills.
-- `--dry-run`: inspect the plan; `--yes`: skip menus and confirmation.
-- `--uninstall`: select the managed resources to remove; add `--atomic` to select the optional workflow entry and tree. It does not delete task artifacts or worktrees.
+| Option | Effect |
+|---|---|
+| `claude-code`, `codex`, `oh-my-pi`, `pi`, `portable`, `all` | Choose an agent; `portable` means plain skill files, `all` selects all four agents |
+| `--skill <name>`, `-s <name>` | Select skills; repeat for more, or use `'*'` for all |
+| `--atomic` | Add the optional workflow; requires all skills and separately installed Atomic |
+| `--project` | Install in this repository |
+| `--global` | Install for the user; default |
+| `--dry-run` | Show changes without writing |
+| `--yes`, `-y` | Skip menus and confirmation; default to detected agents and all skills |
+| `--uninstall` | Remove selected managed files; add `--atomic` to include the workflow |
+| `--list`, `--help` | List skills or show usage, then stop |
+
+Uninstall does not delete task documents or worktrees.
+
+### File locations
+
+| Agent | User skills | User workers |
+|---|---|---|
+| Claude Code | `~/.claude/skills/` | `~/.claude/agents/` |
+| Codex | `~/.agents/skills/` | `~/.codex/agents/` plus a managed config block |
+| Oh My Pi | `~/.omp/agent/skills/` | `~/.omp/agent/agents/` |
+| Pi | `~/.pi/agent/skills/` | Worker roles run in the same session |
+| Portable | `~/.agents/skills/` | Worker roles run in the same session |
+
+Project skills use `.claude/skills/`, `.agents/skills/`, `.omp/skills/`, or `.pi/skills/`. Claude Code and Oh My Pi also use local `agents/` directories. The Codex project installer skips workers and user config; install without `--project` for those.
+
+Atomic installs `workflows/skills-delivery/` and its sibling `skills-delivery.mjs` under `~/.atomic/agent/`, or `.atomic/` for project installs. `ATOMIC_CODING_AGENT_DIR` changes the user root. The workflow reads all portable skills from `~/.agents/skills`, project `.agents/skills`, or your `skills_dir` input.
+
+### Other install methods
+
+- Claude Code plugin: `/plugin marketplace add MarkTripoli/skills`, then `/plugin install marktripoli-skills@marktripoli`.
+- [skills.sh](https://skills.sh/MarkTripoli/skills): `npx skills@latest add MarkTripoli/skills` installs skills only.
+- Pinned release: `npx github:MarkTripoli/skills#v<version>`.
+- Checkout: `node scripts/install.mjs`. Build files under `dist/` with `npm run build -- --runtime <claude-code|codex|oh-my-pi|pi|portable>`.
 
 ## Manual phases
 
@@ -31,38 +60,20 @@ npx github:MarkTripoli/skills portable --atomic --project --yes
 /describe-pr
 ```
 
-Use the actual artifact names from the preceding handoff, not these example names. Codex uses `$skill-name`. Open a fresh session in the handoff's checkout and branch each time. To change an artifact first, use its `iterate-*` skill with feedback.
+Run each in a **new session**, in the checkout and branch named by the previous reply. Use its actual file names, not these examples. Codex uses `$skill-name`. To revise a document, use its `iterate-*` skill with feedback.
 
 ## Atomic launch
 
-Install/authenticate Atomic from its [official guide](https://docs.bastani.ai/getting-started/installation). Run `atomic` in the project, then use these **chat commands**:
+After [Atomic setup](getting-started.md#add-optional-atomic-orchestration), run these in Atomic chat:
 
 ```text
 /workflow reload
 /workflow list
 /workflow inputs delivery
-/workflow delivery request="Add a --verbose flag" workflow=oneshot branch=verbose-flag gates=all
-/workflow delivery request="Diagnose and fix the missing config exit code" workflow=bugfix branch=config-exit-code
-/workflow delivery request="Compare and implement plugin loading approaches" workflow=full branch=plugin-loader gates=plan
+/workflow delivery request="Add a --verbose flag" workflow=oneshot model_routing=fixed branch=verbose-flag gates=all
 ```
 
-`workflow` choices: `auto`, `oneshot`, `lean`, `full`, `prd`, `bugfix`, `epic`, `program`, `resolve-reviews`, `epic-wave`.
-
-| Input | Default | Purpose |
-|---|---|---|
-| `request` | required | Task outcome |
-| `task_dir` | new task or existing directory | Reuse `task.md` and artifacts; preserve its request, `slug`, `workflow`, `base`, and branch |
-| `skills_dir` | install-specific portable root | Complete skill collection |
-| `workflow` | `auto` | Dynamic JEV selection or explicit chain |
-| `gates` | `all` | `all`, `none`, `plan`, `pr` |
-| `model` | `openai-codex/gpt-5.6-luna-fast` for code-writing stages | Stage model override; other blank values use Atomic's configured model |
-| `verify` | `true` | Independent implementation verification |
-| `app_test` | `none` | `web`, `ios`, `android`, or `none` |
-| `app_target` | optional | URL/app id/path |
-| `max_steps` | `40` | Skill-session bound including revisions |
-| `branch`, `base` | optional | New task's branch and merge base |
-
-Use `key=value`, not `--input`. Headless mode requires `gates=none`. `auto` requires a working JEV helper key; an explicit chain does not require JEV routing. The helper reads `TYPESAFE_API_KEY`, `TYPESAFE_API_KEY_FILE`, or `~/.config/typesafe/api_key`.
+Use `key=value`, not `--input`. An explicit `workflow` **and** `model_routing=fixed` avoid JEV, the service that chooses steps or models. See [workflow choices](../workflows/delivery.md#workflow-choices-and-manual-chains), [all inputs](../workflows/delivery.md#inputs), and [model selection](model-routing.md).
 
 ## Atomic inspect and steer
 
@@ -75,7 +86,7 @@ Use `key=value`, not `--input`. Headless mode requires `gates=none`. `auto` requ
 /workflow resume <run-id>
 ```
 
-Answer human prompts through the native UI reached by `connect`. `quit` pauses gracefully and preserves resumable progress; it is not deletion. There are no repository shell approve/reject/wait commands. See [official command semantics](https://docs.bastani.ai/workflows/operations#workflow-commands).
+`connect` opens approval prompts. `quit` preserves resumable work; it does not delete it. Runs without an interactive screen require `gates=none`. See [control rules](../workflows/delivery.md#gates-and-native-controls).
 
 ## Existing tasks, PR feedback, and epic waves
 
@@ -85,13 +96,12 @@ Answer human prompts through the native UI reached by `connect`. `quit` pauses g
 /workflow delivery request="Start ready children" workflow=epic-wave task_dir=.agents/tasks/example-epic gates=none
 ```
 
-The workflow reuses existing task artifacts. Epic children need actual merged dependencies; a PR description alone is not merge evidence. Review and merge externally before starting the next wave.
+These reuse saved task documents. Child tasks wait for prerequisite branches to merge; a pull request description does not prove a merge.
 
 ## Where things live
 
-- Canonical source: `skills/delivery/<name>/SKILL.md`, `skills/show-me/`.
-- Portable install: `~/.agents/skills/`; project install: `.agents/skills/`.
-- Optional workflow source: `atomic/workflows/delivery.ts`, helpers `atomic/lib/`.
-- Installed workflow: `<agentDir>/workflows/skills-delivery/` plus sibling `skills-delivery.mjs`; default agentDir `~/.atomic/agent`, override `ATOMIC_CODING_AGENT_DIR`. Project location: `.atomic/workflows/`.
-- Task history: `.agents/tasks/<slug>/task.md` and numbered artifacts on the task branch.
-- Worktrees persist until their owner deliberately removes them after inspecting/merging their work. Historical cancelled-run worktrees are not migration cleanup targets.
+- Skills: `skills/delivery/<name>/SKILL.md` and `skills/show-me/`.
+- Workflow: `atomic/workflows/delivery.ts`; helpers: `atomic/lib/`.
+- Task documents: `.agents/tasks/<slug>/task.md` and numbered files on the task branch.
+
+Worktrees belong to their owner. Do not delete old or cancelled-run worktrees as installation cleanup.
