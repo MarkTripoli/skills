@@ -8,5 +8,6 @@ Replace the repository's orchestration with the optional Atomic `delivery` workf
 - The dynamic controller uses fresh native stages and artifact-only handoffs, native human approval UI, bounded revision/repair sessions, and the existing typed-judgment helper for JEV decisions. Headless runs require `gates=none`; an explicit workflow selects a deterministic chain.
 - Remove obsolete workflow packs, generated runtime-specific orchestration, and the metrics integration without adding replacement telemetry. Earlier pending release notes describing the superseded orchestration are consolidated here.
 - Preserve task/artifact formats, manual skill invocation fences, published release history, existing task records, and owner-managed worktrees. Old engine checkpoints are not converted; continue from saved artifacts in a new Atomic run.
+- Verification resolves required command arguments and build targets from repository guidance before grading; an incomplete invocation is not treated as a product failure.
 
 This is a breaking operation/install contract change. See the README and delivery workflow reference for native Atomic commands, current inputs, and migration ownership rules.
