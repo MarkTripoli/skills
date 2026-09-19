@@ -61,7 +61,7 @@ Never `git add -A`, `git add .`, broad staging. Verify with `git log -1 --format
 
 ### 6. Save receipt
 
-Useful: take the next artifact number, write `NN-commit-<slug>.md` from `references/commit_template.md`, save the file in the task directory. When not run by the workflow engine, commit it with `git add <path>` as `docs(task): commit artifact`.
+Useful: take the next artifact number, write `NN-commit-<slug>.md` from `references/commit_template.md`, save the file in the task directory. Commit it with `git add <path>` as `docs(task): commit artifact`.
 
 Read and use `references/commit_final_answer.md` exactly. Fill `{artifact_link}` with a relative Markdown link to the saved receipt, `[NN-commit-slug.md](.agents/tasks/<slug>/NN-commit-slug.md)`; when no receipt was saved, write `none` in its place. End with single fenced `text` command.
 

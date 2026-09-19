@@ -20,7 +20,7 @@ Epic branch: `[epic branch]`. Child task files are committed here as `docs(task)
 - Wave 1: [child slugs with no dependencies]
 - Wave 2: [child slugs whose dependencies are all in wave 1]
 
-A wave starts after every dependency's pull request is merged. Under `delivery-epic` and `delivery-program`, the `delivery-wave` block launches each ready child when the pack's `children` input is `auto`; with `children=manual`, or by hand, start the children from the commands in the final answer.
+A wave starts after every dependency's pull request is merged. The optional Atomic workflow can launch each ready child in a separate run; by hand, start the children from the commands in the final answer.
 
 ## Human Review
 

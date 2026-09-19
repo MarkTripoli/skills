@@ -6,7 +6,9 @@ Check:
 - {review_check}
 - Known limits: {known_limits}
 
-Wave 1 children, their GitHub issues, and the start commands the `delivery-wave` block runs for them (each child runs as its own delivery run, cuts its worktree from the epic branch named by `--base`, and opens its pull request against that branch):
-- `{child_slug}` ({child_issue}): `{child_start_command}`
+Wave 1 children and their first manual skill commands:
+- `{child_slug}` ({child_issue}), task directory `.agents/tasks/{child_slug}/`: `{child_start_command}`
 
-The child `task.md` files are committed on the epic branch as `docs(task): open epic children`; a child with an issue carries `issue: <number>`, and its pull request description closes that issue. Under `delivery-epic` and `delivery-program`, the `delivery-wave` block pushes the epic branch and starts the ready children itself when the pack's `children` input is `auto` (the default). Later waves start after every dependency's pull request is merged into the epic branch. Running the epic plan's delivery recorded approval of the epic plan; reply with changes to a child's `task.md` before starting it. With `children: manual`, or to start one child by hand, ask your agent to start it, after `git push -u origin <epic branch>`: Archon cuts each child from the epic branch on `origin`. The commands above are the record of what runs, not something for you to type.
+Each child starts in a fresh session in its own worktree cut from the epic branch recorded as `base` in its `task.md`. <Name the epic branch and the worktree creation command for each child; identify existing child worktrees from observed state. For oneshot children, say to choose manual delivery, implement, verify, and commit before review.> The child's pull request targets that epic branch and closes its recorded issue when present.
+
+The child task files and this receipt are committed on the epic branch. Running this skill recorded approval of the epic plan; review any child changes before starting that child. Later waves start only after every dependency's pull request is merged into the epic branch. Optional workflow automation may launch ready children; none were launched by this skill.

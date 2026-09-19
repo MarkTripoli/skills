@@ -1,9 +1,0 @@
-# `children=manual`: the start commands are printed by `wave__launch-manual`, nothing runs.
-wave__ready: '{"branch":"epic-fixture","ready":["b"],"started":[],"done":["a"],"blocked":["c"]}'
-wave__launch-manual: '{"launched":[],"failed":[],"skipped_manual":true,"commands":["archon workflow run delivery-lean --branch b --base epic-fixture --input task_dir=.agents/tasks/b --input gates=none --input skills_dir=/home/me/.agents/skills --quiet ''b''"]}'
-wave__wave-done: '{"ready":["b"],"started":[],"done":["a"],"blocked":["c"]}'
-fixture:
-  expect: completed
-  inputs: { epic_dir: .agents/tasks/fixture, children: manual }
-  reached: [wave__ready, wave__launch-manual, wave__wave-done]
-exec-code: false

@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 // Validates the skill collection: layout, frontmatter, shared links, reference files,
-// answer-template handoffs, human-review templates, banned host tokens, workflow coverage, and the Archon packs.
+// answer-template handoffs, human-review templates, banned host tokens, and the optional Atomic workflow.
 // Usage: node scripts/validate.mjs [--root <dir>]
 // Exit 1 with one `file:line: message` per failure.
 
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { scanSkills } from "./lib/layout.mjs";
 import { SUBJECT_PATTERN, MAX_SUBJECT_LENGTH } from "./check-commits.mjs";
@@ -48,16 +47,14 @@ const ANSWER_INVENTORY = {
   "create-tdd/references/tdd_final_answer.md": "create-plan",
   "create-tdd/references/tdd_program_review_answer.md": "iterate-tdd",
   "create-tdd/references/tdd_system_review_answer.md": "iterate-tdd",
-  "deliver/references/deliver_archon_answer.md": TERMINAL_ANSWER,
+  "deliver/references/deliver_atomic_answer.md": TERMINAL_ANSWER,
   "deliver/references/deliver_ended_answer.md": TERMINAL_ANSWER,
-  "deliver/references/deliver_gate_answer.md": TERMINAL_ANSWER,
   "deliver/references/deliver_hand_answer.md": DELIVER_VARIANTS,
   "describe-pr/references/pr_description_final_answer.md": "resolve-pr-reviews",
   "fix-code-review/references/code_review_fixes_answer.md": "review-code",
   "fix-bug/references/fix_answer.md": "review-code",
   "gather-sources/references/sources_final_answer.md": SOURCES_VARIANTS,
   "herd-next/references/herd_next_answer.md": TERMINAL_ANSWER,
-  "herd-next/references/herd_next_gate_answer.md": TERMINAL_ANSWER,
   "herd-next/references/herd_next_skipped_answer.md": TERMINAL_ANSWER,
   "implement-outline/references/implementation_final_answer.md": "describe-pr",
   "implement-outline/references/implementation_phase_final_answer.md": "implement-outline",
@@ -217,9 +214,6 @@ const BANNED_TOKENS = [
 
 const SKIP_DIRS = new Set([".git", "node_modules", "dist", "results", ".cache"]);
 const SKIP_FILES = new Set(["scripts/validate.mjs", ".skill-lock.json"]);
-const MODEL_TIERS = ["small", "medium", "large"];
-// Archon 0.10.1's `effort:` enum, read from its loader message: 'effort' Invalid option: expected one of ...
-const EFFORT_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 
 const failures = [];
 const fail = (file, line, message) => failures.push(`${file}:${line}: ${message}`);
@@ -259,7 +253,7 @@ function fillTemplate(input) {
     .replaceAll("{report_link}", "[report.md](.agents/tasks/task-slug/evidence/screen/report.md)")
     .replaceAll("{child_slug}", "child-slug")
     .replaceAll("{child_issue}", "#12")
-    .replaceAll("{child_start_command}", "archon workflow run delivery-lean --base epic-slug --input task_dir=.agents/tasks/child-slug 'Child prompt'")
+    .replaceAll("{child_start_command}", "/deliver .agents/tasks/child-slug")
     .replaceAll("{review_check}", "Review the named behavior and evidence.")
     .replaceAll("{known_limits}", "None.")
     .replaceAll("{needed}", "The exact input file that triggers the crash.")
@@ -347,23 +341,9 @@ const FRESH_SESSION_RE = /^Open a new session in (.+), then run:$/m;
 const FRESH_SESSION_PREFIX = "Open a new session in ";
 const NEXT_ACTION_LABEL = "Next action:";
 
-// shared/CONVENTIONS.md's "Archon gate ask": a reply announcing a paused Archon gate carries this
-// sentence, byte-exact, as its ask. Read out of the convention's own fenced block rather than copied
-// here, so an edit to the convention that misses this file fails loudly instead of drifting silently.
+// Shared conventions also own the commit subject rule checked below.
 const conventionsFile = path.join(repoRoot, "shared", "CONVENTIONS.md");
 const conventionsLines = read(conventionsFile).split("\n");
-const gateAskHeading = conventionsLines.findIndex((line) => line.trim() === "## Archon gate ask");
-const gateAskSectionEnd = gateAskHeading === -1 ? -1 : conventionsLines.findIndex((line, i) => i > gateAskHeading && line.startsWith("## "));
-const gateAskSearchEnd = gateAskSectionEnd === -1 ? conventionsLines.length : gateAskSectionEnd;
-const gateAskFenceStart = gateAskHeading === -1 ? -1 : conventionsLines.findIndex((line, i) => i > gateAskHeading && i < gateAskSearchEnd && line.trim() === "```text");
-const gateAskFenceEnd = gateAskFenceStart === -1 ? -1 : conventionsLines.findIndex((line, i) => i > gateAskFenceStart && i < gateAskSearchEnd && line.trim() === "```");
-const GATE_ASK_SENTENCE = gateAskFenceStart === -1 || gateAskFenceEnd === -1 ? null : conventionsLines.slice(gateAskFenceStart + 1, gateAskFenceEnd).join("\n").trim();
-if (GATE_ASK_SENTENCE === null) fail("shared/CONVENTIONS.md", 0, "missing the Archon gate ask fenced sentence (## Archon gate ask, a fenced ```text block)");
-const GATE_ASK_ANSWERS = new Set([
-  "deliver/references/deliver_archon_answer.md",
-  "deliver/references/deliver_gate_answer.md",
-  "herd-next/references/herd_next_gate_answer.md",
-]);
 
 function checkHandoff(content, expectedSkill, label, { terminal = false, wantsArtifact = null } = {}) {
   const blocks = fences(content);
@@ -411,9 +391,6 @@ for (const [file, expected] of Object.entries(ANSWER_INVENTORY)) {
   if (expected === TERMINAL_ANSWER) {
     checkHandoff(raw, null, rel(skillFile(file)), { terminal: true });
     if (file in FENCE_ARTIFACT) fail(rel(skillFile(file)), 0, "terminal answer must not appear in FENCE_ARTIFACT");
-    if (GATE_ASK_SENTENCE && GATE_ASK_ANSWERS.has(file) && !raw.includes(GATE_ASK_SENTENCE)) {
-      fail(rel(skillFile(file)), 0, "must carry the Archon gate ask sentence, byte-exact (shared/CONVENTIONS.md's Archon gate ask)");
-    }
     continue;
   }
   if (!(file in FENCE_ARTIFACT)) {
@@ -549,131 +526,31 @@ if (!fs.existsSync(workflowFile)) {
   }
 }
 
-// 11. The Archon packs. The native packs are the source; the Oh My Pi flavor is generated from them and must be
-// current. Every skill a pack names exists, every AI node runs in a fresh session, and each workflow directory
-// holds exactly one YAML file (Archon's packaged layout) plus at least one dry-run fixture. Every pack that
-// opens a task directory declares the `gates` input and node; every join after a gated include or the bugfix
-// twins tolerates the skipped branch. When an Archon 0.10+ binary is on PATH, the packs must also load there
-// without errors or warnings; without one, that check is skipped and reported.
-const packsRoot = path.join(repoRoot, ".archon", "workflows");
-const { build: buildPacks, listNative } = await import("./build-packs.mjs");
-let archonChecked = "skipped (no archon 0.10+ on PATH)";
-if (!fs.existsSync(path.join(packsRoot, "delivery"))) {
-  fail(".archon/workflows/delivery", 0, "missing the native delivery packs");
-} else {
-  for (const stale of buildPacks({ write: false }).filter((r) => r.stale)) {
-    fail(rel(stale.target), 0, stale.orphan ? "generated pack has no native source; run node scripts/build-packs.mjs" : "generated Oh My Pi flavor is stale; run node scripts/build-packs.mjs");
-  }
-  for (const flavor of ["delivery", "delivery-omp"]) {
-    for (const dir of fs.readdirSync(path.join(packsRoot, flavor), { withFileTypes: true })) {
-      if (!dir.isDirectory()) continue;
-      const yamls = fs.readdirSync(path.join(packsRoot, flavor, dir.name)).filter((f) => f.endsWith(".yaml"));
-      if (yamls.length !== 1) fail(rel(path.join(packsRoot, flavor, dir.name)), 0, `a workflow directory holds exactly one YAML file (found ${yamls.length})`);
-    }
-  }
-  for (const { dir, file } of listNative()) {
-    const full = path.join(packsRoot, "delivery", dir, file);
-    const content = read(full);
-    const lines = content.split("\n");
-    const expectedName = `delivery-${dir}`;
-    if (!lines.includes(`name: ${expectedName}`)) fail(rel(full), 1, `workflow name must be "${expectedName}" (the directory name)`);
-    for (const match of content.matchAll(/\$(?:INPUTS|task\.output)\.skills_dir\/([a-z0-9-]+)\/SKILL\.md/g)) {
-      if (!skillSet.has(match[1])) fail(rel(full), content.slice(0, match.index).split("\n").length, `names unknown skill "${match[1]}"`);
-    }
-    // Every `$id.output...` and `$LOOP_PREV.id.output...` outside a comment names a node or include alias
-    // this file declares.
-    const declared = new Set([...content.matchAll(/^\s*- id: (\S+)$/gm)].map((m) => m[1]));
-    const code = lines.map((l) => (/^\s*#/.test(l) ? "" : l)).join("\n");
-    for (const match of code.matchAll(/\$(?:LOOP_PREV\.)?([a-z][a-z0-9-]*)\.output\b/g)) {
-      if (!declared.has(match[1])) fail(rel(full), code.slice(0, match.index).split("\n").length, `references \`$${match[1]}.output\` but declares no node "${match[1]}"`);
-    }
-    for (const { start, keyIndent, node } of promptNodes(lines)) {
-      if (!node.some((l) => l === `${" ".repeat(keyIndent)}context: fresh`)) fail(rel(full), start + 1, "every prompt node declares `context: fresh`");
-    }
-    // Top-level nodes: id, the indent-4 keys, and the `depends_on` list.
-    const nodes = [];
-    lines.forEach((line, index) => {
-      const id = /^ {2}- id: (\S+)$/.exec(line);
-      if (id) nodes.push({ id: id[1], line: index + 1, keys: {} });
-      const key = /^ {4}([a-z_]+): ?(.*)$/.exec(line);
-      if (key && nodes.length) nodes.at(-1).keys[key[1]] = key[2];
-    });
-    const byId = new Map(nodes.map((n) => [n.id, n]));
-    // A pack with a gated phase declares the `gates` input and node (resolve-reviews has no gate).
-    if (nodes.some((n) => ["delivery-gate-phase", "delivery-implement"].includes(n.keys.include))) {
-      if (!/^ {2}gates:\n {4}default: all$/m.test(content)) fail(rel(full), 1, "a pack with a gated phase declares input `gates` with `default: all`");
-      if (!byId.has("gates")) fail(rel(full), 1, "a pack with a gated phase has a `gates` node");
-    }
-    // A gated include or a `when:`-guarded twin leaves one branch skipped; an unconditional join after it must
-    // not wait for it. A `when:` node after a twin (bugfix `not-reproduced`) is meant to skip with it.
-    const gated = new Set(nodes.filter((n) => ["delivery-gate-phase", "delivery-implement"].includes(n.keys.include) || "when" in n.keys).map((n) => n.id));
-    for (const node of nodes) {
-      const deps = /^\[(.*)\]$/.exec(node.keys.depends_on ?? "");
-      if ("when" in node.keys || !deps || !deps[1].split(",").some((d) => gated.has(d.trim()))) continue;
-      if (node.keys.trigger_rule !== "none_failed_min_one_success") fail(rel(full), node.line, `\`${node.id}\` follows a gated branch and needs \`trigger_rule: none_failed_min_one_success\``);
-    }
-    const fixtures = path.join(packsRoot, "delivery", dir, "fixtures");
-    if (!fs.existsSync(fixtures) || !fs.readdirSync(fixtures).some((f) => f.endsWith(".stubs.yaml"))) fail(rel(fixtures), 0, "every pack declares at least one dry-run fixture (fixtures/<name>.stubs.yaml)");
-    // Twins: a gate condition on `== 'true'` has a sibling on `!= 'true'` over the same value, so one branch
-    // always runs. Other `when:` nodes (the optional review pass) are single.
-    const whens = [...content.matchAll(/^\s*when: "(\$[A-Za-z0-9_.-]*gate[A-Za-z0-9_.-]*) (==|!=) 'true'"$/gm)].map((m) => `${m[1]} ${m[2]}`);
-    for (const w of whens) {
-      const twin = w.endsWith("==") ? w.replace(/==$/, "!=") : w.replace(/!=$/, "==");
-      if (!whens.includes(twin)) fail(rel(full), lines.findIndex((l) => l.includes(`when: "${w} 'true'"`)) + 1, `\`when: "${w} 'true'"\` has no twin branch \`${twin} 'true'\``);
-    }
-  }
-  const archon = archonBinary();
-  if (archon) {
-    try {
-      const out = execFileSync(archon, ["workflow", "list", "--cwd", repoRoot, "--json"], { encoding: "utf8", env: { ...process.env, DO_NOT_TRACK: "1" }, stdio: ["ignore", "pipe", "ignore"], timeout: 120000 });
-      const listed = JSON.parse(out);
-      const names = new Set();
-      for (const workflow of listed.workflows) {
-        if (!workflow.name.startsWith("delivery-")) continue;
-        names.add(workflow.name);
-        for (const warning of workflow.parseWarnings ?? []) fail(`.archon/workflows (${workflow.name})`, 0, `archon warning: ${warning.slice(0, 200)}`);
-      }
-      for (const error of listed.errors) fail(`.archon/workflows/${error.filename}`, 0, `archon: ${error.error.slice(0, 300)}`);
-      for (const { dir } of listNative()) {
-        for (const name of [`delivery-${dir}`, `delivery-${dir}-omp`]) if (!names.has(name)) fail(`.archon/workflows (${name})`, 0, "archon does not list this workflow");
-      }
-      archonChecked = `checked with ${archon}`;
-    } catch (error) {
-      fail(".archon/workflows", 0, `archon workflow list failed: ${String(error.message).split("\n")[0]}`);
-    }
+// 11. Atomic is an optional installation, not a prerequisite for reading or building skills.
+// Check the repository entry statically; never import the runtime or start a workflow here.
+if (!generated) {
+  const entry = path.join(repoRoot, "atomic", "workflows", "delivery.ts");
+  if (!fs.existsSync(entry)) {
+    fail("atomic/workflows/delivery.ts", 0, "missing the optional delivery workflow source");
+  } else {
+    const content = read(entry);
+    if (!/\bexport\s+default\b/.test(content)) fail(rel(entry), 0, "the Atomic workflow must have a default export");
+    if (!/\bname\s*:\s*["']delivery["']/.test(content)) fail(rel(entry), 0, "the Atomic workflow must register as delivery");
   }
 }
 
-// The first `archon` on PATH whose version is 0.10 or later, else null. `archon --version` prints
-// `Archon CLI vX.Y.Z` on its first line.
-function archonBinary() {
-  for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
-    const candidate = path.join(dir, "archon");
-    if (!dir || !fs.existsSync(candidate)) continue;
-    try {
-      const version = /v(\d+)\.(\d+)\./.exec(execFileSync(candidate, ["--version"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 20000 }));
-      if (version && (Number(version[1]) > 0 || Number(version[2]) >= 10)) return candidate;
-    } catch {
-      // Not a usable archon; keep looking.
-    }
+// 12. Generated runtimes carry exactly the canonical portable skill inventory.
+if (generated) {
+  const canonicalNames = new Set(scanSkills(path.join(repoRoot, "skills")).skills.map((skill) => skill.name));
+  for (const name of canonicalNames) {
+    if (!skillSet.has(name)) fail("skills", 0, `generated tree is missing canonical skill "${name}"`);
   }
-  return null;
-}
-
-// 12. Model tiers. Every prompt node in the native tree names the tier it runs on (`model: small|medium|large`,
-// the words `archon ai tier set` and `archon workflow run --model` bind), and `effort:` when present is one of
-// Archon's levels. Archon accepts any string for `model:` (the SDK decides what exists), so a typo would only
-// surface as a provider error at run time; this check catches it at validation. The generated Oh My Pi tree
-// is not checked: its generator turns the fields into `omp` flags. See docs/model-routing.md.
-if (fs.existsSync(path.join(packsRoot, "delivery"))) {
-  for (const { dir, file } of listNative()) {
-    const full = path.join(packsRoot, "delivery", dir, file);
-    for (const { line, message } of promptNodeTierProblems(read(full).split("\n"))) fail(rel(full), line, message);
+  for (const name of skillSet) {
+    if (!canonicalNames.has(name)) fail("skills", 0, `generated tree includes unknown skill "${name}"`);
   }
 }
 
 // 13. The commit subject rule the conventions document is the rule the commit-msg hook and CI enforce.
-// Reuses conventionsLines, already read above for the Archon gate ask sentence.
 const ruleIndex = conventionsLines.findIndex((line) => /^Validate the subject before committing: it must match `/.test(line));
 const rule = ruleIndex === -1 ? null : /must match `([^`]+)` and be at most (\d+) characters/.exec(conventionsLines[ruleIndex]);
 if (!rule) {
@@ -692,45 +569,7 @@ function report() {
     process.exit(1);
   }
   console.log(
-    `ok: ${skillNames.length} skills, ${answerFiles.length} answer templates, ${HUMAN_REVIEW_TEMPLATES.length} human-review templates, ${EXECUTION_DAG_TEMPLATES.length} execution-DAG templates, ${WORK_BREAKDOWN_TEMPLATES.length} work-breakdown templates, ${bannedHits} banned tokens, packs ${archonChecked}${generated ? ` (generated tree ${root})` : ""}`,
+    `ok: ${skillNames.length} skills, ${answerFiles.length} answer templates, ${HUMAN_REVIEW_TEMPLATES.length} human-review templates, ${EXECUTION_DAG_TEMPLATES.length} execution-DAG templates, ${WORK_BREAKDOWN_TEMPLATES.length} work-breakdown templates, ${bannedHits} banned tokens${generated ? ` (generated tree ${root})` : ", Atomic entry checked"}`,
   );
 }
 
-// Every `prompt: |` node in a workflow file: the node's lines (from its `- id:` line to the next sibling or
-// the end of its parent) and the indent of its keys. Body nodes of a `loop_group` are found the same way,
-// since their `- id:` sits two columns left of their keys too.
-function promptNodes(lines) {
-  const found = [];
-  lines.forEach((line, index) => {
-    const prompt = /^(\s*)prompt: \|$/.exec(line);
-    if (!prompt) return;
-    const keyIndent = prompt[1].length;
-    const idLine = new RegExp(`^${" ".repeat(keyIndent - 2)}- id: `);
-    let start = index;
-    while (start > 0 && !idLine.test(lines[start])) start--;
-    let end = index + 1;
-    while (end < lines.length && !idLine.test(lines[end]) && !(lines[end].trim() !== "" && lines[end].length - lines[end].trimStart().length < keyIndent - 2)) end++;
-    found.push({ start, end, keyIndent, node: lines.slice(start, end) });
-  });
-  return found;
-}
-
-// `{line, message}` per prompt node whose `model:` is missing or not a tier word, or whose `effort:` is not
-// an Archon level. Lines are 1-based and point at the offending key, or at the node's `- id:` line when
-// `model:` is missing.
-function promptNodeTierProblems(lines) {
-  const problems = [];
-  for (const { start, keyIndent, node } of promptNodes(lines)) {
-    const key = (name) => {
-      const pattern = new RegExp(`^ {${keyIndent}}${name}: ?(.*)$`);
-      const offset = node.findIndex((l) => pattern.test(l));
-      return offset === -1 ? null : { line: start + offset + 1, value: pattern.exec(node[offset])[1].trim() };
-    };
-    const model = key("model");
-    if (!model) problems.push({ line: start + 1, message: `prompt node declares no \`model:\`; use one of ${MODEL_TIERS.join(", ")}` });
-    else if (!MODEL_TIERS.includes(model.value)) problems.push({ line: model.line, message: `\`model: ${model.value}\` is not a tier; use one of ${MODEL_TIERS.join(", ")}` });
-    const effort = key("effort");
-    if (effort && !EFFORT_LEVELS.includes(effort.value)) problems.push({ line: effort.line, message: `\`effort: ${effort.value}\` is not an Archon effort level; use one of ${EFFORT_LEVELS.join(", ")}` });
-  }
-  return problems;
-}

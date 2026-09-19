@@ -1,14 +1,14 @@
 #!/usr/bin/env node
-// Installs the collection for coding agents: runtime-adapted skills, worker definitions, and optional Archon
-// delivery packs. Runs from a checkout (`node scripts/install.mjs`) or GitHub (`npx github:MarkTripoli/skills`).
+// Installs independent skills and worker definitions, with an optional Atomic delivery workflow.
+// Runs from a checkout (`node scripts/install.mjs`) or GitHub (`npx github:MarkTripoli/skills`).
 //
-// Usage: npx github:MarkTripoli/skills [target...] [--skill <name>...] [--project] [--dry-run] [--yes] [--no-packs] [--uninstall] [--list]
+// Usage: npx github:MarkTripoli/skills [target...] [--skill <name>...] [--project] [--dry-run] [--yes] [--atomic] [--uninstall] [--list]
 //   target   claude-code | codex | oh-my-pi | pi | portable | all   (interactive when omitted)
 //   --skill, -s    install one named skill; repeat for more (`*` selects all)
-//   --project      install into the current project (./.claude, ./.agents, ./.omp, ./.pi, ./.archon) instead of the home directory
+//   --project      install into the current project instead of the home directory
 //   --dry-run      print what would change and stop
 //   --yes          skip menus and confirmation; use detected runtimes and every skill when unspecified
-//   --no-packs     skip the Archon workflow packs (and the ~/.agents/skills copy they read)
+//   --atomic       also install the Atomic workflow and the full canonical skill collection
 //   --uninstall    remove what an earlier install put in place (same targets, skills, and scope)
 //   --list         print the skills in the collection and stop
 // Exit 0 on success, 1 on error, 2 on usage error, cancellation, or declined confirmation.
@@ -34,14 +34,14 @@ const MARK_BEGIN = "# >>> MarkTripoli/skills workers (managed by the installer; 
 const MARK_END = "# <<< MarkTripoli/skills workers";
 
 export function parseArgs(argv) {
-  const out = { targets: [], skillNames: [], all: false, project: false, dryRun: false, yes: false, packs: true, uninstall: false, list: false, help: false, errors: [] };
+  const out = { targets: [], skillNames: [], project: false, dryRun: false, yes: false, atomic: false, uninstall: false, list: false, help: false, errors: [] };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--project") out.project = true;
     else if (arg === "--global") out.project = false;
     else if (arg === "--dry-run") out.dryRun = true;
     else if (arg === "--yes" || arg === "-y") out.yes = true;
-    else if (arg === "--no-packs" || arg === "--no-pack") out.packs = false;
+    else if (arg === "--atomic") out.atomic = true;
     else if (arg === "--uninstall") out.uninstall = true;
     else if (arg === "--list") out.list = true;
     else if (arg === "--help" || arg === "-h") out.help = true;
@@ -57,7 +57,6 @@ export function parseArgs(argv) {
       if (name) out.skillNames.push(name);
       else out.errors.push("--skill requires a skill name");
     } else if (arg === "all") {
-      out.all = true;
       out.targets.push(...TARGETS.filter((target) => target !== "portable"));
     } else if (TARGETS.includes(arg)) out.targets.push(arg);
     else out.errors.push(`unknown argument "${arg}"; targets are ${TARGETS.join(", ")} or all`);
@@ -113,7 +112,7 @@ export async function promptSelections(args, catalog, { prompt = prompts, isTTY 
     const mode = await prompt.select({
       message: "Which skills should be installed?",
       options: [
-        { value: "all", label: `All ${catalog.length} skills`, hint: "recommended for the delivery packs" },
+        { value: "all", label: `All ${catalog.length} skills` },
         { value: "choose", label: "Choose specific skills" },
       ],
       initialValue: "all",
@@ -163,33 +162,20 @@ export function destinations(target, { project, cwd = process.cwd(), home = os.h
   }
 }
 
-// The Archon packs: `~/.archon/workflows/<pack>/` (or `<cwd>/.archon/workflows/<pack>/` with --project), one
-// directory per flavor. Their prompts read skills from `~/.agents/skills` (the packs' `skills_dir` input default).
-// The native flavor serves the runtimes Archon drives itself; the `-omp` flavor serves Oh My Pi. Only the flavors
-// the chosen targets need are installed, so the router lists one set of packs on a one-runtime machine.
-export const PACKS = ["delivery", "delivery-omp"];
-export const RETIRED = {
-  skills: ["run-task", "start-task", "review-loop", "setup-worktree", "configure-workspaces"],
-  extension: "run-task",
-};
-export function packFlavors(targets) {
-  const flavors = [];
-  if (targets.some((t) => ["claude-code", "codex", "pi", "portable"].includes(t))) flavors.push("delivery");
-  if (targets.includes("oh-my-pi")) flavors.push("delivery-omp");
-  return flavors;
-}
-
-export function packDestination({ project, cwd = process.cwd(), home = os.homedir() }) {
-  return project ? path.join(cwd, ".archon", "workflows") : path.join(home, ".archon", "workflows");
+export function atomicDestination({ project, cwd = process.cwd(), home = os.homedir(), env = process.env }) {
+  const agentDir = env.ATOMIC_CODING_AGENT_DIR || path.join(home, ".atomic", "agent");
+  return project
+    ? path.join(cwd, ".atomic", "workflows", "skills-delivery")
+    : path.resolve(agentDir, "workflows", "skills-delivery");
 }
 
 // One install plan: the file operations for every target, computed before anything is written.
 export function plan(options) {
-  const { targets, project, packs, uninstall = false, cwd, home, env } = options;
+  const { targets, project = false, atomic = false, cwd = process.cwd(), home = os.homedir(), env = process.env } = options;
   const { skills } = scanSkills(path.join(repoRoot, "skills"));
   const allNames = skills.map((skill) => skill.name);
   const names = resolveSkillNames(options.skillNames ?? [], skills);
-  if (packs && names.length !== allNames.length) throw new Error("Archon packs require the full skill collection");
+  if (atomic && names.length !== allNames.length) throw new Error("--atomic requires all skills; remove --skill selections or pass --skill '*' (omit --atomic for independent skills)");
   const allWorkerNames = allNames.filter((name) => name.startsWith("agent-"));
   const workerNames = names.filter((name) => name.startsWith("agent-"));
   const steps = [];
@@ -206,43 +192,16 @@ export function plan(options) {
     steps.push({ target, kind: "skills", from: target === "portable" ? "canonical" : `built for ${target}`, to: dest.skills, names });
     return dest;
   };
+  // Atomic reads canonical skills, even when Codex shares the portable destination.
+  if (atomic) skillStep("portable");
   for (const target of targets) {
     const dest = skillStep(target);
     if (dest.agents && workerNames.length) steps.push({ target, kind: "agents", to: dest.agents, names: workerNames, format: target === "codex" ? "toml" : "md" });
     else if (target === "codex" && project && workerNames.length) notes.push("codex: worker definitions and their config.toml block are user-level; run without --project to install them");
     if (dest.config && workerNames.length) steps.push({ target, kind: "config", to: dest.config, names: workerNames, complete: workerNames.length === allWorkerNames.length });
   }
-  if (packs) {
-    // The packs read `~/.agents/skills/<name>/SKILL.md`; make sure a copy lives there (the codex and portable
-    // targets already write it at home scope).
-    const portable = destinations("portable", { project: false, cwd, home, env });
-    if (!skillDirsClaimed.has(portable.skills)) {
-      skillDirsClaimed.set(portable.skills, "packs");
-      steps.push({ target: "packs", kind: "skills", from: "canonical, read by the packs", to: portable.skills, names });
-    }
-    const to = packDestination({ project, cwd, home });
-    if (path.resolve(to) === path.join(repoRoot, ".archon", "workflows")) notes.push("packs: this checkout already holds the packs; nothing to copy");
-    else steps.push({ target: "packs", kind: "packs", to, names: packFlavors(targets) });
-    if (project) notes.push("packs: project-scoped packs still read skills from ~/.agents/skills; pass --input skills_dir=<dir> to a run to read from elsewhere");
-  }
-  if (uninstall && !packs) {
-    const portable = destinations("portable", { project: false, cwd, home, env }).skills;
-    const kept = steps.filter((step) => step.kind !== "skills" || path.resolve(step.to) !== path.resolve(portable));
-    if (kept.length !== steps.length) steps.splice(0, steps.length, ...kept);
-    notes.push("packs: kept, so the ~/.agents/skills copy they read stays too");
-  }
-  if (!uninstall) {
-    const skillDestinations = [...new Set(steps.filter((step) => step.kind === "skills").map((step) => step.to))];
-    const paths = skillDestinations.flatMap((to) => RETIRED.skills.map((name) => path.join(to, name)));
-    for (const target of targets) {
-      if (target !== "oh-my-pi" && target !== "pi") continue;
-      const root = project ? cwd : home;
-      const extension = target === "oh-my-pi" ? ".omp" : ".pi";
-      paths.push(path.join(root, extension, project ? "extensions" : path.join("agent", "extensions"), RETIRED.extension));
-    }
-    if (paths.length) steps.push({ target: "retired", kind: "retired", paths: [...new Set(paths)] });
-  }
-  if (targets.includes("codex") && !project && (targets.includes("pi") || targets.includes("oh-my-pi"))) {
+  if (atomic) steps.push({ target: "atomic", kind: "workflow", to: atomicDestination({ project, cwd, home, env }) });
+  if (!atomic && targets.includes("codex") && !project && (targets.includes("pi") || targets.includes("oh-my-pi"))) {
     notes.push("Pi and Oh My Pi also read ~/.agents/skills, where the Codex copy lives; their own skill directories are installed too, so a skill may appear twice by name in those runtimes");
   }
   return { steps, notes, names };
@@ -260,10 +219,8 @@ function describe(step, home) {
       return `${step.target}: ${step.names.length} worker definitions -> ${short(step.to, home)}/agent-*.${step.format}`;
     case "config":
       return `${step.target}: [agents.*] block -> ${short(step.to, home)}`;
-    case "packs":
-      return `packs: Archon workflows ${step.names.join(", ")} -> ${short(step.to, home)}/<pack>/`;
-    case "retired":
-      return `remove ${step.paths.length} retired paths`;
+    case "workflow":
+      return `atomic: delivery workflow -> ${short(step.to, home)}/ and ${short(path.join(path.dirname(step.to), "skills-delivery.mjs"), home)}`;
     default:
       return JSON.stringify(step);
   }
@@ -366,21 +323,20 @@ export function apply(planned, { built, uninstall, home }) {
         done.push(`${uninstall ? "updated selected workers in" : "updated the workers block in"} ${short(step.to, home)}`);
         break;
       }
-      case "packs": {
-        if (!uninstall) {
-          for (const name of PACKS.filter((name) => !step.names.includes(name))) fs.rmSync(path.join(step.to, name), { recursive: true, force: true });
+      case "workflow": {
+        const entry = path.join(path.dirname(step.to), "skills-delivery.mjs");
+        if (uninstall) {
+          fs.rmSync(entry, { force: true });
+          fs.rmSync(step.to, { recursive: true, force: true });
+        } else {
+          copyDir(path.join(repoRoot, "atomic"), step.to);
+          // Workflow discovery aliases Atomic and TypeBox, but not third-party imports.
+          // Keep the parser inside this owned tree; never install into the user's project.
+          const yamlRoot = path.dirname(fileURLToPath(import.meta.resolve("yaml/package.json")));
+          copyDir(yamlRoot, path.join(step.to, "node_modules", "yaml"));
+          fs.writeFileSync(entry, "export { default } from './skills-delivery/workflows/delivery.ts';\n");
         }
-        for (const name of step.names) {
-          const to = path.join(step.to, name);
-          if (uninstall) fs.rmSync(to, { recursive: true, force: true });
-          else copyDir(path.join(repoRoot, ".archon", "workflows", name), to);
-        }
-        done.push(`${uninstall ? "removed" : "wrote"} Archon packs ${step.names.join(", ")} under ${short(step.to, home)}`);
-        break;
-      }
-      case "retired": {
-        if (!uninstall) for (const to of step.paths) fs.rmSync(to, { recursive: true, force: true });
-        done.push(`removed ${step.paths.length} retired paths`);
+        done.push(`${uninstall ? "removed" : "wrote"} Atomic delivery workflow and entry under ${short(path.dirname(step.to), home)}`);
         break;
       }
       default:
@@ -390,14 +346,13 @@ export function apply(planned, { built, uninstall, home }) {
   return done;
 }
 
-// One built tree per target the plan writes: runtimes get their flavor, `portable` and `packs` the
-// canonical copy, and the `retired` removal step builds nothing (its pseudo-target is no runtime).
+// Build only skill and worker trees; the optional workflow is copied directly from its source.
 export function buildTrees(planned, work) {
   const built = new Map();
   const selected = new Set(planned.names);
-  for (const target of new Set(planned.steps.filter((step) => step.kind !== "retired").map((step) => step.target))) {
+  for (const target of new Set(planned.steps.filter((step) => step.kind !== "workflow").map((step) => step.target))) {
     const dest = path.join(work, target);
-    if (target === "portable" || target === "packs") {
+    if (target === "portable") {
       fs.mkdirSync(path.join(dest, "skills"), { recursive: true });
       for (const skill of scanSkills(path.join(repoRoot, "skills")).skills) {
         if (selected.has(skill.name)) fs.cpSync(skill.dir, path.join(dest, "skills", skill.name), { recursive: true, filter: noDsStore });
@@ -411,7 +366,7 @@ export function buildTrees(planned, work) {
 async function main(argv) {
   const args = parseArgs(argv);
   const version = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8")).version;
-  const usage = "usage: npx github:MarkTripoli/skills [claude-code|codex|oh-my-pi|pi|portable|all ...] [--skill <name> ...] [--project] [--dry-run] [--yes] [--no-packs] [--uninstall] [--list]";
+  const usage = "usage: npx github:MarkTripoli/skills [claude-code|codex|oh-my-pi|pi|portable|all ...] [--skill <name> ...] [--project] [--dry-run] [--yes] [--atomic] [--uninstall] [--list]";
   if (args.help) {
     console.log(usage);
     return 0;
@@ -444,12 +399,13 @@ async function main(argv) {
     return 2;
   }
   const { targets, skillNames } = selection;
-  const allSkills = skillNames.length === catalog.length;
-  // Partial skill installs cannot carry the Archon packs: every pack references the complete delivery chain.
-  // Uninstalling one named runtime leaves the packs and the ~/.agents/skills copy they read in place.
-  const packs = args.packs && allSkills && (!args.uninstall || !args.targets.length || args.all);
-  const planned = plan({ targets, skillNames, project: args.project, packs, uninstall: args.uninstall, cwd, home, env: process.env });
-  if (args.packs && !allSkills) planned.notes.unshift("packs: skipped because the selected skills do not contain the complete delivery chain");
+  let planned;
+  try {
+    planned = plan({ targets, skillNames, project: args.project, atomic: args.atomic, cwd, home, env: process.env });
+  } catch (error) {
+    console.error(error.message);
+    return 2;
+  }
 
   const targetSuffix = args.targets.length ? "" : interactive ? " (selected)" : " (found on PATH)";
   console.log(`skills ${version} from ${repoRoot}`);
@@ -474,13 +430,13 @@ async function main(argv) {
 
   const work = fs.mkdtempSync(path.join(os.tmpdir(), "skills-install-"));
   try {
-    const built = buildTrees(planned, work);
+    const built = args.uninstall ? new Map() : buildTrees(planned, work);
     for (const line of apply(planned, { built, uninstall: args.uninstall, home })) console.log(`  ${line}`);
   } finally {
     fs.rmSync(work, { recursive: true, force: true });
   }
   if (!args.uninstall) {
-    if (packs) console.log("Done. With Archon installed, `archon workflow list` shows the delivery packs; `archon workflow run delivery-bugfix --branch <name> \"<report>\"` runs one (docs/cheatsheet.md).");
+    if (args.atomic) console.log("Done. Open Atomic to run the delivery workflow. Skills remain usable independently (docs/cheatsheet.md).");
     else console.log("Done. Start a new session; run a skill as /<name> (Codex: $<name>) for a task directory.");
     if (targets.includes("codex")) console.log("Codex: skills are invoked as $<name>.");
   }

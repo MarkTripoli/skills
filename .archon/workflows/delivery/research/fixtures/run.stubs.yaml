@@ -1,8 +1,0 @@
-# Research questions, then research.
-questions: "research questions saved"
-research: "research saved"
-fixture:
-  expect: completed
-  inputs: { task_dir: .agents/tasks/fixture }
-  reached: [questions, research]
-exec-code: false

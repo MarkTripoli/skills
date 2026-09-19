@@ -1,9 +1,0 @@
-# gate=true and the previous pass's "request changes" asked to stop: `stopped` cancels the run before
-# the revision skill runs. (The runner does not check resolved text on a cancel node, so the message is
-# not asserted here.)
-intent: '{"intent":"stop"}'
-fixture:
-  expect: cancelled
-  inputs: { task_dir: .agents/tasks/fixture, skill: create-plan, iterate: iterate-plan, label: the plan, gate: "true" }
-  reached: [intent, stopped]
-exec-code: false

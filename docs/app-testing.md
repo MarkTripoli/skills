@@ -1,6 +1,6 @@
 # App testing
 
-The `test-app` phase drives the implemented application through its user interface, the way a tester at a keyboard would, and records what each step showed. It runs after implementation and before the pull request description when a pack is started with `--input app_test=<kind>`; by hand it is `/test-app` in a fresh session.
+The `test-app` phase drives the implemented application through its user interface, the way a tester at a keyboard would, and records what each step showed. The optional Atomic controller runs it before the pull request description when `app_test` is enabled; by hand invoke `/test-app` in a fresh session.
 
 ## What the phase does
 
@@ -21,19 +21,21 @@ The `test-app` phase drives the implemented application through its user interfa
 
 Missing prerequisites do not fail the phase silently: the artifact's `## Missing` list names each one and the status is `blocked`.
 
-## Pack inputs
+## Optional workflow inputs
 
-Every pack that implements code (`delivery-full`, `delivery-lean`, `delivery-prd`, `delivery-oneshot`, `delivery-bugfix`) takes two inputs:
+The Atomic `delivery` workflow takes:
 
-- `app_test`: `none` (default), `web`, `ios`, or `android`. Anything but `none` runs the `delivery-app-test` block after implementation.
-- `app_target`: what to launch. Empty lets the skill start the repository's own dev server or build.
+- `app_test`: `none` (default), `web`, `ios`, or `android`. Anything but `none` requests UI testing.
+- `app_target`: what to launch. Omit it to let the skill inspect the repository's dev-server or build instructions.
 
-```sh
-archon workflow run delivery-lean --branch verbose-flag --input app_test=web --input app_target=http://localhost:3000 "Add a --verbose flag to the settings page"
-archon workflow run delivery-full --branch onboarding --input app_test=ios --input app_target=com.example.app "Redesign onboarding"
+Inside Atomic:
+
+```text
+/workflow delivery request="Add a settings toggle" workflow=lean branch=settings-toggle app_test=web app_target="http://localhost:3000"
+/workflow delivery request="Redesign onboarding" workflow=full branch=onboarding app_test=ios app_target=com.example.app
 ```
 
-The run needs the simulator, emulator, or browser on the same machine as the Archon worker; the phase does not provision devices.
+The machine running the stage needs the simulator, emulator, or browser; the phase does not provision devices. Independent skill invocation has the same prerequisites but needs no Atomic installation.
 
 ## What the artifact records
 
@@ -41,7 +43,7 @@ The run needs the simulator, emulator, or browser on the same machine as the Arc
 
 ## How failures loop back
 
-The `delivery-app-test` block is a `loop_group` of three rounds. A `failed` round runs `iterate-implementation` with the artifact's `## Findings` as feedback, commits the artifact, and tests again in a fresh session, which revises the same artifact in place. `passed` ends the loop and the pack continues to `describe-pr`. `blocked` commits the artifact and cancels the run; supply what `## Missing` names and start the run again with the same `--input task_dir=`. Three failed rounds fail the node.
+The Atomic controller reads the saved app-test artifact. A `failed` result routes to `iterate-implementation` with its findings, then a fresh test stage exercises the repair. A `passed` result allows the remaining review/PR work to continue. A `blocked` result reports the missing prerequisite instead of passing. The workflow's `max_steps` bounds repeated repair sessions; inspect native run status and the artifact before resuming or starting a new run with the existing `task_dir`.
 
 By hand the same routing is the reply's command fence: `/describe-pr` after a pass, `/iterate-implementation @<plan file>` after a failure, `/show-me` when blocked.
 

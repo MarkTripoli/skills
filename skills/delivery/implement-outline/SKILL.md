@@ -68,7 +68,7 @@ If automated checks failed, report the failure and either fix it or ask for dire
 
 ### 3. Commit and continue
 
-When every automated validation checkbox in the phase is checked with a recorded passing result, create a focused commit with a Conventional Commits subject (conventions, Commits section) and start the next phase without waiting. Use explicit `git add <path>` commands for code paths; never mix `.agents/tasks/` files into the code commit. When not run by the workflow engine, commit the updated outline and the receipt separately with `git add <path>` as `docs(task): implementation artifact`. `/ci-commit` stays the manual fallback for work outside this flow.
+When every automated validation checkbox in the phase is checked with a recorded passing result, create a focused commit with a Conventional Commits subject (conventions, Commits section) and start the next phase without waiting. Use explicit `git add <path>` commands for code paths; never mix `.agents/tasks/` files into the code commit. Commit the updated outline and the receipt separately with `git add <path>` as `docs(task): implementation artifact`. `/ci-commit` stays the manual fallback for work outside this flow.
 
 ### 4. Repeat for the next phase
 

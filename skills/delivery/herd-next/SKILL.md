@@ -1,6 +1,6 @@
 ---
 name: herd-next
-description: Run for /herd-next requests at the end of a delivery phase inside Herdr. Open the next phase in its own pane with its command staged, or watch an Archon run and open a review pane when it pauses at a gate.
+description: Run for /herd-next requests at the end of a manual delivery phase inside Herdr. Open the next skill in a fresh pane with its handoff command staged for the user.
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
@@ -68,58 +68,11 @@ herdr pane send-text "$pane" "$command"
 
 `agent start` returns `agent_not_ready` when the agent is blocked during startup while keeping the name usable; on that response, wait with `herdr agent wait "$name" --until idle --until done --timeout 30000` before staging. `--until` is repeatable and a bare wait with none settles on `blocked` too, which is the one state this branch exists to sit out. A wait that fails (the 30-second timeout, or the agent settling on `blocked`) means it never became ready: close the pane this step opened, `herdr pane close "$pane"`, then print `references/herd_next_skipped_answer.md` with the reason `the agent in the new pane is still blocked`, and stop. Nothing was staged, so nothing is left half-open with a reply that claims otherwise.
 
-Step 8, stage or submit. `send-text` is the default and stages without Enter: a command that records approval is staged, never submitted, which is what keeps "running the next command records approval" true. A command that records no approval, such as the gate mode's `/deliver --run <run-id>`, may be submitted. Submit with `herdr agent prompt "$name" "$command" --wait --timeout 120000` only when the caller passed `--submit`. `$command` takes the prefix its own pane's kind uses, not the fence's literal `/`: `shared/CONVENTIONS.md`'s Handoff section fixes the printed fence at `/` for every kind because a Codex person retypes it as `$` before running it; a pane has no person doing that conversion, so step 7's `case "$kind"` does it, for `codex` only, before either `send-text` or this `agent prompt` line sees the string. The gate mode's submitted command below takes the same substitution.
+Step 8, stage or submit. `send-text` stages without Enter. A command that records approval stays staged even when the caller passes `--submit`; the user submits it. For a command that records no approval, submit with `herdr agent prompt "$name" "$command" --wait --timeout 120000` only when the caller passed `--submit`. Step 7 converts `/` to `$` for a Codex pane before either operation; the printed handoff fence keeps `/`.
 
 Step 9, the reply: `references/herd_next_answer.md`, every `<...>` slot filled.
 
 Never close a pane, tab, or workspace this skill did not create. Never target a pane by focus; only by `--current`, an id read from JSON, or a live agent name. Never run `herdr server stop`. No emojis, no em dashes.
-
-## Archon gate mode
-
-Entered when the caller passes `--run <run-id>` or names a run. Step 1's guard runs first here too.
-
-Find the run when the caller named none. One running or paused run for this project is taken without asking; several means asking which:
-
-```bash
-archon workflow status --json | jq -r '.runs[] | "\(.id)\t\(.workflow_name)\t\(.status)\t\(.working_path)"'
-```
-
-Read the run once. This pane is never held: the steward in the review pane does the waiting.
-
-Read the run's state; never guess a path or a decision id:
-
-```bash
-run=$(archon workflow get "$run_id" --json) || { printf '%s\n' "$run" >&2; exit 1; }
-run_status=$(jq -r '.status' <<<"$run")
-cwd=$(jq -r '.working_path' <<<"$run")
-node=$(jq -r '.metadata.approval.nodeId // empty' <<<"$run")
-msg=$(jq -r '.metadata.approval.message // empty' <<<"$run")
-decisions=$(jq -r '.metadata.approval.decisions[]?.id // empty' <<<"$run")
-resolved=$(jq -r '.metadata.approval.resolved // empty' <<<"$run")
-```
-
-A `get` that exits nonzero opens no pane: print `references/herd_next_skipped_answer.md` with the reason `the run could not be read`, followed by Archon's output as cause and fix. Without the guard `$cwd` is the literal string `null` and the pane opens there.
-
-A gate is live when `status` is `paused` and `resolved` is empty; the key is absent while the gate waits and appears once it has been answered. `status` of `completed`, `failed`, or `cancelled` means the run is over: print the skipped reply with the reason `the run has ended` and stop. `running`, or `paused` with a non-empty `resolved`, still opens the pane: `$phase` is `run`, the notification is skipped because there is no gate to name, and the steward in the pane announces the pause when it arrives. `$phase` is `$node` with a trailing `__cycle` stripped when a gate is live, so `design__cycle` labels the pane `<slug>/design`.
-
-`$artifact` is the task directory named in `$msg`, resolved against `$cwd`; when the message names none, `$artifact` is `$cwd` itself. `$slug` is that directory's basename - the run's own task, never the caller's, because `$cwd` is the run's `working_path`, a different checkout from `$PWD` whenever the caller is not already inside it.
-
-Get the pane and the name exactly as steps 4 through 6 do, with one substitution throughout: `$cwd` in place of `$PWD` everywhere a pane or tab is opened, because the review pane lives in the run's worktree, not the caller's. The busy check still reads the caller's own tab and pane through `$HERDR_TAB_ID` and `$HERDR_PANE_ID`, since that geometry is unchanged; only the destination of the new pane or tab moves. That gives `$kind`, `$pane`, and `$name`. Notify, start the agent, and submit the attach command:
-
-```bash
-[ -n "$node" ] && herdr notification show "Gate: $slug/$phase" --body "$msg" --sound request
-herdr agent start "$name" --kind "$kind" --pane "$pane"
-herdr pane rename "$pane" "$slug/$phase gate"
-attach="/deliver --run $run_id"
-case "$kind" in codex) attach="\$deliver --run $run_id" ;; esac
-herdr agent prompt "$name" "$attach"
-```
-
-The `agent_not_ready` handling is the one already stated in step 7, still-blocked branch included; the gate mode does not restate it: wait with `herdr agent wait "$name" --until idle --until done --timeout 30000` before submitting the attach command. A failed wait closes the pane and prints the skipped reply with the same reason, exactly as step 7 does, instead of submitting the attach command or printing the gate reply below. This is what keeps `deliver/SKILL.md`'s `No pane was opened` fallback reachable even though a pane was briefly opened here.
-
-`agent prompt` without `--wait` returns on submission, so the gate mode does not block for the length of the run. The pane's `deliver` reads the gated artifact, announces the pause, and resolves every decision itself, including any id a pack authored beyond `approve` and `reject`. Submitting here records no approval, so the stage-not-submit rule does not reach this line.
-
-The reply is `references/herd_next_gate_answer.md`, every `<...>` slot filled.
 
 ## Optional Stop hook
 

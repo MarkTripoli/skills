@@ -1,7 +1,0 @@
-# Executed for real in Archon's scratch worktree: with no task_dir the node creates
-# `.agents/tasks/<slug>/task.md` and commits it there.
-fixture:
-  expect: completed
-  inputs: { workflow: lean }
-  reached: [create]
-exec-code: true

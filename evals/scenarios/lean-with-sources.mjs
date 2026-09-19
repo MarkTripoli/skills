@@ -22,7 +22,6 @@ export default {
       template: "structure_outline_template.md",
       next: "implement-outline",
       handoffNamesArtifact: true,
-      commit: "docs(task): structure-outline artifact",
       check: ({ artifact }) => {
         const text = artifact?.text ?? "";
         const body = text.split(HUMAN_REVIEW)[0];

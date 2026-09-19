@@ -1,7 +1,0 @@
-# gate=false: `once` runs the skill without a gate; `cycle` is skipped.
-once: "artifact saved"
-fixture:
-  expect: completed
-  inputs: { task_dir: .agents/tasks/fixture, skill: create-plan, iterate: iterate-plan, gate: "false" }
-  reached: [once]
-exec-code: false

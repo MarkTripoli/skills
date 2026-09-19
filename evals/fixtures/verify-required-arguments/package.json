@@ -1,0 +1,17 @@
+{
+  "name": "notifyctl",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "Send account notifications through configured channels",
+  "bin": {
+    "notifyctl": "src/cli.mjs"
+  },
+  "scripts": {
+    "test": "node --test tests/",
+    "build": "make build"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -31,7 +31,7 @@ Run focused tests, then required gates. Record commands/outcomes. Missing gate r
 
 ## Save receipt
 
-Take the next artifact number. Write `NN-code-review-fixes-<summary>.md` using template. Map Critical/Required ids to disposition/evidence. Record advisories separately. Save the file. When not run by the workflow engine, commit it with `git add <path>` as `docs(task): code-review-fixes artifact`; fixes to code go in their own commit with explicit code paths.
+Take the next artifact number. Write `NN-code-review-fixes-<summary>.md` using template. Map Critical/Required ids to disposition/evidence. Record advisories separately. Save the file. Commit it with `git add <path>` as `docs(task): code-review-fixes artifact`; fixes to code go in their own commit with explicit code paths.
 
 ## Review again
 

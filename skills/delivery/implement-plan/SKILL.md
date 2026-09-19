@@ -69,7 +69,7 @@ Automated checks are green, so implementation continues to the next phase.
 
 ### 6. Commit and continue
 
-When every Automated Verification checkbox in the phase is checked with a recorded passing result, create a focused commit with a Conventional Commits subject (conventions, Commits section) and start the next phase without waiting. Stage explicit code paths with `git add`; never stage the whole repository, and never mix `.agents/tasks/` files into the code commit. When not run by the workflow engine, commit the ticked plan and the receipt separately with `git add <path>` as `docs(task): implementation artifact`. `/ci-commit` stays the manual fallback for work outside this flow.
+When every Automated Verification checkbox in the phase is checked with a recorded passing result, create a focused commit with a Conventional Commits subject (conventions, Commits section) and start the next phase without waiting. Stage explicit code paths with `git add`; never stage the whole repository, and never mix `.agents/tasks/` files into the code commit. Commit the ticked plan and the receipt separately with `git add <path>` as `docs(task): implementation artifact`. `/ci-commit` stays the manual fallback for work outside this flow.
 
 ### 7. Repeat for the next phase
 

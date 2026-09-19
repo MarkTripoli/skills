@@ -1,8 +1,0 @@
-# gate=false: the `phases-auto` loop names the phase and runs it with no gate.
-next-phase-auto: '{"next":""}'
-implement-phase-auto: "phase implemented"
-fixture:
-  expect: completed
-  inputs: { task_dir: .agents/tasks/fixture, gate: "false" }
-  reached: [next-phase-auto, implement-phase-auto, phases-auto]
-exec-code: false

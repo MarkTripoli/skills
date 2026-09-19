@@ -1,6 +1,6 @@
 # Context management
 
-The skills in this collection assume one thing about the agent running them: its context window is finite, and its judgment degrades long before the window is full. Everything in the workflow design follows from that. This guide explains the model, how the packs get a fresh context per phase, how to do the same by hand, and how to recognize a degraded session.
+The skills in this collection use one fresh session per phase and artifacts as memory between sessions. This guide explains how optional Atomic orchestration provides that boundary, how to do the same by hand, and how to recognize a degraded session.
 
 ## Why phases, not one long session
 
@@ -28,10 +28,10 @@ flowchart LR
 
 - **Unit**: one phase, one skill, one fresh session. It reads `task.md` and the artifacts it selects, does its work, writes one artifact, prints a reply, and stops.
 - **Memory**: the task directory `.agents/tasks/<slug>/`, committed on the branch (`docs(task): open <slug>`, then `docs(task): <phase> artifacts` after each phase). Artifacts carry `type` and `summary` frontmatter; a later phase reads the full text only of the artifacts it selects and `summary` from the rest.
-- **Transition**: under Archon, the next node in the pack's DAG. By hand, the handoff fence at the end of every reply, one command naming the next phase, with the sentence before it telling you to run it in a new session.
-- **Gate**: an approval node whose artifact you review before the chain continues. Approve continues; reject with text runs the matching `iterate-*` skill in another fresh session with that text as feedback. The `gates` input turns gates off; the phase then runs once without review.
+- **Transition**: under Atomic, the controller selects the next skill from the request and saved artifacts. By hand, the handoff fence at the end of a reply names the next phase and asks you to open a new session.
+- **Gate**: a native Atomic human prompt asks you to review an artifact before continuing. Feedback runs the matching revision skill in a fresh stage. By hand, running the next fenced command records approval.
 
-The contract for all of this is [shared/CONVENTIONS.md](../shared/CONVENTIONS.md), in particular "Phase isolation and context budget" and "Running under Archon".
+The contract is [shared/CONVENTIONS.md](../shared/CONVENTIONS.md), particularly "Phase isolation and context budget". Controller inputs and gate policy are in [workflows/delivery.md](../workflows/delivery.md).
 
 ### What one phase is allowed to read
 
@@ -41,11 +41,11 @@ In this order, and nothing else: `task.md`; the primary artifacts it selects, co
 
 Research and implementation phases delegate to worker roles (`agent-codebase-locator`, `agent-implementer`, and so on). Each worker runs in its own context: it gets the assignment text, reads what it needs, and returns one structured message. The phase verifies the claims it uses against the repository and keeps only the facts. Workers never write into the task directory; the parent phase applies what they report. This keeps the phase's own window small even when the codebase exploration is large.
 
-Worker isolation depends on the install. The portable tree names no subagent mechanism, so a phase performs worker roles inline and says so in its reply; its window then holds the exploration too. The runtime builds (`npm run build -- --runtime <id>`) insert the runtime's worker call into every skill and generate the worker definitions. Point `skills_dir` at a runtime build when you want that isolation under Archon.
+Worker isolation depends on the install. The portable tree names no subagent mechanism, so a phase performs worker roles inline and says so in its reply; its window then holds the exploration too. Runtime builds insert the runtime's worker mechanism and generate worker definitions. The optional Atomic controller uses portable skills with its native stage tools; changing `skills_dir` does not turn Atomic into a different agent harness.
 
 ## Fresh context per phase
 
-Under Archon every AI node in the packs carries `context: fresh`, and every `loop_group` carries `fresh_context: true`, so each pass of a gate cycle, review loop, or implementation loop starts a new agent session. The reviewer's text reaches the iterate skill through the node prompt (`$LOOP_PREV.gate.output.text`), never through a shared conversation. Interactive phases (`create-prd`, `create-tdd`, every `iterate-*`) therefore run as one fresh session per feedback round: the gate collects the feedback, the next iteration applies it. Because the run exits at each gate and `approve --detach` starts a new child, no process holds the earlier phases' context either.
+Under Atomic every skill stage explicitly uses `context: "fresh"`. A revision, implementation phase, verification pass, or review is a new stage, not a continuation of the previous stage's conversation. Feedback reaches the revision through its prompt and saved artifacts. The controller's small decision state is distinct from agent conversation memory.
 
 By hand, the fresh context is a new session you open yourself:
 
@@ -78,7 +78,7 @@ What to do:
 1. Stop giving new instructions in that session.
 2. Make sure the artifact is saved. If the phase has not printed its reply, say: "Save the artifact in its current state and print the final answer from the template."
 3. Open a new session.
-4. Run the next command, or `/iterate-<phase> @<artifact file>` with the feedback you still have. Under Archon, `archon workflow resume <run-id>` re-runs the failed node in a fresh session against the task directory as it stands in the run's worktree.
+4. Run the next command, or `/iterate-<phase> @<artifact file>` with the feedback you still have. For Atomic runs, inspect `/workflow status <run-id>` and use native `/workflow resume <run-id>` when saved durable progress is available; resuming a retained stage is not a substitute for the fresh boundary between different skills.
 
 Never fix a degraded phase with `/compact`. The artifact survives a new session; a compaction summary does not preserve what the next phase needs.
 
@@ -89,6 +89,6 @@ A new skill that joins a workflow keeps the guarantees above by following the co
 - Read only `task.md` and selected artifacts; delegate codebase exploration to workers; never paste worker output.
 - Save the artifact before printing the reply; a handoff ends with `Next action:`, `Open a new session in {run_location}, then run:`, and one command fence. A terminal reply ends with its state and has no fence.
 - Stop on the first sign of degradation and hand off from the saved file.
-- When a pack node needs to route on the result, put the JSON-only answer requirement in the pack prompt with an `output_format`, not in the skill; the skill keeps writing its artifact first.
+- Keep orchestration contracts in the Atomic workflow's stage prompts and helpers, not in ordinary skill files. Preserve the human reply template and artifact-first behavior for standalone use.
 
 `npm test` checks the reply shape, the next-action label, the new-session instruction, the shared links, and the banned tokens for every skill in the collection.

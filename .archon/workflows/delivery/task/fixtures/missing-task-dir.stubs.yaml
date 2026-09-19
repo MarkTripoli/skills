@@ -1,6 +1,0 @@
-# A task_dir with no task.md fails the node.
-fixture:
-  expect: failed
-  fail-node: create
-  inputs: { task_dir: .agents/tasks/nope }
-exec-code: true

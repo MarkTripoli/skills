@@ -1,135 +1,94 @@
 ---
 name: deliver
-description: Run for /deliver requests, for `/deliver --run <run-id>`, or when a person has a request and does not know which delivery pack or skill starts it. Route the request to a pack and an autonomy level, start the `archon workflow run`, and then stay with the run as its steward: announce each pause, take the decision in plain language, and resolve it. Without Archon, open the task directory and hand off to the chain's first skill.
+description: Run for /deliver requests, for `/deliver --run <run-id>`, or when a request needs a delivery chain. Route to a workflow and review policy; use optional Atomic orchestration or open a task for independent skill sessions.
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
 
 # Deliver
 
-One command for a request whose pack is not yet chosen. You read the request, pick the pack and how many human gates it keeps, and hand the work to the engine that runs it: Archon when it is installed, the skills by hand otherwise. This skill implements nothing and writes no artifact; at most it opens the task directory. With Archon it starts the run itself and then stays with it: at every pause it reads the gated artifact, asks for a decision in words, and runs `archon workflow respond` itself. The user never types an `archon` command.
+Choose a delivery chain and review policy. Atomic is optional; every phase also works independently in Claude Code, Codex, Oh My Pi, Pi, or a portable installation. This entry skill opens or routes the task, rather than implementing it.
 
-## Steps
+## 1. Take the request or reconnect
 
-1. **Attach or take the request.** When the argument is `--run <run-id>` or a bare Archon run id, skip steps 2 to 5 and go to step 6 with that run id, whatever the run's status: the loop's first act is the `get` read, so a `paused` run is announced at once and a `running` run is waited on first. This is both what `herd-next` submits into a review pane and how a person re-enters a run whose steward was lost.
+For `--run <run-id>`, use Atomic's native `/workflow status <run-id>` and `/workflow connect <run-id>` in Atomic. Read the reported state and artifact paths. A connection inspects the existing run; it does not approve a gate or resume paused work. Outside Atomic, give those native commands as inline text for the user to enter there. Never fabricate a run id or start a replacement run. Use `references/deliver_atomic_answer.md` for an active run and `references/deliver_ended_answer.md` for a terminal result.
 
-   Otherwise take the request from the user's message, verbatim; strip a leading `/deliver`. When nothing remains, ask for the request in one sentence and stop until it arrives. The first line of the request is the task title.
+Otherwise take the request verbatim, stripping a leading `/deliver`. Ask for the request when it is empty. Its first line is the title. Honor an explicit manual/no-workflow request even when Atomic is installed.
 
-2. **Route.** Run the typed-judgment helper twice with the request on stdin, where `<skills dir>` is the directory that contains this skill (in a checkout, `skills/delivery`):
+## 2. Route the request
 
-   - `node <skills dir>/typed-judgment/judge.mjs route-workflow --json -` prints `{workflow, suggested, confidence, probabilities}`. `workflow` is already `full` when `confidence` is below 0.8; `suggested` is the raw pick.
-   - `node <skills dir>/typed-judgment/judge.mjs autonomy --json -` prints `{autonomy, suggested, confidence}`; `autonomy` is one of `none`, `pr`, `plan`, `all`, already thresholded.
+Where available, pass only the request on stdin to these helpers, installed beside this skill (`skills/delivery` in a checkout):
 
-   Program rule: the helper never answers `program`. When `workflow` is `prd` and the request contains `prd` or `requirements` and also `epic`, `children`, `issues`, or `pull requests`, the pack is `program`. A request that names a pack outright (`program`, `bugfix`, ...) takes that pack at confidence 1.
+- `node <skills dir>/typed-judgment/judge.mjs route-workflow --json -` returns `{workflow, suggested, confidence, probabilities}`. Below 0.8 confidence, `workflow` is already `full`.
+- `node <skills dir>/typed-judgment/judge.mjs autonomy --json -` returns `{autonomy, suggested, confidence}`. Map `autonomy` directly to the `gates` value `all`, `none`, `plan`, or `pr`; do not expand it into a comma-separated list.
 
-   Autonomy to `gates`: `none` gives `none`, `pr` gives `pr`, `all` gives `all`, and `plan` gives the pack's planning gates: full `design,plan`; prd and program `prd,tdd,plan`; lean `outline`; bugfix `reproduce`; epic `plan`; oneshot `pr` (it has no plan gate).
+An explicitly named workflow or gate policy wins. The helper does not return `program`: choose it when the request names it, or when a `prd` request contains `prd` or `requirements` and also `epic`, `children`, `issues`, or `pull requests`.
 
-   Helper unavailable (no `node`, exit 3, or any nonzero exit): pick the pack yourself from the table below, take autonomy `all` unless the request plainly asks for an unattended run or a single review point, record no confidence, and say once in the reply that judgments were skipped.
+| Workflow | Use when | First manual action |
+|---|---|---|
+| `oneshot` | Small change, stated expected behavior, verification available, no design choice. | Implement, verify, and commit the requested change; then `/review-code`. |
+| `bugfix` | Observed behavior differs from expected and needs a reproduction. | `/reproduce-bug` |
+| `lean` | Shape is clear, with several files and an ordering. | `/create-research-questions` |
+| `full` | Competing approaches, cross-module impact, migration, or interface design. | `/create-research-questions` |
+| `prd` | Product requirements, users, or edge behavior need definition. | `/create-research` |
+| `epic` | Several independently mergeable deliverables. | `/create-research-questions` |
+| `program` | Product definition followed by epic children. | `/create-research` |
+| `resolve-reviews` | An existing pull request needs review threads resolved. | `/resolve-pr-reviews` |
+| `epic-wave` | An existing epic has ready children to continue. | Read its epic-delivery receipt and open each ready child's first skill. |
 
-   | Pack | Use when |
-   |---|---|
-   | `oneshot` | Small change, stated expected behavior, a way to verify it, no design choice. |
-   | `bugfix` | Observed behavior differs from expected and a reproduction is possible. |
-   | `lean` | The shape is clear but several files and an ordering are involved. |
-   | `full` | Competing approaches, cross-module impact, a migration, an interface others depend on, or a design review is asked for. |
-   | `prd` | The requirement itself is open: what it should do, for whom, edge behavior; product-facing; stakeholders beyond the requester. |
-   | `epic` | Several independently mergeable deliverables, work for more than one person, or more than about eight plan phases. |
-   | `program` | A PRD that then splits into epic children with their own issues and pull requests. |
+If the helper is absent or exits nonzero, choose from this table and use `gates: all` unless the request explicitly chooses another policy. Say once that judgments were skipped. Do not require Node, a key, or a sibling skill to route manually.
 
-3. **Confirm when the pick is soft.** When `confidence` is below 0.8, or the two highest `probabilities` are within 0.2 of each other, or your own reading finds two packs that fit, ask the user one question: the top two packs with one clause each on why, and the autonomy level you will use. Continue with the answer; a named pack takes confidence 1. Otherwise ask nothing.
+When confidence is below 0.8, the top two probabilities differ by less than 0.2, or two chains fit equally, ask one question naming those choices and the proposed gates. Otherwise continue without asking. Route on the request, not repository exploration.
 
-4. **With Archon** (`command -v archon` succeeds, `git rev-parse --is-inside-work-tree` succeeds, and `git remote get-url origin` prints a remote): compute the branch name and start the run; step 6 stewards it from there.
+## 3. Optional Atomic launch
 
-   - Branch: the request's first line, lower-cased, every character outside `a-z0-9` and space replaced by a space, split into words, the stop words `a an the to of for in on and or with that this add make create please fix bug` dropped, the first four words joined with `-`. When no word survives, take the first four words without dropping any; `task` when the line is empty. `epic` and `program` prefix the result with `epic-`, because `start-epic-delivery` refuses to run on `main`, `master`, or a detached `HEAD`. This is the rule the `delivery-task` node applies, so the branch and the task slug match.
-   - Command: `archon workflow run delivery-<pack> --branch <branch> --input gates=<gates> '<request>'`, the request in shell single quotes with every `'` written as `'\''`. Add `--input app_test=<web|ios|android>` when the request asks for the running application to be tested on one of those surfaces, and `--input app_target=<url, bundle id, or package>` when it names one; `epic` and `program` take neither. Omit `--input gates=` only when `gates` is `all`, the default.
-   - Run it from the project root as a long-running process that outlives this reply: start it with the runtime's background or supervised long-running-process mechanism and never wait on it. No shell call is held for the length of a phase, here or later; step 6 does every read and every wait, in bounded chunks. Never add `--detach`: Archon refuses it for a workflow that can pause, and nothing here needs it, because the process is ours to leave running. Read the run id from the run list, polling it every few seconds for up to 30 seconds, taking the run whose `working_path` is the worktree for `<branch>`:
+Use this branch only when Atomic and the collection's registered `delivery` workflow are available and orchestration is wanted. Check `/workflow list` and `/workflow inputs delivery` in Atomic first. A binary alone does not establish that the workflow is installed. Installation is opt-in with `--atomic`; normal skill installation has no workflow dependency.
 
-     ```bash
-     archon workflow status --json | jq -r '.runs[] | "\(.id)\t\(.workflow_name)\t\(.status)\t\(.working_path)"'
-     ```
+Start through Atomic's native command surface:
 
-     A dispatch still absent from that list after 30 seconds is a start failure: report the background process's own captured output (wherever the runtime's long-running-process mechanism recorded its stdout and stderr) as cause and fix, and retry nothing.
-   - The command fails before dispatching when the worktree for `<branch>` is in use by an earlier run; its message names that run id. Attach to it by taking that run id into step 6 instead of starting a second run, and report that run. Any other failure is reported as cause and fix, verbatim from Archon's output, and nothing is retried.
-   - Pauses: from the pack's gate list (full `design`, `plan`, `phases`, `pr`; lean `outline`, `phases`, `pr`; prd `prd`, `tdd`, `plan`, `phases`, `pr`; oneshot `pr`; bugfix `reproduce`, `pr`; epic `plan`; program `prd`, `tdd`, `plan`) keep the names `gates` leaves on; `none` leaves none. The pause the run stopped at comes first in the reply; the ones still ahead follow.
-   - Inside Herdr (`HERDR_ENV` is `1`): run `herd-next`'s Archon gate mode for this run id at once, without waiting for a pause; it opens the review pane at the run's `working_path` and submits `/deliver --run <run-id>` into it. When its reply opens with `No pane was opened` instead (an unreadable agent kind, a name it cannot build, a `get` that failed, or an agent still blocked after the readiness wait: no pane opened, so no steward exists anywhere for this run), go to step 6 now and steward inline in this session, exactly as the outside-Herdr branch below does. Otherwise reply with `references/deliver_archon_answer.md`, its run line reading `is running` while the run has not paused yet and its last line filled with the pane pointer, and stop. The pane's steward owns every pause from here.
-   - Outside Herdr, or inside Herdr when the gate mode opened no pane: go to step 6 now. The run is `running`, so the loop's running-run branch waits in bounded chunks for the first pause; this reply is `references/deliver_archon_answer.md` printed at that pause, its run line filled from the gated artifact's `summary`, `### Verify`, and `### Known limits` and its last line filled with the ask. Step 6's loop resumes on the user's answer.
-   - Either way the reply carries no command fence: the run is already going, so no skill command follows.
+```text
+/workflow delivery request="<request>" workflow=<workflow> gates=<gates>
+```
 
-5. **Without Archon**: open the task worktree, open the task directory in it, and hand off to the chain's first skill.
+Encode string inputs as JSON strings, preserving quotes, newlines, and backslashes. This is a command entered in Atomic, not a shell subcommand. From another coding runtime, present it inline for the user to enter in Atomic; report that launch is pending, not running. Do not type it into an unrelated agent prompt. When a native workflow tool is available, inspect its installed input contract and launch semantics before using it; do not invent shell equivalents.
 
-   - Open the worktree per the conventions' Task worktree section, with the branch from step 4 and the path `~/.agents/worktrees/<repo>/<slug>`. It is the default here for the same reason Archon uses one: the phases that follow commit code and artifacts on the task branch, and the checkout the user is in stays on its own branch. Ask nothing; the section names the cases that skip it.
-   - Create `.agents/tasks/<slug>/task.md` in the worktree per the conventions (slug from the branch rule above, `-2`, `-3` suffix when the directory exists; no `epic-` prefix on a slug), with frontmatter `slug`, `title`, `workflow: <pack>`, `gates: <gates>`, `routed_by: deliver`, `route_confidence: <confidence>` (omit the line when the helper did not run), `created`, and the request as the body. `git add .agents/tasks/<slug>/task.md` and commit as `docs(task): open <slug>`, applying the conventions' `.gitignore` rule. Outside a git work tree, write the file, skip the worktree, and say both are uncommitted.
-   - `{next_command}` is the chain's first skill: bugfix `/reproduce-bug`; oneshot `/review-code`; lean, full, and epic `/create-research-questions`; prd and program `/create-research`. For `oneshot` the reply first says the change is small enough to implement in this session: on the user's go, implement, verify, and commit it per the `ci-commit` conventions, then the review runs from the fence.
-   - Reply with `references/deliver_hand_answer.md`, every `<...>` slot filled: the pack, its confidence, the autonomy level and gates, the worktree path and branch, the task directory, and the chain as the table in `workflows/delivery.md` lists it. Fill `{run_location}` in the handoff sentence with that same worktree per the conventions' placeholder rule (`` `<worktree path>` on branch `<branch>` ``, or `this checkout` when the worktree was skipped), so the next session opens where the task's commits and each `@<file>` handoff resolve. The gates that stay on are the replies the user reviews before pasting the next command; later phases are the skills the chain names.
+The registered inputs are:
 
-6. **Steward the run** until it completes, fails, or is cancelled. Entered from step 1's attach branch, or from step 4 outside Herdr, or from step 4 inside Herdr when the gate mode opened no pane. Right after step 4 the run is `running` and has not paused yet, so the loop takes the running-run branch below: bounded `wait` chunks until the first pause. No shell call is held for the length of a phase, the first one included.
+| Input | Type and default |
+|---|---|
+| `request` | Required string. |
+| `task_dir` | Optional existing task-directory string. |
+| `skills_dir` | Optional skill root; defaults to portable `~/.agents/skills`. Project installs use the project's `.agents/skills`; pass that absolute path. |
+| `workflow` | `auto` by default; also `oneshot`, `lean`, `full`, `prd`, `bugfix`, `epic`, `program`, `resolve-reviews`, `epic-wave`. |
+| `gates` | `all` by default; also `none`, `plan`, `pr`. |
+| `model` | `openai-codex/gpt-5.6-luna-fast` by default; ordinary economical baseline and mandatory for every code-writing or unknown phase. Explicit values are honored. |
+| `model_routing` | `auto` by default; `auto` asks JEV whether the ordinary model or `reasoning_model` is adequate for eligible non-writing stages, while `fixed` selects `model` directly with no JEV call. |
+| `reasoning_model` | `openai-codex/gpt-5.6-sol` by default; stronger candidate considered only for eligible stages in `model_routing=auto`. |
+| `app_test` | `none` by default; also `web`, `ios`, `android`. |
+| `app_target` | Optional URL, bundle id, package, or application path string. |
+| `verify` | Boolean, default `true`. |
+| `max_steps` | Number, default `40`. |
+| `branch` | Optional task branch string. |
+| `base` | Optional merge-target branch string. |
 
-   Read the state; never guess a path or a decision id:
+Pass an existing task directory rather than opening a duplicate task. Resolve it, read `<task_dir>/task.md`, and preserve its `slug`, request body, `workflow`, and `base` metadata; do not classify the directory path as request text or overwrite `task.md`. Reuse its branch and merge target. `resolve-reviews` and `epic-wave` continue the saved task without changing those fields. Supply application inputs only when requested. Headless execution requires `gates=none`; approvals require an interactive Atomic session. An explicit workflow does not disable stage-model JEV; use `model_routing=fixed` when the run must be JEV-free.
 
-   ```bash
-   run=$(archon workflow get "$run_id" --json) || { printf '%s\n' "$run" >&2; exit 1; }
-   run_status=$(jq -r '.status' <<<"$run")
-   cwd=$(jq -r '.working_path' <<<"$run")
-   node=$(jq -r '.metadata.approval.nodeId // empty' <<<"$run")
-   msg=$(jq -r '.metadata.approval.message // empty' <<<"$run")
-   decisions=$(jq -r '.metadata.approval.decisions[]?.id // empty' <<<"$run")
-   resolved=$(jq -r '.metadata.approval.resolved // empty' <<<"$run")
-   ```
+Atomic owns run state and approvals. Inspect with `/workflow status <run-id>`; open the graph and answer pending prompts with `/workflow connect <run-id>`. Use `/workflow pause <run-id>` to pause, `/workflow quit <run-id>` to stop gracefully while preserving resumability, and `/workflow resume <run-id>` to continue saved work. Quit is not deletion or abandonment. Never interpret an ordinary chat reply or a phase's manual command fence as an Atomic approval. Never add a polling steward, shell response command, or automated Herdr gate pane.
 
-   A `get` that exits nonzero ends the steward: report Archon's output as cause and fix, and retry nothing, the rule step 4 already applies to a failed dispatch. Outside a git work tree the body is a well-formed `ok: false` error with no `status` key, so an unguarded read leaves `$run_status` as the literal `null`, the loop takes the running-run branch, and it waits forever on a run it cannot read. The guard fires on the nonzero exit, not on a parse error. The variable is `run_status`, not `status`: zsh reserves `status` as a read-only alias for `$?`, and an assignment to it aborts the whole read under zsh, the default login shell on macOS.
+Reply with `references/deliver_atomic_answer.md`, filling only observed run information. When no run was launched, state the prerequisite or pending native command instead of a run id. Every new skill stage gets a fresh context; resuming an interrupted active stage may restore that stage's own session. Completed phases pass artifacts, not conversation.
 
-   A gate is live only when `status` is `paused` and `resolved` is empty. `completed`, `failed`, and `cancelled` print `references/deliver_ended_answer.md` and stop. The running-run branch, taken on `running` or on `paused` with a non-empty `resolved`, waits in chunks (below) and reads again; it is the branch taken on the first read after step 4 and after every respond.
+## 4. Manual fallback
 
-   Announce the pause. `$phase` is `$node` with a trailing `__cycle` stripped. The gated artifact is the newest artifact of the phase's type in the task directory `$msg` names, resolved against `$cwd`; read its frontmatter `summary`, its `### Verify` list, and its `### Known limits` list. `$slug` is that directory's basename. Inside Herdr, raise the notification first:
+Use this branch when Atomic is absent, its `delivery` workflow is unavailable, or the user chooses manual operation. All gates are human reviews between independent skill sessions; `gates=none` does not make a manual chain advance automatically.
 
-   ```bash
-   herdr notification show "Gate: $slug/$phase" --body "$msg" --sound request
-   ```
+For a new task, derive its slug from the title: lowercase, replace punctuation with spaces, drop `a an the to of for in on and or with that this add make create please fix bug`, and join the first four remaining words with `-`. Fall back to the first four original words, then `task`. Use `-2`, `-3`, and so on for collisions. Branches for `epic` and `program` use `epic-<slug>`.
 
-   Print `references/deliver_gate_answer.md` with every `<...>` slot filled and end the turn. The turn ends with the ask; the person's reply starts the next turn.
+Open the task worktree per the conventions before writing `.agents/tasks/<slug>/task.md`. Respect the documented worktree exceptions and an explicitly supplied task directory. Set `slug`, `title`, `workflow`, `gates`, `routed_by: deliver`, `created`, and `route_confidence` when known; preserve the request as the body. Commit `task.md` with its explicit path as `docs(task): open <slug>`, applying the conventions' ignore-file rule. Outside git, save it in place and state that it is uncommitted.
 
-   Map the reply. `$judge` is `<skills dir>/typed-judgment/judge.mjs` from step 2; `$reply` is the person's words, verbatim. A reply that is exactly one word matching an id in `decisions` is that id, with no judgment call. Otherwise:
+An existing task reuses its directory, branch, and artifacts. For `epic-wave`, read the epic-delivery receipt and dependency merge state; follow `start-epic-delivery`'s manual child handoffs without recreating child directories. Optional automated child launching belongs to the Atomic workflow, not this skill.
 
-   ```bash
-   a=$(node "$judge" feedback-intent --json - <<<"$reply") || a=''
-   [ -n "$a" ] || a='{}'
-   intent=$(jq -r '.intent // "revise"' <<<"$a")
-   suggested=$(jq -r '.suggested // "unclear"' <<<"$a")
-   ```
-
-   `intent: proceed` is `approve`, `$text` empty. `intent: revise` with `suggested: revise` is `reject`, `$text` the person's words. `suggested: unclear`, or a `suggested` of `proceed` or `stop` that the helper did not clear its own bar for, is one clarifying question naming the available ids, and no decision is sent; the bare word clamps below the bar to `revise`, which would reject a gate because the person asked what a phase does. `intent: stop` has no decision id: confirm once, in one sentence, and only on a repeated statement run both commands below, in order, each guarded exactly like the two reads:
-
-   ```bash
-   out=$(archon workflow cancel "$run_id" --cwd "$cwd") || { printf '%s\n' "$out" >&2; exit 1; }
-   out=$(archon workflow abandon "$run_id" --cwd "$cwd") || { printf '%s\n' "$out" >&2; exit 1; }
-   ```
-
-   `cancel` stops the detached continuation the last `respond --detach` created; `abandon` alone would leave that child running while only flipping the run's own recorded status, so `cancel` runs first. End the step 4 dispatch process too, through the same runtime background or supervised long-running-process mechanism step 4 used to start it; nothing else here tracks that process, and leaving it running after `cancel` and `abandon` defeats the stop the person asked for. Print the ended reply after all three. A reply matching no declared id gets the clarifying question, never a guess.
-
-   Helper unavailable (no `node`, exit 3, any nonzero exit): read the reply yourself and say once in the reply that judgments were skipped.
-
-   Resolve and wait one chunk. The decision returns at once and this one `wait` call is bounded by its own `--timeout`, so this fence holds one shell call for at most that long, never for the length of a phase. `respond` is guarded exactly like the two reads: a nonzero exit ends the steward, reporting Archon's output as cause and fix, before the wait ever starts, so a dropped decision does not silently re-ask the same gate:
-
-   ```bash
-   out=$(archon workflow respond "$run_id" "$decision" "$text" --detach --cwd "$cwd") || { printf '%s\n' "$out" >&2; exit 1; }
-   archon workflow wait "$run_id" --json --timeout 600 --cwd "$cwd" || true
-   run=$(archon workflow get "$run_id" --json --cwd "$cwd") || { printf '%s\n' "$run" >&2; exit 1; }
-   run_status=$(jq -r '.status' <<<"$run")
-   ```
-
-   `run_status` of `paused`, `completed`, `failed`, or `cancelled` ends the wait. Anything else, most often `running`, is a chunk that expired, not a failure: run the `wait`, `get`, and `run_status` lines again, in a fresh shell call, dropping the `respond` line (already sent), and keep doing so until `run_status` is one of those four; this is also the fence the running-run branch runs on its own, with no `respond` line at all, right after step 4 and on the first read after step 1's attach. `--cwd "$cwd"` names the run's own worktree on every call once the first read has returned it, so the steward reads the same run from whatever directory the person started it in; a read that still fails ends the steward, as above. `--detach` is accepted here because Archon refuses it only on a fresh launch of an interactive pack, not on a decision that continues one. Once `run_status` is one of the four, loop back to the state read.
-
-## Rules
-
-- Never start a pack's phases by hand when Archon is present; the run is the whole deliverable. Start it once; a second start on the same branch is refused by Archon and is never attempted.
-- The by-hand path opens a worktree every time, without asking. Only the cases the conventions' Task worktree section lists skip it.
-- Route on the request alone: the helper receives the request text and nothing else. Do not read the repository to decide the pack.
-- One question at most (step 3), and only when the pick is soft. A named pack or gate list in the request is final.
-- `epic` stays `epic` and `prd` stays `prd`; `program` needs both a PRD word and a children word in the request, or the name itself.
-- No emojis, no em dashes; the reply carries no tooling narration beyond the routing line.
-- No reply ever names an `archon` command for the person to run. The steward runs every command itself; the only `archon` line a reply carries is the started command in past tense, as the run's provenance.
-- One run per steward. `--run` takes one run id and the loop watches that run only.
+Reply with `references/deliver_hand_answer.md`. Fill the chain from [workflows/delivery.md](https://github.com/MarkTripoli/skills/blob/main/workflows/delivery.md), the task location from observed state, and `{next_command}` from the table. For `oneshot`, explain that implementation precedes `/review-code`; never claim it has happened. For an epic wave, name the ready children and select one child's first skill for the final fence, with its task directory stated above it. Keep the final manual command fence and fresh-session handoff intact.
 
 ## References
 
-Read from this skill directory: `references/deliver_archon_answer.md`, `references/deliver_gate_answer.md`, `references/deliver_ended_answer.md`, `references/deliver_hand_answer.md`.
+Read from this skill directory: `references/deliver_atomic_answer.md`, `references/deliver_ended_answer.md`, `references/deliver_hand_answer.md`.
