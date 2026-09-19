@@ -1,6 +1,6 @@
 ---
 name: reproduce-bug
-description: Run for /reproduce-bug requests. Reproduce a reported bug before anything is edited: record the observed and expected behavior, a reproduction that fails today, the cause, and a short fix plan; or record exactly what is missing when it cannot be reproduced.
+description: Run for /reproduce-bug requests. Reproduce a reported bug before anything is edited. Record the observed and expected behavior, a reproduction that fails today, the cause, and a short fix plan; or record exactly what is missing when it cannot be reproduced.
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.

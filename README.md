@@ -6,17 +6,23 @@ Works with Claude Code, Codex, Oh My Pi, Pi, and other agents that read `SKILL.m
 
 ## Install
 
-Requires Node 20.12 or newer. Run in your terminal:
+Use Node 22.20 or newer. Run in your terminal:
+
+```sh
+npx skills@latest add MarkTripoli/skills
+# Or choose agents and one skill without menus:
+npx skills@latest add MarkTripoli/skills --agent claude-code codex --skill create-research-questions --yes
+```
+
+Choose your coding agents and skills when prompted. `--agent` selects agents; `--skill` selects skills. Installs are project-local by default; add `--global` for all projects.
+
+This installs skill files only. For agent-specific worker setup or Atomic, use this repository's installer (Node 20.12 or newer):
 
 ```sh
 npx github:MarkTripoli/skills
-# Or install one skill without menus:
-npx github:MarkTripoli/skills claude-code --skill create-research-questions --yes
 ```
 
-The installer asks which agent and skills to use, shows the file changes, then asks before writing. Add `--project` to install only in the current repository.
-
-See the [install reference](docs/cheatsheet.md#install) for flags, file locations, and other install methods.
+See the [repository installer reference](docs/cheatsheet.md#install) for its separate flags, file locations, and other install methods.
 
 ## Use skills independently
 
