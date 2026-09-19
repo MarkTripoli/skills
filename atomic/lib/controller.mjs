@@ -179,6 +179,12 @@ export function stagePrompt(task, skill, state, inputs, feedback) {
   const sourceForRevision = skill === 'iterate-plan' ? state.latest.plan : skill === 'iterate-structure-outline' ? state.latest['structure-outline'] : null;
   const revisionCheck = sourceForRevision ? inspectSource(sourceForRevision) : null;
   const recovery = recoveryDiagnostic(state);
+  const failedProofFeedback = skill === 'iterate-implementation'
+    ? ['verification', 'app-test']
+      .map(type => ({ type, artifact: state.latest[type] }))
+      .filter(({ type, artifact }) => artifact && artifact.status === 'failed' && currentProof(state, type))
+      .map(({ type, artifact }) => `Current failed ${type} artifact (required fully-read feedback; its Findings remain in scope alongside human feedback): ${artifact.file}`)
+    : [];
   const recoveryPrompt = recovery
     ? `Recovery is required after a real native delivery failure. Latest implementation receipt: ${recovery.receipt.file} (${recovery.receipt.hash}). Authoritative source: ${recovery.source.file} (${recovery.source.hash}). Reason: ${recovery.reason} Legal next actions are iterate-plan, iterate-implementation, or blocked. Do not treat model completion claims or the old receipt as evidence; do not return to ordinary implementation or complete until this recovery is resolved.`
     : '';
@@ -200,6 +206,7 @@ export function stagePrompt(task, skill, state, inputs, feedback) {
     skill === 'test-app' ? `Exercise the actual ${inputs.app_test} surface. Target: ${inputs.app_target || 'discover the configured application target'}. Missing runtime access is blocked. Record actual step verdicts.` : '',
     skill === 'resolve-pr-reviews' ? 'Do one review round only. Keep action-time confirmation for external replies/resolutions. Save pr-review status approved only when the current head is approved, no required thread is unresolved, and required checks passed; otherwise pending or blocked.' : '',
     skill === 'start-epic-delivery' ? 'Create each child task on the current epic branch with parent, base and depends_on. Preserve the approved epic-plan child names, prompts and acceptance criteria. The workflow engine launches eligible children; this session creates artifacts only.' : '',
+    ...failedProofFeedback,
     feedback ? `Human feedback for this phase (apply to its artifact, not a replacement task):\n${feedback}` : '',
   ].filter(Boolean).join('\n\n');
 }
