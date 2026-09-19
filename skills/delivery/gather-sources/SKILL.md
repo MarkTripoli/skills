@@ -34,4 +34,6 @@ Follow references/sources_template.md. Frontmatter `summary` names the sources g
 - The request asks to convert, import, adopt, or port an existing document that the sources hold, and no research is asked for: `/create-prd` when that document is a product one (a PRD, product spec, feature brief, requirements page); `/create-tdd` when it is a technical one (an RFC, design document, technical spec, architecture decision record). The owning skill writes its artifact from the excerpts in one pass.
 - Otherwise the chain's first skill for the `workflow` in `task.md`: `/create-research-questions` for `full`, `lean`, and `epic`; `/create-research` for `prd`, `program`, and `oneshot`; `/reproduce-bug` for `bugfix`.
 
+Use that mapping literally; source completeness does not advance the chain. A sources artifact is not codebase research. In a `lean`, `full`, or `epic` task, never jump from source gathering to an outline, design, plan, or implementation.
+
 End with exactly one fenced `text` block holding that command.
