@@ -19,8 +19,12 @@ DOM/accessibility trees, console output, probes, narration, overlays, assertion 
 
 For every observation, name raw or rendered media, its hash, timestamp coordinate system, and the application pane/surface. Read the session report and manifest timing before translating event time into video time.
 
+A timestamp describes only the event its producer observed. Cite the producer metadata or source sampling point and preserve exact observed field/event names; distinguish a reference clock from the operation it precedes. For browser capture whose `startedAt` is sampled immediately before `context.newPage`, report that existing value as the pre-page-creation capture reference used for `video-started-at`, not navigation time or the first encoded frame's origin. Record navigation or encoded-frame time as unavailable unless independently observed; served-response identity does not supply either clock.
+
+A clock read before saving a reservation is not its persistence time, and a baseline inspection time cannot date a later reservation. Preserve the ordered receipt/trace boundary when exact operation timing is unavailable; explicitly omit the unavailable timestamp rather than infer one. Apply this attribution when recording observations, not only at terminal delivery.
+
 - **Cards and overlays:** Account for the rendered title-card shift and summary card. Neither is application behavior. If overlays obscure state, inspect raw footage or an alternate render through the existing `render` options. Retain the original render and label provenance.
-- **External capture:** Preserve `video-started-at`, the raw video's start, and recorder alignment. Close the recording context before import. Record any manual offset or alignment correction and its observed basis.
+- **External capture:** Preserve the supplied `video-started-at` reference, its producer-defined meaning, and recorder alignment; identify the raw video's encoded time coordinate separately. Close the recording context before import. Record any manual offset or alignment correction and its observed basis.
 - **Offsets:** Use `video_t` and manifest timing, including `offset_applied`, rather than equating an annotation's wall clock with a displayed timestamp. Note whether each cited sample is raw or rendered time.
 - **Held tails:** A recorder-held last frame only repeats the last observed state. It cannot establish persistence or continued application execution through the padded interval.
 - **Segments and gaps:** Identify segment boundaries, missing footage, and capture cadence limits. A gap cannot prove ordering, absence, or duration across it.
@@ -53,7 +57,5 @@ A finding reaches `resolved` only after current-revision evidence proves its unc
 ## Finalize the receipt against retained evidence
 
 For passed, failed, and blocked outcomes, check each of the template's seven coverage columns against the revision, recording, inspection, check, and finding ledgers. An overall failure or blocker does not collapse the table or erase known per-flow outcomes. Missing current proof stays untested with its gap; older evidence stays historical.
-
-A timestamp describes only the event its cited clock/trace output observed. A clock read before saving a reservation is not its persistence time, and a baseline inspection time cannot date a later reservation. Preserve the ordered receipt/trace boundary when exact timing is unavailable; explicitly omit the unavailable timestamp rather than infer one.
 
 Separate current state from history: terminal summaries name the actual last completed step and any genuinely incomplete blocked work and prerequisite. Superseded pending steps and reservations remain labeled historical at their original boundaries. A failed completed round has no unfinished step merely because its finding remains open; an interrupted round retains the first incomplete step for authorized continuation.

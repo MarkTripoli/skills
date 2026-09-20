@@ -14,7 +14,7 @@ current_application_revision: "[Revision ledger identity, distinct from receipt 
 
 Use `NN-evidence-iteration-<slug>.md`; continuation revises this file. Fill every field from observations, using `None.`, `unknown`, or `not applicable` with a reason instead of invented values. Remove unneeded example rows. Current frontmatter, finding summaries, and final coverage can change; append their supporting observations, transitions, round history, authorizations, and stop decisions without deleting earlier results. This receipt is the loop state, not a companion JSON store.
 
-`status`: `in-progress`, `passed`, `blocked`, or `failed`. `stop_reason`: `none` while active/interrupted; otherwise `success`, `blocker`, `no-progress`, or `exhaustion`. `limit` and `consumed_rounds` are nonnegative integers. A reserved round consumes allowance before mutation; baseline consumes zero.
+`status`: `in-progress`, `passed`, `blocked`, or `failed`. `stop_reason`: `none` while active/interrupted; otherwise `success`, `blocker`, `no-progress`, or `exhaustion`. `limit` and `consumed_rounds` are nonnegative integers. A reserved round consumes allowance before delegation or mutation; baseline consumes zero. While active, frontmatter's consumed number selects the matching numbered round, whose scoped record owns repair state, not the last historical heading. Apply the skill's [reservation boundary](../SKILL.md#4-reserve-and-complete-one-repair-round) before action, including continuation.
 
 ## Scope
 
@@ -71,11 +71,11 @@ Append every application identity used for checks or capture. A dirty tree is ne
 
 ## Recording ledger
 
-One unique session directory per capture/surface. Preserve all baseline/failed material beneath ignored task evidence storage. Hash raw and rendered media; rerenders remain linked to their original capture.
+One unique session directory per capture/surface. Preserve all baseline/failed material beneath ignored task evidence storage. Hash raw and rendered media; rerenders remain linked to their original capture. Attribute clocks using [time and surface identity](inspection_acceptance.md#preserve-time-and-surface-identity): retain producer field/event names, sampling point, and unavailable operation times.
 
-| Session ID and pass | Surface/pane | Revision ID | Raw/rendered paths and hashes | Report/manifest/events paths | Capture start/end and video start | Timing and alignment caveats | Availability/posting location |
+| Session ID and pass | Surface/pane | Revision ID | Raw/rendered paths and hashes | Report/manifest/events paths | Observed clocks and producer references | Timing and alignment caveats | Availability/posting location |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| [unique session; baseline or reserved round] | [surface/pane/source session] | [identity] | [paths + hash algorithm/values] | [paths] | [wall-clock times; video-started-at] | [cards, video_t mapping, offsets, held tails, gaps, cadence, alignment] | [local-only reachable paths, verified URL, or unavailable with reason] |
+| [unique session; baseline or reserved round] | [surface/pane/source session] | [identity] | [paths + hash algorithm/values] | [paths] | [field/event, value, source and sampling point; video-started-at reference; unavailable operation times] | [cards, video_t mapping, offsets, held tails, gaps, cadence, alignment] | [local-only reachable paths, verified URL, or unavailable with reason] |
 
 ## Inspection ledger
 
@@ -115,12 +115,13 @@ Baseline is capture and inspection at consumed `0`, not a repair reservation. Ap
 
 ### Round [reserved number]
 
-- Reservation persisted at: [receipt boundary before mutation/delegation; observed timestamp and clock/trace source, or timestamp unavailable]
+- Reservation persisted at: [saved receipt/trace boundary before mutation/delegation; observed timestamp and source, or timestamp unavailable; independent of the last completed step's name]
 - Consumed count / authorized limit: [count / limit]
 - Attempted finding IDs: [existing inspected required findings]
 - Pre-round unresolved required IDs: [set]
 - Before application identity: [revision]
 - Authorized repair/delegation boundary: [paths, actor, scope]
+- Pre-action reconciliation: [saved frontmatter, this round, and current Delivery agree on identity, consumed/limit, findings and pending step; retained boundary before delegation/mutation]
 
 | Step | State: pending/completed/interrupted/blocked | Time | Action and exact command, where applicable | Revision and result/exit code | Retained output or evidence |
 | --- | --- | --- | --- | --- | --- |
@@ -133,7 +134,7 @@ Baseline is capture and inspection at consumed `0`, not a repair reservation. Ap
 - Newly verified resolutions of previously open required IDs: [set, with new evidence]
 - Reopened / newly discovered / remaining required IDs: [separate sets]
 - Progress comparison: [pre-round versus post-round; true only for a new verified required resolution]
-- Current step / last completed step / next incomplete step: [actual saved boundary; none pending after reconciliation, or blocked/interrupted step still to complete]
+- Current step / last completed step / next incomplete step: [actual saved boundary, also reflected in current Delivery before action; last completed need not be reservation; none pending after reconciliation]
 - Interruption, continuation, or operational failure: [observed time/source or timestamp unavailable; actual state, authorization/restored prerequisite and evidence, or None.]
 - Decision / next action: [precedence evaluation or reserved work to complete; label superseded pending boundaries historical and retain them]
 
@@ -164,6 +165,7 @@ Before saving the terminal result, apply the skill's finalization boundary and t
 ## Delivery and known limits
 
 - Current result and application identity: [receipt state and Revision ledger reference]
+- Active round / consumed count / authorized limit / attempted finding IDs: [matching numbered round and frontmatter values, or baseline/terminal with reason; update at reservation before delegation/mutation]
 - Current step / last completed step / next incomplete step: [reconciled with the terminal result, or actionable interrupted boundary; no pending round step after completion]
 - Evidence availability: [local-only retained paths or verified posting links; unavailable material]
 - Posting confirmation, when required: [destination, reopen/playback result, or blocker; otherwise requester-only]

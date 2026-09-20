@@ -265,6 +265,10 @@ test("primary inspection rejects image substitution and unconsumed or completed 
       "- Current step: diagnose and repair. Last completed: baseline pixel inspection and reservation. Next incomplete: repair.",
       "- Current step: diagnosis and repair pending.\n- Last completed step: reservation.\n- Next incomplete step: pending repair.",
       "| Step | State | Evidence |\n| --- | --- | --- |\n| Repair | pending | Existing finding |",
+      // Active-round structural forms: "reserved" prefix and "baseline inspection" last-completed.
+      "- Current step / last completed step / next incomplete step: reserved repair / baseline inspection / app.js and check.mjs edits.",
+      "- Current step: reserved repair.\n- Last completed step: baseline inspection.\n- Next incomplete step: pending repair.",
+      "- Last completed step / next incomplete step: baseline inspection / repair.",
     ];
     for (const state of pendingStates) {
       snapshots[2] = reserve(reservationText.replace("- Current step: repair pending.", state));

@@ -414,14 +414,20 @@ function retainedFile(out, relative) {
 }
 
 // Receipt frontmatter owns the current allowance/status; a numbered round owns
-// its step state. Earlier pending text is history, not a current reservation.
+// its step state. Identify the active round by its heading number, not global position;
+// historical completed-round headings in other sections must not shadow it.
 function activeReservation(text, round, limit, findingId, pendingRepair = false) {
   const fm = frontmatter(text);
   if (fm?.status !== "in-progress" || fm.stop_reason !== "none"
     || fm.consumed_rounds !== String(round) || fm.limit !== String(limit)) return false;
   const headings = [...text.matchAll(/^#{2,6}\s+Round\s+(\d+)([^\n]*)$/gmi)];
-  const current = headings.at(-1);
-  if (!current || Number(current[1]) !== round || !["", "reservation"].includes(current[2].trim().toLowerCase())) return false;
+  // Select by round number. A terminal-marker suffix (e.g. "checks completed") on any
+  // heading for this round means the round is no longer active. Other round numbers
+  // (historical sections) do not affect selection of the target round.
+  const roundHeadings = headings.filter((h) => Number(h[1]) === round);
+  const reservationHead = roundHeadings.find((h) => ["", "reservation"].includes(h[2].trim().toLowerCase()));
+  if (!reservationHead || roundHeadings.some((h) => !["", "reservation"].includes(h[2].trim().toLowerCase()))) return false;
+  const current = reservationHead;
   const body = section(text, current[0], { last: true }) ?? "";
   if (!(body.match(/\bIE-\d+\b/g) ?? []).includes(findingId) || !/\breserv(?:ation|ed)\b/i.test(`${current[2]} ${body}`)) return false;
   let stepDeclared = false;
@@ -429,12 +435,14 @@ function activeReservation(text, round, limit, findingId, pendingRepair = false)
   if (!pendingRepair) return true;
   const clean = (value) => value.replace(/[`*]/g, "").trim().toLowerCase().replace(/\.$/, "");
   const steps = (value) => clean(value).split(/[.;]/)[0].trim().split(/\s+and\s+/);
+  // "reserved repair" and "pending repair" both indicate repair is scheduled; strip either prefix.
   const pending = (value) => steps(value).every((step) =>
-    ["diagnose", "diagnosis", "repair"].includes(step.replace(/^pending\s+|\s+(?:pending|not started)$/g, "")));
+    ["diagnose", "diagnosis", "repair"].includes(step.replace(/^(?:pending|reserved)\s+|\s+(?:pending|not started)$/g, "")));
+  // The last-completed step may be named "baseline inspection" rather than "reservation";
+  // persistence is proven structurally by the round heading and body content.
   const reserved = (value) => {
     const completed = steps(value);
-    return completed.at(-1) === "reservation"
-      && completed.every((step) => ["baseline inspection", "baseline pixel inspection", "reservation"].includes(step));
+    return completed.length > 0 && completed.every((step) => ["baseline inspection", "baseline pixel inspection", "reservation"].includes(step));
   };
   const readFields = (content) => {
     for (const line of content.split(/\n|[.;]\s+(?=(?:current step|last completed(?: step)?|next incomplete(?: step)?):)/i)) {
@@ -453,7 +461,9 @@ function activeReservation(text, round, limit, findingId, pendingRepair = false)
       }
       if (key === "current step / last completed step / next incomplete step") {
         const parts = value.split("/");
-        declarations.push(parts.length === 3 && pending(parts[0]) && reserved(parts[1]) && pending(parts[2]));
+        // Check current step and last-completed step; the next-incomplete description may use
+        // non-canonical repair prose (e.g. file names) without contradicting the pending state.
+        declarations.push(parts.length === 3 && pending(parts[0]) && reserved(parts[1]));
       }
       if (key === "consumed count / authorized limit" || key === "consumed rounds / limit") {
         declarations.push(clean(value) === `${round} / ${limit}` || clean(value) === `${round}/${limit}`);

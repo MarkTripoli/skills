@@ -52,9 +52,9 @@ try {
   await context.close();
   context = null;
   const videoPath = await video.path();
-  const capture = { url, startedAt, finishedAt: Date.now() / 1000, viewport: { width: 1280, height: 720 }, browserVersion: browser.version(), actions, servedScript: "served-app.js", servedSha256: sha256(served), video: path.relative(session, videoPath), videoSha256: sha256(fs.readFileSync(videoPath)), timingCaveat: "Action samples use wall clock relative to page creation; inspect recorder alignment and raw pixels, not timestamps alone." };
+  const capture = { url, startedAt, startedAtMeaning: "Unix seconds sampled immediately before context.newPage(); capture reference only, not navigation time or first encoded video frame.", finishedAt: Date.now() / 1000, viewport: { width: 1280, height: 720 }, browserVersion: browser.version(), actions, servedScript: "served-app.js", servedSha256: sha256(served), video: path.relative(session, videoPath), videoSha256: sha256(fs.readFileSync(videoPath)), timingCaveat: "Action wallTime records the named mark() sample; videoTime is elapsed wall clock from startedAt, not a measured media coordinate. Exact navigation and first encoded-frame times are not retained. Inspect recorder alignment and raw pixels." };
   fs.writeFileSync(path.join(session, "capture.json"), `${JSON.stringify(capture, null, 2)}\n`);
-  console.log(JSON.stringify({ session, video: videoPath, capture: path.join(session, "capture.json"), startedAt, actions }));
+  console.log(JSON.stringify({ session, video: videoPath, capture: path.join(session, "capture.json"), startedAt, startedAtMeaning: capture.startedAtMeaning, actions }));
 } finally {
   if (context) await context.close();
   await browser.close();
