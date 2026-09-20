@@ -2,5 +2,5 @@ package steps
 
 import "context"
 
-// CI performs the configured CI gate when one is configured.
-func CI(ctx context.Context) error { return Validate(ctx, "ci") }
+// CI is owned by the typed SCM/provider boundary, never a pushed shell command.
+func CI(ctx context.Context) error { return Typed(ctx, "ci") }

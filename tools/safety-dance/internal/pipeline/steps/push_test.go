@@ -106,3 +106,48 @@ func TestPublishUpdatesMirrorAndRecordsBinding(t *testing.T) {
 		t.Fatalf("recovery=%+v err=%v", recovered, err)
 	}
 }
+
+func TestPublishReleasesInterruptedFirstPublication(t *testing.T) {
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	work := filepath.Join(root, "work")
+	gitTest(t, root, "init", "--bare", remote)
+	gitTest(t, root, "init", work)
+	gitTest(t, work, "config", "user.email", "test@example.com")
+	gitTest(t, work, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(work, "file"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, work, "add", "file")
+	gitTest(t, work, "commit", "-m", "one")
+	base := strings.TrimSpace(gitTest(t, work, "rev-parse", "HEAD"))
+	if err := os.WriteFile(filepath.Join(work, "file"), []byte("two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, work, "commit", "-am", "two")
+	candidate := strings.TrimSpace(gitTest(t, work, "rev-parse", "HEAD"))
+	database, err := db.Open(filepath.Join(root, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err := database.InsertRepoWithID("repo", work, remote, "main"); err != nil {
+		t.Fatal(err)
+	}
+	run, err := database.CreateRunFromAccepted(db.RunInput{Accepted: db.AcceptedRef{RepoID: "repo", Branch: "main", GateHead: candidate, LaunchNonce: "nonce"}, BaseSHA: base})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.TransitionRunStatus(run.ID, "pending", "running"); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.AcquireRunPushActive(run.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Publish(context.Background(), database, run.ID, PushRequest{Worktree: work, Remote: remote, Ref: "refs/heads/main", Candidate: candidate, ReviewedHead: candidate, VerifiedHead: ""}, func(context.Context, string) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(gitTest(t, root, "--git-dir", remote, "rev-parse", "refs/heads/main")); got != candidate {
+		t.Fatalf("published head=%s want %s", got, candidate)
+	}
+}

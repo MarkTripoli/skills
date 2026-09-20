@@ -209,7 +209,9 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 			return
 		}
 		if repo, e := d.GetRepo(r.RepoID); e == nil && repo != nil {
-			_ = worktrees.RemoveDetached(context.Background(), repo.WorkingPath, *current.WorktreeDir)
+			if removeErr := worktrees.RemoveDetached(context.Background(), repo.WorkingPath, *current.WorktreeDir); removeErr != nil {
+				fmt.Fprintf(os.Stderr, "safety-dance: worktree cleanup pending for %s: %v\n", r.ID, removeErr)
+			}
 		}
 	})
 	adm := daemon.NewAdmissionWithStore(server, func(ctx context.Context, n daemon.PushNotification) error { return recordPush(d, p, manager, n) }, filepath.Join(p.Root(), "admission-receipts.json"))
@@ -263,7 +265,9 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		accepted := db.AcceptedRef{RepoID: q.RepoID, Branch: q.Branch, GateHead: q.HeadSHA, LaunchNonce: nonce}
 		r, err := manager.Replace(ctx, daemon.BranchKey{RepositoryID: q.RepoID, Ref: q.Branch}, accepted, worktree)
 		if err != nil {
-			_ = os.RemoveAll(worktree)
+			return nil, err
+		}
+		if err := worktrees.CommitOwnership(worktree); err != nil {
 			return nil, err
 		}
 		return ipc.StartFreshRunResult{Receipt: ipc.LaunchReceipt{RunID: r.ID, Branch: r.Branch, HeadSHA: r.HeadSHA, SubmittedHeadSHA: r.HeadSHA, Disposition: "created"}}, nil
@@ -341,8 +345,21 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		}
 		return ipc.CancelRunResult{OK: true}, nil
 	})
-	if err := worktrees.RecoverPending(context.Background(), filepath.Join(p.Root(), "worktrees")); err != nil {
+	protected := []string{}
+	if owned, err := d.ActiveRunWorktrees(); err == nil {
+		for _, worktree := range owned {
+			if worktree.Dir != "" {
+				protected = append(protected, worktree.Dir)
+			}
+		}
+	} else {
+		return fmt.Errorf("find owned worktrees: %w", err)
+	}
+	if err := worktrees.RecoverPending(context.Background(), filepath.Join(p.Root(), "worktrees"), protected...); err != nil {
 		return fmt.Errorf("recover pending worktrees: %w", err)
+	}
+	if err := worktrees.RecoverRemoving(context.Background(), filepath.Join(p.Root(), "worktrees")); err != nil {
+		return fmt.Errorf("recover removing worktrees: %w", err)
 	}
 	if err := manager.Recover(context.Background()); err != nil {
 		return err
@@ -397,9 +414,9 @@ func recordPush(d *db.DB, p *paths.Paths, manager *daemon.Manager, n daemon.Push
 		accepted := db.AcceptedRef{RepoID: r.ID, Branch: branch, GateHead: n.New, PreviousReconciledHead: n.Old, LaunchNonce: nonce, RequestedOptions: append([]string(nil), n.Options...)}
 		_, err = manager.Replace(context.Background(), daemon.BranchKey{RepositoryID: r.ID, Ref: branch}, accepted, worktree)
 		if err != nil {
-			_ = os.RemoveAll(worktree)
+			return err
 		}
-		return err
+		return worktrees.CommitOwnership(worktree)
 	}
 	return fmt.Errorf("unknown gate %q", n.Gate)
 }
@@ -471,7 +488,6 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 		return fmt.Errorf("load global configuration: %w", globalErr)
 	}
 	mergedConfig := config.Merge(globalConfig, effectiveConfig)
-	effectiveConfig.Commands = mergedConfig.Commands
 	ref := run.Branch
 	if !strings.HasPrefix(ref, "refs/") {
 		ref = "refs/heads/" + ref
@@ -493,9 +509,9 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	runner := pipeline.NewDurable(database, run.ID)
 	for _, name := range pipeline.CoreSteps {
 		name := name
-		runner.Register(name, func(stepCtx context.Context) error {
+		runner.RegisterWithInputs(name, pipeline.StepInputs{CandidateHead: run.HeadSHA, Policy: mergedConfig.TrustedConfigSHA + "\x00" + string(mergedConfig.ReplayGlobalYAML) + "\x00" + string(mergedConfig.ReplayRepoYAML), Command: fmt.Sprintf("%#v", mergedConfig.Commands), Owner: "pipeline." + string(name), ValidationGeneration: valueOrEmpty(run.LaunchValidationGeneration)}, func(stepCtx context.Context) error {
 			stepCtx = steps.WithWorktree(stepCtx, worktree)
-			stepCtx = steps.WithRepoConfig(stepCtx, effectiveConfig)
+			stepCtx = steps.WithConfig(stepCtx, mergedConfig)
 			stepCtx = steps.WithRun(stepCtx, database, run.ID)
 			var stepErr error
 			switch name {
@@ -595,4 +611,11 @@ func flags(c *cobra.Command, a *pushArgs) {
 	c.Flags().StringVar(&a.new, "new", "", "new")
 	c.Flags().StringVar(&a.token, "token", "", "token")
 	c.Flags().StringSliceVar(&a.options, "push-option", nil, "push option")
+}
+
+func valueOrEmpty(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
 }

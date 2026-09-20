@@ -62,6 +62,42 @@ func TestAdmissionRejectsUnmanagedTokenPeer(t *testing.T) {
 	}
 }
 
+func TestManagedHookPeerRequiresExecutableAncestry(t *testing.T) {
+	gate := filepath.Join(t.TempDir(), "gate.git")
+	hook := filepath.Join(gate, "hooks", "pre-receive")
+	old := processInfoFunc
+	t.Cleanup(func() { processInfoFunc = old })
+	processInfoFunc = func(pid int) (int, string, error) {
+		switch pid {
+		case 101:
+			return 102, "/tmp/safety-dance SD_MANAGED_HOOK=" + hook, nil
+		case 102:
+			return 103, "git-receive-pack '" + gate + "'", nil
+		default:
+			return 1, "init", nil
+		}
+	}
+	if managedHookPeer(101, gate) {
+		t.Fatal("forgeable environment marker authorized a token request")
+	}
+
+	processInfoFunc = func(pid int) (int, string, error) {
+		switch pid {
+		case 101:
+			return 102, "/tmp/safety-dance", nil
+		case 102:
+			return 103, "/bin/sh " + hook, nil
+		case 103:
+			return 1, "git-receive-pack '" + gate + "'", nil
+		default:
+			return 1, "init", nil
+		}
+	}
+	if !managedHookPeer(101, gate) {
+		t.Fatal("actual managed hook and git receive ancestry was rejected")
+	}
+}
+
 func TestAdmissionReceiptLoadFailureIsVisible(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "receipts.json")

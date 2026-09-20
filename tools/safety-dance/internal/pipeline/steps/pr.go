@@ -2,5 +2,5 @@ package steps
 
 import "context"
 
-// PR performs the configured pull-request gate when one is configured.
-func PR(ctx context.Context) error { return Validate(ctx, "pull-request") }
+// PR is owned by the typed SCM/provider boundary, never a pushed shell command.
+func PR(ctx context.Context) error { return Typed(ctx, "pull-request") }

@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS step_results (
     status           TEXT NOT NULL DEFAULT 'pending',
     exit_code        INTEGER,
     duration_ms      INTEGER,
+    input_fingerprint TEXT,
     log_path         TEXT,
     findings_json    TEXT,
     error            TEXT,
@@ -356,4 +357,5 @@ var migrationStatements = []string{
 	`ALTER TABLE agent_invocations ADD COLUMN workload_lines INTEGER`,
 	`ALTER TABLE agent_invocations ADD COLUMN finding_count INTEGER`,
 	`ALTER TABLE step_results ADD COLUMN approval_reason TEXT`,
+	`ALTER TABLE step_results ADD COLUMN input_fingerprint TEXT`,
 }

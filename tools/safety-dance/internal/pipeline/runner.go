@@ -2,6 +2,9 @@ package pipeline
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -33,22 +36,59 @@ type StepResult struct {
 }
 type Step func(context.Context) error
 
-type Runner struct {
-	mu       sync.Mutex
-	steps    map[StepName]Step
-	Results  []StepResult
-	Database *db.DB
-	RunID    string
+// StepInputs are the trusted values that determine whether a completed result
+// remains valid after restart. Empty values are intentional and are still
+// included in the digest, so legacy rows never qualify for reuse.
+type StepInputs struct {
+	CandidateHead        string `json:"candidate_head"`
+	Policy               string `json:"policy"`
+	Command              string `json:"command"`
+	Owner                string `json:"owner"`
+	ValidationGeneration string `json:"validation_generation"`
 }
 
-func New() *Runner { return &Runner{steps: map[StepName]Step{}} }
+func Fingerprint(name StepName, in StepInputs) string {
+	v, _ := json.Marshal(struct {
+		Name   StepName   `json:"step"`
+		Inputs StepInputs `json:"inputs"`
+	}{name, in})
+	h := sha256.Sum256(v)
+	return hex.EncodeToString(h[:])
+}
+
+type Runner struct {
+	mu         sync.Mutex
+	steps      map[StepName]Step
+	inputs     map[StepName]StepInputs
+	inputFuncs map[StepName]func() StepInputs
+	Results    []StepResult
+	Database   *db.DB
+	RunID      string
+}
+
+func New() *Runner {
+	return &Runner{steps: map[StepName]Step{}, inputs: map[StepName]StepInputs{}, inputFuncs: map[StepName]func() StepInputs{}}
+}
 func NewDurable(database *db.DB, runID string) *Runner {
 	r := New()
 	r.Database, r.RunID = database, runID
 	return r
 }
-func (r *Runner) Register(n StepName, s Step) { r.mu.Lock(); defer r.mu.Unlock(); r.steps[n] = s }
-
+func (r *Runner) Register(n StepName, s Step) { r.RegisterWithInputs(n, StepInputs{}, s) }
+func (r *Runner) RegisterWithInputs(n StepName, in StepInputs, s Step) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.steps[n] = s
+	r.inputs[n] = in
+	delete(r.inputFuncs, n)
+}
+func (r *Runner) RegisterWithInputFunc(n StepName, in func() StepInputs, s Step) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.steps[n] = s
+	r.inputFuncs[n] = in
+	delete(r.inputs, n)
+}
 func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 	for _, n := range CoreSteps {
 		select {
@@ -58,7 +98,12 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 		}
 		r.mu.Lock()
 		s := r.steps[n]
+		in := r.inputs[n]
+		inputFunc := r.inputFuncs[n]
 		r.mu.Unlock()
+		if inputFunc != nil {
+			in = inputFunc()
+		}
 		if s == nil {
 			continue
 		}
@@ -80,8 +125,21 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 					return r.Results, err
 				}
 			}
+			fingerprint := Fingerprint(n, in)
 			if persisted.Status == types.StepStatusCompleted || persisted.Status == types.StepStatusSkipped {
-				continue
+				if persisted.InputFingerprint != nil && *persisted.InputFingerprint == fingerprint {
+					continue
+				}
+				if err := r.Database.ResetStepsFrom(r.RunID, persisted.StepOrder); err != nil {
+					return r.Results, err
+				}
+				persisted, err = r.Database.GetStepResult(persisted.ID)
+				if err != nil {
+					return r.Results, err
+				}
+			}
+			if err := r.Database.SetStepInputFingerprint(persisted.ID, fingerprint); err != nil {
+				return r.Results, err
 			}
 			if persisted.Status == types.StepStatusAwaitingApproval || persisted.Status == types.StepStatusFixReview {
 				for {

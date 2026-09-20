@@ -107,7 +107,7 @@ func Publish(ctx context.Context, database *db.DB, runID string, req PushRequest
 		}
 		if live == req.Candidate {
 			result = PushResult{Candidate: req.Candidate, Upstream: live, GateMirror: req.GateMirror}
-		} else if live == strings.TrimSpace(req.VerifiedHead) && strings.TrimSpace(req.VerifiedHead) != "" && strings.Trim(req.VerifiedHead, "0") != "" {
+		} else if live == strings.TrimSpace(req.VerifiedHead) {
 			if err := database.SetRunPushActive(runID, false); err != nil {
 				return PushResult{}, fmt.Errorf("release interrupted publication claim: %w", err)
 			}

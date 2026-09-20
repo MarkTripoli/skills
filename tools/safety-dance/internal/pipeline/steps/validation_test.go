@@ -2,6 +2,7 @@ package steps
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"testing"
 
@@ -23,5 +24,18 @@ func TestValidateRunsConfiguredCommandInOwnedWorktree(t *testing.T) {
 	ctx := WithRepoConfig(WithWorktree(context.Background(), dir), &config.RepoConfig{Commands: config.Commands{Lint: "pwd > marker"}})
 	if err := Validate(ctx, "lint"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTypedStageDoesNotRunRepositoryCommand(t *testing.T) {
+	dir := t.TempDir()
+	marker := dir + "/marker"
+	ctx := WithWorktree(context.Background(), dir)
+	ctx = WithConfig(ctx, &config.Config{Commands: config.Commands{Review: "touch " + marker}})
+	if err := Review(ctx); err == nil {
+		t.Fatal("expected missing typed owner")
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("typed stage executed repository command")
 	}
 }

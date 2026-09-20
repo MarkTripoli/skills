@@ -10,23 +10,24 @@ import (
 
 // StepResult represents the result of a pipeline step execution.
 type StepResult struct {
-	ID             string
-	RunID          string
-	StepName       types.StepName
-	StepOrder      int
-	Status         types.StepStatus
-	ExitCode       *int
-	DurationMS     *int64
-	LogPath        *string
-	FindingsJSON   *string
-	Error          *string
-	StartedAt      *int64
-	RoundStartedAt *int64
-	CompletedAt    *int64
-	LastActivityAt *int64
-	LastActivity   *string
-	AgentPID       *int
-	AutoFixLimit   *int
+	ID               string
+	RunID            string
+	StepName         types.StepName
+	StepOrder        int
+	Status           types.StepStatus
+	InputFingerprint *string
+	ExitCode         *int
+	DurationMS       *int64
+	LogPath          *string
+	FindingsJSON     *string
+	Error            *string
+	StartedAt        *int64
+	RoundStartedAt   *int64
+	CompletedAt      *int64
+	LastActivityAt   *int64
+	LastActivity     *string
+	AgentPID         *int
+	AutoFixLimit     *int
 	// OverrideReason is non-nil exactly when a human answered ActionApprove on
 	// this step's gate despite an unresolved condition (currently: the CI
 	// step's live checks were still failing, or the Test step's configured
@@ -42,7 +43,7 @@ type StepResult struct {
 	SkipReason *string
 }
 
-const stepResultColumns = `id, run_id, step_name, step_order, status, exit_code, duration_ms, log_path, findings_json, error, started_at, completed_at, last_activity_at, last_activity, agent_pid, auto_fix_limit`
+const stepResultColumns = `id, run_id, step_name, step_order, status, input_fingerprint, exit_code, duration_ms, log_path, findings_json, error, started_at, completed_at, last_activity_at, last_activity, agent_pid, auto_fix_limit`
 
 // readableStepResultColumns tolerates databases that predate the optional
 // columns. The ci_fix_attempts column is no longer read: the CI step's fix
@@ -98,7 +99,7 @@ func (d *DB) GetStepResult(id string) (*StepResult, error) {
 	s := &StepResult{}
 	err := d.sql.QueryRow(
 		`SELECT `+d.readableStepResultColumns()+` FROM step_results WHERE id = ?`, id,
-	).Scan(&s.ID, &s.RunID, &s.StepName, &s.StepOrder, &s.Status, &s.ExitCode, &s.DurationMS, &s.LogPath, &s.FindingsJSON, &s.Error, &s.StartedAt, &s.CompletedAt, &s.LastActivityAt, &s.LastActivity, &s.AgentPID, &s.AutoFixLimit, &s.RoundStartedAt, &s.OverrideReason, &s.SkipReason, &s.ApprovalReason)
+	).Scan(&s.ID, &s.RunID, &s.StepName, &s.StepOrder, &s.Status, &s.InputFingerprint, &s.ExitCode, &s.DurationMS, &s.LogPath, &s.FindingsJSON, &s.Error, &s.StartedAt, &s.CompletedAt, &s.LastActivityAt, &s.LastActivity, &s.AgentPID, &s.AutoFixLimit, &s.RoundStartedAt, &s.OverrideReason, &s.SkipReason, &s.ApprovalReason)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -128,7 +129,7 @@ func (d *DB) GetStepsByRun(runID string) ([]*StepResult, error) {
 	var steps []*StepResult
 	for rows.Next() {
 		s := &StepResult{}
-		if err := rows.Scan(&s.ID, &s.RunID, &s.StepName, &s.StepOrder, &s.Status, &s.ExitCode, &s.DurationMS, &s.LogPath, &s.FindingsJSON, &s.Error, &s.StartedAt, &s.CompletedAt, &s.LastActivityAt, &s.LastActivity, &s.AgentPID, &s.AutoFixLimit, &s.RoundStartedAt, &s.OverrideReason, &s.SkipReason, &s.ApprovalReason); err != nil {
+		if err := rows.Scan(&s.ID, &s.RunID, &s.StepName, &s.StepOrder, &s.Status, &s.InputFingerprint, &s.ExitCode, &s.DurationMS, &s.LogPath, &s.FindingsJSON, &s.Error, &s.StartedAt, &s.CompletedAt, &s.LastActivityAt, &s.LastActivity, &s.AgentPID, &s.AutoFixLimit, &s.RoundStartedAt, &s.OverrideReason, &s.SkipReason, &s.ApprovalReason); err != nil {
 			return nil, fmt.Errorf("scan step result: %w", err)
 		}
 		steps = append(steps, s)
@@ -142,10 +143,19 @@ func (d *DB) ResetStepsFrom(runID string, stepOrder int) error {
 		SET status = ?, exit_code = NULL, duration_ms = NULL, log_path = NULL,
 			findings_json = NULL, error = NULL, started_at = NULL,
 			round_started_at = NULL, completed_at = NULL, last_activity_at = NULL, last_activity = NULL,
-			agent_pid = NULL, auto_fix_limit = NULL, override_reason = NULL, approval_reason = NULL
-		WHERE run_id = ? AND step_order >= ? AND status != ?`, types.StepStatusPending, runID, stepOrder, types.StepStatusSkipped)
+			agent_pid = NULL, auto_fix_limit = NULL, input_fingerprint = NULL, override_reason = NULL, approval_reason = NULL
+		WHERE run_id = ? AND step_order >= ?`, types.StepStatusPending, runID, stepOrder)
 	if err != nil {
 		return fmt.Errorf("reset steps for revalidation: %w", err)
+	}
+	return nil
+}
+
+// SetStepInputFingerprint binds a result to the trusted inputs used to produce it.
+func (d *DB) SetStepInputFingerprint(id, fingerprint string) error {
+	_, err := d.sql.Exec(`UPDATE step_results SET input_fingerprint = ? WHERE id = ?`, fingerprint, id)
+	if err != nil {
+		return fmt.Errorf("set step input fingerprint: %w", err)
 	}
 	return nil
 }

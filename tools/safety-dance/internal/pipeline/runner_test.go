@@ -77,3 +77,37 @@ func TestDurableRunnerPersistsAndSkipsCompletedSteps(t *testing.T) {
 		t.Fatalf("completed step reran %d times", called)
 	}
 }
+
+func TestDurableRunnerInvalidatesChangedInputsAndDependents(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err := database.InsertRepoWithID("repo", "/checkout", "upstream", "main"); err != nil {
+		t.Fatal(err)
+	}
+	run, err := database.CreateRunFromAccepted(db.RunInput{Accepted: db.AcceptedRef{RepoID: "repo", Branch: "main", GateHead: "head", LaunchNonce: "nonce"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.TransitionRunStatus(run.ID, "pending", "running"); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	first := NewDurable(database, run.ID)
+	first.RegisterWithInputs(StepIntent, StepInputs{CandidateHead: "head", Policy: "policy-v1", Owner: "intent"}, func(context.Context) error { calls++; return nil })
+	first.RegisterWithInputs(StepRebase, StepInputs{CandidateHead: "head", Policy: "policy-v1", Owner: "rebase"}, func(context.Context) error { calls++; return nil })
+	if _, err := first.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	second := NewDurable(database, run.ID)
+	second.RegisterWithInputs(StepIntent, StepInputs{CandidateHead: "head", Policy: "policy-v2", Owner: "intent"}, func(context.Context) error { calls++; return nil })
+	second.RegisterWithInputs(StepRebase, StepInputs{CandidateHead: "head", Policy: "policy-v2", Owner: "rebase"}, func(context.Context) error { calls++; return nil })
+	if _, err := second.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 4 {
+		t.Fatalf("calls=%d, want both steps invalidated", calls)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/custody"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/types"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/worktrees"
 )
 
 type BranchKey struct{ RepositoryID, Ref string }
@@ -81,6 +82,13 @@ func (m *Manager) Replace(ctx context.Context, key BranchKey, accepted db.Accept
 		return nil, err
 	}
 	if err = m.store.TransitionRunStatus(r.ID, types.RunPending, types.RunRunning); err != nil {
+		m.mu.Unlock()
+		return nil, err
+	}
+	// The creation journal is cleared only after the durable run owns the path.
+	// Do this before exposing the run to the executor, closing the crash window
+	// where a terminal run could race journal cleanup.
+	if err = worktrees.CommitOwnership(worktree); err != nil {
 		m.mu.Unlock()
 		return nil, err
 	}

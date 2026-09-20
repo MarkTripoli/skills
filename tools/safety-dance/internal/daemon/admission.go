@@ -6,10 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -125,45 +122,54 @@ func managedHookPeer(pid int, gate string) bool {
 		return false
 	}
 	gate = cleanPath(gate)
-	var managedHook bool
-	expected := map[string]bool{cleanPath(filepath.Join(gate, "hooks", "pre-receive")): true, cleanPath(filepath.Join(gate, "hooks", "post-receive")): true}
+	expected := map[string]bool{
+		cleanPath(filepath.Join(gate, "hooks", "pre-receive")):  true,
+		cleanPath(filepath.Join(gate, "hooks", "post-receive")): true,
+	}
+	managedHook := false
+	gitReceive := false
 	for depth := 0; pid > 1 && depth < 64; depth++ {
-		ppid, command, err := processInfo(pid)
+		ppid, command, err := processInfoFunc(pid)
 		if err != nil {
 			return false
 		}
-		env, envErr := processEnvironment(pid)
-		if envErr != nil || strings.Contains(string(env), "SD_PARENT_RUN_ID=") {
-			return false
+		// The marker is supplied by the hook and is therefore caller-controlled.
+		// Only process metadata can establish that this request descended from
+		// the installed hook and Git's receive process.
+		if commandHasExecutable(command, expected) {
+			managedHook = true
 		}
-		fields := strings.Fields(command)
-		if len(fields) > 0 {
-			executable := cleanPath(fields[0])
-			for hook := range expected {
-				if executable == hook || strings.Contains(string(env), "SD_MANAGED_HOOK="+hook) {
-					managedHook = true
-				}
-			}
+		if isGitReceiveCommand(command) {
+			gitReceive = true
 		}
 		pid = ppid
 	}
-	return managedHook
+	return managedHook && gitReceive
 }
 
-func processInfo(pid int) (int, string, error) {
-	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "ppid=,command=").Output()
-	if err != nil {
-		return 0, "", err
+// processInfoFunc is a test seam for deterministic ancestry cases. Production
+// authorization always uses the platform process table implementation.
+var processInfoFunc = processInfo
+
+func commandHasExecutable(command string, expected map[string]bool) bool {
+	for _, field := range strings.Fields(command) {
+		field = strings.Trim(field, "\"'(),")
+		if expected[cleanPath(field)] {
+			return true
+		}
 	}
-	fields := strings.Fields(string(out))
-	if len(fields) < 2 {
-		return 0, "", errors.New("process information is incomplete")
+	return false
+}
+
+func isGitReceiveCommand(command string) bool {
+	for _, field := range strings.Fields(command) {
+		field = strings.Trim(field, "\"'(),")
+		name := filepath.Base(field)
+		if name == "git-receive-pack" || name == "git-receive-pack.exe" {
+			return true
+		}
 	}
-	parent, err := strconv.Atoi(fields[0])
-	if err != nil {
-		return 0, "", err
-	}
-	return parent, strings.Join(fields[1:], " "), nil
+	return false
 }
 
 func cleanPath(value string) string {
@@ -181,12 +187,12 @@ func cleanPath(value string) string {
 // AuthorizeMutationPeer permits only the Safety Dance CLI and rejects any
 // validation descendant carrying the parent-run marker.
 func AuthorizeMutationPeer(pid int) error {
-	if runtime.GOOS == "windows" || pid <= 0 {
+	if pid <= 0 {
 		return errors.New("unsupported or unauthenticated IPC peer")
 	}
 	var cliPeer bool
 	for depth := 0; pid > 1 && depth < 64; depth++ {
-		parent, command, err := processInfo(pid)
+		parent, command, err := processInfoFunc(pid)
 		if err != nil {
 			return err
 		}
