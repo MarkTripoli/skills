@@ -23,6 +23,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildRuntime } from "../scripts/lib/build.mjs";
 import { subjectProblems } from "../scripts/check-commits.mjs";
@@ -491,16 +492,31 @@ if (gradeDir !== null) {
   for (const s of scenarios) results.push(await gradeScenario(s, runDir));
 } else {
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "").replace("T", "-");
-  const runDir = path.join(resultsRoot, stamp);
-  fs.mkdirSync(runDir, { recursive: true });
+  let suffix = 0;
+  let runDir;
+  while (runDir === undefined) {
+    const candidate = path.join(resultsRoot, suffix === 0 ? stamp : `${stamp}-${suffix}`);
+    try {
+      fs.mkdirSync(candidate);
+      runDir = candidate;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      suffix += 1;
+    }
+  }
   // The built tree and source snapshots are private to this run (a concurrent run must not rebuild
   // the skills or change the guidance a running session is reading) and stay with its recordings.
   const dist = path.join(runDir, ".dist");
   buildRuntime("oh-my-pi", dist);
   snapshotSources(dist);
   const latest = path.join(resultsRoot, "latest");
-  fs.rmSync(latest, { force: true });
-  fs.symlinkSync(stamp, latest);
+  const latestTemp = path.join(resultsRoot, `.latest-${process.pid}-${randomUUID()}`);
+  try {
+    fs.symlinkSync(path.basename(runDir), latestTemp);
+    fs.renameSync(latestTemp, latest);
+  } finally {
+    fs.rmSync(latestTemp, { force: true });
+  }
   console.log(`skills built at ${path.relative(repoRoot, dist)}; running ${scenarios.map((s) => s.name).join(", ")} with ${maxMinutes} minutes per phase; recordings in ${path.relative(repoRoot, runDir)}`);
   results = await Promise.all(scenarios.map((s) => runScenario(s, runDir, dist)));
   fs.writeFileSync(path.join(runDir, "summary.json"), JSON.stringify(results, null, 2));
