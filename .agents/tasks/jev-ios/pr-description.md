@@ -12,10 +12,10 @@ Complete the preserved iOS JEV adapter acceptance while retaining the released b
 ## Acceptance criteria
 
 - Fresh iOS-only verification uses the real adapter and JEV without resuming the old all-platform run: historical receipts identify `idb`/`jev-1.13.0`, and current repair receipts are under `evidence/repair-cb7b53a/`.
-- Generic confirmation remains independently observed. Exact Name and Casey-to-Jordan wrapper-backed reruns are preserved but not claimed because the wrapper rewrote prompts; unchanged-helper proof remains pending.
+ - Generic, exact Name, and Casey-to-Jordan plain-helper reruns are independently observed and recorded; the original long refusal remains rejected because helper returned empty text.
 - Device/app/PID identity, safe replacement, truthful failed/blocked outcomes, and owned cleanup are proven: current `cb7b53a` records a genuine `failed` receipt and cleanup regressions, while preserved blocked receipts remain non-green.
-- Installed standalone proof is pending unchanged-helper rerun; historical wrapper-backed evidence remains preserved but unclaimed.
-- Aggregate tests, runtime packaging, and browser/Android offline boundaries pass: `npm test` is 149/149 and all four runtime builds pass. Independent review remains pending with CR-001 open for helper provenance.
+ - Installed standalone proof passes from rebuilt Codex with external `idb`, plain `omp -p`, credentials, and recording integration.
+ - Aggregate tests, runtime packaging, and browser/Android offline boundaries pass: `npm test` is 150/150 and all four runtime builds pass. Independent review remains pending for the iOS-only WAIT repair.
 
 ## Special things to note
 
