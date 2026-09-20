@@ -18,7 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import * as prompts from "@clack/prompts";
 import { fileURLToPath } from "node:url";
-import { buildRuntime, RUNTIMES, repoRoot } from "./lib/build.mjs";
+import { buildPortable, buildRuntime, RUNTIMES, repoRoot } from "./lib/build.mjs";
 import { scanSkills } from "./lib/layout.mjs";
 
 const TARGETS = [...RUNTIMES, "portable"];
@@ -358,15 +358,10 @@ export function apply(planned, { built, uninstall, home }) {
 // Build only skill and worker trees; the optional workflow is copied directly from its source.
 export function buildTrees(planned, work) {
   const built = new Map();
-  const selected = new Set(planned.names);
   for (const target of new Set(planned.steps.filter((step) => step.kind !== "workflow").map((step) => step.target))) {
     const dest = path.join(work, target);
-    if (target === "portable") {
-      fs.mkdirSync(path.join(dest, "skills"), { recursive: true });
-      for (const skill of scanSkills(path.join(repoRoot, "skills")).skills) {
-        if (selected.has(skill.name)) fs.cpSync(skill.dir, path.join(dest, "skills", skill.name), { recursive: true, filter: noDsStore });
-      }
-    } else buildRuntime(target, dest, { skillNames: planned.names });
+    if (target === "portable") buildPortable(dest, { skillNames: planned.names });
+    else buildRuntime(target, dest, { skillNames: planned.names });
     built.set(target, dest);
   }
   return built;
