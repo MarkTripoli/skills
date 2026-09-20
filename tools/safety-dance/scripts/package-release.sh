@@ -22,7 +22,7 @@ stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 toolroot=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cp "$toolroot/LICENSE" "$stage/LICENSE"
-if ! (cd "$toolroot" && go run ./scripts/generate-notices.go) > "$stage/THIRD_PARTY_NOTICES.md"; then
+if ! (cd "$toolroot" && env -u GOOS -u GOARCH go run ./scripts/generate-notices.go) > "$stage/THIRD_PARTY_NOTICES.md"; then
 	echo "unable to generate dependency notices from the module graph" >&2
 	exit 1
 fi

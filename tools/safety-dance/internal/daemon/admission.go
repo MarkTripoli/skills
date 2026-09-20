@@ -121,7 +121,7 @@ func (a *Admission) Issue(gate, ref string) (string, error) {
 // managedHookPeer proves that a token request came through a managed receive
 // hook, rather than merely from another process owned by the same user.
 func managedHookPeer(pid int, gate string) bool {
-	if runtime.GOOS == "windows" || pid <= 0 {
+	if pid <= 0 {
 		return false
 	}
 	gate = cleanPath(gate)
@@ -132,14 +132,15 @@ func managedHookPeer(pid int, gate string) bool {
 			return false
 		}
 		env, envErr := processEnvironment(pid)
-		if envErr != nil {
+		if envErr != nil || strings.Contains(string(env), "SD_PARENT_RUN_ID=") {
 			return false
 		}
-		if strings.Contains(string(env), "SD_PARENT_RUN_ID=") {
-			return false
-		}
-		if (strings.HasSuffix(command, "hooks/pre-receive") || strings.HasSuffix(command, "hooks/post-receive")) && strings.Contains(cleanPath(command), gate) {
-			managedHook = true
+		fields := strings.Fields(command)
+		if len(fields) > 0 {
+			executable := cleanPath(fields[0])
+			if (strings.HasSuffix(command, "hooks/pre-receive") || strings.HasSuffix(command, "hooks/post-receive")) && strings.Contains(executable, gate) {
+				managedHook = true
+			}
 		}
 		pid = ppid
 	}
@@ -273,15 +274,21 @@ func (a *Admission) notifyPush(ctx context.Context, raw json.RawMessage) (interf
 		return nil, errors.New("admission receipt is required")
 	}
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	receipt, ok := a.receipts[token]
 	if !ok || receipt.Gate != p.Gate || receipt.Ref != p.Ref || receipt.Old != p.Old || receipt.New != p.New {
+		a.mu.Unlock()
 		return nil, errors.New("notification does not match admitted update")
 	}
+	a.mu.Unlock()
 	if a.notify != nil {
 		if err := a.notify(ctx, PushNotification{Gate: p.Gate, Ref: p.Ref, Old: p.Old, New: p.New, Token: token, Options: append([]string(nil), p.PushOptions...)}); err != nil {
 			return nil, err
 		}
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if current, exists := a.receipts[token]; !exists || current.Gate != receipt.Gate || current.Ref != receipt.Ref || current.New != receipt.New {
+		return nil, errors.New("admission receipt changed while processing notification")
 	}
 	delete(a.receipts, token)
 	if err := a.saveReceipts(); err != nil {

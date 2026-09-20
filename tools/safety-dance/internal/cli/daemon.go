@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -148,28 +147,28 @@ func stopDaemon(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := stopInstalledService(p); err != nil {
-		return err
-	}
 	path := p.PIDFile()
-	raw, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
 		fmt.Fprintln(cmd.OutOrStdout(), "daemon stopped")
 		return nil
-	}
-	if err != nil {
+	} else if err != nil {
 		return err
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
-	if err != nil {
-		return err
+	var out ipc.ShutdownResult
+	if err := callDaemon(ipc.MethodShutdown, ipc.ShutdownParams{}, &out); err != nil {
+		return fmt.Errorf("authenticated daemon shutdown failed: %w", err)
 	}
-	if proc, e := os.FindProcess(pid); e == nil {
-		_ = proc.Signal(syscall.SIGTERM)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var health ipc.HealthResult
+		if err := callDaemon(ipc.MethodHealth, ipc.HealthParams{}, &health); err != nil {
+			_ = os.Remove(path)
+			fmt.Fprintln(cmd.OutOrStdout(), "daemon stopped")
+			return nil
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
-	_ = os.Remove(path)
-	fmt.Fprintln(cmd.OutOrStdout(), "daemon stopped")
-	return nil
+	return fmt.Errorf("daemon did not stop within timeout")
 }
 
 func serveDaemon(cmd *cobra.Command, args []string) error {
@@ -182,6 +181,8 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
 	defer own.Close()
 	server := ipc.NewServer()
 	manager := daemon.NewManager(d, func(ctx context.Context, r *db.Run) {
@@ -223,6 +224,13 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 			<-ticker.C
 		}
 	}()
+	server.Handle(ipc.MethodShutdown, func(ctx context.Context, raw json.RawMessage) (interface{}, error) {
+		if err := daemon.AuthorizeMutationPeer(ipc.PeerPID(ctx)); err != nil {
+			return nil, err
+		}
+		go func() { _ = syscall.Kill(os.Getpid(), syscall.SIGTERM) }()
+		return ipc.ShutdownResult{OK: true}, nil
+	})
 	server.Handle(ipc.MethodHealth, func(context.Context, json.RawMessage) (interface{}, error) {
 		return ipc.HealthResult{Status: "ok"}, nil
 	})
@@ -338,8 +346,6 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	go server.ServeReady()
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
 	<-sig
 	server.Close()
 	server.CloseListener()
@@ -455,6 +461,12 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 		}
 	}
 	effectiveConfig := config.EffectiveRepoConfig(pushedConfig, trustedConfig, trustedConfig.AllowRepoCommands)
+	globalConfig, globalErr := config.LoadGlobal(p.ConfigFile())
+	if globalErr != nil {
+		return fmt.Errorf("load global configuration: %w", globalErr)
+	}
+	mergedConfig := config.Merge(globalConfig, effectiveConfig)
+	effectiveConfig.Commands = mergedConfig.Commands
 	ref := run.Branch
 	if !strings.HasPrefix(ref, "refs/") {
 		ref = "refs/heads/" + ref

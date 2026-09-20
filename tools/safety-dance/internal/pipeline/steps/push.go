@@ -99,25 +99,40 @@ func Publish(ctx context.Context, database *db.DB, runID string, req PushRequest
 	if err := ctx.Err(); err != nil {
 		return PushResult{}, err
 	}
+	claimed := run.PushActive
 	if run.PushActive {
-		return PushResult{}, fmt.Errorf("run %s has an active publication claim; reconcile before retry", runID)
-	}
-	if err := database.AcquireRunPushActive(runID); err != nil {
-		return PushResult{}, err
+		live, liveErr := (branchsync.Syncer{Remote: req.Remote, Ref: req.Ref}).LiveHead(ctx)
+		if liveErr != nil {
+			return PushResult{}, fmt.Errorf("reconcile active publication: %w", liveErr)
+		}
+		if live != req.Candidate {
+			return PushResult{}, fmt.Errorf("active publication requires reconciliation: live head %s, candidate %s", live, req.Candidate)
+		}
+		result = PushResult{Candidate: req.Candidate, Upstream: live, GateMirror: req.GateMirror}
+	} else {
+		if err := database.AcquireRunPushActive(runID); err != nil {
+			return PushResult{}, err
+		}
+		claimed = true
 	}
 	defer func() {
+		if !claimed {
+			return
+		}
 		if clearErr := database.SetRunPushActive(runID, false); clearErr != nil && err == nil {
 			result = PushResult{}
 			err = fmt.Errorf("clear publication ownership: %w", clearErr)
 		}
 	}()
-	if live, liveErr := (branchsync.Syncer{Remote: req.Remote, Ref: req.Ref}).LiveHead(ctx); liveErr == nil && live == req.Candidate {
-		result = PushResult{Candidate: req.Candidate, Upstream: live, GateMirror: req.GateMirror}
-	} else {
-		var err error
-		result, err = Push(ctx, req)
-		if err != nil {
-			return PushResult{}, err
+	if !run.PushActive {
+		if live, liveErr := (branchsync.Syncer{Remote: req.Remote, Ref: req.Ref}).LiveHead(ctx); liveErr == nil && live == req.Candidate {
+			result = PushResult{Candidate: req.Candidate, Upstream: live, GateMirror: req.GateMirror}
+		} else {
+			var pushErr error
+			result, pushErr = Push(ctx, req)
+			if pushErr != nil {
+				return PushResult{}, pushErr
+			}
 		}
 	}
 	if mirror == nil {

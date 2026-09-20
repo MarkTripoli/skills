@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/git"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/ipc"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/tui"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/types"
@@ -37,8 +39,16 @@ func renderTUI(cmd *cobra.Command, args []string) error {
 	if repo == nil {
 		return fmt.Errorf("repository is not registered")
 	}
+	branchRaw, err := git.Run(context.Background(), root, "symbolic-ref", "--short", "HEAD")
+	if err != nil {
+		return err
+	}
+	branch := strings.TrimSpace(branchRaw)
+	if branch == "" {
+		return fmt.Errorf("current checkout is detached")
+	}
 	model := func() (tui.Model, error) {
-		run, err := database.GetActiveRun(repo.ID, "")
+		run, err := database.GetActiveRun(repo.ID, branch)
 		if err != nil {
 			return tui.Model{}, err
 		}
