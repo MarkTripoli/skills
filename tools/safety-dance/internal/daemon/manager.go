@@ -87,3 +87,40 @@ func (m *Manager) Active(key BranchKey) *RunHandle {
 	defer m.mu.Unlock()
 	return m.keys[key]
 }
+
+// Recover re-registers durable active runs after a daemon restart and resumes
+// only runs whose persisted status permits execution.
+func (m *Manager) Recover(ctx context.Context) error {
+	runs, err := m.db.RecoverableRuns()
+	if err != nil {
+		return err
+	}
+	for _, r := range runs {
+		if r.Status != types.RunPending && r.Status != types.RunRunning {
+			continue
+		}
+		runctx, cancel := context.WithCancel(ctx)
+		h := &RunHandle{Run: r, cancel: cancel, done: make(chan struct{})}
+		key := BranchKey{RepositoryID: r.RepoID, Ref: r.Branch}
+		m.mu.Lock()
+		if _, exists := m.keys[key]; exists {
+			m.mu.Unlock()
+			cancel()
+			continue
+		}
+		m.keys[key] = h
+		m.mu.Unlock()
+		go func(key BranchKey, handle *RunHandle) {
+			defer close(handle.done)
+			if m.run != nil {
+				m.run(runctx, handle.Run)
+			}
+			m.mu.Lock()
+			if m.keys[key] == handle {
+				delete(m.keys, key)
+			}
+			m.mu.Unlock()
+		}(key, h)
+	}
+	return nil
+}

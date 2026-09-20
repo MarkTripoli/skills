@@ -220,6 +220,14 @@ CREATE TABLE IF NOT EXISTS publications (
     gate_mirror TEXT NOT NULL,
     published_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS responses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    step TEXT NOT NULL,
+    action TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
 `
 
 // migrationStatements hold additive schema changes applied to databases that

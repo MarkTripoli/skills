@@ -43,21 +43,25 @@ GATE_DIR=$(git rev-parse --absolute-git-dir 2>/dev/null || :)
 case "$GATE_DIR" in /*) ;; *) HOOK_DIR=${0%/*}; GATE_DIR=$(cd "$HOOK_DIR/.." 2>/dev/null && pwd -P || :);; esac
 TMP=$(mktemp "$GATE_DIR/.safety-dance-receive.XXXXXX") || exit 1
 cat > "$TMP"
-TOKEN=""
-i=0
-while [ "$i" -lt "${GIT_PUSH_OPTION_COUNT:-0}" ]; do
-  opt=$(printenv "GIT_PUSH_OPTION_$i" 2>/dev/null || :)
-  case "$opt" in safety-dance-token=*) TOKEN=${opt#*=};; esac
-  i=$((i + 1))
-done
 while read line; do
   set -- $line; oldrev=$1; newrev=$2; refname=$3
-  out=$(printf '%s %s %s\n' "$oldrev" "$newrev" "$refname" | SD_HOOK_HELPER=1 "$SD_BIN" daemon admit-push --gate "$GATE_DIR" --ref "$refname" --token "$TOKEN" 2>&1)
+  token=""
+  if [ "${GIT_PUSH_OPTION_COUNT:-0}" -gt 0 ]; then
+    i=0
+    while [ "$i" -lt "${GIT_PUSH_OPTION_COUNT:-0}" ]; do
+      opt=$(printenv "GIT_PUSH_OPTION_$i" 2>/dev/null || :)
+      case "$opt" in safety-dance-token=*) token=${opt#*=};; esac
+      i=$((i + 1))
+    done
+  else
+    token=$(SD_HOOK_HELPER=1 "$SD_BIN" daemon issue-push-token --gate "$GATE_DIR" --ref "$refname" 2>/dev/null) || { rm -f "$TMP"; printf 'safety-dance: could not obtain admission token\n' >&2; exit 1; }
+  fi
+  out=$(printf '%s\n' "$line" | SD_HOOK_HELPER=1 "$SD_BIN" daemon admit-push --gate "$GATE_DIR" --ref "$refname" --token "$token" 2>&1)
   status=$?
   if [ $status -ne 0 ]; then rm -f "$TMP"; printf 'safety-dance: gate push refused before ref mutation:\n%s\n' "$out" >&2; exit $status; fi
 done < "$TMP"
-USER_HOOK="$GATE_DIR/hooks/` + preservedPreReceiveHook + `"
-if [ -x "$USER_HOOK" ]; then # exec "$USER_HOOK" is intentionally avoided so stdin can be restored
+USER_HOOK="$GATE_DIR/hooks/pre-receive.safety-dance-user"
+if [ -x "$USER_HOOK" ]; then
   "$USER_HOOK" < "$TMP"; status=$?; rm -f "$TMP"; exit $status; fi
 rm -f "$TMP"
 exit 0

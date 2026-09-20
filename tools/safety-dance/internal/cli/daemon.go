@@ -37,8 +37,23 @@ func newDaemon() *cobra.Command {
 		return nil
 	}})
 	d.AddCommand(&cobra.Command{Use: "serve", Hidden: true, RunE: serveDaemon})
-	d.AddCommand(newAdmitPush(), newNotifyPush())
+	d.AddCommand(newAdmitPush(), newNotifyPush(), newIssuePushToken())
 	return d
+}
+
+func newIssuePushToken() *cobra.Command {
+	a := &pushArgs{}
+	c := &cobra.Command{Use: "issue-push-token", Hidden: true, RunE: func(cmd *cobra.Command, args []string) error {
+		var out ipc.IssuePushTokenResult
+		if err := callDaemon(ipc.MethodIssuePushToken, ipc.IssuePushTokenParams{Gate: a.gate, Ref: a.ref}, &out); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), out.Token)
+		return err
+	}}
+	c.Flags().StringVar(&a.gate, "gate", "", "gate")
+	c.Flags().StringVar(&a.ref, "ref", "", "ref")
+	return c
 }
 
 func startDaemon(cmd *cobra.Command, args []string) error {
@@ -126,6 +141,21 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		return ipc.StartFreshRunResult{Receipt: ipc.LaunchReceipt{RunID: r.ID, Branch: r.Branch, HeadSHA: r.HeadSHA, SubmittedHeadSHA: r.HeadSHA, Disposition: "created"}}, nil
 	})
 	server.Handle(ipc.MethodRespond, func(ctx context.Context, raw json.RawMessage) (interface{}, error) {
+		var q ipc.RespondParams
+		if err := json.Unmarshal(raw, &q); err != nil {
+			return nil, err
+		}
+		if q.RunID == "" || q.Step == "" || q.Action == "" {
+			return nil, fmt.Errorf("run, step, and action are required")
+		}
+		if r, err := d.GetRun(q.RunID); err != nil {
+			return nil, err
+		} else if r == nil {
+			return nil, fmt.Errorf("run %s not found", q.RunID)
+		}
+		if err := d.RecordResponse(db.Response{RunID: q.RunID, Step: string(q.Step), Action: string(q.Action), Payload: q}); err != nil {
+			return nil, err
+		}
 		return ipc.RespondResult{OK: true}, nil
 	})
 	server.Handle(ipc.MethodCancelRun, func(ctx context.Context, raw json.RawMessage) (interface{}, error) {

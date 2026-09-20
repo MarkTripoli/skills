@@ -39,3 +39,25 @@ func RemoveDetached(ctx context.Context, source, dir string) error {
 	}
 	return nil
 }
+
+// RecoverDetached verifies an owned run worktree after restart, recreating it
+// from the persisted head only when the directory is missing.
+func RecoverDetached(ctx context.Context, source, dir, head string) error {
+	if source == "" || dir == "" || head == "" {
+		return fmt.Errorf("source, directory, and head are required")
+	}
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return CreateDetached(ctx, source, dir, head)
+	} else if err != nil {
+		return err
+	}
+	verify := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "HEAD")
+	out, err := verify.Output()
+	if err != nil {
+		return fmt.Errorf("verify recovered worktree: %w", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != head {
+		return fmt.Errorf("recovered worktree head mismatch: got %s want %s", got, head)
+	}
+	return nil
+}

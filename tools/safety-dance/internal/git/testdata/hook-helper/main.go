@@ -15,7 +15,7 @@ import (
 
 func main() {
 	if len(os.Args) < 3 || os.Args[1] != "daemon" {
-		fmt.Fprintln(os.Stderr, "hook-helper accepts daemon admit-push or daemon notify-push")
+		fmt.Fprintln(os.Stderr, "hook-helper accepts daemon issue-push-token, admit-push or notify-push")
 		os.Exit(2)
 	}
 	p, err := paths.New()
@@ -28,6 +28,8 @@ func main() {
 	}
 	defer c.Close()
 	switch os.Args[2] {
+	case "issue-push-token":
+		issue(c, os.Args[3:])
 	case "admit-push":
 		admit(c, os.Args[3:])
 	case "notify-push":
@@ -35,6 +37,19 @@ func main() {
 	default:
 		fail(fmt.Errorf("unsupported helper command %q", os.Args[2]))
 	}
+}
+
+func issue(c *ipc.Client, args []string) {
+	fs := flag.NewFlagSet("issue-push-token", flag.ContinueOnError)
+	gate, ref := fs.String("gate", "", ""), fs.String("ref", "", "")
+	if err := fs.Parse(args); err != nil {
+		fail(err)
+	}
+	var result ipc.IssuePushTokenResult
+	if err := c.CallWithTimeout(ipc.MethodIssuePushToken, ipc.IssuePushTokenParams{Gate: *gate, Ref: *ref}, &result, 5*time.Second); err != nil {
+		fail(err)
+	}
+	fmt.Fprintln(os.Stdout, result.Token)
 }
 
 func endpoint(p *paths.Paths) string {
