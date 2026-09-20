@@ -88,7 +88,7 @@ test('text helper timeout kills SIGTERM-ignoring helper and descendant',async()=
   const scratch=await fs.mkdtemp(path.join(os.tmpdir(),'jev-helper-group-'));
   const pidFile=path.join(scratch,'pids.json');
   const childCode=`const fs=require('node:fs');const {spawn}=require('node:child_process');process.on('SIGTERM',()=>{});const descendant=spawn(process.execPath,['-e',\"process.on('SIGTERM',()=>{});setInterval(()=>{},1000)\"],{stdio:'ignore'});fs.writeFileSync(${JSON.stringify(pidFile)},JSON.stringify({parent:process.pid,descendant:descendant.pid}));setInterval(()=>{},1000);`;
-  const result=await generateText({command:[process.execPath,'-e',childCode],timeoutMs:40});
+  const result=await generateText({command:[process.execPath,'-e',childCode],timeoutMs:500});
   assert.equal(result.reason,'text helper timeout');
   const pids=JSON.parse(await fs.readFile(pidFile,'utf8'));
   await new Promise(resolve=>setTimeout(resolve,50));
