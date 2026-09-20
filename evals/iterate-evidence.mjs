@@ -179,10 +179,13 @@ export async function inspectEvidenceTrace(file, imageDir = null) {
   return index;
 }
 
+// Providers whose OAuth token OMP accepts from the environment; the isolated viewer case exports exactly one.
+const isolatedCredentialEnv = { "openai-codex": "OPENAI_CODEX_OAUTH_TOKEN", anthropic: "ANTHROPIC_OAUTH_TOKEN" };
+
 async function runSubject(prompt, config, pinned, options) {
   const { out, repo } = config;
   const args = ["-p", "--auto-approve", "--mode", "json", "--session-dir", path.join(out, "sessions"), "--no-extensions", "--no-skills", "--no-rules", "--no-lsp", "--no-title", "--extension", path.join(pinned, "evals", "iterate-evidence-hooks.mjs"), `--max-time=${options.maxMinutes}m`];
-  const model = options.model || (config.blocked ? "openai-codex/gpt-6-astra" : null);
+  const model = options.model || null;
   if (model) args.push("--model", model);
   let subjectEnv = { ...process.env, ITERATE_EVIDENCE_OBSERVER: path.join(out, "observer-config.json") };
   if (config.pauseFile) subjectEnv.ITERATE_EVIDENCE_CAPTURE_PAUSE = config.pauseFile;
@@ -191,13 +194,16 @@ async function runSubject(prompt, config, pinned, options) {
     fs.writeFileSync(overlay, blockedOverlay);
     args.push("--tools", "read,grep,glob,write,bash,todo", "--config", overlay);
     // An ephemeral environment credential is supported by OMP; never persist its value.
-    if (!model.startsWith("openai-codex/")) throw new Error("Isolated viewer case requires an openai-codex model for the configured token export arrangement");
-    const token = command("omp", ["token", "openai-codex"], repo);
+    if (!model) throw new Error(`Isolated viewer case requires --model from a provider with an environment credential: ${Object.keys(isolatedCredentialEnv).join(", ")}`);
+    const provider = model.split("/")[0];
+    const envName = isolatedCredentialEnv[provider];
+    if (!envName) throw new Error(`Isolated viewer case has no environment credential arrangement for provider ${provider}; supported: ${Object.keys(isolatedCredentialEnv).join(", ")}`);
+    const token = command("omp", ["token", provider], repo);
     if (token.code !== 0 || !token.stdout.trim()) throw new Error("Isolated provider authentication unavailable");
     subjectEnv = {
       PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, HOME: config.home,
       PI_CONFIG_DIR: path.join(config.home, ".omp"), PI_CODING_AGENT_DIR: path.join(config.home, ".omp", "agent"),
-      OPENAI_CODEX_OAUTH_TOKEN: token.stdout.trim(),
+      [envName]: token.stdout.trim(),
       PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || path.join(os.homedir(), "Library", "Caches", "ms-playwright"),
       ITERATE_EVIDENCE_OBSERVER: path.join(out, "observer-config.json"),
     };
@@ -205,7 +211,7 @@ async function runSubject(prompt, config, pinned, options) {
   args.push(prompt);
   const configPath = path.join(out, "observer-config.json");
   save(configPath, config);
-  save(path.join(out, "runtime.json"), { node: process.version, platform: process.platform, arch: process.arch, omp: command("omp", ["--version"], repo), model, args, authentication: config.blocked ? "Fresh isolated HOME/config; omp token openai-codex supplied only as OPENAI_CODEX_OAUTH_TOKEN; no credentials retained" : "Caller environment/profile; no credentials copied into evidence" });
+  save(path.join(out, "runtime.json"), { node: process.version, platform: process.platform, arch: process.arch, omp: command("omp", ["--version"], repo), model, args, authentication: config.blocked ? `Fresh isolated HOME/config; omp token ${model.split("/")[0]} supplied only as ${isolatedCredentialEnv[model.split("/")[0]]}; no credentials retained` : "Caller environment/profile; no credentials copied into evidence" });
   const stdout = fs.createWriteStream(path.join(out, "trace.jsonl"));
   const stderr = fs.createWriteStream(path.join(out, "stderr.log"));
   const child = spawn("omp", args, { cwd: repo, env: subjectEnv, detached: true, stdio: ["ignore", "pipe", "pipe"] });
