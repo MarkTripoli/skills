@@ -22,6 +22,7 @@ import (
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/paths"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/pipeline"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/pipeline/steps"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/policy"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/scm"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/scm/github"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/shellenv"
@@ -494,6 +495,10 @@ func pinGatesForAdmission(ctx context.Context, p *paths.Paths, repo *db.Repo, wo
 		return "", fmt.Errorf("fetch trusted configuration: %w", err)
 	}
 	defer func() { _, _ = git.Run(ctx, repo.WorkingPath, "update-ref", "-d", ref) }()
+	trustedRevision, err := git.Run(ctx, repo.WorkingPath, "rev-parse", ref)
+	if err != nil {
+		return "", fmt.Errorf("resolve trusted policy revision: %w", err)
+	}
 	entries, err := git.Run(ctx, repo.WorkingPath, "ls-tree", "-r", "--name-only", ref, "--", ".safety-dance.yaml")
 	if err != nil {
 		return "", fmt.Errorf("inspect trusted configuration: %w", err)
@@ -507,6 +512,15 @@ func pinGatesForAdmission(ctx context.Context, p *paths.Paths, repo *db.Repo, wo
 		if err != nil {
 			return "", fmt.Errorf("load trusted repository configuration: %w", err)
 		}
+	}
+	trusted, err = policy.Resolve(p, repo.ID, strings.TrimSpace(trustedRevision), func() *config.RepoConfig {
+		if strings.TrimSpace(entries) != "" {
+			return trusted
+		}
+		return nil
+	}())
+	if err != nil {
+		return "", err
 	}
 	effective := config.EffectiveRepoConfig(pushed, trusted, trusted.AllowRepoCommands)
 	global, err := config.LoadGlobal(p.ConfigFile())
@@ -691,6 +705,10 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 		return fmt.Errorf("fetch trusted configuration: %w", err)
 	}
 	defer func() { _, _ = git.Run(ctx, repo.WorkingPath, "update-ref", "-d", trustedRef) }()
+	trustedRevision, err := git.Run(ctx, repo.WorkingPath, "rev-parse", trustedRef)
+	if err != nil {
+		return fmt.Errorf("resolve trusted policy revision: %w", err)
+	}
 	entries, err := git.Run(ctx, repo.WorkingPath, "ls-tree", "-r", "--name-only", trustedRef, "--", ".safety-dance.yaml")
 	if err != nil {
 		return fmt.Errorf("inspect trusted configuration: %w", err)
@@ -704,15 +722,15 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 		if err != nil {
 			return fmt.Errorf("load trusted repository configuration: %w", err)
 		}
-	} else {
-		raw, readErr := os.ReadFile(p.BootstrapConfigFile())
-		if readErr != nil {
-			return fmt.Errorf("trusted repository configuration is not committed on the default branch: %w", readErr)
+	}
+	trustedConfig, err = policy.Resolve(p, repo.ID, strings.TrimSpace(trustedRevision), func() *config.RepoConfig {
+		if strings.TrimSpace(entries) != "" {
+			return trustedConfig
 		}
-		trustedConfig, err = config.LoadRepoFromBytes(raw)
-		if err != nil {
-			return fmt.Errorf("load wizard bootstrap configuration: %w", err)
-		}
+		return nil
+	}())
+	if err != nil {
+		return err
 	}
 	effectiveConfig := config.EffectiveRepoConfig(pushedConfig, trustedConfig, trustedConfig.AllowRepoCommands)
 	globalConfig, globalErr := config.LoadGlobal(p.ConfigFile())

@@ -22,7 +22,7 @@ func metadataDir(dir string) string {
 			worktreeRoot := filepath.Join(root, "worktrees")
 			rel, relErr := filepath.Rel(worktreeRoot, clean)
 			if relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				return filepath.Join(root, ".safety-dance-journals")
+				return filepath.Join(worktreeRoot, ".safety-dance-journals")
 			}
 		}
 	}
