@@ -71,6 +71,26 @@ test("named excluded-root snapshots detect tracked, untracked, ignored, and dele
   });
 });
 
+test("named excluded-root snapshots detect permission-only changes", () => {
+  // Given
+  const root = repository();
+  put(root, ".agents/private.txt", "same\n");
+  fs.chmodSync(path.join(root, ".agents"), 0o700);
+  fs.chmodSync(path.join(root, ".agents/private.txt"), 0o600);
+  const before = snapshotNamedRoot(root, ".agents");
+
+  // When
+  fs.chmodSync(path.join(root, ".agents"), 0o755);
+  fs.chmodSync(path.join(root, ".agents/private.txt"), 0o644);
+  const afterSnapshot = snapshotNamedRoot(root, ".agents");
+
+  // Then
+  assert.deepEqual(diffRepositorySnapshots(before, afterSnapshot).modified, [
+    ".agents",
+    ".agents/private.txt",
+  ]);
+});
+
 fifoTest("named excluded-root snapshots retain types without dereferencing payloads", () => {
   const root = repository();
   put(root, ".agents/file-to-directory", "before\n");
@@ -144,8 +164,8 @@ test("Git excluded-root snapshots omit only config and ordinary index contents",
   const afterSnapshot = snapshotGitRoot(root);
 
   assert.equal(".git/config" in afterSnapshot, false);
-  assert.deepEqual(before[".git/index"], { kind: "file" });
-  assert.deepEqual(afterSnapshot[".git/index"], { kind: "file" });
+  assert.deepEqual(before[".git/index"], { kind: "file", mode: "0644" });
+  assert.deepEqual(afterSnapshot[".git/index"], { kind: "file", mode: "0644" });
   assert.deepEqual(diffRepositorySnapshots(before, afterSnapshot).changedPaths, [".git/hooks/outside-config"]);
 });
 
@@ -172,7 +192,7 @@ test("Git excluded-root snapshots detect index directories and descendants", () 
   put(root, ".git/index/payload", "retained\n");
   const directorySnapshot = snapshotGitRoot(root);
 
-  assert.deepEqual(directorySnapshot[".git/index"], { kind: "directory" });
+  assert.deepEqual(directorySnapshot[".git/index"], { kind: "directory", mode: "0755" });
   assert.equal(directorySnapshot[".git/index/payload"].kind, "file");
   assert.deepEqual(diffRepositorySnapshots(fileSnapshot, directorySnapshot).changedPaths, [
     ".git/index",

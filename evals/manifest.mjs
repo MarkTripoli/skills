@@ -1,7 +1,11 @@
+import crypto from "node:crypto";
+
 const HASH = /^[a-f0-9]{64}$/;
 const OBJECT_ID = /^[a-f0-9]{40,64}$/;
 const FILE_MODE = /^[0-7]{6}$/;
+const PERMISSION_MODE = /^[0-7]{4}$/;
 const OTHER_TYPES = new Set(["other", "fifo", "socket", "block-device", "character-device"]);
+const READ_ERROR_CLASSES = new Set(["io-error", "permission-denied", "read-failure"]);
 const INDEX_OPERATIONS = new Set(["diff-visible-intent", "diff-ordinary-staged", "ls-files", "parse-ls-files"]);
 const INDEX_REASONS = new Set(["absent-git-root", "unsafe-git-root", "unreadable-git-root"]);
 
@@ -21,28 +25,73 @@ function validBase64(value) {
     && Buffer.from(value, "base64").toString("base64") === value;
 }
 
+function payloadDigest(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function pathProblem(file, ownedRoot = null) {
+  const normalized = file.replaceAll("\\", "/");
+  const segments = normalized.split("/");
+  if (
+    file === ""
+    || normalized !== file
+    || normalized.startsWith("/")
+    || /^[A-Za-z]:\//.test(normalized)
+    || segments.some((segment) => segment === "" || segment === "." || segment === "..")
+  ) return `has invalid path ${JSON.stringify(file)}`;
+  if (ownedRoot === null && [".agents", ".git", ".omp"].includes(segments[0])) {
+    return `has reserved root path ${JSON.stringify(file)}`;
+  }
+  if (ownedRoot !== null && segments[0] !== ownedRoot) {
+    return `has path outside bucket ${JSON.stringify(file)}`;
+  }
+  return null;
+}
+
 function entryProblem(entry, file, contentlessIndex) {
   if (!record(entry) || typeof entry.kind !== "string") return `${file} has no known record kind`;
   switch (entry.kind) {
     case "directory":
-      return exactKeys(entry, ["kind"]) ? null : `${file} directory record has unknown fields`;
+      return exactKeys(entry, ["kind", "mode"])
+        && typeof entry.mode === "string"
+        && PERMISSION_MODE.test(entry.mode)
+        ? null
+        : `${file} directory record is malformed`;
     case "file":
       if (contentlessIndex && file === ".git/index") {
-        return exactKeys(entry, ["kind"]) ? null : `${file} contentless record has unknown fields`;
+        return exactKeys(entry, ["kind", "mode"])
+          && typeof entry.mode === "string"
+          && PERMISSION_MODE.test(entry.mode)
+          ? null
+          : `${file} contentless record is malformed`;
       }
-      return exactKeys(entry, ["bytes", "kind", "sha256"])
-        && validBase64(entry.bytes)
-        && typeof entry.sha256 === "string"
-        && HASH.test(entry.sha256)
+      if (!exactKeys(entry, ["bytes", "kind", "mode", "sha256"])
+        || !validBase64(entry.bytes)
+        || typeof entry.mode !== "string"
+        || !PERMISSION_MODE.test(entry.mode)
+        || typeof entry.sha256 !== "string"
+        || !HASH.test(entry.sha256)) return `${file} file record is malformed`;
+      return payloadDigest(Buffer.from(entry.bytes, "base64")) === entry.sha256
         ? null
-        : `${file} file record is malformed`;
+        : `${file} file digest mismatch`;
     case "symlink":
-      return exactKeys(entry, ["kind", "linkTarget", "sha256"])
-        && typeof entry.linkTarget === "string"
-        && typeof entry.sha256 === "string"
-        && HASH.test(entry.sha256)
+      if (!exactKeys(entry, ["kind", "linkTarget", "sha256"])
+        || typeof entry.linkTarget !== "string"
+        || typeof entry.sha256 !== "string"
+        || !HASH.test(entry.sha256)) return `${file} symlink record is malformed`;
+      return payloadDigest(entry.linkTarget) === entry.sha256
         ? null
-        : `${file} symlink record is malformed`;
+        : `${file} symlink digest mismatch`;
+    case "file-error":
+      return exactKeys(entry, ["errorClass", "kind", "mode", "operation", "sha256"])
+        && typeof entry.mode === "string"
+        && PERMISSION_MODE.test(entry.mode)
+        && entry.operation === "read-file"
+        && typeof entry.errorClass === "string"
+        && READ_ERROR_CLASSES.has(entry.errorClass)
+        && entry.sha256 === null
+        ? null
+        : `${file} file-error record is malformed`;
     case "other":
       return exactKeys(entry, ["kind", "type"])
         && typeof entry.type === "string"
@@ -54,10 +103,11 @@ function entryProblem(entry, file, contentlessIndex) {
   }
 }
 
-function treeProblem(value, contentlessIndex = false) {
+function treeProblem(value, contentlessIndex = false, ownedRoot = null) {
   if (!record(value)) return "must be an object keyed by repository-relative path";
   for (const [file, entry] of Object.entries(value)) {
-    if (file === "" || file.startsWith("/") || file.includes("\\")) return `has invalid path ${JSON.stringify(file)}`;
+    const invalidPath = pathProblem(file, ownedRoot);
+    if (invalidPath) return invalidPath;
     const problem = entryProblem(entry, file, contentlessIndex);
     if (problem) return problem;
   }
@@ -73,7 +123,7 @@ export function excludedRootsManifestProblem(value) {
     return "must contain only .agents, .git, and .omp roots";
   }
   for (const root of [".agents", ".git", ".omp"]) {
-    const problem = treeProblem(value[root], root === ".git");
+    const problem = treeProblem(value[root], root === ".git", root);
     if (problem) return `${root}: ${problem}`;
   }
   return null;
@@ -83,7 +133,9 @@ export function gitConfigManifestProblem(value) {
   if (value === null) return null;
   if (!record(value) || typeof value.kind !== "string") return "must be null or a typed config record";
   if (value.kind === "file") {
-    return exactKeys(value, ["kind", "sha256"])
+    return exactKeys(value, ["kind", "mode", "sha256"])
+      && typeof value.mode === "string"
+      && PERMISSION_MODE.test(value.mode)
       && typeof value.sha256 === "string"
       && HASH.test(value.sha256)
       ? null

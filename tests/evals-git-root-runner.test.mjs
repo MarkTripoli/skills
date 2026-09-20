@@ -136,8 +136,8 @@ test("terminal capture retains only a digest for regular Git config files", () =
     // Then
     assert.equal(live.status, 1);
     assert.match(live.stdout, /repository: local Git configuration changed/);
-    assert.deepEqual(Object.keys(before).sort(), ["kind", "sha256"]);
-    assert.deepEqual(Object.keys(afterSnapshot).sort(), ["kind", "sha256"]);
+    assert.deepEqual(Object.keys(before).sort(), ["kind", "mode", "sha256"]);
+    assert.deepEqual(Object.keys(afterSnapshot).sort(), ["kind", "mode", "sha256"]);
     assert.notEqual(before.sha256, afterSnapshot.sha256);
     assert.equal(retained.includes(sentinel), false);
     assert.equal(retained.includes(encodedSentinel), false);

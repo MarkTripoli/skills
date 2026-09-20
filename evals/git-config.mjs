@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { fileReadError, permissionMode } from "./file-evidence.mjs";
 
 function snapshotSpecialEntry(stats) {
   let type = "other";
@@ -12,7 +13,7 @@ function snapshotSpecialEntry(stats) {
   return { kind: "other", type };
 }
 
-export function snapshotGitConfig(root) {
+export function snapshotGitConfig(root, { readFile = fs.readFileSync } = {}) {
   const gitRoot = path.join(root, ".git");
   let gitRootStats;
   try {
@@ -39,12 +40,17 @@ export function snapshotGitConfig(root) {
       sha256: crypto.createHash("sha256").update(linkTarget).digest("hex"),
     };
   }
-  if (stats.isDirectory()) return { kind: "directory" };
+  if (stats.isDirectory()) return { kind: "directory", mode: permissionMode(stats) };
   if (!stats.isFile()) return snapshotSpecialEntry(stats);
-  return {
-    kind: "file",
-    sha256: crypto.createHash("sha256").update(fs.readFileSync(config)).digest("hex"),
-  };
+  try {
+    return {
+      kind: "file",
+      mode: permissionMode(stats),
+      sha256: crypto.createHash("sha256").update(readFile(config)).digest("hex"),
+    };
+  } catch (error) {
+    return fileReadError(stats, error);
+  }
 }
 
 export function gitConfigChanged(before, after) {
