@@ -18,7 +18,7 @@
   "scripts": {
     "postinstall": "node scripts/prepare.mjs",
     "test": "node scripts/validate.mjs && node scripts/sync-plugin.mjs --check && node --test tests/ skills/delivery/jev-ui/scripts/test-acceptance.mjs",
-    "test:safety-dance": "node scripts/check-safety-dance-identity.mjs && (cd tools/safety-dance && go test -race ./... && go vet ./... && go build ./cmd/safety-dance) && node --test tests/safety-dance-release.test.mjs",
+    "test:safety-dance": "node scripts/check-safety-dance-identity.mjs && (cd tools/safety-dance && go test -race ./... && go vet ./... && tmp=$(mktemp -d) && trap 'rm -rf \"$tmp\"' EXIT && go build -o \"$tmp/safety-dance\" ./cmd/safety-dance) && node --test tests/safety-dance-release.test.mjs",
     "validate": "node scripts/validate.mjs",
     "evals": "node evals/run.mjs",
     "check-commits": "node scripts/check-commits.mjs",

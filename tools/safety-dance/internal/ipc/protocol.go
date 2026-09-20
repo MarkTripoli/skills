@@ -26,6 +26,7 @@ const (
 	MethodGateContext        = "gate_context"
 	MethodAdmitPush          = "admit_push"
 	MethodNotifyPush         = "notify_push"
+	MethodIssuePushToken     = "issue_push_token"
 	MethodHealth             = "health"
 	MethodShutdown           = "shutdown"
 )
@@ -222,6 +223,14 @@ type GateContextParams struct {
 type AdmitPushParams struct {
 	Gate  string `json:"gate"`
 	Ref   string `json:"ref"`
+	Token string `json:"token"`
+}
+
+type IssuePushTokenParams struct {
+	Gate string `json:"gate"`
+	Ref  string `json:"ref"`
+}
+type IssuePushTokenResult struct {
 	Token string `json:"token"`
 }
 

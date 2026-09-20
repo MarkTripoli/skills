@@ -45,3 +45,53 @@ func TestSameBranchSupersede(t *testing.T) {
 	mu.Unlock()
 	m.Active(key).Cancel()
 }
+
+func TestDifferentBranchesOverlap(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if _, err = d.InsertRepoWithID("repo", "/checkout", "upstream", "main"); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	m := NewManager(d, func(ctx context.Context, r *db.Run) { started <- r.Branch; <-release })
+	if _, err = m.Replace(context.Background(), BranchKey{"repo", "refs/heads/main"}, db.AcceptedRef{RepoID: "repo", Branch: "refs/heads/main", GateHead: "a", LaunchNonce: "a"}, "/tmp/a"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = m.Replace(context.Background(), BranchKey{"repo", "refs/heads/dev"}, db.AcceptedRef{RepoID: "repo", Branch: "refs/heads/dev", GateHead: "b", LaunchNonce: "b"}, "/tmp/b"); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		seen[<-started] = true
+	}
+	close(release)
+	if len(seen) != 2 {
+		t.Fatalf("branches did not overlap: %v", seen)
+	}
+}
+
+func TestRestartRecoveryListsActiveRuns(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if _, err = d.InsertRepoWithID("repo", "/checkout", "upstream", "main"); err != nil {
+		t.Fatal(err)
+	}
+	r, err := d.InsertRun("repo", "refs/heads/main", "head", "base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := d.RecoverableRuns()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 1 || active[0].ID != r.ID {
+		t.Fatalf("recovery=%v", active)
+	}
+}

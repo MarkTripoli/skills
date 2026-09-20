@@ -29,6 +29,7 @@ func NewAdmission(server *ipc.Server, notify func(context.Context, PushNotificat
 	a := &Admission{auth: ipc.NewAuthenticator(), notify: notify}
 	server.Handle(ipc.MethodAdmitPush, a.admit)
 	server.Handle(ipc.MethodNotifyPush, a.notifyPush)
+	server.Handle(ipc.MethodIssuePushToken, a.issue)
 	return a
 }
 
@@ -37,6 +38,20 @@ func (a *Admission) Issue(gate, ref string) (string, error) {
 		return "", errors.New("admission is not initialized")
 	}
 	return a.auth.Issue(gate, ref)
+}
+func (a *Admission) issue(ctx context.Context, raw json.RawMessage) (interface{}, error) {
+	if ipc.PeerPID(ctx) <= 0 {
+		return nil, errors.New("unauthenticated IPC peer")
+	}
+	var p ipc.IssuePushTokenParams
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	token, err := a.Issue(p.Gate, p.Ref)
+	if err != nil {
+		return nil, err
+	}
+	return ipc.IssuePushTokenResult{Token: token}, nil
 }
 
 func (a *Admission) admit(ctx context.Context, raw json.RawMessage) (interface{}, error) {
