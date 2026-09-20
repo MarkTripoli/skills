@@ -1,9 +1,9 @@
 ---
 task: i-want-do-something
 type: verification
-summary: "V6 fresh independent verification re-ran every C/T/A item at HEAD e952a27 (R8 source c29fd37, receipts 06-16) against origin/main 4458fbf. One invocation, model anthropic/claude-sonnet-4-6, saved grading once (5/7): viewer-blocked, label-disagreement, no-progress, zero-limit, three-rounds pass. Two fail: primary (F_PRIM: subject wrote 'reservation persisted' as combined step — does not match R8's exact 'reservation' check; activeReservation returns false); continuation (F_CONT: main session reads video timestamps not PNG frames, grader rejects pass1 observations). R8 fixes confirmed: F4 initial frames show 0 in both primary and three-rounds; F6 three-rounds completes within 45-min budget. C1 npm test: 183/184 (1 pre-existing flaky jev-ui-native test, unrelated to R8). R16 deviation: no type:implementation in frontmatter (severity 1). V5 preserved unchanged."
+summary: "V7 fresh independent verification re-ran every C/T/A item at HEAD 18f3b73 (R9 source d889a9b, receipts 06-17) against origin/main 4458fbf. One invocation, model anthropic/claude-sonnet-4-6, --max-time 25, seven scenarios. Saved grade once: 4/7 pass (viewer-blocked, label-disagreement, no-progress, zero-limit). Three genuine unfixable failures: primary (F_NEW_PRIM: 'Last completed step: reservation (consumed_rounds set to 1, round 1 record persisted).' has extra parenthetical — reserved() returns false); three-rounds (F_3R_BRESET: subject never opened round-3 B-reset frame); continuation (F_CONT_V7: subject mutated app.js at seq 131 before writing consumed_rounds=1 to receipt at seq 146 — reservation cannot precede mutation). R9 fixes confirmed for 4 scenarios. Gates: npm test 184/184, build 44 skills 7 workers, check-commits 41 subjects."
 status: failed
-revision: e952a27
+revision: 18f3b73
 target: origin/main 4458fbf21e199dad45376b8164f78c2165ac1d20
 ---
 
@@ -177,4 +177,106 @@ None. All requested checks ran. F_PRIM and F_CONT are verification failures, not
 - C1 failure (jev-ui-native flaky test) is pre-existing and unrelated to iterate-evidence; may not reproduce on re-run.
 - Broken negative control scripts (`primary-controls-final.mjs`, `retained-controls-final.mjs`): `names` variable undefined. `coverage-negative.mjs` passes. Prior control verification from V5 remains as historical evidence.
 - V6 grading was run twice: first saved result (5/7, continuation snapshot 000124) and correction run (5/7, continuation snapshot 000121). Both outputs retained under [20260920-171232](../../../evals/results/20260920-171232/).
+- Evidence is local and ignored. Git commits do not transport media or diagnostic dependencies.
+
+---
+
+## V7 Evidence
+
+V6 evidence and all prior findings are preserved unchanged above. V7 below re-runs all seven scenarios.
+
+### Run (V7)
+
+- Revision: `18f3b73` (docs commit: V7 receipt); verified source HEAD `d889a9b` (R9: `fix(iterate-evidence): structural reservation rule and frame identity`). Branch `i-want-do-something`. Tree clean at verification start.
+- Target: **origin/main `4458fbf21e199dad45376b8164f78c2165ac1d20`**. All task/plan/outline/receipts **06,07,08,10,11,12,13,14,15,16,17** read completely.
+- Subject model: **`anthropic/claude-sonnet-4-6`** — mandatory per model policy (Codex quota exhausted, Fable/Astra forbidden). Evidence condition.
+- Command: `npm run evals -- iterate-evidence iterate-evidence-viewer-blocked iterate-evidence-label-disagreement iterate-evidence-no-progress iterate-evidence-zero-limit iterate-evidence-three-rounds iterate-evidence-continuation --model anthropic/claude-sonnet-4-6 --keep --max-time 25`
+- Autonomy: `gates=none`. No repair, acceptance weakening, or retry-until-green. One saved-grading invocation.
+
+### R9 artifacts verified
+
+**R9 changes (d889a9b):**
+- `activeReservation` structural rule: accepts any non-terminal current step (including "repair pending") via `pending(v)` and broadened regex; three-way combined line anchored on parts[2] (next incomplete step).
+- Frame identity uniform: video+timestamp form accepted alongside PNG form in all three graders. `frameSha256` binds to OMP-returned image sha for video form; non-initial video frames must be within action window.
+- R16 frontmatter fixed.
+
+**R9 fixes confirmed:**
+- F_PRIM (V6): "reservation persisted" as current step no longer fails — V7 primary subject wrote "repair pending" which `pending(v)` accepts.
+- F_CONT (V6): video+timestamp form now accepted by grader — V7 continuation main session uses both forms; grader accepts both.
+- R16 deviation: 16-implementation-iterate-evidence.md now has correct frontmatter.
+
+### Fresh scenario outcomes (V7)
+
+Single invocation result directory: [20260920-191030](../../../evals/results/20260920-191030/).
+
+Three-rounds effective max-time = max(25, 45) = **45 minutes** (minMinutes:45 active).
+
+| Scenario | Independently observed behavior | Saved grade |
+|---|---|---|
+| Primary | baseline-initial(0.136s)=0 ✓; baseline-increment(2.232s)=2 ✓; repaired-initial(0.173s)=0 ✓; repaired-increment(2.265s)=1 ✓; repaired-reset(4.443s)=0 ✓. F4 confirmed. R9 structural rule correctly accepts "repair pending" as current step. FAIL: 'Last completed step: reservation (consumed_rounds set to 1, round 1 record persisted).' — extra parenthetical causes reserved() to return false → activeReservation fails. F_NEW_PRIM. | **Fail** |
+| Viewer-blocked | Real capture at epoch 1789931565. Read denied at trace.results line 1202 (message_end toolResult, isError=true, text='blocked by user policy'). tool: read, path ends in .png. effective-config.json confirms read/eval/task=deny, blockImages=true, browser/computer disabled. trace.images empty. blocked/blocker. | **Pass** |
+| Label-disagreement | Video at 2.278s: counter=2 (IE-001). Video at 3.413s: counter=0 (Reset). PASS labels preserved unchanged. No source mutations. failed/exhaustion/consumed=0. | **Pass** |
+| No-progress | baseline increment(3.0s)=2 ✓; baseline reset(5.5s)=0 ✓. Round1 increment(3.0s)=2 ✓ (handler unchanged — worker only changed unusedIncrement). failed/no-progress/consumed=1/limit=1. | **Pass** |
+| Zero-limit | baseline increment(2.26s)=2 ✓; baseline reset(4.401s)=0 ✓. No reservation, no mutation. failed/exhaustion/consumed=0/limit=0. | **Pass** |
+| Three-rounds | Baseline initial: A=B=C=D=0 ✓. 31/32 flow observations opened. Round 3 B-reset frame never opened by subject → grader requires observation → FAIL (F_3R_BRESET). Rounds 2/3 reservation snapshots found: snap 289/394 (tool_execution_start) have Round 2/3 headings and precede mutations. But missing B-reset observation forces failure. | **Fail** |
+| Continuation | Interrupted baseline: increment(2.365s)=2 ✓; reset(4.521s)=0 ✓. Main: increment(2.436s)=1 ✓; reset(4.575s)=0 ✓. FAIL: subject mutated app.js at interrupted seq=131 before writing consumed_rounds=1 to receipt at seq=146 → reservation cannot precede mutation. F_CONT_V7. | **Fail** |
+
+### Gates and checks (V7)
+
+| Command | Result |
+|---|---|
+| `npm test` | Exit 0; **184/184 pass**, 0 fail (flaky jev-ui-native test did not fire this run) |
+| `npm run build -- --runtime oh-my-pi` | Exit 0; 44 skills, 7 workers |
+| `node scripts/check-commits.mjs 4458fbf..HEAD` | Exit 0; ok: **41 subjects** |
+| `npm run evals -- [7 scenarios] --grade evals/results/20260920-191030` | **4/7 passed** (one invocation) |
+
+### New Findings (V7)
+
+#### F_NEW_PRIM — Primary activeReservation fails on parenthetical last-completed-step (severity 2) [V7 NEW]
+
+V7 primary subject wrote "Last completed step: reservation (consumed_rounds set to 1, round 1 record persisted)." in the Delivery section. The `reserved()` function in `activeReservation` requires the last-completed step to be exactly "reservation" or start with "baseline inspection"/"baseline pixel inspection". The parenthetical text "(consumed_rounds set to 1, round 1 record persisted)" makes the step value "reservation (consumed_rounds set to 1, round 1 record persisted)" which does not equal "reservation". `reserved()` returns false → `declarations.every(Boolean)` fails → `activeReservation` returns false.
+
+R9's fix for F_PRIM (V6) resolved "reservation persisted" as current step but did not address extra parenthetical text in the last-completed step field.
+
+Fix required: Either (a) `reserved()` should accept "reservation" as a prefix (i.e., `step.startsWith("reservation")`), or (b) SKILL.md should explicitly require "Last completed step: reservation." without parenthetical notes.
+
+#### F_3R_BRESET — Three-rounds round-3 B-reset frame never opened (severity 2) [V7 NEW]
+
+The V7 three-rounds subject opened 31 of 32 required flow frames. Round-3 B-reset (`12-assertion-b-reset-...png`) was never opened in trace.jsonl. The grader requires exactly one observation per pass+flow (8 flows × 4 passes = 32). The missing observation causes "one pass 3 B-reset observation required" failure.
+
+This is a subject behavior gap. The subject covered all other flows but skipped B-reset in round 3. Fix requires the subject to open all 8 flows per pass, or the grader to relax the B-reset requirement for the round where B was already resolved (IE-002 resolved at round 2).
+
+#### F_CONT_V7 — Continuation subject mutated source before writing reservation to receipt (severity 2) [V7 NEW]
+
+In the interrupted session, the subject edited app.js (repair) at seq=131, but only updated the receipt with `consumed_rounds: 1` at seq=146. The grader requires `reserved.sequence < mutation.sequence`. With reserved=146 and mutation=131, `146 < 131` is false → "round 1 reservation must precede source mutation" fails.
+
+This is a subject workflow ordering error. Fix requires the subject to persist consumed_rounds in the receipt BEFORE making source edits, per SKILL.md step 4 ("Repair → checks → new recording → pixel inspection → reconcile").
+
+### V6 Findings Status in V7
+
+- **F_PRIM** (V6): RESOLVED by R9. V7 subject wrote "repair pending" as current step — passes R9 structural rule. F_NEW_PRIM is a different failure mode.
+- **F_CONT** (V6): RESOLVED by R9. V7 continuation grader accepts video+timestamp form. F_CONT_V7 is a different failure mode (ordering, not form).
+- **F4, F5, F6** (V5): All confirmed resolved in V7. Three-rounds completes within 45-min budget; initial frames show pre-click zero; reservation step recognized.
+
+## Human Review (V7)
+
+### Review targets
+
+- V7 four passing scenarios and three new failures in [20260920-191030](../../../evals/results/20260920-191030/).
+- F_NEW_PRIM: reserved() parenthetical rejection; F_3R_BRESET: missing B-reset observation; F_CONT_V7: mutation-before-reservation ordering.
+- R9 confirmed fixes: viewer-blocked (denial at trace.results line 1202), label-disagreement (video+timestamp baseline-increment/reset), no-progress (correct flow names), zero-limit (correct flow names).
+
+### Verify
+
+- [ ] Confirm V7 four passing scenarios evidence in [20260920-191030](../../../evals/results/20260920-191030/).
+- [ ] Confirm F_NEW_PRIM: snap 145 blob f35b1e7e "Last completed step: reservation (consumed_rounds...)" fails reserved().
+- [ ] Confirm F_3R_BRESET: trace-index for three-rounds has 31 images, no round-3 B-reset frame.
+- [ ] Confirm F_CONT_V7: interrupted snap 131 shows app.js mutation; snap 146 shows consumed_rounds=1.
+- [ ] Confirm gate results: 184/184 npm test, 44 skills build, 41 commit subjects.
+
+### Known limits
+
+- Model: mandatory `anthropic/claude-sonnet-4-6`. All three V7 failures reflect this model's behavior for V7 run.
+- C1 npm test: pre-existing flaky jev-ui-native test did not fire in V7 run (184/184 pass).
+- Review.json files for the three failing scenarios include the correct evidence of the failure; they cannot satisfy all grader requirements because the subject did not produce the required sequence of actions.
 - Evidence is local and ignored. Git commits do not transport media or diagnostic dependencies.
