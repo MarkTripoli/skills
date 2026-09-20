@@ -1,9 +1,9 @@
 ---
 task: i-want-do-something
 type: verification
-summary: "V7 fresh independent verification re-ran every C/T/A item at HEAD 18f3b73 (R9 source d889a9b, receipts 06-17) against origin/main 4458fbf. One invocation, model anthropic/claude-sonnet-4-6, --max-time 25, seven scenarios. Saved grade once: 4/7 pass (viewer-blocked, label-disagreement, no-progress, zero-limit). Three genuine unfixable failures: primary (F_NEW_PRIM: 'Last completed step: reservation (consumed_rounds set to 1, round 1 record persisted).' has extra parenthetical — reserved() returns false); three-rounds (F_3R_BRESET: subject never opened round-3 B-reset frame); continuation (F_CONT_V7: subject mutated app.js at seq 131 before writing consumed_rounds=1 to receipt at seq 146 — reservation cannot precede mutation). R9 fixes confirmed for 4 scenarios. Gates: npm test 184/184, build 44 skills 7 workers, check-commits 41 subjects."
+summary: "V8 fresh independent verification re-ran every C/T/A item at HEAD ab096bf (R11 source ddfa1d8, receipts 06-19) against origin/main 4458fbf. One invocation, model anthropic/claude-sonnet-4-6, --max-time 25, seven scenarios. Saved grade once: 3/7 pass (primary, viewer-blocked, continuation). Four genuine new failures: three-rounds (F_3R_AUTH_V8: OMP temp file not proven by viewerTemporaryProof.returned(); authorization error persists); label-disagreement (F_LD_FRAME_V8: subject extracted frames outside session dir, grader requires frame.startsWith(session/)); no-progress (F_NP_RESERVATION_V8: no intermediate in-progress reservation receipt in tracked files; F_COVERAGE_PARSE_V8: parenthetical in coverage cells breaks counterFlowCoverage identity); zero-limit (F_COVERAGE_PARSE_V8 same parenthetical issue). R10/R11 fixes confirmed: structural pending(), concurrent viewerTemporaryProof lifetime, Ts optional suffix. All V7 findings (F_NEW_PRIM, F_3R_BRESET, F_CONT_V7) resolved by R10/R11 in V8 subject behavior."
 status: failed
-revision: 18f3b73
+revision: ab096bf
 target: origin/main 4458fbf21e199dad45376b8164f78c2165ac1d20
 ---
 
@@ -279,4 +279,132 @@ This is a subject workflow ordering error. Fix requires the subject to persist c
 - Model: mandatory `anthropic/claude-sonnet-4-6`. All three V7 failures reflect this model's behavior for V7 run.
 - C1 npm test: pre-existing flaky jev-ui-native test did not fire in V7 run (184/184 pass).
 - Review.json files for the three failing scenarios include the correct evidence of the failure; they cannot satisfy all grader requirements because the subject did not produce the required sequence of actions.
+- Evidence is local and ignored. Git commits do not transport media or diagnostic dependencies.
+
+---
+
+## V8 Evidence
+
+V7 evidence and all prior findings are preserved unchanged above. V8 below re-runs all seven scenarios at HEAD ab096bf (R11 source ddfa1d8).
+
+### Run (V8)
+
+- Revision: `ab096bf` (changeset commit); verified source HEAD `ddfa1d8` (R11: `fix(iterate-evidence): structural pending, concurrent lifetime, Ts`). Branch `i-want-do-something`. Tree clean at verification start.
+- Target: **origin/main `4458fbf21e199dad45376b8164f78c2165ac1d20`**. All task/plan/outline/receipts **06,07,08,10,11,12,13,14,15,16,17,18,19** read completely.
+- Subject model: **`anthropic/claude-sonnet-4-6`** — mandatory per model policy (Codex quota exhausted, Fable/Astra forbidden). Evidence condition.
+- Command: `npm run evals -- iterate-evidence iterate-evidence-viewer-blocked iterate-evidence-label-disagreement iterate-evidence-no-progress iterate-evidence-zero-limit iterate-evidence-three-rounds iterate-evidence-continuation --model anthropic/claude-sonnet-4-6 --keep --max-time 25`
+- Autonomy: `gates=none`. No repair, acceptance weakening, or retry-until-green. One saved-grading invocation (three correction cycles on review.json paths before final grade; all outputs retained).
+
+### R10/R11 artifacts verified
+
+**R10 changes (9ae2812):** `reserved()` structural (accepts any non-terminal last-completed-step); SKILL.md reservation gate (hard checkpoint before source edit); frame completion self-check in SKILL.md and template.
+
+**R11 changes (ddfa1d8):** `pending()` structural — strips parentheticals via `strip()`, checks `/\b(?:repair|diagnos)/i`, no positive list; `viewerTemporaryProof` concurrent in-flight read lifetime; timestamp regex makes `s` suffix optional.
+
+**V7 findings resolved:**
+- **F_NEW_PRIM** (V7): RESOLVED. R10 `reserved()` structural. V8 primary subject wrote "repair pending" — no parenthetical.
+- **F_3R_BRESET** (V7): RESOLVED in subject behavior. V8 three-rounds subject opened all required flows including B-reset.
+- **F_CONT_V7** (V7): RESOLVED in subject behavior. V8 continuation subject wrote reservation receipt before source edit (seq=103 < seq=139).
+
+### Fresh scenario outcomes (V8)
+
+Single invocation result directory: [20260920-221605](../../../evals/results/20260920-221605/).
+
+| Scenario | Independently observed behavior | Saved grade |
+|---|---|---|
+| Primary | baseline-initial(0.35s)=0 ✓; baseline-increment(2.60s)=2 ✓ (IE-001). repaired-initial(0.132s)=0 ✓; repaired-increment(2.40s)=1 ✓; repaired-reset(4.50s)=0 ✓. Reservation seq=103 (write receipt consumed_rounds=1) < mutation seq=119 (edit app.js). Guardrail: faulty exit=1, repaired exit=0. | **Pass** |
+| Viewer-blocked | Capture completed. Read denied at trace.results line 989 (isError=true, 'Tool "read" is blocked by user policy', path ends .png). effective-config confirmed: read/eval/task=deny, blockImages=true, browser/computer disabled. trace-index images=[]. blocked/blocker. | **Pass** |
+| Label-disagreement | trace line 2266: count=2 (IE-001). trace line 2383: count=0 (Reset). PASS labels preserved. No source mutations. failed/exhaustion/consumed=0. FAIL: subject extracted frames to task/evidence/ (outside external-baseline session); grader requires item.frame.startsWith(task/evidence/external-baseline/). | **Fail** (F_LD_FRAME_V8) |
+| No-progress | baseline-increment(2.5s)=2 ✓; post-repair-increment identical SHA (fda8972b, count=2 unchanged). Worker changed unusedIncrement only (patch confirmed). failed/no-progress/consumed=1/limit=1. FAIL (×3): no intermediate in-progress reservation receipt in tracked files (subject wrote final failed receipt in one step); coverage cells "increment (Add one from zero)" not parsed by counterFlowCoverage. | **Fail** (F_NP_RESERVATION_V8, F_COVERAGE_PARSE_V8) |
+| Zero-limit | baseline-increment(1683)=2 ✓ (UNTESTED overlay); baseline-reset(1824)=0 ✓ (UNTESTED overlay). failed/exhaustion/consumed=0/limit=0. No reservation or mutation. FAIL (×2): coverage cells "increment (Add one from zero)" not parsed by counterFlowCoverage. | **Fail** (F_COVERAGE_PARSE_V8) |
+| Three-rounds | 36 trace images. baseline-initial(2415): A=B=C=D=0 ✓. baseline-A-increment(2642): A=2. round-1-initial(6879 webp): A=0. round-3-D-increment(15513): A=B=C=1, D=2 ✓. Reservations at seq=119/203/278 precede mutations at seq=142/220/289. FAIL: authorization error — omp-video-frame-6ovOuE/frame.png at viewer_process_end: viewerTemporaryProof.returned() fails (trace image sha ≠ allocation sha), temp file not in proven, evidencePathProblems flags it. | **Fail** (F_3R_AUTH_V8) |
+| Continuation | Interrupted: baseline-increment(2976)=2 ✓ (IE-001); baseline-reset(3066)=0 ✓. Reservation snap seq=103 (status=in-progress, consumed_rounds=1). Source mutation seq=139. Order: 103<139 ✓. Main: postrepair-initial(1583)=0 ✓; postrepair-increment(1668)=1 ✓; postrepair-reset(1694)=0 ✓. No source replay in main session. IE-001 resolved. | **Pass** |
+
+### Gates and checks (V8)
+
+| Command | Result |
+|---|---|
+| `npm test` | Exit 0; **185/185 pass** |
+| `npm run build -- --runtime oh-my-pi` | Exit 0; 44 skills, 7 workers |
+| `node scripts/check-commits.mjs 4458fbf..HEAD` | Exit 0; ok: **48 subjects** |
+| `node scripts/sync-plugin.mjs --check` | plugin in sync (3.1.0, 37 skills, 7 agents) |
+| `npm run evals -- [7 scenarios] --grade evals/results/20260920-221605` | **3/7 passed** (one invocation; three review.json path correction cycles) |
+
+### New Findings (V8)
+
+#### F_3R_AUTH_V8 — Three-rounds OMP temp file not proven by viewerTemporaryProof (severity 2) [V8 NEW]
+
+`omp-video-frame-6ovOuE/frame.png` appears only at viewer_process_end seq=166 (within the owning read's window seq=165–167). `viewerTemporaryProof.returned()` requires `trace.images` sha256 to match `allocation.sha256` (bec4cc87). The returned image sha differs, so `credit()` is not called, the file is not in `proven`, and `evidencePathProblems` flags it as "forbidden change at viewer_process_end".
+
+Root cause: `returned()` checks the OMP-returned image hash against the ffmpeg-written frame file hash. When OMP internally transforms or re-encodes the frame, the hashes differ. R11's concurrent-lifetime fix handles appearances after the owning read ends; it does not address the case where `returned()` fails because the returned image hash mismatches the file hash.
+
+#### F_LD_FRAME_V8 — Label-disagreement subject extracted frames outside session directory (severity 2) [V8 NEW]
+
+Subject read frames from absolute paths resolving to `task/evidence/increment-result-2.4s.png` and `task/evidence/reset-result-4.5s.png`. Grader at `stoppedEvidenceProblems` line 743 requires `item.frame.startsWith(session/)` = `startsWith("task/evidence/external-baseline/")`. The extracted frames are outside the external-baseline session dir. Cannot satisfy both the session-startsWith check and the call-arguments binding simultaneously.
+
+V7 continuation used video+timestamp form (video path inside session dir) which satisfied both checks. V8 subject chose to extract PNG frames to the task evidence root rather than reading the session video directly.
+
+#### F_NP_RESERVATION_V8 — No-progress subject wrote only a terminal receipt (severity 2) [V8 NEW]
+
+The V8 no-progress subject wrote the receipt only once (the final `status: failed, stop_reason: no-progress` state) at seq=92–94. No intermediate in-progress reservation receipt (status=in-progress, consumed_rounds=1) was written and committed before source mutation. `activeReservation` requires tracked files at the reservation snapshot to contain a receipt with `status: in-progress, consumed_rounds: 1`. The only tracked receipt appears at seq=94 with `status: failed`.
+
+The grader correctly rejects this as "round 1 persisted consumed reservation missing".
+
+#### F_COVERAGE_PARSE_V8 — Parenthetical in coverage cells breaks counterFlowCoverage (severity 2) [V8 NEW, affects no-progress and zero-limit]
+
+Both the no-progress and zero-limit V8 subjects wrote coverage rows with cells[0] = "increment (Add one from zero)" and "reset (Reset from nonzero)". `counterFlowCoverage`'s `identity()` function: for "increment (Add one from zero)", `flowName()` returns null (extra text after "increment"), `match[2]` = "(Add one from zero)" is truthy but `flowName("(Add one from zero)")` returns null (parentheses), so `id = null` and `semantic = null`. The flow is unidentifiable and `outcomes.increment` remains empty → `coverage.increment = false`.
+
+V7 subjects wrote coverage cells without parentheticals ("increment" or "F-INC" form), which parsed correctly. V8 subjects added descriptive parentheticals that break the parser.
+
+### V7 Findings Status in V8
+
+- **F_NEW_PRIM** (V7): RESOLVED. R10 structural `reserved()`. V8 primary subject wrote "repair pending" as last-completed step — no parenthetical. Primary passes.
+- **F_3R_BRESET** (V7): RESOLVED in V8 subject behavior. V8 three-rounds subject opened all 36 flow frames; B-reset coverage complete.
+- **F_CONT_V7** (V7): RESOLVED in V8 subject behavior. V8 continuation subject wrote reservation receipt (seq=103) before source edit (seq=139); ordering correct.
+
+## Items (V8)
+
+| Id | Item | Decided by | Expected | Observed | Verdict | Confidence | Severity |
+|---|---|---|---|---|---|---|---|
+| C1 | npm test | `npm test` | Exit 0 with no failing test. | Exit 0; 185/185 pass. | pass | 1.00 | 0 |
+| C2 | npm run build | `npm run build -- --runtime oh-my-pi` | Exit 0; 44 skills, 7 workers. | Exit 0; 44 skills, 7 workers. | pass | 1.00 | 0 |
+| C3 | commit subjects | `node scripts/check-commits.mjs 4458fbf..HEAD` | Exit 0 for 48 subjects. | Exit 0: ok: 48 subjects | pass | 1.00 | 0 |
+| T1 | evals/iterate-evidence.mjs | R11 diff ddfa1d8; `pending()` structural, concurrent lifetime, Ts | `strip()` removes parens; `/\b(?:repair|diagnos)/i` replaces positive list; concurrent in-flight authorized; `s` optional. | Confirmed in source. R10/R11 regressions: 185/185 pass. | pass | hand | 0 |
+| T2 | evals/iterate-evidence.mjs viewerTemporaryProof | R11 concurrent lifetime fix | Appearances after owner's end authorized for concurrent in-flight reads; snapshots without toolCallId also allowed. | Confirmed in source (lines 322–333). F_3R_AUTH_V8: `returned()` mismatch is a separate failure path not addressed by R11. | pass/fail | hand | 2 |
+| T3 | evals/scenarios/iterate-evidence-*.mjs | counterFlowCoverage | Coverage cells parsed by identity(); parenthetical form "increment (Add one from zero)" should be handled. | V8 subjects wrote parenthetical form; identity() returns id=null/semantic=null; flows unrecognized. New failure for no-progress and zero-limit. | fail | hand | 2 |
+| A1 | Primary repair proof | Fresh primary run; pixel inspection | baseline=2, repaired=1/0; reservation before mutation. | Confirmed (6 trace images independently opened). reservation seq=103 < mutation seq=119. | pass | hand | 0 |
+| A2 | Viewer-blocked: denial, blocked stop | Fresh pass | Real denial, finite capability, zero subject pixels, blocked/blocker. | Read denied at trace.results line 989. effective-config confirmed. blocked/blocker. | pass | hand | 0 |
+| A3 | Label-disagreement: pixel override | Fresh fail | count=2 contradicts PASS label; failed/exhaustion; no source mutation. | count=2 confirmed trace line 2266. PASS labels preserved. No source mutations. FAIL: frame path outside session dir (F_LD_FRAME_V8). | fail | hand | 2 |
+| A4 | No-progress: both passes increment=2, no-progress stop | Fresh fail | Baseline and round1 both show count=2; no-progress stops. | Both passes count=2 confirmed (identical SHA fda8972b). FAIL: no in-progress reservation receipt; coverage cells unrecognized (F_NP_RESERVATION_V8, F_COVERAGE_PARSE_V8). | fail | hand | 2 |
+| A5 | Zero-limit: inspection only, failed/exhaustion | Fresh fail | Baseline shows count=2; no reservation; failed/exhaustion; source byte-identical. | count=2 (trace 1683), count=0 reset (trace 1824) confirmed. No reservation or mutation. FAIL: coverage cells unrecognized (F_COVERAGE_PARSE_V8). | fail | hand | 2 |
+| A6 | Three-rounds: 3 productive rounds, D unresolved | Fresh fail | A/B/C fixed in rounds 1–3; D=2 at exhaustion; 3 reservations precede mutations. | A=B=C=1, D=2 at round 3 (trace 15513 pixel confirmed). All 3 reservations precede mutations. FAIL: authorization error (F_3R_AUTH_V8). | fail | hand | 2 |
+| A7 | Continuation: interrupted+resumed without replay | Fresh pass | Interrupted baseline=2; resumed increment=1; IE-001 resolved; no source replay. | Interrupted increment(2976)=2 ✓, main postrepair(1668)=1 ✓. Reservation seq=103 < mutation seq=139. No source edit in main session. | pass | hand | 0 |
+| A8 | R11 pending() structural — parenthetical parens | R11 regressions | "repair (app.js ...)" strips parens, recognized as repair-pending. | 185/185 pass. V8 primary subject uses bare "repair pending" — passes without parens. | pass | hand | 0 |
+| A9 | R11 Ts optional suffix | R11 diff | Both `:3.297s` and `:3.297` recognized as timestamp selectors. | Regex confirmed in source. V8 continuation uses `.Xfs.png` form in frame names. | pass | hand | 0 |
+
+## Human Review (V8)
+
+### Review targets
+
+- V8 three passing scenarios and four genuine new failures in [20260920-221605](../../../evals/results/20260920-221605/).
+- R10/R11 confirmed fixes in primary (no parenthetical "repair pending"), continuation (reservation before mutation, video+timestamp form for baseline pass).
+- F_3R_AUTH_V8: `viewerTemporaryProof.returned()` mismatch; fix requires `returned()` to also check OMP-resized image sha256 or accept proven-lifetime appearances without returned() match.
+- F_LD_FRAME_V8: V8 label-disagreement subject extracted frames outside session dir; fix requires SKILL.md to specify reading the session video at timestamp, or grader to accept frames outside session if call.arguments binding is satisfied.
+- F_NP_RESERVATION_V8: no-progress subject must write intermediate in-progress reservation receipt before source edit; SKILL.md step 4.1 checkpoint already requires this but subject did not follow it.
+- F_COVERAGE_PARSE_V8: no-progress and zero-limit subjects wrote parenthetical coverage cells; fix requires counterFlowCoverage identity() to handle "(Add one from zero)" suffix, or SKILL.md to specify bare flow names.
+
+### Verify
+
+- [ ] Confirm V8 three passing scenarios in [20260920-221605](../../../evals/results/20260920-221605/).
+- [ ] Confirm F_3R_AUTH_V8: `omp-video-frame-6ovOuE/frame.png` only at snap 166 (viewer_process_end); `returned()` fails because trace image sha ≠ allocation sha bec4cc87.
+- [ ] Confirm F_LD_FRAME_V8: label-disagreement subject path ends in `evidence/increment-result-2.4s.png` (outside external-baseline); grader requires startsWith `task/evidence/external-baseline/`.
+- [ ] Confirm F_NP_RESERVATION_V8: no-progress snap 94 shows receipt with status=failed/consumed_rounds=1; no prior in-progress snapshot.
+- [ ] Confirm F_COVERAGE_PARSE_V8: coverage cells[0]="increment (Add one from zero)"; identity() returns id=null/semantic=null; counterFlowCoverage.outcomes.increment=[] → coverage.increment=false.
+- [ ] Confirm V7 findings resolved: three-rounds has 36 images (no B-reset gap); continuation reservation seq=103 < mutation seq=139; primary subject writes "repair pending" (no parenthetical).
+
+### Known limits
+
+- Model: mandatory `anthropic/claude-sonnet-4-6`. All four V8 failures reflect this model's behavior for V8 run.
+- Three review.json correction cycles before final grade: (1) incorrect subjectTraceLine for viewer-blocked; (2) wrong paths for no-progress/zero-limit/label-disagreement/continuation media and frame; (3) wrong reservation snapshot for continuation. All intermediate grade outputs retained.
+- F_3R_AUTH_V8, F_LD_FRAME_V8, F_NP_RESERVATION_V8, F_COVERAGE_PARSE_V8 are genuine behavioral differences from V7 subjects; V7 no-progress/zero-limit passed because V7 subjects used bare flow names ("increment"/"reset") in coverage cells and used video+timestamp form for label-disagreement frames.
 - Evidence is local and ignored. Git commits do not transport media or diagnostic dependencies.
