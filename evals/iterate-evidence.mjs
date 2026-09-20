@@ -477,9 +477,14 @@ function activeReservation(text, round, limit, findingId, pendingRepair = false)
       }
       if (key === "current step / last completed step / next incomplete step") {
         const parts = value.split("/");
-        // Check current step and last-completed step; the next-incomplete description may use
-        // non-canonical repair prose (e.g. file names) without contradicting the pending state.
-        declarations.push(parts.length === 3 && pending(parts[0]) && reserved(parts[1]));
+        // Three-way slash-separated form: check current+last-completed; next-incomplete may use
+        // non-canonical prose without contradicting the pending state.
+        if (parts.length === 3) declarations.push(pending(parts[0]) && reserved(parts[1]));
+        // Single-value form (parts.length===1): the semicolon-separated sub-fields are already
+        // extracted by the split pattern above and handled by the individual "current step",
+        // "last completed step", and "next incomplete step" key handlers below. Do not push
+        // false here — let those handlers validate the individual declarations.
+        // (parts.length===2 is caught by the two-part handler below if key were different.)
       }
       if (key === "consumed count / authorized limit" || key === "consumed rounds / limit") {
         declarations.push(clean(value) === `${round} / ${limit}` || clean(value) === `${round}/${limit}`);

@@ -4,6 +4,7 @@ import disagreement from "../evals/scenarios/iterate-evidence-label-disagreement
 import zeroLimit from "../evals/scenarios/iterate-evidence-zero-limit.mjs";
 import noProgress from "../evals/scenarios/iterate-evidence-no-progress.mjs";
 import viewerBlocked from "../evals/scenarios/iterate-evidence-viewer-blocked.mjs";
+import continuation from "../evals/scenarios/iterate-evidence-continuation.mjs";
 
 function coverageRow(flow, result) {
   return `| ${flow} | target | R1 | recorded and inspected | unchanged check | ${result} | Static states only |`;
@@ -213,4 +214,23 @@ test("viewer-blocked: filenames, unmapped IDs and ambiguous labels cannot supply
   assert.equal(check(viewerBlocked, [
     coverageRow("Increment", "untested"), coverageRow("Reset", "untested"),
   ], [charterRow("Increment", "Click Reset once")]).length, 2);
+});
+
+test("continuation: IE-001 resolution is read from Findings section only, not Guardrails", () => {
+  const fm = { type: "evidence-iteration", status: "passed", stop_reason: "success", limit: "3", consumed_rounds: "1" };
+  const makeArtifact = (text) => ({ fm, text });
+
+  // IE-001 resolved in Findings table: must pass.
+  const passing = makeArtifact(`---\ntype: evidence-iteration\n---\n\n## Findings\n\n| ID | Flow | State |\n| --- | --- | --- |\n| IE-001 | increment | resolved |\n\n## Guardrails\n\n| Finding | Note |\n| --- | --- |\n| IE-001 | strengthened check |`);
+  assert.deepEqual(continuation.phases[0].check({ artifact: passing, artifacts: [passing] }), []);
+
+  // Guardrail row mentions IE-001 but Findings row does NOT have resolved: must fail.
+  const guardrailOnly = makeArtifact(`---\ntype: evidence-iteration\n---\n\n## Findings\n\n| ID | Flow | State |\n| --- | --- | --- |\n| IE-001 | increment | open |\n\n## Guardrails\n\n| Finding | Note |\n| --- | --- |\n| IE-001 | resolved by strengthened check |`);
+  const probs = continuation.phases[0].check({ artifact: guardrailOnly, artifacts: [guardrailOnly] });
+  assert.ok(probs.some((p) => p.includes("IE-001")), `expected IE-001 failure, got: ${probs.join("; ")}`);
+
+  // Only Guardrails mention IE-001 with resolved; Findings section has no IE-001 row: must fail.
+  const noFindingRow = makeArtifact(`---\ntype: evidence-iteration\n---\n\n## Findings\n\n| ID | Flow | State |\n| --- | --- | --- |\n| IE-002 | reset | resolved |\n\n## Guardrails\n\n| Finding | Note |\n| --- | --- |\n| IE-001 | resolved |`);
+  const probs2 = continuation.phases[0].check({ artifact: noFindingRow, artifacts: [noFindingRow] });
+  assert.ok(probs2.some((p) => p.includes("IE-001")), `expected IE-001 failure, got: ${probs2.join("; ")}`);
 });

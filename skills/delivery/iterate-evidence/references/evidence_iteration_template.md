@@ -170,7 +170,9 @@ Before saving the terminal result, apply the skill's finalization boundary and t
 
 - Current result and application identity: [receipt state and Revision ledger reference]
 - Active round / consumed count / authorized limit / attempted finding IDs: [matching numbered round and frontmatter values, or baseline/terminal with reason; update at reservation before delegation/mutation]
-- Current step / last completed step / next incomplete step: [reconciled with the terminal result, or actionable interrupted boundary; no pending round step after completion]
+- Current step: [repair pending / checks pending / capture pending / inspection pending / completed; or terminal result; update at each step]
+- Last completed step: [reservation / baseline inspection / repair / checks / capture; the step actually persisted to disk]
+- Next incomplete step: [repair / checks / capture / inspection / reconciliation; or None. after terminal; no pending round step after completion]
 - Evidence availability: [local-only retained paths or verified posting links; unavailable material]
 - Posting confirmation, when required: [destination, reopen/playback result, or blocker; otherwise requester-only]
 - Artifact/source commit separation: [receipt commit and source commits separately, pending parent ownership, or uncommitted outside Git]

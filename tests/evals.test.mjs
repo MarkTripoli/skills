@@ -271,6 +271,12 @@ test("primary inspection rejects image substitution and unconsumed or completed 
       "- Last completed step / next incomplete step: baseline inspection / repair.",
       // Delivery section forms: "baseline inspection complete" matches the baseline prefix.
       "- Current step / last completed step / next incomplete step: Repair / baseline inspection complete / Repair.",
+      // Semicolon/colon-separated single line: split pattern extracts labeled sub-lines, which
+      // resolve via the individual "last completed step" and "next incomplete step" handlers.
+      // The combined-key handler skips (no push) when parts.length===1; sub-lines handle it.
+      "- Current step / last completed step / next incomplete step: reservation complete; last completed: reservation; next incomplete: Repair",
+      // Three explicit labeled lines (canonical form from template).
+      "- Current step: repair pending\n- Last completed step: reservation\n- Next incomplete step: repair",
     ];
     for (const state of pendingStates) {
       snapshots[2] = reserve(reservationText.replace("- Current step: repair pending.", state));

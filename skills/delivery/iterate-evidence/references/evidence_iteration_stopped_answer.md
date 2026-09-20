@@ -1,4 +1,4 @@
-Artifact saved: {artifact_link}
+[{artifact_file}]({artifact_link})
 
 {summary}
 

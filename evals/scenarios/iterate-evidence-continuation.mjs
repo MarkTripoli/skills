@@ -1,4 +1,4 @@
-import { failures } from "../lib.mjs";
+import { failures, section } from "../lib.mjs";
 
 export default {
   slug: "counter-evidence-continuation",
@@ -11,7 +11,8 @@ export default {
     artifactType: "evidence-iteration",
     template: "evidence_iteration_template.md",
     check: ({ artifact, artifacts = [] }) => {
-      const findings = (artifact?.text ?? "").split("\n")
+      const findingsSection = section(artifact?.text ?? "", "## Findings") ?? "";
+      const findings = findingsSection.split("\n")
         .filter((line) => /^\s*\|/.test(line))
         .map((line) => line.trim().slice(1, -1).split("|").map((cell) => cell.replace(/[`*_]/g, "").trim()));
       return failures(
@@ -21,8 +22,8 @@ export default {
         artifact?.fm?.limit === "3" ? null : "continuation: receipt must retain the default three-round allowance",
         artifact?.fm?.consumed_rounds === "1" ? null : "continuation: resumed work must complete the original single reserved round",
         findings.filter((cells) => cells[0] === "IE-001").at(-1)?.some((cell) => /(?:^|→\s*)resolved$/i.test(cell))
-          || /\bIE-001\b[^\n]*(?:→|->)\s*resolved\b/i.test(artifact?.text ?? "")
-          ? null : "continuation: original finding IE-001 must remain present and resolved",
+          || /\bIE-001\b[^\n]*(?:→|->)\s*resolved\b/i.test(findingsSection)
+          ? null : "continuation: original finding IE-001 must remain present and resolved in the Findings table",
         artifacts.filter((entry) => entry.fm?.type === "evidence-iteration").length === 1
           ? null : "continuation: both invocations must retain exactly one iteration receipt",
       );
