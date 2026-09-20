@@ -87,3 +87,8 @@ This inventory covers non-sensitive JSON/Markdown receipts and manifests only. N
 | `verification-8a45b9b/zero-action/report.md` | 692 | `a043566d2942d692f46b75aa3948a1a2d1d0a03b4f2b30a9b01ed66d1eb84ab0` |
 
 No credential-bearing files or video binaries are included in this committed inventory.
+## Latest review-batch repair records
+
+- Pre-edit archives for `02-verification-jev-ios.md`, `04-verification-continuation-jev-ios.md`, `06-repair-verification-jev-ios.md`, `final-checks.md`, and `pr-description.md` are under `evidence/risk-repair-20260920/originals/`; SHA-256 values are recorded in `evidence/risk-repair-20260920/originals.sha256`.
+- Red/green probe outputs are retained as `/tmp/jev-controller-probe-before-repair.txt`, `/tmp/jev-stop-probe-before-repair.txt`, `/tmp/jev-controller-probe-after-repair.txt`, and `/tmp/jev-stop-probe-after-repair.txt`; the durable command and observed output are transcribed in `08-repair-verification-jev-ios.md`.
+- Affected live blocked attempts and recorder receipts are retained under ignored `evidence/repair-risk-20260920065808/`; no recording binary is committed.

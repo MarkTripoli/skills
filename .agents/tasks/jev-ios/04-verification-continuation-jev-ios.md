@@ -1,9 +1,9 @@
 ---
 task: jev-ios
 type: verification-continuation
-summary: "Final continuation matrix reconciles historical 8a45b9b proof with cb7b53a repair proof; all acceptance rows and independent review are complete."
-status: passed
-revision: a108538
+summary: "Continuation matrix preserves historical and repair evidence; latest WAIT and cleanup repairs pass offline checks, while affected native reruns and independent review remain pending."
+status: pending-independent-review
+revision: b95285c
 ---
 
 # Phase 1 continuation notes
@@ -16,7 +16,7 @@ Before editing `02-verification-jev-ios.md`, its exact bytes were archived at `e
 SHA-256 for both the original and archive was `2bbed214cd0c7085e455538bf7abc4a00dd6a46b7c8ba4ae77c3b80ff774d649`.
 All existing evidence directories and failed receipts remain in place. Video files remain local and unstaged; no recording is uploaded or added to a commit.
 
-The implementation files are unchanged from `8a45b9b` (`git diff --name-only 8a45b9b..HEAD` reports only the prior verification artifact), so the retained native and standalone receipts are reusable. The reconciled `02-verification-jev-ios.md` now truthfully reports `passed`; A9 is pass from the independent clean review in `07-code-review-jev-ios.md`.
+The implementation and test changes after `a108538` are limited to the latest review batch in `b95285c`; historical native and standalone receipts remain reusable where their execution paths were unchanged. The reconciled `02-verification-jev-ios.md` now reports pending affected reruns; A9 is untested for this latest batch.
 
 ## Acceptance matrix
 
@@ -24,7 +24,7 @@ The implementation files are unchanged from `8a45b9b` (`git diff --name-only 8a4
 |---|---|---|---|
 | P1 | Continue on existing `feat/jev-ios` checkout/worktree and preserve task metadata. | `git branch --show-current` is `feat/jev-ios`; task metadata and `task.md` are unchanged. | pass |
 | P2 | Preserve original artifacts, failed evidence, recordings, and worktrees. | Byte archive above; prior `verification-8a45b9b`, `verification-20260920`, `repair-label-equal`, and `.atomic-delivery` remain present. Local evidence is unstaged. | pass |
-| P3 | Reconcile verification status and item verdicts truthfully. | `02-verification-jev-ios.md` now reconciles historical and current proof, marks A9 pass from independent review, and reports overall status passed. | pass |
+| P3 | Reconcile verification status and item verdicts truthfully. | `02-verification-jev-ios.md` now distinguishes historical proof, latest offline repair proof, blocked affected native reruns, and pending independent review. | pending |
 | P4 | Exact implementation and test authorship remains Luna-fast; no product changes in this phase. | No implementation/test/diagnostic files changed. This phase changed only verification prose and the archival note. | pass |
 | P5 | Fresh iOS-only proof uses real adapter and real JEV, without resuming old all-platform run. | Retained receipts identify `idb`, model `jev-1.13.0`, authorized simulator `7A023F51-F0DA-4179-868B-19207E433651`, and bundle `ai.typesafe.jevfixture`. No old run was resumed. | pass |
 | P6 | Prove generic confirmation from independent UI status. | `evidence/verification-8a45b9b/generic/` receipt/report: passed, independent status `Confirmed`, stable PID, one assertion. | pass |
@@ -34,13 +34,13 @@ The implementation files are unchanged from `8a45b9b` (`git diff --name-only 8a4
 | P10 | Prove truthful success, failed, and blocked outcomes. | `evidence/repair-cb7b53a/failed/jev-receipt.json` is a genuine failed controller outcome (`expected postconditions not observed independently`) with verified failed assertion media; `verification-20260920/zero-action/` and `generic-companion-unavailable/` remain blocked with explicit reasons. | pass |
 | P11 | Prove owned app/recording/companion/simulator cleanup. | Controller tests prove cleanup executes after launch rejection and failed controller status. Existing zero-action receipt records app `pid: null`, no verifier recorder, stopped companion/socket, and simulator shutdown; failed proof retains recorder media and terminal status. | pass |
 | P12 | Verify installed standalone iOS execution with external drivers, credentials, helper, and recording integration. | `verification-8a45b9b/standalone-generic/` receipt/report records installed Codex bundle, external `idb`, helper, recording, stable PID, independent `Confirmed`, and verified media. The later blocked standalone attempt is retained, not substituted. | pass, with preserved blocked attempt |
-| P13 | Run aggregate tests. | `npm test`: exit 0; 147 tests, 147 pass, 0 fail, 0 skipped, 0 todo after CR-001/CR-002 regressions. | pass |
-| P14 | Run all four runtime builds. | External destination `/tmp/jev-ios-repair-cb7b53a`: claude-code 43 skills/7 workers; codex 43/7; oh-my-pi 43/7; pi 43/0. All exit 0. | pass |
-| P15 | Run commit validation. | `node scripts/check-commits.mjs origin/main..HEAD`: exit 0, `ok: 9 subjects`. | pass |
-| P16 | Preserve browser/Android behavior and packaging. | Aggregate tests include browser/Android regressions; all four runtime builds pass. No Android device or emulator was touched. | pass (offline boundary) |
+| P13 | Run aggregate tests. | `npm test`: exit 0; 149 tests, 149 pass, 0 fail, 0 skipped, 0 todo after latest review-batch regressions. | pass |
+| P14 | Run all four runtime builds. | External destination `/tmp/jev-ios-risk-builds-1789902006`: claude-code 43 skills/7 workers; codex 43/7; oh-my-pi 43/7; pi 43/0. All exit 0. | pass |
+| P15 | Run commit validation. | `node scripts/check-commits.mjs origin/main..HEAD`: exit 0, `ok: 16 subjects` before pending artifact commits. | pass |
+| P16 | Preserve browser/Android behavior and packaging. | Aggregate tests include browser/Android regressions; all four runtime builds pass. The new chooser regression explicitly preserves ordinary Android WAIT behavior; no Android device or emulator was touched. | pass (offline boundary) |
 | P17 | Inspect CI/setup/docs and do not claim missing setup. | `package.json`, `docs/testing.md`, `.github/workflows/commits.yml`, `.github/workflows/release.yml`, `task.md`, and fixture docs were inspected. Node 26.8.1 and `node_modules` are present; no setup gap found. | pass |
-| P18 | Complete independent code review only after verification. | `07-code-review-jev-ios.md` (commit `a108538`) independently reviewed repaired HEAD and approved with no critical or major findings; the stale-wording advisory was corrected here. | pass |
-| P19 | Commit final task artifacts using repository conventions and prepare normal PR handoff, without submitting it here. | Final reconciliation artifacts and `pr-description.md` are committed with explicit paths; branch `feat/jev-ios` targets `main`, and no push or PR creation is performed. | pass |
+| P18 | Complete independent code review only after verification. | Previous `07-code-review-jev-ios.md` predates `b95285c`; independent review of the latest batch remains pending. | pending |
+| P19 | Commit final task artifacts using repository conventions and prepare normal PR handoff, without submitting it here. | Latest repair receipt and reconciled artifacts are being committed; normal handoff remains pending independent review and affected native rerun. | pending |
 
 ## Stateful transitions and invariants
 
@@ -62,3 +62,12 @@ The implementation files are unchanged from `8a45b9b` (`git diff --name-only 8a4
 - `node scripts/build-runtimes.mjs --runtime {claude-code,codex,oh-my-pi,pi} --dest /tmp/jev-ios-final-builds/{runtime}` -> all exit 0 with counts above.
 - `node scripts/check-commits.mjs origin/main..HEAD` -> exit 0, `ok: 13 subjects`.
 - Final scope includes the reviewed implementation repair and explicit task artifacts; historical source revision `8a45b9b` remains the provenance for Name/replacement/standalone runs, while `cb7b53a` is the cleanup repair revision.
+
+
+## Latest consolidated repair batch
+
+- Root cause 1: `typesafe.mjs` previously removed WAIT after any text attempt with a TAP target. `node /tmp/jev-controller-probe.mjs` reproduced `TYPE_TEXT,TAP,TAP` and blocked before repair; after `b95285c` it produced `TYPE_TEXT,WAIT,DONE` and passed, matching the origin baseline.
+- Root cause 2: `stopNativeFixture` previously treated empty or malformed IDB output as stopped. `node /tmp/jev-stop-probe.mjs` reproduced false verification before repair; after repair empty/malformed output and interrupted termination followed by empty output remain unusable errors, while valid empty arrays and Unknown/null-PID observations remain verified stopped.
+- Durable regression evidence: `tests/jev-ui-controller.test.mjs` adds ordinary WAIT preservation plus unreadable, valid-empty, Unknown, and interrupted-cleanup cases. `npm test` passes 149/149.
+- Affected native reruns were attempted against the authorized simulator and real `idb`/JEV. The simulator was initially Shutdown, then booted and the owned companion restarted; live runs were blocked by the external text helper returning invalid JSON before any action. No new native pass is claimed. Existing receipts and failed evidence remain preserved.
+- Independent review is pending for this repair batch.

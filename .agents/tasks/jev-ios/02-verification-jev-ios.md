@@ -1,9 +1,9 @@
 ---
 task: jev-ios
 type: verification
-summary: "Historical iOS acceptance at 8a45b9b and cleanup repair proof at cb7b53a are reconciled; current tests, packaging, genuine failed/blocked outcomes, and independent review pass."
-status: passed
-revision: cb7b53a
+summary: "Historical iOS acceptance and cleanup repair proof remain preserved; the latest WAIT and cleanup repairs have passed offline tests, while affected native reruns and independent review remain pending."
+status: pending-independent-review
+revision: b95285c
 target: main
 ---
 
@@ -21,13 +21,13 @@ target: main
 
 | Id | Item | Decided by | Expected | Observed | Verdict | Confidence | Severity |
 |---|---|---|---|---|---|---|---|
-| C1 | Aggregate repository test. | `npm test` | Exits 0 with no failing test. | Exit 0; validation and plugin sync passed; Node reported `tests 147`, `pass 147`, `fail 0`, `skipped 0`, `todo 0`. | pass | 1.00 | 0 |
+| C1 | Aggregate repository test. | `npm test` | Exits 0 with no failing test. | Exit 0; validation and plugin sync passed; Node reported `tests 149`, `pass 149`, `fail 0`, `skipped 0`, `todo 0`. | pass | 1.00 | 0 |
 | C2 | Claude Code runtime build. | `node scripts/build-runtimes.mjs --runtime claude-code --dest /tmp/jev-ios-verify-8a45b9b.4fozOj/build-claude-code` | Exits 0 and builds the requested runtime. | Exit 0; `built claude-code: 43 skills, 7 workers`. | pass | 1.00 | 0 |
 | C3 | Codex runtime build. | `node scripts/build-runtimes.mjs --runtime codex --dest /tmp/jev-ios-verify-8a45b9b.4fozOj/build-codex` | Exits 0 and builds the requested runtime. | Exit 0; `built codex: 43 skills, 7 workers`. | pass | 1.00 | 0 |
 | C4 | Oh My Pi runtime build. | `node scripts/build-runtimes.mjs --runtime oh-my-pi --dest /tmp/jev-ios-verify-8a45b9b.4fozOj/build-oh-my-pi` | Exits 0 and builds the requested runtime. | Exit 0; `built oh-my-pi: 43 skills, 7 workers`. | pass | 1.00 | 0 |
 | C5 | Pi runtime build. | `node scripts/build-runtimes.mjs --runtime pi --dest /tmp/jev-ios-verify-8a45b9b.4fozOj/build-pi` | Exits 0 and builds the requested runtime. | Exit 0; `built pi: 43 skills, 0 workers`. | pass | 1.00 | 0 |
-| C6 | Conventional Commit subjects. | `node scripts/check-commits.mjs origin/main..HEAD` | Exits 0 with no invalid commit subject. | Exit 0; `ok: 11 subjects`. | pass | 1.00 | 0 |
-| T1 | `tests/jev-ui-controller.test.mjs`. | `git diff origin/main...HEAD -- tests/jev-ui-controller.test.mjs`, read in this session | The change keeps this check's strength. | Added one regression proving an unchanged attempted text action clears the ambiguity requirement and permits confirmation; no tests were removed, skipped, marked `only`, or marked `todo`. | pass | 0.91 | 0 |
+| C6 | Conventional Commit subjects. | `node scripts/check-commits.mjs origin/main..HEAD` | Exits 0 with no invalid commit subject. | Exit 0; `ok: 16 subjects`. | pass | 1.00 | 0 |
+| T1 | `tests/jev-ui-controller.test.mjs`. | `git diff origin/main...HEAD -- tests/jev-ui-controller.test.mjs`, read in this session | The change keeps this check's strength. | Added regressions for unchanged attempted text, ordinary native WAIT preservation, and unreadable/valid iOS cleanup observations; no tests were removed, skipped, marked `only`, or marked `todo`. | pass | 0.91 | 0 |
 | T2 | `tests/jev-ui-native.test.mjs`. | `git diff origin/main...HEAD -- tests/jev-ui-native.test.mjs`, read in this session | The change keeps this check's strength. | Added iOS driver, identity, metadata, safe replacement, idempotent text, ambiguity, and redaction tests; the Android rewrite removed only an incidental call count, and no test was skipped, marked `only`, marked `todo`, or deleted. | pass | 0.92 | 0 |
 | T3 | `skills/delivery/jev-ui/fixture/ios/AppDelegate.swift`. | `git diff origin/main...HEAD -- skills/delivery/jev-ui/fixture/ios/AppDelegate.swift`, read in this session | The change keeps this fixture's strength. | Added a UIKit entry point that creates the fixture window and view controller; no check was removed or skipped. | pass | 0.82 | 0 |
 | T4 | `skills/delivery/jev-ui/fixture/ios/Info.plist`. | `git diff origin/main...HEAD -- skills/delivery/jev-ui/fixture/ios/Info.plist`, read in this session | The change keeps this fixture's strength. | Added fixed fixture identity, executable, versions, package type, display name, and launch-screen metadata; no check was removed or skipped. | pass | 0.82 | 0 |
@@ -37,23 +37,23 @@ target: main
 | T8 | `skills/delivery/jev-ui/fixture/ios/install-authorized.sh`. | `git diff origin/main...HEAD -- skills/delivery/jev-ui/fixture/ios/install-authorized.sh`, read in this session | The change keeps this fixture's strength. | Refuses other UDIDs, builds outside the source tree with cleanup traps, and installs, terminates, and launches only the fixed fixture bundle; no check was removed or skipped. | pass | 0.84 | 0 |
 | A1 | Fresh iOS-only verification on the exact branch revision with the real adapter and JEV (`task.md:33`; claimed: yes). | Run the A2-A7 commands from `feat/jev-ios` revision `8a45b9b` and inspect their receipts. | Fresh iOS-only verification uses the real adapter and real JEV on the exact branch revision. | Historical acceptance ran generic, label-equal, replacement, installed standalone, and zero-action iOS acceptance from revision `8a45b9b`; current repair proof reran generic success and a genuine failed outcome from `cb7b53a`; receipts report driver `idb` and model `jev-1.13.0`. | pass | hand | 0 |
 | A2 | Generic confirmation comes from independent non-input UI output (`task.md:34`; claimed: yes). | `node skills/delivery/jev-ui/scripts/acceptance.mjs --surface ios --target 7A023F51-F0DA-4179-868B-19207E433651 --goal 'Confirm the delivery check-in' --expected 'Confirmed' --evidence-dir .agents/tasks/jev-ios/evidence/verification-8a45b9b/generic` | Generic confirmation passes from an independent non-input UI observation. | Exit 0; receipt status `passed`, PID `13299` stayed stable, Status supplied observed postcondition `Confirmed`, and media was verified with 1 passed assertion. | pass | 1.00 | 0 |
-| A3 | Exact label-equal Name confirmation (`task.md:34`; claimed: yes). | `node skills/delivery/jev-ui/scripts/acceptance.mjs --surface ios --target 7A023F51-F0DA-4179-868B-19207E433651 --initial-name Name --goal 'Confirm the current exact Name value without replacing it' --expected 'Confirmed Name' --evidence-dir .agents/tasks/jev-ios/evidence/verification-8a45b9b/label-equal-name` | Exact label-equal Name reaches independently observed `Confirmed Name`. | Exit 0; receipt status `passed`, PID `19367` stayed stable, decisions were `TYPE_TEXT`, `TAP`, `DONE`, Status supplied observed postcondition `Confirmed Name`, and media was verified with 1 passed assertion. | pass | 1.00 | 0 |
-| A4 | Genuine Casey-to-Jordan replacement without relaunch (`task.md:34`; claimed: yes). | `node skills/delivery/jev-ui/scripts/acceptance.mjs --surface ios --target 7A023F51-F0DA-4179-868B-19207E433651 --seed-goal 'Set Name to exactly Casey and confirm it' --seed-expected 'Confirmed Casey' --goal 'Replace Casey with Jordan and confirm it' --expected 'Confirmed Jordan' --evidence-dir .agents/tasks/jev-ios/evidence/verification-8a45b9b/replacement` | Casey and Jordan are independently observed in one fixture launch with stable identity. | Exit 0; status `passed`, observed `Confirmed Casey` then `Confirmed Jordan`, PID stayed `25839`, both text/tap transitions ran, and verified media recorded 2 passed assertions. | pass | 1.00 | 0 |
+| A3 | Exact label-equal Name confirmation (`task.md:34`; claimed: pending affected rerun). | `node skills/delivery/jev-ui/scripts/acceptance.mjs --surface ios --target 7A023F51-F0DA-4179-868B-19207E433651 --initial-name Name --goal 'Confirm the current exact Name value without replacing it' --expected 'Confirmed Name' --evidence-dir .agents/tasks/jev-ios/evidence/verification-8a45b9b/label-equal-name` | Exact label-equal Name reaches independently observed `Confirmed Name`. | Exit 0; receipt status `passed`, PID `19367` stayed stable, decisions were `TYPE_TEXT`, `TAP`, `DONE`, Status supplied observed postcondition `Confirmed Name`, and media was verified with 1 passed assertion. | pass | 1.00 | 0 |
+| A4 | Genuine Casey-to-Jordan replacement without relaunch (`task.md:34`; claimed: pending affected rerun). | `node skills/delivery/jev-ui/scripts/acceptance.mjs --surface ios --target 7A023F51-F0DA-4179-868B-19207E433651 --seed-goal 'Set Name to exactly Casey and confirm it' --seed-expected 'Confirmed Casey' --goal 'Replace Casey with Jordan and confirm it' --expected 'Confirmed Jordan' --evidence-dir .agents/tasks/jev-ios/evidence/verification-8a45b9b/replacement` | Casey and Jordan are independently observed in one fixture launch with stable identity. | Exit 0; status `passed`, observed `Confirmed Casey` then `Confirmed Jordan`, PID stayed `25839`, both text/tap transitions ran, and verified media recorded 2 passed assertions. | pass | 1.00 | 0 |
 | A5 | Explicit identity and safe input replacement (`task.md:35`; claimed: yes). | Inspect the A2-A4 receipts and their independent observations. | Receipts prove device, app, driver, PID, and safe replacement without identity drift. | Receipts name the authorized UDID, `ai.typesafe.jevfixture`, `idb`, simulator identity, and one stable PID per run; replacement changed Casey to Jordan under PID `25839` before independent Status changed. | pass | 0.80 | 0 |
 | A6 | Truthful blocked outcome and owned app/recording cleanup across outcomes (`task.md:35`; claimed: yes). | Run zero-action acceptance with `--max-actions 0`, inspect its receipt, query `idb list-apps`, inspect verifier-owned recording processes, then stop owned services. | Zero-action remains blocked, evidence is retained, and owned app, recording, companion, and simulator resources stop. | Acceptance exited 1 as expected; receipt status was `blocked` with `action budget exhausted`, media was verified, app state was `Unknown` with `pid: null`, no verifier recorder remained, the companion stopped, its socket was removed, and the simulator returned to `Shutdown`. | pass | 1.00 | 0 |
 | A7 | Installed standalone iOS execution uses external dependencies (`task.md:36`; claimed: yes). | Run `/tmp/jev-ios-verify-8a45b9b.4fozOj/build-codex/skills/jev-ui/scripts/acceptance.mjs` with external `IDB_COMPANION`, OMP text helper, absolute evidence command, and evidence working directory. | Installed standalone acceptance exits 0 with documented external drivers, credentials, helper command, and recording integration. | Built Codex entry point exited 0 with external companion, helper, and recording configuration; receipt status `passed`, model `jev-1.13.0`, PID `36693` stayed stable, Status supplied `Confirmed`, and media was verified. | pass | hand | 0 |
 | A8 | Aggregate regression and packaging preserve browser and Android boundaries (`task.md:37`; claimed: yes). | C1-C5. | Current aggregate tests and all runtime packages pass without regressing browser or Android behavior. | C1 passed all 147 tests, including browser and Android regressions; C2-C5 built every supported runtime. | pass | hand | 0 |
-| A9 | Independent review follows verification (`task.md:37`; claimed: yes). | `07-code-review-jev-ios.md` after repair. | Independent review approved the repaired scope; no critical or major findings. | pass | hand | 0
+| A9 | Independent review follows verification (`task.md:37`; claimed: pending). | Next independent review after this repair. | Previous review findings are superseded by the current repair batch; no new review has run. | untested | hand | 0
 
 Verdicts: `pass`, `fail`, or `untested` (nothing in this environment could decide it). Confidence is the helper's probability for the verdict, or `hand` when decided without it; deterministic verdicts record `1.00`. Severity: 0 none, 1 cosmetic, 2 functional, 3 blocking.
 
 ## Findings
 
-None. Independent review artifact `07-code-review-jev-ios.md` is clean; its one stale-wording advisory is corrected in `06-repair-verification-jev-ios.md`.
+The latest independent review batch found two root causes: ordinary native text entry lost WAIT choices, and unusable iOS app-state output was treated as verified cleanup. Both are repaired in `b95285c` with 149 passing tests and deterministic probes. Affected real iOS reruns were attempted but blocked by the external JEV text helper returning invalid JSON; historical receipts remain preserved and no new pass is claimed.
 
 ## Missing
 
-None.
+Affected exact-Name and replacement reruns remain pending because the current external JEV helper returned invalid JSON before actions.
 
 ## Human Review
 
@@ -63,10 +63,11 @@ None.
 
 ### Verify
 
-- [x] `npm test` exits 0 with 147 passing tests and no failures.
+- [x] `npm test` exits 0 with 149 passing tests and no failures.
 - [x] Four runtime builds exit 0 in `/tmp/jev-ios-final-builds/`.
-- [x] `node scripts/check-commits.mjs origin/main..HEAD` exits 0 with 11 valid subjects.
-- [x] Historical `8a45b9b` receipts prove Name, Casey-to-Jordan, standalone, and blocked flows; current `cb7b53a` receipts prove generic success and genuine failed outcome.
+- [x] `node scripts/check-commits.mjs origin/main..HEAD` exits 0 with 16 valid subjects.
+- [x] Historical `8a45b9b` receipts preserve Name, Casey-to-Jordan, standalone, and blocked flows; current repair probes and receipts preserve prior generic/failed outcomes.
+- [ ] Affected exact-Name and replacement native reruns after the chooser repair.
 - [x] `07-code-review-jev-ios.md` independently approves the repaired scope with no critical or major findings.
 - [x] Authorized simulator is Shutdown, the owned IDB socket is absent, and no verifier-owned acceptance process remains.
 

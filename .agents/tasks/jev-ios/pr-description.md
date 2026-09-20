@@ -15,7 +15,7 @@ Complete the preserved iOS JEV adapter acceptance while retaining the released b
 - Generic confirmation, exact label-equal `Name`, and Casey-to-Jordan replacement are independently observed without relaunch: historical `8a45b9b` receipts record `Confirmed`, `Confirmed Name`, then `Confirmed Casey` and `Confirmed Jordan` under stable fixture identity.
 - Device/app/PID identity, safe replacement, truthful failed/blocked outcomes, and owned cleanup are proven: current `cb7b53a` records a genuine `failed` receipt and cleanup regressions, while preserved blocked receipts remain non-green.
 - Installed standalone iOS execution uses external drivers, helper, credentials, and recording integration: the historical standalone receipt records the installed Codex entry point and external dependencies without exposing credentials here.
-- Aggregate tests, runtime packaging, independent review, and browser/Android boundaries pass: `npm test` is 147/147, all four runtime builds pass, and `07-code-review-jev-ios.md` approves with no critical or major findings.
+- Aggregate tests, runtime packaging, and browser/Android offline boundaries pass: `npm test` is 149/149 and all four runtime builds pass. Independent review of the latest `b95285c` repair batch and affected native reruns remain pending.
 
 ## Special things to note
 
@@ -42,7 +42,7 @@ tests/jev-ui-controller.test.mjs
   reconciled verification -> acceptance matrix -> repair review -> local PR description
 ```
 
-The independent review is clean. The branch is ready for a later authorized PR creation action, but no external write was performed in this run.
+The prior independent review was clean before the latest repair batch. A fresh independent review is required before handoff; no external write was performed in this run.
 
 ## Human Review
 
