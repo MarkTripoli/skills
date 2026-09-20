@@ -14,7 +14,7 @@ const retired = [
   [['kun', 'cheng', 'uid'].join('')],
 ];
 const retiredPatterns = retired.map(parts => new RegExp(parts.join(''), 'gi'));
-const shippedRoots = ['tools/safety-dance', 'skills/delivery/safety-dance', 'scripts', 'tests', '.github', 'docs', 'README.md', 'package.json'];
+const shippedRoots = ['tools/safety-dance', 'skills/delivery/safety-dance', 'scripts', 'tests', '.github', '.claude-plugin/plugin.json', 'docs', 'README.md', 'package.json'];
 const skipped = new Set(['.git', 'node_modules', 'dist']);
 const binaryExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.ico', '.pdf', '.zip', '.gz', '.exe', '.dll', '.bin']);
 async function files(dir) {

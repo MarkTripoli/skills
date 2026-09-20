@@ -264,7 +264,6 @@ func InitWithForkRollback(ctx context.Context, d *db.DB, p *paths.Paths, workDir
 		}, nil
 	}
 
-	// Insert repo record with deterministic ID.
 	repo, err := d.InsertRepoWithIDAndFork(id, absRoot, redactedUpstreamURL, forkURL, branch)
 	if err != nil {
 		gateBefore.restore()
@@ -275,7 +274,20 @@ func InitWithForkRollback(ctx context.Context, d *db.DB, p *paths.Paths, workDir
 		return nil, false, nil, fmt.Errorf("insert repo: %w", err)
 	}
 	slog.Info("gate initialized", "repo_id", id, "path", absRoot, "upstream", redactedUpstreamURL)
-	return repo, true, nil, nil
+	return repo, true, func() error {
+		var first error
+		if err := d.DeleteRepo(id); err != nil {
+			first = err
+		}
+		restoreRemote()
+		gateBefore.restore()
+		if !bareExisted {
+			if err := os.RemoveAll(bareDir); err != nil && first == nil {
+				first = err
+			}
+		}
+		return first
+	}, nil
 }
 
 func validateForkRouting(ctx context.Context, upstreamURL, forkURL string) error {
@@ -418,11 +430,11 @@ func Eject(ctx context.Context, d *db.DB, p *paths.Paths, workDir string) (*db.R
 
 	// Remove remote from working repo (non-fatal).
 	_ = git.RemoveRemote(ctx, absRoot, RemoteName)
-
-	// Delete bare repo.
 	bareDir := p.RepoDir(repo.ID)
+	if target, linkErr := os.Readlink(bareDir); linkErr == nil && filepath.IsAbs(target) {
+		_ = os.Remove(target)
+	}
 	os.RemoveAll(bareDir)
-
 	// Delete worktrees for this repo. This happens before the repo record is
 	// deleted, because in a configured root the run rows are what identify
 	// which directories are ours to remove.

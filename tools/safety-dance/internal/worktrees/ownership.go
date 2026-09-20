@@ -16,9 +16,14 @@ type pendingWorktree struct{ Source, Dir, Head string }
 
 func metadataDir(dir string) string {
 	clean := filepath.Clean(dir)
-	if configured := strings.TrimSpace(os.Getenv("SD_HOME")); configured != "" {
-		root, err := filepath.Abs(configured)
-		if err == nil {
+	configured := strings.TrimSpace(os.Getenv("SD_HOME"))
+	if configured == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			configured = filepath.Join(home, ".safety-dance")
+		}
+	}
+	if configured != "" {
+		if root, err := filepath.Abs(configured); err == nil {
 			defaultRoot := filepath.Join(root, "worktrees")
 			rel, relErr := filepath.Rel(defaultRoot, clean)
 			if relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -26,9 +31,6 @@ func metadataDir(dir string) string {
 			}
 		}
 	}
-	// Custom roots own their journal beside the run directory. Do not infer
-	// ownership from an ancestor named "worktrees": operators may nest a
-	// configured root below such a directory.
 	return filepath.Join(filepath.Dir(clean), ".safety-dance-journals")
 }
 
@@ -216,7 +218,7 @@ func RecoverPending(ctx context.Context, root string, protected ...string) error
 }
 
 // RecoverRemoving retries removals whose daemon died during cleanup.
-func RecoverRemoving(ctx context.Context, root string) error {
+func RecoverRemoving(ctx context.Context, root string, protected ...string) error {
 	journalRoot := filepath.Join(root, ".safety-dance-journals")
 	if _, err := os.Stat(journalRoot); os.IsNotExist(err) {
 		return nil
@@ -235,6 +237,11 @@ func RecoverRemoving(ctx context.Context, root string) error {
 		var removing pendingWorktree
 		if err := json.Unmarshal(raw, &removing); err != nil {
 			return fmt.Errorf("read removing worktree %s: %w", path, err)
+		}
+		for _, owned := range protected {
+			if filepath.Clean(owned) == filepath.Clean(removing.Dir) {
+				return nil
+			}
 		}
 		return RemoveDetached(ctx, removing.Source, removing.Dir)
 	})

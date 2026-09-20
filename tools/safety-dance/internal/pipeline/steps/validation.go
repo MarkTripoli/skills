@@ -157,10 +157,12 @@ func Typed(ctx context.Context, name string) error {
 			lastErr = err
 			continue
 		}
-		if err := agent.EnsureGateNeutralized(a); err != nil {
-			_ = a.Close()
-			lastErr = err
-			continue
+		if roleCfg.DisableProjectSettings {
+			if err := agent.EnsureGateNeutralized(a); err != nil {
+				_ = a.Close()
+				lastErr = err
+				continue
+			}
 		}
 		res, runErr := a.Run(ctx, agent.RunOpts{CWD: worktree(ctx), Purpose: name, Env: []string{"SD_PARENT_RUN_ID=" + runID(ctx)}, Prompt: fmt.Sprintf("Run the typed %s validation for this checkout and return verdict, findings, and evidence.", name), JSONSchema: json.RawMessage(`{"type":"object","required":["verdict","findings","evidence"],"properties":{"verdict":{"type":"string","enum":["pass","fail","blocked"]},"findings":{"type":"array"},"evidence":{"type":"array","items":{"type":"string"}}}}`)})
 		_ = a.Close()

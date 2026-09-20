@@ -49,6 +49,14 @@ func newDaemon() *cobra.Command {
 		if err := nestedMutation(); err != nil {
 			return err
 		}
+		p, err := home()
+		if err != nil {
+			return err
+		}
+		service := daemon.Service{Home: p, Binary: "safety-dance", Executor: commandExecutor{}}
+		if service.DefinitionExists() {
+			return service.Restart()
+		}
 		if err := stopDaemon(cmd, args); err != nil {
 			return err
 		}
@@ -460,7 +468,7 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		if err := worktrees.RecoverPending(context.Background(), root, protected...); err != nil {
 			return fmt.Errorf("recover pending worktrees: %w", err)
 		}
-		if err := worktrees.RecoverRemoving(context.Background(), root); err != nil {
+		if err := worktrees.RecoverRemoving(context.Background(), root, protected...); err != nil {
 			return fmt.Errorf("recover removing worktrees: %w", err)
 		}
 	}

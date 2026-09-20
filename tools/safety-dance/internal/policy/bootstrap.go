@@ -26,10 +26,29 @@ func Store(p *paths.Paths, repository, revision string, policy *config.RepoConfi
 	if err != nil {
 		return err
 	}
-	if err = os.MkdirAll(filepath.Dir(p.BootstrapConfigFile(repository)), 0700); err != nil {
+	target := p.BootstrapConfigFile(repository)
+	if err = os.MkdirAll(filepath.Dir(target), 0700); err != nil {
 		return err
 	}
-	return os.WriteFile(p.BootstrapConfigFile(repository), raw, 0600)
+	tmp, err := os.CreateTemp(filepath.Dir(target), ".bootstrap-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err = tmp.Chmod(0600); err == nil {
+		_, err = tmp.Write(raw)
+	}
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(tmpName, target)
 }
 func Resolve(p *paths.Paths, repository, trustedRevision string, committed *config.RepoConfig) (*config.RepoConfig, error) {
 	if strings.TrimSpace(repository) == "" || strings.TrimSpace(trustedRevision) == "" {

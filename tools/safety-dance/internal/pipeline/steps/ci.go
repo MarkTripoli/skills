@@ -22,6 +22,9 @@ func CI(ctx context.Context) error {
 	if run == nil || run.PRURL == nil || *run.PRURL == "" {
 		return fmt.Errorf("ci: pull request URL is required")
 	}
+	if cfg := mergedConfig(ctx); cfg != nil && cfg.NoCI {
+		return database.SetRunCIReadyWithReason(run.ID, true, true)
+	}
 	if err := host.Available(ctx); err != nil {
 		return fmt.Errorf("ci provider unavailable: %w", err)
 	}

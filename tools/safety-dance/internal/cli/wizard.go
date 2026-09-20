@@ -167,9 +167,18 @@ func runWizard(cmd *cobra.Command, args []string) error {
 					return err
 				}
 				if _, statErr := os.Stat(customGate); statErr == nil {
-					return fmt.Errorf("custom gate already exists: %s", customGate)
+					target, linkErr := os.Readlink(defaultGate)
+					if linkErr != nil || filepath.Clean(target) != filepath.Clean(customGate) {
+						return fmt.Errorf("custom gate already exists: %s", customGate)
+					}
+					return policy.Store(p, repo.ID, strings.TrimSpace(initialRevision), parsed)
 				} else if !os.IsNotExist(statErr) {
 					return statErr
+				}
+				if info, err := os.Lstat(defaultGate); err == nil && info.Mode()&os.ModeSymlink != 0 {
+					if err := os.Remove(defaultGate); err != nil {
+						return err
+					}
 				}
 				if err := os.Rename(defaultGate, customGate); err != nil {
 					return fmt.Errorf("move gate to selected location: %w", err)

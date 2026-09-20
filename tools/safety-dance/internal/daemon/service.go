@@ -294,3 +294,23 @@ func (s Service) Stop() error {
 		return restoreServiceAfterStop(path)
 	}
 }
+
+// Restart restarts an owned service without removing its persistent definition.
+func (s Service) Restart() error {
+	if s.Executor == nil {
+		return fmt.Errorf("service executor is required")
+	}
+	if !s.DefinitionExists() {
+		return fmt.Errorf("service definition is not installed")
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return s.Executor.Run("launchctl", "kickstart", "gui/"+fmt.Sprint(os.Getuid())+"/"+s.Label())
+	case "linux":
+		path, _ := s.definitionPath()
+		_ = path
+		return s.Executor.Run("systemctl", "--user", "restart", filepath.Base(path))
+	default:
+		return s.Executor.Run("schtasks", "/Run", "/TN", s.Label())
+	}
+}

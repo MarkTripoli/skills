@@ -15,7 +15,9 @@ import (
 )
 
 func newTUI() *cobra.Command {
-	return &cobra.Command{Use: "tui", Short: "show the terminal run view", RunE: renderTUI}
+	c := &cobra.Command{Use: "tui", Short: "show the terminal run view", RunE: renderTUI}
+	c.Flags().Bool("plain", false, "force ANSI-free one-shot output")
+	return c
 }
 func terminalWriter(w interface{}) bool {
 	file, ok := w.(*os.File)
@@ -23,6 +25,7 @@ func terminalWriter(w interface{}) bool {
 }
 
 func renderTUI(cmd *cobra.Command, args []string) error {
+	plain, _ := cmd.Flags().GetBool("plain")
 	p, err := home()
 	if err != nil {
 		return err
@@ -93,8 +96,7 @@ func renderTUI(cmd *cobra.Command, args []string) error {
 		return m, nil
 	}
 	var current tui.Model
-
-	if !term.IsTerminal(os.Stdin.Fd()) || !terminalWriter(cmd.OutOrStdout()) {
+	if plain || !term.IsTerminal(os.Stdin.Fd()) || !terminalWriter(cmd.OutOrStdout()) {
 		m, err := model()
 		if err != nil {
 			return err

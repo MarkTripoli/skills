@@ -46,7 +46,6 @@ ACCEPTED=$(mktemp "$GATE_DIR/.safety-dance-accepted.XXXXXX") || { rm -f "$INPUT"
 RECEIPTS="$GATE_DIR/.safety-dance-receipts"
 LOCK="$GATE_DIR/.safety-dance-receipts.lock"
 LOCK_OWNED=0
-lock_age_stale() { now=$(date +%s 2>/dev/null || echo 0); stamp=$(stat -c %Y "$LOCK" 2>/dev/null || stat -f %m "$LOCK" 2>/dev/null || echo 0); [ "$stamp" -gt 0 ] && [ $((now - stamp)) -ge 5 ]; }
 cleanup() { rm -f "$INPUT" "$ACCEPTED"; if [ "$LOCK_OWNED" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; fi; }
 trap cleanup EXIT INT TERM HUP
 lock_receipts() {
@@ -54,7 +53,7 @@ lock_receipts() {
   while ! mkdir "$LOCK" 2>/dev/null; do
     i=$((i + 1)); [ "$i" -ge 300 ] && return 1
     owner=$(cat "$LOCK/pid" 2>/dev/null || :)
-    case "$owner" in ''|*[!0-9]*) stale=0; lock_age_stale && stale=1;; *) kill -0 "$owner" 2>/dev/null && stale=0 || stale=1;; esac
+    case "$owner" in ''|*[!0-9]*) stale=0;; *) kill -0 "$owner" 2>/dev/null && stale=0 || stale=1;; esac
     if [ "$stale" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; continue; fi
     sleep 0.1
   done
@@ -147,11 +146,11 @@ INPUT=$(mktemp "$GATE_DIR/.safety-dance-post.XXXXXX") || {
   printf '[%s] post-receive input capture failed; notifying directly\n' "$(date '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo unknown)" >> "$LOG"
   while read oldrev newrev refname; do
     [ -n "$refname" ] || continue
+    if [ -f "$GATE_DIR/.safety-dance-receipts" ]; then token=$(awk -v o="$oldrev" -v n="$newrev" -v r="$refname" '$1==o && $2==n && $3==r {last=$4} END {print last}' "$GATE_DIR/.safety-dance-receipts"); fi
     args="--gate $GATE_DIR --ref $refname --old $oldrev --new $newrev"
+    [ -n "$token" ] && args="$args --push-option safety-dance-token=$token"
     i=0
     while [ "$i" -lt "${GIT_PUSH_OPTION_COUNT:-0}" ]; do opt=$(printenv "GIT_PUSH_OPTION_$i" 2>/dev/null || :); args="$args --push-option $opt"; i=$((i + 1)); done
-    # The ref is already accepted, so notification failure is logged for
-    # reconciliation rather than returned as a rollback claim.
     sh -c "\"$SD_BIN\" daemon notify-push $args" >> "$LOG" 2>&1 || :
   done
   exit 0
@@ -161,10 +160,15 @@ LOCK="$GATE_DIR/.safety-dance-receipts.lock"
 LOCK_OWNED=0
 cleanup_post() { rm -f "$INPUT"; if [ "$LOCK_OWNED" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; fi; }
 trap cleanup_post EXIT INT TERM HUP
-lock_age_stale() { now=$(date +%s 2>/dev/null || echo 0); stamp=$(stat -c %Y "$LOCK" 2>/dev/null || stat -f %m "$LOCK" 2>/dev/null || echo 0); [ "$stamp" -gt 0 ] && [ $((now - stamp)) -ge 5 ]; }
-lock_receipts() { i=0; while ! mkdir "$LOCK" 2>/dev/null; do i=$((i + 1)); [ "$i" -ge 300 ] && return 1; owner=$(cat "$LOCK/pid" 2>/dev/null || :); case "$owner" in ''|*[!0-9]*) stale=0; lock_age_stale && stale=1;; *) kill -0 "$owner" 2>/dev/null && stale=0 || stale=1;; esac; if [ "$stale" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; continue; fi; sleep 0.1; done; LOCK_OWNED=1; if ! printf '%s\n' "$$" > "$LOCK/pid"; then unlock_receipts; return 1; fi; }
+lock_age_stale() { return 1; }
+lock_receipts() { i=0; while ! mkdir "$LOCK" 2>/dev/null; do i=$((i + 1)); [ "$i" -ge 300 ] && return 1; owner=$(cat "$LOCK/pid" 2>/dev/null || :); case "$owner" in ''|*[!0-9]*) stale=0;; *) kill -0 "$owner" 2>/dev/null && stale=0 || stale=1;; esac; if [ "$stale" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; continue; fi; sleep 0.1; done; LOCK_OWNED=1; if ! printf '%s\n' "$$" > "$LOCK/pid"; then unlock_receipts; return 1; fi; }
+unlock_receipts() { if [ "$LOCK_OWNED" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; LOCK_OWNED=0; fi; }
 if ! cat > "$INPUT"; then
-  printf '[%s] post-receive input capture failed after opening file\n' "$(date '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo unknown)" >> "$LOG"
+  printf '[%s] post-receive input capture failed after opening file; retrying from receipts\n' "$(date '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo unknown)" >> "$LOG"
+  while read oldrev newrev refname; do
+    token=""; [ -f "$RECEIPTS" ] && token=$(awk -v o="$oldrev" -v n="$newrev" -v r="$refname" '$1==o && $2==n && $3==r {last=$4} END {print last}' "$RECEIPTS")
+    [ -n "$token" ] && "$SD_BIN" daemon notify-push --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --push-option "safety-dance-token=$token" >> "$LOG" 2>&1 || :
+  done
   exit 0
 fi
 while read oldrev newrev refname; do

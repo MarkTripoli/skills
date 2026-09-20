@@ -108,15 +108,27 @@ func (a *App) Run(ctx context.Context) error {
 				return nil
 			case "r", "respond":
 				fmt.Fprintln(a.Out, "choose an explicit action: approve, fix, skip, or abort")
-			case "a", "abort":
-				if a.Abort != nil {
-					if err := a.Abort(); err != nil {
+			case "a", "approve":
+				if a.Respond != nil {
+					if err := a.Respond("approve"); err != nil {
 						return err
 					}
 				}
-			case "approve", "fix", "skip":
+			case "f", "fix":
 				if a.Respond != nil {
-					if err := a.Respond(strings.ToLower(line)); err != nil {
+					if err := a.Respond("fix"); err != nil {
+						return err
+					}
+				}
+			case "s", "skip":
+				if a.Respond != nil {
+					if err := a.Respond("skip"); err != nil {
+						return err
+					}
+				}
+			case "x", "abort":
+				if a.Abort != nil {
+					if err := a.Abort(); err != nil {
 						return err
 					}
 				}
