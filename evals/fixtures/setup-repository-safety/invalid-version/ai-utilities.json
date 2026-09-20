@@ -1,0 +1,15 @@
+{
+  "vcs": {
+    "platform": "github",
+    "repository": "acme/invalid-version"
+  },
+  "custom": {
+    "preserve": ["exact", "bytes"]
+  },
+  "onboarding": {
+    "schemaVersion": "1",
+    "profile": "default",
+    "appliedRevision": 1,
+    "providers": {}
+  }
+}
