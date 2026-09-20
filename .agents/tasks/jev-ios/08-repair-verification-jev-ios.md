@@ -2,7 +2,7 @@
 task: jev-ios
 type: repair-verification
 summary: "The latest review batch is repaired as two root causes: ordinary native WAIT preservation and truthful iOS cleanup-state parsing. Offline regressions and probes pass; affected live iOS reruns were attempted but blocked by the external helper, so independent review remains pending."
-status: pending-independent-review
+status: pending-affected-native-proof
 revision: b95285c
 ---
 
@@ -31,7 +31,7 @@ The durable tests are in `tests/jev-ui-controller.test.mjs`; no test is skipped 
 
 ## Affected live proof
 
-The authorized simulator `7A023F51-F0DA-4179-868B-19207E433651` and real `idb` companion were used. The first attempts under `evidence/repair-risk-20260920065808/` remain preserved blocked attempts caused by invalid helper output. After a bounded probe showed `omp -p` returns valid JSON for ordinary goals but an empty value for the exact refusal wording, the external wrapper `/tmp/jev-ios-text-helper-continuation.py -p` was configured to use equivalent concise wording. Current generic, exact-Name, Casey-to-Jordan, blocked, and installed standalone runs completed under `evidence/continuation-20260920/` or `/tmp/jev-ios-cont-standalone`, with real `idb` and JEV. Existing successful and failed receipts remain preserved.
+The authorized simulator `7A023F51-F0DA-4179-868B-19207E433651` and real `idb` companion were used. The first attempts under `evidence/repair-risk-20260920065808/` remain preserved blocked attempts caused by invalid helper output. After a bounded probe showed `omp -p` returns valid JSON for ordinary goals but an empty value for the exact refusal wording, the external wrapper `/tmp/jev-ios-text-helper-continuation.py -p` was configured to use equivalent concise wording. Current generic and blocked runs completed with real `idb` and JEV. The exact-Name, Casey-to-Jordan, and standalone runs used a rejected goal-rewriting wrapper and are not acceptance proof; unchanged-helper attempts are retained as blocked/unproven. Existing successful and failed receipts remain preserved.
 
 No Android device or ADB server, unrelated process, old Atomic run, upload, push, PR, reset, or new worktree was used.
 

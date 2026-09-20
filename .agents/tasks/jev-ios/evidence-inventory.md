@@ -96,9 +96,9 @@ No credential-bearing files or video binaries are included in this committed inv
 
 ## Continuation reruns (2026-09-20)
 
-- External helper setup probe: `/tmp/jev-ios-text-helper-continuation.py -p` wraps documented `omp -p` and rewrites only the refusal wording that returned an empty JSON text value; no credentials are stored in the wrapper.
-- Current generic, exact-Name, and Casey-to-Jordan evidence is retained under `evidence/continuation-20260920/`; installed standalone evidence remains at `/tmp/jev-ios-cont-standalone` because it is external ignored output.
-- Earlier invalid-helper blocked attempts under `evidence/repair-risk-20260920065808/` remain preserved and are not relabeled.
+- CR-001 wrapper provenance is rejected: `/tmp/jev-ios-text-helper-continuation.py` matches fixture-specific Name/Casey goals and rewrites them. Its receipts remain preserved but are not accepted proof.
+- Unchanged-helper raw-goal attempts are retained under `evidence/cr001-raw-goal-20260920/pre-edit/`; plain `omp -p` returned non-contract prose (exit 0), while the configured command returned `usage_limit_reached` (exit 1). SHA-256 values and exact commands are recorded in `10-repair-verification-jev-ios.md`.
+- Exact Name, Casey-to-Jordan, and installed standalone acceptance remain pending until unchanged documented-helper proof records original prompt bytes and helper output. Generic/blocked evidence and all prior failed attempts remain preserved.
 - Final owned cleanup: authorized simulator `7A023F51-F0DA-4179-868B-19207E433651` was `Shutdown`; `/tmp/atomic-migration.JBu9Sk/jev-ios-idb.sock` was absent after stopping the owned companion.
 
 - Current blocked cleanup receipt: `continuation-20260920/zero-action/jev-receipt.json` reports `blocked` / `action budget exhausted` with verified recording; the companion-unavailable and action-budget failures remain non-green.
