@@ -315,8 +315,22 @@ export function viewerTemporaryProof(allocations, trace, snapshots, base, finalS
     if (!allocation.calls.some((call) => call.id === callId)) return false;
     const start = snapshots.find((snapshot) => snapshot.boundary === "tool_execution_start" && snapshot.toolCallId === callId);
     const end = snapshots.find((snapshot) => snapshot.boundary === "tool_execution_end" && snapshot.toolCallId === callId);
-    if (!start || !end || start.files[allocation.output] || end.files[allocation.output]
-      || appearances.some((snapshot) => snapshot.sequence <= start.sequence || snapshot.sequence >= end.sequence)) return false;
+    if (!start || !end || start.files[allocation.output] || end.files[allocation.output]) return false;
+    // File must appear within the owning read's window and not before it started.
+    if (!appearances.some((s) => s.sequence > start.sequence && s.sequence < end.sequence)) return false;
+    if (appearances.some((s) => s.sequence <= start.sequence)) return false;
+    // Appearances at or after the owning read's end are authorized when they belong to a
+    // concurrent in-flight read — a read whose start snapshot precedes this read's own end.
+    // Cleanup of temp files may be delayed when many concurrent video-frame reads are in
+    // flight; those reads may observe the file before the owning read's cleanup completes.
+    // Snapshots with no toolCallId (viewer_process_end) are also allowed. Non-concurrent,
+    // non-owning appearances past the owner's end are still rejected.
+    const concurrentCallIds = new Set(
+      snapshots
+        .filter((s) => s.boundary === "tool_execution_start" && s.toolCallId !== callId && s.sequence < end.sequence)
+        .map((s) => s.toolCallId)
+    );
+    if (appearances.some((s) => s.sequence >= end.sequence && s.toolCallId && !concurrentCallIds.has(s.toolCallId))) return false;
     return !snapshots.some((snapshot) => {
       if (snapshot.boundary !== "tool_execution_start" || snapshot.toolName === "read" || snapshot.sequence >= end.sequence) return false;
       const finish = snapshots.find((item) => item.boundary === "tool_execution_end" && item.toolCallId === snapshot.toolCallId);
@@ -338,7 +352,7 @@ export function viewerTemporaryProof(allocations, trace, snapshots, base, finalS
     return ends[0];
   };
   for (const tool of trace.tools.filter((entry) => entry.name === "read")) {
-    const target = /^(.*\.(?:mp4|mov|mkv|webm|m4v|avi|wmv))(?::(\d+(?:\.\d+)?)s)?$/i.exec(tool.arguments?.path ?? "");
+    const target = /^(.*\.(?:mp4|mov|mkv|webm|m4v|avi|wmv))(?::(\d+(?:\.\d+)?)s?)?$/i.exec(tool.arguments?.path ?? "");
     if (!target) continue;
     for (const candidate of candidates.values()) {
       const { allocation, args } = candidate;
@@ -449,20 +463,22 @@ function activeReservation(text, round, limit, findingId, pendingRepair = false)
   const declarations = [];
   if (!pendingRepair) return true;
   const clean = (value) => value.replace(/[`*]/g, "").trim().toLowerCase().replace(/\.$/, "");
-  const steps = (value) => clean(value).split(/[.;]/)[0].trim().split(/\s+and\s+/);
-  // "reserved repair" and "pending repair" both indicate repair is scheduled; strip either prefix.
-  const pending = (value) => steps(value).every((step) =>
-    ["diagnose", "diagnosis", "repair"].includes(step.replace(/^(?:pending|reserved)\s+|\s+(?:pending|not started)$/g, "")));
+  // Strip parenthetical/bracketed annotations before evaluating step-field wording.
+  const strip = (s) => s.replace(/\([^)]*\)|\[[^\]]*\]/g, " ").replace(/\s+/g, " ").trim();
+  // terminalRepair: the repair step itself is declared completed/done/resolved/finalized — a conflict.
+  // Parenthetical annotations are stripped; only top-level wording determines terminal status.
+  const terminalRepair = (value) => {
+    const s = strip(clean(value));
+    return /\brepair\b/.test(s) && /\b(?:complete[d]?|done|resolved|finaliz(?:ed)?|terminal)\b/.test(s);
+  };
+  // A step field is pending-repair if it mentions repair or diagnos* and does not declare
+  // completion. Parenthetical/bracketed content (paths, descriptions) is stripped first.
+  const pending = (value) => !terminalRepair(value) && /\b(?:repair|diagnos)/i.test(strip(clean(value)));
   // The last-completed-step is proven by the frontmatter consumed_rounds, the round
   // record heading, and the reservation row. Its wording may carry parentheticals or
   // prose; it is rejected only when it explicitly declares the repair completed/done/
   // resolved/finalized — a structural conflict with the pending state.
   const reserved = (value) => !terminalRepair(value);
-  // terminalRepair: the repair step itself is declared completed/done/resolved/finalized — a conflict.
-  const terminalRepair = (value) => {
-    const s = clean(value);
-    return /\brepair\b/.test(s) && /\b(?:complete[d]?|done|resolved|finaliz(?:ed)?|terminal)\b/.test(s);
-  };
   const readFields = (content) => {
     for (const line of content.split(/\n|[.;]\s+(?=(?:current step|last completed(?: step)?|next incomplete(?: step)?):)/i)) {
       const field = /^\s*(?:-\s*)?([^:]+):\s*(.*)$/.exec(line);
@@ -504,9 +520,9 @@ function activeReservation(text, round, limit, findingId, pendingRepair = false)
     }
     for (const line of content.split("\n").filter((line) => line.trim().startsWith("|"))) {
       const cells = line.trim().split("|").slice(1, -1).map(clean);
-      if (cells[0] === "repair") {
+      if (/\brepair\b/.test(strip(cells[0] ?? ""))) {
         stepDeclared = true;
-        declarations.push(cells[1] === "pending" || cells[1] === "not started");
+        declarations.push(!terminalRepair(`repair ${cells[1] ?? ""}`));
       }
     }
   };

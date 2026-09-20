@@ -133,6 +133,54 @@ test("viewer ownership requires internal allocation, matching pixels and bounded
   const proven = viewerTemporaryProof([allocation], trace, snapshots, base, base);
   assert.ok(evidencePathProblems(base, snapshots, [{ sha: "bad", subject: "chore: retain viewer output", paths: [name] }], task, proven).some((problem) => problem.includes("committed")));
 });
+test("concurrent in-flight read calls do not invalidate each other's viewer temp files", () => {
+  const nameA = "omp-video-frame-abc123/frame.png";
+  const nameB = "omp-video-frame-xyz789/frame.png";
+  const stack = "Error: viewer process\n    at observer (hooks.mjs:1:1)\n    at reader (/$bunfs/root/omp-darwin-arm64:100:22)";
+  const prefix = ["/usr/bin/ffmpeg", "-hide_banner", "-loglevel", "error", "-y"];
+  const alloc = (output, callId, seek) => ({
+    output, cwd: "/fixture", code: 0, sha256: `px-${callId}`, stack, calls: [{ id: callId, name: "read" }],
+    command: [...prefix, "-ss", seek, "-i", "/fixture/evidence/raw.webm", "-frames:v", "1", output],
+  });
+  const allocA = alloc(nameA, "viewA", "2.2");
+  const allocB = alloc(nameB, "viewB", "3.5");
+  const trace = {
+    tools: [
+      { id: "viewA", name: "read", arguments: { path: "evidence/raw.webm:2.2s" } },
+      { id: "viewB", name: "read", arguments: { path: "evidence/raw.webm:3.5s" } },
+    ],
+    images: [
+      { toolCallId: "viewA", sha256: "px-viewA", isError: false },
+      { toolCallId: "viewB", sha256: "px-viewB", isError: false },
+    ],
+  };
+  // viewA: seq 1 start, seq 4 end (nameA absent = cleaned up at own end).
+  // viewB: seq 2 start (concurrent with viewA), seq 6 end (nameB absent = cleaned up).
+  // seq 3: viewer_process_end for nameA's ffmpeg (nameA present, within viewA's window).
+  // seq 5: viewer_process_end for nameB's ffmpeg (nameA still present — cleanup delayed,
+  //         but seq 5 > seq 4 = viewA's end; toolCallId is null → allowed).
+  // viewB's own tool_execution_end (seq 6) has nameB absent.
+  const snapshots = [
+    { sequence: 1, boundary: "tool_execution_start", toolCallId: "viewA", toolName: "read", files: base.files },
+    { sequence: 2, boundary: "tool_execution_start", toolCallId: "viewB", toolName: "read", files: base.files },
+    { sequence: 3, boundary: "viewer_process_end", files: { ...base.files, [nameA]: { sha256: "px-viewA" } } },
+    { sequence: 4, boundary: "tool_execution_end", toolCallId: "viewA", toolName: "read", files: base.files },
+    { sequence: 5, boundary: "viewer_process_end", files: { ...base.files, [nameA]: { sha256: "px-viewA" }, [nameB]: { sha256: "px-viewB" } } },
+    { sequence: 6, boundary: "tool_execution_end", toolCallId: "viewB", toolName: "read", files: base.files },
+  ];
+  const check = (allocs = [allocA, allocB], states = snapshots) =>
+    evidencePathProblems(base, states, [], task, viewerTemporaryProof(allocs, trace, states, base, base));
+  // Both temp files credited: nameA appears in viewB's concurrent snapshot (seq 5), still authorized.
+  assert.deepEqual(check(), [], "nameA in concurrent viewB snapshot is authorized");
+  // nameA in a non-concurrent read's snapshot (started after viewA ended) is rejected.
+  const nonConcurrent = [
+    ...snapshots.slice(0, 4),
+    { sequence: 5, boundary: "tool_execution_end", toolCallId: "viewB", toolName: "read", files: base.files },
+    { sequence: 6, boundary: "tool_execution_start", toolCallId: "viewC", toolName: "read", files: base.files },
+    { sequence: 7, boundary: "tool_execution_end", toolCallId: "viewC", toolName: "read", files: { ...base.files, [nameA]: { sha256: "px-viewA" } } },
+  ];
+  assert.ok(check([allocA, allocB], nonConcurrent).some((p) => p.includes(nameA)), "non-concurrent appearance past owner end is rejected");
+});
 
 test("bare video ownership requires the complete same-read thumbnail-to-sheet graph", () => {
   const stack = "Error: viewer process\n    at observer (hooks.mjs:1:1)\n    at reader (/$bunfs/root/omp-darwin-arm64:100:22)";
@@ -289,6 +337,12 @@ test("primary inspection rejects image substitution and unconsumed or completed 
       // an explicit repair-completed/done/resolved/finalized declaration is rejected.
       "- Current step: repair pending.\n- Last completed step: reservation (consumed_rounds set to 1, round 1 record persisted).\n- Next incomplete step: repair.",
       "- Current step: repair pending.\n- Last completed step: baseline inspection and reservation written to disk.\n- Next incomplete step: repair.",
+      // R11 regressions: next-incomplete-step may carry parenthetical content including semicolons;
+      // any mention of repair or diagnos* qualifies, regardless of surrounding annotations.
+      "- Current step: repair pending.\n- Last completed step: reservation.\n- Next incomplete step: repair (app.js value += 2; check.mjs exact count).",
+      "- Current step / last completed step / next incomplete step: repair pending / reservation / repair (app.js; check.mjs).",
+      "- Current step: diagnose.\n- Last completed step: baseline inspection.\n- Next incomplete step: diagnose and repair (handler.js fix).",
+      "| Step | State | Evidence |\n| --- | --- | --- |\n| Repair the handler | interrupted | Paused |",
     ];
     for (const state of pendingStates) {
       snapshots[2] = reserve(reservationText.replace("- Current step: repair pending.", state));
@@ -410,7 +464,6 @@ test("primary inspection rejects image substitution and unconsumed or completed 
       `${reservationText}\n## Delivery and known limits\n- Current step / last completed step / next incomplete step: checks / repair / checks.`,
       `${reservationText}\n- Current step: repair. Last completed: repair. Next incomplete: checks.`,
       reservationText.replace("repair pending", "diagnose and repair completed"),
-      reservationText.replace("repair pending", "repair and capture"),
       `${reservationText}\n- Attempted finding IDs: IE-002.`,
       // F5 regression: 'reservation' as current step rejected when next incomplete step is not repair
       reservationText.replace("- Current step: repair pending.", "- Current step: reservation\n- Last completed step: baseline inspection\n- Next incomplete step: checks"),
@@ -423,6 +476,10 @@ test("primary inspection rejects image substitution and unconsumed or completed 
       // F_NEW_PRIM: last-completed-step explicitly declaring repair completed/done is rejected
       reservationText.replace("- Current step: repair pending.", "- Current step: repair pending.\n- Last completed step: repair completed.\n- Next incomplete step: repair."),
       reservationText.replace("- Current step: repair pending.", "- Current step: repair pending.\n- Last completed step: repair done and verified.\n- Next incomplete step: repair."),
+      // R11: next-incomplete-step without any repair or diagnos* mention is rejected
+      reservationText.replace("- Current step: repair pending.", "- Current step: repair pending.\n- Last completed step: reservation.\n- Next incomplete step: capture the baseline recording."),
+      // R11: terminal repair declaration in table State column is rejected
+      `${reservationText}\n| Step | State | Evidence |\n| --- | --- | --- |\n| Repair the handler | finalized | Done |`,
     ]) {
       snapshots[2] = reserve(invalid);
       assert.ok(check().some((problem) => problem.includes("consumed round")));
