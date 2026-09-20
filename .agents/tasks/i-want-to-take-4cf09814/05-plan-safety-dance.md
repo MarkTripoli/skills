@@ -635,10 +635,10 @@ const allow = new Set(["tools/safety-dance/LICENSE"]);
 
 #### Automated Verification:
 
-- [ ] `node scripts/check-safety-dance-identity.mjs && npm test`
-- [ ] `cd tools/safety-dance && go test -race ./... && go vet ./... && go build ./cmd/safety-dance`
-- [ ] `node --test tests/safety-dance-release.test.mjs`
-- [ ] `node scripts/sync-plugin.mjs --check && git diff --exit-code -- .claude-plugin/plugin.json agents/`
+- [x] `node scripts/check-safety-dance-identity.mjs && npm test`
+- [x] `cd tools/safety-dance && go test -race ./... && go vet ./... && go build ./cmd/safety-dance`
+- [x] `node --test tests/safety-dance-release.test.mjs`
+- [x] `node scripts/sync-plugin.mjs --check && git diff --exit-code -- .claude-plugin/plugin.json agents/`
 
 Done when the aggregate suite catches Go, identity, installer, generated-plugin, and release-contract regressions; local builds contain no retired product identity outside the legal file; and product tags map deterministically to native archives plus checksums.
 
