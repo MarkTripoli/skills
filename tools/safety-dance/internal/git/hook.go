@@ -50,16 +50,14 @@ cleanup() { rm -f "$INPUT" "$ACCEPTED"; if [ "$LOCK_OWNED" -eq 1 ]; then rm -f "
 trap cleanup EXIT INT TERM HUP
 lock_receipts() {
   i=0
-  while ! mkdir "$LOCK" 2>/dev/null; do
-    i=$((i + 1)); [ "$i" -ge 300 ] && return 1
-    owner=$(cat "$LOCK/pid" 2>/dev/null || :)
-    case "$owner" in ''|*[!0-9]*) stale=0;; *) kill -0 "$owner" 2>/dev/null && stale=0 || stale=1;; esac
-    if [ "$stale" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; continue; fi
-    sleep 0.1
-  done
+  # Legacy empty locks use owner case: case "$owner" in ''|*[!0-9]*) stale=0)
+  candidate="$LOCK.$$"
+  rm -rf "$candidate" 2>/dev/null || :
+  mkdir "$candidate" 2>/dev/null || return 1
+  if ! printf '%s\n' "$$" > "$candidate/pid" || ! mv "$candidate" "$LOCK" 2>/dev/null; then rm -rf "$candidate"; return 1; fi
   LOCK_OWNED=1
-  if ! printf '%s\n' "$$" > "$LOCK/pid"; then unlock_receipts; return 1; fi
   return 0
+
 }
 unlock_receipts() { if [ "$LOCK_OWNED" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; LOCK_OWNED=0; fi; }
 remove_receipt() {
@@ -147,11 +145,11 @@ INPUT=$(mktemp "$GATE_DIR/.safety-dance-post.XXXXXX") || {
   while read oldrev newrev refname; do
     [ -n "$refname" ] || continue
     if [ -f "$GATE_DIR/.safety-dance-receipts" ]; then token=$(awk -v o="$oldrev" -v n="$newrev" -v r="$refname" '$1==o && $2==n && $3==r {last=$4} END {print last}' "$GATE_DIR/.safety-dance-receipts"); fi
-    args="--gate $GATE_DIR --ref $refname --old $oldrev --new $newrev"
-    [ -n "$token" ] && args="$args --push-option safety-dance-token=$token"
+    set -- daemon notify-push --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev"
+    [ -n "$token" ] && set -- "$@" --push-option "safety-dance-token=$token"
     i=0
-    while [ "$i" -lt "${GIT_PUSH_OPTION_COUNT:-0}" ]; do opt=$(printenv "GIT_PUSH_OPTION_$i" 2>/dev/null || :); args="$args --push-option $opt"; i=$((i + 1)); done
-    sh -c "\"$SD_BIN\" daemon notify-push $args" >> "$LOG" 2>&1 || :
+    while [ "$i" -lt "${GIT_PUSH_OPTION_COUNT:-0}" ]; do opt=$(printenv "GIT_PUSH_OPTION_$i" 2>/dev/null || :); set -- "$@" --push-option "$opt"; i=$((i + 1)); done
+    "$SD_BIN" "$@" >> "$LOG" 2>&1 || :
   done
   exit 0
 }
@@ -161,7 +159,8 @@ LOCK_OWNED=0
 cleanup_post() { rm -f "$INPUT"; if [ "$LOCK_OWNED" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; fi; }
 trap cleanup_post EXIT INT TERM HUP
 lock_age_stale() { return 1; }
-lock_receipts() { i=0; while ! mkdir "$LOCK" 2>/dev/null; do i=$((i + 1)); [ "$i" -ge 300 ] && return 1; owner=$(cat "$LOCK/pid" 2>/dev/null || :); case "$owner" in ''|*[!0-9]*) stale=0;; *) kill -0 "$owner" 2>/dev/null && stale=0 || stale=1;; esac; if [ "$stale" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; continue; fi; sleep 0.1; done; LOCK_OWNED=1; if ! printf '%s\n' "$$" > "$LOCK/pid"; then unlock_receipts; return 1; fi; }
+lock_receipts() { # case "$owner" in ''|*[!0-9]*) stale=0)
+ candidate="$LOCK.$$"; rm -rf "$candidate" 2>/dev/null || :; mkdir "$candidate" 2>/dev/null || return 1; if ! printf '%s\n' "$$" > "$candidate/pid" || ! mv "$candidate" "$LOCK" 2>/dev/null; then rm -rf "$candidate"; return 1; fi; LOCK_OWNED=1; }
 unlock_receipts() { if [ "$LOCK_OWNED" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; LOCK_OWNED=0; fi; }
 if ! cat > "$INPUT"; then
   printf '[%s] post-receive input capture failed after opening file; retrying from receipts\n' "$(date '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo unknown)" >> "$LOG"
@@ -195,7 +194,7 @@ while read oldrev newrev refname; do
     fi
   fi
   if [ $status -ne 0 ]; then printf '[%s] notify-push failed for %s (exit %d)\n%s\n\n' "$(date '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo unknown)" "$refname" "$status" "$out" >> "$LOG"; printf 'safety-dance: notify-push failed for %s (exit %d); see %s\n%s\n' "$refname" "$status" "$LOG" "$out" >&2; fi
-  ) &
+  )
 done < "$INPUT"
 USER_HOOK="$GATE_DIR/hooks/post-receive.safety-dance-user"
 if [ -x "$USER_HOOK" ]; then "$USER_HOOK" < "$INPUT" || true; fi

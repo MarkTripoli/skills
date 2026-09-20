@@ -169,7 +169,7 @@ func managedHookPeer(pid int, gate string) bool {
 		return false
 	}
 	gate = cleanPath(gate)
-	expected := map[string]bool{cleanPath(filepath.Join(gate, "hooks", "pre-receive")): true, cleanPath(filepath.Join(gate, "hooks", "post-receive")): true}
+	expected := map[string]bool{cleanPath(filepath.Join(gate, "hooks", "pre-receive")): true, cleanPath(filepath.Join(gate, "hooks", "post-receive")): true, "hooks/pre-receive": true, "hooks/post-receive": true}
 	managedHook, gitReceive := false, false
 	for depth := 0; pid > 1 && depth < 64; depth++ {
 		ppid, command, err := processInfoFunc(pid)
@@ -201,7 +201,7 @@ var processEnvironmentFunc = processEnvironment
 func commandHasExecutable(command string, expected map[string]bool) bool {
 	for _, field := range commandLineFields(command) {
 		field = strings.Trim(field, "\"'(),")
-		if expected[cleanPath(field)] {
+		if expected[field] || expected[cleanPath(field)] {
 			return true
 		}
 	}
@@ -320,6 +320,9 @@ func (a *Admission) admit(ctx context.Context, raw json.RawMessage) (interface{}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, fmt.Errorf("decode admission: %w", err)
 	}
+	if !managedHookPeer(ipc.PeerPID(ctx), p.Gate) {
+		return nil, errors.New("push admission requires a managed git hook")
+	}
 	if strings.TrimSpace(p.Old) == "" || strings.TrimSpace(p.New) == "" {
 		return nil, errors.New("old and new revisions are required")
 	}
@@ -343,12 +346,12 @@ func (a *Admission) admit(ctx context.Context, raw json.RawMessage) (interface{}
 }
 
 func (a *Admission) revoke(ctx context.Context, raw json.RawMessage) (interface{}, error) {
-	if ipc.PeerPID(ctx) <= 0 {
-		return nil, errors.New("unauthenticated IPC peer")
-	}
 	var p ipc.RevokePushReceiptParams
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, fmt.Errorf("decode receipt revocation: %w", err)
+	}
+	if !managedHookPeer(ipc.PeerPID(ctx), p.Gate) {
+		return nil, errors.New("receipt revocation requires a managed git hook")
 	}
 	if p.Gate == "" || p.Ref == "" || p.Token == "" {
 		return nil, errors.New("gate, ref, and token are required")
@@ -375,12 +378,12 @@ func (a *Admission) revoke(ctx context.Context, raw json.RawMessage) (interface{
 }
 
 func (a *Admission) notifyPush(ctx context.Context, raw json.RawMessage) (interface{}, error) {
-	if ipc.PeerPID(ctx) <= 0 {
-		return nil, errors.New("unauthenticated IPC peer")
-	}
 	var p ipc.NotifyPushParams
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, fmt.Errorf("decode notification: %w", err)
+	}
+	if !managedHookPeer(ipc.PeerPID(ctx), p.Gate) {
+		return nil, errors.New("notification requires a managed git hook")
 	}
 	if strings.TrimSpace(p.Gate) == "" || strings.TrimSpace(p.Ref) == "" || strings.TrimSpace(p.New) == "" {
 		return nil, errors.New("gate, ref, and new revision are required")
@@ -431,6 +434,7 @@ func (a *Admission) notifyPush(ctx context.Context, raw json.RawMessage) (interf
 	delete(a.receipts, token)
 	delete(a.claimed, token)
 	if err := a.saveReceipts(); err != nil {
+		a.receipts[token] = receipt
 		return nil, fmt.Errorf("remove admission receipt: %w", err)
 	}
 	return map[string]bool{"ok": true}, nil

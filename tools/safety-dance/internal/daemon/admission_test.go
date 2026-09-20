@@ -123,6 +123,14 @@ func TestAdmissionAuthenticatedReplayAndMismatch(t *testing.T) {
 	socket := filepath.Join("/tmp", "sd-"+filepath.Base(dir)+".sock")
 	defer os.Remove(socket)
 	server := ipc.NewServer()
+	oldProcessInfo := processInfoFunc
+	t.Cleanup(func() { processInfoFunc = oldProcessInfo })
+	processInfoFunc = func(pid int) (int, string, error) {
+		if pid == os.Getpid() {
+			return pid + 1, "/bin/sh /tmp/gate.git/hooks/pre-receive", nil
+		}
+		return 1, "git-receive-pack /tmp/gate.git", nil
+	}
 	var got PushNotification
 	a := NewAdmission(server, func(_ context.Context, n PushNotification) error { got = n; return nil })
 	if err := server.Listen(socket); err != nil {
@@ -243,6 +251,14 @@ func TestAdmissionNotificationClaimsReceiptBeforeCallback(t *testing.T) {
 	socket := filepath.Join("/tmp", "sd-claim-"+filepath.Base(dir)+".sock")
 	defer os.Remove(socket)
 	server := ipc.NewServer()
+	oldProcessInfo := processInfoFunc
+	t.Cleanup(func() { processInfoFunc = oldProcessInfo })
+	processInfoFunc = func(pid int) (int, string, error) {
+		if pid == os.Getpid() {
+			return pid + 1, "/bin/sh /tmp/gate.git/hooks/pre-receive", nil
+		}
+		return 1, "git-receive-pack /tmp/gate.git", nil
+	}
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var calls int
