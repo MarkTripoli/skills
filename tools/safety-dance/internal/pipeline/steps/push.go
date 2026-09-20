@@ -91,7 +91,7 @@ func Publish(ctx context.Context, database *db.DB, runID string, req PushRequest
 	if err != nil {
 		return PushResult{}, err
 	}
-	if run == nil || run.Status == types.RunCancelled || run.Status == types.RunFailed {
+	if run == nil || ((run.Status == types.RunCancelled || run.Status == types.RunFailed) && !run.PushActive) {
 		return PushResult{}, fmt.Errorf("run %s is not publishable", runID)
 	}
 	if req.Candidate == "" || req.ReviewedHead == "" || req.Candidate != req.ReviewedHead {

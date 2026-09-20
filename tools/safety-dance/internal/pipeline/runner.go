@@ -65,16 +65,18 @@ type Runner struct {
 	Results    []StepResult
 	Database   *db.DB
 	RunID      string
+	Order      []StepName
 }
 
 func New() *Runner {
-	return &Runner{steps: map[StepName]Step{}, inputs: map[StepName]StepInputs{}, inputFuncs: map[StepName]func() StepInputs{}}
+	return &Runner{steps: map[StepName]Step{}, inputs: map[StepName]StepInputs{}, inputFuncs: map[StepName]func() StepInputs{}, Order: append([]StepName(nil), CoreSteps...)}
 }
 func NewDurable(database *db.DB, runID string) *Runner {
 	r := New()
 	r.Database, r.RunID = database, runID
 	return r
 }
+func (r *Runner) SetOrder(order []StepName)   { r.Order = append([]StepName(nil), order...) }
 func (r *Runner) Register(n StepName, s Step) { r.RegisterWithInputs(n, StepInputs{}, s) }
 func (r *Runner) RegisterWithInputs(n StepName, in StepInputs, s Step) {
 	r.mu.Lock()
@@ -91,7 +93,7 @@ func (r *Runner) RegisterWithInputFunc(n StepName, in func() StepInputs, s Step)
 	delete(r.inputs, n)
 }
 func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
-	for _, n := range CoreSteps {
+	for _, n := range r.Order {
 		select {
 		case <-ctx.Done():
 			return r.Results, ctx.Err()

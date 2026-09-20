@@ -70,13 +70,13 @@ if [ -x "$USER_HOOK" ]; then
 	if [ $status -ne 0 ]; then
 		while read receipt_line; do
 			set -- $receipt_line; oldrev=$1; newrev=$2; refname=$3
-			token=$(awk -F '\t' -v o="$oldrev" -v n="$newrev" -v r="$refname" '$1==o && $2==n && $3==r {print $4; exit}' "$GATE_DIR/.safety-dance-receipts")
+            token=$(awk -v o="$oldrev" -v n="$newrev" -v r="$refname" '$1==o && $2==n && $3==r {print $4; exit}' "$GATE_DIR/.safety-dance-receipts")
 			if [ -n "$token" ]; then
 				"$SD_BIN" daemon revoke-push-receipt --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --token "$token" >/dev/null 2>&1 || true
 			fi
 		 done < "$TMP"
 		receipts_tmp="$GATE_DIR/.safety-dance-receipts.cleanup"
-		awk -F '\t' 'NR==FNR {bad[$1 FS $2 FS $3]=1; next} !bad[$1 FS $2 FS $3]' "$TMP" "$GATE_DIR/.safety-dance-receipts" > "$receipts_tmp" 2>/dev/null || true
+        awk 'NR==FNR {bad[$1 FS $2 FS $3]=1; next} !bad[$1 FS $2 FS $3]' "$TMP" "$GATE_DIR/.safety-dance-receipts" > "$receipts_tmp" 2>/dev/null || true
 		mv "$receipts_tmp" "$GATE_DIR/.safety-dance-receipts" 2>/dev/null || true
 		rm -f "$TMP"
 	else
@@ -118,8 +118,8 @@ while read oldrev newrev refname; do
   while [ "$i" -lt "${GIT_PUSH_OPTION_COUNT:-0}" ]; do opt=$(printenv "GIT_PUSH_OPTION_$i" 2>/dev/null || :); case "$opt" in safety-dance-token=*) token=${opt#*=};; esac; set -- "$@" --push-option "$opt"; i=$((i + 1)); done
   (
   if [ -z "${token:-}" ] && [ -f "$GATE_DIR/.safety-dance-receipts" ]; then
-    token=$(awk -F '\t' -v o="$oldrev" -v n="$newrev" -v r="$refname" '$1==o && $2==n && $3==r {print $4; exit}' "$GATE_DIR/.safety-dance-receipts")
-    if [ -n "$token" ]; then sed -i.bak "\\|^$oldrev[[:space:]]\\+$newrev[[:space:]]\\+$refname[[:space:]]|d" "$GATE_DIR/.safety-dance-receipts" 2>/dev/null || true; rm -f "$GATE_DIR/.safety-dance-receipts.bak"; fi
+    token=$(awk -v o="$oldrev" -v n="$newrev" -v r="$refname" '$1==o && $2==n && $3==r {print $4; exit}' "$GATE_DIR/.safety-dance-receipts")
+    if [ -n "$token" ]; then sed -i.bak "\|^$oldrev[[:space:]]\+$newrev[[:space:]]\+$refname[[:space:]]|d" "$GATE_DIR/.safety-dance-receipts" 2>/dev/null || true; rm -f "$GATE_DIR/.safety-dance-receipts.bak"; fi
     if [ -n "${token:-}" ]; then set -- "$@" --push-option "safety-dance-token=$token"; fi
   fi
     out=$("$SD_BIN" daemon notify-push "$@" 2>&1); status=$?

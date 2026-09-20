@@ -158,7 +158,7 @@ func (s Service) taskOwned() (bool, error) {
 	if !ok {
 		return false, nil
 	}
-	out, err := executor.Output("schtasks", "/Query", "/TN", s.Label(), "/FO", "XML")
+	out, err := executor.Output("schtasks", "/Query", "/TN", s.Label(), "/XML")
 	if err != nil {
 		return false, nil
 	}
@@ -208,7 +208,7 @@ func (s Service) Install() error {
 		activationErr = s.Executor.Run("systemctl", "--user", "enable", "--now", filepath.Base(path))
 	default:
 		if executor, ok := s.Executor.(serviceOutputExecutor); ok {
-			if out, queryErr := executor.Output("schtasks", "/Query", "/TN", s.Label(), "/FO", "XML"); queryErr == nil && (!strings.Contains(string(out), serviceMarker) || !strings.Contains(string(out), s.Home.Root()) || !strings.Contains(string(out), s.Binary)) {
+			if out, queryErr := executor.Output("schtasks", "/Query", "/TN", s.Label(), "/XML"); queryErr == nil && (!strings.Contains(string(out), serviceMarker) || !strings.Contains(string(out), s.Home.Root()) || !strings.Contains(string(out), s.Binary)) {
 				return fmt.Errorf("foreign scheduled task collision: %s", s.Label())
 			}
 		}

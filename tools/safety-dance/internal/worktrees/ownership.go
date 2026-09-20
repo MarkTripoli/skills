@@ -2,6 +2,8 @@ package worktrees
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,8 +14,30 @@ import (
 
 type pendingWorktree struct{ Source, Dir, Head string }
 
-func journalPath(dir string) string         { return dir + ".safety-dance-pending.json" }
-func removingJournalPath(dir string) string { return dir + ".safety-dance-removing.json" }
+func metadataDir(dir string) string {
+	clean := filepath.Clean(dir)
+	parts := strings.Split(clean, string(filepath.Separator))
+	for i, part := range parts {
+		if part == "worktrees" {
+			root := strings.Join(parts[:i+1], string(filepath.Separator))
+			if root == "" {
+				root = string(filepath.Separator)
+			}
+			return filepath.Join(root, ".safety-dance-journals")
+		}
+	}
+	return filepath.Join(filepath.Dir(clean), ".safety-dance-journals")
+}
+func journalName(dir, kind string) string {
+	sum := sha256.Sum256([]byte(filepath.Clean(dir)))
+	return hex.EncodeToString(sum[:]) + ".safety-dance-" + kind + ".json"
+}
+func journalPath(dir string) string {
+	return filepath.Join(metadataDir(dir), journalName(dir, "pending"))
+}
+func removingJournalPath(dir string) string {
+	return filepath.Join(metadataDir(dir), journalName(dir, "removing"))
+}
 
 // CreateDetached journals ownership before Git creates the worktree. The
 // journal remains until the run row has committed ownership.
@@ -25,6 +49,9 @@ func CreateDetached(ctx context.Context, source, dir, head string) (err error) {
 		return err
 	}
 	marker := journalPath(dir)
+	if err = os.MkdirAll(filepath.Dir(marker), 0700); err != nil {
+		return err
+	}
 	raw, err := json.Marshal(pendingWorktree{Source: source, Dir: dir, Head: head})
 	if err != nil {
 		return err
@@ -73,12 +100,16 @@ func JournalRemoval(source, dir string) error {
 	if err != nil {
 		return fmt.Errorf("journal worktree removal: %w", err)
 	}
-	if err := os.WriteFile(removingJournalPath(dir), raw, 0600); err != nil {
+	marker := removingJournalPath(dir)
+	if err := os.MkdirAll(filepath.Dir(marker), 0700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(marker, raw, 0600); err != nil {
 		return fmt.Errorf("journal worktree removal: %w", err)
 	}
 	return nil
-}
 
+}
 func RemoveDetached(ctx context.Context, source, dir string) error {
 	if source == "" || dir == "" {
 		return fmt.Errorf("source and directory are required")
@@ -88,6 +119,9 @@ func RemoveDetached(ctx context.Context, source, dir string) error {
 		return fmt.Errorf("journal worktree removal: %w", err)
 	}
 	marker := removingJournalPath(dir)
+	if err := os.MkdirAll(filepath.Dir(marker), 0700); err != nil {
+		return err
+	}
 	if err := os.WriteFile(marker, raw, 0600); err != nil {
 		return fmt.Errorf("journal worktree removal: %w", err)
 	}
@@ -117,10 +151,41 @@ func RemoveDetached(ctx context.Context, source, dir string) error {
 	return nil
 }
 
+// SourceFor returns the repository that owns dir, refusing to guess from the
+// configured repository when a run was created from a different Git source.
+func SourceFor(ctx context.Context, sources []string, dir string) (string, error) {
+	want, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	for _, source := range sources {
+		if source == "" {
+			continue
+		}
+		out, runErr := exec.CommandContext(ctx, "git", "-C", source, "worktree", "list", "--porcelain").Output()
+		if runErr != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.HasPrefix(line, "worktree ") {
+				candidate, absErr := filepath.Abs(strings.TrimPrefix(line, "worktree "))
+				if absErr == nil && candidate == want {
+					return source, nil
+				}
+			}
+		}
+	}
+	return "", fmt.Errorf("worktree %s is not registered with a known source", dir)
+}
+
 // RecoverPending removes worktrees whose ownership transaction was interrupted
 // before run persistence. Protected paths belong to committed runs.
 func RecoverPending(ctx context.Context, root string, protected ...string) error {
-	return filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+	journalRoot := filepath.Join(root, ".safety-dance-journals")
+	if _, err := os.Stat(journalRoot); os.IsNotExist(err) {
+		return nil
+	}
+	return filepath.WalkDir(journalRoot, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -140,16 +205,17 @@ func RecoverPending(ctx context.Context, root string, protected ...string) error
 				return nil
 			}
 		}
-		if err := RemoveDetached(ctx, pending.Source, pending.Dir); err != nil {
-			return err
-		}
-		return nil
+		return RemoveDetached(ctx, pending.Source, pending.Dir)
 	})
 }
 
 // RecoverRemoving retries removals whose daemon died during cleanup.
 func RecoverRemoving(ctx context.Context, root string) error {
-	return filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+	journalRoot := filepath.Join(root, ".safety-dance-journals")
+	if _, err := os.Stat(journalRoot); os.IsNotExist(err) {
+		return nil
+	}
+	return filepath.WalkDir(journalRoot, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -168,7 +234,6 @@ func RecoverRemoving(ctx context.Context, root string) error {
 	})
 }
 
-// RecoverDetached verifies an owned run worktree after restart.
 func RecoverDetached(ctx context.Context, source, dir, head string) error {
 	if source == "" || dir == "" || head == "" {
 		return fmt.Errorf("source, directory, and head are required")

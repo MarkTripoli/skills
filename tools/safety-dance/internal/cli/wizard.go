@@ -64,6 +64,7 @@ func runWizard(cmd *cobra.Command, args []string) error {
 		return originErr
 	}
 	var gateRollback gate.Rollback
+	gateAttempted := false
 	configPath := filepath.Join(root, ".safety-dance.yaml")
 	configExisted := false
 	var originalConfig []byte
@@ -108,6 +109,7 @@ func runWizard(cmd *cobra.Command, args []string) error {
 			if configExisted {
 				_ = os.Chmod(configPath, originalConfigMode)
 			}
+			gateAttempted = true
 			_, _, rollback, err := gate.InitWithRollback(context.Background(), database, p, root)
 			gateRollback = rollback
 			return err
@@ -118,7 +120,7 @@ func runWizard(cmd *cobra.Command, args []string) error {
 				if err := gateRollback(); err != nil {
 					first = err
 				}
-			} else {
+			} else if gateAttempted {
 				if _, err := gate.Eject(context.Background(), database, p, root); err != nil {
 					first = err
 				}

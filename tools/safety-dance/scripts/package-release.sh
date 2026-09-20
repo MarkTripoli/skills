@@ -17,6 +17,9 @@ case "$version" in *[!0-9.]*) echo "invalid semantic version: $version" >&2; exi
 oldIFS=$IFS; IFS=.; set -- $version; IFS=$oldIFS
 [ "$#" -eq 3 ] && [ -n "$1" ] && [ -n "$2" ] && [ -n "$3" ] || { echo "invalid semantic version: $version" >&2; exit 1; }
 mkdir -p "$out"
+out=$(CDPATH= cd -- "$out" && pwd)
+binary_dir=$(CDPATH= cd -- "$(dirname "$binary")" && pwd)
+binary="$binary_dir/$(basename "$binary")"
 name="safety-dance_${version}_${os}_${arch}"
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT

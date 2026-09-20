@@ -52,4 +52,4 @@ jobs:
         run: |
           find dist -type f -not -name checksums.txt -exec cp {} . \;
           sha256sum safety-dance_* > checksums.txt
-          gh release create "$GITHUB_REF_NAME" safety-dance_* checksums.txt --title "$GITHUB_REF_NAME" --verify-tag
+          gh release create "$GITHUB_REF_NAME" safety-dance_* checksums.txt --title "$GITHUB_REF_NAME" --verify-tag --repo "$GITHUB_REPOSITORY"

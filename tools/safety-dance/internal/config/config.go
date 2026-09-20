@@ -532,6 +532,9 @@ func (c *RepoConfig) UnmarshalYAML(value *yaml.Node) error {
 	c.DisableProjectSettings = raw.DisableProjectSettings
 	c.NoCI = raw.NoCI
 	c.Providers = raw.Providers
+	if raw.Providers.GitLab.DraftPullRequests != nil || raw.Providers.Bitbucket.DraftPullRequests != nil || raw.Providers.AzureDevOps.DraftPullRequests != nil {
+		return fmt.Errorf("providers.gitlab, providers.bitbucket, and providers.azuredevops are not supported by this build; use GitHub")
+	}
 	return nil
 }
 
@@ -1268,12 +1271,6 @@ eval:
 # Provider-specific settings. Opt in to opening created PRs/MRs as drafts.
 # providers:
 #   github:
-#     draft_pull_requests: true
-#   gitlab:
-#     draft_pull_requests: true
-#   bitbucket:
-#     draft_pull_requests: true
-#   azuredevops:
 #     draft_pull_requests: true
 `
 

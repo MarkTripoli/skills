@@ -187,7 +187,7 @@ func (m *Manager) Recover(ctx context.Context) error {
 		return err
 	}
 	for _, r := range runs {
-		if r.Status != types.RunPending && r.Status != types.RunRunning {
+		if r.Status != types.RunPending && r.Status != types.RunRunning && !(r.Status == types.RunCancelled && r.PushActive) {
 			continue
 		}
 		if r.Status == types.RunPending {

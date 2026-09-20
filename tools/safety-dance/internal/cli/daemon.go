@@ -60,7 +60,7 @@ func newDaemon() *cobra.Command {
 		return nil
 	}})
 	d.AddCommand(&cobra.Command{Use: "serve", Hidden: true, RunE: serveDaemon})
-	d.AddCommand(newAdmitPush(), newNotifyPush(), newIssuePushToken())
+	d.AddCommand(newAdmitPush(), newNotifyPush(), newIssuePushToken(), newRevokePushReceipt())
 	return d
 }
 
@@ -218,7 +218,11 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 			if repo == nil {
 				return fmt.Errorf("repository %s not found", r.RepoID)
 			}
-			return worktrees.JournalRemoval(p.RepoDir(repo.ID), *r.WorktreeDir)
+			source, sourceErr := worktrees.SourceFor(context.Background(), []string{p.RepoDir(repo.ID), repo.WorkingPath}, *r.WorktreeDir)
+			if sourceErr != nil {
+				return sourceErr
+			}
+			return worktrees.JournalRemoval(source, *r.WorktreeDir)
 		}
 		if err != nil {
 			status := types.RunFailed
@@ -249,7 +253,12 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 			return
 		}
 		if repo, e := d.GetRepo(r.RepoID); e == nil && repo != nil {
-			if removeErr := worktrees.RemoveDetached(context.Background(), p.RepoDir(repo.ID), *current.WorktreeDir); removeErr != nil {
+			source, sourceErr := worktrees.SourceFor(context.Background(), []string{p.RepoDir(repo.ID), repo.WorkingPath}, *current.WorktreeDir)
+			if sourceErr != nil {
+				fmt.Fprintf(os.Stderr, "safety-dance: worktree source lookup for %s: %v\n", r.ID, sourceErr)
+				return
+			}
+			if removeErr := worktrees.RemoveDetached(context.Background(), source, *current.WorktreeDir); removeErr != nil {
 				fmt.Fprintf(os.Stderr, "safety-dance: worktree cleanup pending for %s: %v\n", r.ID, removeErr)
 			}
 		}
@@ -570,7 +579,11 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	defer logFile.Close()
 	_, _ = fmt.Fprintf(logFile, "run %s started for %s\n", run.ID, run.Branch)
 	defer func() { _, _ = fmt.Fprintf(logFile, "run %s finished\n", run.ID) }()
-	if err := worktrees.RecoverDetached(ctx, p.RepoDir(run.RepoID), worktree, run.HeadSHA); err != nil {
+	source, sourceErr := worktrees.SourceFor(ctx, []string{p.RepoDir(repo.ID), repo.WorkingPath}, worktree)
+	if sourceErr != nil {
+		return sourceErr
+	}
+	if err := worktrees.RecoverDetached(ctx, source, worktree, run.HeadSHA); err != nil {
 		return err
 	}
 	if _, err := os.Stat(worktree); err != nil {
@@ -609,6 +622,37 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	if err := mergedConfig.ResolveAgent(ctx, exec.LookPath); err != nil {
 		return fmt.Errorf("resolve validation agent: %w", err)
 	}
+	gatePayload, gateErr := database.GetRunGates(run.ID)
+	if gateErr != nil {
+		return gateErr
+	}
+	if strings.TrimSpace(gatePayload) == "" {
+		gatePayload, gateErr = config.MarshalGates(mergedConfig.Gates)
+		if gateErr != nil {
+			return gateErr
+		}
+		if gatePayload != "" {
+			if gateErr = database.SetRunGates(run.ID, gatePayload); gateErr != nil {
+				return gateErr
+			}
+		}
+	}
+	gates, gateErr := config.ParseGates(gatePayload)
+	if gateErr != nil {
+		return fmt.Errorf("load pinned gates: %w", gateErr)
+	}
+	gateByStep := make(map[pipeline.StepName]config.Gate, len(gates))
+	order := make([]pipeline.StepName, 0, len(pipeline.CoreSteps)+len(gates))
+	for _, core := range pipeline.CoreSteps {
+		order = append(order, core)
+		for _, gate := range gates {
+			if pipeline.StepName(gate.After) == core {
+				step := pipeline.StepName(gate.StepName())
+				order = append(order, step)
+				gateByStep[step] = gate
+			}
+		}
+	}
 	ref := run.Branch
 	if !strings.HasPrefix(ref, "refs/") {
 		ref = "refs/heads/" + ref
@@ -626,12 +670,24 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 		if checkErr != nil {
 			return checkErr
 		}
-		if current == nil || current.Status == types.RunCancelled || current.Status == types.RunFailed {
+		if current == nil || current.Status == types.RunFailed || (current.Status == types.RunCancelled && !current.PushActive) {
 			return fmt.Errorf("run %s was superseded before publication", run.ID)
 		}
 		return nil
 	}}
 	runner := pipeline.NewDurable(database, run.ID)
+	runner.SetOrder(order)
+	for gateStep, gate := range gateByStep {
+		gateStep, gate := gateStep, gate
+		runner.RegisterWithInputs(gateStep, pipeline.StepInputs{Command: gate.Command, Owner: "gate." + string(gateStep)}, func(stepCtx context.Context) error {
+			command := exec.CommandContext(stepCtx, "sh", "-c", gate.Command)
+			command.Dir = worktree
+			if output, commandErr := command.CombinedOutput(); commandErr != nil {
+				return fmt.Errorf("custom gate %s: %s: %w", gate.Name, strings.TrimSpace(string(output)), commandErr)
+			}
+			return nil
+		})
+	}
 	for _, name := range pipeline.CoreSteps {
 		name := name
 		runner.RegisterWithInputs(name, pipeline.StepInputs{CandidateHead: run.HeadSHA, Policy: mergedConfig.TrustedConfigSHA + "\x00" + string(mergedConfig.ReplayGlobalYAML) + "\x00" + string(mergedConfig.ReplayRepoYAML), Command: fmt.Sprintf("%#v", mergedConfig.Commands), Owner: "pipeline." + string(name), ValidationGeneration: valueOrEmpty(run.LaunchValidationGeneration)}, func(stepCtx context.Context) error {
