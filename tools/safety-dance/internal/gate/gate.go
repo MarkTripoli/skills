@@ -243,6 +243,7 @@ func InitWithFork(ctx context.Context, d *db.DB, p *paths.Paths, workDir, forkUR
 	// Insert repo record with deterministic ID.
 	repo, err := d.InsertRepoWithIDAndFork(id, absRoot, redactedUpstreamURL, forkURL, branch)
 	if err != nil {
+		gateBefore.restore()
 		restoreRemote()
 		if !bareExisted {
 			_ = os.RemoveAll(bareDir)
