@@ -438,11 +438,12 @@ function activeReservation(text, round, limit, findingId, pendingRepair = false)
   // "reserved repair" and "pending repair" both indicate repair is scheduled; strip either prefix.
   const pending = (value) => steps(value).every((step) =>
     ["diagnose", "diagnosis", "repair"].includes(step.replace(/^(?:pending|reserved)\s+|\s+(?:pending|not started)$/g, "")));
-  // The last-completed step may be named "baseline inspection" rather than "reservation";
-  // persistence is proven structurally by the round heading and body content.
+  // The last-completed step may be named "baseline inspection", "baseline inspection complete",
+  // "baseline pixel inspection", or "reservation"; prefix matching avoids requiring one exact phrase.
   const reserved = (value) => {
     const completed = steps(value);
-    return completed.length > 0 && completed.every((step) => ["baseline inspection", "baseline pixel inspection", "reservation"].includes(step));
+    return completed.length > 0 && completed.every((step) =>
+      step === "reservation" || step.startsWith("baseline inspection") || step.startsWith("baseline pixel inspection"));
   };
   const readFields = (content) => {
     for (const line of content.split(/\n|[.;]\s+(?=(?:current step|last completed(?: step)?|next incomplete(?: step)?):)/i)) {
