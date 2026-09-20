@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/conventional"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/scm"
 )
 
@@ -46,7 +47,18 @@ func PR(ctx context.Context) error {
 		return err
 	}
 	if pr == nil {
-		pr, err = host.CreatePR(ctx, run.Branch, baseBranch, scm.PRContent{Title: "Safety Dance validation", Body: "Created by Safety Dance."})
+		title := "chore: validate changes"
+		if run.Intent != nil && strings.TrimSpace(*run.Intent) != "" {
+			title = conventional.TightenTitle(*run.Intent)
+		}
+		if cfg := mergedConfig(ctx); cfg != nil {
+			var titleErr error
+			title, titleErr = cfg.PR.RenderTitle(run.Branch, title)
+			if titleErr != nil {
+				return fmt.Errorf("render pull-request title: %w", titleErr)
+			}
+		}
+		pr, err = host.CreatePR(ctx, run.Branch, baseBranch, scm.PRContent{Title: title, Body: "Created by Safety Dance."})
 		if err != nil {
 			return err
 		}

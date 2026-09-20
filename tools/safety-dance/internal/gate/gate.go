@@ -25,6 +25,10 @@ var ensureGateHooksPathIsolation = git.EnsureHooksPathIsolation
 
 var sweepRunWorktrees = procreap.SweepRunWorktrees
 
+// Rollback restores an existing gate's files and managed remote after a later
+// setup action fails. It is intentionally one-shot and scoped to initialization.
+type Rollback func() error
+
 type gateSnapshot struct {
 	files    map[string][]byte
 	modes    map[string]os.FileMode
@@ -113,17 +117,28 @@ func repoID(absPath string) string {
 // new path, preserving its run history. The returned bool reports whether a
 // new gate was created (true) or an existing one was refreshed (false).
 func Init(ctx context.Context, d *db.DB, p *paths.Paths, workDir string) (*db.Repo, bool, error) {
-	return InitWithFork(ctx, d, p, workDir, "")
+	repo, created, _, err := InitWithRollback(ctx, d, p, workDir)
+	return repo, created, err
+}
+
+// InitWithRollback returns a bounded rollback handle for an existing gate repair.
+func InitWithRollback(ctx context.Context, d *db.DB, p *paths.Paths, workDir string) (*db.Repo, bool, Rollback, error) {
+	return InitWithForkRollback(ctx, d, p, workDir, "")
 }
 
 // InitWithFork is Init plus an optional GitHub fork push URL. The origin remote
 // remains the parent repository used for PRs. When forkURL is empty, an
 // existing fork setting is preserved across idempotent refreshes.
 func InitWithFork(ctx context.Context, d *db.DB, p *paths.Paths, workDir, forkURL string) (*db.Repo, bool, error) {
+	repo, created, _, err := InitWithForkRollback(ctx, d, p, workDir, forkURL)
+	return repo, created, err
+}
+
+func InitWithForkRollback(ctx context.Context, d *db.DB, p *paths.Paths, workDir, forkURL string) (*db.Repo, bool, Rollback, error) {
 	if classified, err := (gatecontext.Inspector{DB: d, Paths: p}).Inspect(ctx, gatecontext.Request{CWD: workDir, MarkerPresent: gatecontext.MarkerPresent()}); err != nil {
-		return nil, false, err
+		return nil, false, nil, err
 	} else if classified.Nested {
-		return nil, false, fmt.Errorf("%s", gatecontext.RefusalMessage(classified))
+		return nil, false, nil, fmt.Errorf("%s", gatecontext.RefusalMessage(classified))
 	}
 	forkURL = strings.TrimSpace(forkURL)
 
@@ -131,7 +146,7 @@ func InitWithFork(ctx context.Context, d *db.DB, p *paths.Paths, workDir, forkUR
 	// from either the main checkout or any attached worktree.
 	gitRoot, err := git.FindMainRepoRoot(workDir)
 	if err != nil {
-		return nil, false, fmt.Errorf("find git root: %w", err)
+		return nil, false, nil, fmt.Errorf("find git root: %w", err)
 	}
 	absRoot := gitRoot
 
@@ -139,7 +154,7 @@ func InitWithFork(ctx context.Context, d *db.DB, p *paths.Paths, workDir, forkUR
 	// refresh, and so we never tear down a working gate on a repair failure.
 	existing, err := d.GetRepoByPath(absRoot)
 	if err != nil {
-		return nil, false, fmt.Errorf("check existing: %w", err)
+		return nil, false, nil, fmt.Errorf("check existing: %w", err)
 	}
 	if existing == nil {
 		// No record at this path, but the repo may have been moved or renamed
@@ -147,7 +162,7 @@ func InitWithFork(ctx context.Context, d *db.DB, p *paths.Paths, workDir, forkUR
 		// the leftover remote.
 		existing, err = reattachRelocatedRepo(ctx, d, p, absRoot)
 		if err != nil {
-			return nil, false, err
+			return nil, false, nil, err
 		}
 	}
 
@@ -165,18 +180,18 @@ func InitWithFork(ctx context.Context, d *db.DB, p *paths.Paths, workDir, forkUR
 		// keeps its original error.
 		hasOrigin, listErr := git.HasRemote(ctx, absRoot, "origin")
 		if listErr == nil && !hasOrigin {
-			return nil, false, fmt.Errorf(
+			return nil, false, nil, fmt.Errorf(
 				"no 'origin' remote in %s\n\n"+
 					"safety-dance pushes your branch and opens a pull request, so it needs a remote to push to.\n"+
 					"Add one, then re-run:\n\n"+
 					"  git remote add origin <url>",
 				absRoot)
 		}
-		return nil, false, fmt.Errorf("get origin url: %w", err)
+		return nil, false, nil, fmt.Errorf("get origin url: %w", err)
 	}
 	if forkURL != "" {
 		if err := validateForkRouting(ctx, upstreamURL, forkURL); err != nil {
-			return nil, false, err
+			return nil, false, nil, err
 		}
 	}
 
@@ -219,7 +234,7 @@ func InitWithFork(ctx context.Context, d *db.DB, p *paths.Paths, workDir, forkUR
 		} else {
 			restoreRemote()
 		}
-		return nil, false, err
+		return nil, false, nil, err
 	}
 	// Detect default branch from upstream remote.
 	branch := git.DefaultBranch(ctx, absRoot, "origin")
@@ -234,10 +249,19 @@ func InitWithFork(ctx context.Context, d *db.DB, p *paths.Paths, workDir, forkUR
 		if err != nil {
 			gateBefore.restore()
 			restoreRemote()
-			return nil, false, fmt.Errorf("update repo metadata: %w", err)
+			return nil, false, nil, fmt.Errorf("update repo metadata: %w", err)
 		}
 		slog.Info("gate refreshed", "repo_id", repo.ID, "path", absRoot)
-		return repo, false, nil
+		return repo, false, func() error {
+			gateBefore.restore()
+			restoreRemote()
+			if existing.ForkURL != "" {
+				_, restoreErr := d.UpdateRepoMetadataWithFork(existing.ID, existing.UpstreamURL, existing.ForkURL, existing.DefaultBranch)
+				return restoreErr
+			}
+			_, restoreErr := d.UpdateRepoMetadata(existing.ID, existing.UpstreamURL, existing.DefaultBranch)
+			return restoreErr
+		}, nil
 	}
 
 	// Insert repo record with deterministic ID.
@@ -248,10 +272,10 @@ func InitWithFork(ctx context.Context, d *db.DB, p *paths.Paths, workDir, forkUR
 		if !bareExisted {
 			_ = os.RemoveAll(bareDir)
 		}
-		return nil, false, fmt.Errorf("insert repo: %w", err)
+		return nil, false, nil, fmt.Errorf("insert repo: %w", err)
 	}
 	slog.Info("gate initialized", "repo_id", id, "path", absRoot, "upstream", redactedUpstreamURL)
-	return repo, true, nil
+	return repo, true, nil, nil
 }
 
 func validateForkRouting(ctx context.Context, upstreamURL, forkURL string) error {

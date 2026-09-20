@@ -2,11 +2,13 @@ package steps
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"testing"
 
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/config"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/types"
 )
 
 func TestValidateRunsConfiguredStageCommand(t *testing.T) {
@@ -53,5 +55,19 @@ func TestParseTypedVerdictRejectsFailureAsApproval(t *testing.T) {
 func TestParseTypedVerdictRejectsUnknownValue(t *testing.T) {
 	if _, err := parseTypedVerdict([]byte(`{"verdict":"maybe"}`)); err == nil {
 		t.Fatal("unknown typed verdict was accepted")
+	}
+}
+
+func TestTypedEvidenceUsesCanonicalFindingsEnvelope(t *testing.T) {
+	evidence, err := typedEvidence(typedResult{Verdict: "fail", Findings: []json.RawMessage{json.RawMessage(`{"severity":"error","description":"bad","action":"no-op"}`)}, Evidence: []string{"agent output"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := types.ParseFindingsJSON(evidence.FindingsJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Verdict != "fail" || len(parsed.Items) != 1 || len(evidence.Evidence) != 1 {
+		t.Fatalf("unexpected evidence: %#v", evidence)
 	}
 }

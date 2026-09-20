@@ -65,9 +65,9 @@ func (s Service) Definition() (string, error) {
 		root := html.EscapeString(s.Home.Root())
 		binary := html.EscapeString(s.Binary)
 		label := html.EscapeString(s.Label())
-		return fmt.Sprintf("<!-- %s home=%s --><plist><dict><key>Label</key><string>%s</string><key>ProgramArguments</key><array><string>%s</string><string>daemon</string><string>serve</string></array><key>EnvironmentVariables</key><dict><key>SD_HOME</key><string>%s</string></dict><key>KeepAlive</key><true/></dict></plist>", serviceMarker, root, label, binary, root), nil
+		return fmt.Sprintf("<!-- %s home=%s --><plist><dict><key>Label</key><string>%s</string><key>ProgramArguments</key><array><string>%s</string><string>daemon</string><string>serve</string></array><key>EnvironmentVariables</key><dict><key>SD_HOME</key><string>%s</string></dict><key>StandardOutPath</key><string>%s</string><key>StandardErrorPath</key><string>%s</string><key>KeepAlive</key><true/></dict></plist>", serviceMarker, root, label, binary, root, html.EscapeString(s.Home.DaemonLog()), html.EscapeString(s.Home.DaemonBootstrapLog())), nil
 	case "linux":
-		return fmt.Sprintf("# %s home=%s\n[Unit]\nDescription=Safety Dance daemon\n[Service]\nExecStart=%s daemon serve\nEnvironment=SD_HOME=%s\nRestart=on-failure\n", serviceMarker, systemdQuote(s.Home.Root()), systemdQuote(s.Binary), systemdQuote(s.Home.Root())), nil
+		return fmt.Sprintf("# %s home=%s\n[Unit]\nDescription=Safety Dance daemon\n[Service]\nExecStart=%s daemon serve\nEnvironment=SD_HOME=%s\nStandardOutput=append:%s\nStandardError=append:%s\nRestart=on-failure\n[Install]\nWantedBy=default.target\n", serviceMarker, systemdQuote(s.Home.Root()), systemdQuote(s.Binary), systemdQuote(s.Home.Root()), systemdQuote(s.Home.DaemonLog()), systemdQuote(s.Home.DaemonBootstrapLog())), nil
 	default:
 		return fmt.Sprintf("%s home=%s\nSafety Dance Task\nName=%s\nBinary=%s daemon serve\nSD_HOME=%s\n", serviceMarker, s.Home.Root(), s.Label(), filepath.Clean(s.Binary), s.Home.Root()), nil
 	}
@@ -158,12 +158,12 @@ func (s Service) taskOwned() (bool, error) {
 	if !ok {
 		return false, nil
 	}
-	out, err := executor.Output("schtasks", "/Query", "/TN", s.Label(), "/FO", "LIST")
+	out, err := executor.Output("schtasks", "/Query", "/TN", s.Label(), "/FO", "XML")
 	if err != nil {
 		return false, nil
 	}
 	raw := string(out)
-	return strings.Contains(raw, serviceMarker) && strings.Contains(raw, s.Home.Root()), nil
+	return strings.Contains(raw, serviceMarker) && strings.Contains(raw, s.Home.Root()) && strings.Contains(raw, s.Binary), nil
 }
 
 func (s Service) Install() error {
@@ -201,19 +201,17 @@ func (s Service) Install() error {
 		return fmt.Errorf("write service definition: %w", err)
 	}
 	var activationErr error
-	if runtime.GOOS == "windows" {
-		if executor, ok := s.Executor.(serviceOutputExecutor); ok {
-			if out, queryErr := executor.Output("schtasks", "/Query", "/TN", s.Label(), "/FO", "LIST"); queryErr == nil && (!strings.Contains(string(out), serviceMarker) || !strings.Contains(string(out), s.Home.Root())) {
-				return fmt.Errorf("foreign scheduled task collision: %s", s.Label())
-			}
-		}
-	}
 	switch runtime.GOOS {
 	case "darwin":
 		activationErr = s.Executor.Run("launchctl", "load", "-w", path)
 	case "linux":
 		activationErr = s.Executor.Run("systemctl", "--user", "enable", "--now", filepath.Base(path))
 	default:
+		if executor, ok := s.Executor.(serviceOutputExecutor); ok {
+			if out, queryErr := executor.Output("schtasks", "/Query", "/TN", s.Label(), "/FO", "XML"); queryErr == nil && (!strings.Contains(string(out), serviceMarker) || !strings.Contains(string(out), s.Home.Root()) || !strings.Contains(string(out), s.Binary)) {
+				return fmt.Errorf("foreign scheduled task collision: %s", s.Label())
+			}
+		}
 		action := fmt.Sprintf(`cmd /D /S /C "set "SD_HOME=%s"&&set %s=1&&"%s" daemon serve"`, windowsCmdValue(s.Home.Root()), serviceMarker, s.Binary)
 		activationErr = s.Executor.Run("schtasks", "/Create", "/TN", s.Label(), "/TR", action, "/SC", "ONLOGON", "/RL", "LIMITED", "/F")
 	}

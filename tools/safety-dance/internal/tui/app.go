@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -67,7 +68,10 @@ func (a *App) Run(ctx context.Context) error {
 	}()
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
-	render := func() error {
+	lastModel := Model{}
+	lastWidth := -1
+	haveRendered := false
+	render := func(force bool) error {
 		if a.Refresh != nil {
 			m, err := a.Refresh()
 			if err != nil {
@@ -81,10 +85,14 @@ func (a *App) Run(ctx context.Context) error {
 		} else {
 			width = terminalWidth(a.Out)
 		}
+		if !force && haveRendered && reflect.DeepEqual(lastModel, a.Model) && lastWidth == width {
+			return nil
+		}
+		lastModel, lastWidth, haveRendered = a.Model, width, true
 		_, err := fmt.Fprintln(a.Out, Render(a.Model, width))
 		return err
 	}
-	if err := render(); err != nil {
+	if err := render(true); err != nil {
 		return err
 	}
 	for {
@@ -113,11 +121,11 @@ func (a *App) Run(ctx context.Context) error {
 					}
 				}
 			}
-			if err := render(); err != nil {
+			if err := render(true); err != nil {
 				return err
 			}
 		case <-ticker.C:
-			if err := render(); err != nil {
+			if err := render(false); err != nil {
 				return err
 			}
 		}

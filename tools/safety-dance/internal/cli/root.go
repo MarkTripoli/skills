@@ -6,6 +6,7 @@ import (
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/buildinfo"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/paths"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"io"
 	"os"
 	"strings"
@@ -33,6 +34,14 @@ func Execute() int {
 		var coded *ExitCodeError
 		if errors.As(err, &coded) && coded.Code > 0 {
 			return coded.Code
+		}
+		var parseErr *pflag.NotExistError
+		var valueErr *pflag.ValueRequiredError
+		var invalidErr *pflag.InvalidValueError
+		var syntaxErr *pflag.InvalidSyntaxError
+		switch {
+		case errors.As(err, &parseErr), errors.As(err, &valueErr), errors.As(err, &invalidErr), errors.As(err, &syntaxErr):
+			return 2
 		}
 		message := strings.ToLower(err.Error())
 		switch {

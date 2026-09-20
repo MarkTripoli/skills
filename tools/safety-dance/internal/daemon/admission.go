@@ -76,6 +76,7 @@ func newAdmission(server *ipc.Server, notify func(context.Context, PushNotificat
 	}
 	server.Handle(ipc.MethodAdmitPush, a.admit)
 	server.Handle(ipc.MethodNotifyPush, a.notifyPush)
+	server.Handle(ipc.MethodRevokePushReceipt, a.revoke)
 	server.Handle(ipc.MethodIssuePushToken, a.issue)
 	return a
 }
@@ -299,6 +300,31 @@ func (a *Admission) admit(ctx context.Context, raw json.RawMessage) (interface{}
 		return nil, fmt.Errorf("persist admission receipt: %w", saveErr)
 	}
 	return ipc.AdmitPushResult{}, nil
+}
+
+func (a *Admission) revoke(ctx context.Context, raw json.RawMessage) (interface{}, error) {
+	if ipc.PeerPID(ctx) <= 0 {
+		return nil, errors.New("unauthenticated IPC peer")
+	}
+	var p ipc.RevokePushReceiptParams
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, fmt.Errorf("decode receipt revocation: %w", err)
+	}
+	if p.Gate == "" || p.Ref == "" || p.Token == "" {
+		return nil, errors.New("gate, ref, and token are required")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	receipt, ok := a.receipts[p.Token]
+	if !ok || receipt.Gate != p.Gate || receipt.Ref != p.Ref || receipt.Old != p.Old || receipt.New != p.New {
+		return nil, errors.New("receipt does not match admitted update")
+	}
+	delete(a.receipts, p.Token)
+	delete(a.claimed, p.Token)
+	if err := a.saveReceipts(); err != nil {
+		return nil, fmt.Errorf("persist receipt revocation: %w", err)
+	}
+	return map[string]bool{"ok": true}, nil
 }
 
 func (a *Admission) notifyPush(ctx context.Context, raw json.RawMessage) (interface{}, error) {

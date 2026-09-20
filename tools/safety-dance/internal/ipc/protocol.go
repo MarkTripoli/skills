@@ -26,6 +26,7 @@ const (
 	MethodGateContext        = "gate_context"
 	MethodAdmitPush          = "admit_push"
 	MethodNotifyPush         = "notify_push"
+	MethodRevokePushReceipt  = "revoke_push_receipt"
 	MethodIssuePushToken     = "issue_push_token"
 	MethodHealth             = "health"
 	MethodShutdown           = "shutdown"
@@ -234,6 +235,11 @@ type IssuePushTokenParams struct {
 }
 type IssuePushTokenResult struct {
 	Token string `json:"token"`
+}
+
+// RevokePushReceipt invalidates an admitted update rejected by a preserved hook.
+type RevokePushReceiptParams struct {
+	Gate, Ref, Old, New, Token string
 }
 
 // NotifyPushParams describes an update after Git accepted the ref.

@@ -51,6 +51,20 @@ func TestAdmissionAuthenticatedReplayAndMismatch(t *testing.T) {
 	if err := client.CallWithTimeout(ipc.MethodNotifyPush, ipc.NotifyPushParams{Gate: "/tmp/gate.git", Ref: "refs/heads/main", Old: "0", New: "1", PushOptions: []string{"safety-dance-token=" + token}}, &result, time.Second); err != nil {
 		t.Fatalf("notification: %v", err)
 	}
+	second, err := a.Issue("/tmp/gate.git", "refs/heads/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondParams := ipc.AdmitPushParams{Gate: "/tmp/gate.git", Ref: "refs/heads/main", Old: "1", New: "2", Token: second}
+	if err := client.CallWithTimeout(ipc.MethodAdmitPush, secondParams, &accepted, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.CallWithTimeout(ipc.MethodRevokePushReceipt, ipc.RevokePushReceiptParams{Gate: secondParams.Gate, Ref: secondParams.Ref, Old: secondParams.Old, New: secondParams.New, Token: second}, &result, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.CallWithTimeout(ipc.MethodNotifyPush, ipc.NotifyPushParams{Gate: secondParams.Gate, Ref: secondParams.Ref, Old: secondParams.Old, New: secondParams.New, PushOptions: []string{"safety-dance-token=" + second}}, &result, time.Second); err == nil {
+		t.Fatal("revoked receipt was replayable")
+	}
 	if got.New != "1" || len(got.Options) != 1 {
 		t.Fatalf("unexpected notification: %#v", got)
 	}

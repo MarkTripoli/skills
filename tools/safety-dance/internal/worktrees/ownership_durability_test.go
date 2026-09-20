@@ -59,3 +59,18 @@ func TestRemoveDetachedLeavesRetryJournalOnFailure(t *testing.T) {
 		t.Fatalf("retry journal missing: %v", statErr)
 	}
 }
+
+func TestJournalRemovalRecordsIntentBeforeRemoval(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "run")
+	source := filepath.Join(t.TempDir(), "gate.git")
+	if err := JournalRemoval(source, dir); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(removingJournalPath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), source) || !strings.Contains(string(raw), dir) {
+		t.Fatalf("journal does not identify cleanup ownership: %s", raw)
+	}
+}

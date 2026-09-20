@@ -33,3 +33,31 @@ func TestAcceptedRefAndGuardedTransition(t *testing.T) {
 		t.Fatalf("status=%s", got.Status)
 	}
 }
+
+func TestPublicationBindingSurvivesCancellationAfterRemoteWrite(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if _, err = d.InsertRepoWithID("repo", "/checkout", "upstream", "main"); err != nil {
+		t.Fatal(err)
+	}
+	r, err := d.CreateRunFromAccepted(RunInput{Accepted: AcceptedRef{RepoID: "repo", Branch: "refs/heads/main", GateHead: "candidate", LaunchNonce: "n2"}, WorktreeDir: "/tmp/run2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = d.TransitionRunStatus(r.ID, types.RunPending, types.RunRunning); err != nil {
+		t.Fatal(err)
+	}
+	if err = d.AcquireRunPushActive(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = d.CancelRun(r.ID, "cancelled"); err != nil {
+		t.Fatal(err)
+	}
+	binding := PushBinding{HeadSHA: "candidate", TargetKind: "remote", TargetFingerprint: "fingerprint", Ref: "refs/heads/main"}
+	if err = d.RecordPublicationAndBinding(Publication{RunID: r.ID, RepoID: "repo", Ref: binding.Ref, Candidate: "candidate", VerifiedUpstream: "candidate", GateMirror: "candidate"}, binding); err != nil {
+		t.Fatal(err)
+	}
+}

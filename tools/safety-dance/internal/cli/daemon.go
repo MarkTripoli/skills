@@ -96,8 +96,13 @@ func startDaemon(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	child := exec.Command(exe, "daemon", "serve")
-	child.Stdout = os.Stdout
-	child.Stderr = os.Stderr
+	bootstrap, openErr := os.OpenFile(p.DaemonBootstrapLog(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if openErr != nil {
+		return openErr
+	}
+	defer bootstrap.Close()
+	child.Stdout = bootstrap
+	child.Stderr = bootstrap
 	child.Env = os.Environ()
 	if err := child.Start(); err != nil {
 		return err
@@ -181,6 +186,16 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer d.Close()
+	if err := p.EnsureDirs(); err != nil {
+		return err
+	}
+	logFile, logErr := os.OpenFile(p.DaemonLog(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if logErr != nil {
+		return logErr
+	}
+	defer logFile.Close()
+	_, _ = fmt.Fprintf(logFile, "daemon starting pid=%d\n", os.Getpid())
+	defer func() { _, _ = fmt.Fprintf(logFile, "daemon stopping pid=%d\n", os.Getpid()) }()
 	own, err := daemon.AcquireOwnership(p)
 	if err != nil {
 		return err
@@ -192,16 +207,39 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 	manager := daemon.NewManager(d, func(ctx context.Context, r *db.Run) {
 		err := executeRun(ctx, d, p, r)
 		cleanup := false
+		journalCleanup := func() error {
+			if r.WorktreeDir == nil {
+				return nil
+			}
+			repo, repoErr := d.GetRepo(r.RepoID)
+			if repoErr != nil {
+				return repoErr
+			}
+			if repo == nil {
+				return fmt.Errorf("repository %s not found", r.RepoID)
+			}
+			return worktrees.JournalRemoval(p.RepoDir(repo.ID), *r.WorktreeDir)
+		}
 		if err != nil {
 			status := types.RunFailed
 			if ctx.Err() != nil {
 				status = types.RunCancelled
 			}
+			if journalErr := journalCleanup(); journalErr != nil {
+				fmt.Fprintf(os.Stderr, "safety-dance: journal worktree cleanup for %s: %v\n", r.ID, journalErr)
+				return
+			}
 			if statusErr := d.UpdateRunErrorStatus(r.ID, err.Error(), status); statusErr == nil {
 				cleanup = true
 			}
-		} else if statusErr := d.TransitionRunStatus(r.ID, types.RunRunning, types.RunCompleted); statusErr == nil {
-			cleanup = true
+		} else {
+			if journalErr := journalCleanup(); journalErr != nil {
+				fmt.Fprintf(os.Stderr, "safety-dance: journal worktree cleanup for %s: %v\n", r.ID, journalErr)
+				return
+			}
+			if statusErr := d.TransitionRunStatus(r.ID, types.RunRunning, types.RunCompleted); statusErr == nil {
+				cleanup = true
+			}
 		}
 		if !cleanup {
 			return
@@ -211,7 +249,7 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 			return
 		}
 		if repo, e := d.GetRepo(r.RepoID); e == nil && repo != nil {
-			if removeErr := worktrees.RemoveDetached(context.Background(), repo.WorkingPath, *current.WorktreeDir); removeErr != nil {
+			if removeErr := worktrees.RemoveDetached(context.Background(), p.RepoDir(repo.ID), *current.WorktreeDir); removeErr != nil {
 				fmt.Fprintf(os.Stderr, "safety-dance: worktree cleanup pending for %s: %v\n", r.ID, removeErr)
 			}
 		}
@@ -680,6 +718,14 @@ func newAdmitPush() *cobra.Command {
 	a := &pushArgs{}
 	c := &cobra.Command{Use: "admit-push", Hidden: true, RunE: func(cmd *cobra.Command, args []string) error {
 		return callDaemon(ipc.MethodAdmitPush, ipc.AdmitPushParams{Gate: a.gate, Ref: a.ref, Old: a.old, New: a.new, Token: a.token}, &ipc.AdmitPushResult{})
+	}}
+	flags(c, a)
+	return c
+}
+func newRevokePushReceipt() *cobra.Command {
+	a := &pushArgs{}
+	c := &cobra.Command{Use: "revoke-push-receipt", Hidden: true, RunE: func(cmd *cobra.Command, args []string) error {
+		return callDaemon(ipc.MethodRevokePushReceipt, ipc.RevokePushReceiptParams{Gate: a.gate, Ref: a.ref, Old: a.old, New: a.new, Token: a.token}, &map[string]bool{})
 	}}
 	flags(c, a)
 	return c

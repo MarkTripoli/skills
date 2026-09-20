@@ -63,7 +63,7 @@ func runWizard(cmd *cobra.Command, args []string) error {
 	if originErr != nil && !strings.Contains(originErr.Error(), "No such remote") {
 		return originErr
 	}
-	createdGate := false
+	var gateRollback gate.Rollback
 	configPath := filepath.Join(root, ".safety-dance.yaml")
 	configExisted := false
 	var originalConfig []byte
@@ -108,13 +108,17 @@ func runWizard(cmd *cobra.Command, args []string) error {
 			if configExisted {
 				_ = os.Chmod(configPath, originalConfigMode)
 			}
-			_, created, err := gate.Init(context.Background(), database, p, root)
-			createdGate = created
+			_, _, rollback, err := gate.InitWithRollback(context.Background(), database, p, root)
+			gateRollback = rollback
 			return err
 		},
 		Compensate: func(model wizard.Model) error {
 			var first error
-			if createdGate {
+			if gateRollback != nil {
+				if err := gateRollback(); err != nil {
+					first = err
+				}
+			} else {
 				if _, err := gate.Eject(context.Background(), database, p, root); err != nil {
 					first = err
 				}

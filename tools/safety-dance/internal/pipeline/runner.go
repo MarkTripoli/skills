@@ -183,18 +183,18 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 		r.mu.Unlock()
 		if persisted != nil {
 			var persistErr error
-			if err != nil {
-				persistErr = r.Database.FailStep(persisted.ID, err.Error(), 0)
-			} else {
-				if sink.Value != nil && sink.Value.FindingsJSON != "" {
-					persistErr = r.Database.SetStepFindings(persisted.ID, sink.Value.FindingsJSON)
-					if persistErr == nil && len(sink.Value.Evidence) > 0 {
-						persistErr = r.Database.TouchStepActivity(persisted.ID, "evidence: "+strings.Join(sink.Value.Evidence, "; "))
-					}
-				}
-				if persistErr == nil {
+			if sink.Value != nil && sink.Value.FindingsJSON != "" {
+				persistErr = r.Database.SetStepFindings(persisted.ID, sink.Value.FindingsJSON)
+			}
+			if persistErr == nil {
+				if err != nil {
+					persistErr = r.Database.FailStep(persisted.ID, err.Error(), 0)
+				} else {
 					persistErr = r.Database.CompleteStep(persisted.ID, 0, 0, "")
 				}
+			}
+			if persistErr == nil && sink.Value != nil && len(sink.Value.Evidence) > 0 {
+				persistErr = r.Database.TouchStepActivity(persisted.ID, "evidence: "+strings.Join(sink.Value.Evidence, "; "))
 			}
 			if persistErr != nil {
 				return r.Results, fmt.Errorf("persist step %s: %w", n, persistErr)

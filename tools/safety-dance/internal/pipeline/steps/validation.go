@@ -112,6 +112,20 @@ func parseTypedResult(raw []byte) (typedResult, error) {
 	return result, nil
 }
 
+func typedEvidence(result typedResult) (*db.TypedEvidence, error) {
+	items := make([]types.Finding, len(result.Findings))
+	for i, raw := range result.Findings {
+		if err := json.Unmarshal(raw, &items[i]); err != nil {
+			return nil, fmt.Errorf("decode finding %d: %w", i, err)
+		}
+	}
+	findings, err := json.Marshal(types.Findings{Items: items, Summary: result.Verdict, Verdict: result.Verdict})
+	if err != nil {
+		return nil, fmt.Errorf("marshal typed findings: %w", err)
+	}
+	return &db.TypedEvidence{FindingsJSON: string(findings), Evidence: append([]string(nil), result.Evidence...)}, nil
+}
+
 // Typed delegates non-shell validation to the configured typed agent owner.
 func Typed(ctx context.Context, name string) error {
 	if err := ctx.Err(); err != nil {
@@ -161,15 +175,16 @@ func Typed(ctx context.Context, name string) error {
 			lastErr = parseErr
 			continue
 		}
+		if sink := db.TypedEvidenceSinkFrom(ctx); sink != nil {
+			evidence, evidenceErr := typedEvidence(result)
+			if evidenceErr != nil {
+				lastErr = evidenceErr
+				continue
+			}
+			sink.Value = evidence
+		}
 		if result.Verdict != "pass" {
 			return fmt.Errorf("%s: typed validation verdict %q", name, result.Verdict)
-		}
-		if sink := db.TypedEvidenceSinkFrom(ctx); sink != nil {
-			findings, marshalErr := json.Marshal(result.Findings)
-			if marshalErr != nil {
-				return fmt.Errorf("marshal typed findings: %w", marshalErr)
-			}
-			sink.Value = &db.TypedEvidence{FindingsJSON: string(findings), Evidence: append([]string(nil), result.Evidence...)}
 		}
 		return nil
 	}

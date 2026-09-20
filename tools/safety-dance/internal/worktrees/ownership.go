@@ -62,6 +62,23 @@ func CommitOwnership(dir string) error {
 	return nil
 }
 
+// JournalRemoval records cleanup intent before a run enters terminal state.
+// RemoveDetached performs the recorded operation and clears this marker only
+// after Git confirms removal.
+func JournalRemoval(source, dir string) error {
+	if source == "" || dir == "" {
+		return fmt.Errorf("source and directory are required")
+	}
+	raw, err := json.Marshal(pendingWorktree{Source: source, Dir: dir})
+	if err != nil {
+		return fmt.Errorf("journal worktree removal: %w", err)
+	}
+	if err := os.WriteFile(removingJournalPath(dir), raw, 0600); err != nil {
+		return fmt.Errorf("journal worktree removal: %w", err)
+	}
+	return nil
+}
+
 func RemoveDetached(ctx context.Context, source, dir string) error {
 	if source == "" || dir == "" {
 		return fmt.Errorf("source and directory are required")

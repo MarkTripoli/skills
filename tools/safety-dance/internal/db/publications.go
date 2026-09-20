@@ -34,9 +34,10 @@ func (d *DB) GetPublication(runID string) (*Publication, error) {
 	return &p, nil
 }
 
-// RecordPublicationAndBinding commits the final publication receipt only while
-// the run is still running. Cancellation therefore serializes with this write
-// instead of racing two independent updates.
+// RecordPublicationAndBinding commits the final publication receipt while the
+// run owns publication. A cancellation may race after the remote write, but
+// push_active keeps the receipt eligible so the confirmed publication is not
+// lost.
 func (d *DB) RecordPublicationAndBinding(p Publication, binding PushBinding) error {
 	if p.RunID == "" || p.Candidate == "" || p.VerifiedUpstream != p.Candidate {
 		return fmt.Errorf("publication candidate is not verified")
@@ -46,7 +47,7 @@ func (d *DB) RecordPublicationAndBinding(p Publication, binding PushBinding) err
 		return err
 	}
 	defer tx.Rollback()
-	res, err := tx.Exec(`UPDATE runs SET last_pushed_sha=?, push_target_kind=?, push_target_fingerprint=?, push_ref=?, last_pushed_at=?, push_generation=COALESCE(push_generation,0)+1, updated_at=? WHERE id=? AND status IN (?,?) AND push_active=1`, binding.HeadSHA, binding.TargetKind, binding.TargetFingerprint, binding.Ref, now(), now(), p.RunID, types.RunPending, types.RunRunning)
+	res, err := tx.Exec(`UPDATE runs SET last_pushed_sha=?, push_target_kind=?, push_target_fingerprint=?, push_ref=?, last_pushed_at=?, push_generation=COALESCE(push_generation,0)+1, updated_at=? WHERE id=? AND status IN (?,?,?) AND push_active=1`, binding.HeadSHA, binding.TargetKind, binding.TargetFingerprint, binding.Ref, now(), now(), p.RunID, types.RunPending, types.RunRunning, types.RunCancelled)
 	if err != nil {
 		return fmt.Errorf("guard publication binding: %w", err)
 	}

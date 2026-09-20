@@ -21,12 +21,21 @@ test('accepts the legal notice and excludes task history', async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-test('reports retired identity with path and line', async () => {
+test('reports every retired identity class with path and line', async () => {
   const root = await fixture();
-  await writeFile(path.join(root, 'bad.txt'), `safe\n${['no', '-', 'mistakes'].join('')} command\n`);
+  const retired = ['no', '-', 'mistakes'].join('');
+  const cases = [
+    ['command.txt', `${retired} command`],
+    ['module.txt', `github.com/kunchenguid/${retired}`],
+    ['environment.txt', `${['no', '_', 'mistakes'].join('')}`],
+    ['path.txt', `.${retired}.yaml`],
+    ['service.txt', `${retired}-daemon`],
+    ['release.txt', `${retired}-token`],
+  ];
+  for (const [name, text] of cases) await writeFile(path.join(root, name), text);
   const findings = await scan(root);
-  assert.equal(findings.length, 1);
-  assert.match(findings[0], /^bad\.txt:2:/);
+  assert.equal(findings.length, cases.length);
+  for (const [name] of cases) assert.ok(findings.some(line => line.startsWith(`${name}:1:`)));
   await rm(root, { recursive: true, force: true });
 });
 

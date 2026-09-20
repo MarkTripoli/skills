@@ -67,14 +67,21 @@ done < "$TMP"
 USER_HOOK="$GATE_DIR/hooks/pre-receive.safety-dance-user"
 if [ -x "$USER_HOOK" ]; then
   "$USER_HOOK" < "$TMP"; status=$?
-  if [ $status -ne 0 ]; then
-    receipts_tmp="$GATE_DIR/.safety-dance-receipts.cleanup"
-    awk -F '\t' 'NR==FNR {bad[$1 FS $2 FS $3]=1; next} !bad[$1 FS $2 FS $3]' "$TMP" "$GATE_DIR/.safety-dance-receipts" > "$receipts_tmp" 2>/dev/null || true
-    mv "$receipts_tmp" "$GATE_DIR/.safety-dance-receipts" 2>/dev/null || true
-    rm -f "$TMP"
-  else
-    rm -f "$TMP"
-  fi
+	if [ $status -ne 0 ]; then
+		while read receipt_line; do
+			set -- $receipt_line; oldrev=$1; newrev=$2; refname=$3
+			token=$(awk -F '\t' -v o="$oldrev" -v n="$newrev" -v r="$refname" '$1==o && $2==n && $3==r {print $4; exit}' "$GATE_DIR/.safety-dance-receipts")
+			if [ -n "$token" ]; then
+				"$SD_BIN" daemon revoke-push-receipt --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --token "$token" >/dev/null 2>&1 || true
+			fi
+		 done < "$TMP"
+		receipts_tmp="$GATE_DIR/.safety-dance-receipts.cleanup"
+		awk -F '\t' 'NR==FNR {bad[$1 FS $2 FS $3]=1; next} !bad[$1 FS $2 FS $3]' "$TMP" "$GATE_DIR/.safety-dance-receipts" > "$receipts_tmp" 2>/dev/null || true
+		mv "$receipts_tmp" "$GATE_DIR/.safety-dance-receipts" 2>/dev/null || true
+		rm -f "$TMP"
+	else
+		rm -f "$TMP"
+	fi
   exit $status
 fi
 rm -f "$TMP"
