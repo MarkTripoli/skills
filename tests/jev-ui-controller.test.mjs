@@ -1,3 +1,4 @@
+import {act as actIos} from '../skills/delivery/jev-ui/scripts/ios.mjs';
 import {runAcceptance,parseArgs,stopNativeFixture} from '../skills/delivery/jev-ui/scripts/acceptance.mjs';
 import {EventEmitter} from 'node:events';
 const fakeChild = result => { const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); queueMicrotask(() => { if (result.stdout !== undefined) child.stdout.emit('data', result.stdout); if (result.stderr !== undefined) child.stderr.emit('data', result.stderr); child.emit('close', result.code ?? null, result.signal ?? null); }); return child; };
@@ -112,6 +113,27 @@ test('iOS cleanup rejects unreadable app-state and accepts valid stopped observa
     calls=[]; results=[{code:0,stdout:'[{"bundle_id":"ai.typesafe.jevfixture","process_state":"Running"}]'},{code:null,signal:'SIGTERM',stderr:'terminated'},{code:0,stdout:''}];
     await assert.rejects(()=>stopNativeFixture('ios','sim',{spawnImpl:(command,args)=>{calls.push(command);return fakeChild(results.shift());}}),/unusable/);
     assert.deepEqual(calls,['idb','xcrun','idb']);
+  } finally { if(prior===undefined) delete process.env.IDB_COMPANION; else process.env.IDB_COMPANION=prior; }
+});
+test('iOS cleanup rejects parsed but unusable app-state records',async()=>{
+  const prior=process.env.IDB_COMPANION; process.env.IDB_COMPANION='/tmp/test-companion';
+  try {
+    for(const stdout of ['{}','{"error":"service unavailable"}','[{"bundle_id":"ai.typesafe.jevfixture","pid":12}]']) {
+      await assert.rejects(()=>stopNativeFixture('ios','sim',{spawnImpl:()=>fakeChild({code:0,stdout})}),/unusable/);
+    }
+  } finally { if(prior===undefined) delete process.env.IDB_COMPANION; else process.env.IDB_COMPANION=prior; }
+});
+test('iOS TYPE_TEXT dispatches to the revalidated focused frame',async()=>{
+  const prior=process.env.IDB_COMPANION; process.env.IDB_COMPANION='/tmp/test-companion';
+  try {
+    const identity={id:'sim',app:'ai.typesafe.jevfixture',driver:'idb',pid:12,verifyDevice:false};
+    const snapshot={target:{id:'sim',app:identity.app,driver:'idb',pid:12},elements:[{id:'native-0',name:'Name',pid:12,editable:true,focused:false,value:'Casey',frame:{x:11,y:7},operations:['TYPE_TEXT']}]};
+    let observations=0; const focused={...snapshot,elements:[{...snapshot.elements[0],focused:true,frame:{x:109,y:93}}]};
+    let calls=[]; const runner=async(command,args)=>{calls.push([command,args]);return {stdout:'',stderr:''};};
+    await actIos(identity,snapshot,{operation:'TYPE_TEXT',target:'native-0',text:'Jordan'},{runner,observe:async()=>{observations++; return observations>2?{...focused,elements:[{...focused.elements[0],value:'Jordan'}]}:focused;}});
+    const setValue=calls.find(([,args])=>args.includes('set-value'))[1];
+    assert.equal(setValue[setValue.indexOf('--value')+4],'109');
+    assert.equal(setValue[setValue.indexOf('--value')+5],'93');
   } finally { if(prior===undefined) delete process.env.IDB_COMPANION; else process.env.IDB_COMPANION=prior; }
 });
 test('repeated unchanged actions are blocked',async()=>{let actions=0;const snapshot=makeSnapshot({target:'s1',raw:'same',elements:[{id:'button',role:'button',name:'Confirm',operations:['CLICK']}]});const r=await run({session,adapter:{observe:async()=>snapshot,act:async()=>actions++},chooser:async()=>({decision:{operation:'CLICK',target:'button'},model:'m',usage:{}}),limits:{maxActions:5,maxModels:5}});assert.equal(r.status,'blocked');assert.equal(actions,3);assert.match(r.reason,/repeated/);});

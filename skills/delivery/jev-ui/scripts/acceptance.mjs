@@ -26,6 +26,7 @@ function appRunning(stdout,bundle){
   const lines=text.split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
   const records=[];
   for(const line of lines){let value;try{value=JSON.parse(line)}catch{return null} if(Array.isArray(value))records.push(...value); else if(value&&typeof value==='object')records.push(value); else return null;}
+  if(records.some(app=>!app||typeof app!=='object'||!["process_state","processState","state"].some(key=>Object.hasOwn(app,key))))return null;
   return records.some(app=>String(app.bundle_id??app.bundleId??app.identifier??'')===bundle&&/\b(?:running|foreground)\b/i.test(String(app.process_state??app.processState??app.state??'')));
 }
 async function iosAppRunning(target,{spawnImpl=spawn}={}){const companion=process.env.IDB_COMPANION;if(!companion)throw Error('IDB_COMPANION is required to verify iOS fixture state');const result=await commandResult('idb',['--companion',companion,'list-apps','--udid',target,'--fetch-process-state','--json'],{spawnImpl});if(result.code!==0)throw Error(`idb app-state check exited ${result.code}: ${result.stderr.trim()||'no diagnostic'}`);const running=appRunning(result.stdout,'ai.typesafe.jevfixture');if(running===null)throw Error('iOS app-state observation is unusable');return running;}
