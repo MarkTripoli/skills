@@ -1,3 +1,9 @@
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+import { once } from "node:events";
 import { expect, failures } from "../lib.mjs";
 
 const invalidJsonSentinel = "phase-three-secret-value";
@@ -17,6 +23,10 @@ const resetForeignState = {
   ticketing: { tool: "jira", project: "SAFE" },
   custom: { nested: { preserve: ["alpha", "beta"] } },
 };
+
+function removeMetadata(root) {
+  fs.rmSync(path.join(root, "ai-utilities.json"), { recursive: true, force: true });
+}
 
 function bytes(manifest, file = "ai-utilities.json") {
   const encoded = manifest?.[file]?.bytes;
@@ -43,6 +53,86 @@ function unchanged(beforeRepository, afterRepository, changedPaths) {
 function zeroOperations(answer) {
   return expect.matches("receipt: no external operations", answer, /External operations:\s*0/i);
 }
+
+function rejectedEntry(answer, beforeRepository, afterRepository, changedPaths, type, sentinel = null) {
+  return failures(
+    changedPaths.length === 0 ? null : `repository: changed ${changedPaths.join(", ")}`,
+    JSON.stringify(beforeRepository["ai-utilities.json"]) === JSON.stringify(afterRepository["ai-utilities.json"])
+      ? null
+      : "repository: ai-utilities.json entry changed",
+    expect.matches("receipt: metadata entry conflict", answer, new RegExp(`ai-utilities\\.json[^\\n]*(?:${type}|entry type|non-regular)`, "i")),
+    expect.matches("receipt: nothing written", answer, /Written:\s*(?:none|nothing)/i),
+    sentinel === null ? null : expect.excludes("receipt: linked payload redacted", answer, sentinel),
+    zeroOperations(answer),
+  );
+}
+
+function entryPhase(entryKind, type, prepareFixture, sentinel = null, cleanupFixture = null) {
+  return {
+    phaseType: "terminal",
+    skill: "setup-repository",
+    entryKind,
+    prepareFixture,
+    cleanupFixture,
+    request: `Run \`/setup-repository\` in exact \`reconcile\` mode. The metadata entry is ${type}; fail closed before reading it.`,
+    allowedChangedPaths: [],
+    check: ({ answer, beforeRepository, afterRepository, changedPaths }) => rejectedEntry(
+      answer,
+      beforeRepository,
+      afterRepository,
+      changedPaths,
+      type,
+      sentinel,
+    ),
+  };
+}
+
+const nonRegularEntryPhases = [
+  entryPhase("directory", "directory", (root) => {
+    removeMetadata(root);
+    fs.mkdirSync(path.join(root, "ai-utilities.json"));
+  }),
+  entryPhase("valid-symlink", "symlink", (root) => {
+    removeMetadata(root);
+    fs.writeFileSync(path.join(root, "metadata-target.json"), "valid-link-private-sentinel\n");
+    fs.symlinkSync("metadata-target.json", path.join(root, "ai-utilities.json"));
+  }, "valid-link-private-sentinel"),
+  entryPhase("dangling-symlink", "symlink", (root) => {
+    removeMetadata(root);
+    fs.symlinkSync("missing-metadata-target", path.join(root, "ai-utilities.json"));
+  }),
+  entryPhase("external-symlink", "symlink", (root) => {
+    removeMetadata(root);
+    const external = path.join(os.tmpdir(), `${path.basename(root)}-external-metadata.json`);
+    fs.writeFileSync(external, "external-link-private-sentinel\n");
+    fs.symlinkSync(external, path.join(root, "ai-utilities.json"));
+  }, "external-link-private-sentinel", (root) => {
+    fs.rmSync(path.join(os.tmpdir(), `${path.basename(root)}-external-metadata.json`), { force: true });
+  }),
+  entryPhase("fifo", "fifo", (root) => {
+    removeMetadata(root);
+    execFileSync("mkfifo", [path.join(root, "ai-utilities.json")]);
+  }),
+  (() => {
+    let server;
+    let shortRoot;
+    return entryPhase("socket", "socket", async (root) => {
+      removeMetadata(root);
+      shortRoot = path.join("/tmp", `sr-${process.pid}-${Date.now()}`);
+      fs.symlinkSync(root, shortRoot, "dir");
+      server = net.createServer();
+      server.listen(path.join(shortRoot, "ai-utilities.json"));
+      await once(server, "listening");
+    }, null, async () => {
+      if (server === undefined) return;
+      server.close();
+      await once(server, "close");
+      server = undefined;
+      fs.rmSync(shortRoot, { force: true });
+      shortRoot = undefined;
+    });
+  })(),
+];
 
 function providerPreserved(manifest, expected) {
   const record = metadata(manifest)?.onboarding?.providers?.github?.["repository-labels"];
@@ -195,5 +285,6 @@ export default {
         zeroOperations(answer),
       ),
     },
+    ...nonRegularEntryPhases,
   ],
 };

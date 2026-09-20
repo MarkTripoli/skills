@@ -17,6 +17,12 @@ import setupRepositorySafety from "../evals/scenarios/setup-repository-safety.mj
 const temps = [];
 const fifoTest = process.platform === "win32" ? test.skip : test;
 
+function deniedRead() {
+  const error = new Error("private raw read failure sentinel");
+  error.code = "EACCES";
+  throw error;
+}
+
 function repository() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "skills-terminal-eval-"));
   temps.push(root);
@@ -53,6 +59,46 @@ test("repository snapshots report sorted creates, modifications, and deletions",
   });
   assert.equal(afterSnapshot["created.txt"].bytes, Buffer.from("created\n").toString("base64"));
   assert.match(afterSnapshot["created.txt"].sha256, /^[a-f0-9]{64}$/);
+});
+
+test("repository snapshots detect permission-only file and directory changes", () => {
+  // Given
+  const root = repository();
+  put(root, "private/file.txt", "same\n");
+  fs.chmodSync(path.join(root, "private"), 0o700);
+  fs.chmodSync(path.join(root, "private/file.txt"), 0o600);
+  const before = snapshotRepository(root);
+
+  // When
+  fs.chmodSync(path.join(root, "private"), 0o755);
+  fs.chmodSync(path.join(root, "private/file.txt"), 0o644);
+  const afterSnapshot = snapshotRepository(root);
+
+  // Then
+  assert.equal(before.private.mode, "0700");
+  assert.equal(before["private/file.txt"].mode, "0600");
+  assert.deepEqual(diffRepositorySnapshots(before, afterSnapshot).modified, ["private", "private/file.txt"]);
+});
+
+test("repository snapshots retain bounded typed evidence for unreadable regular files", () => {
+  // Given
+  const root = repository();
+  put(root, "unreadable.txt", "private payload sentinel\n");
+  fs.chmodSync(path.join(root, "unreadable.txt"), 0o000);
+
+  // When
+  const snapshot = snapshotRepository(root, { readFile: deniedRead });
+
+  // Then
+  assert.deepEqual(snapshot["unreadable.txt"], {
+    kind: "file-error",
+    mode: "0000",
+    operation: "read-file",
+    errorClass: "permission-denied",
+    sha256: null,
+  });
+  assert.equal(JSON.stringify(snapshot).includes("private payload sentinel"), false);
+  assert.equal(JSON.stringify(snapshot).includes("private raw read failure sentinel"), false);
 });
 
 test("repository snapshots preserve a byte-stable no-op and exclude harness paths", () => {
@@ -99,7 +145,7 @@ test("repository snapshots detect an empty directory created from absence", () =
   const afterSnapshot = snapshotRepository(root);
 
   assert.deepEqual(diffRepositorySnapshots(before, afterSnapshot).created, ["empty"]);
-  assert.deepEqual(afterSnapshot.empty, { kind: "directory" });
+  assert.deepEqual(afterSnapshot.empty, { kind: "directory", mode: "0755" });
 });
 
 test("repository snapshots detect an empty directory deleted to absence", () => {
@@ -111,7 +157,7 @@ test("repository snapshots detect an empty directory deleted to absence", () => 
   const afterSnapshot = snapshotRepository(root);
 
   assert.deepEqual(diffRepositorySnapshots(before, afterSnapshot).deleted, ["empty"]);
-  assert.deepEqual(before.empty, { kind: "directory" });
+  assert.deepEqual(before.empty, { kind: "directory", mode: "0755" });
 });
 
 test("repository snapshots report non-empty directory creation through its contents once", () => {
@@ -122,7 +168,7 @@ test("repository snapshots report non-empty directory creation through its conte
   const afterSnapshot = snapshotRepository(root);
 
   assert.deepEqual(diffRepositorySnapshots(before, afterSnapshot).changedPaths, ["created/file.txt"]);
-  assert.deepEqual(afterSnapshot.created, { kind: "directory" });
+  assert.deepEqual(afterSnapshot.created, { kind: "directory", mode: "0755" });
 });
 
 test("repository snapshots report non-empty directory deletion through its contents once", () => {
@@ -134,7 +180,7 @@ test("repository snapshots report non-empty directory deletion through its conte
   const afterSnapshot = snapshotRepository(root);
 
   assert.deepEqual(diffRepositorySnapshots(before, afterSnapshot).changedPaths, ["removed/file.txt"]);
-  assert.deepEqual(before.removed, { kind: "directory" });
+  assert.deepEqual(before.removed, { kind: "directory", mode: "0755" });
 });
 
 fifoTest("repository snapshots detect a FIFO created from absence without reading it", () => {
@@ -172,7 +218,7 @@ fifoTest("repository snapshot diffs report a directory replaced by a FIFO", () =
   const afterSnapshot = snapshotRepository(root);
 
   assert.deepEqual(diffRepositorySnapshots(before, afterSnapshot).modified, ["entry"]);
-  assert.deepEqual(before.entry, { kind: "directory" });
+  assert.deepEqual(before.entry, { kind: "directory", mode: "0755" });
   assert.deepEqual(afterSnapshot.entry, { kind: "other", type: "fifo" });
 });
 
@@ -190,6 +236,44 @@ test("local Git configuration snapshots detect byte changes outside repository m
   assert.equal(evalLib.gitConfigChanged(beforeConfig, afterConfig), true);
 });
 
+test("local Git configuration snapshots detect permission-only changes", () => {
+  // Given
+  const root = repository();
+  put(root, ".git/config", "same\n");
+  fs.chmodSync(path.join(root, ".git/config"), 0o600);
+  const before = evalLib.snapshotGitConfig(root);
+
+  // When
+  fs.chmodSync(path.join(root, ".git/config"), 0o644);
+  const afterSnapshot = evalLib.snapshotGitConfig(root);
+
+  // Then
+  assert.equal(before.mode, "0600");
+  assert.equal(afterSnapshot.mode, "0644");
+  assert.equal(evalLib.gitConfigChanged(before, afterSnapshot), true);
+});
+
+test("local Git configuration retains bounded typed evidence for unreadable regular files", () => {
+  // Given
+  const root = repository();
+  put(root, ".git/config", "private config sentinel\n");
+  fs.chmodSync(path.join(root, ".git/config"), 0o000);
+
+  // When
+  const snapshot = evalLib.snapshotGitConfig(root, { readFile: deniedRead });
+
+  // Then
+  assert.deepEqual(snapshot, {
+    kind: "file-error",
+    mode: "0000",
+    operation: "read-file",
+    errorClass: "permission-denied",
+    sha256: null,
+  });
+  assert.equal(JSON.stringify(snapshot).includes("private config sentinel"), false);
+  assert.equal(JSON.stringify(snapshot).includes("private raw read failure sentinel"), false);
+});
+
 test("local Git configuration detects a directory created from absence", () => {
   const root = repository();
   fs.mkdirSync(path.join(root, ".git"));
@@ -200,7 +284,7 @@ test("local Git configuration detects a directory created from absence", () => {
 
   assert.equal(evalLib.gitConfigChanged(before, afterSnapshot), true);
   assert.equal(before, null);
-  assert.deepEqual(afterSnapshot, { kind: "directory" });
+  assert.deepEqual(afterSnapshot, { kind: "directory", mode: "0755" });
 });
 
 test("local Git configuration detects a directory deleted to absence", () => {
@@ -212,7 +296,7 @@ test("local Git configuration detects a directory deleted to absence", () => {
   const afterSnapshot = evalLib.snapshotGitConfig(root);
 
   assert.equal(evalLib.gitConfigChanged(before, afterSnapshot), true);
-  assert.deepEqual(before, { kind: "directory" });
+  assert.deepEqual(before, { kind: "directory", mode: "0755" });
   assert.equal(afterSnapshot, null);
 });
 
@@ -255,7 +339,7 @@ fifoTest("local Git configuration detects a directory replaced by a FIFO", () =>
   const afterSnapshot = evalLib.snapshotGitConfig(root);
 
   assert.equal(evalLib.gitConfigChanged(before, afterSnapshot), true);
-  assert.deepEqual(before, { kind: "directory" });
+  assert.deepEqual(before, { kind: "directory", mode: "0755" });
   assert.deepEqual(afterSnapshot, { kind: "other", type: "fifo" });
 });
 
@@ -476,4 +560,29 @@ test("invalid JSON phase rejects leaked source sentinel", () => {
   // Then
   assert.equal(problems.length, 1);
   assert.match(problems[0], /^receipt: source bytes redacted:/);
+});
+
+fifoTest("setup safety scenarios create non-regular metadata entries without payload reads", async () => {
+  // Given
+  const root = repository();
+  const phases = setupRepositorySafety.phases.filter((phase) => phase.entryKind);
+
+  // When / Then
+  assert.deepEqual(phases.map(({ entryKind }) => entryKind), [
+    "directory",
+    "valid-symlink",
+    "dangling-symlink",
+    "external-symlink",
+    "fifo",
+    "socket",
+  ]);
+  for (const phase of phases) {
+    const phaseRoot = path.join(root, phase.entryKind);
+    fs.mkdirSync(phaseRoot);
+    await phase.prepareFixture(phaseRoot);
+    const metadataPath = path.join(phaseRoot, "ai-utilities.json");
+    const stats = fs.lstatSync(metadataPath);
+    assert.equal(stats.isFile(), false, phase.entryKind);
+    await phase.cleanupFixture?.(phaseRoot);
+  }
 });
