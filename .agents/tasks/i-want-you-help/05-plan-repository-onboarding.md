@@ -265,11 +265,11 @@ Add `/setup-repository` for idempotent local repository metadata setup and manag
 
 #### Automated Verification:
 
-- [ ] `node --test tests/evals-terminal-phase.test.mjs`
-- [ ] `node --test tests/install.test.mjs`
-- [ ] `node scripts/validate.mjs`
-- [ ] `node scripts/sync-plugin.mjs --check`
-- [ ] `npm run evals -- setup-repository-basic --keep`
+- [x] `node --test tests/evals-terminal-phase.test.mjs`
+- [x] `node --test tests/install.test.mjs`
+- [x] `node scripts/validate.mjs`
+- [x] `node scripts/sync-plugin.mjs --check`
+- [x] `npm run evals -- setup-repository-basic --keep`
 
 human-gated: false
 
