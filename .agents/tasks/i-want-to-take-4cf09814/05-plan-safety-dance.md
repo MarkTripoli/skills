@@ -382,9 +382,9 @@ clear push_active
 
 #### Automated Verification:
 
-- [x] `cd tools/safety-dance && go test -race ./internal/agent/... ./internal/branchsync/... ./internal/pipeline/...`
-- [x] `cd tools/safety-dance && go test ./internal/pipeline/steps -run 'ReviewedHead|RemoteHead|Lease|PublishedRef|Mirror|Binding|Cancel'`
-- [x] `cd tools/safety-dance && make e2e`
+- [ ] `cd tools/safety-dance && go test -race ./internal/agent/... ./internal/branchsync/... ./internal/pipeline/...`
+- [ ] `cd tools/safety-dance && go test ./internal/pipeline/steps -run 'ReviewedHead|RemoteHead|Lease|PublishedRef|Mirror|Binding|Cancel'`
+- [ ] `cd tools/safety-dance && make e2e`
 
 Done when a temporary upstream accepts the reviewed candidate, rejects every stale or failed case, records the publication only after mirror reconciliation, and recovers without repeating a completed publication.
 
@@ -485,8 +485,8 @@ Add the public `safety-dance` executable after the trusted path is complete. Use
 
 #### Automated Verification:
 
-- [x] `cd tools/safety-dance && go test -race ./internal/cli/... ./internal/wizard/... ./internal/tui/... && go test -race ./internal/daemon -run 'Service'`
-- [x] `cd tools/safety-dance && go build ./cmd/safety-dance && make e2e`
+- [ ] `cd tools/safety-dance && go test -race ./internal/cli/... ./internal/wizard/... ./internal/tui/... && go test -race ./internal/daemon -run 'Service'`
+- [ ] `cd tools/safety-dance && go build ./cmd/safety-dance && make e2e`
 - [x] `cd tools/safety-dance && go vet ./...`
 
 Done when a temporary repository can run the built `safety-dance init`, push through the generated remote, observe and control the durable run, and produce semantically matching compact, wide, and plain outputs.
