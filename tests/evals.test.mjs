@@ -265,8 +265,8 @@ test("primary inspection rejects image substitution and unconsumed or completed 
       "- Current step: diagnose and repair. Last completed: baseline pixel inspection and reservation. Next incomplete: repair.",
       "- Current step: diagnosis and repair pending.\n- Last completed step: reservation.\n- Next incomplete step: pending repair.",
       "| Step | State | Evidence |\n| --- | --- | --- |\n| Repair | pending | Existing finding |",
-      // Active-round structural forms: "reserved" prefix, "baseline inspection" and variants.
-      "- Current step / last completed step / next incomplete step: reserved repair / baseline inspection / app.js and check.mjs edits.",
+      // Active-round structural forms: "reserved" prefix with three labeled lines; combined forms require
+      // next incomplete step to name repair (new structural rule anchors on parts[2]).
       "- Current step: reserved repair.\n- Last completed step: baseline inspection.\n- Next incomplete step: pending repair.",
       "- Last completed step / next incomplete step: baseline inspection / repair.",
       // Delivery section forms: "baseline inspection complete" matches the baseline prefix.
@@ -280,6 +280,11 @@ test("primary inspection rejects image substitution and unconsumed or completed 
       // F5 regression: 'reservation' as current step is a valid pending-repair state
       "- Current step: reservation\n- Last completed step: baseline inspection\n- Next incomplete step: repair",
       "- Current step / last completed step / next incomplete step: reservation / baseline inspection / repair",
+      // F_PRIM regressions: structural rule — any reservation/reserved/pending prose as current step
+      // when next incomplete step names repair; combined slash line parsed by position.
+      "- Current step / last completed step / next incomplete step: reservation persisted / reservation / repair",
+      "- Current step: reserved\n- Last completed step: baseline inspection\n- Next incomplete step: repair",
+      "- Current step: reservation persisted\n- Last completed step: reservation\n- Next incomplete step: repair",
     ];
     for (const state of pendingStates) {
       snapshots[2] = reserve(reservationText.replace("- Current step: repair pending.", state));
@@ -331,6 +336,59 @@ test("primary inspection rejects image substitution and unconsumed or completed 
       observations[0].timestamp = 0.5;
       put("task/evidence/baseline/capture.json", JSON.stringify(baselineCapture));
     }
+    // F_CONT regressions: video+timestamp frame identity form (both forms are equivalent)
+    {
+      const savedObs1 = { ...observations[1] }; // baseline-increment (PNG form)
+      const savedTool1 = { ...trace.tools[1] };
+      const videoPath = observations[1].media; // "task/evidence/baseline/raw.webm"
+      // Video+timestamp form: frame = video path, frameSha256 = OMP-returned image hash from trace.
+      trace.tools[1] = { id: "2", arguments: { path: videoPath.slice("task/".length) + ":2.0s" } };
+      const videoObs1 = { ...savedObs1, frame: videoPath, frameSha256: trace.images[1].sha256, timestamp: 2.0 };
+      observations[1] = videoObs1;
+      assert.deepEqual(check(), [], "F_CONT: video+timestamp form must pass");
+      // Mismatched frameSha256: wrong hash for video form must fail.
+      observations[1] = { ...videoObs1, frameSha256: "deadbeef0000" };
+      assert.ok(check().some((p) => p.includes("OMP") || p.includes("hash")), "F_CONT: video frame with wrong frameSha256 must fail");
+      // Restore correct video obs1 before inner sub-blocks.
+      observations[1] = videoObs1;
+      // Initial frame via video form: timestamp before first click passes; at/after first click fails.
+      // During this sub-block, obs[1] uses PNG form so its action window does not interfere.
+      {
+        const bCapture = JSON.parse(fs.readFileSync(path.join(dir, "task/evidence/baseline/capture.json"), "utf8"));
+        const actionsV = [{ flow: "initial", videoTime: 1.0 }, { flow: "increment", videoTime: 2.5 }];
+        put("task/evidence/baseline/capture.json", JSON.stringify({ ...bCapture, actions: actionsV }));
+        const videoInit = observations[0].media;
+        const savedObs0 = { ...observations[0] };
+        const savedTool0 = { ...trace.tools[0] };
+        // Use PNG form for obs[1] AND restore its tool so the PNG path link check passes.
+        observations[1] = savedObs1;
+        trace.tools[1] = savedTool1;
+        trace.tools[0] = { id: "1", arguments: { path: videoInit.slice("task/".length) + ":0.5s" } };
+        observations[0] = { ...savedObs0, frame: videoInit, frameSha256: trace.images[0].sha256, timestamp: 0.5 };
+        assert.deepEqual(check(), [], "F_CONT: video initial frame before first click passes");
+        observations[0] = { ...savedObs0, frame: videoInit, frameSha256: trace.images[0].sha256, timestamp: 3.0 };
+        assert.ok(check().some((p) => p.includes("initial") || p.includes("first click") || p.includes("timestamp")), "F_CONT: video initial frame at/after first click must fail");
+        observations[0] = savedObs0;
+        trace.tools[0] = savedTool0;
+        trace.tools[1] = { id: "2", arguments: { path: videoPath.slice("task/".length) + ":2.0s" } };
+        observations[1] = videoObs1; // restore video form for next sub-block
+        put("task/evidence/baseline/capture.json", JSON.stringify(bCapture));
+      }
+      // Non-initial video frame: timestamp before action window must fail; at/after passes.
+      {
+        const bCapture2 = JSON.parse(fs.readFileSync(path.join(dir, "task/evidence/baseline/capture.json"), "utf8"));
+        const actionsV2 = [{ flow: "initial", videoTime: 1.0 }, { flow: "increment", videoTime: 2.5 }];
+        put("task/evidence/baseline/capture.json", JSON.stringify({ ...bCapture2, actions: actionsV2 }));
+        observations[1] = { ...videoObs1, timestamp: 0.5 };
+        assert.ok(check().some((p) => p.includes("timestamp") || p.includes("action")), "F_CONT: video non-initial before action window must fail");
+        observations[1] = { ...videoObs1, timestamp: 3.0 };
+        assert.deepEqual(check(), [], "F_CONT: video non-initial at/after action window passes");
+        put("task/evidence/baseline/capture.json", JSON.stringify(bCapture2));
+      }
+      // Restore
+      observations[1] = savedObs1;
+      trace.tools[1] = savedTool1;
+    }
     for (const invalid of [
       reservationText.replace("consumed_rounds: 1", "consumed_rounds: 0"),
       reservationText.replace("status: in-progress", "status: passed"),
@@ -353,6 +411,11 @@ test("primary inspection rejects image substitution and unconsumed or completed 
       // F5 regression: 'reservation' as current step rejected when next incomplete step is not repair
       reservationText.replace("- Current step: repair pending.", "- Current step: reservation\n- Last completed step: baseline inspection\n- Next incomplete step: checks"),
       reservationText.replace("- Current step: repair pending.", "- Current step / last completed step / next incomplete step: reservation / baseline inspection / checks"),
+      // F_PRIM regressions: "repair completed" in any field is a conflict even when next=repair
+      reservationText.replace("- Current step: repair pending.", "- Current step: repair completed.\n- Last completed step: reservation.\n- Next incomplete step: repair."),
+      reservationText.replace("- Current step: repair pending.", "- Current step / last completed step / next incomplete step: repair completed / reservation / repair."),
+      `${reservationText}\n| Step | State | Evidence |\n| --- | --- | --- |\n| Repair | done | Confirmed |`,
+      `${reservationText}\n## Delivery and known limits\n- Current step: repair resolved. Last completed: reservation.`,
     ]) {
       snapshots[2] = reserve(invalid);
       assert.ok(check().some((problem) => problem.includes("consumed round")));

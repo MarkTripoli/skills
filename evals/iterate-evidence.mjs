@@ -405,7 +405,7 @@ const reviewSchema = {
       flow: { enum: ["baseline-initial", "baseline-increment", "repaired-initial", "repaired-increment", "repaired-reset"] },
       capture: { type: "string", description: "Retained capture.json path relative to this phase directory" },
       media: { type: "string", description: "Opened raw or rendered video, relative to this phase directory" }, mediaSha256: { type: "string" },
-      frame: { type: "string", description: "Opened recorded PNG/JPEG, not a live screenshot; relative to this phase directory" }, frameSha256: { type: "string" },
+      frame: { type: "string", description: "Retained PNG/JPEG frame path OR the retained video path read with a timestamp selector (e.g., video.webm:Ts); both forms bind the observation through the returned image hash; relative to this phase directory" }, frameSha256: { type: "string" },
       timestamp: { type: "number", minimum: 0, description: "Seconds in the named media; account for title cards/offsets" },
       observedCount: { type: "integer" }, subjectTraceLine: { type: "integer", minimum: 1 }, notes: { type: "string", minLength: 1 },
       subjectImage: { type: "string", description: "Exact retained trace-images path when the viewer transformed the frame; independently open both images" },
@@ -460,6 +460,11 @@ function activeReservation(text, round, limit, findingId, pendingRepair = false)
     return completed.length > 0 && completed.every((step) =>
       step === "reservation" || step.startsWith("baseline inspection") || step.startsWith("baseline pixel inspection"));
   };
+  // terminalRepair: the repair step itself is declared completed/done/resolved/finalized — a conflict.
+  const terminalRepair = (value) => {
+    const s = clean(value);
+    return /\brepair\b/.test(s) && /\b(?:complete[d]?|done|resolved|finaliz(?:ed)?|terminal)\b/.test(s);
+  };
   const readFields = (content) => {
     for (const line of content.split(/\n|[.;]\s+(?=(?:current step|last completed(?: step)?|next incomplete(?: step)?):)/i)) {
       const field = /^\s*(?:-\s*)?([^:]+):\s*(.*)$/.exec(line);
@@ -468,7 +473,9 @@ function activeReservation(text, round, limit, findingId, pendingRepair = false)
       if (["current step", "next incomplete step", "last completed step / next incomplete step",
         "current step / last completed step / next incomplete step"].includes(key)) stepDeclared = true;
       const value = field[2];
-      if (key === "current step") declarations.push(pending(value) || clean(value) === "reservation");
+      // Current step may be any reservation/reserved/pending/repair-pending wording.
+      // Only a terminal declaration (repair explicitly completed/done/resolved/finalized) conflicts.
+      if (key === "current step") declarations.push(terminalRepair(value) ? false : pending(value) || /\breserv(?:ation|ed)\b/.test(clean(value)));
       if (key === "last completed step") declarations.push(reserved(value));
       if (key === "next incomplete step") declarations.push(pending(value));
       if (key === "last completed step / next incomplete step") {
@@ -477,9 +484,11 @@ function activeReservation(text, round, limit, findingId, pendingRepair = false)
       }
       if (key === "current step / last completed step / next incomplete step") {
         const parts = value.split("/");
-        // Three-way slash-separated form: check current+last-completed; next-incomplete may use
-        // non-canonical prose without contradicting the pending state.
-        if (parts.length === 3) declarations.push((pending(parts[0]) || (clean(parts[0]) === "reservation" && pending(parts[2]))) && reserved(parts[1]));
+        // Structural rule: anchor on next incomplete step (parts[2]) naming repair; current step
+        // (parts[0]) may be any reservation/reserved/pending/repair-pending wording — only a terminal
+        // repair declaration conflicts. The combined slash line never pushes false when the three
+        // labeled lines are present and consistent; when only the combined line exists, parse by position.
+        if (parts.length === 3) declarations.push(!terminalRepair(parts[0]) && pending(parts[2]) && reserved(parts[1]));
         // Single-value form (parts.length===1): the semicolon-separated sub-fields are already
         // extracted by the split pattern above and handled by the individual "current step",
         // "last completed step", and "next incomplete step" key handlers below. Do not push
@@ -523,10 +532,19 @@ export function reviewProblems(out, review, trace, snapshots, base, finalState, 
     require(item.observedCount === expected && typeof item.notes === "string" && item.notes.trim(), `${flow} pixels must show ${expected} with review notes`);
     require(Number.isFinite(item.timestamp) && item.timestamp >= 0, `${flow} needs an exact media timestamp`);
     const capture = json(retainedFile(out, item.capture));
-    for (const [key, hash] of [["media", "mediaSha256"], ["frame", "frameSha256"]]) require(sha256(fs.readFileSync(retainedFile(out, item[key]))) === item[hash], `${flow} ${key} hash mismatch`);
+    require(sha256(fs.readFileSync(retainedFile(out, item.media))) === item.mediaSha256, `${flow} media hash mismatch`);
+    const isVideoFrameRef = /\.(mp4|webm)$/.test(item.frame);
+    if (isVideoFrameRef) {
+      // Video+timestamp form: item.frame is the retained capture video; verify against capture identity.
+      // item.frameSha256 binds to the OMP-returned image hash, verified below via trace.
+      require(sha256(fs.readFileSync(retainedFile(out, item.frame))) === capture.videoSha256, `${flow} video frame reference must be the retained capture video`);
+    } else {
+      require(sha256(fs.readFileSync(retainedFile(out, item.frame))) === item.frameSha256, `${flow} frame hash mismatch`);
+    }
     const session = path.dirname(item.capture);
     require(item.media.startsWith(`${session}/`) && item.frame.startsWith(`${session}/`), `${flow} opened pixels must belong to its recording session`);
-    require(/\.(mp4|webm)$/.test(item.media) && /\.(png|jpe?g)$/.test(item.frame), `${flow} requires video and recorded frame evidence`);
+    require(/\.(mp4|webm)$/.test(item.media), `${flow} requires video evidence`);
+    require(/\.(png|jpe?g)$/.test(item.frame) || (isVideoFrameRef && Number.isFinite(item.timestamp) && item.timestamp >= 0), `${flow} requires a recorded PNG/JPEG frame or a video path with an explicit timestamp selector`);
     require(fs.existsSync(path.join(out, session, "manifest.json")), `${flow} recorder manifest missing`);
     const raw = retainedFile(out, path.posix.join(session, capture.video));
     require(sha256(fs.readFileSync(raw)) === capture.videoSha256, `${flow} raw video hash mismatch`);
@@ -551,8 +569,19 @@ export function reviewProblems(out, review, trace, snapshots, base, finalState, 
       require(Boolean(image) && item.subjectImage === image.file && item.subjectImageInspected === true && item.subjectImageSha256 === image.sha256, `${flow} transformed subject image needs independent opening and exact payload identity`);
       require(Boolean(item.subjectImage) && sha256(fs.readFileSync(retainedFile(out, item.subjectImage))) === item.subjectImageSha256, `${flow} transformed subject image payload missing or changed`);
     }
+    // Video+timestamp form: frameSha256 binds to the OMP-returned image hash (A9 seconds-selector provenance).
+    if (isVideoFrameRef) {
+      require(Boolean(image) && image.sha256 === item.frameSha256, `${flow} video-frame frameSha256 must match the OMP-returned image hash`);
+      if (!flow.endsWith("-initial") && Array.isArray(capture.actions)) {
+        const flowName = flow.replace(/^(?:baseline|repaired)-/, "");
+        const flowAct = capture.actions.find((a) => a.flow === flowName);
+        if (flowAct) require(rawTimestamp >= flowAct.videoTime, `${flow} video-frame timestamp (${rawTimestamp}s) must be within the action window (>= ${flowAct.videoTime}s)`);
+      }
+    }
     if (flow.endsWith("-initial")) {
-      require(path.basename(item.frame).toLowerCase().includes("initial"), `${flow} frame filename must contain 'initial' to identify the pre-click extraction`);
+      if (!isVideoFrameRef) {
+        require(path.basename(item.frame).toLowerCase().includes("initial"), `${flow} frame filename must contain 'initial' to identify the pre-click extraction`);
+      }
       // Structural binding: initial frame must be before the first click's videoTime in the capture manifest.
       const firstClickAction = Array.isArray(capture.actions) ? capture.actions.find((a) => a.flow !== "initial") : null;
       if (firstClickAction) {
@@ -613,7 +642,7 @@ export function reviewProblems(out, review, trace, snapshots, base, finalState, 
 
 const stoppedReviewSchema = {
   reviewer: "Independent executing agent", inspectedAt: "ISO timestamp",
-  observations: [{ flow: "baseline-increment", capture: "task/evidence/baseline/capture.json", media: "retained video path", mediaSha256: "SHA256", frame: "retained recorded frame path", frameSha256: "SHA256", timestamp: 0, observedCount: 2, subjectTraceLine: 0, notes: "Exact observed pixels and timing limitations; required only for label disagreement" }],
+  observations: [{ flow: "baseline-increment", capture: "task/evidence/baseline/capture.json", media: "retained video path", mediaSha256: "SHA256", frame: "retained PNG/JPEG frame path OR video path for video+timestamp form (read video.webm:Ts)", frameSha256: "SHA256 of PNG frame file OR OMP-returned image hash for video+timestamp form", timestamp: 0, observedCount: 2, subjectTraceLine: 0, notes: "Exact observed pixels and timing limitations; required only for label disagreement" }],
   denial: { subjectTraceLine: 0, capabilityReview: "Exact active tools, isolated config, finite shell/write restrictions and denied read after capture; required only for viewer blocked" },
   final: { receipt: "task/NN-evidence-iteration-slug.md", receiptSha256: "SHA256", unchangedExpectations: true, noSourceMutations: true, coverage: "failed or untested", stableFinding: "IE-001 for disagreement; none for denied viewing", notes: "Receipt/source/tool history and label preservation review" },
 };
@@ -692,7 +721,13 @@ function stoppedEvidenceProblems(out, setup, trace, snapshots, base, finalState,
       const item = review.observations?.find((entry) => entry.flow === flow);
       require(item?.observedCount === expected && item?.capture === capturePath && Boolean(item?.notes?.trim()) && Number.isFinite(item.timestamp) && item.timestamp >= 0, `independently opened ${flow} must show ${expected}`);
       if (!item) continue;
-      for (const [key, hash] of [["media", "mediaSha256"], ["frame", "frameSha256"]]) require(item[key]?.startsWith(`${session}/`) && sha256(fs.readFileSync(retainedFile(out, item[key]))) === item[hash], `review ${key} hash/session mismatch`);
+      require(item.media?.startsWith(`${session}/`) && sha256(fs.readFileSync(retainedFile(out, item.media))) === item.mediaSha256, "review media hash/session mismatch");
+      if (/\.(mp4|webm)$/.test(item.frame)) {
+        // Video+timestamp form: verify item.frame is the retained capture video.
+        require(item.frame?.startsWith(`${session}/`) && sha256(fs.readFileSync(retainedFile(out, item.frame))) === capture.videoSha256, "review video frame must be the retained capture video");
+      } else {
+        require(item.frame?.startsWith(`${session}/`) && sha256(fs.readFileSync(retainedFile(out, item.frame))) === item.frameSha256, "review frame hash/session mismatch");
+      }
       const image = trace.images.find((entry) => entry.line === item.subjectTraceLine && !entry.isError);
       const call = image && trace.tools.find((entry) => entry.id === image.toolCallId);
       require(Boolean(call) && JSON.stringify(call.arguments).includes(item.frame.slice("task/".length)), "subject image result does not name the recorded frame");
@@ -705,7 +740,7 @@ function stoppedEvidenceProblems(out, setup, trace, snapshots, base, finalState,
 
 const boundedReviewGuide = {
   reviewer: "Independent executing agent", inspectedAt: "ISO timestamp",
-  observations: [{ pass: 0, flow: "increment (or A-increment through D-reset)", capture: "task/evidence/SESSION/capture.json", media: "task/evidence/SESSION/evidence.mp4", mediaSha256: "SHA256", frame: "task/evidence/SESSION/recorded.png", frameSha256: "SHA256", timestamp: 0, observedCount: 2, subjectTraceLine: 0, traceSession: "main or interrupted", notes: "Actual pixels and timing limits. When viewer resizes a contact sheet, also independently open retained subjectImage, bind subjectImageSha256, and set subjectImageInspected:true; identify the exact tile." }],
+  observations: [{ pass: 0, flow: "increment (or A-increment through D-reset)", capture: "task/evidence/SESSION/capture.json", media: "task/evidence/SESSION/evidence.mp4", mediaSha256: "SHA256", frame: "task/evidence/SESSION/recorded.png OR task/evidence/SESSION/video.webm for video+timestamp form (read video.webm:Ts)", frameSha256: "SHA256 of PNG frame OR OMP-returned image hash for video+timestamp form", timestamp: 0, observedCount: 2, subjectTraceLine: 0, traceSession: "main or interrupted", notes: "Actual pixels and timing limits. Video+timestamp form: frame is the retained capture video, frameSha256 is the image OMP returned, timestamp is the seconds selector. PNG form: frame is the extracted PNG, frameSha256 is its file hash. When viewer resizes a contact sheet, also independently open retained subjectImage, bind subjectImageSha256, and set subjectImageInspected:true; identify the exact tile." }],
   reservations: [{ round: 1, snapshot: "snapshots/NNNNNN-tool_execution_end.json", traceSession: "main or interrupted", findingId: "IE-001", resolvedAfter: [], notes: "Inspected finding and consumed reservation before mutation; actual progress after new pixels" }],
   final: { receipt: "task/NN-evidence-iteration-slug.md", receiptSha256: "SHA256", unchangedExpectations: true, historyPreserved: true, mutationToolsReviewed: true, notes: "Review every source transition, finding status, consumed allowance, stop precedence and incomplete-step continuation where applicable" },
 };
@@ -819,8 +854,16 @@ async function boundedEvidenceProblems(out, setup, trace, snapshots, base, final
       if (!item) continue;
       require(item.observedCount === expected && item.capture === capture.relative && Number.isFinite(item.timestamp) && item.timestamp >= 0 && Boolean(item.notes?.trim()), `pass ${pass} ${flow} must show ${expected} with timing/notes`);
       require(capture.value.actions.some((action) => action.flow === flow), `capture lacks ${flow} action`);
-      for (const [key, hash] of [["media", "mediaSha256"], ["frame", "frameSha256"]]) require(item[key]?.startsWith(`${capture.session}/`) && sha256(fs.readFileSync(retainedFile(out, item[key]))) === item[hash], `${flow} reviewed ${key} hash/session mismatch`);
-      require(/\.(mp4|webm)$/.test(item.media) && /\.(png|jpe?g)$/.test(item.frame), "video plus recorded frame required");
+      require(item.media?.startsWith(`${capture.session}/`) && sha256(fs.readFileSync(retainedFile(out, item.media))) === item.mediaSha256, `${flow} media hash/session mismatch`);
+      const isVideoFrame = /\.(mp4|webm)$/.test(item.frame);
+      if (isVideoFrame) {
+        // Video+timestamp form: item.frame is the retained capture video.
+        require(item.frame?.startsWith(`${capture.session}/`) && sha256(fs.readFileSync(retainedFile(out, item.frame))) === capture.value.videoSha256, `${flow} video frame reference must be the retained capture`);
+      } else {
+        require(item.frame?.startsWith(`${capture.session}/`) && sha256(fs.readFileSync(retainedFile(out, item.frame))) === item.frameSha256, `${flow} frame hash/session mismatch`);
+      }
+      require(/\.(mp4|webm)$/.test(item.media), `${flow} video evidence required`);
+      require(/\.(png|jpe?g)$/.test(item.frame) || (isVideoFrame && Number.isFinite(item.timestamp) && item.timestamp >= 0), `${flow} requires a recorded PNG/JPEG frame or a video path with an explicit timestamp selector`);
       const selectedTrace = resumed && pass === 0 ? firstTrace : trace;
       require(item.traceSession === (resumed && pass === 0 ? "interrupted" : "main"), "wrong pixel-opening session");
       const image = selectedTrace.images.find((entry) => entry.line === item.subjectTraceLine && !entry.isError);
@@ -832,6 +875,13 @@ async function boundedEvidenceProblems(out, setup, trace, snapshots, base, final
         const imagePath = `${resumed && pass === 0 ? "interrupted/" : ""}${image?.file}`;
         require(item.subjectImage === imagePath && item.subjectImageInspected === true && item.subjectImageSha256 === image?.sha256, "transformed subject image needs independent opening and exact payload identity");
         require(item.subjectImage && sha256(fs.readFileSync(retainedFile(out, item.subjectImage))) === item.subjectImageSha256, "transformed subject image payload missing or changed");
+      }
+      if (isVideoFrame) {
+        // Video+timestamp form: frameSha256 binds to the OMP-returned image hash (A9 seconds-selector provenance).
+        require(Boolean(image) && image?.sha256 === item.frameSha256, `${flow} video-frame frameSha256 must match the OMP-returned image hash`);
+        // Timestamp within action window: must be at or after the flow's action videoTime.
+        const videoFlowAction = capture.value.actions?.find((a) => a.flow === flow);
+        if (videoFlowAction) require(item.timestamp >= videoFlowAction.videoTime, `${flow} video-frame timestamp (${item.timestamp}s) must be within the action window (>= ${videoFlowAction.videoTime}s)`);
       }
     }
   }
