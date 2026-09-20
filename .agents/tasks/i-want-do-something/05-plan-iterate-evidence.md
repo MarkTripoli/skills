@@ -280,10 +280,10 @@ npm run evals -- iterate-evidence-no-progress iterate-evidence-zero-limit iterat
 
 Retain each phase’s explicit result directory in the implementation receipt and regrade those directories separately. Missing names are skipped by the existing runner; skipped names never count toward the seven live acceptances.
 
-- [ ] Ineffective repair stops after one unproductive round, retaining the original finding and failed pixels.
-- [ ] Zero allowance preserves source/checks and consumes no round despite an inspected defect.
-- [ ] Default allowance permits exactly three productive rounds; retained baseline plus three passes show D still failing and no fourth attempt.
-- [ ] A fresh continuation session completes the reserved round without replay, ID loss, history replacement, or counter reset.
+- [x] Ineffective repair stops after one unproductive round, retaining the original finding and failed pixels.
+- [x] Zero allowance preserves source/checks and consumes no round despite an inspected defect.
+- [x] Default allowance permits exactly three productive rounds; retained baseline plus three passes show D still failing and no fourth attempt.
+- [x] A fresh continuation session completes the reserved round without replay, ID loss, history replacement, or counter reset.
 
 human-gated: false
 
