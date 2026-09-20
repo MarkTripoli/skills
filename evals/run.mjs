@@ -25,6 +25,7 @@ import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { buildRuntime } from "../scripts/lib/build.mjs";
 import { subjectProblems } from "../scripts/check-commits.mjs";
 import {
@@ -303,6 +304,56 @@ function report(scenario, label, seconds, problems) {
   for (const p of problems) console.log(`    - ${p.split("\n").join("\n      ")}`);
 }
 
+function readJson(file) {
+  try {
+    return { ok: true, value: JSON.parse(fs.readFileSync(file, "utf8")) };
+  } catch (error) {
+    return { ok: false, problem: `recording: ${path.basename(file)} is unreadable or invalid JSON (${error.message})` };
+  }
+}
+
+function completedRunProblems(runDir, selectedScenarios) {
+  const summaryFile = path.join(runDir, "summary.json");
+  if (!fs.existsSync(summaryFile)) return ["recording: run is incomplete (summary.json missing)"];
+  const parsed = readJson(summaryFile);
+  if (!parsed.ok) return [parsed.problem];
+  if (!Array.isArray(parsed.value) || parsed.value.length === 0) {
+    return ["recording: summary.json must contain at least one completed scenario"];
+  }
+  const problems = [];
+  const names = new Set();
+  for (const result of parsed.value) {
+    if (!result || typeof result !== "object" || Array.isArray(result)) {
+      problems.push("recording: summary.json contains a non-object scenario result");
+      continue;
+    }
+    if (typeof result.name !== "string" || result.name === "") {
+      problems.push("recording: summary.json contains a scenario without a name");
+      continue;
+    }
+    if (names.has(result.name)) problems.push(`recording: summary.json repeats scenario ${result.name}`);
+    names.add(result.name);
+    if (typeof result.ok !== "boolean" || !Array.isArray(result.phases) || result.phases.length === 0) {
+      problems.push(`recording: summary.json has incomplete result metadata for ${result.name}`);
+      continue;
+    }
+    const reportFile = path.join(runDir, result.name, "report.json");
+    if (!fs.existsSync(reportFile)) {
+      problems.push(`recording: completed scenario ${result.name} is missing report.json`);
+      continue;
+    }
+    const recorded = readJson(reportFile);
+    if (!recorded.ok) problems.push(recorded.problem);
+    else if (!isDeepStrictEqual(recorded.value, result)) {
+      problems.push(`recording: summary.json disagrees with ${result.name}/report.json`);
+    }
+  }
+  for (const scenario of selectedScenarios) {
+    if (!names.has(scenario.name)) problems.push(`recording: selected scenario ${scenario.name} is absent from summary.json`);
+  }
+  return problems;
+}
+
 function templateFor(skillsDir, phase) {
   if (!phase.template) return "";
   const file = path.join(skillsDir, phase.skill, "references", phase.template);
@@ -401,14 +452,20 @@ async function gradeScenario(scenario, runDir) {
   const resultDir = path.join(runDir, scenario.name);
   const result = { name: scenario.name, repo: null, phases: [], ok: true, graded: true };
   if (!fs.existsSync(resultDir)) {
-    console.log(`[${scenario.name}] no recording under ${path.relative(repoRoot, runDir)}; skipped`);
-    return { ...result, skipped: true };
+    const problems = ["recording: completed run is missing the scenario directory"];
+    result.phases.push({ phase: "recording", seconds: null, ok: false, problems });
+    result.ok = false;
+    report(scenario.name, "recording", null, problems);
+    return result;
   }
   const pinnedDist = path.join(runDir, ".dist");
   const sourceRoot = path.join(pinnedDist, "fixtures");
   if (!fs.existsSync(sourceRoot)) {
-    console.log(`[${scenario.name}] source snapshot missing under ${path.relative(repoRoot, pinnedDist)}; skipped`);
-    return { ...result, skipped: true };
+    const problems = ["recording: completed run is missing its pinned source snapshot"];
+    result.phases.push({ phase: "recording", seconds: null, ok: false, problems });
+    result.ok = false;
+    report(scenario.name, "recording", null, problems);
+    return result;
   }
   const codeRoot = fs.mkdtempSync(path.join(os.tmpdir(), `skills-eval-grade-${scenario.name}-`));
   copyFixtures(scenario, codeRoot, sourceRoot);
@@ -430,18 +487,27 @@ async function gradeScenario(scenario, runDir) {
       const afterGitConfigManifest = path.join(out, "git-config-after.json");
       const beforeExcludedRootsManifest = path.join(out, "excluded-roots-before.json");
       const afterExcludedRootsManifest = path.join(out, "excluded-roots-after.json");
-      if (phase.phaseType === "terminal" && [beforeManifest, afterManifest, beforeGitConfigManifest, afterGitConfigManifest, beforeExcludedRootsManifest, afterExcludedRootsManifest].some((file) => !fs.existsSync(file))) {
-        console.log(`[${scenario.name}] ${label}: terminal repository, Git config, or excluded-root manifests missing; skipped`);
-        result.skipped = true;
+      const requiredManifests = [beforeManifest, afterManifest, beforeGitConfigManifest, afterGitConfigManifest, beforeExcludedRootsManifest, afterExcludedRootsManifest];
+      if (phase.phaseType === "terminal" && requiredManifests.some((file) => !fs.existsSync(file))) {
+        const missing = requiredManifests.filter((file) => !fs.existsSync(file)).map((file) => path.basename(file));
+        const problems = [`recording: phase is incomplete (required manifests missing: ${missing.join(", ")})`];
+        result.phases.push({ phase: label, seconds: null, ok: false, problems });
+        result.ok = false;
+        report(scenario.name, label, null, problems);
+        break;
+      }
+      const parsedManifests = phase.phaseType === "terminal" ? requiredManifests.map(readJson) : [];
+      const manifestProblems = parsedManifests.filter((manifest) => !manifest.ok).map((manifest) => manifest.problem);
+      if (manifestProblems.length) {
+        result.phases.push({ phase: label, seconds: null, ok: false, problems: manifestProblems });
+        result.ok = false;
+        report(scenario.name, label, null, manifestProblems);
         break;
       }
       const previous = index === 0 ? null : path.join(resultDir, `${index}-${scenario.phases[index - 1].skill}`, "task");
-      const beforeRepository = phase.phaseType === "terminal" ? JSON.parse(fs.readFileSync(beforeManifest, "utf8")) : null;
-      const afterRepository = phase.phaseType === "terminal" ? JSON.parse(fs.readFileSync(afterManifest, "utf8")) : null;
-      const beforeGitConfig = phase.phaseType === "terminal" ? JSON.parse(fs.readFileSync(beforeGitConfigManifest, "utf8")) : null;
-      const afterGitConfig = phase.phaseType === "terminal" ? JSON.parse(fs.readFileSync(afterGitConfigManifest, "utf8")) : null;
-      const beforeExcludedRoots = phase.phaseType === "terminal" ? JSON.parse(fs.readFileSync(beforeExcludedRootsManifest, "utf8")) : null;
-      const afterExcludedRoots = phase.phaseType === "terminal" ? JSON.parse(fs.readFileSync(afterExcludedRootsManifest, "utf8")) : null;
+      const [beforeRepository, afterRepository, beforeGitConfig, afterGitConfig, beforeExcludedRoots, afterExcludedRoots] = phase.phaseType === "terminal"
+        ? parsedManifests.map((manifest) => manifest.value)
+        : [null, null, null, null, null, null];
       const repositoryDiff = beforeRepository && afterRepository
         ? diffRepositorySnapshots(beforeRepository, afterRepository)
         : { created: [], modified: [], deleted: [], changedPaths: [] };
@@ -491,6 +557,11 @@ if (gradeDir !== null) {
     process.exit(2);
   }
   console.log(`re-grading ${fs.realpathSync(runDir)} with the current checks`);
+  const completionProblems = completedRunProblems(runDir, scenarios);
+  if (completionProblems.length) {
+    for (const problem of completionProblems) console.error(problem);
+    process.exit(1);
+  }
   results = [];
   for (const s of scenarios) results.push(await gradeScenario(s, runDir));
 } else {
