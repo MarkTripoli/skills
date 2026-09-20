@@ -32,7 +32,7 @@ func TestAdmissionAuthenticatedReplayAndMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	var accepted ipc.AdmitPushResult
-	params := ipc.AdmitPushParams{Gate: "/tmp/gate.git", Ref: "refs/heads/main", Token: token}
+	params := ipc.AdmitPushParams{Gate: "/tmp/gate.git", Ref: "refs/heads/main", Old: "0", New: "1", Token: token}
 	if err := client.CallWithTimeout(ipc.MethodAdmitPush, params, &accepted, time.Second); err != nil {
 		t.Fatalf("authenticated admission: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestAdmissionAuthenticatedReplayAndMismatch(t *testing.T) {
 		t.Fatal("mismatched gate accepted")
 	}
 	var result map[string]bool
-	if err := client.CallWithTimeout(ipc.MethodNotifyPush, ipc.NotifyPushParams{Gate: "/tmp/gate.git", Ref: "refs/heads/main", Old: "0", New: "1", PushOptions: []string{"x=y"}}, &result, time.Second); err != nil {
+	if err := client.CallWithTimeout(ipc.MethodNotifyPush, ipc.NotifyPushParams{Gate: "/tmp/gate.git", Ref: "refs/heads/main", Old: "0", New: "1", PushOptions: []string{"safety-dance-token=" + token}}, &result, time.Second); err != nil {
 		t.Fatalf("notification: %v", err)
 	}
 	if got.New != "1" || len(got.Options) != 1 {

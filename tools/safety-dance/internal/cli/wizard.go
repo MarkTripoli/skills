@@ -35,14 +35,19 @@ func runWizard(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	service := daemon.Service{Home: p, Binary: "safety-dance", Executor: commandExecutor{}}
+	createdGate := false
 	setup := wizard.Setup{
 		In:  cmd.InOrStdin(),
 		Out: cmd.OutOrStdout(),
 		Write: func(model wizard.Model) error {
-			_, _, err := gate.Init(context.Background(), database, p, root)
+			_, created, err := gate.Init(context.Background(), database, p, root)
+			createdGate = created
 			return err
 		},
 		Compensate: func(model wizard.Model) error {
+			if !createdGate {
+				return nil
+			}
 			_, err := gate.Eject(context.Background(), database, p, root)
 			return err
 		},

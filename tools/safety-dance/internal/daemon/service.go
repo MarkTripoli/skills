@@ -3,6 +3,7 @@ package daemon
 import (
 	"fmt"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/paths"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -46,6 +47,55 @@ func (s Service) Validate() error {
 	}
 	return nil
 }
+func (s Service) definitionPath() (string, error) {
+	if s.Home == nil {
+		return "", fmt.Errorf("runtime home is required")
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(s.Home.Root(), "safety-dance.plist"), nil
+	case "linux":
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, ".config", "systemd", "user", "safety-dance-"+strings.ReplaceAll(s.Home.Root(), "/", "-")+".service"), nil
+	default:
+		return "", nil
+	}
+}
+
+func (s Service) writeDefinition() error {
+	path, err := s.definitionPath()
+	if err != nil || path == "" {
+		return err
+	}
+	definition, err := s.Definition()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".safety-dance-service-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.WriteString(definition); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
 
 func (s Service) Install() error {
 	if s.Executor == nil {
@@ -54,14 +104,16 @@ func (s Service) Install() error {
 	if err := s.Validate(); err != nil {
 		return err
 	}
-	if err := s.Validate(); err != nil {
-		return err
+	if err := s.writeDefinition(); err != nil {
+		return fmt.Errorf("write service definition: %w", err)
 	}
 	switch runtime.GOOS {
 	case "darwin":
-		return s.Executor.Run("launchctl", "load", "-w", filepath.Join(s.Home.Root(), "safety-dance.plist"))
+		path, _ := s.definitionPath()
+		return s.Executor.Run("launchctl", "load", "-w", path)
 	case "linux":
-		return s.Executor.Run("systemctl", "--user", "enable", "--now", "safety-dance-"+strings.ReplaceAll(s.Home.Root(), "/", "-")+".service")
+		path, _ := s.definitionPath()
+		return s.Executor.Run("systemctl", "--user", "enable", "--now", filepath.Base(path))
 	default:
 		return s.Executor.Run("schtasks", "/Create", "/TN", s.Label(), "/TR", s.Binary+" daemon serve", "/F")
 	}
@@ -72,9 +124,19 @@ func (s Service) Stop() error {
 	}
 	switch runtime.GOOS {
 	case "darwin":
-		return s.Executor.Run("launchctl", "unload", "-w", filepath.Join(s.Home.Root(), "safety-dance.plist"))
+		path, _ := s.definitionPath()
+		err := s.Executor.Run("launchctl", "unload", "-w", path)
+		if err == nil {
+			_ = os.Remove(path)
+		}
+		return err
 	case "linux":
-		return s.Executor.Run("systemctl", "--user", "disable", "--now", "safety-dance-"+strings.ReplaceAll(s.Home.Root(), "/", "-")+".service")
+		path, _ := s.definitionPath()
+		err := s.Executor.Run("systemctl", "--user", "disable", "--now", filepath.Base(path))
+		if err == nil {
+			_ = os.Remove(path)
+		}
+		return err
 	default:
 		return s.Executor.Run("schtasks", "/End", "/TN", s.Label())
 	}

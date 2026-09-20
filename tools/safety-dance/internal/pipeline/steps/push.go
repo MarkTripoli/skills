@@ -124,6 +124,12 @@ func Publish(ctx context.Context, database *db.DB, runID string, req PushRequest
 	if run == nil {
 		return PushResult{}, fmt.Errorf("run %s not found", runID)
 	}
+	if run.Status == types.RunCancelled || run.Status == types.RunFailed {
+		return PushResult{}, fmt.Errorf("run %s was cancelled before publication binding", runID)
+	}
+	if err := ctx.Err(); err != nil {
+		return PushResult{}, err
+	}
 	if err := database.RecordPublication(db.Publication{RunID: runID, RepoID: run.RepoID, Ref: req.Ref, Candidate: result.Candidate, VerifiedUpstream: result.Upstream, GateMirror: result.Candidate}); err != nil {
 		return PushResult{}, err
 	}

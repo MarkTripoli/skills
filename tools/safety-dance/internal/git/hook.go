@@ -55,7 +55,7 @@ while read line; do
     done
   fi
   if [ -z "$token" ]; then rm -f "$TMP"; printf 'safety-dance: authorized admission token is required\n' >&2; exit 1; fi
-  out=$(printf '%s\n' "$line" | SD_HOOK_HELPER=1 "$SD_BIN" daemon admit-push --gate "$GATE_DIR" --ref "$refname" --token "$token" 2>&1)
+  out=$(printf '%s\n' "$line" | SD_HOOK_HELPER=1 "$SD_BIN" daemon admit-push --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --token "$token" 2>&1)
   status=$?
   if [ $status -ne 0 ]; then rm -f "$TMP"; printf 'safety-dance: gate push refused before ref mutation:\n%s\n' "$out" >&2; exit $status; fi
 done < "$TMP"

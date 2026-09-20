@@ -223,6 +223,8 @@ type GateContextParams struct {
 type AdmitPushParams struct {
 	Gate  string `json:"gate"`
 	Ref   string `json:"ref"`
+	Old   string `json:"old"`
+	New   string `json:"new"`
 	Token string `json:"token"`
 }
 

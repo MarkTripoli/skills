@@ -2,7 +2,6 @@
 package main
 
 import (
-	"bufio"
 	"flag"
 	"fmt"
 	"os"
@@ -61,22 +60,14 @@ func endpoint(p *paths.Paths) string {
 
 func admit(c *ipc.Client, args []string) {
 	fs := flag.NewFlagSet("admit-push", flag.ContinueOnError)
-	gate, ref, token := fs.String("gate", "", ""), fs.String("ref", "", ""), fs.String("token", "", "")
+	gate, ref, old, newRev, token := fs.String("gate", "", ""), fs.String("ref", "", ""), fs.String("old", "", ""), fs.String("new", "", ""), fs.String("token", "", "")
 	if err := fs.Parse(args); err != nil {
 		fail(err)
 	}
-	var result ipc.AdmitPushResult
-	if err := c.CallWithTimeout(ipc.MethodAdmitPush, ipc.AdmitPushParams{Gate: *gate, Ref: *ref, Token: *token}, &result, 5*time.Second); err != nil {
+	if err := c.CallWithTimeout(ipc.MethodAdmitPush, ipc.AdmitPushParams{Gate: *gate, Ref: *ref, Old: *old, New: *newRev, Token: *token}, &ipc.AdmitPushResult{}, 5*time.Second); err != nil {
 		fail(err)
 	}
-	in := bufio.NewScanner(os.Stdin)
-	for in.Scan() {
-		if strings.TrimSpace(in.Text()) != "" {
-			fmt.Fprintln(os.Stdout, in.Text())
-		}
-	}
 }
-
 func notify(c *ipc.Client, args []string) {
 	fs := flag.NewFlagSet("notify-push", flag.ContinueOnError)
 	gate, ref, old, newRev := fs.String("gate", "", ""), fs.String("ref", "", ""), fs.String("old", "", ""), fs.String("new", "", "")

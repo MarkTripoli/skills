@@ -368,9 +368,8 @@ type pushArgs struct {
 
 func newAdmitPush() *cobra.Command {
 	a := &pushArgs{}
-
 	c := &cobra.Command{Use: "admit-push", Hidden: true, RunE: func(cmd *cobra.Command, args []string) error {
-		return callDaemon(ipc.MethodAdmitPush, ipc.AdmitPushParams{Gate: a.gate, Ref: a.ref, Token: a.token}, &ipc.AdmitPushResult{})
+		return callDaemon(ipc.MethodAdmitPush, ipc.AdmitPushParams{Gate: a.gate, Ref: a.ref, Old: a.old, New: a.new, Token: a.token}, &ipc.AdmitPushResult{})
 	}}
 	flags(c, a)
 	return c

@@ -822,12 +822,19 @@ func TestInitRefreshPreservesCustomPostReceiveHook(t *testing.T) {
 		t.Fatalf("re-init: %v", err)
 	}
 
-	got, err := os.ReadFile(hookPath)
+	got, err := os.ReadFile(filepath.Join(filepath.Dir(hookPath), "post-receive.safety-dance-user"))
 	if err != nil {
-		t.Fatalf("read hook: %v", err)
+		t.Fatalf("read preserved hook: %v", err)
 	}
 	if string(got) != string(customHook) {
-		t.Errorf("custom hook was overwritten")
+		t.Errorf("custom hook was not preserved")
+	}
+	managed, err := os.ReadFile(hookPath)
+	if err != nil {
+		t.Fatalf("read managed hook: %v", err)
+	}
+	if !strings.Contains(string(managed), "# safety-dance post-receive hook") {
+		t.Errorf("managed wrapper was not installed")
 	}
 }
 

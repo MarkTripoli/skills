@@ -2343,7 +2343,7 @@ func parseRepoConfig(data []byte) (*RepoConfig, error) {
 	if err := yaml.Unmarshal(data, &document); err != nil {
 		return nil, fmt.Errorf("parse repo config: %w", err)
 	}
-	allowed := map[string]bool{"agent": true, "commands": true, "ignore_patterns": true, "protected_paths": true, "allow_repo_commands": true, "auto_fix": true, "ci": true, "rebase": true, "review": true, "test": true, "gates": true, "pr": true, "document": true}
+	allowed := map[string]bool{"agent": true, "commands": true, "ignore_patterns": true, "protected_paths": true, "allow_repo_commands": true, "auto_fix": true, "ci": true, "rebase": true, "review": true, "test": true, "gates": true, "pr": true, "document": true, "commit": true, "intent": true, "providers": true, "disable_project_settings": true, "no_ci": true}
 	if len(document.Content) > 0 && document.Content[0].Kind == yaml.MappingNode {
 		for i := 0; i+1 < len(document.Content[0].Content); i += 2 {
 			key := document.Content[0].Content[i].Value
@@ -2353,7 +2353,9 @@ func parseRepoConfig(data []byte) (*RepoConfig, error) {
 		}
 	}
 	cfg := &RepoConfig{}
-	if err := yaml.Unmarshal(data, cfg); err != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(cfg); err != nil {
 		return nil, fmt.Errorf("parse repo config: %w", err)
 	}
 	if err := validateCommitRaw(cfg.Commit); err != nil {

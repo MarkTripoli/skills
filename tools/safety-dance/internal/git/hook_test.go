@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPreReceiveHookScript(t *testing.T) {
@@ -292,15 +293,22 @@ func TestRefreshManagedPostReceiveHookPreservesCustomHook(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RefreshManagedPostReceiveHook: %v", err)
 	}
-	if changed {
-		t.Fatal("custom hook should not be overwritten")
+	if !changed {
+		t.Fatal("custom hook should be moved behind the managed wrapper")
 	}
-	data, err := os.ReadFile(hookPath)
+	data, err := os.ReadFile(filepath.Join(bare, "hooks", "post-receive.safety-dance-user"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(data) != custom {
-		t.Fatalf("custom hook changed to:\n%s", data)
+		t.Fatalf("custom companion changed to:\n%s", data)
+	}
+	managed, err := os.ReadFile(hookPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isManagedPostReceiveHook(managed) {
+		t.Fatal("managed wrapper was not installed")
 	}
 }
 
@@ -445,14 +453,22 @@ func TestPostReceiveHook_FallsBackToHookLocationForGateDir(t *testing.T) {
 	cmd.Dir = bare
 	cmd.Stdin = strings.NewReader("oldrev newrev refs/heads/main\n")
 	cmd.Env = []string{
-		"PATH=" + fakePath,
+		"PATH=" + fakePath + ":" + os.Getenv("PATH"),
 		"PWD=.",
 	}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("run hook: %v: %s", err, out)
 	}
 
-	args, err := os.ReadFile(argsPath)
+	var args []byte
+	var err error
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+		args, err = os.ReadFile(argsPath)
+		if err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if err != nil {
 		t.Fatalf("fake binary should have recorded argv: %v", err)
 	}
