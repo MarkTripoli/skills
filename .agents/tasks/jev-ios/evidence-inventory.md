@@ -111,3 +111,11 @@ No credential-bearing files or video binaries are included in this committed inv
 - `source-sha256.txt` records SHA-256 for the current replacement receipt and standalone receipt. Accepted plain `omp -p` direct goals and their provenance are recorded verbatim in `11-repair-verification-jev-ios.md` and `12-repair-verification-jev-ios.md`.
 - The long goal's empty helper output, rejected rewriting wrapper, blocked attempts, and genuine failed cb7b53a outcome remain preserved as non-green historical evidence. No fabricated pass is claimed.
 - Final cleanup evidence: authorized simulator `Shutdown`; owned IDB socket absent; owned companion/recorder stopped; unrelated processes untouched. `task.md` remained byte-identical.
+
+
+## Safety repair recovery (2026-09-20)
+
+- Pre-edit byte archives and recovery copies are under the unique ignored `evidence/safety-repair-current-20260920T083906-79975/`; `SHA256SUMS` records every copied file.
+- Passing standalone PID16750 evidence was copied from `/tmp/jev-ios-current-standalone`; the historical `final-sync-20260920/current-standalone` blocked run remains untouched.
+- Raw transcript excerpts and reconstructed PID98075 receipt were copied from `/tmp/jev-ios-evidence-recovery-current-20260920T123601Z-61502`. The PID98075 original video/media is irrecoverable after an avoidable earlier worker deletion; reconstructed JSON and transcript are not video recovery.
+- Overall preservation requirement: **NOT MET**. No claim of complete evidence preservation or overall acceptance pass is made.

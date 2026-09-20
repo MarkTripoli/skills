@@ -1,18 +1,19 @@
 ---
 task: jev-ios
 type: final-checks
-status: complete
+status: blocked
 ---
 
 # Final checks
 
 - Branch/worktree: `feat/jev-ios`; base verified as `origin/main` at `4458fbf21e199dad45376b8164f78c2165ac1d20` (not a stale local `main`). No new worktree, push, PR, upload, old Atomic resume, recording upload, or Android interaction.
-- Independent review: `13-code-review-jev-ios.md`, reviewed HEAD `2fcc651` (review artifact commit `c5fa96c`), status `clean`, decision `approve`; its minor receipt-provenance suggestion is deferred and requires no product expansion.
+- Independent review of the current safety repair is pending; no approval is claimed.
 - `npm test`: exit 0; 150 tests, 150 pass, 0 fail, 0 skipped, 0 todo.
 - Runtime packaging for current product revision `0084d10`: four fresh `node scripts/build-runtimes.mjs` commands exited 0 into `/tmp/jev-ios-repair-0084d10-1789906894/`: claude-code 43 skills/7 workers; codex 43/7; oh-my-pi 43/7; pi 43/0.
 - Commit validation: `node scripts/check-commits.mjs origin/main..HEAD` exited 0 with valid subjects. Final commit subject was checked against repository conventions.
 - Luna-authored table validation: `python3` Markdown pipe-count check over `02-verification-jev-ios.md` reported `rows=24, expected_cells=8, invalid=[]`.
-- Native acceptance: current replacement receipt/media is persisted under ignored `evidence/final-sync-20260920/current-replacement/`; standalone receipt/media is persisted under ignored `evidence/final-sync-20260920/current-standalone/`. Source paths and SHA-256 values are in `source-sha256.txt`. Plain `omp -p` direct goals are recorded verbatim in `11`/`12`; the long goal's empty output and rejected rewriting wrapper remain failed historical evidence, not passing proof.
+- Native evidence: current replacement remains under ignored `evidence/final-sync-20260920/current-replacement/`; passing standalone PID16750 bytes were copied from `/tmp/jev-ios-current-standalone` into the unique safety-repair recovery directory. Historical `current-standalone` remains blocked and untouched. Source paths and SHA-256 values are in `source-sha256.txt`. Plain `omp -p` direct goals are recorded verbatim in `11`/`12`; the long goal's empty output and rejected rewriting wrapper remain failed historical evidence, not passing proof.
+- Preservation status: **NOT MET**. Earlier avoidable worker `rm -rf` commands deleted failed replacement and PID98075 standalone original media; PID98075 video is irrecoverable, and reconstructed JSON/transcript is not video recovery.
 - Historical truth: genuine failed outcome remains `evidence/repair-cb7b53a/failed/` (cb7b53a provenance); blocked and cleanup regressions remain preserved and non-green.
 - Cleanup observed after latest runs: authorized simulator `7A023F51-F0DA-4179-868B-19207E433651` was `Shutdown`; owned `/tmp/atomic-migration.JBu9Sk/jev-ios-idb.sock` was absent; owned companion/recorder processes were stopped. Unrelated processes were not touched.
 - Qlty's existing shellcheck advisory remains deferred; no prose-only rerun was needed.

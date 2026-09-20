@@ -1,8 +1,8 @@
 ---
 task: jev-ios
 type: verification
-summary: "Historical iOS acceptance and cleanup repair proof remain preserved; latest iOS WAIT repair and plain-helper native reruns pass, with independent review complete."
-status: passed
+summary: "Safety repairs pass offline; native proof is retained, but preservation is violated and independent review remains pending."
+status: blocked
 revision: 0084d10
 target: main
 ---
@@ -41,7 +41,7 @@ target: main
 | A4 | Genuine Casey-to-Jordan replacement without relaunch (`task.md:34`; claimed: yes). | Plain `omp -p` replacement run with unchanged direct goals and existing 10-action budget. | Exit 0; Casey then Jordan and both independent confirmation statuses observed under stable PID `81161`; verified recording. | Current replacement evidence `final-sync-20260920/current-replacement`. | pass | hand | 0 |
 | A5 | Explicit identity and safe input replacement (`task.md:35`; claimed: yes). | Inspect the A2-A4 receipts and their independent observations. | Receipts prove device, app, driver, PID, and safe replacement without identity drift. | Receipts name the authorized UDID, `ai.typesafe.jevfixture`, `idb`, simulator identity, and one stable PID per run; accepted plain-helper replacement changed Casey to Jordan under PID `81161` before independent Status changed. | pass | 0.80 | 0 |
 | A6 | Truthful blocked outcome and owned app/recording cleanup across outcomes (`task.md:35`; claimed: yes). | Run zero-action acceptance with `--max-actions 0`, inspect its receipt, query `idb list-apps`, inspect verifier-owned recording processes, then stop owned services. | Zero-action remains blocked, evidence is retained, and owned app, recording, companion, and simulator resources stop. | Current continuation zero-action exited 1 as expected with `blocked` / `action budget exhausted`; verified media was retained. The prior and current owned cleanup checks leave no verifier recorder, stop the companion, remove its socket, and return the simulator to `Shutdown`. | pass | 1.00 | 0 |
-| A7 | Installed standalone iOS execution uses external dependencies (`task.md:36`; claimed: yes). | Rebuilt `/tmp/jev-ios-cr001-codex/skills/jev-ui/scripts/acceptance.mjs` with external companion, plain `omp -p`, absolute record-evidence command. | Exit 0; independent `Confirmed Name`, stable PID `16750`, verified recording. | Current standalone evidence `final-sync-20260920/current-standalone`; final-sync/current-standalone is the accepted current standalone proof. | pass | hand | 0 |
+| A7 | Installed standalone iOS execution uses external dependencies (`task.md:36`; claimed: yes). | Rebuilt `/tmp/jev-ios-cr001-codex/skills/jev-ui/scripts/acceptance.mjs` with external companion, plain `omp -p`, absolute record-evidence command. | Exit 0; independent `Confirmed Name`, stable PID `16750`, verified recording. | Passing standalone evidence is copied from `/tmp/jev-ios-current-standalone` into the unique ignored safety-repair recovery directory; the historical `final-sync-20260920/current-standalone` blocked evidence remains untouched and is not accepted as passing proof. | pass | hand | 0 |
 | A8 | Aggregate regression and packaging preserve browser and Android boundaries (`task.md:37`; claimed: yes). | C1-C5 and controller/cleanup probes. | C1 passed 150 tests; all four runtime packages passed; `jev-controller-probe` returned `TYPE_TEXT,WAIT,DONE`; no Android device was touched. | Fresh current-product builds recorded in `final-checks.md` passed; no Android device was touched. | pass | hand | 0 |
 | A9 | Independent review follows verification (`task.md:37`; claimed: yes). | `13-code-review-jev-ios.md` reviewed HEAD `2fcc651`; review artifact commit `c5fa96c`. | Independent review decision approve; no critical or major findings. | `13-code-review-jev-ios.md` records review of HEAD `2fcc651`; artifact commit is `c5fa96c`, not the reviewed HEAD. | pass | hand | 0 |
 
@@ -53,7 +53,9 @@ The latest native reruns diagnosed repeated iOS WAIT decisions after successful 
 
 ## Missing
 
-No implementation or acceptance item remains open in this matrix; independent review of the product repair and current receipts is complete.
+- **NOT READY:** Preservation requirement is unmet. Earlier avoidable `rm -rf` commands deleted the failed replacement attempt and PID 98075 standalone original media; no original PID 98075 video was recovered. Reconstructed terminal JSON is not video recovery.
+- Independent code review of the current uncommitted safety repair remains pending.
+- Native proof was not rerun in this repair session; retained generic, Casey-to-Jordan, Name/PID16750, and blocked evidence is referenced truthfully.
 
 ## Human Review
 
@@ -75,4 +77,4 @@ No implementation or acceptance item remains open in this matrix; independent re
 
 - Browser and Android live acceptance were not repeated; aggregate tests and all runtime packages pass, and no Android device or ADB server was touched.
 - Qlty was installed in `/tmp/jev-qlty-bin` for one bounded check. Its generated temporary configuration was removed afterward; the check found one pre-existing shellcheck advisory in `install-authorized.sh`, and no unrelated product edit was made.
-- Native recordings and screenshots remain local ignored evidence; no video binaries or credentials are committed or linked.
+- Native recordings and screenshots remain local ignored evidence; no video binaries or credentials are committed or linked. The preservation violation and irrecoverable PID 98075 media prevent an overall pass.

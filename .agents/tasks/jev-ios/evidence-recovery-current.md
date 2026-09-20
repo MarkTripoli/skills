@@ -27,6 +27,6 @@ The PID 98075 tool output was available in the transcript, so a separately label
 
 ## Contract failure / limits
 
-The preservation contract was unavoidably violated before this recovery: the transcript proves destructive `rm -rf` commands deleted failed/interrupted evidence before retries. The reconstructed PID 98075 receipt and raw transcript excerpt do not restore the deleted media. The passing PID 16750 receipt/report/video are actual recovered bytes and are not evidence that the deleted PID 98075 media was restored. No claim of original-video restoration is made.
+The preservation contract was violated by an avoidable destructive worker action before this recovery: the transcript proves destructive `rm -rf` commands deleted failed/interrupted evidence before retries. The reconstructed PID 98075 receipt and raw transcript excerpt do not restore the deleted media. The passing PID 16750 receipt/report/video are actual recovered bytes and are not evidence that the deleted PID 98075 media was restored. No claim of original-video restoration is made. The deleted PID 98075 original video is irrecoverable; the transcript and reconstructed JSON are historical evidence only, not video recovery.
 
 Recovery commands used after inspection were read-only validation (`jq`, `ffprobe`, `shasum`, `cmp`, `ps`, transcript parsing) plus new-directory creation and `cp -p` into the unique `/tmp` recovery directory. No existing evidence path was deleted, moved, or overwritten.
