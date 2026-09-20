@@ -810,9 +810,8 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	if err != nil {
 		return err
 	}
-	rewrite := false
 	var request steps.PushRequest
-	request = steps.PushRequest{Worktree: worktree, Remote: repo.PushURL(), Ref: ref, Candidate: run.HeadSHA, VerifiedHead: verifiedHead, BeforePush: func() error {
+	request = steps.PushRequest{Worktree: worktree, Remote: repo.PushURL(), Ref: ref, Candidate: run.HeadSHA, VerifiedHead: verifiedHead, BeforePush: func(req *steps.PushRequest) error {
 		current, checkErr := database.GetRun(run.ID)
 		if checkErr != nil {
 			return checkErr
@@ -826,8 +825,7 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 		}
 		if verifiedHead != "" && strings.TrimSpace(candidate) != verifiedHead {
 			_, mergeErr := git.Run(context.Background(), worktree, "merge-base", "--is-ancestor", verifiedHead, strings.TrimSpace(candidate))
-			rewrite = mergeErr != nil
-			request.Rewrite = rewrite
+			req.Rewrite = mergeErr != nil
 		}
 		return nil
 	}}
@@ -881,21 +879,14 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 			if stepErr != nil {
 				return stepErr
 			}
-			// Persist the latest owned worktree head so restart recovery resumes
-			// from the output of the last completed modifying step.
-			if head, headErr := git.Run(stepCtx, worktree, "rev-parse", "HEAD"); headErr == nil {
-				if headErr = database.UpdateRunHeadSHA(run.ID, strings.TrimSpace(head)); headErr != nil {
-					return headErr
-				}
-			}
-			if name == pipeline.StepReview {
-				head, headErr := git.Run(stepCtx, worktree, "rev-parse", "HEAD")
-				if headErr != nil {
-					return headErr
-				}
-				return database.UpdateRunReviewApprovedHeadSHA(run.ID, strings.TrimSpace(head))
-			}
 			return nil
+		})
+		runner.RegisterWithCheckpoint(name, func() (string, error) {
+			head, headErr := git.Run(context.Background(), worktree, "rev-parse", "HEAD")
+			if headErr != nil {
+				return "", headErr
+			}
+			return strings.TrimSpace(head), nil
 		})
 	}
 	runner.Register(pipeline.StepPush, func(pushCtx context.Context) error {

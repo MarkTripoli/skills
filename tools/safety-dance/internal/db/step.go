@@ -405,6 +405,38 @@ func (d *DB) CompleteReviewStep(id, runID, approvedHeadSHA string, exitCode int,
 	return nil
 }
 
+// CompleteStepWithRunHead commits a successful step and the resulting worktree
+// checkpoint in one transaction. A review also records its exact approved head
+// in the same transaction, so recovery cannot observe only one side.
+func (d *DB) CompleteStepWithRunHead(id, runID, headSHA, findingsJSON string, review bool) error {
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return fmt.Errorf("begin complete step checkpoint: %w", err)
+	}
+	defer tx.Rollback()
+	ts := now()
+	result, err := tx.Exec(`UPDATE step_results SET status = ?, exit_code = ?, findings_json = NULLIF(?, ''), completed_at = ?, last_activity_at = ?, last_activity = ?, agent_pid = NULL WHERE id = ?`, types.StepStatusCompleted, 0, findingsJSON, ts, ts, "status: completed", id)
+	if err != nil {
+		return fmt.Errorf("complete step checkpoint: %w", err)
+	}
+	if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+		return fmt.Errorf("complete step checkpoint: step row not found")
+	}
+	if headSHA != "" {
+		result, err := tx.Exec(`UPDATE runs SET head_sha = ?, review_approved_head_sha = CASE WHEN ? THEN ? ELSE review_approved_head_sha END, updated_at = ? WHERE id = ?`, headSHA, review, headSHA, ts, runID)
+		if err != nil {
+			return fmt.Errorf("record step checkpoint: %w", err)
+		}
+		if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+			return fmt.Errorf("record step checkpoint: run row not found")
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit step checkpoint: %w", err)
+	}
+	return nil
+}
+
 // FailStep marks a step as failed with an error message and duration.
 func (d *DB) FailStep(id string, errMsg string, durationMS int64) error {
 	_, err := d.sql.Exec(

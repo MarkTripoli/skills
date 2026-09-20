@@ -18,8 +18,9 @@ import (
 type PushRequest struct {
 	Worktree, Remote, Ref, Candidate, ReviewedHead, VerifiedHead, GateMirror string
 	Rewrite                                                                  bool
-	// BeforePush runs after the live head and lease are verified, immediately before Git push.
-	BeforePush func() error
+	// BeforePush runs after the live head is verified and before Git arguments
+	// are built, so it may select the lease mode for the final candidate.
+	BeforePush func(*PushRequest) error
 }
 type PushResult struct {
 	Candidate, Upstream, GateMirror string
@@ -41,6 +42,11 @@ func Push(ctx context.Context, req PushRequest) (PushResult, error) {
 	if req.VerifiedHead != "" && live != req.VerifiedHead {
 		return PushResult{}, fmt.Errorf("upstream changed before push: expected %s, got %s", req.VerifiedHead, live)
 	}
+	if req.BeforePush != nil {
+		if err := req.BeforePush(&req); err != nil {
+			return PushResult{}, err
+		}
+	}
 	if req.Rewrite && req.VerifiedHead == "" {
 		return PushResult{}, fmt.Errorf("rewrite requires verified upstream head")
 	}
@@ -49,11 +55,6 @@ func Push(ctx context.Context, req PushRequest) (PushResult, error) {
 	if req.Rewrite {
 		lease = "--force-with-lease=" + req.Ref + ":" + req.VerifiedHead
 		args = []string{"push", lease, req.Remote, req.Candidate + ":" + req.Ref}
-	}
-	if req.BeforePush != nil {
-		if err := req.BeforePush(); err != nil {
-			return PushResult{}, err
-		}
 	}
 	cmd := exec.CommandContext(ctx, "git", args...)
 	if req.Worktree != "" {

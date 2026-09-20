@@ -78,6 +78,44 @@ func TestDurableRunnerPersistsAndSkipsCompletedSteps(t *testing.T) {
 	}
 }
 
+func TestDurableRunnerCommitsStepAndHeadCheckpointTogether(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err := database.InsertRepoWithID("repo", "/checkout", "upstream", "main"); err != nil {
+		t.Fatal(err)
+	}
+	run, err := database.CreateRunFromAccepted(db.RunInput{Accepted: db.AcceptedRef{RepoID: "repo", Branch: "main", GateHead: "head", LaunchNonce: "nonce"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.TransitionRunStatus(run.ID, "pending", "running"); err != nil {
+		t.Fatal(err)
+	}
+	runner := NewDurable(database, run.ID)
+	runner.Register(StepIntent, func(context.Context) error { return nil })
+	runner.RegisterWithCheckpoint(StepIntent, func() (string, error) { return "after-intent", nil })
+	if _, err := runner.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := database.GetRun(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.HeadSHA != "after-intent" {
+		t.Fatalf("head=%q, want checkpoint", updated.HeadSHA)
+	}
+	steps, err := database.GetStepsByRun(run.ID)
+	if err != nil || len(steps) != 1 {
+		t.Fatalf("steps=%d err=%v", len(steps), err)
+	}
+	if steps[0].Status != "completed" {
+		t.Fatalf("step status=%s, want completed", steps[0].Status)
+	}
+}
+
 func TestDurableRunnerReusesCompletedStepAfterRunHeadAdvances(t *testing.T) {
 	database, err := db.Open(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {

@@ -58,18 +58,19 @@ func Fingerprint(name StepName, in StepInputs) string {
 }
 
 type Runner struct {
-	mu         sync.Mutex
-	steps      map[StepName]Step
-	inputs     map[StepName]StepInputs
-	inputFuncs map[StepName]func() StepInputs
-	Results    []StepResult
-	Database   *db.DB
-	RunID      string
-	Order      []StepName
+	mu              sync.Mutex
+	steps           map[StepName]Step
+	inputs          map[StepName]StepInputs
+	inputFuncs      map[StepName]func() StepInputs
+	checkpointFuncs map[StepName]func() (string, error)
+	Results         []StepResult
+	Database        *db.DB
+	RunID           string
+	Order           []StepName
 }
 
 func New() *Runner {
-	return &Runner{steps: map[StepName]Step{}, inputs: map[StepName]StepInputs{}, inputFuncs: map[StepName]func() StepInputs{}, Order: append([]StepName(nil), CoreSteps...)}
+	return &Runner{steps: map[StepName]Step{}, inputs: map[StepName]StepInputs{}, inputFuncs: map[StepName]func() StepInputs{}, checkpointFuncs: map[StepName]func() (string, error){}, Order: append([]StepName(nil), CoreSteps...)}
 }
 func NewDurable(database *db.DB, runID string) *Runner {
 	r := New()
@@ -85,6 +86,11 @@ func (r *Runner) RegisterWithInputs(n StepName, in StepInputs, s Step) {
 	r.inputs[n] = in
 	delete(r.inputFuncs, n)
 }
+func (r *Runner) RegisterWithCheckpoint(n StepName, checkpoint func() (string, error)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.checkpointFuncs[n] = checkpoint
+}
 func (r *Runner) RegisterWithInputFunc(n StepName, in func() StepInputs, s Step) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -92,6 +98,7 @@ func (r *Runner) RegisterWithInputFunc(n StepName, in func() StepInputs, s Step)
 	r.inputFuncs[n] = in
 	delete(r.inputs, n)
 }
+
 func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 	for _, n := range r.Order {
 		select {
@@ -103,6 +110,7 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 		s := r.steps[n]
 		in := r.inputs[n]
 		inputFunc := r.inputFuncs[n]
+		checkpointFunc := r.checkpointFuncs[n]
 		r.mu.Unlock()
 		if inputFunc != nil {
 			in = inputFunc()
@@ -111,10 +119,11 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 			continue
 		}
 		var persisted *db.StepResult
+		var err error
 		if r.Database != nil && r.RunID != "" {
-			rows, err := r.Database.GetStepsByRun(r.RunID)
-			if err != nil {
-				return r.Results, err
+			rows, queryErr := r.Database.GetStepsByRun(r.RunID)
+			if queryErr != nil {
+				return r.Results, queryErr
 			}
 			for _, row := range rows {
 				if row.StepName == types.StepName(n) {
@@ -178,28 +187,39 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 			}
 		}
 		sink := db.NewTypedEvidenceSink()
-		err := s(db.WithTypedEvidenceSink(ctx, sink))
+		err = s(db.WithTypedEvidenceSink(ctx, sink))
 		result := StepResult{n, err == nil, err}
 		r.mu.Lock()
 		r.Results = append(r.Results, result)
 		r.mu.Unlock()
 		if persisted != nil {
-			var persistErr error
-			if sink.Value != nil && sink.Value.FindingsJSON != "" {
-				persistErr = r.Database.SetStepFindings(persisted.ID, sink.Value.FindingsJSON)
-			}
-			if persistErr == nil {
+			checkpoint := ""
+			if err == nil && checkpointFunc != nil {
+				checkpoint, err = checkpointFunc()
 				if err != nil {
-					persistErr = r.Database.FailStep(persisted.ID, err.Error(), 0)
-				} else {
-					persistErr = r.Database.CompleteStep(persisted.ID, 0, 0, "")
+					return r.Results, fmt.Errorf("checkpoint step %s: %w", n, err)
 				}
 			}
-			if persistErr == nil && sink.Value != nil && len(sink.Value.Evidence) > 0 {
-				persistErr = r.Database.TouchStepActivity(persisted.ID, "evidence: "+strings.Join(sink.Value.Evidence, "; "))
+			findings := ""
+			if sink.Value != nil {
+				findings = sink.Value.FindingsJSON
 			}
-			if persistErr != nil {
-				return r.Results, fmt.Errorf("persist step %s: %w", n, persistErr)
+			if err == nil {
+				if persistErr := r.Database.CompleteStepWithRunHead(persisted.ID, r.RunID, checkpoint, findings, n == StepReview); persistErr != nil {
+					return r.Results, fmt.Errorf("persist step %s: %w", n, persistErr)
+				}
+			} else {
+				if persistErr := r.Database.SetStepFindings(persisted.ID, findings); persistErr != nil {
+					return r.Results, fmt.Errorf("persist step %s findings: %w", n, persistErr)
+				}
+				if persistErr := r.Database.FailStep(persisted.ID, err.Error(), 0); persistErr != nil {
+					return r.Results, fmt.Errorf("persist step %s: %w", n, persistErr)
+				}
+			}
+			if sink.Value != nil && len(sink.Value.Evidence) > 0 {
+				if persistErr := r.Database.TouchStepActivity(persisted.ID, "evidence: "+strings.Join(sink.Value.Evidence, "; ")); persistErr != nil {
+					return r.Results, fmt.Errorf("persist step %s evidence: %w", n, persistErr)
+				}
 			}
 		}
 		if err != nil {

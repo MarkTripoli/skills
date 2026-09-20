@@ -145,7 +145,7 @@ func TestTemporaryUpstreamPublicationMatrix(t *testing.T) {
 		_, err := steps.Push(context.Background(), steps.PushRequest{
 			Worktree: work, Remote: upstream, Ref: ref, Candidate: candidate,
 			ReviewedHead: candidate, VerifiedHead: candidate, Rewrite: true,
-			BeforePush: func() error {
+			BeforePush: func(*steps.PushRequest) error {
 				runGit(t, competing, "push", "origin", "HEAD:refs/heads/main")
 				return nil
 			},
