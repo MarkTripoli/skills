@@ -555,7 +555,7 @@ description: Operate the local Safety Dance Git gate, inspect durable runs, and 
 
 #### Automated Verification:
 
-- [ ] `node scripts/validate.mjs && node scripts/sync-plugin.mjs --check && node --test tests/install.test.mjs`
+- [x] `node scripts/validate.mjs && node scripts/sync-plugin.mjs --check && node --test tests/install.test.mjs`
 - [x] `tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT; for runtime in claude-code codex oh-my-pi pi; do node scripts/build-runtimes.mjs --runtime "$runtime" --dest "$tmp/$runtime"; test -f "$tmp/$runtime/skills/safety-dance/SKILL.md"; test ! -e "$tmp/$runtime/agents/safety-dance.md"; test ! -e "$tmp/$runtime/agents/safety-dance.toml"; done`
 
 Done when all runtime and portable trees contain the canonical skill, selected uninstall preserves unrelated files, plugin sync is clean, and no worker definition is generated.
