@@ -255,7 +255,50 @@ test("regrade rejects symlinked scenario directories", async () => {
 
     // Then
     assert.equal(regrade.status, 1);
-    assert.match(`${regrade.stdout}\n${regrade.stderr}`, /unsafe scenario directory/);
+    assert.match(`${regrade.stdout}\n${regrade.stderr}`, /unsafe retained|unsafe scenario directory/);
+  } finally {
+    removeFixtureRepositories(harness.resultsRoot);
+    fs.rmSync(harness.temp, { recursive: true, force: true });
+  }
+});
+
+test("regrade rejects symlinks across every retained input class", async (t) => {
+  // Given
+  const harness = createHarness("skills-retained-tree-regrade-");
+  try {
+    const live = await runEval([basicScenario], ["--keep", "--max-time", "1"], harness.env);
+    assert.equal(live.status, 0, live.stderr || live.stdout);
+    const runDir = fs.realpathSync(path.join(harness.resultsRoot, "latest"));
+    const phaseDir = path.join(runDir, basicScenario, "1-setup-repository");
+    const cases = [
+      ["summary", path.join(runDir, "summary.json")],
+      ["pinned source", path.join(runDir, ".dist")],
+      ["report", path.join(runDir, basicScenario, "report.json")],
+      ["phase directory", phaseDir],
+      ["answer", path.join(phaseDir, "answer.md")],
+      ["status", path.join(phaseDir, "exit-status.json")],
+      ["manifest", path.join(phaseDir, "repository-before.json")],
+      ["task copy", path.join(phaseDir, "task")],
+    ];
+
+    for (const [name, target] of cases) {
+      await t.test(name, async () => {
+        const retained = `${target}.retained`;
+        fs.renameSync(target, retained);
+        fs.symlinkSync(retained, target, fs.lstatSync(retained).isDirectory() ? "dir" : "file");
+        try {
+          // When
+          const regrade = await runEval([basicScenario], ["--grade", runDir], harness.env);
+
+          // Then
+          assert.equal(regrade.status, 1);
+          assert.match(`${regrade.stdout}\n${regrade.stderr}`, /unsafe retained|unsafe report/);
+        } finally {
+          fs.rmSync(target, { force: true });
+          fs.renameSync(retained, target);
+        }
+      });
+    }
   } finally {
     removeFixtureRepositories(harness.resultsRoot);
     fs.rmSync(harness.temp, { recursive: true, force: true });
@@ -279,12 +322,29 @@ test("regrade rejects every malformed retained manifest shape even when before a
         },
       },
       {
+        name: "repository NUL path",
+        files: ["repository-before.json", "repository-after.json"],
+        mutate(value) {
+          return { ...value, "bad\0name": { kind: "directory", mode: "0755" } };
+        },
+      },
+      {
         name: "excluded-root bucket ownership",
         files: ["excluded-roots-before.json", "excluded-roots-after.json"],
         mutate(value) {
           return {
             ...value,
             ".agents": { ...value[".agents"], "README.md": { kind: "directory", mode: "0755" } },
+          };
+        },
+      },
+      {
+        name: "excluded-root NUL path",
+        files: ["excluded-roots-before.json", "excluded-roots-after.json"],
+        mutate(value) {
+          return {
+            ...value,
+            ".agents": { ...value[".agents"], ".agents/bad\0name": { kind: "directory", mode: "0755" } },
           };
         },
       },

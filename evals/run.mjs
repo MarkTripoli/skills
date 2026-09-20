@@ -352,8 +352,37 @@ function readValidatedJson(file, validator) {
     : parsed;
 }
 
+function retainedTreeProblem(root) {
+  const pending = [root];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    let stats;
+    try {
+      stats = fs.lstatSync(current);
+    } catch {
+      return "recording: retained run contains an unreadable entry";
+    }
+    const relative = path.relative(root, current) || ".";
+    if (stats.isSymbolicLink() || (!stats.isDirectory() && !stats.isFile())) {
+      return `recording: retained run contains unsafe retained entry ${JSON.stringify(relative)}`;
+    }
+    if (stats.isDirectory()) {
+      let names;
+      try {
+        names = fs.readdirSync(current);
+      } catch {
+        return `recording: retained run contains unreadable directory ${JSON.stringify(relative)}`;
+      }
+      for (const name of names) pending.push(path.join(current, name));
+    }
+  }
+  return null;
+}
+
 function completedRunProblems(runDir, selectedScenarios) {
   const canonicalRunDir = fs.realpathSync(runDir);
+  const unsafeTree = retainedTreeProblem(canonicalRunDir);
+  if (unsafeTree) return [unsafeTree];
   const summaryFile = path.join(canonicalRunDir, "summary.json");
   if (!fs.existsSync(summaryFile)) return ["recording: run is incomplete (summary.json missing)"];
   const parsed = readJson(summaryFile);
