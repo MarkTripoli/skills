@@ -16,8 +16,11 @@ import (
 
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/daemon"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/git"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/ipc"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/paths"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/pipeline"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/pipeline/steps"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/types"
 	"github.com/spf13/cobra"
 )
@@ -129,6 +132,11 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 	defer own.Close()
 	server := ipc.NewServer()
 	manager := daemon.NewManager(d, func(ctx context.Context, r *db.Run) {
+		if err := executeRun(ctx, d, p, r); err != nil {
+			_ = d.UpdateRunError(r.ID, err.Error())
+			_ = d.TransitionRunStatus(r.ID, types.RunRunning, types.RunFailed)
+			return
+		}
 		if err := d.TransitionRunStatus(r.ID, types.RunRunning, types.RunCompleted); err != nil {
 			_ = d.TransitionRunStatus(r.ID, types.RunRunning, types.RunFailed)
 		}
@@ -221,6 +229,62 @@ func recordPush(d *db.DB, p *paths.Paths, manager *daemon.Manager, n daemon.Push
 	return fmt.Errorf("unknown gate %q", n.Gate)
 }
 
+func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Run) error {
+	repo, err := database.GetRepo(run.RepoID)
+	if err != nil {
+		return err
+	}
+	if repo == nil || repo.PushURL() == "" {
+		return fmt.Errorf("repository %s has no publication remote", run.RepoID)
+	}
+	worktree := repo.WorkingPath
+	if run.WorktreeDir != nil && *run.WorktreeDir != "" {
+		if _, statErr := os.Stat(*run.WorktreeDir); statErr == nil {
+			worktree = *run.WorktreeDir
+		}
+	}
+	ref := run.Branch
+	if !strings.HasPrefix(ref, "refs/") {
+		ref = "refs/heads/" + ref
+	}
+	request := steps.PushRequest{Worktree: worktree, Remote: repo.PushURL(), Ref: ref, Candidate: run.HeadSHA, ReviewedHead: run.HeadSHA, VerifiedHead: run.BaseSHA}
+	runner := pipeline.NewDurable(database, run.ID)
+	for _, name := range pipeline.CoreSteps {
+		name := name
+		runner.Register(name, func(stepCtx context.Context) error {
+			switch name {
+			case pipeline.StepIntent:
+				return steps.Intent(stepCtx)
+			case pipeline.StepRebase:
+				return steps.Rebase(stepCtx)
+			case pipeline.StepReview:
+				return steps.Review(stepCtx)
+			case pipeline.StepTest:
+				return steps.Test(stepCtx)
+			case pipeline.StepDocument:
+				return steps.Document(stepCtx)
+			case pipeline.StepLint:
+				return steps.Lint(stepCtx)
+			case pipeline.StepPullRequest:
+				return steps.PR(stepCtx)
+			case pipeline.StepCI:
+				return steps.CI(stepCtx)
+			default:
+				return nil
+			}
+		})
+	}
+	runner.Register(pipeline.StepPush, func(pushCtx context.Context) error {
+		_, err := steps.Publish(pushCtx, database, run.ID, request, func(mirrorCtx context.Context, candidate string) error {
+			_, err := git.RunBare(mirrorCtx, p.RepoDir(run.RepoID), "update-ref", ref, candidate)
+			return err
+		})
+		return err
+	})
+	_, err = runner.Run(ctx)
+	return err
+}
+
 type pushArgs struct {
 	gate, ref, old, new, token string
 	options                    []string
@@ -228,6 +292,7 @@ type pushArgs struct {
 
 func newAdmitPush() *cobra.Command {
 	a := &pushArgs{}
+
 	c := &cobra.Command{Use: "admit-push", Hidden: true, RunE: func(cmd *cobra.Command, args []string) error {
 		return callDaemon(ipc.MethodAdmitPush, ipc.AdmitPushParams{Gate: a.gate, Ref: a.ref, Token: a.token}, &ipc.AdmitPushResult{})
 	}}

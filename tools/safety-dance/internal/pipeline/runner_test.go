@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -22,6 +23,26 @@ func TestRunnerExecutesFixedOrderAndStopsOnFailure(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, CoreSteps) {
 		t.Fatalf("order=%v", got)
+	}
+}
+func TestRunnerStopsAfterFailedStep(t *testing.T) {
+	r := New()
+	called := []StepName{}
+	for _, name := range CoreSteps {
+		name := name
+		r.Register(name, func(context.Context) error {
+			called = append(called, name)
+			if name == StepReview {
+				return fmt.Errorf("review failed")
+			}
+			return nil
+		})
+	}
+	if _, err := r.Run(context.Background()); err == nil {
+		t.Fatal("expected failure")
+	}
+	if !reflect.DeepEqual(called, []StepName{StepIntent, StepRebase, StepReview}) {
+		t.Fatalf("called=%v", called)
 	}
 }
 

@@ -79,9 +79,15 @@ func Publish(ctx context.Context, database *db.DB, runID string, req PushRequest
 		return PushResult{}, err
 	}
 	defer database.SetRunPushActive(runID, false)
-	result, err := Push(ctx, req)
-	if err != nil {
-		return PushResult{}, err
+	result := PushResult{}
+	if live, liveErr := (branchsync.Syncer{Remote: req.Remote, Ref: req.Ref}).LiveHead(ctx); liveErr == nil && live == req.Candidate {
+		result = PushResult{Candidate: req.Candidate, Upstream: live, GateMirror: req.GateMirror}
+	} else {
+		var err error
+		result, err = Push(ctx, req)
+		if err != nil {
+			return PushResult{}, err
+		}
 	}
 	if mirror == nil {
 		return PushResult{}, fmt.Errorf("gate mirror callback is required")
