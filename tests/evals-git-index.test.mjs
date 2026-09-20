@@ -133,3 +133,32 @@ test("semantic Git index snapshots ignore inherited repository routing variables
   // Then
   assert.deepEqual(snapshot.map(({ path: trackedPath }) => trackedPath), ["README.md"]);
 });
+
+test("semantic Git index snapshots ignore inherited Git configuration", () => {
+  // Given
+  const root = repository();
+  const marker = path.join(root, "fsmonitor-ran");
+  const monitor = path.join(root, "fsmonitor.sh");
+  fs.writeFileSync(monitor, `#!/bin/sh\nprintf ran > ${JSON.stringify(marker)}\nprintf '0\\n'\n`);
+  fs.chmodSync(monitor, 0o755);
+  const overrides = {
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "core.fsmonitor",
+    GIT_CONFIG_VALUE_0: monitor,
+  };
+  const original = Object.fromEntries(Object.keys(overrides).map((key) => [key, process.env[key]]));
+
+  // When
+  Object.assign(process.env, overrides);
+  try {
+    snapshotGitIndex(root);
+  } finally {
+    for (const [key, value] of Object.entries(original)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+
+  // Then
+  assert.equal(fs.existsSync(marker), false);
+});

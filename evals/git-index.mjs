@@ -3,22 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-
-const GIT_ROUTING_ENVIRONMENT = [
-  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-  "GIT_CEILING_DIRECTORIES",
-  "GIT_COMMON_DIR",
-  "GIT_DIR",
-  "GIT_DISCOVERY_ACROSS_FILESYSTEM",
-  "GIT_GRAFT_FILE",
-  "GIT_INDEX_FILE",
-  "GIT_NAMESPACE",
-  "GIT_OBJECT_DIRECTORY",
-  "GIT_PREFIX",
-  "GIT_REPLACE_REF_BASE",
-  "GIT_SHALLOW_FILE",
-  "GIT_WORK_TREE",
-];
+import { sanitizedGitEnvironment } from "./git-environment.mjs";
 
 function nulSeparated(buffer) {
   return buffer.toString("utf8").split("\0").filter(Boolean);
@@ -36,8 +21,7 @@ export function snapshotGitIndex(root) {
   if (!gitRootStats.isDirectory() || gitRootStats.isSymbolicLink()) {
     return { kind: "unavailable", reason: "unsafe-git-root" };
   }
-  const gitEnvironment = { ...process.env };
-  for (const variable of GIT_ROUTING_ENVIRONMENT) delete gitEnvironment[variable];
+  const gitEnvironment = sanitizedGitEnvironment();
 
   const indexDigest = () => {
     try {
