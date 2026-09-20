@@ -1,10 +1,10 @@
 ---
 task: i-want-to-take-4cf09814
 type: plan
-summary: "This plan implements Safety Dance in six testable phases: authenticated gate admission, durable branch-scoped execution, guarded publication, public operator interfaces, canonical skill distribution, and repository release integration. It fixes the Go module, product namespace, persistence and concurrency boundaries, publication order, installer ownership, identity scan, and release contract. Implementation must complete each phase's race-enabled tests and preserve the imported MIT notice before advancing."
+summary: "This repaired plan implements Safety Dance in six testable phases and makes Phase 1 independently executable through a private admission handler plus a test-only hook helper, without moving the public CLI before Phase 4. It fixes the product namespace, persistence and concurrency boundaries, publication order, installer ownership, identity scan, and release contract. Implementation must pass each phase's listed checks and preserve the imported MIT notice before advancing."
 repo: skills
 branch: safety-dance
-sha: 186215c8d48143b345c175f37df236ce58ac84da
+sha: f91e15029686fee9fce2d68f3eae88b779ad7ee4
 ---
 
 # Safety Dance implementation plan
@@ -33,7 +33,7 @@ Do not add aliases for retired commands, paths, environment variables, services,
 
 This repository is a Node package of canonical skills. `scripts/lib/build.mjs` scans `skills/`, copies every selected skill into runtime-specific trees, and emits worker definitions only for names beginning with `agent-` (`scripts/lib/build.mjs:70-119`). `scripts/install.mjs` plans writes before applying them, copies only selected skill directories, and removes only the selected resources on uninstall (`scripts/install.mjs:180-216`, `scripts/install.mjs:294-372`). Safety Dance should use these owners rather than add another skill installer.
 
-There is no `tools/` tree or Go module yet. The repository has no general test workflow; `.github/workflows/commits.yml` checks commit subjects and `.github/workflows/release.yml` manages Changesets releases. `package.json` makes `npm test` the aggregate offline check (`package.json:18-28`).
+There is no `tools/` tree or Go module on the branch baseline. The uncommitted Phase 1 work now contains the module, gate, hooks, and IPC token code, but no daemon package or public command. The latest implementation receipt records three passing package checks and one blocking gap: generated hooks have not run through a real executable adapter against authenticated IPC in a temporary bare repository. `.github/workflows/commits.yml` checks commit subjects, `.github/workflows/release.yml` manages Changesets releases, and `package.json` makes `npm test` the aggregate offline check (`package.json:18-28`).
 
 ### Key discoveries
 
@@ -64,9 +64,9 @@ The public CLI, wizard, service management, status commands, logs, and TUI use t
 
 ## Execution Strategy
 
-Implement the trusted path before adding the public binary. Phase 1 creates the module and authenticated gate packages. Phase 2 makes accepted pushes durable and branch-scoped. Phase 3 adds the fixed validation pipeline and guarded publication. Only Phase 4 exposes `cmd/safety-dance` and operator interfaces. Phase 5 connects one canonical skill to existing build and install owners. Phase 6 adds aggregate checks, identity enforcement, documentation, and product-specific releases.
+Implement the trusted path before adding the public binary. Phase 1 creates the module, authenticated gate packages, a private daemon admission handler, and a test-only executable hook helper. That helper proves the generated shell hooks and real IPC boundary without exposing a product command. Phase 2 extends the daemon owner with durable branch-scoped execution. Phase 3 adds the fixed validation pipeline and guarded publication. Phase 4 wires the proven admission and notification calls into `cmd/safety-dance` and adds operator interfaces. Phase 5 connects one canonical skill to existing build and install owners. Phase 6 adds aggregate checks, identity enforcement, documentation, and product-specific releases.
 
-Each phase commits production code with its package tests and leaves the repository runnable at that layer. Package APIs may remain `internal`; the first three phases use tests as their entry points. Do not create placeholder commands or empty package shells for later phases.
+Each phase commits production code with its package tests and leaves the repository runnable at that layer. Package APIs may remain `internal`; the first three phases use tests as their entry points. Test-only executable fixtures live below `testdata` and cannot become shipped commands. Do not create placeholder public commands or empty package shells for later phases.
 
 ---
 
@@ -144,22 +144,27 @@ on error
 - `tools/safety-dance/internal/ipc/server.go`
 - `tools/safety-dance/internal/ipc/auth.go`
 - `tools/safety-dance/internal/ipc/ipc_test.go`
+- `tools/safety-dance/internal/daemon/admission.go`
+- `tools/safety-dance/internal/daemon/admission_test.go`
 - `tools/safety-dance/internal/git/hook.go`
 - `tools/safety-dance/internal/git/hook_test.go`
+- `tools/safety-dance/internal/git/hook_e2e_test.go`
+- `tools/safety-dance/internal/git/testdata/hook-helper/main.go`
 
 **Changes**:
 - Port the local IPC request and response types needed by receive hooks. Use Unix-domain sockets on Unix and the imported Windows local transport behind build-tagged files when required.
-- Bind admission to the gate, ref request, launch nonce or token, and authenticated process ancestry. Reject malformed, replayed, mismatched-gate, and nested-validation requests before returning success to `pre-receive`.
+- Add the private daemon admission owner now, before durable run management. It registers the real admission method, binds each request to the operating-system-authenticated peer, gate, ref, launch token, and parent-process policy, then consumes the token once. Phase 2 extends this package instead of replacing the handler.
+- Add a test-only executable under `internal/git/testdata`. It parses only `daemon admit-push` and `daemon notify-push`, calls the real IPC client, and exists solely so generated hooks can execute a process before Phase 4 adds `cmd/safety-dance`.
 - Generate `pre-receive` so a nonzero `admit-push` result rejects the Git update. Generate `post-receive` so it forwards old SHA, new SHA, ref, and supported push options to `notify-push`.
-- Keep notification non-blocking after Git accepts the ref. Print the error and append it to `<gate>/notify-push.log`; never report that the accepted ref was reverted.
-- Test hook scripts by running them against a temporary bare repository and fake authenticated IPC server rather than comparing strings alone.
+- Keep notification non-blocking after Git accepts the ref. Print the error and append it to `<gate>/notify-push.log`; never report that the accepted ref was reverted. Tests must wait with a bounded poll for the asynchronous notification instead of reading the log immediately.
+- Build the test helper into a temporary directory, install hooks rendered with its absolute path, and push to a temporary bare repository backed by the real IPC server. Prove unauthenticated rejection, authenticated acceptance, replay rejection, mismatched-gate rejection, accepted-ref notification, and preserved hook input. String assertions alone do not satisfy this check.
 
 ```sh
-# managed pre-receive shape
-safety-dance daemon admit-push --gate "$GATE_DIR" || exit 1
+# managed pre-receive shape, inside the ref-update loop
+safety-dance daemon admit-push --gate "$GATE_DIR" --ref "$refname" --token "$TOKEN" || exit 1
 
-# managed post-receive shape
-safety-dance daemon notify-push --gate "$GATE_DIR" || {
+# managed post-receive shape, inside the ref-update loop
+safety-dance daemon notify-push --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" || {
   printf '%s\n' "Safety Dance notification failed" >&2
   exit 0
 }
@@ -172,9 +177,9 @@ safety-dance daemon notify-push --gate "$GATE_DIR" || {
 - [x] `cd tools/safety-dance && go test -race ./internal/config ./internal/paths ./internal/types ./internal/git ./internal/gate ./internal/ipc`
 - [x] `cd tools/safety-dance && go test ./internal/gate -run 'Init|Repair|Hook|Rollback|Preserve'`
 - [x] `cd tools/safety-dance && go test ./internal/git -run 'PreReceive|PostReceive|NotifyFailure|PushOptions'`
-- [ ] `cd tools/safety-dance && go test ./internal/gate ./internal/git -run 'Executable|TemporaryRepo|Authenticated|Replay|Mismatch'`
+- [ ] `cd tools/safety-dance && go test -race ./internal/daemon ./internal/git -run 'Admission|ExecutableGate|Authenticated|Replay|Mismatch|AcceptedRefNotification'`
 
-Done when temporary Git repositories prove unauthenticated rejection, authenticated admission, accepted-ref notification, preserved user hooks, and rollback that touches only Safety Dance-owned state. No public binary entry point exists yet.
+Done when temporary Git repositories prove unauthenticated rejection, authenticated admission, replay and gate mismatch rejection, accepted-ref notification, preserved user hooks, and rollback that touches only Safety Dance-owned state. The executable proof uses the test-only helper; no public binary entry point exists yet.
 
 human-gated: false
 
@@ -216,6 +221,7 @@ WHERE id = ? AND status = ?;
 #### 2.2 Add singleton daemon ownership and per-branch replacement
 
 **Files**:
+- `tools/safety-dance/internal/daemon/admission.go`
 - `tools/safety-dance/internal/daemon/daemon.go`
 - `tools/safety-dance/internal/daemon/manager.go`
 - `tools/safety-dance/internal/daemon/recovery.go`
@@ -224,6 +230,7 @@ WHERE id = ? AND status = ?;
 - `tools/safety-dance/internal/daemon/subscribe_recover_test.go`
 
 **Changes**:
+- Extend Phase 1's private admission owner into the runtime daemon. Keep the admission handler as the only owner of receive-hook authentication.
 - Acquire one process lock for `SD_HOME` before binding IPC. A second daemon must fail without replacing the socket or PID record owned by the first.
 - Key run coordination by stable repository identity plus full branch ref. Hold the key lock while cancelling and joining the prior run, persisting the replacement, and assigning its worktree. Release it before the pipeline performs long work.
 - Recheck current ownership after every blocking wait so an older cancellation path cannot act on a newer run.
@@ -410,6 +417,7 @@ Add the public `safety-dance` executable after the trusted path is complete. Use
 **Changes**:
 - Keep `main.go` limited to dependency construction, signal handling, exit-code mapping, and `cli.Execute`.
 - Port `init`, `run`, `status`, `respond`, `abort`, `logs`, and `daemon start|stop|restart|status`. Route state changes through authenticated IPC and durable daemon methods rather than editing SQLite from the CLI.
+- Replace the Phase 1 test-only command adapter with public argument parsing that calls the same daemon admission and notification methods; do not duplicate hook authentication in the CLI.
 - Refuse parent-run control when `SD_PARENT_RUN_ID` identifies a validation child. Status and logs may remain read-only if the imported contract permits them; init, run, respond, and abort must fail.
 - Return stable nonzero exit classes for usage, unavailable daemon, rejected request, failed run, and blocked run. Keep plain-text output ANSI-free.
 - Test command behavior with injected clients and temporary homes, then cover the built binary in end-to-end tests.
@@ -647,6 +655,7 @@ human-gated: false
 ### Review targets
 
 - Confirm the first public binary remains in Phase 4, after authenticated admission, durable coordination, validation, and guarded publication are tested.
+- Confirm Phase 1 can finish through its private daemon handler and test-only executable helper while the first shipped `cmd/safety-dance` entry point remains in Phase 4.
 - Confirm the database, daemon, worktree, and publication owners each enforce one boundary without duplicating checks in CLI or TUI code.
 - Confirm the push sequence cannot record success before upstream verification and gate-mirror reconciliation.
 - Confirm the Go setup flow owns repository and service state while the root installer alone owns coding-agent skill files.
@@ -656,6 +665,7 @@ human-gated: false
 ### Verify
 
 - [ ] Every outline phase maps to one independently testable implementation phase with named files, invariants, failure behavior, and runnable commands.
+- [ ] Phase 1 has a buildable test-only hook helper, a real private admission handler, and a temporary-repository check that can pass before Phase 4 begins.
 - [ ] The plan retains authenticated admission, durable creation before execution, same-branch replacement, cross-branch concurrency, worktree ownership, and restart recovery.
 - [ ] Publication requires reviewed-head continuity, live remote-head verification, an explicit lease when needed, post-push ref verification, gate-mirror update, and a durable binding in that order.
 - [ ] Public commands, paths, configuration, environment variables, service labels, skill files, fixtures, generated metadata, docs, and release assets use the Safety Dance identity outside `tools/safety-dance/LICENSE`.
@@ -664,6 +674,7 @@ human-gated: false
 
 ### Known limits
 
+- Phase 1 executable proof uses a test-only helper. The shipped `safety-dance` command does not exist until Phase 4 replaces that adapter with public CLI wiring.
 - The selected source snapshot had no repository history, so implementation can preserve current tested behavior but cannot recover undocumented historical compatibility decisions.
 - Provider pull-request and CI integrations can use fixtures locally; live provider proof needs credentials during final verification.
 - This plan intentionally provides no migration or aliases for another product's hooks, services, configuration, persisted database, or commands.
