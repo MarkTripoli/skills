@@ -12,7 +12,7 @@
 - Standalone Codex execution passed with external drivers/helper/recording integration; persisted under ignored `evidence/final-sync-20260920/current-standalone/`. Source paths and hashes are recorded in `evidence/final-sync-20260920/source-sha256.txt`.
 - Genuine failed outcome remains under `evidence/repair-cb7b53a/failed/` with cb7b53a provenance; blocked outcomes and cleanup regressions remain non-green historical proof.
 - `npm test` passed 150/150. Four runtime builds passed with 43 skills (Pi: 0 workers). Commit validation passed against `origin/main..HEAD` with valid subjects.
-- Independent review `13-code-review-jev-ios.md` is clean at `c5fa96c` and approves. Its minor receipt-provenance suggestion is deferred; no product change is required.
+- Independent review `13-code-review-jev-ios.md` reviewed HEAD `2fcc651`; the review artifact is commit `c5fa96c`, and it is clean and approves. Its minor receipt-provenance suggestion is deferred; no product change is required.
 - Authorized simulator is Shutdown, owned IDB socket absent, and owned processes stopped; unrelated processes untouched. No Android/ADB interaction, upload, push, PR, or video commit occurred.
 
 ## Review and persistence
