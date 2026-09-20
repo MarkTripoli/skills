@@ -8,6 +8,7 @@ import path from "node:path";
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const basicScenario = "setup-repository-basic";
 const blockedScenario = "setup-repository-unresolved";
+const readErrorsScenario = "setup-repository-read-errors";
 
 function runEval(scenarios, args, env) {
   return new Promise((resolve) => {
@@ -173,6 +174,30 @@ test("live and retained grading preserve a nonzero OMP exit", async () => {
   }
 });
 
+test("live and retained grading complete with unreadable regular-file evidence", async () => {
+  // Given
+  const harness = createHarness("skills-read-errors-regrade-");
+  try {
+    // When
+    const live = await runEval([readErrorsScenario], ["--keep", "--max-time", "1"], harness.env);
+    assert.equal(live.status, 0, live.stderr || live.stdout);
+    const runDir = fs.realpathSync(path.join(harness.resultsRoot, "latest"));
+    const regrade = await runEval([readErrorsScenario], ["--grade", runDir], harness.env);
+
+    // Then
+    assert.equal(regrade.status, 0, regrade.stderr || regrade.stdout);
+    assert.equal(fs.existsSync(path.join(runDir, "summary.json")), true);
+    for (const phase of ["1-setup-repository", "2-setup-repository"]) {
+      assert.equal(fs.existsSync(path.join(runDir, readErrorsScenario, phase, "answer.md")), true);
+      assert.equal(fs.existsSync(path.join(runDir, readErrorsScenario, phase, "exit-status.json")), true);
+    }
+    assert.equal(fs.existsSync(path.join(runDir, readErrorsScenario, "report.json")), true);
+  } finally {
+    removeFixtureRepositories(harness.resultsRoot);
+    fs.rmSync(harness.temp, { recursive: true, force: true });
+  }
+});
+
 test("regrade rejects every malformed retained manifest shape even when before and after match", async (t) => {
   // Given
   const harness = createHarness("skills-manifest-schema-regrade-");
@@ -182,6 +207,48 @@ test("regrade rejects every malformed retained manifest shape even when before a
     const runDir = fs.realpathSync(path.join(harness.resultsRoot, "latest"));
     const phaseDir = path.join(runDir, basicScenario, "1-setup-repository");
     const cases = [
+      {
+        name: "repository path ownership",
+        files: ["repository-before.json", "repository-after.json"],
+        mutate(value) {
+          return { ...value, "../outside": { kind: "directory", mode: "0755" } };
+        },
+      },
+      {
+        name: "excluded-root bucket ownership",
+        files: ["excluded-roots-before.json", "excluded-roots-after.json"],
+        mutate(value) {
+          return {
+            ...value,
+            ".agents": { ...value[".agents"], "README.md": { kind: "directory", mode: "0755" } },
+          };
+        },
+      },
+      {
+        name: "repository payload digest",
+        files: ["repository-before.json", "repository-after.json"],
+        mutate(value) {
+          const [file, entry] = Object.entries(value).find(([, record]) => record.kind === "file");
+          return { ...value, [file]: { ...entry, sha256: "0".repeat(64) } };
+        },
+      },
+      {
+        name: "repository raw read error",
+        files: ["repository-before.json", "repository-after.json"],
+        mutate(value) {
+          return {
+            ...value,
+            "unreadable.txt": {
+              kind: "file-error",
+              mode: "0000",
+              operation: "read-file",
+              errorClass: "permission-denied",
+              sha256: null,
+              message: "private raw failure",
+            },
+          };
+        },
+      },
       {
         name: "repository",
         files: ["repository-before.json", "repository-after.json"],

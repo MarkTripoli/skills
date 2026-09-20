@@ -206,10 +206,24 @@ function snapshot(taskDir) {
   return files;
 }
 
-function snapshotExcludedRoots(root) {
+function snapshotReadOptions(phase, root) {
+  const failures = new Set((phase.readFailurePaths ?? []).map((file) => path.resolve(root, file)));
+  return {
+    readFile(file) {
+      if (failures.has(path.resolve(file))) {
+        const error = new Error("injected bounded read failure");
+        error.code = "EACCES";
+        throw error;
+      }
+      return fs.readFileSync(file);
+    },
+  };
+}
+
+function snapshotExcludedRoots(root, readOptions = {}) {
   return Object.fromEntries(excludedRootSpecs.map(({ root: relativeRoot, ...options }) => [
     relativeRoot,
-    snapshotNamedRoot(root, relativeRoot, options),
+    snapshotNamedRoot(root, relativeRoot, { ...options, ...readOptions }),
   ]));
 }
 
@@ -396,13 +410,15 @@ async function runScenario(scenario, runDir, dist) {
     for (const overlay of [phase.fixtureOverlay ?? []].flat()) {
       fs.cpSync(path.join(dist, "fixtures", overlay), repo, { recursive: true });
     }
+    await phase.prepareFixture?.(repo);
+    const readOptions = snapshotReadOptions(phase, repo);
     const prompt = phasePrompt(skillsDir, phase, taskRel);
     fs.writeFileSync(path.join(out, "prompt.md"), prompt);
     const before = snapshot(taskDir);
     const beforeHead = git(repo, "rev-parse", "HEAD");
-    const beforeRepository = phase.phaseType === "terminal" ? snapshotRepository(repo) : null;
-    const beforeExcludedRoots = phase.phaseType === "terminal" ? snapshotExcludedRoots(repo) : null;
-    const beforeGitConfig = phase.phaseType === "terminal" ? snapshotGitConfig(repo) : null;
+    const beforeRepository = phase.phaseType === "terminal" ? snapshotRepository(repo, readOptions) : null;
+    const beforeExcludedRoots = phase.phaseType === "terminal" ? snapshotExcludedRoots(repo, readOptions) : null;
+    const beforeGitConfig = phase.phaseType === "terminal" ? snapshotGitConfig(repo, readOptions) : null;
     const beforeGitIndex = phase.phaseType === "terminal" ? snapshotGitIndex(repo) : null;
     if (beforeRepository) fs.writeFileSync(path.join(out, "repository-before.json"), `${JSON.stringify(beforeRepository, null, 2)}\n`);
     if (beforeExcludedRoots) fs.writeFileSync(path.join(out, "excluded-roots-before.json"), `${JSON.stringify(beforeExcludedRoots, null, 2)}\n`);
@@ -413,11 +429,11 @@ async function runScenario(scenario, runDir, dist) {
     console.log(`[${scenario.name}] ${label}: started`);
     const { status, stdout, stderr } = await runOmp(prompt, repo);
     const seconds = Math.round((Date.now() - started) / 1000);
-    const afterRepository = phase.phaseType === "terminal" ? snapshotRepository(repo) : null;
+    const afterRepository = phase.phaseType === "terminal" ? snapshotRepository(repo, readOptions) : null;
     if (afterRepository) fs.writeFileSync(path.join(out, "repository-after.json"), `${JSON.stringify(afterRepository, null, 2)}\n`);
-    const afterExcludedRoots = phase.phaseType === "terminal" ? snapshotExcludedRoots(repo) : null;
+    const afterExcludedRoots = phase.phaseType === "terminal" ? snapshotExcludedRoots(repo, readOptions) : null;
     if (afterExcludedRoots) fs.writeFileSync(path.join(out, "excluded-roots-after.json"), `${JSON.stringify(afterExcludedRoots, null, 2)}\n`);
-    const afterGitConfig = phase.phaseType === "terminal" ? snapshotGitConfig(repo) : null;
+    const afterGitConfig = phase.phaseType === "terminal" ? snapshotGitConfig(repo, readOptions) : null;
     const afterGitIndex = phase.phaseType === "terminal" ? snapshotGitIndex(repo) : null;
     if (phase.phaseType === "terminal") fs.writeFileSync(path.join(out, "git-config-after.json"), `${JSON.stringify(afterGitConfig, null, 2)}\n`);
     if (phase.phaseType === "terminal") fs.writeFileSync(path.join(out, "git-index-after.json"), `${JSON.stringify(afterGitIndex, null, 2)}\n`);
@@ -425,6 +441,7 @@ async function runScenario(scenario, runDir, dist) {
     fs.writeFileSync(path.join(out, "answer.md"), stdout);
     fs.writeFileSync(path.join(out, "stderr.log"), stderr);
     if (fs.existsSync(taskDir)) fs.cpSync(taskDir, path.join(out, "task"), { recursive: true });
+    await phase.cleanupFixture?.(repo);
     const repositoryDiff = beforeRepository && afterRepository
       ? diffRepositorySnapshots(beforeRepository, afterRepository)
       : { created: [], modified: [], deleted: [], changedPaths: [] };
