@@ -22,24 +22,31 @@ func Push(ctx context.Context, req PushRequest) (PushResult, error) {
 	if req.Candidate == "" || req.ReviewedHead == "" || req.Candidate != req.ReviewedHead {
 		return PushResult{}, fmt.Errorf("candidate is not reviewed head")
 	}
+	if err := ctx.Err(); err != nil {
+		return PushResult{}, err
+	}
 	s := branchsync.Syncer{Remote: req.Remote, Ref: req.Ref}
 	live, err := s.LiveHead(ctx)
 	if err != nil {
 		return PushResult{}, err
 	}
+	if req.VerifiedHead != "" && live != req.VerifiedHead {
+		return PushResult{}, fmt.Errorf("upstream changed before push: expected %s, got %s", req.VerifiedHead, live)
+	}
 	if req.Rewrite && req.VerifiedHead == "" {
 		return PushResult{}, fmt.Errorf("rewrite requires verified upstream head")
-	}
-	if !req.Rewrite && req.VerifiedHead != "" && live != req.VerifiedHead {
-		return PushResult{}, fmt.Errorf("upstream changed before push")
 	}
 	args := []string{"push", req.Remote, req.Candidate + ":" + req.Ref}
 	lease := ""
 	if req.Rewrite {
-		lease = "--force-with-lease=" + req.Ref + ":" + live
+		lease = "--force-with-lease=" + req.Ref + ":" + req.VerifiedHead
 		args = []string{"push", lease, req.Remote, req.Candidate + ":" + req.Ref}
 	}
-	if out, e := exec.CommandContext(ctx, "git", args...).CombinedOutput(); e != nil {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	if req.Worktree != "" {
+		cmd.Dir = req.Worktree
+	}
+	if out, e := cmd.CombinedOutput(); e != nil {
 		return PushResult{}, fmt.Errorf("push: %s: %w", strings.TrimSpace(string(out)), e)
 	}
 	after, err := s.LiveHead(ctx)
@@ -57,6 +64,16 @@ func Push(ctx context.Context, req PushRequest) (PushResult, error) {
 func Publish(ctx context.Context, database *db.DB, runID string, req PushRequest, mirror func(context.Context, string) error) (PushResult, error) {
 	if database == nil || runID == "" {
 		return PushResult{}, fmt.Errorf("database and run id are required")
+	}
+	// A durable binding is the replay receipt. Do not push again after a
+	// restart has completed the remote write and recorded publication.
+	if publication, err := database.GetPublication(runID); err != nil {
+		return PushResult{}, err
+	} else if publication != nil {
+		if publication.Ref != req.Ref || publication.Candidate != req.Candidate || publication.VerifiedUpstream != publication.Candidate {
+			return PushResult{}, fmt.Errorf("publication binding does not match candidate")
+		}
+		return PushResult{Candidate: publication.Candidate, Upstream: publication.VerifiedUpstream, GateMirror: publication.GateMirror}, nil
 	}
 	if err := database.SetRunPushActive(runID, true); err != nil {
 		return PushResult{}, err

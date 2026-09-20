@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"sync"
+
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/types"
 )
 
 type StepName string
@@ -28,14 +31,23 @@ type StepResult struct {
 	Err    error
 }
 type Step func(context.Context) error
+
 type Runner struct {
-	mu      sync.Mutex
-	steps   map[StepName]Step
-	Results []StepResult
+	mu       sync.Mutex
+	steps    map[StepName]Step
+	Results  []StepResult
+	Database *db.DB
+	RunID    string
 }
 
-func New() *Runner                            { return &Runner{steps: map[StepName]Step{}} }
+func New() *Runner { return &Runner{steps: map[StepName]Step{}} }
+func NewDurable(database *db.DB, runID string) *Runner {
+	r := New()
+	r.Database, r.RunID = database, runID
+	return r
+}
 func (r *Runner) Register(n StepName, s Step) { r.mu.Lock(); defer r.mu.Unlock(); r.steps[n] = s }
+
 func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 	for _, n := range CoreSteps {
 		select {
@@ -49,10 +61,45 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 		if s == nil {
 			continue
 		}
-		e := s(ctx)
-		r.Results = append(r.Results, StepResult{n, e == nil, e})
-		if e != nil {
-			return r.Results, fmt.Errorf("step %s failed: %w", n, e)
+		var persisted *db.StepResult
+		if r.Database != nil && r.RunID != "" {
+			rows, err := r.Database.GetStepsByRun(r.RunID)
+			if err != nil {
+				return r.Results, err
+			}
+			for _, row := range rows {
+				if row.StepName == types.StepName(n) {
+					persisted = row
+					break
+				}
+			}
+			if persisted == nil {
+				persisted, err = r.Database.InsertStepResult(r.RunID, types.StepName(n))
+				if err != nil {
+					return r.Results, err
+				}
+			}
+			if persisted.Status == types.StepStatusCompleted || persisted.Status == types.StepStatusSkipped {
+				continue
+			}
+			if err := r.Database.StartStep(persisted.ID); err != nil {
+				return r.Results, err
+			}
+		}
+		err := s(ctx)
+		result := StepResult{n, err == nil, err}
+		r.mu.Lock()
+		r.Results = append(r.Results, result)
+		r.mu.Unlock()
+		if persisted != nil {
+			if err != nil {
+				_ = r.Database.FailStep(persisted.ID, err.Error(), 0)
+			} else {
+				_ = r.Database.CompleteStep(persisted.ID, 0, 0, "")
+			}
+		}
+		if err != nil {
+			return r.Results, fmt.Errorf("step %s failed: %w", n, err)
 		}
 	}
 	return r.Results, nil
