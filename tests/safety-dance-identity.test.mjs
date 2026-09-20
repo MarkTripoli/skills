@@ -24,9 +24,11 @@ test('accepts the legal notice and excludes task history', async () => {
 test('reports every retired identity class with path and line', async () => {
   const root = await fixture();
   const retired = ['no', '-', 'mistakes'].join('');
+  const owner = ['kun', 'cheng', 'uid'].join('');
   const cases = [
     ['command.txt', `${retired} command`],
-    ['module.txt', `github.com/kunchenguid/${retired}`],
+    ['module.txt', `github.com/${owner}/${retired}`],
+    ['owner.txt', owner],
     ['environment.txt', `${['no', '_', 'mistakes'].join('')}`],
     ['path.txt', `.${retired}.yaml`],
     ['service.txt', `${retired}-daemon`],

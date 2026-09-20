@@ -9,8 +9,9 @@ const allowLicense = path.normalize('tools/safety-dance/LICENSE');
 const retired = [
   ['no', '-', 'mistakes'], ['no', '_', 'mistakes'], ['no', '-', 'mistakes', '-', 'home'],
   ['no', ' ', 'mistakes'], ['no', '.', 'mistakes'], ['NO', '_', 'MISTAKES'],
-  ['github.com/', 'kunchenguid/', 'no', '-', 'mistakes'], ['.no', '-', 'mistakes', '.yaml'],
+  ['github.com/', ['kun', 'cheng', 'uid'].join(''), '/', 'no', '-', 'mistakes'], ['.no', '-', 'mistakes', '.yaml'],
   ['no', '-', 'mistakes', '-', 'token'], ['no', '-', 'mistakes', '-', 'daemon'],
+  [['kun', 'cheng', 'uid'].join('')],
 ];
 const retiredPatterns = retired.map(parts => new RegExp(parts.join(''), 'gi'));
 const shippedRoots = ['tools/safety-dance', 'skills/delivery/safety-dance', 'scripts', 'tests', '.github', 'docs', 'README.md', 'package.json'];
