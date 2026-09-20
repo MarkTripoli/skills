@@ -26,11 +26,12 @@ func Execute() int {
 	return 0
 }
 func NewRoot() *cobra.Command {
-	root := &cobra.Command{Use: "safety-dance", SilenceUsage: true, SilenceErrors: true, RunE: func(cmd *cobra.Command, args []string) error { return statusCommand(cmd, args) }}
+	root := &cobra.Command{Use: "safety-dance", SilenceUsage: true, SilenceErrors: true, RunE: launchDefault}
 	root.SetOut(output)
 	root.Version = buildinfo.CurrentVersion()
-	root.AddCommand(newInit(), newRun(), newStatus(), newRespond(), newAbort(), newLogs(), newDaemon())
+	root.AddCommand(newInit(), newRun(), newStatus(), newRespond(), newAbort(), newLogs(), newDaemon(), newWizard(), newTUI())
 	return root
+
 }
 func home() (*paths.Paths, error) { return paths.New() }
 func nestedMutation() error {

@@ -133,9 +133,25 @@ func TestTemporaryUpstreamPublicationMatrix(t *testing.T) {
 		}
 	})
 	t.Run("lease-rejection", func(t *testing.T) {
-		_, err := steps.Push(context.Background(), steps.PushRequest{Worktree: work, Remote: upstream, Ref: ref, Candidate: candidate, ReviewedHead: candidate, VerifiedHead: "different"})
+		competing := filepath.Join(t.TempDir(), "competing")
+		runGit(t, t.TempDir(), "clone", upstream, competing)
+		runGit(t, competing, "config", "user.email", "other@example.com")
+		runGit(t, competing, "config", "user.name", "Other")
+		if err := os.WriteFile(filepath.Join(competing, "other"), []byte("changed\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, competing, "add", "other")
+		runGit(t, competing, "commit", "-m", "competing change")
+		_, err := steps.Push(context.Background(), steps.PushRequest{
+			Worktree: work, Remote: upstream, Ref: ref, Candidate: candidate,
+			ReviewedHead: candidate, VerifiedHead: candidate, Rewrite: true,
+			BeforePush: func() error {
+				runGit(t, competing, "push", "origin", "HEAD:refs/heads/main")
+				return nil
+			},
+		})
 		if err == nil {
-			t.Fatal("expected remote-head rejection")
+			t.Fatal("expected explicit force-with-lease rejection")
 		}
 	})
 	t.Run("cancellation", func(t *testing.T) {
