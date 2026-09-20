@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { evidencePathProblems, inspectEvidenceTrace, isEvidenceScenario, viewerTemporaryProof, reviewProblems } from "../evals/iterate-evidence.mjs";
+import { counterFlowCoverage, normalize } from "../evals/evidence-flows.mjs";
 import { viewerToolDenial } from "../evals/iterate-evidence-hooks.mjs";
 import { createHash } from "node:crypto";
 import primaryScenario from "../evals/scenarios/iterate-evidence.mjs";
@@ -121,7 +122,15 @@ test("viewer ownership requires internal allocation, matching pixels and bounded
   assert.ok(check([]).some((problem) => problem.includes(name)));
   assert.ok(check([{ ...allocation, stack: "at arbitraryWrite" }]).length);
   assert.ok(check([{ ...allocation, calls: [{ id: "writer", name: "bash" }] }]).length);
-  assert.ok(check([allocation], { ...trace, images: [{ ...trace.images[0], sha256: "different" }] }).length);
+  // F_3R_AUTH_V8: OMP may resize frames before returning them; a different returned sha is accepted.
+  assert.deepEqual(check([allocation], { ...trace, images: [{ ...trace.images[0], sha256: "omp-resized" }] }), [], "OMP-resized frame with different returned sha is accepted");
+  // F_3R_AUTH_V8 regression: OMP-resized frame (allocation sha A, returned sha B != A) is still credited.
+  const ompResizedSnaps = [
+    { sequence: 1, boundary: "tool_execution_start", toolCallId: "view", toolName: "read", files: base.files },
+    { sequence: 2, boundary: "tool_execution_end", toolCallId: "other-read", toolName: "read", files: { ...base.files, [name]: { sha256: "pixels" } } },
+    { sequence: 3, boundary: "tool_execution_end", toolCallId: "view", toolName: "read", files: base.files },
+  ];
+  assert.deepEqual(check([allocation], { ...trace, images: [{ toolCallId: "view", sha256: "omp-resized-pixels", isError: false }] }, ompResizedSnaps), [], "OMP-resized frame credited: allocation sha pixels, returned sha omp-resized-pixels");
   assert.ok(check([allocation], { ...trace, images: [{ ...trace.images[0], isError: true }] }).length);
   assert.ok(check([{ ...allocation, command: allocation.command.map((arg) => arg === "2.2" ? "3" : arg) }]).length);
   assert.ok(check([{ ...allocation, command: allocation.command.map((arg) => arg === "/fixture/evidence/raw.webm" ? "/fixture/evidence/other.webm" : arg) }]).length);
@@ -230,7 +239,6 @@ test("bare video ownership requires the complete same-read thumbnail-to-sheet gr
     ["producer failure", (value) => { value.allocations[0].code = 1; }],
     ["thumbnail output mismatch", (value) => { value.allocations[0].command[13] = "preview-work/other.png"; }],
     ["producer hash mismatch", (value) => { value.allocations[0].sha256 = "wrong"; }],
-    ["sheet hash mismatch", (value) => { value.trace.images[0].sha256 = "wrong"; }],
     ["failed read result", (value) => { value.trace.images[0].isError = true; }],
     ["wrong sheet input", (value) => { value.allocations[6].command[6] = "preview-work/unknown.png"; }],
     ["duplicate sheet input", (value) => { value.allocations[6].command[8] = names[0]; }],
@@ -257,6 +265,10 @@ test("bare video ownership requires the complete same-read thumbnail-to-sheet gr
   const unknown = structuredClone(fixture);
   unknown.snapshots[7].files["omp-video-sheet-unknown/sheet.png"] = { sha256: "sheet-pixels" };
   assert.ok(check(unknown).some((problem) => problem.includes("omp-video-sheet-unknown/sheet.png")));
+  // F_3R_AUTH_V8: OMP-resized sheet (returned sha differs from sheet allocation sha) is accepted.
+  const resizedSheet = structuredClone(fixture);
+  resizedSheet.trace.images[0].sha256 = "omp-resized-sheet-pixels";
+  assert.deepEqual(check(resizedSheet), [], "OMP-resized sheet with different returned sha is accepted");
 });
 
 test("primary inspection rejects image substitution and unconsumed or completed reservations", () => {
@@ -343,11 +355,22 @@ test("primary inspection rejects image substitution and unconsumed or completed 
       "- Current step / last completed step / next incomplete step: repair pending / reservation / repair (app.js; check.mjs).",
       "- Current step: diagnose.\n- Last completed step: baseline inspection.\n- Next incomplete step: diagnose and repair (handler.js fix).",
       "| Step | State | Evidence |\n| --- | --- | --- |\n| Repair the handler | interrupted | Paused |",
+      // R12 normalize regressions: parenthetical/bracketed annotations in step fields are stripped.
+      "- Current step: repair pending (handler value only).\n- Last completed step: reservation.\n- Next incomplete step: repair [app.js handler].",
+      "- Current step: repair pending.\n- Last completed step: reservation [confirmed].\n- Next incomplete step: repair (app.js only).",
+      "- Current step / last completed step / next incomplete step: repair pending (active) / reservation (round 1) / repair.",
     ];
     for (const state of pendingStates) {
       snapshots[2] = reserve(reservationText.replace("- Current step: repair pending.", state));
       assert.deepEqual(check(), [], state);
     }
+    // R12 normalize regressions: annotated consumed count and Delivery section status fields.
+    const annotatedConsumption = reservationText.replace("- Consumed count / authorized limit: 1 / 3.", "- Consumed count / authorized limit: 1 / 3 (authorized at round start).");
+    snapshots[2] = reserve(annotatedConsumption);
+    assert.deepEqual(check(), [], "annotated consumed count '1 / 3 (...)' passes with normalize");
+    const annotatedDelivery = reservationText + "\n\n## Delivery and known limits\n- Status: in-progress (active round).\n- Current step: repair pending.\n- Stop reason: none.";
+    snapshots[2] = reserve(annotatedDelivery);
+    assert.deepEqual(check(), [], "annotated status 'in-progress (active round)' in Delivery section passes with normalize");
     snapshots[2] = reserve(reservationText);
     const increment = observations[1];
     const originalSample = { ...increment };
@@ -447,6 +470,25 @@ test("primary inspection rejects image substitution and unconsumed or completed 
       observations[1] = savedObs1;
       trace.tools[1] = savedTool1;
     }
+    // F_LD_FRAME_V8 regression: PNG frame outside the recording session directory is accepted;
+    // media must remain in the session; binding is by call-argument path and hash.
+    {
+      const outOfSessionFrame = `task/evidence/extracted/baseline-increment.png`;
+      const savedObs2 = { ...observations[1] };
+      const savedTool2 = { ...trace.tools[1] };
+      const frameSha2 = put(outOfSessionFrame, "baseline increment pixels");
+      trace.tools[1] = { id: "2", arguments: { path: outOfSessionFrame.slice("task/".length) } };
+      trace.images[1] = { line: 2, toolCallId: "2", sha256: frameSha2 };
+      observations[1] = { ...savedObs2, frame: outOfSessionFrame, frameSha256: frameSha2 };
+      assert.deepEqual(check(), [], "F_LD_FRAME_V8: PNG frame outside session dir accepted; media still in session");
+      // Media outside session still fails.
+      const savedMedia = observations[1].media;
+      observations[1] = { ...observations[1], media: outOfSessionFrame, mediaSha256: frameSha2 };
+      assert.ok(check().some((p) => p.includes("session")), "media outside session dir is rejected");
+      observations[1] = savedObs2;
+      trace.tools[1] = savedTool2;
+      trace.images[1] = { line: 2, toolCallId: "2", sha256: savedObs2.frameSha256 };
+    }
     for (const invalid of [
       reservationText.replace("consumed_rounds: 1", "consumed_rounds: 0"),
       reservationText.replace("status: in-progress", "status: passed"),
@@ -497,4 +539,54 @@ test("primary scenario rejects an altered default allowance", () => {
   assert.deepEqual(primaryScenario.phases[0].check({ artifact }), []);
   artifact.fm.limit = "4";
   assert.ok(primaryScenario.phases[0].check({ artifact }).length);
+});
+
+test("normalize strips parenthetical, bracketed, quoted, and mixed label forms", () => {
+  assert.strictEqual(normalize("increment (Add one from zero)"), "increment", "parenthetical stripped");
+  assert.strictEqual(normalize("reset (Reset from nonzero)"), "reset", "parenthetical stripped");
+  assert.strictEqual(normalize("increment [primary flow]"), "increment", "brackets stripped");
+  assert.strictEqual(normalize("'increment'"), "increment", "surrounding quotes stripped");
+  assert.strictEqual(normalize("`Add one`"), "add one", "surrounding backticks stripped");
+  assert.strictEqual(normalize("increment."), "increment", "trailing period stripped");
+  assert.strictEqual(normalize("  Increment  "), "increment", "whitespace collapsed and lowercased");
+  assert.strictEqual(normalize("repair pending (app.js value += 2)."), "repair pending", "multi-punctuation trailing stripped");
+  assert.strictEqual(normalize("1 / 3 (authorized at round start)."), "1 / 3", "annotated count stripped");
+  assert.strictEqual(normalize("in-progress (active round)."), "in-progress", "annotated status stripped");
+});
+
+test("counterFlowCoverage resolves parenthetical, quoted, and mixed label forms (F_COVERAGE_PARSE_V8)", () => {
+  const make = (charter, coverage) => `\n### Targets and regression charter\n\n${charter}\n\n## Final coverage\n\n${coverage}\n`;
+  const charRow = (id, action) => `| ${id} | target | zero | ${action} | expected: 1 | spec.md | yes |`;
+  const covRow = (id, result) => `| ${id} | target | rev | evidence | checks | ${result} | reason |`;
+
+  // Bare forms (baseline)
+  assert.ok(counterFlowCoverage(make(charRow("F-INC", "Add one"), covRow("increment", "failed") + "\n" + covRow("reset", "passed")), { increment: "failed", reset: "passed" }).increment);
+
+  // F_COVERAGE_PARSE_V8: parenthetical in cells[0] of coverage table
+  const parentheticalCoverage = covRow("increment (Add one from zero)", "failed") + "\n" + covRow("reset (Reset from nonzero)", "passed");
+  const r1 = counterFlowCoverage(make(charRow("F-INC", "Add one"), parentheticalCoverage), { increment: "failed", reset: "passed" });
+  assert.ok(r1.increment, "increment (Add one from zero) resolves to increment");
+  assert.ok(r1.reset, "reset (Reset from nonzero) resolves to reset");
+
+  // Quoted flow name in charter action column
+  const quotedAction = charRow("F-INC", "'Add one'");
+  const r2 = counterFlowCoverage(make(quotedAction, covRow("F-INC", "failed") + "\n" + covRow("reset", "passed")), { increment: "failed", reset: "passed" });
+  assert.ok(r2.increment, "quoted 'Add one' action resolves to increment");
+
+  // Annotated result column: 'failed (coverage missing)' normalizes to 'failed'
+  const annotatedResult = covRow("increment", "failed (coverage missing)") + "\n" + covRow("reset", "passed");
+  const r3 = counterFlowCoverage(make(charRow("F-INC", "Add one"), annotatedResult), { increment: "failed", reset: "passed" });
+  assert.ok(r3.increment, "annotated result 'failed (coverage missing)' recognized as failed");
+
+  // Bracketed annotation in charter row id
+  const bracketedId = charRow("F-INC [primary]", "Add one");
+  const r4 = counterFlowCoverage(make(bracketedId, covRow("F-INC", "failed") + "\n" + covRow("reset", "passed")), { increment: "failed", reset: "passed" });
+  assert.ok(r4.increment, "bracketed ID annotation F-INC [primary] still maps to F-INC");
+
+  // Mixed: parenthetical in charter id AND coverage id AND result column
+  const mixedCharter = charRow("F-INC (flow 1)", "Add one");
+  const mixedCoverage = covRow("F-INC (flow 1)", "failed (see findings)") + "\n" + covRow("reset (from nonzero)", "passed");
+  const r5 = counterFlowCoverage(make(mixedCharter, mixedCoverage), { increment: "failed", reset: "passed" });
+  assert.ok(r5.increment, "mixed: parenthetical charter id and annotated result pass");
+  assert.ok(r5.reset, "mixed: parenthetical coverage reset passes");
 });

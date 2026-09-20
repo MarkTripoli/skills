@@ -1,5 +1,21 @@
 import { section } from "./lib.mjs";
 
+// Strip parenthetical/bracketed annotations, surrounding quotes/backticks, trailing
+// punctuation, and collapse whitespace; lowercases for uniform comparison.
+// Routes every receipt text parser so annotated forms like 'increment (Add one from zero)'
+// resolve to 'increment' and 'reset (Reset from nonzero)' to 'reset'.
+export function normalize(label) {
+  return String(label ?? "")
+    .replace(/\([^)]*\)/g, " ")      // strip (...) annotations
+    .replace(/\[[^\]]*\]/g, " ")     // strip [...] annotations
+    .replace(/[`*_]/g, "")           // strip inline formatting markers
+    .replace(/^(["'`])(.*)\1$/, "$2") // strip matching surrounding quote/backtick pair only
+    .replace(/[.!?,;]+$/, "")        // strip trailing punctuation
+    .replace(/\s+/g, " ")            // collapse whitespace
+    .trim()
+    .toLowerCase();
+}
+
 function rows(text) {
   return text.split("\n")
     .filter((line) => /^\s*\|/.test(line))
@@ -10,13 +26,15 @@ function rows(text) {
 // These are counter actions, not ID prefixes or evidence filenames. Configuration
 // follows a comma, semicolon, or a spaced slash in the retained receipts.
 function flowName(label) {
-  if (/^(?:increment(?: from (?:0|zero))?|(?:one )?add one(?: activation)?(?: from (?:fresh )?(?:0|zero))?)$/i.test(label)) return "increment";
-  if (/^reset(?: from (?:(?:actual|the current) )?nonzero(?: count| \d+)?)?$/i.test(label)) return "reset";
+  const n = normalize(label);
+  if (/^(?:increment(?: from (?:0|zero))?|(?:one )?add one(?: activation)?(?: from (?:fresh )?(?:0|zero))?)$/i.test(n)) return "increment";
+  if (/^reset(?: from (?:(?:actual|the current) )?nonzero(?: count| \d+)?)?$/i.test(n)) return "reset";
   return null;
 }
 
 function identity(label) {
-  const [name, ...details] = label.split(/[,;:]|\s+\/\s+/).map((part) => part.trim());
+  const n = normalize(label);
+  const [name, ...details] = n.split(/[,;:]|\s+\/\s+/).map((part) => normalize(part));
   const direct = flowName(name);
   const match = direct ? null : /^([a-z0-9][a-z0-9_-]*)(?:\s+(.+))?$/i.exec(name);
   const suffix = flowName(match?.[2] ?? "");
@@ -27,11 +45,9 @@ function identity(label) {
 }
 
 function actionFlow(action) {
-  const stripped = action.replace(/^(?:activate|click)\s+/i, "").replace(/\s+(?:exactly\s+)?once\b/i, "").trim();
-  // Strip matching surrounding quotes (single, double, backtick) so 'Add one', "Add one",
-  // and `Add one` in charter action descriptions resolve to the same flow as unquoted forms.
-  const unquoted = /^(["'`])(.+)\1$/.exec(stripped);
-  return flowName(unquoted ? unquoted[2].trim() : stripped);
+  const n = normalize(action);
+  const stripped = n.replace(/^(?:activate|click)\s+/i, "").replace(/\s+(?:exactly\s+)?once\b/i, "").trim();
+  return flowName(stripped);
 }
 
 // Stable IDs have meaning only within this receipt's frozen target charter.
@@ -53,14 +69,15 @@ export function counterFlowCoverage(text, expected) {
   const outcomes = { increment: [], reset: [] };
   const results = [];
   for (const cells of rows(section(text, "## Final coverage") ?? "")) {
-    results.push(cells[5].toLowerCase());
+    const result = normalize(cells[5]);
+    results.push(result);
     const declared = identity(cells[0]);
     if (declared.conflict) conflict = true;
     const mapped = declared.id ? mappings.get(declared.id) : null;
     if (mapped && declared.semantic && mapped !== declared.semantic) conflict = true;
     // An ID with a semantic suffix still needs an explicit charter mapping.
     const flow = declared.id ? mapped : declared.semantic;
-    if (flow) outcomes[flow].push(cells[5].toLowerCase());
+    if (flow) outcomes[flow].push(result);
   }
   return {
     increment: !conflict && outcomes.increment.length > 0 && outcomes.increment.every((result) => result === expected.increment),

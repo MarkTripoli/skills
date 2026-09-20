@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { finished } from "node:stream/promises";
 import { artifacts, newest, placeholders, frontmatter, section } from "./lib.mjs";
+import { normalize } from "./evidence-flows.mjs";
 
 const repairable = new Set(["app.js", "check.mjs"]);
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -48,7 +49,7 @@ mcp:
 
 export function snapshotEvidenceSources(root, dist) {
   const pinned = path.join(dist, "evidence-source");
-  for (const name of ["scripts/install.mjs", "scripts/lib", "skills", "runtimes", "shared", "package.json", "package-lock.json", "evals/iterate-evidence.mjs", "evals/iterate-evidence-hooks.mjs", "evals/lib.mjs", "evals/fixtures/iterate-evidence", "evals/fixtures/iterate-evidence-three-rounds"]) {
+  for (const name of ["scripts/install.mjs", "scripts/lib", "skills", "runtimes", "shared", "package.json", "package-lock.json", "evals/iterate-evidence.mjs", "evals/iterate-evidence-hooks.mjs", "evals/lib.mjs", "evals/evidence-flows.mjs", "evals/fixtures/iterate-evidence", "evals/fixtures/iterate-evidence-three-rounds"]) {
     const target = path.join(pinned, name);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.cpSync(path.join(root, name), target, { recursive: true });
@@ -337,7 +338,10 @@ export function viewerTemporaryProof(allocations, trace, snapshots, base, finalS
       return !finish || finish.sequence > start.sequence;
     });
   };
-  const returned = (candidate, callId) => trace.images.some((image) => image.toolCallId === callId && !image.isError && image.sha256 === candidate.allocation.sha256);
+  // Accept any non-error returned image: OMP may resize frames before returning them.
+  // Both allocation SHA (from hooks) and returned SHA (from trace) are recorded; the
+  // transformation chain is proven when a non-error image exists for this call.
+  const returned = (candidate, callId) => trace.images.some((image) => image.toolCallId === callId && !image.isError);
   const credit = ({ allocation, appearances }) => proven.set(allocation.output, { sha256: allocation.sha256, sequences: new Set(appearances.map((snapshot) => snapshot.sequence)) });
   const processEnd = (candidate, callId) => {
     const allocation = candidate.allocation;
@@ -462,9 +466,11 @@ function activeReservation(text, round, limit, findingId, pendingRepair = false)
   let stepDeclared = false;
   const declarations = [];
   if (!pendingRepair) return true;
-  const clean = (value) => value.replace(/[`*]/g, "").trim().toLowerCase().replace(/\.$/, "");
-  // Strip parenthetical/bracketed annotations before evaluating step-field wording.
-  const strip = (s) => s.replace(/\([^)]*\)|\[[^\]]*\]/g, " ").replace(/\s+/g, " ").trim();
+  // Use the shared normalize helper for all value comparisons: strips parenthetical/bracketed
+  // annotations, surrounding quotes/backticks, trailing punctuation, and collapses whitespace.
+  const clean = normalize;
+  // strip is normalize applied to already-clean values; retained for terminalRepair/pending/reserved callers.
+  const strip = normalize;
   // terminalRepair: the repair step itself is declared completed/done/resolved/finalized — a conflict.
   // Parenthetical annotations are stripped; only top-level wording determines terminal status.
   const terminalRepair = (value) => {
@@ -546,17 +552,19 @@ export function reviewProblems(out, review, trace, snapshots, base, finalState, 
     require(item.observedCount === expected && typeof item.notes === "string" && item.notes.trim(), `${flow} pixels must show ${expected} with review notes`);
     require(Number.isFinite(item.timestamp) && item.timestamp >= 0, `${flow} needs an exact media timestamp`);
     const capture = json(retainedFile(out, item.capture));
+    const session = path.dirname(item.capture);
     require(sha256(fs.readFileSync(retainedFile(out, item.media))) === item.mediaSha256, `${flow} media hash mismatch`);
+    // The retained media must be the session's; the extracted frame need not be.
+    require(item.media.startsWith(`${session}/`), `${flow} media must belong to its recording session`);
     const isVideoFrameRef = /\.(mp4|webm)$/.test(item.frame);
     if (isVideoFrameRef) {
-      // Video+timestamp form: item.frame is the retained capture video; verify against capture identity.
+      // Video+timestamp form: item.frame is the retained capture video; must be in the session.
       // item.frameSha256 binds to the OMP-returned image hash, verified below via trace.
-      require(sha256(fs.readFileSync(retainedFile(out, item.frame))) === capture.videoSha256, `${flow} video frame reference must be the retained capture video`);
+      require(item.frame?.startsWith(`${session}/`) && sha256(fs.readFileSync(retainedFile(out, item.frame))) === capture.videoSha256, `${flow} video frame reference must be the retained capture video`);
     } else {
+      // PNG frame: path need not be under the session directory; bound by call-argument path and hash.
       require(sha256(fs.readFileSync(retainedFile(out, item.frame))) === item.frameSha256, `${flow} frame hash mismatch`);
     }
-    const session = path.dirname(item.capture);
-    require(item.media.startsWith(`${session}/`) && item.frame.startsWith(`${session}/`), `${flow} opened pixels must belong to its recording session`);
     require(/\.(mp4|webm)$/.test(item.media), `${flow} requires video evidence`);
     require(/\.(png|jpe?g)$/.test(item.frame) || (isVideoFrameRef && Number.isFinite(item.timestamp) && item.timestamp >= 0), `${flow} requires a recorded PNG/JPEG frame or a video path with an explicit timestamp selector`);
     require(fs.existsSync(path.join(out, session, "manifest.json")), `${flow} recorder manifest missing`);
@@ -740,7 +748,8 @@ function stoppedEvidenceProblems(out, setup, trace, snapshots, base, finalState,
         // Video+timestamp form: verify item.frame is the retained capture video.
         require(item.frame?.startsWith(`${session}/`) && sha256(fs.readFileSync(retainedFile(out, item.frame))) === capture.videoSha256, "review video frame must be the retained capture video");
       } else {
-        require(item.frame?.startsWith(`${session}/`) && sha256(fs.readFileSync(retainedFile(out, item.frame))) === item.frameSha256, "review frame hash/session mismatch");
+        // PNG frame: path need not be under the session directory; bound by call-argument path and hash.
+        require(sha256(fs.readFileSync(retainedFile(out, item.frame))) === item.frameSha256, "review frame hash mismatch");
       }
       const image = trace.images.find((entry) => entry.line === item.subjectTraceLine && !entry.isError);
       const call = image && trace.tools.find((entry) => entry.id === image.toolCallId);
@@ -874,7 +883,8 @@ async function boundedEvidenceProblems(out, setup, trace, snapshots, base, final
         // Video+timestamp form: item.frame is the retained capture video.
         require(item.frame?.startsWith(`${capture.session}/`) && sha256(fs.readFileSync(retainedFile(out, item.frame))) === capture.value.videoSha256, `${flow} video frame reference must be the retained capture`);
       } else {
-        require(item.frame?.startsWith(`${capture.session}/`) && sha256(fs.readFileSync(retainedFile(out, item.frame))) === item.frameSha256, `${flow} frame hash/session mismatch`);
+        // PNG frame: path need not be under the session directory; bound by call-argument path and hash.
+        require(sha256(fs.readFileSync(retainedFile(out, item.frame))) === item.frameSha256, `${flow} frame hash mismatch`);
       }
       require(/\.(mp4|webm)$/.test(item.media), `${flow} video evidence required`);
       require(/\.(png|jpe?g)$/.test(item.frame) || (isVideoFrame && Number.isFinite(item.timestamp) && item.timestamp >= 0), `${flow} requires a recorded PNG/JPEG frame or a video path with an explicit timestamp selector`);

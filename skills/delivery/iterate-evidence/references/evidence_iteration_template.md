@@ -120,7 +120,7 @@ Baseline is capture and inspection at consumed `0`, not a repair reservation. Ap
 ### Round [reserved number]
 
 - Reservation persisted at: [saved receipt/trace boundary before mutation/delegation; observed timestamp and source, or timestamp unavailable; independent of the last completed step's name]
-- Reservation persisted before any edit: [yes — confirmed on disk (consumed_rounds read back) before first source/check edit or worker delegation; or blocked with reason]
+- Reservation persisted before any edit or worker delegation: [yes — confirmed on disk (consumed_rounds read back and "Reservation persisted" entry present in this round record) before first source/check edit, worker spawn, or any other delegating command; or blocked with reason. This checkpoint applies to direct edits and to bounded-delegation rounds.]
 - Consumed count / authorized limit: [count / limit]
 - Attempted finding IDs: [existing inspected required findings]
 - Pre-round unresolved required IDs: [set]

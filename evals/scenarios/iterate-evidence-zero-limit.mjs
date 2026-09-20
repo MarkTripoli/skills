@@ -1,5 +1,5 @@
 import { failures, section } from "../lib.mjs";
-import { counterFlowCoverage } from "../evidence-flows.mjs";
+import { counterFlowCoverage, normalize } from "../evidence-flows.mjs";
 
 export default {
   slug: "counter-zero-limit",
@@ -24,9 +24,9 @@ export default {
         artifact?.fm?.stop_reason === "exhaustion" ? null : "zero-limit: zero repair allowance must stop at exhaustion",
         artifact?.fm?.limit === "0" ? null : "zero-limit: receipt must retain the explicit zero limit",
         artifact?.fm?.consumed_rounds === "0" ? null : "zero-limit: baseline inspection must consume no repair round",
-        findings.some((cells) => cells[0] === "IE-001" && cells.some((cell) => cell.toLowerCase() === "open"))
+        findings.some((cells) => cells[0] === "IE-001" && cells.some((cell) => normalize(cell) === "open"))
           ? null : "zero-limit: inspected defect must retain stable finding IE-001 as open",
-        findings.every((cells) => !cells.some((cell) => cell.toLowerCase() === "resolved"))
+        findings.every((cells) => !cells.some((cell) => normalize(cell) === "resolved"))
           ? null : "zero-limit: inspection without repair must not resolve a finding",
         coverage.increment
           ? null : "zero-limit: increment coverage must remain failed",

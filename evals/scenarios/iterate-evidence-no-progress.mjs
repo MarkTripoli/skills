@@ -1,5 +1,5 @@
 import { failures, section } from "../lib.mjs";
-import { counterFlowCoverage } from "../evidence-flows.mjs";
+import { counterFlowCoverage, normalize } from "../evidence-flows.mjs";
 
 export default {
   slug: "counter-no-progress",
@@ -24,9 +24,9 @@ export default {
         artifact?.fm?.stop_reason === "no-progress" ? null : "no-progress: an unproductive completed round must stop before exhaustion",
         artifact?.fm?.limit === "1" ? null : "no-progress: receipt must retain the explicit one-round limit",
         artifact?.fm?.consumed_rounds === "1" ? null : "no-progress: ineffective repair must consume exactly one round",
-        findings.some((cells) => cells[0] === "IE-001" && cells.some((cell) => cell.toLowerCase() === "open"))
+        findings.some((cells) => cells[0] === "IE-001" && cells.some((cell) => normalize(cell) === "open"))
           ? null : "no-progress: original finding IE-001 must remain open after fresh inspection",
-        findings.every((cells) => !cells.some((cell) => cell.toLowerCase() === "resolved"))
+        findings.every((cells) => !cells.some((cell) => normalize(cell) === "resolved"))
           ? null : "no-progress: ineffective repair must not resolve a finding",
         coverage.increment
           ? null : "no-progress: increment coverage must remain failed",
