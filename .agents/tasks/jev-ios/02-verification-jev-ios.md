@@ -65,7 +65,7 @@ No implementation or acceptance item remains open in this matrix; independent re
 
 - [x] `npm test` exits 0 with 150 passing tests and no failures.
 - [x] Four runtime builds exit 0 in `/tmp/jev-ios-final-builds/`.
-- [x] `node scripts/check-commits.mjs origin/main..HEAD` exits 0 with 32 valid subjects.
+- [x] `node scripts/check-commits.mjs origin/main..HEAD` exits 0 with 28 valid subjects.
 - [x] Historical `8a45b9b` receipts preserve Name, Casey-to-Jordan, standalone, and blocked flows; current repair probes and receipts preserve prior generic/failed outcomes.
 - [x] Affected generic, exact-Name, Casey-to-Jordan, blocked, and installed standalone native reruns after the chooser/parser repair.
 - [x] Independent review of `bf603e1` and current native evidence: `13-code-review-jev-ios.md` clean at `c5fa96c`.
