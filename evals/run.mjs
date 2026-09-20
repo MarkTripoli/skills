@@ -28,6 +28,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { buildRuntime } from "../scripts/lib/build.mjs";
 import { subjectProblems } from "../scripts/check-commits.mjs";
+import { gitIndexChanged, snapshotGitIndex } from "./git-index.mjs";
 import {
   artifacts,
   diffExcludedRootSnapshots,
@@ -253,6 +254,7 @@ function commonChecks(phase, ctx) {
       if (changedPaths.length) out.push(`repository: excluded root ${root} changed paths: ${changedPaths.join(", ")}`);
     }
     if (gitConfigChanged(ctx.beforeGitConfig, ctx.afterGitConfig)) out.push("repository: local Git configuration changed");
+    if (gitIndexChanged(ctx.beforeGitIndex, ctx.afterGitIndex)) out.push("repository: semantic Git index changed");
     if (!ctx.live) return out;
     if (ctx.excludedRootChanges?.[".git"]?.length) return out;
     const head = git(ctx.repo, "rev-parse", "HEAD");
@@ -384,9 +386,11 @@ async function runScenario(scenario, runDir, dist) {
     const beforeRepository = phase.phaseType === "terminal" ? snapshotRepository(repo) : null;
     const beforeExcludedRoots = phase.phaseType === "terminal" ? snapshotExcludedRoots(repo) : null;
     const beforeGitConfig = phase.phaseType === "terminal" ? snapshotGitConfig(repo) : null;
+    const beforeGitIndex = phase.phaseType === "terminal" ? snapshotGitIndex(repo) : null;
     if (beforeRepository) fs.writeFileSync(path.join(out, "repository-before.json"), `${JSON.stringify(beforeRepository, null, 2)}\n`);
     if (beforeExcludedRoots) fs.writeFileSync(path.join(out, "excluded-roots-before.json"), `${JSON.stringify(beforeExcludedRoots, null, 2)}\n`);
     if (phase.phaseType === "terminal") fs.writeFileSync(path.join(out, "git-config-before.json"), `${JSON.stringify(beforeGitConfig, null, 2)}\n`);
+    if (phase.phaseType === "terminal") fs.writeFileSync(path.join(out, "git-index-before.json"), `${JSON.stringify(beforeGitIndex, null, 2)}\n`);
     const template = templateFor(skillsDir, phase);
     const started = Date.now();
     console.log(`[${scenario.name}] ${label}: started`);
@@ -397,7 +401,12 @@ async function runScenario(scenario, runDir, dist) {
     const afterExcludedRoots = phase.phaseType === "terminal" ? snapshotExcludedRoots(repo) : null;
     if (afterExcludedRoots) fs.writeFileSync(path.join(out, "excluded-roots-after.json"), `${JSON.stringify(afterExcludedRoots, null, 2)}\n`);
     const afterGitConfig = phase.phaseType === "terminal" ? snapshotGitConfig(repo) : null;
+    const gitRootChanged = beforeExcludedRoots && afterExcludedRoots
+      ? diffExcludedRootSnapshots(beforeExcludedRoots, afterExcludedRoots)[".git"]?.length > 0
+      : false;
+    const afterGitIndex = phase.phaseType === "terminal" && !gitRootChanged ? snapshotGitIndex(repo) : null;
     if (phase.phaseType === "terminal") fs.writeFileSync(path.join(out, "git-config-after.json"), `${JSON.stringify(afterGitConfig, null, 2)}\n`);
+    if (phase.phaseType === "terminal") fs.writeFileSync(path.join(out, "git-index-after.json"), `${JSON.stringify(afterGitIndex, null, 2)}\n`);
     fs.writeFileSync(path.join(out, "answer.md"), stdout);
     fs.writeFileSync(path.join(out, "stderr.log"), stderr);
     if (fs.existsSync(taskDir)) fs.cpSync(taskDir, path.join(out, "task"), { recursive: true });
@@ -420,6 +429,8 @@ async function runScenario(scenario, runDir, dist) {
       afterRepository,
       beforeGitConfig,
       afterGitConfig,
+      beforeGitIndex,
+      afterGitIndex,
       beforeExcludedRoots,
       afterExcludedRoots,
       excludedRootChanges,
@@ -485,9 +496,11 @@ async function gradeScenario(scenario, runDir) {
       const afterManifest = path.join(out, "repository-after.json");
       const beforeGitConfigManifest = path.join(out, "git-config-before.json");
       const afterGitConfigManifest = path.join(out, "git-config-after.json");
+      const beforeGitIndexManifest = path.join(out, "git-index-before.json");
+      const afterGitIndexManifest = path.join(out, "git-index-after.json");
       const beforeExcludedRootsManifest = path.join(out, "excluded-roots-before.json");
       const afterExcludedRootsManifest = path.join(out, "excluded-roots-after.json");
-      const requiredManifests = [beforeManifest, afterManifest, beforeGitConfigManifest, afterGitConfigManifest, beforeExcludedRootsManifest, afterExcludedRootsManifest];
+      const requiredManifests = [beforeManifest, afterManifest, beforeGitConfigManifest, afterGitConfigManifest, beforeGitIndexManifest, afterGitIndexManifest, beforeExcludedRootsManifest, afterExcludedRootsManifest];
       if (phase.phaseType === "terminal" && requiredManifests.some((file) => !fs.existsSync(file))) {
         const missing = requiredManifests.filter((file) => !fs.existsSync(file)).map((file) => path.basename(file));
         const problems = [`recording: phase is incomplete (required manifests missing: ${missing.join(", ")})`];
@@ -505,9 +518,9 @@ async function gradeScenario(scenario, runDir) {
         break;
       }
       const previous = index === 0 ? null : path.join(resultDir, `${index}-${scenario.phases[index - 1].skill}`, "task");
-      const [beforeRepository, afterRepository, beforeGitConfig, afterGitConfig, beforeExcludedRoots, afterExcludedRoots] = phase.phaseType === "terminal"
+      const [beforeRepository, afterRepository, beforeGitConfig, afterGitConfig, beforeGitIndex, afterGitIndex, beforeExcludedRoots, afterExcludedRoots] = phase.phaseType === "terminal"
         ? parsedManifests.map((manifest) => manifest.value)
-        : [null, null, null, null, null, null];
+        : [null, null, null, null, null, null, null, null];
       const repositoryDiff = beforeRepository && afterRepository
         ? diffRepositorySnapshots(beforeRepository, afterRepository)
         : { created: [], modified: [], deleted: [], changedPaths: [] };
@@ -526,6 +539,8 @@ async function gradeScenario(scenario, runDir) {
         afterRepository,
         beforeGitConfig,
         afterGitConfig,
+        beforeGitIndex,
+        afterGitIndex,
         beforeExcludedRoots,
         afterExcludedRoots,
         excludedRootChanges,
