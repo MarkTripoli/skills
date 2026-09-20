@@ -62,6 +62,15 @@ Atomic installs `workflows/skills-delivery/` and its sibling `skills-delivery.mj
 
 Run each in a **new session**, in the checkout and branch named by the previous reply. Use its actual file names, not these examples. Codex uses `$skill-name`. To revise a document, use its `iterate-*` skill with feedback.
 
+## Repository metadata setup
+
+```text
+/setup-repository
+/setup-repository reset-managed
+```
+
+Both commands manage local `ai-utilities.json`. They do not install skills or mutate provider resources.
+
 ## Atomic launch
 
 After [Atomic setup](getting-started.md#add-optional-atomic-orchestration), run these in Atomic chat:
@@ -100,7 +109,7 @@ These reuse saved task documents. Child tasks wait for prerequisite branches to 
 
 ## Where things live
 
-- Skills: `skills/delivery/<name>/SKILL.md` and `skills/show-me/`.
+- Skills: `skills/delivery/<name>/SKILL.md`, `skills/show-me/`, and `skills/setup-repository/`.
 - Workflow: `atomic/workflows/delivery.ts`; helpers: `atomic/lib/`.
 - Task documents: `.agents/tasks/<slug>/task.md` and numbered files on the task branch.
 

@@ -1,0 +1,15 @@
+{
+  "vcs": {
+    "platform": "github",
+    "repository": "acme/newer-schema"
+  },
+  "custom": {
+    "preserve": true
+  },
+  "onboarding": {
+    "schemaVersion": 2,
+    "profile": "default",
+    "appliedRevision": 1,
+    "providers": {}
+  }
+}

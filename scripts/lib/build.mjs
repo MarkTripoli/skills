@@ -67,6 +67,32 @@ function tomlMultiline(value) {
 
 const noDsStore = (src) => path.basename(src) !== ".DS_Store";
 
+function selectSkills(skillNames) {
+  const layout = scanSkills(path.join(repoRoot, "skills"));
+  if (layout.problems.length) throw new Error(layout.problems.map((p) => `${path.relative(repoRoot, p.path)}: ${p.message}`).join("\n"));
+  const requested = skillNames ? new Set(skillNames) : null;
+  const available = new Set(layout.skills.map((skill) => skill.name));
+  const unknown = requested ? [...requested].filter((name) => !available.has(name)) : [];
+  if (unknown.length) throw new Error(`unknown skill${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}`);
+  return requested ? layout.skills.filter((skill) => requested.has(skill.name)) : layout.skills;
+}
+
+export function buildPortable(dest, { skillNames } = {}) {
+  const selected = selectSkills(skillNames);
+  fs.rmSync(dest, { recursive: true, force: true });
+  fs.mkdirSync(path.join(dest, "skills"), { recursive: true });
+  for (const { name, dir: source } of selected) {
+    const target = path.join(dest, "skills", name);
+    fs.cpSync(source, target, { recursive: true, filter: noDsStore });
+    const skill = parseSkill(path.join(source, "SKILL.md"));
+    const lines = skill.content.split("\n");
+    if (lines.length < 7 || lines[6] !== "") throw new Error(`${name}/SKILL.md: expected line 6 to be the shared sentence followed by a blank line`);
+    const inserted = [...lines.slice(0, 6), "", "Runtime: Portable.", ...lines.slice(6)];
+    fs.writeFileSync(path.join(target, "SKILL.md"), inserted.join("\n"));
+  }
+  return { skills: selected.map((skill) => skill.name), workers: 0 };
+}
+
 // Returns { skills: [names], workers }. `skillNames` narrows an installer build; omitted builds the collection.
 export function buildRuntime(runtime, dest, { skillNames } = {}) {
   if (!RUNTIMES.includes(runtime)) throw new Error(`unknown runtime "${runtime}"; choose one of ${RUNTIMES.join(", ")}`);
@@ -74,13 +100,7 @@ export function buildRuntime(runtime, dest, { skillNames } = {}) {
   if (!fs.existsSync(runtimeFile)) throw new Error(`missing runtime adapter ${path.relative(repoRoot, runtimeFile)}`);
   const adapter = parseAdapter(fs.readFileSync(runtimeFile, "utf8"), runtimeFile);
 
-  const layout = scanSkills(path.join(repoRoot, "skills"));
-  if (layout.problems.length) throw new Error(layout.problems.map((p) => `${path.relative(repoRoot, p.path)}: ${p.message}`).join("\n"));
-  const requested = skillNames ? new Set(skillNames) : null;
-  const available = new Set(layout.skills.map((skill) => skill.name));
-  const unknown = requested ? [...requested].filter((name) => !available.has(name)) : [];
-  if (unknown.length) throw new Error(`unknown skill${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}`);
-  const selected = requested ? layout.skills.filter((skill) => requested.has(skill.name)) : layout.skills;
+  const selected = selectSkills(skillNames);
 
   fs.rmSync(dest, { recursive: true, force: true });
   fs.mkdirSync(path.join(dest, "skills"), { recursive: true });

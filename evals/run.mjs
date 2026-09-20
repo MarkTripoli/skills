@@ -10,9 +10,11 @@
 //   --keep     keep every scenario's temporary repository (failed ones are kept regardless)
 //   --model    pass an explicit model selector through to each spawned `omp` session
 //   --grade    no model: re-grade the recordings of an earlier run (`evals/results/<stamp>` or `latest`)
-//              with the current checks; git-state checks are skipped, everything else runs.
+//              with the current checks; live repository-only checks are skipped, retained evidence runs.
+//   SKILLS_EVAL_RESULTS_ROOT overrides `evals/results` for test isolation; relative paths resolve
+//              from the repository root. Leave unset for normal eval runs.
 //
-// Output: evals/results/<stamp>/<scenario>/<n>-<skill>/{prompt.md,answer.md,stderr.log,task/},
+// Output: evals/results/<stamp>/<scenario>/<n>-<skill>/{prompt.md,answer.md,stderr.log,exit-status.json,task/},
 // evals/results/<stamp>/<scenario>/report.json (written as each scenario ends),
 // evals/results/<stamp>/summary.json, and `evals/results/latest` pointing at the newest run.
 // Recordings are never deleted by a later run. Exit 1 when any phase fails.
@@ -21,39 +23,74 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { buildRuntime } from "../scripts/lib/build.mjs";
 import { subjectProblems } from "../scripts/check-commits.mjs";
-import { artifacts, failures, handoff, newest, placeholders } from "./lib.mjs";
+import { CliArgumentError, parseEvalArgs } from "./cli.mjs";
+import { sanitizedGitEnvironment } from "./git-environment.mjs";
+import { gitIndexChanged, snapshotGitIndex } from "./git-index.mjs";
+import {
+  excludedRootsManifestProblem,
+  gitConfigManifestProblem,
+  gitIndexManifestProblem,
+  phaseStatusProblem,
+  repositoryManifestProblem,
+} from "./manifest.mjs";
+import {
+  artifacts,
+  diffExcludedRootSnapshots,
+  diffRepositorySnapshots,
+  failures,
+  handoff,
+  gitConfigChanged,
+  newest,
+  placeholders,
+  snapshotGitConfig,
+  snapshotNamedRoot,
+  snapshotRepository,
+  unexpectedRepositoryChanges,
+} from "./lib.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..");
-const resultsRoot = path.join(here, "results");
+const configuredResultsRoot = process.env.SKILLS_EVAL_RESULTS_ROOT;
+if (configuredResultsRoot !== undefined && configuredResultsRoot.trim() === "") {
+  console.error("SKILLS_EVAL_RESULTS_ROOT needs a non-empty path");
+  process.exit(2);
+}
+const resultsRoot = configuredResultsRoot === undefined
+  ? path.join(here, "results")
+  : path.resolve(repoRoot, configuredResultsRoot);
 const scenariosDir = path.join(here, "scenarios");
 const fixturesDir = path.join(here, "fixtures");
 const guidanceFiles = ["WRITING.md", "CONVENTIONS.md"];
+const excludedRootSpecs = [
+  { root: ".agents", exclude: [] },
+  { root: ".git", exclude: [".git/config"], omitFileContents: [".git/index"] },
+  { root: ".omp", exclude: [] },
+];
 
-const args = process.argv.slice(2);
-const keep = args.includes("--keep");
-const flagValue = (flag) => {
-  const i = args.indexOf(flag);
-  return i === -1 ? null : (args[i + 1] ?? "");
-};
-const modelIndex = args.indexOf("--model");
-if (modelIndex !== -1 && (!args[modelIndex + 1] || args[modelIndex + 1].startsWith("--"))) {
-  console.error("--model needs a value");
-  process.exit(2);
+let options;
+try {
+  options = parseEvalArgs(process.argv.slice(2));
+} catch (error) {
+  if (error instanceof CliArgumentError) {
+    console.error(error.message);
+    process.exit(2);
+  }
+  throw error;
 }
-const model = modelIndex === -1 ? null : args[modelIndex + 1];
-const maxMinutes = flagValue("--max-time") === null ? 25 : Number(flagValue("--max-time"));
-if (!Number.isFinite(maxMinutes) || maxMinutes <= 0) {
-  console.error("--max-time needs a positive number of minutes");
-  process.exit(2);
-}
-const gradeDir = flagValue("--grade");
-const names = args.filter((a, i) => !a.startsWith("--") && !["--max-time", "--grade", "--model"].includes(args[i - 1]));
+const { gradeDir, keep, maxMinutes, model, names } = options;
+const gitEnvironment = sanitizedGitEnvironment();
 
-const git = (cwd, ...argv) => execFileSync("git", argv, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+const git = (cwd, ...argv) => execFileSync("git", argv, {
+  cwd,
+  encoding: "utf8",
+  env: gitEnvironment,
+  stdio: ["ignore", "pipe", "pipe"],
+}).trim();
 
 function loadScenarios() {
   const files = fs
@@ -87,6 +124,7 @@ function prepareRepo(scenario, dist) {
   git(repo, "init", "-q", "-b", "main");
   git(repo, "config", "user.email", "evals@example.com");
   git(repo, "config", "user.name", "Skills Evals");
+  for (const remote of scenario.gitRemotes ?? []) git(repo, "remote", "add", remote.name, remote.url);
   copyFixtures(scenario, repo, path.join(dist, "fixtures"));
   fs.cpSync(path.join(dist, "agents"), path.join(repo, ".omp", "agents"), { recursive: true });
   git(repo, "add", "-A");
@@ -110,6 +148,18 @@ function prepareRepo(scenario, dist) {
 // one pass has to come from the skill reading `task.md`; a phase that asks a question fails the
 // handoff check, which is the right signal.
 function phasePrompt(skillsDir, phase, taskRel) {
+  if (phase.phaseType === "terminal") {
+    return [
+      `Read and follow ${path.join(skillsDir, phase.skill, "SKILL.md")}, the installed \`${phase.skill}\` skill. Run it in the current repository and print its terminal answer.`,
+      "",
+      "Before acting or replying, read the pinned current guidance in this task repository: `shared/WRITING.md` and `shared/CONVENTIONS.md`. Do not fetch published copies or read the harness checkout.",
+      "Use only facts from this repository. Do not create or modify a task artifact and do not print a next-skill handoff fence.",
+      "",
+      phase.request ?? "",
+      "",
+      "Print the skill's terminal answer.",
+    ].join("\n").replace(/\n{3,}/g, "\n\n");
+  }
   return [
     `Read and follow ${path.join(skillsDir, phase.skill, "SKILL.md")}, the installed \`${phase.skill}\` skill, for task directory ${taskRel}.`,
     "",
@@ -131,7 +181,7 @@ function runOmp(prompt, cwd) {
     const child = spawn("omp", ompArgs, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
+      env: gitEnvironment,
       detached: true,
     });
     let stdout = "";
@@ -145,9 +195,12 @@ function runOmp(prompt, cwd) {
         child.kill("SIGKILL");
       }
     }, (maxMinutes + 1) * 60 * 1000);
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
       clearTimeout(timer);
-      resolve({ code, stdout, stderr });
+      const status = code === null
+        ? { kind: "signal", signal: signal ?? "SIGUNKNOWN" }
+        : { kind: "exit", code };
+      resolve({ status, stdout, stderr });
     });
   });
 }
@@ -158,6 +211,27 @@ function snapshot(taskDir) {
   const task = path.join(taskDir, "task.md");
   if (fs.existsSync(task)) files.push({ file: "task.md", text: fs.readFileSync(task, "utf8") });
   return files;
+}
+
+function snapshotReadOptions(phase, root) {
+  const failures = new Set((phase.readFailurePaths ?? []).map((file) => path.resolve(root, file)));
+  return {
+    readFile(file) {
+      if (failures.has(path.resolve(file))) {
+        const error = new Error("injected bounded read failure");
+        error.code = "EACCES";
+        throw error;
+      }
+      return fs.readFileSync(file);
+    },
+  };
+}
+
+function snapshotExcludedRoots(root, readOptions = {}) {
+  return Object.fromEntries(excludedRootSpecs.map(({ root: relativeRoot, ...options }) => [
+    relativeRoot,
+    snapshotNamedRoot(root, relativeRoot, { ...options, ...readOptions }),
+  ]));
 }
 
 // Checks every phase must pass before its own: one handoff fence naming the next skill directly after
@@ -184,6 +258,33 @@ function headArtifactCommitProblems(ctx) {
 // artifacts and `task.md` unchanged. Git-state checks need the live repository and are skipped when
 // re-grading a recording.
 function commonChecks(phase, ctx) {
+  if (phase.phaseType === "terminal") {
+    const out = [];
+    const h = handoff(ctx.answer);
+    if (h) out.push(`reply: terminal phase includes a /${h.skill} command fence`);
+    const currentArtifacts = artifacts(ctx.taskDir);
+    const beforeByFile = new Map(ctx.before.map((file) => [file.file, file.text]));
+    for (const artifact of currentArtifacts) {
+      if (!beforeByFile.has(artifact.file)) out.push(`${artifact.file}: terminal phase created a task artifact`);
+    }
+    for (const file of ctx.before) {
+      const full = path.join(ctx.taskDir, file.file);
+      if (!fs.existsSync(full)) out.push(`${file.file}: terminal phase removed task state`);
+      else if (fs.readFileSync(full, "utf8") !== file.text) out.push(`${file.file}: terminal phase modified task state`);
+    }
+    const unexpected = unexpectedRepositoryChanges(ctx.changedPaths ?? [], phase.allowedChangedPaths ?? []);
+    if (unexpected.length) out.push(`repository: unexpected changed paths: ${unexpected.join(", ")}`);
+    for (const [root, changedPaths] of Object.entries(ctx.excludedRootChanges ?? {})) {
+      if (changedPaths.length) out.push(`repository: excluded root ${root} changed paths: ${changedPaths.join(", ")}`);
+    }
+    if (gitConfigChanged(ctx.beforeGitConfig, ctx.afterGitConfig)) out.push("repository: local Git configuration changed");
+    if (gitIndexChanged(ctx.beforeGitIndex, ctx.afterGitIndex)) out.push("repository: semantic Git index changed");
+    if (!ctx.live) return out;
+    if (ctx.excludedRootChanges?.[".git"]?.length) return out;
+    const head = git(ctx.repo, "rev-parse", "HEAD");
+    if (head !== ctx.beforeHead) out.push(`git: HEAD changed from ${ctx.beforeHead} to ${head}`);
+    return out;
+  }
   const h = handoff(ctx.answer);
   const out = [];
   if (!h) out.push("reply: no `/<skill>` command fence");
@@ -220,13 +321,144 @@ function commonChecks(phase, ctx) {
   return out;
 }
 
-function grade(phase, ctx, exitCode) {
-  return failures(exitCode === 0 ? null : `omp exited ${exitCode}`, commonChecks(phase, ctx), phase.check ? phase.check(ctx) : []);
+function statusFailure(status) {
+  if (status.kind === "exit") return status.code === 0 ? null : `omp exited ${status.code}`;
+  return `omp terminated by ${status.signal}`;
+}
+
+function grade(phase, ctx, status) {
+  return failures(statusFailure(status), commonChecks(phase, ctx), phase.check ? phase.check(ctx) : []);
 }
 
 function report(scenario, label, seconds, problems) {
   console.log(`[${scenario}] ${label}: ${problems.length === 0 ? "ok" : "FAIL"}${seconds === null ? "" : ` (${seconds}s)`}`);
   for (const p of problems) console.log(`    - ${p.split("\n").join("\n      ")}`);
+}
+
+function readJson(file) {
+  try {
+    return { ok: true, value: JSON.parse(fs.readFileSync(file, "utf8")) };
+  } catch {
+    return { ok: false, problem: `recording: ${path.basename(file)} is unreadable or invalid JSON` };
+  }
+}
+
+function readValidatedJson(file, validator) {
+  const parsed = readJson(file);
+  if (!parsed.ok) return parsed;
+  const problem = validator(parsed.value);
+  return problem
+    ? { ok: false, problem: `recording: ${path.basename(file)} manifest ${problem}` }
+    : parsed;
+}
+
+function retainedTreeProblem(root) {
+  const pending = [root];
+  const fileIdentities = new Set();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    let stats;
+    try {
+      stats = fs.lstatSync(current);
+    } catch {
+      return "recording: retained run contains an unreadable entry";
+    }
+    const relative = path.relative(root, current) || ".";
+    if (stats.isSymbolicLink() || (!stats.isDirectory() && !stats.isFile())) {
+      return `recording: retained run contains unsafe retained entry ${JSON.stringify(relative)}`;
+    }
+    if (stats.isFile()) {
+      const identity = `${stats.dev}:${stats.ino}`;
+      if (stats.nlink !== 1 || fileIdentities.has(identity)) {
+        return `recording: retained run contains unsafe retained entry ${JSON.stringify(relative)}`;
+      }
+      fileIdentities.add(identity);
+    }
+    if (stats.isDirectory()) {
+      let names;
+      try {
+        names = fs.readdirSync(current);
+      } catch {
+        return `recording: retained run contains unreadable directory ${JSON.stringify(relative)}`;
+      }
+      for (const name of names) pending.push(path.join(current, name));
+    }
+  }
+  return null;
+}
+
+function completedRunProblems(runDir, selectedScenarios) {
+  const canonicalRunDir = fs.realpathSync(runDir);
+  const unsafeTree = retainedTreeProblem(canonicalRunDir);
+  if (unsafeTree) return [unsafeTree];
+  const summaryFile = path.join(canonicalRunDir, "summary.json");
+  if (!fs.existsSync(summaryFile)) return ["recording: run is incomplete (summary.json missing)"];
+  const parsed = readJson(summaryFile);
+  if (!parsed.ok) return [parsed.problem];
+  if (!Array.isArray(parsed.value) || parsed.value.length === 0) {
+    return ["recording: summary.json must contain at least one completed scenario"];
+  }
+  const problems = [];
+  const names = new Set();
+  const selectedNames = new Set(selectedScenarios.map((scenario) => scenario.name));
+  for (const result of parsed.value) {
+    if (!result || typeof result !== "object" || Array.isArray(result)) {
+      problems.push("recording: summary.json contains a non-object scenario result");
+      continue;
+    }
+    if (typeof result.name !== "string" || result.name === "") {
+      problems.push("recording: summary.json contains a scenario without a name");
+      continue;
+    }
+    if (names.has(result.name)) problems.push(`recording: summary.json repeats scenario ${result.name}`);
+    names.add(result.name);
+    if (!selectedNames.has(result.name)) {
+      problems.push(`recording: summary.json contains unselected scenario ${result.name}`);
+      continue;
+    }
+    if (typeof result.ok !== "boolean" || !Array.isArray(result.phases) || result.phases.length === 0) {
+      problems.push(`recording: summary.json has incomplete result metadata for ${result.name}`);
+      continue;
+    }
+    const scenarioDir = path.join(canonicalRunDir, result.name);
+    let scenarioStats;
+    try {
+      scenarioStats = fs.lstatSync(scenarioDir);
+    } catch {
+      problems.push(`recording: completed scenario ${result.name} is missing report.json`);
+      continue;
+    }
+    if (!scenarioStats.isDirectory() || scenarioStats.isSymbolicLink()) {
+      problems.push(`recording: completed scenario ${result.name} has unsafe scenario directory`);
+      continue;
+    }
+    const reportFile = path.join(scenarioDir, "report.json");
+    let reportStats;
+    try {
+      reportStats = fs.lstatSync(reportFile);
+    } catch {
+      problems.push(`recording: completed scenario ${result.name} is missing report.json`);
+      continue;
+    }
+    if (!reportStats.isFile() || reportStats.isSymbolicLink()) {
+      problems.push(`recording: completed scenario ${result.name} has unsafe report.json`);
+      continue;
+    }
+    const relativeReport = path.relative(canonicalRunDir, fs.realpathSync(reportFile));
+    if (path.isAbsolute(relativeReport) || relativeReport === ".." || relativeReport.startsWith(`..${path.sep}`)) {
+      problems.push(`recording: completed scenario ${result.name} has unsafe report.json`);
+      continue;
+    }
+    const recorded = readJson(reportFile);
+    if (!recorded.ok) problems.push(recorded.problem);
+    else if (!isDeepStrictEqual(recorded.value, result)) {
+      problems.push(`recording: summary.json disagrees with ${result.name}/report.json`);
+    }
+  }
+  for (const scenarioName of selectedNames) {
+    if (!names.has(scenarioName)) problems.push(`recording: selected scenario ${scenarioName} is absent from summary.json`);
+  }
+  return problems;
 }
 
 function templateFor(skillsDir, phase) {
@@ -249,17 +481,47 @@ async function runScenario(scenario, runDir, dist) {
     const label = `${index + 1}-${phase.skill}`;
     const out = path.join(resultDir, label);
     fs.mkdirSync(out, { recursive: true });
+    for (const overlay of [phase.fixtureOverlay ?? []].flat()) {
+      fs.cpSync(path.join(dist, "fixtures", overlay), repo, { recursive: true });
+    }
+    await phase.prepareFixture?.(repo);
+    const readOptions = snapshotReadOptions(phase, repo);
     const prompt = phasePrompt(skillsDir, phase, taskRel);
     fs.writeFileSync(path.join(out, "prompt.md"), prompt);
     const before = snapshot(taskDir);
+    const beforeHead = git(repo, "rev-parse", "HEAD");
+    const beforeRepository = phase.phaseType === "terminal" ? snapshotRepository(repo, readOptions) : null;
+    const beforeExcludedRoots = phase.phaseType === "terminal" ? snapshotExcludedRoots(repo, readOptions) : null;
+    const beforeGitConfig = phase.phaseType === "terminal" ? snapshotGitConfig(repo, readOptions) : null;
+    const beforeGitIndex = phase.phaseType === "terminal" ? snapshotGitIndex(repo) : null;
+    if (beforeRepository) fs.writeFileSync(path.join(out, "repository-before.json"), `${JSON.stringify(beforeRepository, null, 2)}\n`);
+    if (beforeExcludedRoots) fs.writeFileSync(path.join(out, "excluded-roots-before.json"), `${JSON.stringify(beforeExcludedRoots, null, 2)}\n`);
+    if (phase.phaseType === "terminal") fs.writeFileSync(path.join(out, "git-config-before.json"), `${JSON.stringify(beforeGitConfig, null, 2)}\n`);
+    if (phase.phaseType === "terminal") fs.writeFileSync(path.join(out, "git-index-before.json"), `${JSON.stringify(beforeGitIndex, null, 2)}\n`);
     const template = templateFor(skillsDir, phase);
     const started = Date.now();
     console.log(`[${scenario.name}] ${label}: started`);
-    const { code, stdout, stderr } = await runOmp(prompt, repo);
+    const { status, stdout, stderr } = await runOmp(prompt, repo);
     const seconds = Math.round((Date.now() - started) / 1000);
+    const afterRepository = phase.phaseType === "terminal" ? snapshotRepository(repo, readOptions) : null;
+    if (afterRepository) fs.writeFileSync(path.join(out, "repository-after.json"), `${JSON.stringify(afterRepository, null, 2)}\n`);
+    const afterExcludedRoots = phase.phaseType === "terminal" ? snapshotExcludedRoots(repo, readOptions) : null;
+    if (afterExcludedRoots) fs.writeFileSync(path.join(out, "excluded-roots-after.json"), `${JSON.stringify(afterExcludedRoots, null, 2)}\n`);
+    const afterGitConfig = phase.phaseType === "terminal" ? snapshotGitConfig(repo, readOptions) : null;
+    const afterGitIndex = phase.phaseType === "terminal" ? snapshotGitIndex(repo) : null;
+    if (phase.phaseType === "terminal") fs.writeFileSync(path.join(out, "git-config-after.json"), `${JSON.stringify(afterGitConfig, null, 2)}\n`);
+    if (phase.phaseType === "terminal") fs.writeFileSync(path.join(out, "git-index-after.json"), `${JSON.stringify(afterGitIndex, null, 2)}\n`);
+    fs.writeFileSync(path.join(out, "exit-status.json"), `${JSON.stringify(status, null, 2)}\n`);
     fs.writeFileSync(path.join(out, "answer.md"), stdout);
     fs.writeFileSync(path.join(out, "stderr.log"), stderr);
     if (fs.existsSync(taskDir)) fs.cpSync(taskDir, path.join(out, "task"), { recursive: true });
+    await phase.cleanupFixture?.(repo);
+    const repositoryDiff = beforeRepository && afterRepository
+      ? diffRepositorySnapshots(beforeRepository, afterRepository)
+      : { created: [], modified: [], deleted: [], changedPaths: [] };
+    const excludedRootChanges = beforeExcludedRoots && afterExcludedRoots
+      ? diffExcludedRootSnapshots(beforeExcludedRoots, afterExcludedRoots)
+      : {};
 
     const ctx = {
       live: true,
@@ -268,12 +530,23 @@ async function runScenario(scenario, runDir, dist) {
       taskDir,
       fixtureSha,
       before,
+      beforeHead,
+      beforeRepository,
+      afterRepository,
+      beforeGitConfig,
+      afterGitConfig,
+      beforeGitIndex,
+      afterGitIndex,
+      beforeExcludedRoots,
+      afterExcludedRoots,
+      excludedRootChanges,
+      ...repositoryDiff,
       template,
       answer: stdout,
-      artifact: newest(taskDir, phase.artifactType),
+      artifact: phase.artifactType ? newest(taskDir, phase.artifactType) : null,
       artifacts: artifacts(taskDir),
     };
-    const problems = grade(phase, ctx, code);
+    const problems = grade(phase, ctx, status);
     result.phases.push({ phase: label, seconds, ok: problems.length === 0, problems });
     report(scenario.name, label, seconds, problems);
     if (problems.length) {
@@ -296,14 +569,20 @@ async function gradeScenario(scenario, runDir) {
   const resultDir = path.join(runDir, scenario.name);
   const result = { name: scenario.name, repo: null, phases: [], ok: true, graded: true };
   if (!fs.existsSync(resultDir)) {
-    console.log(`[${scenario.name}] no recording under ${path.relative(repoRoot, runDir)}; skipped`);
-    return { ...result, skipped: true };
+    const problems = ["recording: completed run is missing the scenario directory"];
+    result.phases.push({ phase: "recording", seconds: null, ok: false, problems });
+    result.ok = false;
+    report(scenario.name, "recording", null, problems);
+    return result;
   }
   const pinnedDist = path.join(runDir, ".dist");
   const sourceRoot = path.join(pinnedDist, "fixtures");
   if (!fs.existsSync(sourceRoot)) {
-    console.log(`[${scenario.name}] source snapshot missing under ${path.relative(repoRoot, pinnedDist)}; skipped`);
-    return { ...result, skipped: true };
+    const problems = ["recording: completed run is missing its pinned source snapshot"];
+    result.phases.push({ phase: "recording", seconds: null, ok: false, problems });
+    result.ok = false;
+    report(scenario.name, "recording", null, problems);
+    return result;
   }
   const codeRoot = fs.mkdtempSync(path.join(os.tmpdir(), `skills-eval-grade-${scenario.name}-`));
   copyFixtures(scenario, codeRoot, sourceRoot);
@@ -313,10 +592,74 @@ async function gradeScenario(scenario, runDir) {
       const out = path.join(resultDir, label);
       const taskDir = path.join(out, "task");
       if (!fs.existsSync(path.join(out, "answer.md"))) {
-        console.log(`[${scenario.name}] ${label}: not recorded`);
+        const problems = ["recording: phase is incomplete (answer.md missing)"];
+        result.phases.push({ phase: label, seconds: null, ok: false, problems });
+        result.ok = false;
+        report(scenario.name, label, null, problems);
+        break;
+      }
+      const statusFile = path.join(out, "exit-status.json");
+      if (!fs.existsSync(statusFile)) {
+        const problems = ["recording: phase is incomplete (exit-status.json missing)"];
+        result.phases.push({ phase: label, seconds: null, ok: false, problems });
+        result.ok = false;
+        report(scenario.name, label, null, problems);
+        break;
+      }
+      const parsedStatus = readValidatedJson(statusFile, phaseStatusProblem);
+      if (!parsedStatus.ok) {
+        const problems = [parsedStatus.problem];
+        result.phases.push({ phase: label, seconds: null, ok: false, problems });
+        result.ok = false;
+        report(scenario.name, label, null, problems);
+        break;
+      }
+      const beforeManifest = path.join(out, "repository-before.json");
+      const afterManifest = path.join(out, "repository-after.json");
+      const beforeGitConfigManifest = path.join(out, "git-config-before.json");
+      const afterGitConfigManifest = path.join(out, "git-config-after.json");
+      const beforeGitIndexManifest = path.join(out, "git-index-before.json");
+      const afterGitIndexManifest = path.join(out, "git-index-after.json");
+      const beforeExcludedRootsManifest = path.join(out, "excluded-roots-before.json");
+      const afterExcludedRootsManifest = path.join(out, "excluded-roots-after.json");
+      const requiredManifests = [
+        { file: beforeManifest, validate: repositoryManifestProblem },
+        { file: afterManifest, validate: repositoryManifestProblem },
+        { file: beforeGitConfigManifest, validate: gitConfigManifestProblem },
+        { file: afterGitConfigManifest, validate: gitConfigManifestProblem },
+        { file: beforeGitIndexManifest, validate: gitIndexManifestProblem },
+        { file: afterGitIndexManifest, validate: gitIndexManifestProblem },
+        { file: beforeExcludedRootsManifest, validate: excludedRootsManifestProblem },
+        { file: afterExcludedRootsManifest, validate: excludedRootsManifestProblem },
+      ];
+      if (phase.phaseType === "terminal" && requiredManifests.some(({ file }) => !fs.existsSync(file))) {
+        const missing = requiredManifests.filter(({ file }) => !fs.existsSync(file)).map(({ file }) => path.basename(file));
+        const problems = [`recording: phase is incomplete (required manifests missing: ${missing.join(", ")})`];
+        result.phases.push({ phase: label, seconds: null, ok: false, problems });
+        result.ok = false;
+        report(scenario.name, label, null, problems);
+        break;
+      }
+      const parsedManifests = phase.phaseType === "terminal"
+        ? requiredManifests.map(({ file, validate }) => readValidatedJson(file, validate))
+        : [];
+      const manifestProblems = parsedManifests.filter((manifest) => !manifest.ok).map((manifest) => manifest.problem);
+      if (manifestProblems.length) {
+        result.phases.push({ phase: label, seconds: null, ok: false, problems: manifestProblems });
+        result.ok = false;
+        report(scenario.name, label, null, manifestProblems);
         break;
       }
       const previous = index === 0 ? null : path.join(resultDir, `${index}-${scenario.phases[index - 1].skill}`, "task");
+      const [beforeRepository, afterRepository, beforeGitConfig, afterGitConfig, beforeGitIndex, afterGitIndex, beforeExcludedRoots, afterExcludedRoots] = phase.phaseType === "terminal"
+        ? parsedManifests.map((manifest) => manifest.value)
+        : [null, null, null, null, null, null, null, null];
+      const repositoryDiff = beforeRepository && afterRepository
+        ? diffRepositorySnapshots(beforeRepository, afterRepository)
+        : { created: [], modified: [], deleted: [], changedPaths: [] };
+      const excludedRootChanges = beforeExcludedRoots && afterExcludedRoots
+        ? diffExcludedRootSnapshots(beforeExcludedRoots, afterExcludedRoots)
+        : {};
       const ctx = {
         live: false,
         repo: null,
@@ -324,12 +667,23 @@ async function gradeScenario(scenario, runDir) {
         taskDir,
         fixtureSha: null,
         before: previous && fs.existsSync(previous) ? snapshot(previous) : fs.existsSync(taskDir) ? [{ file: "task.md", text: fs.readFileSync(path.join(taskDir, "task.md"), "utf8") }] : [],
+        beforeHead: null,
+        beforeRepository,
+        afterRepository,
+        beforeGitConfig,
+        afterGitConfig,
+        beforeGitIndex,
+        afterGitIndex,
+        beforeExcludedRoots,
+        afterExcludedRoots,
+        excludedRootChanges,
+        ...repositoryDiff,
         template: fs.existsSync(pinnedDist) ? templateFor(path.join(pinnedDist, "skills"), phase) : "",
         answer: fs.readFileSync(path.join(out, "answer.md"), "utf8"),
-        artifact: newest(taskDir, phase.artifactType),
+        artifact: phase.artifactType ? newest(taskDir, phase.artifactType) : null,
         artifacts: artifacts(taskDir),
       };
-      const problems = grade(phase, ctx, 0);
+      const problems = grade(phase, ctx, parsedStatus.value);
       result.phases.push({ phase: label, seconds: null, ok: problems.length === 0, problems });
       report(scenario.name, label, null, problems);
       if (problems.length) result.ok = false;
@@ -351,23 +705,43 @@ if (gradeDir !== null) {
     process.exit(2);
   }
   console.log(`re-grading ${fs.realpathSync(runDir)} with the current checks`);
+  const completionProblems = completedRunProblems(runDir, scenarios);
+  if (completionProblems.length) {
+    for (const problem of completionProblems) console.error(problem);
+    process.exit(1);
+  }
   results = [];
   for (const s of scenarios) results.push(await gradeScenario(s, runDir));
 } else {
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "").replace("T", "-");
-  const runDir = path.join(resultsRoot, stamp);
-  fs.mkdirSync(runDir, { recursive: true });
+  let suffix = 0;
+  let runDir;
+  while (runDir === undefined) {
+    const candidate = path.join(resultsRoot, suffix === 0 ? stamp : `${stamp}-${suffix}`);
+    try {
+      fs.mkdirSync(candidate);
+      runDir = candidate;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      suffix += 1;
+    }
+  }
   // The built tree and source snapshots are private to this run (a concurrent run must not rebuild
   // the skills or change the guidance a running session is reading) and stay with its recordings.
   const dist = path.join(runDir, ".dist");
   buildRuntime("oh-my-pi", dist);
   snapshotSources(dist);
-  const latest = path.join(resultsRoot, "latest");
-  fs.rmSync(latest, { force: true });
-  fs.symlinkSync(stamp, latest);
   console.log(`skills built at ${path.relative(repoRoot, dist)}; running ${scenarios.map((s) => s.name).join(", ")} with ${maxMinutes} minutes per phase; recordings in ${path.relative(repoRoot, runDir)}`);
   results = await Promise.all(scenarios.map((s) => runScenario(s, runDir, dist)));
   fs.writeFileSync(path.join(runDir, "summary.json"), JSON.stringify(results, null, 2));
+  const latest = path.join(resultsRoot, "latest");
+  const latestTemp = path.join(resultsRoot, `.latest-${process.pid}-${randomUUID()}`);
+  try {
+    fs.symlinkSync(path.basename(runDir), latestTemp);
+    fs.renameSync(latestTemp, latest);
+  } finally {
+    fs.rmSync(latestTemp, { force: true });
+  }
 }
 
 const graded = results.filter((r) => !r.skipped);

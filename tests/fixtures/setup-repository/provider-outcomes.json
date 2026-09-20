@@ -1,0 +1,123 @@
+[
+  {
+    "provider": "github",
+    "case": "create repository triage label without a prior or foreign identity",
+    "mode": "reconcile",
+    "priorOwnedState": null,
+    "observedIdentity": null,
+    "observedDigest": null,
+    "expectedCategory": "create",
+    "expectedOwnedState": {
+      "logicalKey": "github.repository-label.triage",
+      "stableId": "github-label-id-101",
+      "lastAppliedDigest": "sha256:github-triage-v1"
+    }
+  },
+  {
+    "provider": "linear",
+    "case": "update recorded workflow state by stable identity",
+    "mode": "reconcile",
+    "priorOwnedState": {
+      "logicalKey": "linear.team-workflow-state.triage",
+      "stableId": "linear-workflow-state-id-201",
+      "lastAppliedDigest": "sha256:linear-triage-v1"
+    },
+    "observedIdentity": {
+      "stableId": "linear-workflow-state-id-201",
+      "name": "Triage"
+    },
+    "observedDigest": "sha256:linear-triage-v1",
+    "expectedCategory": "update",
+    "expectedOwnedState": {
+      "logicalKey": "linear.team-workflow-state.triage",
+      "stableId": "linear-workflow-state-id-201",
+      "lastAppliedDigest": "sha256:linear-triage-v2"
+    }
+  },
+  {
+    "provider": "github",
+    "case": "no-op for equal recorded and observed digest",
+    "mode": "reconcile",
+    "priorOwnedState": {
+      "logicalKey": "github.repository-label.triage",
+      "stableId": "github-label-id-101",
+      "lastAppliedDigest": "sha256:github-triage-v1"
+    },
+    "observedIdentity": {
+      "stableId": "github-label-id-101",
+      "name": "triage"
+    },
+    "observedDigest": "sha256:github-triage-v1",
+    "expectedCategory": "no-op",
+    "expectedOwnedState": {
+      "logicalKey": "github.repository-label.triage",
+      "stableId": "github-label-id-101",
+      "lastAppliedDigest": "sha256:github-triage-v1"
+    }
+  },
+  {
+    "provider": "github",
+    "case": "conflict when a matching name has no recorded stable identity",
+    "mode": "reconcile",
+    "priorOwnedState": null,
+    "observedIdentity": {
+      "stableId": "github-label-id-foreign",
+      "name": "triage"
+    },
+    "observedDigest": "sha256:github-foreign",
+    "expectedCategory": "conflict",
+    "expectedOwnedState": null
+  },
+  {
+    "provider": "linear",
+    "case": "conflict on reconcile when recorded identity has drifted",
+    "mode": "reconcile",
+    "priorOwnedState": {
+      "logicalKey": "linear.team-workflow-state.triage",
+      "stableId": "linear-workflow-state-id-201",
+      "lastAppliedDigest": "sha256:linear-triage-v1"
+    },
+    "observedIdentity": {
+      "stableId": "linear-workflow-state-id-201",
+      "name": "Triage"
+    },
+    "observedDigest": "sha256:linear-manual-drift",
+    "expectedCategory": "conflict",
+    "expectedOwnedState": {
+      "logicalKey": "linear.team-workflow-state.triage",
+      "stableId": "linear-workflow-state-id-201",
+      "lastAppliedDigest": "sha256:linear-triage-v1"
+    }
+  },
+  {
+    "provider": "linear",
+    "case": "update recorded identity after explicit reset observes drift",
+    "mode": "reset-managed",
+    "priorOwnedState": {
+      "logicalKey": "linear.team-workflow-state.triage",
+      "stableId": "linear-workflow-state-id-201",
+      "lastAppliedDigest": "sha256:linear-triage-v1"
+    },
+    "observedIdentity": {
+      "stableId": "linear-workflow-state-id-201",
+      "name": "Triage"
+    },
+    "observedDigest": "sha256:linear-manual-drift",
+    "expectedCategory": "update",
+    "expectedOwnedState": {
+      "logicalKey": "linear.team-workflow-state.triage",
+      "stableId": "linear-workflow-state-id-201",
+      "lastAppliedDigest": "sha256:linear-triage-v2"
+    }
+  },
+  {
+    "provider": "jira",
+    "case": "unsupported project provisioning creates no ownership",
+    "mode": "reconcile",
+    "priorOwnedState": null,
+    "observedIdentity": null,
+    "observedDigest": null,
+    "expectedCategory": "unsupported",
+    "expectedOwnedState": null
+  }
+]

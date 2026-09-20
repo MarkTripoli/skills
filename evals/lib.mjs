@@ -4,6 +4,133 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
+import { fileReadError, permissionMode } from "./file-evidence.mjs";
+
+export { gitConfigChanged, snapshotGitConfig } from "./git-config.mjs";
+
+const SNAPSHOT_EXCLUDED_DIRECTORIES = new Set([".git", ".agents", ".omp"]);
+
+function snapshotBytes(bytes, stats) {
+  return {
+    kind: "file",
+    mode: permissionMode(stats),
+    bytes: bytes.toString("base64"),
+    sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
+  };
+}
+
+function snapshotSymbolicLink(file) {
+  const linkTarget = fs.readlinkSync(file);
+  return {
+    kind: "symlink",
+    linkTarget,
+    sha256: crypto.createHash("sha256").update(linkTarget).digest("hex"),
+  };
+}
+
+function snapshotOther(stats) {
+  let type = "other";
+  if (stats.isFIFO()) type = "fifo";
+  else if (stats.isSocket()) type = "socket";
+  else if (stats.isBlockDevice()) type = "block-device";
+  else if (stats.isCharacterDevice()) type = "character-device";
+  return { kind: "other", type };
+}
+
+function snapshotEntry(file, stats, omitFileContents = false, readFile = fs.readFileSync) {
+  if (stats.isSymbolicLink()) return snapshotSymbolicLink(file);
+  if (stats.isDirectory()) return { kind: "directory", mode: permissionMode(stats) };
+  if (!stats.isFile()) return snapshotOther(stats);
+  if (omitFileContents) return { kind: "file", mode: permissionMode(stats) };
+  try {
+    return snapshotBytes(readFile(file), stats);
+  } catch (error) {
+    return fileReadError(stats, error);
+  }
+}
+
+function snapshotTree(root, relativeRoot = "", excludedPaths = new Set(), contentlessFilePaths = new Set(), readFile = fs.readFileSync) {
+  const manifest = {};
+  const fullRoot = path.join(root, relativeRoot);
+  let rootStats;
+  try {
+    rootStats = fs.lstatSync(fullRoot);
+  } catch (error) {
+    if (error?.code === "ENOENT") return manifest;
+    throw error;
+  }
+
+  const visit = (fullPath, relativePath, stats) => {
+    if (excludedPaths.has(relativePath)) return;
+    if (relativePath) manifest[relativePath] = snapshotEntry(fullPath, stats, contentlessFilePaths.has(relativePath), readFile);
+    if (!stats.isDirectory() || stats.isSymbolicLink()) return;
+    const entries = fs.readdirSync(fullPath, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      const childRelativePath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+      const childPath = path.join(fullPath, entry.name);
+      visit(childPath, childRelativePath, fs.lstatSync(childPath));
+    }
+  };
+
+  visit(fullRoot, relativeRoot, rootStats);
+  return manifest;
+}
+
+export function snapshotRepository(root, { readFile = fs.readFileSync } = {}) {
+  return snapshotTree(root, "", SNAPSHOT_EXCLUDED_DIRECTORIES, new Set(), readFile);
+}
+
+export function snapshotNamedRoot(root, relativeRoot, { exclude = [], omitFileContents = [], readFile = fs.readFileSync } = {}) {
+  if (path.isAbsolute(relativeRoot) || path.dirname(relativeRoot) !== ".") {
+    throw new Error(`snapshot root must be one repository-root entry: ${relativeRoot}`);
+  }
+  return snapshotTree(root, relativeRoot, new Set(exclude), new Set(omitFileContents), readFile);
+}
+
+export function diffRepositorySnapshots(before, after) {
+  const beforePaths = new Set(Object.keys(before));
+  const afterPaths = new Set(Object.keys(after));
+  const withoutNonEmptyDirectories = (paths, snapshot) => {
+    const nonEmptyDirectories = new Set();
+    for (const entryPath of paths) {
+      let separator = entryPath.lastIndexOf("/");
+      while (separator !== -1) {
+        const ancestor = entryPath.slice(0, separator);
+        if (snapshot[ancestor]?.kind === "directory") nonEmptyDirectories.add(ancestor);
+        separator = ancestor.lastIndexOf("/");
+      }
+    }
+    return paths.filter((entryPath) => !nonEmptyDirectories.has(entryPath));
+  };
+  const createdPaths = [...afterPaths].filter((file) => !beforePaths.has(file));
+  const deletedPaths = [...beforePaths].filter((file) => !afterPaths.has(file));
+  const created = withoutNonEmptyDirectories(createdPaths, after).sort();
+  const deleted = withoutNonEmptyDirectories(deletedPaths, before).sort();
+  const modified = [...beforePaths]
+    .filter((file) => afterPaths.has(file) && !isDeepStrictEqual(before[file], after[file]))
+    .sort();
+  return {
+    created,
+    modified,
+    deleted,
+    changedPaths: [...created, ...modified, ...deleted].sort(),
+  };
+}
+
+export function diffExcludedRootSnapshots(before, after) {
+  const roots = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort();
+  return Object.fromEntries(roots.map((root) => [
+    root,
+    diffRepositorySnapshots(before[root] ?? {}, after[root] ?? {}).changedPaths,
+  ]));
+}
+
+export function unexpectedRepositoryChanges(changedPaths, allowedChangedPaths = []) {
+  const allowed = new Set(allowedChangedPaths);
+  return [...changedPaths].filter((file) => !allowed.has(file)).sort();
+}
 
 export function frontmatter(text) {
   const match = /^---\n([\s\S]*?)\n---\n/.exec(text);

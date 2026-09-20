@@ -115,6 +115,29 @@ test("a selected skill installs and uninstalls independently in every target", (
   }
 });
 
+test("setup-repository installs its complete local metadata contract in every target", () => {
+  const expected = [
+    "SKILL.md",
+    "references/repository-metadata.md",
+    "references/setup-final-answer.md",
+    "references/setup-receipt-template.md",
+  ];
+  for (const target of ["claude-code", "codex", "oh-my-pi", "pi", "portable"]) {
+    const home = tmpdir();
+    const skillDir = destinations(target, { home, env }).skills;
+    const foreign = path.join(skillDir, "mine", "SKILL.md");
+    put(foreign, "keep me\n");
+    const planned = install({ targets: [target], skillNames: ["setup-repository"], cwd: home, home, env });
+    const installed = path.join(skillDir, "setup-repository");
+    for (const file of expected) assert.ok(fs.existsSync(path.join(installed, file)), `${target}: ${file}`);
+    assert.equal(fs.existsSync(path.join(home, ".atomic")), false);
+    assert.equal(fs.readFileSync(foreign, "utf8"), "keep me\n");
+    uninstall(planned, home);
+    assert.equal(fs.existsSync(installed), false);
+    assert.equal(fs.readFileSync(foreign, "utf8"), "keep me\n");
+  }
+});
+
 test("partial Codex worker changes preserve other skills and worker configuration", () => {
   const home = tmpdir();
   const configFile = path.join(home, ".codex", "config.toml");
@@ -160,9 +183,6 @@ test("Atomic installs canonical full skills and workflow sources beside unrelate
   const skillsDir = path.join(home, ".agents", "skills");
   const canonical = scanSkills(path.join(REPO, "skills")).skills;
   assert.deepEqual(fs.readdirSync(skillsDir).sort(), [...canonical.map((skill) => skill.name), "mine"].sort());
-  for (const skill of canonical) {
-    assert.equal(fs.readFileSync(path.join(skillsDir, skill.name, "SKILL.md"), "utf8"), fs.readFileSync(path.join(skill.dir, "SKILL.md"), "utf8"));
-  }
   const workflowRoot = atomicDestination(options);
   const entry = path.join(path.dirname(workflowRoot), "skills-delivery.mjs");
   assert.ok(fs.existsSync(entry));

@@ -1,0 +1,290 @@
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+import { once } from "node:events";
+import { expect, failures } from "../lib.mjs";
+
+const invalidJsonSentinel = "phase-three-secret-value";
+const managedSecretSentinel = "non-secret-test-sentinel";
+const providerRecord = {
+  logicalKey: "repository-labels",
+  stableId: "R_kwDO-provider-state",
+  lastAppliedDigest: "sha256:9bbdc9a8c4d0",
+};
+const resetProviderRecord = {
+  logicalKey: "repository-labels",
+  stableId: "R_kwDO-reset-managed",
+  lastAppliedDigest: "sha256:reset-managed",
+};
+const resetForeignState = {
+  vcs: { platform: "github", repository: "acme/reset-managed" },
+  ticketing: { tool: "jira", project: "SAFE" },
+  custom: { nested: { preserve: ["alpha", "beta"] } },
+};
+
+function removeMetadata(root) {
+  fs.rmSync(path.join(root, "ai-utilities.json"), { recursive: true, force: true });
+}
+
+function bytes(manifest, file = "ai-utilities.json") {
+  const encoded = manifest?.[file]?.bytes;
+  return encoded ? Buffer.from(encoded, "base64") : null;
+}
+
+function metadata(manifest) {
+  try {
+    return JSON.parse(bytes(manifest)?.toString("utf8") ?? "");
+  } catch {
+    return null;
+  }
+}
+
+function unchanged(beforeRepository, afterRepository, changedPaths) {
+  return [
+    changedPaths.length === 0 ? null : `repository: changed ${changedPaths.join(", ")}`,
+    bytes(beforeRepository)?.equals(bytes(afterRepository))
+      ? null
+      : "repository: ai-utilities.json bytes changed",
+  ];
+}
+
+function zeroOperations(answer) {
+  return expect.matches("receipt: no external operations", answer, /External operations:\s*0/i);
+}
+
+function rejectedEntry(answer, beforeRepository, afterRepository, changedPaths, type, sentinel = null) {
+  return failures(
+    changedPaths.length === 0 ? null : `repository: changed ${changedPaths.join(", ")}`,
+    JSON.stringify(beforeRepository["ai-utilities.json"]) === JSON.stringify(afterRepository["ai-utilities.json"])
+      ? null
+      : "repository: ai-utilities.json entry changed",
+    expect.matches("receipt: metadata entry conflict", answer, new RegExp(`ai-utilities\\.json[^\\n]*(?:${type}|entry type|non-regular)`, "i")),
+    expect.matches("receipt: nothing written", answer, /Written:\s*(?:none|nothing)/i),
+    sentinel === null ? null : expect.excludes("receipt: linked payload redacted", answer, sentinel),
+    zeroOperations(answer),
+  );
+}
+
+function entryPhase(entryKind, type, prepareFixture, sentinel = null, cleanupFixture = null) {
+  return {
+    phaseType: "terminal",
+    skill: "setup-repository",
+    entryKind,
+    prepareFixture,
+    cleanupFixture,
+    request: `Run \`/setup-repository\` in exact \`reconcile\` mode. The metadata entry is ${type}; fail closed before reading it.`,
+    allowedChangedPaths: [],
+    check: ({ answer, beforeRepository, afterRepository, changedPaths }) => rejectedEntry(
+      answer,
+      beforeRepository,
+      afterRepository,
+      changedPaths,
+      type,
+      sentinel,
+    ),
+  };
+}
+
+const nonRegularEntryPhases = [
+  entryPhase("directory", "directory", (root) => {
+    removeMetadata(root);
+    fs.mkdirSync(path.join(root, "ai-utilities.json"));
+  }),
+  entryPhase("valid-symlink", "symlink", (root) => {
+    removeMetadata(root);
+    fs.writeFileSync(path.join(root, "metadata-target.json"), "valid-link-private-sentinel\n");
+    fs.symlinkSync("metadata-target.json", path.join(root, "ai-utilities.json"));
+  }, "valid-link-private-sentinel"),
+  entryPhase("dangling-symlink", "symlink", (root) => {
+    removeMetadata(root);
+    fs.symlinkSync("missing-metadata-target", path.join(root, "ai-utilities.json"));
+  }),
+  entryPhase("external-symlink", "symlink", (root) => {
+    removeMetadata(root);
+    const external = path.join(os.tmpdir(), `${path.basename(root)}-external-metadata.json`);
+    fs.writeFileSync(external, "external-link-private-sentinel\n");
+    fs.symlinkSync(external, path.join(root, "ai-utilities.json"));
+  }, "external-link-private-sentinel", (root) => {
+    fs.rmSync(path.join(os.tmpdir(), `${path.basename(root)}-external-metadata.json`), { force: true });
+  }),
+  entryPhase("fifo", "fifo", (root) => {
+    removeMetadata(root);
+    execFileSync("mkfifo", [path.join(root, "ai-utilities.json")]);
+  }),
+  (() => {
+    let server;
+    let shortRoot;
+    return entryPhase("socket", "socket", async (root) => {
+      removeMetadata(root);
+      shortRoot = path.join("/tmp", `sr-${process.pid}-${Date.now()}`);
+      fs.symlinkSync(root, shortRoot, "dir");
+      server = net.createServer();
+      server.listen(path.join(shortRoot, "ai-utilities.json"));
+      await once(server, "listening");
+    }, null, async () => {
+      if (server === undefined) return;
+      server.close();
+      await once(server, "close");
+      server = undefined;
+      fs.rmSync(shortRoot, { force: true });
+      shortRoot = undefined;
+    });
+  })(),
+];
+
+function providerPreserved(manifest, expected) {
+  const record = metadata(manifest)?.onboarding?.providers?.github?.["repository-labels"];
+  return JSON.stringify(record) === JSON.stringify(expected)
+    ? null
+    : `repository: provider ownership changed ${JSON.stringify(record)}`;
+}
+
+export default {
+  slug: "setup-repository-safety",
+  title: "Fail closed and reset only proven local repository metadata",
+  workflow: "oneshot",
+  fixtures: ["setup-repository-basic"],
+  request: "Exercise blocked metadata, unsupported provider ownership, and exact managed reset behavior.",
+  phases: [
+    {
+      phaseType: "terminal",
+      skill: "setup-repository",
+      request: "Run `/setup-repository` in exact `reconcile` mode. The metadata is invalid JSON; fail closed.",
+      fixtureOverlay: "setup-repository-safety/invalid-json",
+      allowedChangedPaths: [],
+      check: ({ answer, beforeRepository, afterRepository, changedPaths }) => failures(
+        unchanged(beforeRepository, afterRepository, changedPaths),
+        expect.matches("receipt: parse conflict", answer, /Conflicts:[^\n]*(?:invalid JSON|parse)/i),
+        expect.matches("receipt: nothing written", answer, /Written:\s*(?:none|nothing)/i),
+        expect.matches("receipt: original bytes preserved", answer, /Verification bytes:[^\n]*(?:unchanged|preserved|match)/i),
+        expect.excludes("receipt: source bytes redacted", answer, invalidJsonSentinel),
+        zeroOperations(answer),
+      ),
+    },
+    {
+      phaseType: "terminal",
+      skill: "setup-repository",
+      request: "Run `/setup-repository` in exact `reconcile` mode. The valid JSON contains a nested secret-shaped managed key; fail closed without exposing its value.",
+      fixtureOverlay: "setup-repository-safety/secret-shaped-managed-key",
+      allowedChangedPaths: [],
+      check: ({ answer, beforeRepository, afterRepository, changedPaths }) => failures(
+        unchanged(beforeRepository, afterRepository, changedPaths),
+        expect.matches("receipt: secret-key conflict class", answer, /Conflicts:[^\n]*(?:secret|credential)[^\n]*(?:key|field)/i),
+        expect.matches("receipt: secret-key conflict path", answer, /onboarding[^\n]*providers[^\n]*github[^\n]*repository-labels[^\n]*configuration[^\n]*api[_-]?key/i),
+        expect.matches("receipt: nothing written", answer, /Written:\s*(?:none|nothing)/i),
+        expect.matches("receipt: original bytes preserved", answer, /Verification bytes:[^\n]*(?:unchanged|preserved|match)/i),
+        expect.excludes("receipt: managed value redacted", answer, managedSecretSentinel),
+        zeroOperations(answer),
+      ),
+    },
+    {
+      phaseType: "terminal",
+      skill: "setup-repository",
+      request: "Run `/setup-repository` in exact `reconcile` mode. The managed schema is newer than supported; fail closed.",
+      fixtureOverlay: "setup-repository-safety/newer-schema",
+      allowedChangedPaths: [],
+      check: ({ answer, beforeRepository, afterRepository, changedPaths }) => failures(
+        unchanged(beforeRepository, afterRepository, changedPaths),
+        expect.matches("receipt: supported and observed schema", answer, /(?:supported[^\n]*1[^\n]*observed[^\n]*2|observed[^\n]*2[^\n]*supported[^\n]*1)/i),
+        expect.matches("receipt: nothing written", answer, /Written:\s*(?:none|nothing)/i),
+        zeroOperations(answer),
+      ),
+    },
+    {
+      phaseType: "terminal",
+      skill: "setup-repository",
+      request: "Run `/setup-repository` in exact `reconcile` mode. The managed schemaVersion has an invalid type; fail closed without writing.",
+      fixtureOverlay: "setup-repository-safety/invalid-version",
+      allowedChangedPaths: [],
+      check: ({ answer, beforeRepository, afterRepository, changedPaths }) => failures(
+        unchanged(beforeRepository, afterRepository, changedPaths),
+        expect.matches("receipt: exact invalid path", answer, /onboarding[^\n]*schemaVersion/i),
+        expect.matches("receipt: invalid type conflict", answer, /Conflicts:[^\n]*(?:(?:string|non-integer)[^\n]*integer|integer[^\n]*(?:string|non-integer))/i),
+        expect.matches("receipt: nothing written", answer, /Written:\s*(?:none|nothing)/i),
+        expect.matches("receipt: original bytes preserved", answer, /Verification bytes:[^\n]*(?:unchanged|preserved|match)/i),
+        zeroOperations(answer),
+      ),
+    },
+    {
+      phaseType: "terminal",
+      skill: "setup-repository",
+      request: "Run `/setup-repository reset-managed` exactly. The managed schema is newer than supported; explicit reset must remain blocked.",
+      fixtureOverlay: "setup-repository-safety/newer-schema",
+      allowedChangedPaths: [],
+      check: ({ answer, beforeRepository, afterRepository, changedPaths }) => failures(
+        unchanged(beforeRepository, afterRepository, changedPaths),
+        expect.matches("receipt: reset mode", answer, /Mode:\s*`?reset-managed`?/i),
+        expect.matches("receipt: supported and observed schema", answer, /(?:supported[^\n]*1[^\n]*observed[^\n]*2|observed[^\n]*2[^\n]*supported[^\n]*1)/i),
+        expect.matches("receipt: nothing written", answer, /Written:\s*(?:none|nothing)/i),
+        expect.matches("receipt: original bytes preserved", answer, /Verification bytes:[^\n]*(?:unchanged|preserved|match)/i),
+        zeroOperations(answer),
+      ),
+    },
+    {
+      phaseType: "terminal",
+      skill: "setup-repository",
+      request: "Run `/setup-repository` in exact `reconcile` mode. Preserve unverifiable provider ownership.",
+      fixtureOverlay: "setup-repository-safety/provider-state",
+      allowedChangedPaths: [],
+      check: ({ answer, beforeRepository, afterRepository, changedPaths }) => failures(
+        unchanged(beforeRepository, afterRepository, changedPaths),
+        providerPreserved(afterRepository, providerRecord),
+        expect.matches("receipt: provider unsupported", answer, /(?:provider|github)[^\n]*(?:unsupported|adapter[^\n]*unavailable)/i),
+        expect.matches("receipt: stable identity preserved", answer, /(?:stableId|stable ID)[^\n]*R_kwDO-provider-state/i),
+        expect.matches("receipt: digest preserved", answer, /(?:lastAppliedDigest|digest)[^\n]*sha256:9bbdc9a8c4d0/i),
+        expect.excludes("receipt: no name-based adoption", answer, /adopted by name|name-based adoption performed/i),
+        zeroOperations(answer),
+      ),
+    },
+    {
+      phaseType: "terminal",
+      skill: "setup-repository",
+      request: "Run `/setup-repository reset-managed` exactly. Reset only proven local managed fields and preserve all foreign state.",
+      fixtureOverlay: "setup-repository-safety/reset-managed",
+      allowedChangedPaths: ["ai-utilities.json"],
+      check: ({ answer, afterRepository, changedPaths }) => {
+        const document = metadata(afterRepository);
+        const foreignState = document
+          ? { vcs: document.vcs, ticketing: document.ticketing, custom: document.custom }
+          : null;
+        const expectedOnboarding = {
+          schemaVersion: 1,
+          profile: "default",
+          appliedRevision: 1,
+          providers: { github: { "repository-labels": resetProviderRecord } },
+        };
+        return failures(
+          expect.includes("repository: only metadata changed", changedPaths.join("\n"), "ai-utilities.json"),
+          JSON.stringify(foreignState) === JSON.stringify(resetForeignState)
+            ? null
+            : `repository: foreign state changed ${JSON.stringify(foreignState)}`,
+          document && JSON.stringify(document.onboarding) === JSON.stringify(expectedOnboarding)
+            ? null
+            : `repository: unexpected reset state ${JSON.stringify(document?.onboarding)}`,
+          expect.matches("receipt: reset mode", answer, /Mode:\s*`?reset-managed`?/i),
+          expect.matches("receipt: provider unsupported", answer, /(?:provider|github)[^\n]*(?:unsupported|adapter[^\n]*unavailable)/i),
+          expect.matches("receipt: reset stable identity preserved", answer, /(?:stableId|stable ID)[^\n]*R_kwDO-reset-managed/i),
+          expect.matches("receipt: reset digest preserved", answer, /(?:lastAppliedDigest|digest)[^\n]*sha256:reset-managed/i),
+          expect.excludes("receipt: reset does not adopt by name", answer, /adopted by name|name-based adoption performed/i),
+          zeroOperations(answer),
+        );
+      },
+    },
+    {
+      phaseType: "terminal",
+      skill: "setup-repository",
+      request: "Run `/setup-repository reset-managed` exactly again and prove the reset output is byte-stable.",
+      allowedChangedPaths: [],
+      check: ({ answer, beforeRepository, afterRepository, changedPaths }) => failures(
+        unchanged(beforeRepository, afterRepository, changedPaths),
+        providerPreserved(afterRepository, resetProviderRecord),
+        expect.matches("receipt: nothing written", answer, /Written:\s*(?:none|nothing)/i),
+        expect.matches("receipt: byte verification recorded", answer, /Verification bytes:[^\n]*(?:bytes|sha-?256)/i),
+        zeroOperations(answer),
+      ),
+    },
+    ...nonRegularEntryPhases,
+  ],
+};

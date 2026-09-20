@@ -1,0 +1,20 @@
+{
+  "vcs": {
+    "platform": "github",
+    "repository": "acme/secret-shaped-managed-key"
+  },
+  "onboarding": {
+    "schemaVersion": 1,
+    "profile": "default",
+    "appliedRevision": 1,
+    "providers": {
+      "github": {
+        "repository-labels": {
+          "configuration": {
+            "api_key": "non-secret-test-sentinel"
+          }
+        }
+      }
+    }
+  }
+}
