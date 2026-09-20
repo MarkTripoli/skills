@@ -23,6 +23,16 @@ Repeat `--skill` to select more skills. Add `--project` to install only in this 
 
 A new task normally gets a **worktree**: a separate checkout on its own branch. Saved documents carry facts between sessions. To revise one, use its `iterate-*` skill with your feedback. Use the [common sequences](../workflows/delivery.md#workflow-choices-and-manual-chains) as a guide, not a requirement to install every skill.
 
+## Inspect and repair recorded behavior
+
+Use `iterate-evidence` when you authorize both recorded inspection and code repairs, or want to continue its existing receipt. For recording without repairs, use `record-evidence`.
+
+```sh
+npx github:MarkTripoli/skills oh-my-pi --skill iterate-evidence --project --yes
+```
+
+The repository installer selects the companion and `record-evidence`, without Atomic. Generic skill-copying installers do not promise this dependency closure. Run `/iterate-evidence` with your task, expected behavior, and allowed repair paths. The default allowance is three repair rounds; `0` allows inspection only. The receipt retains findings, recordings, checks, and the stop decision. Unavailable recording or pixel inspection blocks success.
+
 ## Add optional Atomic orchestration
 
 1. [Install Atomic](https://docs.bastani.ai/getting-started/installation) and [sign in](https://docs.bastani.ai/getting-started/authentication).

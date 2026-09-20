@@ -62,6 +62,8 @@ const ANSWER_INVENTORY = {
   "implement-plan/references/implementation_phase_final_answer.md": "implement-plan",
   "iterate-design-discussion/references/design_discussion_final_answer.md": "create-plan",
   "iterate-design-discussion/references/design_discussion_review_answer.md": "iterate-design-discussion",
+  "iterate-evidence/references/evidence_iteration_passed_answer.md": TERMINAL_ANSWER,
+  "iterate-evidence/references/evidence_iteration_stopped_answer.md": TERMINAL_ANSWER,
   "iterate-implementation/references/implementation_final_answer.md": "describe-pr",
   "iterate-implementation/references/implementation_phase_final_answer.md": "implement-plan",
   "iterate-plan/references/plan_final_answer.md": "implement-plan",

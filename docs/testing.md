@@ -72,6 +72,21 @@ npm run evals -- verify-required-arguments --model openai-codex/gpt-5.6-luna --k
 
 This tests command discovery and preservation of a documented build output, not relocation of unexpected runtime evidence. A live skill eval proves only the exercised phase in that harness. It does not prove Atomic discovery, its human UI, durable resume, epic child scheduling, or another harness's tools. Provider credentials and OMP are required.
 
+### Recorded repair evidence
+
+The `iterate-evidence` family uses a selected installed companion and recorder, not the full document-skill tree. Its pinned installer inputs, JSON tool trace, source and receipt snapshots, checks, raw videos, extracted frames, and installation inventory stay under the result directory. The only repairable fixture paths are `app.js` and `check.mjs`; specification and capture support remain fixed.
+
+```sh
+npm run evals -- iterate-evidence --keep --max-time 25
+npm run evals -- iterate-evidence --grade evals/results/latest
+```
+
+The primary case requires an agent-authored repair and strengthened check, including failure against preserved defective source and success against repaired source. Independent recorded-pixel review must observe baseline `2`, repaired increment `1`, and Reset `0`. Save exact media hashes, sample timestamps, observations, and subject trace references in the retained review. Automated evidence retention alone leaves inspection pending; missing review cannot pass saved regrading.
+
+The live command exits `1` while independent review is pending. Open the retained frames yourself, write `iterate-evidence/1-iterate-evidence/review.json` using its `review-schema.json`, then run saved grading. The review binds observed pixels to media/frame hashes, subject trace entries, pre-edit receipt history, and final coverage; it is not generated from labels or receipt prose.
+
+Saved regrading reads retained repair evidence, not a reconstructed original fixture or mutable host source. It does not execute the agent or supply missing inspection. The complete plan contains exactly seven live cases: primary repair, viewer blocked, label disagreement, no progress, zero limit, three rounds, and continuation. Only explicitly executed cases establish behavior; offline checks and this primary case do not prove the later cases.
+
 ## Adding a skill to the workflow
 
 1. Add `skills/delivery/<name>/SKILL.md` and `references/` templates, preserving frontmatter and the shared links on line 6.

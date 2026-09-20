@@ -166,6 +166,7 @@ Artifact type is the template's frontmatter `type`. Human gates apply only when 
 | reproduce-bug | reproduction | yes | Bugfix before product edits |
 | fix-bug | fix | no | Bugfix after reproduction |
 | record-evidence | evidence | no | By hand; narrated video proof |
+| iterate-evidence | evidence-iteration | no | Independent authorized capture, inspection, and repair loop |
 | deliver | none | no | Independent entry point; optional Atomic handoff |
 | configure-model-routing | none | no | By hand or model-invoked; creates and verifies the shared candidate profile |
 | herd-next | none | no | By hand inside Herdr; stage the next session |
@@ -182,6 +183,8 @@ Artifact type is the template's frontmatter `type`. Human gates apply only when 
 ## Running skills by hand
 
 Invoke `/<skill> @<artifact or task directory>` in Claude Code, OMP, Pi, or another compatible host; use `$<skill>` in Codex. An individual skill needs no Atomic installation or running controller. Unless an exception applies, task conventions open a worktree for a new task. Later phases use that checkout and branch.
+
+`iterate-evidence` independently composes `record-evidence` for an explicitly authorized, bounded repair loop. It saves one append-only receipt and inspects newly recorded pixels before resolving findings. It is not scheduled by the Atomic controller. Install it with the [repository installer](../docs/getting-started.md#inspect-and-repair-recorded-behavior) so the recorder dependency is included; record-only requests still use `record-evidence`.
 
 Use the phase table as a guide, not a requirement to install every phase. A manual handoff names the saved artifact and ends with:
 

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Counter</title>
+  <style>
+    body { margin: 0; background: #f4f1eb; color: #202020; font: 24px system-ui, sans-serif; }
+    main { margin: 140px auto; width: 640px; text-align: center; }
+    h1 { font-size: 36px; }
+    output { display: block; margin: 28px; font-size: 96px; font-variant-numeric: tabular-nums; }
+    button { padding: 16px 24px; margin: 8px; font: inherit; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Counter</h1>
+    <output id="count" aria-live="polite" aria-label="Count">0</output>
+    <button id="add" type="button">Add one</button>
+    <button id="reset" type="button">Reset</button>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

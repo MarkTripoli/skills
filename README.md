@@ -38,6 +38,8 @@ Each step saves a task document, called an **artifact**. New tasks normally use 
 
 Install only the skills you need. A suggested next skill is not a hidden dependency. See [getting started](docs/getting-started.md) or [common skill sequences](workflows/delivery.md#workflow-choices-and-manual-chains).
 
+For authorized inspection and repair of recorded behavior, use [iterate-evidence](docs/getting-started.md#inspect-and-repair-recorded-behavior). Its selected repository installation includes the recorder dependency; Atomic is not required.
+
 ## Optional Atomic orchestration
 
 Atomic runs skills in separate sessions and pauses for your approval. Install and sign in to Atomic separately, then add the workflow:

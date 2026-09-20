@@ -22,8 +22,8 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { buildRuntime } from "../scripts/lib/build.mjs";
 import { subjectProblems } from "../scripts/check-commits.mjs";
+import { gradeEvidenceScenario, isEvidenceScenario, snapshotEvidenceSources } from "./iterate-evidence.mjs";
 import { artifacts, failures, handoff, newest, placeholders } from "./lib.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -237,6 +237,11 @@ function templateFor(skillsDir, phase) {
 }
 
 async function runScenario(scenario, runDir, dist) {
+  if (isEvidenceScenario(scenario)) {
+    const pinned = path.join(dist, "evidence-source");
+    const { runEvidenceScenario } = await import(pathToFileURL(path.join(pinned, "evals", "iterate-evidence.mjs")));
+    return runEvidenceScenario(scenario, runDir, pinned, { model, maxMinutes });
+  }
   const skillsDir = path.join(dist, "skills");
   const { repo, taskDir } = prepareRepo(scenario, dist);
   const taskRel = path.relative(repo, taskDir);
@@ -293,6 +298,7 @@ async function runScenario(scenario, runDir, dist) {
 // the previous phase's copy is the "before" snapshot, and `path:line` pointers resolve against a fresh
 // copy of the fixtures. No model, no git.
 async function gradeScenario(scenario, runDir) {
+  if (isEvidenceScenario(scenario)) return gradeEvidenceScenario(scenario, runDir);
   const resultDir = path.join(runDir, scenario.name);
   const result = { name: scenario.name, repo: null, phases: [], ok: true, graded: true };
   if (!fs.existsSync(resultDir)) {
@@ -345,7 +351,8 @@ fs.mkdirSync(resultsRoot, { recursive: true });
 
 let results;
 if (gradeDir !== null) {
-  const runDir = path.resolve(resultsRoot, gradeDir || "latest");
+  const requested = gradeDir || "latest";
+  const runDir = fs.existsSync(path.resolve(requested)) ? path.resolve(requested) : path.resolve(resultsRoot, requested);
   if (!fs.existsSync(runDir)) {
     console.error(`no run at ${runDir}`);
     process.exit(2);
@@ -360,7 +367,11 @@ if (gradeDir !== null) {
   // The built tree and source snapshots are private to this run (a concurrent run must not rebuild
   // the skills or change the guidance a running session is reading) and stay with its recordings.
   const dist = path.join(runDir, ".dist");
-  buildRuntime("oh-my-pi", dist);
+  if (scenarios.some((scenario) => !isEvidenceScenario(scenario))) {
+    const { buildRuntime } = await import("../scripts/lib/build.mjs");
+    buildRuntime("oh-my-pi", dist);
+  }
+  if (scenarios.some(isEvidenceScenario)) snapshotEvidenceSources(repoRoot, dist);
   snapshotSources(dist);
   const latest = path.join(resultsRoot, "latest");
   fs.rmSync(latest, { force: true });

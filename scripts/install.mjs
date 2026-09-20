@@ -29,7 +29,7 @@ const TARGET_LABEL = {
   pi: "Pi",
   portable: "Portable",
 };
-const SKILL_DEPENDENCIES = { "jev-ui": ["typed-judgment", "record-evidence"] };
+const SKILL_DEPENDENCIES = { "jev-ui": ["typed-judgment", "record-evidence"], "iterate-evidence": ["record-evidence"] };
 
 function dependencyClosure(names) {
   const result = new Set(names);

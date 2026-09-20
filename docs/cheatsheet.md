@@ -34,6 +34,14 @@ Uninstall does not delete task documents or worktrees.
 
 Use this model-invoked skill when no valid candidate profile exists. Codex users invoke `$configure-model-routing`; other harnesses invoke `/configure-model-routing`. It writes the project profile or the user file named by `SKILLS_MODEL_CANDIDATES_FILE`, then verifies it through `route-model`.
 
+
+For authorized recorded inspection and repair, install the companion with its recorder dependency:
+
+```sh
+npx github:MarkTripoli/skills oh-my-pi --skill iterate-evidence --project --yes
+```
+
+Then run `/iterate-evidence @<task-directory-or-iteration-receipt>` with expected behavior and repair authority. Default: three repair rounds; `0`: inspection only. Selected uninstall removes the companion and leaves the recorder. Use this repository installer for dependency closure; generic skill copying does not guarantee it. See [the independent loop](getting-started.md#inspect-and-repair-recorded-behavior).
 ### File locations
 
 | Agent | User skills | User workers |
