@@ -182,6 +182,9 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		}
 		return ipc.CancelRunResult{OK: d.CancelRun(q.RunID, "cancelled") == nil}, nil
 	})
+	if err := manager.Recover(context.Background()); err != nil {
+		return err
+	}
 	if err := server.Listen(p.Socket()); err != nil {
 		return err
 	}

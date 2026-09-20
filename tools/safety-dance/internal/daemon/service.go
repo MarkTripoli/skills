@@ -44,3 +44,42 @@ func (s Service) Validate() error {
 	}
 	return nil
 }
+
+func (s Service) Install() error {
+	if s.Executor == nil {
+		return fmt.Errorf("service executor is required")
+	}
+	if err := s.Validate(); err != nil {
+		return err
+	}
+	return s.Executor.Run(serviceInstallCommand())
+}
+
+func (s Service) Stop() error {
+	if s.Executor == nil {
+		return fmt.Errorf("service executor is required")
+	}
+	return s.Executor.Run(serviceStopCommand())
+}
+
+func serviceInstallCommand() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "launchctl"
+	case "linux":
+		return "systemctl"
+	default:
+		return "schtasks"
+	}
+}
+
+func serviceStopCommand() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "launchctl"
+	case "linux":
+		return "systemctl"
+	default:
+		return "schtasks"
+	}
+}

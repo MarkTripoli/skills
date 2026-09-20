@@ -13,6 +13,10 @@ func newLogs() *cobra.Command {
 			return err
 		}
 		b, err := os.ReadFile(p.DaemonLog())
+		if os.IsNotExist(err) {
+			fmt.Fprintln(cmd.OutOrStdout(), "no daemon logs")
+			return nil
+		}
 		if err != nil {
 			return err
 		}
