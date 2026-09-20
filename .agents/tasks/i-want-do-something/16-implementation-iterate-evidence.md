@@ -1,4 +1,7 @@
 ---
+task: i-want-do-something
+type: implementation
+summary: "R8 fixes F4 (initial frame timing binding before first click), F5 (reservation step recognition), and three-rounds minimum budget (minMinutes:45)."
 round: R8
 revision: c29fd37
 fixes: F4 F5 three-rounds-budget
