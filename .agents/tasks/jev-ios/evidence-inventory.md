@@ -6,16 +6,16 @@ status: not-ready
 
 # Evidence inventory
 
-This inventory covers non-sensitive JSON/Markdown receipts and manifests only. Native recordings, screenshots, raw logs, credentials, and helper configuration remain local and ignored. The edited artifacts are byte-archived under unique ignored evidence directories; the latest originals are under `evidence/native-safety-current-20260920T084236-2488/originals-before-final-sync/` and their SHA-256 values are recorded below.
+This inventory covers non-sensitive JSON/Markdown receipts and manifests only. Native recordings, screenshots, raw logs, credentials, and helper configuration remain local and ignored. The edited artifacts are byte-archived under unique ignored evidence directories; the four originals below are under `evidence/final-reconciliation-20260920/originals/` and their SHA-256 values are recorded below.
 
 ## Archived originals
 
 | File | SHA-256 |
 |---|---|
-| `02-verification-jev-ios.md` | `ad13b9842c7f962ce18e8750990272bcd6900b9621c1d143e8ff2105da103461` |
-| `04-verification-continuation-jev-ios.md` | `7ba8b4110258a262e555bb2636f249c1b27bc1c3256eac34a782a452f03a9253` |
-| `06-repair-verification-jev-ios.md` | `f1345495dca5259bf23a2b173b1b5117b5ef7bc5a61ef6dadfcb819231d56883` |
-| `07-code-review-jev-ios.md` | `5e46927c884ae53522d22b1d412c960d8d1b29441b4f3f3b23ebd0df16f7db9a` |
+| `evidence/final-reconciliation-20260920/originals/02-verification-jev-ios.md.archive` | `ad13b9842c7f962ce18e8750990272bcd6900b9621c1d143e8ff2105da103461` |
+| `evidence/final-reconciliation-20260920/originals/04-verification-continuation-jev-ios.md.archive` | `7ba8b4110258a262e555bb2636f249c1b27bc1c3256eac34a782a452f03a9253` |
+| `evidence/final-reconciliation-20260920/originals/06-repair-verification-jev-ios.md.archive` | `f1345495dca5259bf23a2b173b1b5117b5ef7bc5a61ef6dadfcb819231d56883` |
+| `evidence/final-reconciliation-20260920/originals/07-code-review-jev-ios.md.archive` | `5e46927c884ae53522d22b1d412c960d8d1b29441b4f3f3b23ebd0df16f7db9a` |
 
 ## Receipt and manifest checksums
 
