@@ -31,7 +31,7 @@ summary: "Phase 3 now persists pipeline step state, skips completed steps after 
 - command: `cd tools/safety-dance && make e2e`
 - result: passed.
 - evidence: The existing local pipeline fixture passed; it does not exercise a temporary upstream repository.
-
+The Phase 3 code commit was created as `5819807` after the required automated checks passed. The plan and this receipt were committed separately as `fb13d5e`.
 ## Deferred Human Evidence
 
 - The full temporary-upstream publication matrix, daemon caller integration, and restart-after-remote-push recovery remain unproved. These correspond to verification items A3, A12, and A13 in `.agents/tasks/i-want-to-take-4cf09814/16-verification-safety-dance.md`.
