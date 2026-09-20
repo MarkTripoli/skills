@@ -22,7 +22,35 @@ The current local schema is version 1 and profile revision 1:
 }
 ```
 
-`schemaVersion` and `appliedRevision` are integers. `profile` is `default`. `providers` is an object. An existing schema other than version 1 is unsupported in this release. Migration behavior is not inferred.
+`schemaVersion` and `appliedRevision` are integers. `profile` is `default`. `providers` is an object.
+
+## Ordered migration table
+
+Apply the first matching row after parsing and validating the existing `onboarding` object:
+
+| Observed managed state | Plan |
+|---|---|
+| `onboarding` absent | Initialize the current schema-1 subtree. |
+| `schemaVersion: 0`, `appliedRevision: 0` | Replace the owned subtree with current schema 1 and revision 1. Remove obsolete owned fields. |
+| `schemaVersion: 1`, `appliedRevision: 0` | Fill current owned defaults and replace the owned subtree at revision 1. |
+| `schemaVersion: 1`, `appliedRevision: 1` | Current. Preserve the original document bytes when no other semantic change exists. |
+
+Inside an existing `onboarding` object, both version fields must be present integers from 0 through 1. Missing, non-integer, negative, or greater-than-1 values are conflicts. Only the schema/revision pairs in the table are supported; every other pair conflicts before planning or writing.
+
+Build migration output from the parsed top-level document. Assign only its replacement `onboarding` value. Preserve the complete existing values of `vcs`, `ticketing`, and every unknown top-level key. Do not reconstruct, normalize, sort, or add defaults to those foreign subtrees.
+
+For either supported migration, the replacement owned subtree is exactly:
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "default",
+  "appliedRevision": 1,
+  "providers": {}
+}
+```
+
+When a supported existing managed subtree contains a `providers` object, carry that complete object into the replacement instead of `{}`. Preserve every provider record and its values; migration cannot adopt, remove, normalize, or rewrite provider identities. Provider records never authorize a provider call.
 
 Reject any field under `onboarding` whose normalized key names a token, secret, password, private key, API key, or access key. Report its JSON path, never its value.
 

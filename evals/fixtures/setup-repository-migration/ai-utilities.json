@@ -1,0 +1,21 @@
+{
+  "vcs": {
+    "platform": "github",
+    "repository": "acme/preserved"
+  },
+  "ticketing": {
+    "tool": "linear",
+    "team": "ENG"
+  },
+  "custom": {
+    "nested": {
+      "keep": true,
+      "values": ["alpha", "beta"]
+    }
+  },
+  "onboarding": {
+    "schemaVersion": 0,
+    "appliedRevision": 0,
+    "legacyProfile": "default"
+  }
+}
