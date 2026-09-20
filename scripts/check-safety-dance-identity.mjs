@@ -8,25 +8,40 @@ const allowLicense = path.normalize('tools/safety-dance/LICENSE');
 // the identity it enforces, nor should a negative fixture be an accidental hit.
 const retired = [
   ['no', '-', 'mistakes'], ['no', '_', 'mistakes'], ['no', '-', 'mistakes', '-', 'home'],
-  ['no', ' ', 'mistakes'], ['no', '.', 'mistakes'],
+  ['no', ' ', 'mistakes'], ['no', '.', 'mistakes'], ['NO', '_', 'MISTAKES'],
+  ['github.com/', 'kunchenguid/', 'no', '-', 'mistakes'], ['.no', '-', 'mistakes', '.yaml'],
+  ['no', '-', 'mistakes', '-', 'token'], ['no', '-', 'mistakes', '-', 'daemon'],
 ];
 const retiredPatterns = retired.map(parts => new RegExp(parts.join(''), 'gi'));
+const shippedRoots = ['tools/safety-dance', 'skills/delivery/safety-dance', 'scripts', 'tests', '.github', 'docs', 'README.md', 'package.json'];
 const skipped = new Set(['.git', 'node_modules', 'dist']);
 const binaryExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.ico', '.pdf', '.zip', '.gz', '.exe', '.dll', '.bin']);
 async function files(dir) {
-  const out = [];
-  for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
-    if (skipped.has(entry.name)) continue;
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...await files(full));
-    else out.push(full);
-  }
-  return out;
+	const out = [];
+	for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+		if (skipped.has(entry.name)) continue;
+		const full = path.join(dir, entry.name);
+		if (entry.isDirectory()) out.push(...await files(full));
+		else out.push(full);
+	}
+	return out;
+}
+async function shippedFiles(scanRoot) {
+	const out = [];
+	for (const entry of shippedRoots) {
+		const target = path.join(scanRoot, entry);
+		try {
+			const stat = await fs.stat(target);
+			if (stat.isDirectory()) out.push(...await files(target));
+			else out.push(target);
+		} catch {}
+	}
+	return out;
 }
 
 export async function scan(scanRoot = root) {
   const findings = [];
-  for (const file of await files(scanRoot)) {
+  for (const file of await (scanRoot === root ? shippedFiles(scanRoot) : files(scanRoot))) {
     const relative = path.relative(scanRoot, file).split(path.sep).join('/');
     if (relative === allowLicense || relative.startsWith('.agents/tasks/')) continue;
     if (binaryExtensions.has(path.extname(file).toLowerCase())) continue;
@@ -53,7 +68,7 @@ export async function scan(scanRoot = root) {
 	const permissionFragment = ['Permission is hereby', ' granted'].join('');
 	const softwareFragment = ['THE SOFTWARE', ' IS PROVIDED'].join('');
 	const legalFragments = legalLines.concat([permissionFragment, softwareFragment]);
-	for (const file of await files(scanRoot)) {
+	for (const file of await (scanRoot === root ? shippedFiles(scanRoot) : files(scanRoot))) {
 		const relative = path.relative(scanRoot, file).split(path.sep).join('/');
 		if (relative === allowLicense || relative === 'LICENSE' || relative === 'scripts/check-safety-dance-identity.mjs' || relative === 'tests/safety-dance-identity.test.mjs' || relative.startsWith('.agents/tasks/') || binaryExtensions.has(path.extname(file).toLowerCase())) continue;
 		let text; try { text = await fs.readFile(file, 'utf8'); } catch { continue; }

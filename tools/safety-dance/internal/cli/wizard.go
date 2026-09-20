@@ -139,7 +139,7 @@ func runWizard(cmd *cobra.Command, args []string) error {
 		},
 		InstallService: func() error { createdService = !service.DefinitionExists(); return service.Install() },
 		StopService:    func() error { return service.Stop() }, ServiceCreated: func() bool { return createdService },
-		AskService: true, PromptLabels: []string{"upstream", "gate", "provider", "commands"},
+		AskService: true, PromptLabels: []string{"upstream", "commands"},
 	}
 	if err := setup.Run(context.Background()); err != nil {
 		return err

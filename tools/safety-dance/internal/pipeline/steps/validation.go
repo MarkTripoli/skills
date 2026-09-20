@@ -164,6 +164,13 @@ func Typed(ctx context.Context, name string) error {
 		if result.Verdict != "pass" {
 			return fmt.Errorf("%s: typed validation verdict %q", name, result.Verdict)
 		}
+		if sink := db.TypedEvidenceSinkFrom(ctx); sink != nil {
+			findings, marshalErr := json.Marshal(result.Findings)
+			if marshalErr != nil {
+				return fmt.Errorf("marshal typed findings: %w", marshalErr)
+			}
+			sink.Value = &db.TypedEvidence{FindingsJSON: string(findings), Evidence: append([]string(nil), result.Evidence...)}
+		}
 		return nil
 	}
 	return fmt.Errorf("%s: typed validation failed: %w", name, lastErr)

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -174,7 +175,8 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 				return r.Results, err
 			}
 		}
-		err := s(ctx)
+		sink := db.NewTypedEvidenceSink()
+		err := s(db.WithTypedEvidenceSink(ctx, sink))
 		result := StepResult{n, err == nil, err}
 		r.mu.Lock()
 		r.Results = append(r.Results, result)
@@ -184,7 +186,15 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 			if err != nil {
 				persistErr = r.Database.FailStep(persisted.ID, err.Error(), 0)
 			} else {
-				persistErr = r.Database.CompleteStep(persisted.ID, 0, 0, "")
+				if sink.Value != nil && sink.Value.FindingsJSON != "" {
+					persistErr = r.Database.SetStepFindings(persisted.ID, sink.Value.FindingsJSON)
+					if persistErr == nil && len(sink.Value.Evidence) > 0 {
+						persistErr = r.Database.TouchStepActivity(persisted.ID, "evidence: "+strings.Join(sink.Value.Evidence, "; "))
+					}
+				}
+				if persistErr == nil {
+					persistErr = r.Database.CompleteStep(persisted.ID, 0, 0, "")
+				}
 			}
 			if persistErr != nil {
 				return r.Results, fmt.Errorf("persist step %s: %w", n, persistErr)

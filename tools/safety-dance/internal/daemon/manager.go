@@ -35,12 +35,24 @@ type Manager struct {
 	store *custody.Store
 	mu    sync.Mutex
 	keys  map[BranchKey]*RunHandle
+	keyMu map[BranchKey]*sync.Mutex
 	run   func(context.Context, *db.Run)
 }
 
 func NewManager(database *db.DB, runner func(context.Context, *db.Run)) *Manager {
 	store, _ := custody.New(database)
-	return &Manager{db: database, store: store, keys: make(map[BranchKey]*RunHandle), run: runner}
+	return &Manager{db: database, store: store, keys: make(map[BranchKey]*RunHandle), keyMu: make(map[BranchKey]*sync.Mutex), run: runner}
+}
+
+func (m *Manager) branchLock(key BranchKey) *sync.Mutex {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if lock := m.keyMu[key]; lock != nil {
+		return lock
+	}
+	lock := &sync.Mutex{}
+	m.keyMu[key] = lock
+	return lock
 }
 
 // Replace serializes cancellation, joining, persistence, and assignment for one
@@ -49,6 +61,9 @@ func (m *Manager) Replace(ctx context.Context, key BranchKey, accepted db.Accept
 	if key.RepositoryID == "" || key.Ref == "" {
 		return nil, fmt.Errorf("branch key is required")
 	}
+	branchLock := m.branchLock(key)
+	branchLock.Lock()
+	defer branchLock.Unlock()
 	m.mu.Lock()
 	if accepted.LaunchNonce != "" {
 		existing, err := m.db.GetRunByLaunchNonce(key.RepositoryID, key.Ref, accepted.LaunchNonce)
@@ -67,10 +82,6 @@ func (m *Manager) Replace(ctx context.Context, key BranchKey, accepted db.Accept
 		m.mu.Unlock()
 		prior.Wait()
 		m.mu.Lock()
-		if current, exists := m.keys[key]; exists && current != prior {
-			m.mu.Unlock()
-			return nil, fmt.Errorf("branch %s was replaced concurrently", key.Ref)
-		}
 		if err := m.store.SupersedeRun(prior.Run.ID, types.RunCancelReasonSuperseded); err != nil {
 			m.mu.Unlock()
 			return nil, err
@@ -86,16 +97,11 @@ func (m *Manager) Replace(ctx context.Context, key BranchKey, accepted db.Accept
 		m.mu.Unlock()
 		return nil, err
 	}
-	// The creation journal is cleared only after the durable run owns the path.
-	// Do this before exposing the run to the executor, closing the crash window
-	// where a terminal run could race journal cleanup.
 	if err = worktrees.CommitOwnership(worktree); err != nil {
 		m.mu.Unlock()
 		return nil, err
 	}
 	r.Status = types.RunRunning
-	// A request only submits work. The daemon owns the run until it reaches a
-	// durable terminal state, so an IPC disconnect must not cancel it.
 	runctx, cancel := context.WithCancel(context.Background())
 	h := &RunHandle{Run: r, cancel: cancel, done: make(chan struct{}), started: make(chan struct{})}
 	m.keys[key] = h

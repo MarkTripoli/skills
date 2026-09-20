@@ -282,6 +282,9 @@ func (a *Admission) admit(ctx context.Context, raw json.RawMessage) (interface{}
 	if strings.TrimSpace(p.Old) == "" || strings.TrimSpace(p.New) == "" {
 		return nil, errors.New("old and new revisions are required")
 	}
+	if strings.Trim(p.New, "0") == "" {
+		return nil, errors.New("branch deletion is not supported")
+	}
 	if err := ipc.AuthenticateAdmission(ctx, a.auth, p.Gate, p.Ref, p.Token); err != nil {
 		return nil, err
 	}

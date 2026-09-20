@@ -36,7 +36,7 @@ func Execute() int {
 		}
 		message := strings.ToLower(err.Error())
 		switch {
-		case strings.Contains(message, "usage") || strings.Contains(message, "unknown command"):
+		case strings.Contains(message, "usage") || strings.Contains(message, "unknown command") || strings.Contains(message, "accepts ") || strings.Contains(message, "requires ") || strings.Contains(message, "unknown flag") || strings.Contains(message, "invalid argument"):
 			return 2
 		case strings.Contains(message, "daemon") && strings.Contains(message, "unavailable"):
 			return 3

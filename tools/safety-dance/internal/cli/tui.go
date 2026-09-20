@@ -17,6 +17,10 @@ import (
 func newTUI() *cobra.Command {
 	return &cobra.Command{Use: "tui", Short: "show the terminal run view", RunE: renderTUI}
 }
+func terminalWriter(w interface{}) bool {
+	file, ok := w.(*os.File)
+	return ok && term.IsTerminal(file.Fd())
+}
 
 func renderTUI(cmd *cobra.Command, args []string) error {
 	p, err := home()
@@ -61,7 +65,14 @@ func renderTUI(cmd *cobra.Command, args []string) error {
 				return tui.Model{}, nil
 			}
 		}
-		m := tui.Model{RunID: run.ID, Branch: run.Branch, Status: run.Status}
+		m := tui.Model{RunID: run.ID, Branch: run.Branch, Status: run.Status, KeyHint: "approve, fix, skip, abort"}
+		if run.LastPushedSHA != nil {
+			m.Publication = "published " + *run.LastPushedSHA
+		} else if run.PushActive {
+			m.Publication = "publishing"
+		} else {
+			m.Publication = "not published"
+		}
 		if run.Error != nil {
 			m.Error = *run.Error
 		}
@@ -75,14 +86,15 @@ func renderTUI(cmd *cobra.Command, args []string) error {
 			if step.FindingsJSON != nil {
 				m.Findings = []string{*step.FindingsJSON}
 			}
-			if step.Status == types.StepStatusAwaitingApproval {
+			if step.Status == types.StepStatusAwaitingApproval || step.Status == types.StepStatusFixReview {
 				m.Prompt = "response required for " + string(step.StepName)
 			}
 		}
 		return m, nil
 	}
 	var current tui.Model
-	if !term.IsTerminal(os.Stdin.Fd()) {
+
+	if !term.IsTerminal(os.Stdin.Fd()) || !terminalWriter(cmd.OutOrStdout()) {
 		m, err := model()
 		if err != nil {
 			return err

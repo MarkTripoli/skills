@@ -156,7 +156,12 @@ func Publish(ctx context.Context, database *db.DB, runID string, req PushRequest
 	if mirror == nil {
 		return PushResult{}, fmt.Errorf("gate mirror callback is required")
 	}
-	if err := mirror(ctx, result.Candidate); err != nil {
+	// Once the remote ref is known to contain the candidate, cancellation no
+	// longer makes the publication uncertain. Finish mirror and binding work on
+	// a bounded context that is independent of the caller's cancellation.
+	publicationCtx, publicationCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer publicationCancel()
+	if err := mirror(publicationCtx, result.Candidate); err != nil {
 		return PushResult{}, fmt.Errorf("update gate mirror: %w", err)
 	}
 	run, err = database.GetRun(runID)
@@ -165,9 +170,6 @@ func Publish(ctx context.Context, database *db.DB, runID string, req PushRequest
 	}
 	if run == nil {
 		return PushResult{}, fmt.Errorf("run %s not found", runID)
-	}
-	if err := ctx.Err(); err != nil {
-		return PushResult{}, err
 	}
 	fingerprint := sha256.Sum256([]byte(req.Remote))
 	binding := db.PushBinding{HeadSHA: result.Candidate, TargetKind: "remote", TargetFingerprint: hex.EncodeToString(fingerprint[:]), Ref: req.Ref}

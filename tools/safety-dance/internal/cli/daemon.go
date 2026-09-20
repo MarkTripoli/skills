@@ -466,7 +466,7 @@ func recordPush(d *db.DB, p *paths.Paths, manager *daemon.Manager, n daemon.Push
 			return err
 		}
 		worktree := layout.Dir(r.ID, r.WorkingPath, nonce)
-		if err := worktrees.CreateDetached(context.Background(), r.WorkingPath, worktree, n.New); err != nil {
+		if err := worktrees.CreateDetached(context.Background(), gatePath, worktree, n.New); err != nil {
 			return err
 		}
 		accepted := db.AcceptedRef{RepoID: r.ID, Branch: branch, GateHead: n.New, PreviousReconciledHead: n.Old, LaunchNonce: nonce, RequestedOptions: append([]string(nil), n.Options...)}
@@ -521,7 +521,18 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 		return fmt.Errorf("run %s has no owned worktree", run.ID)
 	}
 	worktree := *run.WorktreeDir
-	if err := worktrees.RecoverDetached(ctx, repo.WorkingPath, worktree, run.HeadSHA); err != nil {
+	if err := os.MkdirAll(p.RunLogDir(run.ID), 0o700); err != nil {
+		return fmt.Errorf("create run log directory: %w", err)
+	}
+	runLogPath := filepath.Join(p.RunLogDir(run.ID), "run.log")
+	logFile, logErr := os.OpenFile(runLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if logErr != nil {
+		return fmt.Errorf("open run log: %w", logErr)
+	}
+	defer logFile.Close()
+	_, _ = fmt.Fprintf(logFile, "run %s started for %s\n", run.ID, run.Branch)
+	defer func() { _, _ = fmt.Fprintf(logFile, "run %s finished\n", run.ID) }()
+	if err := worktrees.RecoverDetached(ctx, p.RepoDir(run.RepoID), worktree, run.HeadSHA); err != nil {
 		return err
 	}
 	if _, err := os.Stat(worktree); err != nil {

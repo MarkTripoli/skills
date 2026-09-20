@@ -66,7 +66,17 @@ while read line; do
 done < "$TMP"
 USER_HOOK="$GATE_DIR/hooks/pre-receive.safety-dance-user"
 if [ -x "$USER_HOOK" ]; then
-  "$USER_HOOK" < "$TMP"; status=$?; rm -f "$TMP"; exit $status; fi
+  "$USER_HOOK" < "$TMP"; status=$?
+  if [ $status -ne 0 ]; then
+    receipts_tmp="$GATE_DIR/.safety-dance-receipts.cleanup"
+    awk -F '\t' 'NR==FNR {bad[$1 FS $2 FS $3]=1; next} !bad[$1 FS $2 FS $3]' "$TMP" "$GATE_DIR/.safety-dance-receipts" > "$receipts_tmp" 2>/dev/null || true
+    mv "$receipts_tmp" "$GATE_DIR/.safety-dance-receipts" 2>/dev/null || true
+    rm -f "$TMP"
+  else
+    rm -f "$TMP"
+  fi
+  exit $status
+fi
 rm -f "$TMP"
 exit 0
 `
