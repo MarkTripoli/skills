@@ -16,7 +16,7 @@ const rootIndex = args.indexOf("--root");
 const root = rootIndex === -1 ? repoRoot : path.resolve(args[rootIndex + 1] ?? "");
 const generated = root !== repoRoot;
 
-const EXPECTED_SKILL_COUNT = 43;
+const EXPECTED_SKILL_COUNT = 44;
 const SHARED_LINKS = {
   "shared/WRITING.md": "https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md",
   "shared/CONVENTIONS.md": "https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md",
@@ -227,7 +227,8 @@ function listFiles(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (!SKIP_DIRS.has(entry.name)) out.push(...listFiles(full));
+      const relative = path.relative(root, full);
+      if (!SKIP_DIRS.has(entry.name) && relative !== path.join(".agents", "tasks") && !relative.startsWith(`${path.join(".agents", "tasks")}${path.sep}`)) out.push(...listFiles(full));
     } else if (entry.isFile()) {
       out.push(full);
     }

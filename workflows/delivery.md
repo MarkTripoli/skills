@@ -177,6 +177,7 @@ Artifact type is the template's frontmatter `type`. Human gates apply only when 
 | ci-commit | commit | no | By hand; explicit-path commit conventions |
 | review-artifact-comments | comment-review | no | By hand; artifact feedback |
 | show-me | show-me | no | By hand; visual explanation |
+| safety-dance | none | no | By hand |
 
 ## Running skills by hand
 
