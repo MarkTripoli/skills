@@ -140,6 +140,15 @@ func (m *Manager) Resume(ctx context.Context, r *db.Run) error {
 	if r == nil {
 		return fmt.Errorf("run is required")
 	}
+	if r.Status.Terminal() {
+		return fmt.Errorf("run %s is already terminal", r.ID)
+	}
+	if r.Status == types.RunPending {
+		if err := m.db.TransitionRunStatus(r.ID, types.RunPending, types.RunRunning); err != nil {
+			return err
+		}
+		r.Status = types.RunRunning
+	}
 	key := BranchKey{RepositoryID: r.RepoID, Ref: r.Branch}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -174,6 +183,12 @@ func (m *Manager) Recover(ctx context.Context) error {
 	for _, r := range runs {
 		if r.Status != types.RunPending && r.Status != types.RunRunning {
 			continue
+		}
+		if r.Status == types.RunPending {
+			if err := m.db.TransitionRunStatus(r.ID, types.RunPending, types.RunRunning); err != nil {
+				return err
+			}
+			r.Status = types.RunRunning
 		}
 		runctx, cancel := context.WithCancel(ctx)
 		h := &RunHandle{Run: r, cancel: cancel, done: make(chan struct{})}

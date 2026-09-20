@@ -3,6 +3,8 @@ package steps
 import (
 	"context"
 	"fmt"
+	"strings"
+
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/scm"
 )
 
@@ -29,12 +31,19 @@ func PR(ctx context.Context) error {
 	if err := host.Available(ctx); err != nil {
 		return fmt.Errorf("pull-request provider unavailable: %w", err)
 	}
-	pr, err := host.FindPR(ctx, run.Branch, repo.DefaultBranch)
+	baseBranch := repo.DefaultBranch
+	if cfg := mergedConfig(ctx); cfg != nil && strings.TrimSpace(cfg.PR.BaseBranch) != "" {
+		baseBranch = strings.TrimSpace(cfg.PR.BaseBranch)
+	}
+	if run.PRBaseBranch != nil && strings.TrimSpace(*run.PRBaseBranch) != "" {
+		baseBranch = strings.TrimSpace(*run.PRBaseBranch)
+	}
+	pr, err := host.FindPR(ctx, run.Branch, baseBranch)
 	if err != nil {
 		return err
 	}
 	if pr == nil {
-		pr, err = host.CreatePR(ctx, run.Branch, repo.DefaultBranch, scm.PRContent{Title: "Safety Dance validation", Body: "Created by Safety Dance."})
+		pr, err = host.CreatePR(ctx, run.Branch, baseBranch, scm.PRContent{Title: "Safety Dance validation", Body: "Created by Safety Dance."})
 		if err != nil {
 			return err
 		}

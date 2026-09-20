@@ -208,13 +208,15 @@ func InitWithFork(ctx context.Context, d *db.DB, p *paths.Paths, workDir, forkUR
 	bareExisted := bareStatErr == nil
 	gateBefore := snapshotGate(bareDir)
 	if err := provisionGate(ctx, bareDir, absRoot, upstreamURL, p.ReposDir(), existing != nil); err != nil {
+		if bareExisted {
+			gateBefore.restore()
+		}
 		if existing == nil {
 			restoreRemote()
 			if !bareExisted {
 				_ = os.RemoveAll(bareDir)
 			}
 		} else {
-			gateBefore.restore()
 			restoreRemote()
 		}
 		return nil, false, err

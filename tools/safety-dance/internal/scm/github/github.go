@@ -440,13 +440,16 @@ func (h *Host) GetChecks(ctx context.Context, pr *scm.PR) ([]scm.Check, error) {
 	if err != nil {
 		return nil, err
 	}
+	expectedHeadSHA := strings.TrimSpace(pr.HeadSHA)
 	headSHA := ""
-	if strings.TrimSpace(pr.HeadSHA) != "" {
+	if expectedHeadSHA != "" {
 		headSHA, err = h.getPRHeadSHA(ctx, selector)
 		if err != nil {
 			return nil, err
 		}
-		pr.HeadSHA = headSHA
+		if headSHA != expectedHeadSHA {
+			return nil, fmt.Errorf("PR head %s does not match expected reviewed head %s", headSHA, expectedHeadSHA)
+		}
 	}
 	var checks []scm.Check
 	if headSHA != "" {
@@ -468,8 +471,8 @@ func (h *Host) GetChecks(ctx context.Context, pr *scm.PR) ([]scm.Check, error) {
 		if err != nil {
 			return nil, err
 		}
-		if currentHeadSHA != headSHA {
-			return nil, fmt.Errorf("PR head changed during check discovery from %s to %s", headSHA, currentHeadSHA)
+		if currentHeadSHA != expectedHeadSHA {
+			return nil, fmt.Errorf("PR head changed during check discovery from %s to %s", expectedHeadSHA, currentHeadSHA)
 		}
 	}
 	return checks, nil

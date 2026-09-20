@@ -366,11 +366,36 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 	} else {
 		return fmt.Errorf("find owned worktrees: %w", err)
 	}
-	if err := worktrees.RecoverPending(context.Background(), filepath.Join(p.Root(), "worktrees"), protected...); err != nil {
-		return fmt.Errorf("recover pending worktrees: %w", err)
+	globalConfig, err := config.LoadGlobal(p.ConfigFile())
+	if err != nil {
+		return fmt.Errorf("load global configuration for worktree recovery: %w", err)
 	}
-	if err := worktrees.RecoverRemoving(context.Background(), filepath.Join(p.Root(), "worktrees")); err != nil {
-		return fmt.Errorf("recover removing worktrees: %w", err)
+	roots := []string{filepath.Join(p.Root(), "worktrees")}
+	for _, root := range globalConfig.WorktreeRoots {
+		root = filepath.Clean(root)
+		seen := false
+		for _, existing := range roots {
+			if existing == root {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			roots = append(roots, root)
+		}
+	}
+	for _, root := range roots {
+		if _, statErr := os.Stat(root); os.IsNotExist(statErr) {
+			continue
+		} else if statErr != nil {
+			return statErr
+		}
+		if err := worktrees.RecoverPending(context.Background(), root, protected...); err != nil {
+			return fmt.Errorf("recover pending worktrees: %w", err)
+		}
+		if err := worktrees.RecoverRemoving(context.Background(), root); err != nil {
+			return fmt.Errorf("recover removing worktrees: %w", err)
+		}
 	}
 	if err := manager.Recover(context.Background()); err != nil {
 		return err
@@ -416,6 +441,9 @@ func recordPush(d *db.DB, p *paths.Paths, manager *daemon.Manager, n daemon.Push
 		if existing, err := d.GetRunByLaunchNonce(r.ID, branch, nonce); err != nil {
 			return err
 		} else if existing != nil {
+			if existing.Status.Terminal() {
+				return nil
+			}
 			if manager.Active(daemon.BranchKey{RepositoryID: r.ID, Ref: branch}) == nil {
 				if err := manager.Resume(context.Background(), existing); err != nil {
 					return err
@@ -461,6 +489,18 @@ func livePublicationHead(ctx context.Context, remote, ref string) string {
 		return ""
 	}
 	return normalizeSHA(fields[0])
+}
+
+func newSCMHost(remote, worktree string) (scm.Host, error) {
+	provider := scm.DetectProvider(remote)
+	if provider != scm.ProviderGitHub {
+		return nil, fmt.Errorf("SCM provider %s is not supported by this build; refusing to start a publish pipeline", provider)
+	}
+	return github.New(func(commandCtx context.Context, name string, args ...string) *exec.Cmd {
+		command := exec.CommandContext(commandCtx, name, args...)
+		command.Dir = worktree
+		return command
+	}, func() bool { _, err := exec.LookPath("gh"); return err == nil }, scm.ExtractHost(remote), github.HostPrefixedSlug(remote)), nil
 }
 
 func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Run) error {
@@ -522,13 +562,9 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	if verifiedHead == "" {
 		verifiedHead = normalizeSHA(run.BaseSHA)
 	}
-	var scmHost scm.Host
-	if scm.DetectProvider(repo.PushURL()) == scm.ProviderGitHub {
-		scmHost = github.New(func(commandCtx context.Context, name string, args ...string) *exec.Cmd {
-			command := exec.CommandContext(commandCtx, name, args...)
-			command.Dir = worktree
-			return command
-		}, func() bool { _, err := exec.LookPath("gh"); return err == nil }, scm.ExtractHost(repo.PushURL()), github.HostPrefixedSlug(repo.PushURL()))
+	scmHost, err := newSCMHost(repo.PushURL(), worktree)
+	if err != nil {
+		return err
 	}
 	request := steps.PushRequest{Worktree: worktree, Remote: repo.PushURL(), Ref: ref, Candidate: run.HeadSHA, VerifiedHead: verifiedHead, Rewrite: verifiedHead != "" && verifiedHead == normalizeSHA(run.BaseSHA), BeforePush: func() error {
 		current, checkErr := database.GetRun(run.ID)

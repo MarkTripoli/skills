@@ -37,7 +37,21 @@ type serviceRecovery struct {
 const serviceMarker = "SAFETY_DANCE_MANAGED"
 
 func (s Service) Label() string {
-	return "com.safety-dance.daemon." + strings.NewReplacer("/", "-", "\\", "-", ".", "-").Replace(s.Home.Root())
+	return "com-safety-dance-daemon-" + strings.NewReplacer("/", "-", "\\", "-", ".", "-", ":", "-").Replace(s.Home.Root())
+}
+
+func windowsCmdValue(value string) string {
+	value = strings.ReplaceAll(value, "^", "^^")
+	value = strings.ReplaceAll(value, "&", "^&")
+	value = strings.ReplaceAll(value, "|", "^|")
+	value = strings.ReplaceAll(value, "<", "^<")
+	value = strings.ReplaceAll(value, ">", "^>")
+	value = strings.ReplaceAll(value, "(", "^(")
+	value = strings.ReplaceAll(value, ")", "^)")
+	value = strings.ReplaceAll(value, "!", "^!")
+	value = strings.ReplaceAll(value, "%", "%%")
+	value = strings.ReplaceAll(value, `"`, `^"`)
+	return value
 }
 func (s Service) Definition() (string, error) {
 	if s.Home == nil {
@@ -200,7 +214,7 @@ func (s Service) Install() error {
 	case "linux":
 		activationErr = s.Executor.Run("systemctl", "--user", "enable", "--now", filepath.Base(path))
 	default:
-		action := fmt.Sprintf(`cmd /C "set SD_HOME=%s&& set %s=1&& "%s" daemon serve"`, s.Home.Root(), serviceMarker, s.Binary)
+		action := fmt.Sprintf(`cmd /D /S /C "set "SD_HOME=%s"&&set %s=1&&"%s" daemon serve"`, windowsCmdValue(s.Home.Root()), serviceMarker, s.Binary)
 		activationErr = s.Executor.Run("schtasks", "/Create", "/TN", s.Label(), "/TR", action, "/F")
 	}
 	if activationErr == nil {
