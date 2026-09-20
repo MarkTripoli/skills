@@ -556,11 +556,11 @@ node --input-type=module -e '
 
 #### Automated Verification:
 
-- [ ] `node --test tests/setup-repository-contract.test.mjs`
-- [ ] `npm test`
-- [ ] `npm run build -- --runtime portable && node scripts/validate.mjs --root dist/portable`
-- [ ] `npm run evals -- setup-repository-basic setup-repository-migration setup-repository-safety --keep`
-- [ ] `node --input-type=module -e 'import fs from "node:fs"; import { scanSkills } from "./scripts/lib/layout.mjs"; const skills = scanSkills("./skills").skills; const plugin = JSON.parse(fs.readFileSync("./.claude-plugin/plugin.json", "utf8")); if (skills.length !== 44 || skills.filter(({ name }) => name.startsWith("agent-")).length !== 7 || plugin.skills.length !== 37) process.exit(1);'`
+- [x] `node --test tests/setup-repository-contract.test.mjs`
+- [x] `npm test`
+- [x] `npm run build -- --runtime portable && node scripts/validate.mjs --root dist/portable`
+- [x] `npm run evals -- setup-repository-basic setup-repository-migration setup-repository-safety --keep`
+- [x] `node --input-type=module -e 'import fs from "node:fs"; import { scanSkills } from "./scripts/lib/layout.mjs"; const skills = scanSkills("./skills").skills; const plugin = JSON.parse(fs.readFileSync("./.claude-plugin/plugin.json", "utf8")); if (skills.length !== 44 || skills.filter(({ name }) => name.startsWith("agent-")).length !== 7 || plugin.skills.length !== 37) process.exit(1);'`
 
 human-gated: false
 
