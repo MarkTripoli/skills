@@ -7,6 +7,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
+export { gitConfigChanged, snapshotGitConfig } from "./git-config.mjs";
+
 const SNAPSHOT_EXCLUDED_DIRECTORIES = new Set([".git", ".agents", ".omp"]);
 
 function snapshotBytes(bytes) {
@@ -67,32 +69,6 @@ function snapshotTree(root, relativeRoot = "", excludedPaths = new Set(), conten
 
   visit(fullRoot, relativeRoot, rootStats);
   return manifest;
-}
-
-export function snapshotGitConfig(root) {
-  const gitRoot = path.join(root, ".git");
-  let gitRootStats;
-  try {
-    gitRootStats = fs.lstatSync(gitRoot);
-  } catch (error) {
-    if (error?.code === "ENOENT") return null;
-    throw error;
-  }
-  if (!gitRootStats.isDirectory() || gitRootStats.isSymbolicLink()) return null;
-
-  const config = path.join(gitRoot, "config");
-  let stats;
-  try {
-    stats = fs.lstatSync(config);
-  } catch (error) {
-    if (error?.code === "ENOENT") return null;
-    throw error;
-  }
-  return snapshotEntry(config, stats);
-}
-
-export function gitConfigChanged(before, after) {
-  return !isDeepStrictEqual(before, after);
 }
 
 export function snapshotRepository(root) {
