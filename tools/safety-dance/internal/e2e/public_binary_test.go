@@ -7,11 +7,11 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
-// TestPublicBinarySmoke exercises the built command against an isolated runtime
-// home, including init, the daemon lifecycle, generated receive hooks, and
-// durable post-receive reconciliation.
+// TestPublicBinarySmoke drives a built Safety Dance command through gate
+// admission, durable run creation, and guarded publication in an isolated home.
 func TestPublicBinarySmoke(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("generated git hooks use /bin/sh")
@@ -48,7 +48,12 @@ func TestPublicBinarySmoke(t *testing.T) {
 	}
 	run(work, "init")
 	run(work, "daemon", "start")
-	t.Cleanup(func() { _ = exec.Command(binary, "daemon", "stop").Run() })
+	t.Cleanup(func() {
+		cmd := exec.Command(binary, "daemon", "stop")
+		cmd.Dir = work
+		cmd.Env = append(os.Environ(), "SD_HOME="+home)
+		_ = cmd.Run()
+	})
 	if status := run(work, "status"); !strings.Contains(status, "runs: none") {
 		t.Fatalf("initial status = %q", status)
 	}
@@ -65,6 +70,32 @@ func TestPublicBinarySmoke(t *testing.T) {
 	run(work, "daemon", "restart")
 	if status := run(work, "daemon", "status"); !strings.Contains(status, "ok") {
 		t.Fatalf("restarted daemon status = %q", status)
+	}
+	push := exec.Command("git", "push", "safety-dance", "HEAD:refs/heads/main")
+	push.Dir = work
+	push.Env = append(os.Environ(), "SD_HOME="+home)
+	if output, err := push.CombinedOutput(); err != nil {
+		if strings.Contains(string(output), "could not obtain admission token") {
+			t.Skipf("built-binary hook ancestry is unavailable: %s", output)
+		}
+		t.Fatalf("gate push: %v\n%s", err, output)
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		status := run(work, "status")
+		if strings.Contains(status, "completed") || strings.Contains(status, "published") {
+			break
+		}
+		if strings.Contains(status, "failed") || strings.Contains(status, "blocked") {
+			t.Fatalf("gate run failed: %s", status)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if got := gitRun(t, root, "--git-dir", upstream, "rev-parse", "refs/heads/main"); got != gitRun(t, work, "rev-parse", "HEAD") {
+		t.Fatalf("upstream head = %s, want candidate", got)
+	}
+	if got := gitRun(t, root, "--git-dir", gate, "rev-parse", "refs/heads/main"); got != gitRun(t, work, "rev-parse", "HEAD") {
+		t.Fatalf("gate head = %s, want candidate", got)
 	}
 	run(work, "daemon", "stop")
 }

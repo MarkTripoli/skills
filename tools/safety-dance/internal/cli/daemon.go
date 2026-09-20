@@ -291,6 +291,17 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 	if err := adm.InitError(); err != nil {
 		return fmt.Errorf("load admission receipts: %w", err)
 	}
+	gatePaths := make([]string, 0)
+	if repositories, reposErr := d.GetRepos(); reposErr != nil {
+		return fmt.Errorf("load repositories for receipt recovery: %w", reposErr)
+	} else {
+		for _, repository := range repositories {
+			gatePaths = append(gatePaths, p.RepoDir(repository.ID))
+		}
+	}
+	if err := adm.ImportGateReceipts(context.Background(), gatePaths); err != nil {
+		return fmt.Errorf("import gate receipts: %w", err)
+	}
 	shutdown := make(chan struct{})
 	server.Handle(ipc.MethodShutdown, func(ctx context.Context, raw json.RawMessage) (interface{}, error) {
 		if err := daemon.AuthorizeMutationPeer(ipc.PeerPID(ctx)); err != nil {
@@ -722,7 +733,7 @@ func recoverCancelledPublication(database *db.DB, p *paths.Paths, repo *db.Repo,
 		Candidate: *run.ReviewApprovedHeadSHA, ReviewedHead: *run.ReviewApprovedHeadSHA,
 		VerifiedHead: verified, Rewrite: false,
 	}, func(ctx context.Context, candidate string) error {
-		_, err := git.RunBare(ctx, p.RepoDir(run.RepoID), "update-ref", ref, candidate)
+		_, err := git.RunBare(ctx, p.RepoDir(run.RepoID), "update-ref", "--no-deref", ref, candidate, run.HeadSHA)
 		return err
 	})
 	return err
@@ -952,7 +963,7 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 			return fmt.Errorf("worktree has uncommitted changes after review")
 		}
 		_, err = steps.Publish(pushCtx, database, run.ID, request, func(mirrorCtx context.Context, candidate string) error {
-			_, err := git.RunBare(mirrorCtx, p.RepoDir(run.RepoID), "update-ref", ref, candidate)
+			_, err := git.RunBare(mirrorCtx, p.RepoDir(run.RepoID), "update-ref", "--no-deref", request.Ref, candidate, run.HeadSHA)
 			return err
 		})
 		return err

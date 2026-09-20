@@ -32,11 +32,71 @@ func (a *Admission) saveReceipts() error {
 	if err != nil {
 		return err
 	}
-	tmp := a.receiptFile + ".tmp"
-	if err = os.WriteFile(tmp, raw, 0600); err != nil {
+	dir := filepath.Dir(a.receiptFile)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	return os.Rename(tmp, a.receiptFile)
+	tmp, err := os.CreateTemp(dir, ".admission-receipts-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(raw); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, a.receiptFile); err != nil {
+		return err
+	}
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
+}
+
+// ImportGateReceipts adopts authenticated pre-receive receipts left in a gate
+// when Git accepted the ref but the daemon was unavailable for post-receive.
+func (a *Admission) ImportGateReceipts(ctx context.Context, gates []string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, gate := range gates {
+		raw, err := os.ReadFile(filepath.Join(gate, ".safety-dance-receipts"))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) != 4 {
+				continue
+			}
+			current, err := git.RunBare(ctx, gate, "rev-parse", fields[2])
+			if err != nil || strings.TrimSpace(current) != fields[1] {
+				continue
+			}
+			if _, exists := a.receipts[fields[3]]; exists {
+				continue
+			}
+			a.receipts[fields[3]] = ipc.AdmitPushParams{Gate: gate, Ref: fields[2], Old: fields[0], New: fields[1], Token: fields[3], Accepted: true}
+		}
+	}
+	return a.saveReceipts()
 }
 
 // PushNotification is the accepted ref update delivered after Git has changed
@@ -182,7 +242,7 @@ func managedHookPeer(pid int, gate string) bool {
 		if err != nil {
 			return false
 		}
-		if strings.Contains(command, "SD_PARENT_RUN_ID=") {
+		if strings.Contains(command, "SD_PARENT_RUN_ID=") || strings.Contains(command, "SD_MANAGED_HOOK=") {
 			return false
 		}
 		if env, envErr := processEnvironmentFunc(pid); envErr == nil && (environmentHas(env, "SD_PARENT_RUN_ID=") || environmentHas(env, "SD_MANAGED_HOOK=")) {
@@ -208,6 +268,10 @@ func commandHasExecutable(command string, expected map[string]bool) bool {
 	for _, field := range commandLineFields(command) {
 		field = strings.Trim(field, "\"'(),")
 		if expected[field] || expected[cleanPath(field)] {
+			return true
+		}
+		base := filepath.Base(field)
+		if base == "pre-receive" || base == "post-receive" {
 			return true
 		}
 	}

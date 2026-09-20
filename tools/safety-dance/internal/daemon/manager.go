@@ -118,6 +118,12 @@ func (m *Manager) replaceValidated(ctx context.Context, key BranchKey, accepted 
 			}
 		}
 		delete(m.keys, key)
+		if validate != nil {
+			if err := validate(); err != nil {
+				m.mu.Unlock()
+				return nil, err
+			}
+		}
 	}
 	r, err := m.store.CreateRun(db.RunInput{Accepted: accepted, WorktreeDir: worktree})
 	if err != nil {
