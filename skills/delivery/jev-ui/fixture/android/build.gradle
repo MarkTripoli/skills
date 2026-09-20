@@ -1,0 +1,10 @@
+def fixtureBuildRoot = findProperty('jevFixtureBuildDir')
+if (fixtureBuildRoot == null || fixtureBuildRoot.toString().trim().isEmpty()) {
+    fixtureBuildRoot = new File(System.getProperty('java.io.tmpdir'), 'jev-ui-fixture-build').absolutePath
+}
+buildDir = file(new File(fixtureBuildRoot.toString(), 'root'))
+
+buildscript {
+    repositories { google(); mavenCentral() }
+    dependencies { classpath 'com.android.tools.build:gradle:8.12.0' }
+}

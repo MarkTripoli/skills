@@ -17,7 +17,7 @@
   },
   "scripts": {
     "postinstall": "node scripts/prepare.mjs",
-    "test": "node scripts/validate.mjs && node scripts/sync-plugin.mjs --check && node --test tests/",
+    "test": "node scripts/validate.mjs && node scripts/sync-plugin.mjs --check && node --test tests/ skills/delivery/jev-ui/scripts/test-acceptance.mjs",
     "validate": "node scripts/validate.mjs",
     "evals": "node evals/run.mjs",
     "check-commits": "node scripts/check-commits.mjs",

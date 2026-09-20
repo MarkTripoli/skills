@@ -1,0 +1,12 @@
+apply plugin: 'com.android.application'
+
+// Acceptance builds pass an external output root so generated artifacts never pollute the fixture source tree.
+def fixtureBuildRoot = findProperty('jevFixtureBuildDir')
+if (fixtureBuildRoot == null || fixtureBuildRoot.toString().trim().isEmpty()) {
+    fixtureBuildRoot = new File(System.getProperty('java.io.tmpdir'), 'jev-ui-fixture-build').absolutePath
+}
+buildDir = file(new File(fixtureBuildRoot.toString(), 'app/build'))
+
+android { namespace 'ai.typesafe.jevfixture'; compileSdk 36
+    defaultConfig { applicationId 'ai.typesafe.jevfixture'; minSdk 23; targetSdk 36; versionCode 1; versionName '1.0' }
+}

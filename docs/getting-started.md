@@ -70,6 +70,14 @@ A **gate** is an approval step. `gates=all` is the default. Read the named docum
 
 See [verification](verification.md) and [app testing](app-testing.md) for commands and recorded results.
 
+## Run JEV UI by hand
+
+Install the standalone `jev-ui` skill with its `typed-judgment` and `record-evidence` dependencies. Use an explicitly selected browser or Android target; the skill does not provide iOS control.
+
+```sh
+node skills/delivery/jev-ui/scripts/jev-ui.mjs --platform android --target "$ANDROID_SERIAL" --app "$ANDROID_APP" --goal 'Complete the selected app task' --expected 'Expected status'
+```
+
 ## Continue existing work
 
 Use `task_dir=.agents/tasks/<slug>` from that task's checkout and branch. Do not create another task because a chat ended. Use `workflow=resolve-reviews` for pull request feedback or `workflow=epic-wave` after prerequisite branches merge. The workflow does not merge pull requests.

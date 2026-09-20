@@ -16,7 +16,7 @@ const rootIndex = args.indexOf("--root");
 const root = rootIndex === -1 ? repoRoot : path.resolve(args[rootIndex + 1] ?? "");
 const generated = root !== repoRoot;
 
-const EXPECTED_SKILL_COUNT = 42;
+const EXPECTED_SKILL_COUNT = 43;
 const SHARED_LINKS = {
   "shared/WRITING.md": "https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md",
   "shared/CONVENTIONS.md": "https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md",
@@ -212,8 +212,10 @@ const BANNED_TOKENS = [
   /artifact_directive/i,
 ];
 
+const STANDALONE_SKILLS = new Set(["jev-ui"]);
 const SKIP_DIRS = new Set([".git", "node_modules", "dist", "results", ".cache"]);
 const SKIP_FILES = new Set(["scripts/validate.mjs", ".skill-lock.json"]);
+const SKIP_BINARY_MEDIA = /\.(mp4|m4v|mov|webm|avi|mkv|wav|mp3)$/i;
 
 const failures = [];
 const fail = (file, line, message) => failures.push(`${file}:${line}: ${message}`);
@@ -491,7 +493,7 @@ let bannedHits = 0;
 for (const file of listFiles(root)) {
   const relative = rel(file);
   if (SKIP_FILES.has(relative)) continue;
-  if (/\.(png|jpg|jpeg|gif|ico|woff2?|zip)$/i.test(file)) continue;
+  if (/\.(png|jpg|jpeg|gif|ico|woff2?|zip)$/i.test(file) || SKIP_BINARY_MEDIA.test(file)) continue;
   const lines = read(file).split("\n");
   lines.forEach((line, index) => {
     for (const token of BANNED_TOKENS) {
@@ -512,7 +514,7 @@ if (!fs.existsSync(workflowFile)) {
   const content = read(workflowFile);
   // Every skill in a group belongs to that group's workflow document; standalone skills need no mention.
   for (const skill of layout.skills) {
-    if (skill.group !== "delivery" || skill.name.startsWith("agent-")) continue;
+    if (skill.group !== "delivery" || skill.name.startsWith("agent-") || STANDALONE_SKILLS.has(skill.name)) continue;
     if (!content.includes(skill.name)) fail("workflows/delivery.md", 0, `does not mention skill "${skill.name}"`);
   }
   for (const skill of layout.skills) {

@@ -6,6 +6,7 @@ import path from "node:path";
 import { plan, apply, buildTrees, destinations, atomicDestination, detectTargets, parseArgs, promptSelections, updateConfigBlock } from "../scripts/install.mjs";
 import { scanSkills } from "../scripts/lib/layout.mjs";
 import { pathToFileURL } from "node:url";
+import { spawnSync } from "node:child_process";
 
 const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const env = { PATH: "" };
@@ -218,4 +219,43 @@ test("project Atomic install and uninstall never mutate home or overridden globa
   assert.equal(fs.readFileSync(untouched, "utf8"), "unchanged\n");
   assert.equal(fs.existsSync(path.join(cwd, ".atomic", "workflows", "skills-delivery")), false);
   assert.equal(fs.existsSync(path.join(cwd, ".atomic", "workflows", "skills-delivery.mjs")), false);
+});
+
+test("selected jev-ui installs as a portable consumer outside the repository", async () => {
+  const home = tmpdir("jev-ui-install-test-");
+  const outside = tmpdir("jev-ui-consumer-");
+  const skillDir = path.join(home, ".agents", "skills");
+  const foreign = path.join(skillDir, "foreign", "README.md");
+  put(foreign, "preserve this file\n");
+  const planned = install({ targets: ["portable"], skillNames: ["jev-ui"], cwd: outside, home, env });
+  const installed = path.join(skillDir, "jev-ui");
+  assert.ok(fs.existsSync(path.join(installed, "SKILL.md")));
+  assert.ok(fs.existsSync(path.join(skillDir, "typed-judgment", "SKILL.md")));
+  assert.ok(fs.existsSync(path.join(skillDir, "record-evidence", "SKILL.md")));
+  assert.ok(fs.existsSync(path.join(installed, "references", "result-schema.md")));
+  assert.ok(fs.existsSync(path.join(installed, "scripts", "jev-ui.mjs")));
+  assert.equal(fs.readFileSync(foreign, "utf8"), "preserve this file\n");
+  assert.equal(fs.existsSync(path.join(home, ".atomic")), false);
+  const help = spawnSync(process.execPath, [path.join(installed, "scripts", "jev-ui.mjs"), "--help"], { cwd: outside, encoding: "utf8" });
+  assert.equal(help.status, 0, help.stderr);
+  assert.match(help.stdout, /Usage: node .*jev-ui\.mjs/);
+  const mod = await import(pathToFileURL(path.join(installed, "scripts", "jev-ui.mjs")).href + `?portable=${Date.now()}`);
+  const result = await mod.run({
+    goal: "confirm",
+    expectedPostconditions: ["Confirmed"],
+    session: { id: "consumer" },
+    adapter: {
+      observe: async () => ({ fingerprint: "done", elements: [{ id: "status", role: "status", name: "Confirmed", operations: [] }] }),
+      act: async () => assert.fail("DONE must not execute an action")
+    },
+    chooser: async () => ({ decision: { operation: "DONE" }, model: "injected", usage: { total_tokens: 1 } }),
+    limits: { maxActions: 1, maxModels: 1 }
+  });
+  assert.equal(result.status, "passed");
+  assert.equal(fs.existsSync(path.join(outside, ".atomic")), false);
+  uninstall(planned, home);
+  assert.ok(fs.existsSync(foreign));
+  assert.ok(fs.existsSync(path.join(skillDir, "typed-judgment", "SKILL.md")));
+  assert.ok(fs.existsSync(path.join(skillDir, "record-evidence", "SKILL.md")));
+  assert.equal(fs.existsSync(installed), false);
 });
