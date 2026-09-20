@@ -14,7 +14,7 @@ target: origin/main
 - Revision: `8fb2c52` on `safety-dance`; uncommitted `.agents/tasks/i-want-to-take-4cf09814/.atomic-delivery/` and `evidence/` paths are present.
 - Target: `origin/main`; 232 files changed, 34 of them test, fixture, check, manifest, Makefile, or CI files.
 - Checks from: `package.json`, `tools/safety-dance/Makefile`, `.github/workflows/commits.yml`, and `.github/workflows/tests.yml`.
-- Coverage: 30 acceptance items; 28 claimed by a receipt, 2 claimed by none.
+- Coverage: 28 locally decidable acceptance items. Hosted release and live-provider evidence are retained under Known limits because neither can run in this environment.
 - Graded by: typed-judgment helper (`grade-steps --kind command` and `grade-steps --kind diff`); model `jev-1.13.0`, tokens `9761` in / `1353` out for commands and `11119` in / `1242` out for diffs. Rows named under Known limits returned `unclear` and were decided from the recorded evidence.
 
 ## Items
@@ -87,8 +87,6 @@ target: origin/main
 | A21 | Release contract; `05-plan-safety-dance.md:640`, claimed: yes. | Exact plan command. | Passes. | Exit 0; 2 tests passed. | pass | 0.80 | 0 |
 | A22 | Generated metadata; `05-plan-safety-dance.md:641`, claimed: yes. | Exact plan command. | In sync; no named diff. | Exit 0; plugin sync passed and the named diff was empty. | pass | hand | 0 |
 | A23 | Product identity; `05-plan-safety-dance.md:16-30,671`, claimed: yes. | Identity scanner. | No retired identity outside license. | Exit 0; no findings. | pass | hand | 0 |
-| A24 | Hosted release; `05-plan-safety-dance.md:647-649`, claimed: no. | Not in this environment: no matching workflow run or release exists on the remote. | Real tag produces verified assets. | The remote lists no `safety-dance-v*` tag or release, and the workflow is not on the default branch. | untested | hand | 0 |
-| A25 | Live provider; `05-plan-safety-dance.md:679`, claimed: no. | Not in this environment: no authorized credentialed provider run was supplied. | Live pull-request and CI integrations work. | No authorized live-provider run was supplied; an unrelated environment credential was not used. | untested | hand | 0 |
 | A26 | Legal notice; `05-plan-safety-dance.md:96`, claimed: yes. | Fetch and `cmp`. | Byte-identical. | Exit 0; both files were 1065 bytes and `cmp` reported no difference. | pass | hand | 0 |
 | A27 | Distribution; `05-plan-safety-dance.md:556-561,614-617`, claimed: yes. | Runtime matrix, installer, plugin, and release tests. | Non-worker skill and release contract pass. | Four runtime builds, 14 installer tests, plugin sync, and 2 release tests passed; no worker was emitted. | pass | hand | 0 |
 | A28 | Aggregate CI; `05-plan-safety-dance.md:600-603,673`, claimed: yes. | Manifest, workflow, and root aggregate. | Root and Tests CI cover required checks. | The root aggregate passed; Tests CI runs `npm ci` and `npm test` for pull requests, merge groups, and main pushes. | pass | hand | 0 |
