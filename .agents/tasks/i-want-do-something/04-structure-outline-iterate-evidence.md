@@ -224,32 +224,20 @@ For deterministic interruption, use the scenario's own capture entry to pause be
 
 The three-round case exercises allowance only because each completed round proves progress. Repeating one unfixable counter three times would instead require stopping after round one and cannot establish default exhaustion.
 
-### Acceptance coverage beyond the core scenarios
+### Keep proof focused on the requested loop
 
-The following checks preserve the remaining approved requirements without inventing broad platform promises. They use the same scratch fixture and retained evidence. They are concrete live variations during implementation/independent verification, not prose-only acceptance:
+The seven named scenarios above are the live acceptance scope: primary repair, unavailable viewing, contradictory labels, no progress, zero allowance, default three-round bound, and interrupted continuation. Preserve the design's remaining authority, identity, temporal-inspection, and history rules in the skill and receipt; inspect their consistency during code review.
 
-| Requirement | Verification path and deciding observation |
-| --- | --- |
-| Stable IDs, duplicates, reopenings, explicit extension | Continue the three-round receipt with explicit authorization for one extra round; repair D and recapture all flows. Then deliberately regress A in a separately authorized fixture revision and continue. Old A ID reopens, D keeps its original ID, history and consumed count remain; an added unrelated in-scope defect gets a new ID. Re-observing one defect links to its original finding. Retain actual videos and receipt versions. |
-| Dirty source/build identity and stale baseline | In continuation, introduce an uncommitted source change and a relevant untracked module before restart; retain base SHA, patch and content hashes. Present the old baseline. The companion must retain it as history and obtain current served-source evidence before closure. Use a visible build marker or served-source hash to distinguish the old server from the changed code. |
-| Scope/authority and expected-behavior blockers | Invoke the faulty fixture once without repair permission and once with conflicting pinned expectation sources. Save capture if reachable; trace must show no source mutation and a blocker naming the missing authority/source. Missing launch/capture/check prerequisites use the same real-error receipt path and must not become successful skipped checks. |
-| Invocation without a task or Git | Invoke on a scratch repository with no task to observe task/receipt creation and separate commits. Repeat in a non-Git scratch directory using the same live app; artifacts persist locally, commit unavailability is stated, and capture/repair proof is not mislabeled as committed. No plan or Atomic install may be required. |
-| Regression and final revision coverage | Primary Reset begins nonzero; three-round passes rerun all previously repaired counters. Grader rejects a success receipt linking older-revision video for any required flow or omitting Reset. A regression remains required work rather than a severity downgrade. |
-| Guardrail integrity | Retained strengthened-check failure against original `+2` source and pass after repair are decisive. Compare unchanged specification and failing input/expected value; a rewritten expectation or unrelated rule change fails acceptance. When such proof is impractical in other invocations, require an explicit unverified guardrail limit instead of claiming validation. |
-| Temporal coverage | Core claims remain settled-state only. For a temporal variation, make the actual fixture visibly alternate a state during a short pinned interval, retain the full recording, and inspect sequential frames at capture cadence or full playback. Require logged interval/cadence and observation of the transition. With only sparse event frames available, the same temporal target is untested and cannot yield success. Do not infer native capture quality from this browser variation. |
-| Hidden state claim | A fixture variation posts its count to an owned local server. Inspect success pixels and independently read the persisted server value through a probe. A deliberately acknowledged-but-unpersisted write cannot pass from the toast alone. This remains a verification-only variant, not a production server addition. |
-| Media availability and posting | Continue from a receipt whose local video has been moved outside the subject's accessible workspace; missing media prevents closure until fresh accessible capture. Restore retained media afterward. Requester-only primary run must succeed locally without posting; if publishing is explicitly required in a later invocation, absent destination access blocks that obligation. |
-| Source/receipt history preservation | Compare saved receipt versions, source commits, specification hashes, and all raw/rendered session paths across runs. Failure history must remain readable; receipt-only commits must not masquerade as application revisions. Grading saved evidence never overwrites a previous failed outcome. |
+Do not add separate application features or a broad scenario matrix for hidden-state servers, temporal animation, publishing, every runtime, or every invocation variant. Those are not additional deliverables requested by the user. Report exactly which branches ran; neither the focused live proof nor static review establishes unexercised runtime behavior.
 
-Implementation planning may combine compatible variations in a scenario but must preserve a separately graded result for every row. If a prerequisite prevents one, record that item blocked rather than declaring the entire acceptance contract complete.
+Parent scope correction: this replaces the outline's speculative extra live variations, not any user requirement or the approved design's named acceptance cases.
 
 ### Validation
 
 #### Automated Verification
 
 - [ ] `npm run evals -- iterate-evidence-no-progress iterate-evidence-zero-limit iterate-evidence-three-rounds iterate-evidence-continuation --keep --max-time 25` exercises the named live scenarios.
-- [ ] Execute the acceptance-coverage variations above in owned scratch runs; retain exact invocation, source identity, trace, media, and expected/observed result for each in the implementation/independent-verification artifacts. The plan must assign each to an existing scenario or name its concrete invocation before implementation begins.
-- [ ] `npm test` validates final packaging and harness compatibility after integrated changes. It cannot substitute for any live scenario or coverage variation.
+- [ ] `npm test` validates final packaging and harness compatibility after integrated changes. It cannot substitute for any named live scenario.
 
 human-gated: false
 
