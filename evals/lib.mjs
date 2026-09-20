@@ -70,7 +70,17 @@ function snapshotTree(root, relativeRoot = "", excludedPaths = new Set(), conten
 }
 
 export function snapshotGitConfig(root) {
-  const config = path.join(root, ".git", "config");
+  const gitRoot = path.join(root, ".git");
+  let gitRootStats;
+  try {
+    gitRootStats = fs.lstatSync(gitRoot);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+  if (!gitRootStats.isDirectory() || gitRootStats.isSymbolicLink()) return null;
+
+  const config = path.join(gitRoot, "config");
   let stats;
   try {
     stats = fs.lstatSync(config);
