@@ -159,15 +159,17 @@ npm run evals -- iterate-evidence --keep --max-time 25
 npm run evals -- iterate-evidence --grade evals/results/latest
 ```
 
-- [ ] Isolated selected installation preserves unrelated resources and dependency ownership; offline checks pass.
-- [ ] Live baseline shows `2`; subject pixel-opening trace precedes persisted `IE-001` and round reservation, which precede source mutation.
-- [ ] Agent-authored source/check changes retain unchanged specification; the strengthened check fails against preserved defective source and passes after repair.
-- [ ] Distinct fresh recorded sessions/hashes and independent pixel review show increment `1` and Reset `0` at the repaired served identity. Final required coverage passes.
-- [ ] Saved regrade uses retained repair evidence and cannot pass when required inspection evidence is missing.
+- [x] Isolated selected installation preserves unrelated resources and dependency ownership; offline checks pass.
+- [x] Live baseline shows `2`; subject pixel-opening trace precedes persisted `IE-001` and round reservation, which precede source mutation.
+- [x] Agent-authored source/check changes retain unchanged specification; the strengthened check fails against preserved defective source and passes after repair.
+- [x] Distinct fresh recorded sessions/hashes and independent pixel review show increment `1` and Reset `0` at the repaired served identity. Final required coverage passes.
+- [x] Saved regrade uses retained repair evidence and cannot pass when required inspection evidence is missing.
 
 human-gated: false
 
 **Required executing-agent review:** Open baseline and post-repair footage/frames and record `2`, `1`, and Reset `0` with timestamps in the retained run review. This is mandatory live proof, not deferred human approval. Record unavailable provider, image support, Chromium/Playwright, Python, ffmpeg/ffprobe, or recorder overlay prerequisites as explicit blockers. Preserve successful and failed media with `--keep`.
+
+**Phase 1 execution evidence:** [06-implementation-iterate-evidence.md](06-implementation-iterate-evidence.md) records code commit `f3ce9d8`, 15 passing installer tests, 138 passing aggregate tests, and retained run `evals/results/20260920-051455/`. The live command exited `1` solely for pending independent review; after the executing agent opened the retained frames and video samples, saved grading passed `1/1`. Removing `review.json` failed grading; restoring the identical review passed. Exact commands, hashes, trace/snapshot order, timing limits, and compatible runner adjustments are in the receipt and retained review. Phases 2 and 3 remain unstarted.
 
 ---
 
