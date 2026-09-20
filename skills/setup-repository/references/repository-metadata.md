@@ -22,7 +22,19 @@ The current local schema is version 1 and profile revision 1:
 }
 ```
 
-`schemaVersion` and `appliedRevision` are integers. `profile` is `default`. `providers` is an object.
+`schemaVersion` and `appliedRevision` are integers. In current schema 1 at revision 1, `profile` is exactly `default`. `providers` is an object, never an array or null.
+
+## Fail-closed validation
+
+Validate all managed state before constructing a plan or temporary file:
+
+- The top-level JSON value and any present `onboarding` value must be objects, not arrays or null.
+- `schemaVersion` and `appliedRevision` must be present integers in the supported migration table. Report newer schema conflicts as `supported: 1, observed: <version>` in both modes.
+- Current schema 1 at revision 1 requires `profile: "default"`. Supported older rows may omit current defaults because their plan replaces the owned subtree.
+- `providers` must be an object when present. Validate every nested provider record as data to preserve; its presence never proves an adapter is installed.
+- Recursively normalize each key by lowercasing it and removing separators. Reject keys matching `token`, `secret`, `password`, `privatekey`, `apikey`, or `accesskey` forms.
+
+A conflict receipt names the JSON path, observed type or non-secret value class, and supported expectation. It reports `Written: none`, unchanged original bytes, and zero external operations. For invalid JSON, report only the parse conflict class and file path; never quote source bytes. No blocked case may create or retain a temporary sibling file.
 
 ## Ordered migration table
 
@@ -50,9 +62,28 @@ For either supported migration, the replacement owned subtree is exactly:
 }
 ```
 
-When a supported existing managed subtree contains a `providers` object, carry that complete object into the replacement instead of `{}`. Preserve every provider record and its values; migration cannot adopt, remove, normalize, or rewrite provider identities. Provider records never authorize a provider call.
+When a supported existing managed subtree contains a `providers` object, carry that complete object into the replacement instead of `{}`. Preserve every provider record and its values; migration and reset cannot adopt, remove, normalize, or rewrite provider identities. Provider records never authorize a provider call.
 
 Reject any field under `onboarding` whose normalized key names a token, secret, password, private key, API key, or access key. Report its JSON path, never its value.
+
+## Exact reset-managed behavior
+
+Only the exact `reset-managed` argument selects reset behavior. Aliases, extra words, inferred intent, and automatic reset after a validation conflict are invalid invocations or blocked runs.
+
+`reset-managed` has stronger local intent but no broader authority. After fail-closed validation accepts a supported owned state, construct a replacement `onboarding` subtree with current `schemaVersion`, `profile`, and `appliedRevision`; remove obsolete locally owned fields; and carry the complete existing `providers` object unchanged. Preserve `vcs`, `ticketing`, and every unknown top-level value unchanged. Never delete `ai-utilities.json` or replace the complete top-level object.
+
+An unsupported newer schema remains blocked in `reset-managed`; explicit mode does not authorize a downgrade. A second reset of current state is a semantic no-op and preserves the original bytes.
+
+## Provider ownership safety
+
+Provider ownership depends on recorded stable identity, not display name:
+
+- A name match without a recorded stable ID is foreign and conflicts. Never adopt it by name.
+- A recorded stable ID with a different observed digest is drift and conflicts in `reconcile`.
+- Explicit reset may reapply drift only after an installed provider adapter observes that same recorded identity.
+- This release has no provider adapter. Every existing provider record is `unsupported`, remains byte-equivalent in the planned object, and causes zero provider operations in both modes.
+
+For each unsupported record, the receipt reports its logical key, stable ID, and last-applied digest as preserved. A reset containing such records is partial because only verified local fields can be rebuilt.
 
 ## First run
 

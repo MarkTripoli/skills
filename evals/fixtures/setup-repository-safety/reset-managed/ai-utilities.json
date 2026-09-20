@@ -1,0 +1,32 @@
+{
+  "vcs": {
+    "platform": "github",
+    "repository": "acme/reset-managed"
+  },
+  "ticketing": {
+    "tool": "jira",
+    "project": "SAFE"
+  },
+  "custom": {
+    "nested": {
+      "preserve": [
+        "alpha",
+        "beta"
+      ]
+    }
+  },
+  "onboarding": {
+    "schemaVersion": 0,
+    "appliedRevision": 0,
+    "providers": {
+      "github": {
+        "repository-labels": {
+          "logicalKey": "repository-labels",
+          "stableId": "R_kwDO-reset-managed",
+          "lastAppliedDigest": "sha256:reset-managed"
+        }
+      }
+    },
+    "legacyProfile": "default"
+  }
+}

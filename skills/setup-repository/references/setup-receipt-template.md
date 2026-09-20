@@ -9,8 +9,10 @@
 - Planned paths: [exact repository-relative paths, or none]
 - Written: [exact paths, or none]
 - Skipped: [items skipped and why, or none]
+- Provider outcomes: [each provider logical key, preserved stable ID, preserved last-applied digest, and unsupported status, or none]
 - Unresolved choices: [exact user-owned choices, or none]
-- Conflicts: [safe conflict details, or none]
+- Conflicts: [JSON path, observed type or non-secret value class, supported expectation, or none]
 - Verification: [written bytes match plan, unchanged bytes match observation, or failed]
 - Verification bytes: [planned bytes match reread bytes, observed bytes remain unchanged, or failed]
 - External operations: 0
+- Safe rerun: [one inline `/setup-repository` or `/setup-repository reset-managed` command when useful, or none]
