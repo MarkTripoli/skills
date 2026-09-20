@@ -2,13 +2,121 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/ipc"
 )
+
+func reconcileAdmission(t *testing.T, notify func(context.Context, PushNotification) error) (*Admission, string) {
+	t.Helper()
+	gate := filepath.Join(t.TempDir(), "gate.git")
+	if out, err := exec.Command("git", "init", "--bare", gate).CombinedOutput(); err != nil {
+		t.Fatalf("init bare gate: %v (%s)", err, out)
+	}
+	return &Admission{notify: notify, receipts: make(map[string]ipc.AdmitPushParams), claimed: make(map[string]bool)}, gate
+}
+
+func setGateRef(t *testing.T, gate string) string {
+	t.Helper()
+	treeCmd := exec.Command("git", "--git-dir", gate, "mktree")
+	treeCmd.Stdin = strings.NewReader("")
+	tree, err := treeCmd.Output()
+	if err != nil {
+		t.Fatalf("write gate tree: %v", err)
+	}
+	commitCmd := exec.Command("git", "--git-dir", gate, "commit-tree", strings.TrimSpace(string(tree)))
+	commitCmd.Stdin = strings.NewReader("receipt\n")
+	commitCmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com", "GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com")
+	out, err := commitCmd.Output()
+	if err != nil {
+		t.Fatalf("write gate commit: %v", err)
+	}
+	revision := strings.TrimSpace(string(out))
+	if out, err := exec.Command("git", "--git-dir", gate, "update-ref", "refs/heads/main", revision).CombinedOutput(); err != nil {
+		t.Fatalf("set gate ref: %v (%s)", err, out)
+	}
+	return revision
+}
+
+func acceptedReceipt(gate, token, revision string) ipc.AdmitPushParams {
+	return ipc.AdmitPushParams{Gate: gate, Ref: "refs/heads/main", Old: "old", New: revision, Token: token, Accepted: true}
+}
+
+func TestReconcileOnceStaleReceiptIsAttemptedOnceAndPreserved(t *testing.T) {
+	a, gate := reconcileAdmission(t, func(context.Context, PushNotification) error { t.Fatal("stale receipt was notified"); return nil })
+	a.receipts["stale"] = acceptedReceipt(gate, "stale", "missing")
+	if err := a.ReconcileOnce(context.Background()); err == nil || !strings.Contains(err.Error(), "stale") {
+		t.Fatalf("ReconcileOnce error = %v, want stale receipt error", err)
+	}
+	if _, ok := a.receipts["stale"]; !ok {
+		t.Fatal("stale receipt was not preserved")
+	}
+}
+
+func TestReconcileOnceCallbackFailureDoesNotTightLoop(t *testing.T) {
+	a, gate := reconcileAdmission(t, func(context.Context, PushNotification) error { return errors.New("callback failed") })
+	revision := setGateRef(t, gate)
+	a.receipts["callback"] = acceptedReceipt(gate, "callback", revision)
+	if err := a.ReconcileOnce(context.Background()); err == nil || !strings.Contains(err.Error(), "callback failed") {
+		t.Fatalf("ReconcileOnce error = %v, want callback failure", err)
+	}
+	if _, ok := a.receipts["callback"]; !ok {
+		t.Fatal("callback failure lost receipt")
+	}
+}
+
+func TestReconcileOnceSaveFailurePreservesReceipt(t *testing.T) {
+	calls := 0
+	a, gate := reconcileAdmission(t, func(context.Context, PushNotification) error { calls++; return nil })
+	revision := setGateRef(t, gate)
+	store := filepath.Join(t.TempDir(), "receipts")
+	if err := os.Mkdir(store, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	a.receiptFile = store
+	a.receipts["save"] = acceptedReceipt(gate, "save", revision)
+	if err := a.ReconcileOnce(context.Background()); err == nil || !strings.Contains(err.Error(), "remove admission receipt") {
+		t.Fatalf("ReconcileOnce error = %v, want save failure", err)
+	}
+	if calls != 1 {
+		t.Fatalf("callback calls = %d, want 1", calls)
+	}
+	if _, ok := a.receipts["save"]; !ok {
+		t.Fatal("save failure lost receipt")
+	}
+}
+
+func TestReconcileOnceProcessesAllReceiptsDespiteFailure(t *testing.T) {
+	calls := make(map[string]int)
+	a, gate := reconcileAdmission(t, func(_ context.Context, n PushNotification) error {
+		calls[n.Token]++
+		if n.Token == "bad" {
+			return errors.New("bad callback")
+		}
+		return nil
+	})
+	revision := setGateRef(t, gate)
+	a.receipts["bad"] = acceptedReceipt(gate, "bad", revision)
+	a.receipts["good"] = acceptedReceipt(gate, "good", revision)
+	if err := a.ReconcileOnce(context.Background()); err == nil || !strings.Contains(err.Error(), "bad callback") {
+		t.Fatalf("ReconcileOnce error = %v, want aggregated callback failure", err)
+	}
+	if calls["bad"] != 1 || calls["good"] != 1 {
+		t.Fatalf("callback calls = %#v, want one attempt for both receipts", calls)
+	}
+	if _, ok := a.receipts["good"]; ok {
+		t.Fatal("successful receipt was not removed")
+	}
+	if _, ok := a.receipts["bad"]; !ok {
+		t.Fatal("failed receipt was not preserved")
+	}
+}
 
 func TestAdmissionAuthenticatedReplayAndMismatch(t *testing.T) {
 	dir := t.TempDir()

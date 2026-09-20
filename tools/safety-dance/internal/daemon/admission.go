@@ -86,56 +86,74 @@ func (a *Admission) InitError() error { return a.loadErr }
 
 // ReconcileOnce retries only receipts durably marked accepted by post-receive.
 func (a *Admission) ReconcileOnce(ctx context.Context) error {
+	// Take a fixed snapshot before doing any external work. In particular, do
+	// not select the next receipt by repeatedly scanning the live map: a failed
+	// receipt must remain pending for the next ticker tick, not spin forever.
+	type pendingReceipt struct {
+		token   string
+		receipt ipc.AdmitPushParams
+	}
+	var pending []pendingReceipt
+	a.mu.Lock()
+	for token, receipt := range a.receipts {
+		if receipt.Accepted && !a.claimed[token] {
+			a.claimed[token] = true
+			pending = append(pending, pendingReceipt{token: token, receipt: receipt})
+		}
+	}
+	a.mu.Unlock()
+
 	var errs []error
-	for {
-		a.mu.Lock()
-		var token string
-		var receipt ipc.AdmitPushParams
-		for candidate, value := range a.receipts {
-			if value.Accepted && !a.claimed[candidate] {
-				token, receipt = candidate, value
-				a.claimed[candidate] = true
-				break
-			}
-		}
-		a.mu.Unlock()
-		if token == "" {
-			break
-		}
+	for _, item := range pending {
+		token, receipt := item.token, item.receipt
 		current, err := git.RunBare(ctx, receipt.Gate, "rev-parse", receipt.Ref)
-		if err != nil || strings.TrimSpace(current) != receipt.New {
-			a.mu.Lock()
-			delete(a.claimed, token)
-			a.mu.Unlock()
+		if err != nil {
+			a.releaseClaim(token)
+			errs = append(errs, fmt.Errorf("reconcile receipt %s: resolve ref: %w", token, err))
+			continue
+		}
+		if strings.TrimSpace(current) != receipt.New {
+			a.releaseClaim(token)
+			errs = append(errs, fmt.Errorf("reconcile receipt %s: ref %s is %s, want %s", token, receipt.Ref, strings.TrimSpace(current), receipt.New))
 			continue
 		}
 		if a.notify == nil {
-			a.mu.Lock()
-			delete(a.claimed, token)
-			a.mu.Unlock()
+			a.releaseClaim(token)
+			errs = append(errs, fmt.Errorf("reconcile receipt %s: notification callback is nil", token))
 			continue
 		}
 		if err := a.notify(ctx, PushNotification{Gate: receipt.Gate, Ref: receipt.Ref, Old: receipt.Old, New: receipt.New, Token: token}); err != nil {
-			a.mu.Lock()
-			delete(a.claimed, token)
-			a.mu.Unlock()
-			errs = append(errs, err)
+			a.releaseClaim(token)
+			errs = append(errs, fmt.Errorf("reconcile receipt %s: notify: %w", token, err))
 			continue
 		}
+
 		a.mu.Lock()
-		if currentReceipt, ok := a.receipts[token]; ok && currentReceipt.Gate == receipt.Gate && currentReceipt.Ref == receipt.Ref && currentReceipt.New == receipt.New {
-			delete(a.receipts, token)
+		currentReceipt, ok := a.receipts[token]
+		matches := ok && currentReceipt.Gate == receipt.Gate && currentReceipt.Ref == receipt.Ref && currentReceipt.New == receipt.New
+		if !matches {
 			delete(a.claimed, token)
-			if err := a.saveReceipts(); err != nil {
-				a.receipts[token] = currentReceipt
-				errs = append(errs, fmt.Errorf("remove admission receipt: %w", err))
-			}
-		} else {
-			delete(a.claimed, token)
+			a.mu.Unlock()
+			errs = append(errs, fmt.Errorf("reconcile receipt %s: receipt changed while processing", token))
+			continue
+		}
+		delete(a.receipts, token)
+		delete(a.claimed, token)
+		if err := a.saveReceipts(); err != nil {
+			// Restore custody in memory before returning. The receipt remains
+			// eligible for a later reconciliation attempt.
+			a.receipts[token] = currentReceipt
+			errs = append(errs, fmt.Errorf("reconcile receipt %s: remove admission receipt: %w", token, err))
 		}
 		a.mu.Unlock()
 	}
 	return errors.Join(errs...)
+}
+
+func (a *Admission) releaseClaim(token string) {
+	a.mu.Lock()
+	delete(a.claimed, token)
+	a.mu.Unlock()
 }
 
 func (a *Admission) Issue(gate, ref string) (string, error) {
