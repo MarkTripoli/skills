@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/daemon"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
@@ -91,7 +92,32 @@ func startDaemon(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "daemon started (%d)\n", child.Process.Pid)
+	if err := waitForDaemon(5 * time.Second); err != nil {
+		_ = child.Process.Kill()
+		if path, pathErr := pidPath(); pathErr == nil {
+			_ = os.Remove(path)
+		}
+		return fmt.Errorf("daemon failed to become ready: %w", err)
+	}
 	return nil
+}
+
+func waitForDaemon(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var last error
+	for time.Now().Before(deadline) {
+		var out ipc.HealthResult
+		if err := callDaemon(ipc.MethodHealth, ipc.HealthParams{}, &out); err == nil && out.Status == "ok" {
+			return nil
+		} else if err != nil {
+			last = err
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if last == nil {
+		last = fmt.Errorf("health check timed out")
+	}
+	return last
 }
 
 func stopDaemon(cmd *cobra.Command, args []string) error {

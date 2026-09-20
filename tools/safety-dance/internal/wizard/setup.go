@@ -2,6 +2,7 @@ package wizard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -11,6 +12,11 @@ type Setup struct {
 	In    io.Reader
 	Out   io.Writer
 	Write func(Model) error
+	// Compensate removes only state created by Write. It is called when a
+	// later setup action fails, or when Write reports a partial failure.
+	Compensate     func(Model) error
+	InstallService func() error
+	StopService    func() error
 }
 
 func (s Setup) Run(ctx context.Context) error {
@@ -36,5 +42,23 @@ func (s Setup) Run(ctx context.Context) error {
 			return err
 		}
 	}
-	return s.Write(m)
+	if err := s.Write(m); err != nil {
+		if s.Compensate != nil {
+			return errors.Join(err, s.Compensate(m))
+		}
+		return err
+	}
+	if s.InstallService == nil {
+		return nil
+	}
+	if err := s.InstallService(); err != nil {
+		if s.StopService != nil {
+			_ = s.StopService()
+		}
+		if s.Compensate != nil {
+			return errors.Join(err, s.Compensate(m))
+		}
+		return err
+	}
+	return nil
 }
