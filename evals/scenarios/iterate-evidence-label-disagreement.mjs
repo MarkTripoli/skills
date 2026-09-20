@@ -12,7 +12,7 @@ export default {
     artifactType: "evidence-iteration",
     template: "evidence_iteration_template.md",
     check: ({ artifact }) => {
-      const coverage = counterFlowCoverage(artifact?.text ?? "");
+      const coverage = counterFlowCoverage(artifact?.text ?? "", { increment: "failed", reset: "passed" });
       return failures(
         artifact?.fm?.type === "evidence-iteration" ? null : "label-disagreement: evidence-iteration receipt missing",
         artifact?.fm?.status === "failed" ? null : "label-disagreement: inspected defect must leave the receipt failed",

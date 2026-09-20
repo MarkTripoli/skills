@@ -1,4 +1,5 @@
 import { expect, failures, section } from "../lib.mjs";
+import { counterFlowCoverage } from "../evidence-flows.mjs";
 
 export default {
   slug: "counter-viewer-blocked",
@@ -12,10 +13,7 @@ export default {
     template: "evidence_iteration_template.md",
     check: ({ artifact }) => {
       const coverage = section(artifact?.text ?? "", "## Final coverage");
-      const rows = (coverage ?? "").split("\n")
-        .filter((line) => /^\s*\|/.test(line))
-        .map((line) => line.trim().slice(1, -1).split("|").map((cell) => cell.replace(/[`*_]/g, "").trim()))
-        .filter((cells) => cells.length === 7 && /^(passed|failed|untested)$/i.test(cells[5]));
+      const flows = counterFlowCoverage(artifact?.text ?? "", { increment: "untested", reset: "untested" });
       // Receipt semantics alone cannot establish denial. The family grader must require
       // successful setup/capture, a real denied opening, restricted capabilities, retained
       // media, and unchanged source/check bytes throughout snapshots and commit history.
@@ -26,11 +24,11 @@ export default {
         String(artifact?.fm.limit) === "3" && String(artifact?.fm.consumed_rounds) === "0"
           ? null : "viewer-blocked: default allowance must remain 3 with no consumed round",
         expect.filled("viewer-blocked: final coverage", coverage),
-        rows.some((cells) => /\bincrement\b|\badd one\b/i.test(cells[0]) && cells[5].toLowerCase() === "untested")
+        flows.increment
           ? null : "viewer-blocked: increment inspection coverage must be untested",
-        rows.some((cells) => /\breset\b/i.test(cells[0]) && cells[5].toLowerCase() === "untested")
+        flows.reset
           ? null : "viewer-blocked: Reset inspection coverage must be untested",
-        rows.some((cells) => cells[5].toLowerCase() !== "untested")
+        flows.results.some((result) => result === "passed" || result === "failed")
           ? "viewer-blocked: denied viewing cannot establish passed or failed pixel coverage" : null,
       );
     },

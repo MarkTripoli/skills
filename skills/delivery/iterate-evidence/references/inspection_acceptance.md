@@ -49,3 +49,11 @@ When capture, readable media, temporal resolution, or a capable pixel viewer is 
 Record a denial or failed opening attempt when one occurs, including the exact tool/result; do not infer viewing from a command's name or invent an inspection. Use available permitted viewers, never evade a denied capability. Operational failures do not authorize an extra capture pass or an unlimited retry loop. A later authorized continuation records restoration and resumes its saved boundary.
 
 A finding reaches `resolved` only after current-revision evidence proves its unchanged expected outcome. An evidence-backed `not-a-defect` disposition records the source and reason without deleting history or pretending a repair occurred; it is not progress. Unsupported suspicions stay observations. Required coverage, rather than a reduced finding count or severity, determines acceptance.
+
+## Finalize the receipt against retained evidence
+
+For passed, failed, and blocked outcomes, check each of the template's seven coverage columns against the revision, recording, inspection, check, and finding ledgers. An overall failure or blocker does not collapse the table or erase known per-flow outcomes. Missing current proof stays untested with its gap; older evidence stays historical.
+
+A timestamp describes only the event its cited clock/trace output observed. A clock read before saving a reservation is not its persistence time, and a baseline inspection time cannot date a later reservation. Preserve the ordered receipt/trace boundary when exact timing is unavailable; explicitly omit the unavailable timestamp rather than infer one.
+
+Separate current state from history: terminal summaries name the actual last completed step and any genuinely incomplete blocked work and prerequisite. Superseded pending steps and reservations remain labeled historical at their original boundaries. A failed completed round has no unfinished step merely because its finding remains open; an interrupted round retains the first incomplete step for authorized continuation.

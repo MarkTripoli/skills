@@ -11,13 +11,18 @@ function observeViewerTemps(pi, config, observeProcess) {
   const original = Bun.spawn;
   const pending = new Set();
   Bun.spawn = function (...args) {
-    const command = Array.isArray(args[0]) ? args[0] : args[0]?.cmd;
+    const command = Array.isArray(args[0]) ? [...args[0]] : args[0]?.cmd?.slice();
+    const options = Array.isArray(args[0]) ? args[1] : args[0];
     const stack = new Error("viewer process").stack;
     const calls = [...active.values()];
     const child = original.apply(this, args);
     if (Array.isArray(command) && path.basename(String(command[0])) === "ffmpeg") {
-      const output = path.resolve(config.repo, command.at(-1));
-      const record = { output: path.relative(config.repo, output), cwd: config.repo, command, stack, calls, pid: child.pid, at: new Date().toISOString() };
+      const processCwd = path.resolve(options?.cwd ?? process.cwd());
+      // macOS /var and /private/var name the same directory. Keep the configured
+      // repository spelling only when the observed directories are equivalent.
+      const cwd = fs.realpathSync(processCwd) === fs.realpathSync(config.repo) ? config.repo : processCwd;
+      const output = path.resolve(cwd, command.at(-1));
+      const record = { output: path.relative(config.repo, output), cwd, processCwd, command, stack, calls, pid: child.pid, at: new Date().toISOString() };
       const operation = child.exited.then((code) => {
         record.code = code;
         if (code === 0 && fs.existsSync(output)) record.sha256 = createHash("sha256").update(fs.readFileSync(output)).digest("hex");

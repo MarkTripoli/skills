@@ -115,7 +115,7 @@ Baseline is capture and inspection at consumed `0`, not a repair reservation. Ap
 
 ### Round [reserved number]
 
-- Reservation persisted at: [time and receipt boundary, before any mutation/delegation]
+- Reservation persisted at: [receipt boundary before mutation/delegation; observed timestamp and clock/trace source, or timestamp unavailable]
 - Consumed count / authorized limit: [count / limit]
 - Attempted finding IDs: [existing inspected required findings]
 - Pre-round unresolved required IDs: [set]
@@ -133,9 +133,9 @@ Baseline is capture and inspection at consumed `0`, not a repair reservation. Ap
 - Newly verified resolutions of previously open required IDs: [set, with new evidence]
 - Reopened / newly discovered / remaining required IDs: [separate sets]
 - Progress comparison: [pre-round versus post-round; true only for a new verified required resolution]
-- Last completed step / next incomplete step: [steps]
-- Interruption, continuation, or operational failure: [time, actual state, authorization/restored prerequisite and evidence, or None.]
-- Decision / next action: [precedence evaluation or reserved work to complete]
+- Current step / last completed step / next incomplete step: [actual saved boundary; none pending after reconciliation, or blocked/interrupted step still to complete]
+- Interruption, continuation, or operational failure: [observed time/source or timestamp unavailable; actual state, authorization/restored prerequisite and evidence, or None.]
+- Decision / next action: [precedence evaluation or reserved work to complete; label superseded pending boundaries historical and retain them]
 
 ## Guardrails
 
@@ -145,15 +145,17 @@ Baseline is capture and inspection at consumed `0`, not a repair reservation. Ap
 
 ## Final coverage
 
-List every required target and regression flow/configuration separately at the latest application revision. Prior passing evidence is history if its revision differs. Untested is never passed.
+Keep this seven-column schema for every terminal outcome: passed, failed, or blocked. List every required target and regression flow/configuration separately at the actual latest application revision. Bind each verdict to its evidence/checks and finding IDs; state unavailable values and reasons in their cells. Prior passing evidence is history if its revision differs. Untested is never passed.
 
 | Flow/configuration | Target or regression | Latest revision | Recorded session and inspected evidence | Required checks/state probes | Result: passed/failed/untested | Reason and limits |
 | --- | --- | --- | --- | --- | --- | --- |
-| [flow] | [role] | [identity] | [session/inspection and exact sample/interval] | [result references] | [result] | [actual outcome, missing proof, or limitation] |
+| [flow] | [role] | [actual identity, or unknown with reason] | [session/inspection and exact sample/interval, or unavailable with reason] | [result references, or unavailable/not applicable with reason] | [result] | [finding IDs or None.; actual outcome, missing proof, or limitation] |
 
 ## Stop decision
 
 Append each evaluation, including prior terminal outcomes and later authorized continuation. Success precedes blocker, then no-progress, then exhaustion; preserve all simultaneous failed/untested results. An interruption stays `in-progress/none` at its saved boundary.
+
+Before saving the terminal result, apply the skill's finalization boundary and the [finalization evidence rules](inspection_acceptance.md#finalize-the-receipt-against-retained-evidence). Use only observed clock/trace timestamps with their source; omit unavailable timestamp values explicitly. Keep earlier reservations, pending steps, and stop evaluations as labeled historical boundaries.
 
 | Time/boundary | Status / stop reason | Consumed / limit | Deciding evidence | Simultaneous known failures and untested work | Next prerequisite/action |
 | --- | --- | --- | --- | --- | --- |
@@ -162,6 +164,7 @@ Append each evaluation, including prior terminal outcomes and later authorized c
 ## Delivery and known limits
 
 - Current result and application identity: [receipt state and Revision ledger reference]
+- Current step / last completed step / next incomplete step: [reconciled with the terminal result, or actionable interrupted boundary; no pending round step after completion]
 - Evidence availability: [local-only retained paths or verified posting links; unavailable material]
 - Posting confirmation, when required: [destination, reopen/playback result, or blocker; otherwise requester-only]
 - Artifact/source commit separation: [receipt commit and source commits separately, pending parent ownership, or uncommitted outside Git]

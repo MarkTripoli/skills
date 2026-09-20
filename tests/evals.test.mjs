@@ -123,6 +123,8 @@ test("viewer ownership requires internal allocation, matching pixels and bounded
   assert.ok(check([{ ...allocation, calls: [{ id: "writer", name: "bash" }] }]).length);
   assert.ok(check([allocation], { ...trace, images: [{ ...trace.images[0], sha256: "different" }] }).length);
   assert.ok(check([allocation], { ...trace, images: [{ ...trace.images[0], isError: true }] }).length);
+  assert.ok(check([{ ...allocation, command: allocation.command.map((arg) => arg === "2.2" ? "3" : arg) }]).length);
+  assert.ok(check([{ ...allocation, command: allocation.command.map((arg) => arg === "/fixture/evidence/raw.webm" ? "/fixture/evidence/other.webm" : arg) }]).length);
   assert.ok(check([allocation], trace, snapshots, snapshots[1]).length);
   const writer = { sequence: 0, boundary: "tool_execution_start", toolCallId: "writer", toolName: "write", files: base.files };
   assert.ok(check([allocation], trace, [writer, ...snapshots]).length);
@@ -130,6 +132,83 @@ test("viewer ownership requires internal allocation, matching pixels and bounded
   assert.ok(check([allocation], trace, unrelated).some((problem) => problem.includes("unknown")));
   const proven = viewerTemporaryProof([allocation], trace, snapshots, base, base);
   assert.ok(evidencePathProblems(base, snapshots, [{ sha: "bad", subject: "chore: retain viewer output", paths: [name] }], task, proven).some((problem) => problem.includes("committed")));
+});
+
+test("bare video ownership requires the complete same-read thumbnail-to-sheet graph", () => {
+  const stack = "Error: viewer process\n    at observer (hooks.mjs:1:1)\n    at reader (/$bunfs/root/omp-darwin-arm64:100:22)";
+  const prefix = ["/usr/bin/ffmpeg", "-hide_banner", "-loglevel", "error", "-y"];
+  // Deliberately no runtime filename prefix: names alone confer no authority.
+  const names = Array.from({ length: 6 }, (_, index) => `preview-work/thumb-${index}.png`);
+  const sheet = "preview-work/sheet.png";
+  const at = (milliseconds) => new Date(Date.UTC(2026, 8, 20) + milliseconds).toISOString();
+  const allocations = names.map((output, index) => ({
+    output, cwd: "/fixture", command: [...prefix, "-ss", String(index + 0.5), "-i", "/fixture/evidence/raw.webm", "-frames:v", "1", "-vf", "scale=320:-1", output],
+    code: 0, sha256: `pixels-${index}`, stack, calls: [{ id: "preview", name: "read" }], pid: 100 + index, at: at(10),
+  }));
+  allocations.push({
+    output: sheet, cwd: "/fixture",
+    command: [...prefix, ...names.flatMap((name) => ["-i", name]), "-filter_complex", "[0:v][1:v][2:v][3:v][4:v][5:v]concat=n=6:v=1:a=0,tile=3x2", "-frames:v", "1", sheet],
+    code: 0, sha256: "sheet-pixels", stack, calls: [{ id: "preview", name: "read" }], pid: 200, at: at(80),
+  });
+  const trace = {
+    tools: [{ id: "preview", name: "read", arguments: { path: "evidence/raw.webm" } }],
+    images: [{ toolCallId: "preview", sha256: "sheet-pixels", isError: false }],
+  };
+  const snapshots = [{ sequence: 1, boundary: "tool_execution_start", toolCallId: "preview", toolName: "read", at: at(0), files: base.files }];
+  let state = { ...base.files };
+  for (const [index, allocation] of allocations.entries()) {
+    state = { ...state, [allocation.output]: { sha256: allocation.sha256 } };
+    snapshots.push({ sequence: index + 2, boundary: "viewer_process_end", at: at(index === 6 ? 90 : 20 + index * 10), files: state, input: { viewerProcess: allocation } });
+  }
+  snapshots.push({ sequence: 9, boundary: "tool_execution_end", toolCallId: "preview", toolName: "read", at: at(100), files: base.files });
+  const fixture = { allocations, trace, snapshots, final: base };
+  const check = (value = fixture) => evidencePathProblems(base, value.snapshots, [], task,
+    viewerTemporaryProof(value.allocations, value.trace, value.snapshots, base, value.final));
+  assert.deepEqual(check(), []);
+  // The native reader tiles only materialized thumbs when a seek has no frame.
+  const subset = structuredClone(fixture);
+  subset.allocations.splice(0, 1);
+  subset.snapshots.splice(1, 1);
+  for (const snapshot of subset.snapshots) delete snapshot.files[names[0]];
+  subset.allocations.at(-1).command = [...prefix, ...names.slice(1).flatMap((name) => ["-i", name]),
+    "-filter_complex", "[0:v][1:v][2:v][3:v][4:v]concat=n=5:v=1:a=0,tile=3x2", "-frames:v", "1", sheet];
+  assert.deepEqual(check(subset), []);
+  const controls = [
+    ["missing thumbnail producer", (value) => value.allocations.splice(0, 1)],
+    ["wrong source video", (value) => { value.allocations[0].command[8] = "/fixture/evidence/other.webm"; }],
+    ["wrong scale", (value) => { value.allocations[0].command[12] = "scale=640:-1"; }],
+    ["different read", (value) => { value.allocations[0].calls = [{ id: "other", name: "read" }]; }],
+    ["non-runtime producer", (value) => { value.allocations[0].stack = "at arbitraryWrite"; }],
+    ["producer failure", (value) => { value.allocations[0].code = 1; }],
+    ["thumbnail output mismatch", (value) => { value.allocations[0].command[13] = "preview-work/other.png"; }],
+    ["producer hash mismatch", (value) => { value.allocations[0].sha256 = "wrong"; }],
+    ["sheet hash mismatch", (value) => { value.trace.images[0].sha256 = "wrong"; }],
+    ["failed read result", (value) => { value.trace.images[0].isError = true; }],
+    ["wrong sheet input", (value) => { value.allocations[6].command[6] = "preview-work/unknown.png"; }],
+    ["duplicate sheet input", (value) => { value.allocations[6].command[8] = names[0]; }],
+    ["broken concat graph", (value) => { value.allocations[6].command[18] = "[0:v]concat=n=6:v=1:a=0,tile=3x2"; }],
+    ["wrong sheet output", (value) => { value.allocations[6].command[21] = "preview-work/other-sheet.png"; }],
+    ["successful thumbnail omitted from sheet", (value) => {
+      value.allocations[6].command = [...prefix, ...names.slice(1).flatMap((name) => ["-i", name]),
+        "-filter_complex", "[0:v][1:v][2:v][3:v][4:v]concat=n=5:v=1:a=0,tile=3x2", "-frames:v", "1", sheet];
+    }],
+    ["missing completion binding", (value) => { value.snapshots[1].input = {}; }],
+    ["consumed after read", (value) => { value.snapshots[8].sequence = 7; }],
+    ["producer completed after sheet start", (value) => { value.snapshots[1].at = at(85); }],
+    ["allocation before read", (value) => { value.allocations[0].at = at(-1); }],
+    ["intermediate disappears before consumption", (value) => { delete value.snapshots[7].files[names[0]]; }],
+    ["intermediate changed during consumption", (value) => { value.snapshots[7].files[names[0]] = { sha256: "changed" }; }],
+    ["persistent sheet", (value) => { value.final = { files: { ...base.files, [sheet]: { sha256: "sheet-pixels" } } }; }],
+    ["overlapping writer", (value) => { value.snapshots.unshift({ sequence: 0, boundary: "tool_execution_start", toolCallId: "writer", toolName: "write", files: base.files }); }],
+  ];
+  for (const [label, mutate] of controls) {
+    const value = structuredClone(fixture);
+    mutate(value);
+    assert.ok(check(value).length > 0, label);
+  }
+  const unknown = structuredClone(fixture);
+  unknown.snapshots[7].files["omp-video-sheet-unknown/sheet.png"] = { sha256: "sheet-pixels" };
+  assert.ok(check(unknown).some((problem) => problem.includes("omp-video-sheet-unknown/sheet.png")));
 });
 
 test("primary inspection rejects image substitution and unconsumed or completed reservations", () => {
@@ -169,7 +248,7 @@ test("primary inspection rejects image substitution and unconsumed or completed 
         observations.push({ flow: `${phase}-${flow}`, capture: `${session}/capture.json`, media, mediaSha256, frame, frameSha256, timestamp, observedCount, subjectTraceLine: line, notes: "Opened recorded pixels" });
       }
     }
-    const reservationText = "---\nstatus: in-progress\nconsumed_rounds: 1\nlimit: 3\n---\n### Round 1\nReservation persisted; IE-001; repair pending.";
+    const reservationText = "---\nstatus: in-progress\nstop_reason: none\nconsumed_rounds: 1\nlimit: 3\n---\n### Round 1\n- Reservation persisted at: this boundary before mutation.\n- Consumed count / authorized limit: 1 / 3.\n- Attempted finding IDs: IE-001.\n- Current step: repair pending.";
     const reserve = (text) => {
       const sha = hash(text);
       put(`blobs/${sha}`, text);
@@ -179,6 +258,19 @@ test("primary inspection rejects image substitution and unconsumed or completed 
     const review = { reviewer: "test reviewer", inspectedAt: "2026-09-20T00:00:00Z", observations, reservation: { snapshot: "snapshots/reserved.json", findingId: "IE-001", round: 1, notes: "Persisted before mutation" }, final };
     const check = () => reviewProblems(dir, review, trace, snapshots, original, repaired, task);
     assert.deepEqual(check(), []);
+    const pendingStates = [
+      "- Current step: repair. Change only the evidenced handler.\n- Last completed step / next incomplete step: reservation / repair.",
+      "- Last completed step / next incomplete step: reservation / repair.",
+      "- Current step / last completed step / next incomplete step: repair / reservation / repair.",
+      "- Current step: diagnose and repair. Last completed: baseline pixel inspection and reservation. Next incomplete: repair.",
+      "- Current step: diagnosis and repair pending.\n- Last completed step: reservation.\n- Next incomplete step: pending repair.",
+      "| Step | State | Evidence |\n| --- | --- | --- |\n| Repair | pending | Existing finding |",
+    ];
+    for (const state of pendingStates) {
+      snapshots[2] = reserve(reservationText.replace("- Current step: repair pending.", state));
+      assert.deepEqual(check(), [], state);
+    }
+    snapshots[2] = reserve(reservationText);
     const increment = observations[1];
     const originalSample = { ...increment };
     increment.media = "task/evidence/baseline/evidence.mp4";
@@ -203,6 +295,23 @@ test("primary inspection rejects image substitution and unconsumed or completed 
       reservationText.replace("status: in-progress", "status: passed"),
       reservationText.replace("limit: 3", "limit: 4"),
       reservationText.replace("repair pending", "repair completed"),
+      reservationText.replace("stop_reason: none", "stop_reason: success"),
+      reservationText.replace("### Round 1", "### Round 2"),
+      reservationText.replace("IE-001", "IE-002"),
+      reservationText.replace("1 / 3.", "0 / 3."),
+      reservationText.replace("- Current step: repair pending.", "Historical note: repair pending."),
+      reservationText.replace("### Round 1", "### Round 1 historical reservation"),
+      `${reservationText}\n### Round 1 repair completed\n- Last completed step / next incomplete step: repair / checks.`,
+      `${reservationText}\n- Last completed step / next incomplete step: repair / checks.`,
+      `${reservationText}\n| Step | State | Evidence |\n| --- | --- | --- |\n| Repair | completed | Done |`,
+      `${reservationText}\n## Delivery and known limits\n- Current step / last completed step / next incomplete step: checks / repair / checks.`,
+      `${reservationText}\n- Current step: repair. Last completed: repair. Next incomplete: checks.`,
+      reservationText.replace("repair pending", "diagnose and repair completed"),
+      reservationText.replace("repair pending", "repair and capture"),
+      reservationText.replace("- Current step: repair pending.", "- Last completed step / next incomplete step: reservation / checks."),
+      reservationText.replace("- Current step: repair pending.", "- Last completed step: reservation."),
+      `${reservationText}\n- Status: failed / exhaustion.`,
+      `${reservationText}\n- Attempted finding IDs: IE-002.`,
     ]) {
       snapshots[2] = reserve(invalid);
       assert.ok(check().some((problem) => problem.includes("consumed round")));

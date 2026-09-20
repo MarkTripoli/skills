@@ -17,7 +17,7 @@ export default {
         .filter((line) => /^\s*\|/.test(line))
         .map((line) => line.trim().slice(1, -1).split("|").map((cell) => cell.replace(/[`*_]/g, "").trim()))
         .filter((cells) => /^IE-\d{3,}$/.test(cells[0]));
-      const coverage = counterFlowCoverage(text);
+      const coverage = counterFlowCoverage(text, { increment: "failed", reset: "passed" });
       return failures(
         artifact?.fm?.type === "evidence-iteration" ? null : "no-progress: evidence-iteration receipt missing",
         artifact?.fm?.status === "failed" ? null : "no-progress: inspected defect must leave the receipt failed",

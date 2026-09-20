@@ -6,7 +6,7 @@ import readline from "node:readline";
 import { createHash } from "node:crypto";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { finished } from "node:stream/promises";
-import { artifacts, newest, placeholders, frontmatter } from "./lib.mjs";
+import { artifacts, newest, placeholders, frontmatter, section } from "./lib.mjs";
 
 const repairable = new Set(["app.js", "check.mjs"]);
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -272,44 +272,100 @@ export function evidencePathProblems(base, snapshots, commits, taskRel, viewerFi
   return [...problems];
 }
 
-// Only an observed internal ffmpeg process, a successful active video read, exact
-// output/returned PNG bytes, and removal before that read ends establish ownership.
-// This does not authorize a prefix, persistent file, or a concurrent writer.
+// OMP 18.1.22 video.ts: seconds selectors return one PNG; bare reads return
+// a concat/tile of up to six scaled PNGs. Prove the complete producer graph,
+// never a directory prefix. Other transforms remain unauthorized.
 export function viewerTemporaryProof(allocations, trace, snapshots, base, finalState) {
   const proven = new Map();
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const candidates = new Map();
   for (const allocation of allocations) {
-    // The packaged runtime minifies names. Require the immediate spawning caller
-    // after our observer frame to be the runtime binary, not subject eval/shell.
     const caller = allocation.stack?.split("\n")[2] ?? "";
-    if (!/\(\/\$bunfs\/root\/omp-[^:]+:\d+:\d+\)/.test(caller) || allocation.code !== 0
-      || !Array.isArray(allocation.calls) || !allocation.calls.length || allocation.calls.some((call) => call.name !== "read")) continue;
     const name = allocation.output;
-    if (typeof name !== "string" || path.isAbsolute(name) || name.split(/[\\/]/).some((part) => part === "..")
+    if (!/\(\/\$bunfs\/root\/omp-[^:]+:\d+:\d+\)/.test(caller) || allocation.code !== 0
+      || !Array.isArray(allocation.calls) || !allocation.calls.length || allocation.calls.some((call) => call.name !== "read")
+      || typeof name !== "string" || path.isAbsolute(name) || name.split(/[\\/]/).some((part) => part === "..")
       || !allocation.cwd || base.files[name] || finalState.files[name]) continue;
     const appearances = snapshots.filter((snapshot) => snapshot.files[name]);
-    if (!appearances.length) continue;
-    const hashes = new Set(appearances.map((snapshot) => snapshot.files[name].sha256));
-    if (hashes.size !== 1 || hashes.has(undefined)) continue;
-    const hash = [...hashes][0];
-    if (allocation.sha256 !== hash) continue;
-    for (const call of allocation.calls) {
-      const tool = trace.tools.find((entry) => entry.id === call.id && entry.name === "read");
-      const target = /^(.*\.(?:mp4|mov|mkv|webm|m4v|avi|wmv)):(\d+(?:\.\d+)?)s$/i.exec(tool?.arguments?.path ?? "");
-      if (!target) continue;
-      const command = allocation.command;
-      const expected = ["-hide_banner", "-loglevel", "error", "-y", "-ss", String(Number(target[2])), "-i", path.resolve(allocation.cwd, target[1]), "-frames:v", "1", name];
-      if (!Array.isArray(command) || path.basename(command[0]) !== "ffmpeg" || JSON.stringify(command.slice(1)) !== JSON.stringify(expected)) continue;
-      if (!trace.images.some((image) => image.toolCallId === call.id && !image.isError && image.sha256 === hash)) continue;
-      const start = snapshots.find((snapshot) => snapshot.boundary === "tool_execution_start" && snapshot.toolCallId === call.id);
-      const end = snapshots.find((snapshot) => snapshot.boundary === "tool_execution_end" && snapshot.toolCallId === call.id);
-      if (!start || !end || start.files[name] || end.files[name]
-        || appearances.some((snapshot) => snapshot.sequence <= start.sequence || snapshot.sequence >= end.sequence)) continue;
-      const overlappingWriter = snapshots.some((snapshot) => {
-        if (snapshot.boundary !== "tool_execution_start" || snapshot.toolName === "read" || snapshot.sequence >= end.sequence) return false;
-        const finish = snapshots.find((item) => item.boundary === "tool_execution_end" && item.toolCallId === snapshot.toolCallId);
-        return !finish || finish.sequence > start.sequence;
+    if (!appearances.length || !allocation.sha256 || appearances.some((snapshot) => snapshot.files[name].sha256 !== allocation.sha256)) continue;
+    const command = allocation.command;
+    if (!Array.isArray(command) || !command.every((arg) => typeof arg === "string") || path.basename(command[0]) !== "ffmpeg"
+      || !same(command.slice(1, 5), ["-hide_banner", "-loglevel", "error", "-y"]) || command.at(-1) !== name) continue;
+    // Multiple producers for a path cannot establish exclusive ownership.
+    if (allocations.filter((item) => item.output === name).length !== 1) continue;
+    candidates.set(name, { allocation, appearances, args: command.slice(5) });
+  }
+  const lifetime = (candidate, callId) => {
+    const { allocation, appearances } = candidate;
+    if (!allocation.calls.some((call) => call.id === callId)) return false;
+    const start = snapshots.find((snapshot) => snapshot.boundary === "tool_execution_start" && snapshot.toolCallId === callId);
+    const end = snapshots.find((snapshot) => snapshot.boundary === "tool_execution_end" && snapshot.toolCallId === callId);
+    if (!start || !end || start.files[allocation.output] || end.files[allocation.output]
+      || appearances.some((snapshot) => snapshot.sequence <= start.sequence || snapshot.sequence >= end.sequence)) return false;
+    return !snapshots.some((snapshot) => {
+      if (snapshot.boundary !== "tool_execution_start" || snapshot.toolName === "read" || snapshot.sequence >= end.sequence) return false;
+      const finish = snapshots.find((item) => item.boundary === "tool_execution_end" && item.toolCallId === snapshot.toolCallId);
+      return !finish || finish.sequence > start.sequence;
+    });
+  };
+  const returned = (candidate, callId) => trace.images.some((image) => image.toolCallId === callId && !image.isError && image.sha256 === candidate.allocation.sha256);
+  const credit = ({ allocation, appearances }) => proven.set(allocation.output, { sha256: allocation.sha256, sequences: new Set(appearances.map((snapshot) => snapshot.sequence)) });
+  const processEnd = (candidate, callId) => {
+    const allocation = candidate.allocation;
+    if (!Number.isInteger(allocation.pid) || allocation.pid <= 0 || !Number.isFinite(Date.parse(allocation.at))) return null;
+    const start = snapshots.find((snapshot) => snapshot.boundary === "tool_execution_start" && snapshot.toolCallId === callId);
+    const readEnd = snapshots.find((snapshot) => snapshot.boundary === "tool_execution_end" && snapshot.toolCallId === callId);
+    const ends = snapshots.filter((snapshot) => snapshot.boundary === "viewer_process_end" && same(snapshot.input?.viewerProcess, allocation));
+    if (ends.length !== 1 || !Number.isFinite(Date.parse(start?.at)) || Date.parse(allocation.at) < Date.parse(start.at)
+      || !(Date.parse(ends[0].at) >= Date.parse(allocation.at))
+      || !(Date.parse(ends[0].at) <= Date.parse(readEnd?.at))
+      || ends[0].files[allocation.output]?.sha256 !== allocation.sha256) return null;
+    return ends[0];
+  };
+  for (const tool of trace.tools.filter((entry) => entry.name === "read")) {
+    const target = /^(.*\.(?:mp4|mov|mkv|webm|m4v|avi|wmv))(?::(\d+(?:\.\d+)?)s)?$/i.exec(tool.arguments?.path ?? "");
+    if (!target) continue;
+    for (const candidate of candidates.values()) {
+      const { allocation, args } = candidate;
+      if (!lifetime(candidate, tool.id) || !returned(candidate, tool.id)) continue;
+      const source = path.resolve(allocation.cwd, target[1]);
+      if (target[2] !== undefined) {
+        if (same(args, ["-ss", String(Number(target[2])), "-i", source, "-frames:v", "1", allocation.output])) credit(candidate);
+        continue;
+      }
+      const inputs = [];
+      let offset = 0;
+      while (args[offset] === "-i") { inputs.push(args[offset + 1]); offset += 2; }
+      if (!inputs.length || inputs.length > 6 || new Set(inputs).size !== inputs.length) continue;
+      const graph = `${inputs.map((_, index) => `[${index}:v]`).join("")}concat=n=${inputs.length}:v=1:a=0,tile=3x2`;
+      if (!same(args.slice(offset), ["-filter_complex", graph, "-frames:v", "1", allocation.output])) continue;
+      const sheetEnd = processEnd(candidate, tool.id);
+      if (!sheetEnd) continue;
+      const thumbs = inputs.map((name) => candidates.get(name));
+      if (thumbs.some((thumb) => !thumb)) continue;
+      const valid = thumbs.every((thumb) => {
+        const producer = thumb.allocation;
+        const seek = thumb.args[1];
+        if (producer.cwd !== allocation.cwd || producer.command[0] !== allocation.command[0] || !lifetime(thumb, tool.id)
+          || !Number.isFinite(Number(seek)) || Number(seek) < 0 || String(Number(seek)) !== seek
+          || !same(thumb.args, ["-ss", seek, "-i", source, "-frames:v", "1", "-vf", "scale=320:-1", producer.output])) return false;
+        const end = processEnd(thumb, tool.id);
+        if (!end || end.sequence >= sheetEnd.sequence || !(Date.parse(end.at) <= Date.parse(allocation.at))) return false;
+        // The hash from each producer must still be present throughout observed
+        // consumption, not merely somewhere earlier in the read.
+        return snapshots.filter((snapshot) => snapshot.sequence >= end.sequence && snapshot.sequence <= sheetEnd.sequence)
+          .every((snapshot) => snapshot.files[producer.output]?.sha256 === producer.sha256);
       });
-      if (!overlappingWriter) proven.set(name, { sha256: hash, sequences: new Set(appearances.map((snapshot) => snapshot.sequence)) });
+      if (!valid) continue;
+      // Do not credit a subset when another successful thumbnail for this
+      // read/source was omitted from the returned sheet.
+      const omitted = [...candidates.values()].some((thumb) => thumb.allocation.cwd === allocation.cwd
+        && thumb.allocation.calls.some((call) => call.id === tool.id)
+        && same(thumb.args, ["-ss", thumb.args[1], "-i", source, "-frames:v", "1", "-vf", "scale=320:-1", thumb.allocation.output])
+        && !inputs.includes(thumb.allocation.output));
+      if (omitted) continue;
+      credit(candidate);
+      thumbs.forEach(credit);
     }
   }
   return proven;
@@ -355,6 +411,72 @@ function retainedFile(out, relative) {
   if (!target.startsWith(`${path.resolve(out)}${path.sep}`) || !fs.existsSync(target) || !fs.statSync(target).isFile()) throw new Error(`Missing retained file: ${relative}`);
   if (!fs.realpathSync(target).startsWith(`${fs.realpathSync(out)}${path.sep}`)) throw new Error(`Retained path escapes result: ${relative}`);
   return target;
+}
+
+// Receipt frontmatter owns the current allowance/status; a numbered round owns
+// its step state. Earlier pending text is history, not a current reservation.
+function activeReservation(text, round, limit, findingId, pendingRepair = false) {
+  const fm = frontmatter(text);
+  if (fm?.status !== "in-progress" || fm.stop_reason !== "none"
+    || fm.consumed_rounds !== String(round) || fm.limit !== String(limit)) return false;
+  const headings = [...text.matchAll(/^#{2,6}\s+Round\s+(\d+)([^\n]*)$/gmi)];
+  const current = headings.at(-1);
+  if (!current || Number(current[1]) !== round || !["", "reservation"].includes(current[2].trim().toLowerCase())) return false;
+  const body = section(text, current[0], { last: true }) ?? "";
+  if (!(body.match(/\bIE-\d+\b/g) ?? []).includes(findingId) || !/\breserv(?:ation|ed)\b/i.test(`${current[2]} ${body}`)) return false;
+  let stepDeclared = false;
+  const declarations = [];
+  if (!pendingRepair) return true;
+  const clean = (value) => value.replace(/[`*]/g, "").trim().toLowerCase().replace(/\.$/, "");
+  const steps = (value) => clean(value).split(/[.;]/)[0].trim().split(/\s+and\s+/);
+  const pending = (value) => steps(value).every((step) =>
+    ["diagnose", "diagnosis", "repair"].includes(step.replace(/^pending\s+|\s+(?:pending|not started)$/g, "")));
+  const reserved = (value) => {
+    const completed = steps(value);
+    return completed.at(-1) === "reservation"
+      && completed.every((step) => ["baseline inspection", "baseline pixel inspection", "reservation"].includes(step));
+  };
+  const readFields = (content) => {
+    for (const line of content.split(/\n|[.;]\s+(?=(?:current step|last completed(?: step)?|next incomplete(?: step)?):)/i)) {
+      const field = /^\s*(?:-\s*)?([^:]+):\s*(.*)$/.exec(line);
+      if (!field) continue;
+      const key = clean(field[1]).replace(/^last completed$/, "last completed step").replace(/^next incomplete$/, "next incomplete step");
+      if (["current step", "next incomplete step", "last completed step / next incomplete step",
+        "current step / last completed step / next incomplete step"].includes(key)) stepDeclared = true;
+      const value = field[2];
+      if (key === "current step") declarations.push(pending(value));
+      if (key === "last completed step") declarations.push(reserved(value));
+      if (key === "next incomplete step") declarations.push(pending(value));
+      if (key === "last completed step / next incomplete step") {
+        const parts = value.split("/");
+        declarations.push(parts.length === 2 && reserved(parts[0]) && pending(parts[1]));
+      }
+      if (key === "current step / last completed step / next incomplete step") {
+        const parts = value.split("/");
+        declarations.push(parts.length === 3 && pending(parts[0]) && reserved(parts[1]) && pending(parts[2]));
+      }
+      if (key === "consumed count / authorized limit" || key === "consumed rounds / limit") {
+        declarations.push(clean(value) === `${round} / ${limit}` || clean(value) === `${round}/${limit}`);
+      }
+      if (key === "status") declarations.push(["in-progress", "in-progress / none", "in-progress/none"].includes(clean(value).split(".")[0]));
+      if (key === "stop reason") declarations.push(clean(value) === "none");
+      if (key === "attempted finding ids" || key === "attempted ids") {
+        declarations.push((value.match(/\bIE-\d+\b/g) ?? []).includes(findingId));
+      }
+    }
+    for (const line of content.split("\n").filter((line) => line.trim().startsWith("|"))) {
+      const cells = line.trim().split("|").slice(1, -1).map(clean);
+      if (cells[0] === "repair") {
+        stepDeclared = true;
+        declarations.push(cells[1] === "pending" || cells[1] === "not started");
+      }
+    }
+  };
+  readFields(body);
+  // A current delivery summary must agree with the selected round if it also
+  // declares step state. Historical observations in other sections do not vote.
+  readFields(section(text, "## Delivery and known limits", { body: true }) ?? "");
+  return stepDeclared && declarations.every(Boolean);
 }
 
 export function reviewProblems(out, review, trace, snapshots, base, finalState, taskRel) {
@@ -427,10 +549,7 @@ export function reviewProblems(out, review, trace, snapshots, base, finalState, 
     const receipts = Object.entries(reserved.state.files).filter(([name]) => name.startsWith(`${taskRel}/`) && /\/\d{2}-evidence-iteration-/.test(name));
     require(receipts.some(([, value]) => {
       const text = fs.readFileSync(retainedFile(out, `blobs/${value.sha256}`), "utf8");
-      const fm = frontmatter(text);
-      return fm.status === "in-progress" && fm.consumed_rounds === "1" && fm.limit === "3"
-        && /IE-001/.test(text) && /\breserv(?:ation|ed)\b/i.test(text)
-        && /\brepair\s*(?:[|:=-]\s*)?(?:pending|not.started)\b|\bpending\s+repair\b/i.test(text);
+      return activeReservation(text, 1, 3, "IE-001", true);
     }), "reservation snapshot lacks an in-progress consumed round 1/default 3 receipt with IE-001 and pending repair");
     for (const sample of [before, selected["baseline-initial"]]) {
       const opening = sample && snapshots.find((item) => item.boundary === "tool_execution_end" && item.toolCallId === sample.image?.toolCallId);
@@ -574,8 +693,8 @@ async function boundedEvidenceProblems(out, setup, trace, snapshots, base, final
     for (const [file, value] of Object.entries(snapshot.state.files)) {
       if (!/\/\d{2}-evidence-iteration-/.test(file)) continue;
       const text = fs.readFileSync(retainedFile(snapshotRoot, `blobs/${value.sha256}`), "utf8");
-      const consumed = /^consumed_rounds:\s*(\d+)\s*$/m.exec(text);
-      require(!consumed || Number(consumed[1]) <= rounds, "snapshot exceeds authorized reservation boundary");
+      const consumed = frontmatter(text)?.consumed_rounds;
+      require(consumed === undefined || (/^\d+$/.test(consumed) && Number(consumed) <= rounds), "snapshot exceeds authorized reservation boundary");
     }
   }
   require(Number(receipt?.fm.consumed_rounds) === rounds && Number(receipt?.fm.limit) === (zeroLimit(name) ? 0 : noProgress(name) ? 1 : 3), "exact consumed/default allowance mismatch");
@@ -690,7 +809,7 @@ async function boundedEvidenceProblems(out, setup, trace, snapshots, base, final
       const entries = Object.entries(reserved.state.files).filter(([file]) => /\/\d{2}-evidence-iteration-/.test(file));
       require(entries.some(([, value]) => {
         const text = fs.readFileSync(retainedFile(root, `blobs/${value.sha256}`), "utf8");
-        return text.includes(expectedId) && new RegExp(`consumed_rounds:\\s*${round}\\b`).test(text);
+        return activeReservation(text, round, noProgress(name) ? 1 : 3, expectedId);
       }), `round ${round} persisted consumed reservation missing`);
       const priorPixels = review.observations?.filter((item) => item.pass === round - 1 && item.flow.endsWith("increment")) ?? [];
       for (const item of priorPixels) {
