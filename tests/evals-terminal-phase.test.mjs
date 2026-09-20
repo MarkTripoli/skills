@@ -1,5 +1,6 @@
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -13,6 +14,7 @@ import {
 import setupRepositoryBasic from "../evals/scenarios/setup-repository-basic.mjs";
 
 const temps = [];
+const fifoTest = process.platform === "win32" ? test.skip : test;
 
 function repository() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "skills-terminal-eval-"));
@@ -88,6 +90,91 @@ test("repository snapshots include nested directories named after harness paths"
   ]);
 });
 
+test("repository snapshots detect an empty directory created from absence", () => {
+  const root = repository();
+  const before = snapshotRepository(root);
+
+  fs.mkdirSync(path.join(root, "empty"));
+  const afterSnapshot = snapshotRepository(root);
+
+  assert.deepEqual(diffRepositorySnapshots(before, afterSnapshot).created, ["empty"]);
+  assert.deepEqual(afterSnapshot.empty, { kind: "directory" });
+});
+
+test("repository snapshots detect an empty directory deleted to absence", () => {
+  const root = repository();
+  fs.mkdirSync(path.join(root, "empty"));
+  const before = snapshotRepository(root);
+
+  fs.rmdirSync(path.join(root, "empty"));
+  const afterSnapshot = snapshotRepository(root);
+
+  assert.deepEqual(diffRepositorySnapshots(before, afterSnapshot).deleted, ["empty"]);
+  assert.deepEqual(before.empty, { kind: "directory" });
+});
+
+test("repository snapshots report non-empty directory creation through its contents once", () => {
+  const root = repository();
+  const before = snapshotRepository(root);
+
+  put(root, "created/file.txt", "created\n");
+  const afterSnapshot = snapshotRepository(root);
+
+  assert.deepEqual(diffRepositorySnapshots(before, afterSnapshot).changedPaths, ["created/file.txt"]);
+  assert.deepEqual(afterSnapshot.created, { kind: "directory" });
+});
+
+test("repository snapshots report non-empty directory deletion through its contents once", () => {
+  const root = repository();
+  put(root, "removed/file.txt", "removed\n");
+  const before = snapshotRepository(root);
+
+  fs.rmSync(path.join(root, "removed"), { recursive: true });
+  const afterSnapshot = snapshotRepository(root);
+
+  assert.deepEqual(diffRepositorySnapshots(before, afterSnapshot).changedPaths, ["removed/file.txt"]);
+  assert.deepEqual(before.removed, { kind: "directory" });
+});
+
+fifoTest("repository snapshots detect a FIFO created from absence without reading it", () => {
+  const root = repository();
+  const before = snapshotRepository(root);
+
+  execFileSync("mkfifo", [path.join(root, "entry")]);
+  const afterSnapshot = snapshotRepository(root);
+
+  assert.deepEqual(diffRepositorySnapshots(before, afterSnapshot).created, ["entry"]);
+  assert.deepEqual(afterSnapshot.entry, { kind: "other", type: "fifo" });
+  assert.equal("bytes" in afterSnapshot.entry, false);
+  assert.equal("linkTarget" in afterSnapshot.entry, false);
+});
+
+fifoTest("repository snapshots detect a FIFO deleted to absence", () => {
+  const root = repository();
+  execFileSync("mkfifo", [path.join(root, "entry")]);
+  const before = snapshotRepository(root);
+
+  fs.rmSync(path.join(root, "entry"));
+  const afterSnapshot = snapshotRepository(root);
+
+  assert.deepEqual(diffRepositorySnapshots(before, afterSnapshot).deleted, ["entry"]);
+  assert.deepEqual(before.entry, { kind: "other", type: "fifo" });
+});
+
+fifoTest("repository snapshot diffs report a directory replaced by a FIFO", () => {
+  const root = repository();
+  fs.mkdirSync(path.join(root, "entry"));
+  const before = snapshotRepository(root);
+
+  fs.rmdirSync(path.join(root, "entry"));
+  execFileSync("mkfifo", [path.join(root, "entry")]);
+  const afterSnapshot = snapshotRepository(root);
+
+  assert.deepEqual(diffRepositorySnapshots(before, afterSnapshot).modified, ["entry"]);
+  assert.deepEqual(before.entry, { kind: "directory" });
+  assert.deepEqual(afterSnapshot.entry, { kind: "other", type: "fifo" });
+});
+
 test("local Git configuration snapshots detect byte changes outside repository manifests", () => {
   const root = repository();
   put(root, ".git/config", "[core]\n\trepositoryformatversion = 0\n");
@@ -100,6 +187,75 @@ test("local Git configuration snapshots detect byte changes outside repository m
 
   assert.deepEqual(diffRepositorySnapshots(beforeRepository, afterRepository).changedPaths, []);
   assert.equal(evalLib.gitConfigChanged(beforeConfig, afterConfig), true);
+});
+
+test("local Git configuration detects a directory created from absence", () => {
+  const root = repository();
+  fs.mkdirSync(path.join(root, ".git"));
+  const before = evalLib.snapshotGitConfig(root);
+
+  fs.mkdirSync(path.join(root, ".git/config"));
+  const afterSnapshot = evalLib.snapshotGitConfig(root);
+
+  assert.equal(evalLib.gitConfigChanged(before, afterSnapshot), true);
+  assert.equal(before, null);
+  assert.deepEqual(afterSnapshot, { kind: "directory" });
+});
+
+test("local Git configuration detects a directory deleted to absence", () => {
+  const root = repository();
+  fs.mkdirSync(path.join(root, ".git/config"), { recursive: true });
+  const before = evalLib.snapshotGitConfig(root);
+
+  fs.rmdirSync(path.join(root, ".git/config"));
+  const afterSnapshot = evalLib.snapshotGitConfig(root);
+
+  assert.equal(evalLib.gitConfigChanged(before, afterSnapshot), true);
+  assert.deepEqual(before, { kind: "directory" });
+  assert.equal(afterSnapshot, null);
+});
+
+fifoTest("local Git configuration detects a FIFO created from absence without reading it", () => {
+  const root = repository();
+  fs.mkdirSync(path.join(root, ".git"));
+  const before = evalLib.snapshotGitConfig(root);
+
+  execFileSync("mkfifo", [path.join(root, ".git/config")]);
+  const afterSnapshot = evalLib.snapshotGitConfig(root);
+
+  assert.equal(evalLib.gitConfigChanged(before, afterSnapshot), true);
+  assert.equal(before, null);
+  assert.deepEqual(afterSnapshot, { kind: "other", type: "fifo" });
+  assert.equal("bytes" in afterSnapshot, false);
+  assert.equal("linkTarget" in afterSnapshot, false);
+});
+
+fifoTest("local Git configuration detects a FIFO deleted to absence", () => {
+  const root = repository();
+  fs.mkdirSync(path.join(root, ".git"));
+  execFileSync("mkfifo", [path.join(root, ".git/config")]);
+  const before = evalLib.snapshotGitConfig(root);
+
+  fs.rmSync(path.join(root, ".git/config"));
+  const afterSnapshot = evalLib.snapshotGitConfig(root);
+
+  assert.equal(evalLib.gitConfigChanged(before, afterSnapshot), true);
+  assert.deepEqual(before, { kind: "other", type: "fifo" });
+  assert.equal(afterSnapshot, null);
+});
+
+fifoTest("local Git configuration detects a directory replaced by a FIFO", () => {
+  const root = repository();
+  fs.mkdirSync(path.join(root, ".git/config"), { recursive: true });
+  const before = evalLib.snapshotGitConfig(root);
+
+  fs.rmdirSync(path.join(root, ".git/config"));
+  execFileSync("mkfifo", [path.join(root, ".git/config")]);
+  const afterSnapshot = evalLib.snapshotGitConfig(root);
+
+  assert.equal(evalLib.gitConfigChanged(before, afterSnapshot), true);
+  assert.deepEqual(before, { kind: "directory" });
+  assert.deepEqual(afterSnapshot, { kind: "other", type: "fifo" });
 });
 
 test("local Git configuration detects a dangling symlink created from absence", () => {

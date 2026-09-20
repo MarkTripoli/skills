@@ -26,6 +26,15 @@ function snapshotSymbolicLink(file) {
   };
 }
 
+function snapshotOther(stats) {
+  let type = "other";
+  if (stats.isFIFO()) type = "fifo";
+  else if (stats.isSocket()) type = "socket";
+  else if (stats.isBlockDevice()) type = "block-device";
+  else if (stats.isCharacterDevice()) type = "character-device";
+  return { kind: "other", type };
+}
+
 export function snapshotGitConfig(root) {
   const config = path.join(root, ".git", "config");
   let stats;
@@ -36,8 +45,10 @@ export function snapshotGitConfig(root) {
     throw error;
   }
   if (stats.isSymbolicLink()) return snapshotSymbolicLink(config);
-  if (!stats.isFile()) return null;
-  return snapshotBytes(fs.readFileSync(config));
+  if (stats.isDirectory()) return { kind: "directory" };
+  return stats.isFile()
+    ? snapshotBytes(fs.readFileSync(config))
+    : snapshotOther(stats);
 }
 
 export function gitConfigChanged(before, after) {
@@ -54,6 +65,7 @@ export function snapshotRepository(root) {
       const fullPath = path.join(directory, entry.name);
       const stats = fs.lstatSync(fullPath);
       if (stats.isDirectory()) {
+        manifest[relativePath] = { kind: "directory" };
         visit(fullPath, relativePath);
         continue;
       }
@@ -61,8 +73,9 @@ export function snapshotRepository(root) {
         manifest[relativePath] = snapshotSymbolicLink(fullPath);
         continue;
       }
-      if (!stats.isFile()) continue;
-      manifest[relativePath] = snapshotBytes(fs.readFileSync(fullPath));
+      manifest[relativePath] = stats.isFile()
+        ? snapshotBytes(fs.readFileSync(fullPath))
+        : snapshotOther(stats);
     }
   };
   visit(root);
@@ -72,8 +85,22 @@ export function snapshotRepository(root) {
 export function diffRepositorySnapshots(before, after) {
   const beforePaths = new Set(Object.keys(before));
   const afterPaths = new Set(Object.keys(after));
-  const created = [...afterPaths].filter((file) => !beforePaths.has(file)).sort();
-  const deleted = [...beforePaths].filter((file) => !afterPaths.has(file)).sort();
+  const withoutNonEmptyDirectories = (paths, snapshot) => {
+    const nonEmptyDirectories = new Set();
+    for (const entryPath of paths) {
+      let separator = entryPath.lastIndexOf("/");
+      while (separator !== -1) {
+        const ancestor = entryPath.slice(0, separator);
+        if (snapshot[ancestor]?.kind === "directory") nonEmptyDirectories.add(ancestor);
+        separator = ancestor.lastIndexOf("/");
+      }
+    }
+    return paths.filter((entryPath) => !nonEmptyDirectories.has(entryPath));
+  };
+  const createdPaths = [...afterPaths].filter((file) => !beforePaths.has(file));
+  const deletedPaths = [...beforePaths].filter((file) => !afterPaths.has(file));
+  const created = withoutNonEmptyDirectories(createdPaths, after).sort();
+  const deleted = withoutNonEmptyDirectories(deletedPaths, before).sort();
   const modified = [...beforePaths]
     .filter((file) => afterPaths.has(file) && !isDeepStrictEqual(before[file], after[file]))
     .sort();
