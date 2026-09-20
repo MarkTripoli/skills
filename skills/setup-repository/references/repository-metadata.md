@@ -85,6 +85,32 @@ Provider ownership depends on recorded stable identity, not display name:
 
 For each unsupported record, the receipt reports its logical key, stable ID, and last-applied digest as preserved. A reset containing such records is partial because only verified local fields can be rebuilt.
 
+## Provider-specific future behavior
+
+This document freezes behavior, not a shared adapter interface. The first release has no provider adapters and no second implementation from which to derive a common code abstraction.
+
+Each future adapter keeps its provider-specific resource model behind five shared result categories:
+
+- `create` means no prior owned identity or foreign match exists, the adapter creates its provider-specific resource, and success records `logicalKey`, `stableId`, and `lastAppliedDigest`.
+- `update` means the adapter observed the same recorded stable identity and may apply its provider-specific change. Success records the same three ownership fields with the applied digest.
+- `no-op` means the recorded stable identity and observed digest already match the desired provider-specific state. Existing ownership remains unchanged.
+- `conflict` means ownership cannot be established safely. A foreign name match or reconcile drift performs no operation and creates no ownership record.
+- `unsupported` means the provider or requested provider-specific operation has no adapter. It performs no operation and creates no ownership record.
+
+The behavioral flow is:
+
+```text
+observe(context, priorOwnedState) -> providerSnapshot
+plan(snapshot, priorOwnedState, profileRevision, mode)
+  -> create | update | no-op | conflict | unsupported
+apply(plan)
+  -> operations + { logicalKey, stableId, lastAppliedDigest }
+```
+
+Ownership always follows recorded stable identity. A matching display name without prior recorded stable identity is foreign and returns `conflict`. When the same recorded identity has a different observed digest, `reconcile` returns `conflict`; `reset-managed` may return `update` only after the adapter observes that same recorded identity.
+
+GitHub adapters may manage repository label resources. Linear adapters may manage team or workspace resources. Jira provisioning may return `unsupported`. Each adapter defines its own desired resource shape; there is no provider-neutral label object or generic provider operation.
+
 ## First run
 
 When `ai-utilities.json` is absent, create a new top-level object. Seed `vcs.platform: "github"` only when at least one remote exists and every configured remote URL unambiguously identifies `github.com` through an HTTPS, SSH, or Git URL. A missing remote, unsupported host, malformed URL, or mixed host set leaves `vcs.platform` unresolved.
