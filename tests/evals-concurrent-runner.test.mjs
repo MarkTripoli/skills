@@ -22,6 +22,22 @@ function runEval(args, env) {
   });
 }
 
+function waitForFile(file) {
+  if (fs.existsSync(file)) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      watcher.close();
+      reject(new Error(`timed out waiting for ${file}`));
+    }, 5_000);
+    const watcher = fs.watch(path.dirname(file), () => {
+      if (!fs.existsSync(file)) return;
+      clearTimeout(timeout);
+      watcher.close();
+      resolve();
+    });
+  });
+}
+
 test("concurrent evals reserve independent runs under one results root", async () => {
   // Given
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "skills-concurrent-runner-"));
@@ -93,6 +109,92 @@ test("concurrent evals reserve independent runs under one results root", async (
     assert.equal(fs.existsSync(path.join(latestRun, "summary.json")), true);
     assert.equal(fs.existsSync(path.join(latestRun, scenario, "report.json")), true);
     for (const live of liveRuns) assert.doesNotMatch(`${live.stdout}\n${live.stderr}`, /EEXIST|ENOTEMPTY/);
+  } finally {
+    if (fs.existsSync(resultsRoot)) {
+      for (const entry of fs.readdirSync(resultsRoot, { withFileTypes: true })) {
+        const reportPath = path.join(resultsRoot, entry.name, scenario, "report.json");
+        if (entry.isDirectory() && fs.existsSync(reportPath)) {
+          fixtureRepos.push(JSON.parse(fs.readFileSync(reportPath, "utf8")).repo);
+        }
+      }
+    }
+    for (const fixtureRepo of new Set(fixtureRepos)) {
+      if (fixtureRepo) fs.rmSync(fixtureRepo, { recursive: true, force: true });
+    }
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("latest excludes active runs and explicit incomplete grading fails", async () => {
+  // Given
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "skills-active-runner-"));
+  const resultsRoot = path.join(temp, "results");
+  const bin = path.join(temp, "bin");
+  const gate = path.join(temp, "release");
+  const started = path.join(temp, "started");
+  fs.mkdirSync(bin);
+  fs.writeFileSync(gate, "release\n");
+  const omp = path.join(bin, "omp");
+  fs.writeFileSync(omp, [
+    "#!/usr/bin/env node",
+    "const fs = require('node:fs');",
+    "const path = require('node:path');",
+    "void (async () => {",
+    "fs.writeFileSync(process.env.FAKE_OMP_STARTED, `${process.pid}\\n`);",
+    "if (!fs.existsSync(process.env.FAKE_OMP_GATE)) await new Promise((resolve) => {",
+    "  const watcher = fs.watch(path.dirname(process.env.FAKE_OMP_GATE), () => {",
+    "    if (!fs.existsSync(process.env.FAKE_OMP_GATE)) return;",
+    "    watcher.close();",
+    "    resolve();",
+    "  });",
+    "});",
+    "console.log('fake eval output');",
+    "})();",
+  ].join("\n"));
+  fs.chmodSync(omp, 0o755);
+  const env = {
+    ...process.env,
+    PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+    SKILLS_EVAL_RESULTS_ROOT: resultsRoot,
+    FAKE_OMP_GATE: gate,
+    FAKE_OMP_STARTED: started,
+  };
+  const fixtureRepos = [];
+  let activeRun;
+  let activePromise;
+
+  try {
+    try {
+      const previous = await runEval(["--keep", "--max-time", "1"], env);
+      assert.equal(previous.status, 1);
+      const previousRun = fs.realpathSync(path.join(resultsRoot, "latest"));
+      fs.rmSync(gate);
+      fs.rmSync(started);
+
+      // When
+      activePromise = runEval(["--keep", "--max-time", "1"], env);
+      await waitForFile(started);
+      activeRun = fs.readdirSync(resultsRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => fs.realpathSync(path.join(resultsRoot, entry.name)))
+        .find((runDir) => runDir !== previousRun);
+      assert.ok(activeRun);
+      const latestGrade = await runEval(["--grade", "latest"], env);
+      const activeGrade = await runEval(["--grade", activeRun], env);
+
+      // Then
+      assert.equal(latestGrade.status, 1);
+      assert.match(latestGrade.stdout, new RegExp(`re-grading ${previousRun.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+      assert.notEqual(activeGrade.status, 0);
+    } finally {
+      fs.writeFileSync(gate, "release\n");
+      if (activePromise) await activePromise;
+    }
+
+    const latestRun = fs.realpathSync(path.join(resultsRoot, "latest"));
+    assert.equal(latestRun, activeRun);
+    assert.equal(fs.existsSync(path.join(latestRun, "summary.json")), true);
+    assert.equal(fs.existsSync(path.join(latestRun, scenario, "report.json")), true);
   } finally {
     if (fs.existsSync(resultsRoot)) {
       for (const entry of fs.readdirSync(resultsRoot, { withFileTypes: true })) {

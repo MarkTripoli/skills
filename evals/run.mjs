@@ -418,7 +418,10 @@ async function gradeScenario(scenario, runDir) {
       const out = path.join(resultDir, label);
       const taskDir = path.join(out, "task");
       if (!fs.existsSync(path.join(out, "answer.md"))) {
-        console.log(`[${scenario.name}] ${label}: not recorded`);
+        const problems = ["recording: phase is incomplete (answer.md missing)"];
+        result.phases.push({ phase: label, seconds: null, ok: false, problems });
+        result.ok = false;
+        report(scenario.name, label, null, problems);
         break;
       }
       const beforeManifest = path.join(out, "repository-before.json");
@@ -509,6 +512,9 @@ if (gradeDir !== null) {
   const dist = path.join(runDir, ".dist");
   buildRuntime("oh-my-pi", dist);
   snapshotSources(dist);
+  console.log(`skills built at ${path.relative(repoRoot, dist)}; running ${scenarios.map((s) => s.name).join(", ")} with ${maxMinutes} minutes per phase; recordings in ${path.relative(repoRoot, runDir)}`);
+  results = await Promise.all(scenarios.map((s) => runScenario(s, runDir, dist)));
+  fs.writeFileSync(path.join(runDir, "summary.json"), JSON.stringify(results, null, 2));
   const latest = path.join(resultsRoot, "latest");
   const latestTemp = path.join(resultsRoot, `.latest-${process.pid}-${randomUUID()}`);
   try {
@@ -517,9 +523,6 @@ if (gradeDir !== null) {
   } finally {
     fs.rmSync(latestTemp, { force: true });
   }
-  console.log(`skills built at ${path.relative(repoRoot, dist)}; running ${scenarios.map((s) => s.name).join(", ")} with ${maxMinutes} minutes per phase; recordings in ${path.relative(repoRoot, runDir)}`);
-  results = await Promise.all(scenarios.map((s) => runScenario(s, runDir, dist)));
-  fs.writeFileSync(path.join(runDir, "summary.json"), JSON.stringify(results, null, 2));
 }
 
 const graded = results.filter((r) => !r.skipped);
