@@ -92,6 +92,26 @@ func parseTypedVerdict(raw []byte) (string, error) {
 	return verdict.Verdict, nil
 }
 
+type typedResult struct {
+	Verdict  string            `json:"verdict"`
+	Findings []json.RawMessage `json:"findings"`
+	Evidence []string          `json:"evidence"`
+}
+
+func parseTypedResult(raw []byte) (typedResult, error) {
+	var result typedResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return result, fmt.Errorf("invalid typed result: %w", err)
+	}
+	if result.Verdict != "pass" && result.Verdict != "fail" && result.Verdict != "blocked" {
+		return result, fmt.Errorf("invalid verdict %q", result.Verdict)
+	}
+	if len(result.Evidence) == 0 {
+		return result, fmt.Errorf("typed result has no evidence")
+	}
+	return result, nil
+}
+
 // Typed delegates non-shell validation to the configured typed agent owner.
 func Typed(ctx context.Context, name string) error {
 	if err := ctx.Err(); err != nil {
@@ -126,23 +146,23 @@ func Typed(ctx context.Context, name string) error {
 			lastErr = err
 			continue
 		}
-		res, runErr := a.Run(ctx, agent.RunOpts{CWD: worktree(ctx), Purpose: name, Env: []string{"SD_PARENT_RUN_ID=" + runID(ctx)}, Prompt: fmt.Sprintf("Run the typed %s validation for this checkout and return the structured verdict.", name), JSONSchema: json.RawMessage(`{"type":"object","required":["verdict"],"properties":{"verdict":{"type":"string","enum":["pass","fail","blocked"]}}}`)})
+		res, runErr := a.Run(ctx, agent.RunOpts{CWD: worktree(ctx), Purpose: name, Env: []string{"SD_PARENT_RUN_ID=" + runID(ctx)}, Prompt: fmt.Sprintf("Run the typed %s validation for this checkout and return verdict, findings, and evidence.", name), JSONSchema: json.RawMessage(`{"type":"object","required":["verdict","findings","evidence"],"properties":{"verdict":{"type":"string","enum":["pass","fail","blocked"]},"findings":{"type":"array"},"evidence":{"type":"array","items":{"type":"string"}}}}`)})
 		_ = a.Close()
 		if runErr != nil {
 			lastErr = runErr
 			continue
 		}
 		if res == nil || len(res.Output) == 0 {
-			lastErr = fmt.Errorf("no verdict")
+			lastErr = fmt.Errorf("no typed result")
 			continue
 		}
-		verdict, parseErr := parseTypedVerdict(res.Output)
+		result, parseErr := parseTypedResult(res.Output)
 		if parseErr != nil {
 			lastErr = parseErr
 			continue
 		}
-		if verdict != "pass" {
-			return fmt.Errorf("%s: typed validation verdict %q", name, verdict)
+		if result.Verdict != "pass" {
+			return fmt.Errorf("%s: typed validation verdict %q", name, result.Verdict)
 		}
 		return nil
 	}

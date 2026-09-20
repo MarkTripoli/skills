@@ -65,6 +65,15 @@ func statusCommand(cmd *cobra.Command, args []string) error {
 			status = types.RunFailed
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "run: %s branch=%s status=%s head=%s\n", run.ID, run.Branch, status, run.HeadSHA)
+		steps, stepsErr := d.GetStepsByRun(run.ID)
+		if stepsErr != nil {
+			return stepsErr
+		}
+		for _, step := range steps {
+			if step.Status == types.StepStatusAwaitingApproval || step.Status == types.StepStatusFixReview {
+				fmt.Fprintf(cmd.OutOrStdout(), "prompt: run=%s step=%s actions=approve,fix,skip,abort\n", run.ID, step.StepName)
+			}
+		}
 	}
 	return nil
 }

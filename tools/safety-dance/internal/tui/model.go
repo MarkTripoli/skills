@@ -7,4 +7,6 @@ type Model struct {
 	Status                     types.RunStatus
 	Findings                   []string
 	Prompt                     string
+	Publication                string
+	KeyHint                    string
 }

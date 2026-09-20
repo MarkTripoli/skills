@@ -500,6 +500,18 @@ func (d *DB) UpdateRunPRURL(id, prURL string) error {
 	return nil
 }
 
+// UpdateRunPRBaseBranch records the resolved integration target before provider lookup.
+func (d *DB) UpdateRunPRBaseBranch(id, baseBranch string) error {
+	baseBranch = strings.TrimSpace(baseBranch)
+	if baseBranch == "" {
+		return fmt.Errorf("pull-request base branch is required")
+	}
+	if _, err := d.sql.Exec(`UPDATE runs SET pr_base_branch = ?, updated_at = ? WHERE id = ?`, baseBranch, now(), id); err != nil {
+		return fmt.Errorf("update run pr base branch: %w", err)
+	}
+	return nil
+}
+
 // PushBinding records the exact target and commit proven by a successful
 // pipeline-owned push. TargetFingerprint is a one-way digest and must never be
 // a raw URL.

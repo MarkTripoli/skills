@@ -37,6 +37,12 @@ func Render(m Model, width int) string {
 	if m.Prompt != "" {
 		lines = append(lines, "prompt: "+m.Prompt)
 	}
+	if m.Publication != "" {
+		lines = append(lines, "publication: "+m.Publication)
+	}
+	if m.KeyHint != "" {
+		lines = append(lines, "keys: "+m.KeyHint)
+	}
 	for _, finding := range m.Findings {
 		lines = append(lines, "finding: "+finding)
 	}

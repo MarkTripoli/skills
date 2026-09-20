@@ -49,13 +49,16 @@ export async function scan(scanRoot = root) {
   try {
     const notice = await fs.readFile(license, 'utf8');
     if (!notice.includes('MIT License') || !notice.includes(['Copyright', ' (c) 2026 Kun Chen'].join('')) || !notice.includes('Permission is hereby granted')) findings.push(`${allowLicense}: missing imported MIT notice`);
-    const legalLines = notice.split(/\r?\n/).filter(line => line.startsWith('Copyright'));
-    for (const file of await files(scanRoot)) {
-      const relative = path.relative(scanRoot, file).split(path.sep).join('/');
-      if (relative === allowLicense || relative.startsWith('.agents/tasks/') || binaryExtensions.has(path.extname(file).toLowerCase())) continue;
-      let text; try { text = await fs.readFile(file, 'utf8'); } catch { continue; }
-      for (const line of legalLines) if (line && text.includes(line)) findings.push(`${relative}: imported legal notice outside ${allowLicense}`);
-    }
+	const legalLines = notice.split(/\r?\n/).filter(line => line.startsWith('Copyright'));
+	const permissionFragment = ['Permission is hereby', ' granted'].join('');
+	const softwareFragment = ['THE SOFTWARE', ' IS PROVIDED'].join('');
+	const legalFragments = legalLines.concat([permissionFragment, softwareFragment]);
+	for (const file of await files(scanRoot)) {
+		const relative = path.relative(scanRoot, file).split(path.sep).join('/');
+		if (relative === allowLicense || relative === 'LICENSE' || relative === 'scripts/check-safety-dance-identity.mjs' || relative === 'tests/safety-dance-identity.test.mjs' || relative.startsWith('.agents/tasks/') || binaryExtensions.has(path.extname(file).toLowerCase())) continue;
+		let text; try { text = await fs.readFile(file, 'utf8'); } catch { continue; }
+		for (const line of legalFragments) if (line && text.includes(line)) findings.push(`${relative}: imported legal notice outside ${allowLicense}`);
+	}
   } catch { findings.push(`${allowLicense}: missing imported MIT notice`); }
   return findings;
 }

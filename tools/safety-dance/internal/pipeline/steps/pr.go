@@ -38,6 +38,9 @@ func PR(ctx context.Context) error {
 	if run.PRBaseBranch != nil && strings.TrimSpace(*run.PRBaseBranch) != "" {
 		baseBranch = strings.TrimSpace(*run.PRBaseBranch)
 	}
+	if err := database.UpdateRunPRBaseBranch(run.ID, baseBranch); err != nil {
+		return err
+	}
 	pr, err := host.FindPR(ctx, run.Branch, baseBranch)
 	if err != nil {
 		return err
@@ -50,6 +53,21 @@ func PR(ctx context.Context) error {
 	}
 	if pr == nil || pr.URL == "" {
 		return fmt.Errorf("provider returned no pull-request URL")
+	}
+	if reader, ok := host.(scm.PRBaseBranchReader); ok {
+		liveBase, readErr := reader.GetPRBaseBranch(ctx, pr)
+		if readErr != nil {
+			return readErr
+		}
+		if strings.TrimSpace(liveBase) != "" && strings.TrimSpace(liveBase) != baseBranch {
+			retargeter, canRetarget := host.(scm.PRBaseRetargeter)
+			if !canRetarget {
+				return fmt.Errorf("pull-request target is %q, expected %q, and provider cannot retarget", liveBase, baseBranch)
+			}
+			if err := retargeter.SetPRBaseBranch(ctx, pr, baseBranch); err != nil {
+				return err
+			}
+		}
 	}
 	return database.UpdateRunPRURL(run.ID, pr.URL)
 }

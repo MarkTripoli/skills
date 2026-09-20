@@ -220,16 +220,6 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 	if err := adm.InitError(); err != nil {
 		return fmt.Errorf("load admission receipts: %w", err)
 	}
-	go func() {
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		for {
-			if err := adm.ReconcileOnce(context.Background()); err != nil {
-				// The receipt remains persisted and will be retried on the next tick.
-			}
-			<-ticker.C
-		}
-	}()
 	server.Handle(ipc.MethodShutdown, func(ctx context.Context, raw json.RawMessage) (interface{}, error) {
 		if err := daemon.AuthorizeMutationPeer(ipc.PeerPID(ctx)); err != nil {
 			return nil, err
@@ -400,6 +390,16 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 	if err := manager.Recover(context.Background()); err != nil {
 		return err
 	}
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			if err := adm.ReconcileOnce(context.Background()); err != nil {
+				// The receipt remains persisted and will be retried on the next tick.
+			}
+			<-ticker.C
+		}
+	}()
 	if err := server.Listen(p.Socket()); err != nil {
 		return err
 	}
@@ -434,6 +434,12 @@ func recordPush(d *db.DB, p *paths.Paths, manager *daemon.Manager, n daemon.Push
 			continue
 		}
 		branch := strings.TrimPrefix(n.Ref, "refs/heads/")
+		current, currentErr := git.RunBare(context.Background(), gatePath, "rev-parse", n.Ref)
+		if currentErr == nil && strings.TrimSpace(current) != strings.TrimSpace(n.New) {
+			// A delayed notification for an older accepted update must not replace
+			// the run already admitted for the current ref.
+			return nil
+		}
 		nonce := n.Token
 		if nonce == "" {
 			return fmt.Errorf("accepted push has no durable identity")

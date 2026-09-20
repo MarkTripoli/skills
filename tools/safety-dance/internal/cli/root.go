@@ -18,10 +18,35 @@ func SetOutput(w io.Writer) {
 		output = w
 	}
 }
+
+type ExitCodeError struct {
+	Code int
+	Err  error
+}
+
+func (e *ExitCodeError) Error() string { return e.Err.Error() }
+func (e *ExitCodeError) Unwrap() error { return e.Err }
+
 func Execute() int {
 	if err := NewRoot().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		return 1
+		var coded *ExitCodeError
+		if errors.As(err, &coded) && coded.Code > 0 {
+			return coded.Code
+		}
+		message := strings.ToLower(err.Error())
+		switch {
+		case strings.Contains(message, "usage") || strings.Contains(message, "unknown command"):
+			return 2
+		case strings.Contains(message, "daemon") && strings.Contains(message, "unavailable"):
+			return 3
+		case strings.Contains(message, "reject") || strings.Contains(message, "unauthor"):
+			return 4
+		case strings.Contains(message, "blocked"):
+			return 6
+		default:
+			return 5
+		}
 	}
 	return 0
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/branchsync"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
@@ -138,10 +139,17 @@ func Publish(ctx context.Context, database *db.DB, runID string, req PushRequest
 		if live, liveErr := (branchsync.Syncer{Remote: req.Remote, Ref: req.Ref}).LiveHead(ctx); liveErr == nil && live == req.Candidate {
 			result = PushResult{Candidate: req.Candidate, Upstream: live, GateMirror: req.GateMirror}
 		} else {
-			var pushErr error
-			result, pushErr = Push(ctx, req)
+			pushResult, pushErr := Push(ctx, req)
 			if pushErr != nil {
-				return PushResult{}, pushErr
+				reconcileCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				remoteHead, reconcileErr := (branchsync.Syncer{Remote: req.Remote, Ref: req.Ref}).LiveHead(reconcileCtx)
+				cancel()
+				if reconcileErr != nil || remoteHead != req.Candidate {
+					return PushResult{}, pushErr
+				}
+				result = PushResult{Candidate: req.Candidate, Upstream: remoteHead, GateMirror: req.GateMirror}
+			} else {
+				result = pushResult
 			}
 		}
 	}

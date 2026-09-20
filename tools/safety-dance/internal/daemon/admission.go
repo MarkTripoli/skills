@@ -83,26 +83,25 @@ func newAdmission(server *ipc.Server, notify func(context.Context, PushNotificat
 // InitError reports unreadable persisted receipts before the daemon announces readiness.
 func (a *Admission) InitError() error { return a.loadErr }
 
-// ReconcileOnce retries receipts only while the gate still contains the exact admitted ref.
+// ReconcileOnce retries receipts without treating a transient pre-receive state as stale.
 func (a *Admission) ReconcileOnce(ctx context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for token, receipt := range a.receipts {
 		current, err := git.RunBare(ctx, receipt.Gate, "rev-parse", receipt.Ref)
 		if err != nil || strings.TrimSpace(current) != receipt.New {
-			delete(a.receipts, token)
-			if err := a.saveReceipts(); err != nil {
-				return fmt.Errorf("discard stale admission receipt: %w", err)
-			}
 			continue
 		}
-		if a.notify == nil {
+		if a.notify == nil || a.claimed[token] {
 			continue
 		}
+		a.claimed[token] = true
 		if err := a.notify(ctx, PushNotification{Gate: receipt.Gate, Ref: receipt.Ref, Old: receipt.Old, New: receipt.New, Token: token}); err != nil {
+			delete(a.claimed, token)
 			return err
 		}
 		delete(a.receipts, token)
+		delete(a.claimed, token)
 		if err := a.saveReceipts(); err != nil {
 			return fmt.Errorf("remove admission receipt: %w", err)
 		}
@@ -134,11 +133,13 @@ func managedHookPeer(pid int, gate string) bool {
 		if err != nil {
 			return false
 		}
-		if strings.Contains(command, "SD_MANAGED_HOOK=") {
+		if strings.Contains(command, "SD_PARENT_RUN_ID=") {
 			return false
 		}
-		if env, envErr := processEnvironmentFunc(pid); envErr == nil && environmentHas(env, "SD_MANAGED_HOOK=") {
-			return false
+		if env, envErr := processEnvironmentFunc(pid); envErr == nil {
+			if environmentHas(env, "SD_PARENT_RUN_ID=") || environmentHas(env, "SD_MANAGED_HOOK=") {
+				return false
+			}
 		}
 		if commandHasExecutable(command, expected) {
 			managedHook = true
