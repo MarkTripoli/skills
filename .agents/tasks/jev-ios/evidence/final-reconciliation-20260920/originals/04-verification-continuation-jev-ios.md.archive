@@ -1,9 +1,9 @@
 ---
 task: jev-ios
 type: verification-continuation
-summary: "Final continuation matrix reconciles historical 8a45b9b proof with cb7b53a repair proof; all acceptance rows and independent review are complete."
-status: passed
-revision: a108538
+summary: "Phase 1 reconciles preserved iOS verification against current checkout evidence, records the full acceptance matrix, and leaves independent review pending."
+status: pending-independent-review
+revision: 2384ca5
 ---
 
 # Phase 1 continuation notes
@@ -16,7 +16,7 @@ Before editing `02-verification-jev-ios.md`, its exact bytes were archived at `e
 SHA-256 for both the original and archive was `2bbed214cd0c7085e455538bf7abc4a00dd6a46b7c8ba4ae77c3b80ff774d649`.
 All existing evidence directories and failed receipts remain in place. Video files remain local and unstaged; no recording is uploaded or added to a commit.
 
-The implementation files are unchanged from `8a45b9b` (`git diff --name-only 8a45b9b..HEAD` reports only the prior verification artifact), so the retained native and standalone receipts are reusable. The reconciled `02-verification-jev-ios.md` now truthfully reports `passed`; A9 is pass from the independent clean review in `07-code-review-jev-ios.md`.
+The implementation files are unchanged from `8a45b9b` (`git diff --name-only 8a45b9b..HEAD` reports only the prior verification artifact), so the retained native and standalone receipts are reusable. The reconciled `02-verification-jev-ios.md` now truthfully reports `pending-independent-review`; A9 remains `untested`.
 
 ## Acceptance matrix
 
@@ -39,8 +39,8 @@ The implementation files are unchanged from `8a45b9b` (`git diff --name-only 8a4
 | P15 | Run commit validation. | `node scripts/check-commits.mjs origin/main..HEAD`: exit 0, `ok: 9 subjects`. | pass |
 | P16 | Preserve browser/Android behavior and packaging. | Aggregate tests include browser/Android regressions; all four runtime builds pass. No Android device or emulator was touched. | pass (offline boundary) |
 | P17 | Inspect CI/setup/docs and do not claim missing setup. | `package.json`, `docs/testing.md`, `.github/workflows/commits.yml`, `.github/workflows/release.yml`, `task.md`, and fixture docs were inspected. Node 26.8.1 and `node_modules` are present; no setup gap found. | pass |
-| P18 | Complete independent code review only after verification. | `07-code-review-jev-ios.md` (commit `a108538`) independently reviewed repaired HEAD and approved with no critical or major findings; the stale-wording advisory was corrected here. | pass |
-| P19 | Commit final task artifacts using repository conventions and prepare normal PR handoff, without submitting it here. | Final reconciliation artifacts and `pr-description.md` are committed with explicit paths; branch `feat/jev-ios` targets `main`, and no push or PR creation is performed. | pass |
+| P18 | Complete independent code review only after verification. | No review was performed in this phase. A9 is explicitly untested and review is the next phase. | pending |
+| P19 | Commit final task artifacts using repository conventions and prepare normal PR handoff, without submitting it here. | This phase commits prose/archive only. PR creation and final handoff remain for the later review/reducer stage. | pending |
 
 ## Stateful transitions and invariants
 
@@ -50,15 +50,15 @@ The implementation files are unchanged from `8a45b9b` (`git diff --name-only 8a4
 - Cleanup is an invariant for every terminal outcome: verifier-owned app/recorder/companion resources are stopped, evidence is retained, and unrelated devices are untouched.
 - Independent status must come from non-input UI output. Editable field echoes, fixture assumptions, model assertions, or stale reports cannot establish a pass.
 
-## Completion notes
+## Deferred to next phase
 
-- Independent review and actionable repair loop are complete.
-- Native proof was rerun only for the affected cleanup repair; historical 8a45b9b evidence remains preserved.
-- Final local PR handoff is recorded in `.agents/tasks/jev-ios/pr-description.md`; publishing is intentionally omitted.
+- Independent full code review and any actionable repairs.
+- Re-run native proof only if review changes affected implementation or exposes a gap.
+- Final task artifact/implementation commit reconciliation and normal local PR handoff after review approval.
 
 ## Commands and outcomes
 
-- `npm test` -> exit 0, 147/147 passing.
+- `npm test` -> exit 0, 145/145 passing.
 - `node scripts/build-runtimes.mjs --runtime {claude-code,codex,oh-my-pi,pi} --dest /tmp/jev-ios-phase1.T58mi5/{runtime}` -> all exit 0 with counts above.
-- `node scripts/check-commits.mjs origin/main..HEAD` -> exit 0, `ok: 11 subjects`.
-- Final scope includes the reviewed implementation repair and explicit task artifacts; historical source revision `8a45b9b` remains the provenance for Name/replacement/standalone runs, while `cb7b53a` is the cleanup repair revision.
+- `node scripts/check-commits.mjs origin/main..HEAD` -> exit 0, `ok: 6 subjects`.
+- `git diff --name-only 8a45b9b..HEAD` -> only `.agents/tasks/jev-ios/02-verification-jev-ios.md` before this phase's prose edits.

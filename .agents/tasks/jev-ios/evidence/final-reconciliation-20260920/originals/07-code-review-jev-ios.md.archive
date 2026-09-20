@@ -17,7 +17,7 @@ summary: "The repaired iOS lifecycle registers cleanup ownership before authoriz
 - reviewed HEAD: `46bc595`
 - commits: `0bcffbb`, `3a5f221`, `11d748b`, `b1054d5`, `8a45b9b`, `2384ca5`, `a44dce1`, `cb7b53a`, `46bc595`
 - staged and unstaged changes: none; `git status --short --branch` reports a clean `feat/jev-ios` worktree
-- task-owned retained evidence: original receipts and media remain local and ignored; byte archives and non-sensitive inventory/checksums are committed in the final reconciliation, while video binaries and credentials remain uncommitted
+- task-owned untracked files: none; retained task evidence is committed in the reviewed branch
 - excluded changes: task artifacts and evidence are not product diff subjects, but named receipts and verification commands were checked as review inputs
 
 ## Previous Round

@@ -2,7 +2,7 @@
 task: jev-ios
 type: repair-verification
 summary: "CR-001 and CR-002 repaired: native cleanup ownership now begins before authorized fixture setup, regression tests cover launch rejection and failed controller outcomes, and a real authorized iOS/JEV failed receipt is retained."
-status: passed
+status: pending-independent-review
 revision: cb7b53a
 ---
 
@@ -29,10 +29,10 @@ revision: cb7b53a
 ## Commands and limits
 
 - `npm test` passed as above.
-- Final integration reran all four runtime builds to `/tmp/jev-ios-final-builds/`; each exited 0. Final commit validation also passed with 11 valid subjects.
+- Four runtime builds and commit validation were already passed in phase 1; they must be rerun after this code commit by the next integration check.
 - `qlty` was checked (`command -v qlty`, `$HOME/.qlty/bin/qlty`) but is unavailable in this environment; no qlty check ran. Repository validation remains authoritative.
-- No Android device, ADB server, old Atomic run, upload, reset, or unrelated app was touched. Final inspection found the authorized simulator Shutdown, the owned IDB socket absent, and no verifier-owned acceptance process remaining. A visible unrelated process was not touched.
+- No Android device, ADB server, old Atomic run, upload, reset, or unrelated app was touched. The owned iOS companion was started for this proof and remains to be stopped by the final integration owner.
 
 ## Evidence reconciliation
 
-`04-verification-continuation-jev-ios.md` now points P8 at current-revision replacement evidence and records the genuine failed receipt under P10, while preserving the older receipt as historical evidence. Independent review is complete in `07-code-review-jev-ios.md` (commit `a108538`) with approval and no critical or major findings.
+`04-verification-continuation-jev-ios.md` now points P8 at current-revision replacement evidence and records the genuine failed receipt under P10, while preserving the older receipt as historical evidence. Independent review remains pending; this artifact does not self-approve the repair.
