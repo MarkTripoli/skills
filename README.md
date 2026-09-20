@@ -4,6 +4,10 @@ Instructions that help coding agents research, plan, build, check, and review ch
 
 Works with Claude Code, Codex, Oh My Pi, Pi, and other agents that read `SKILL.md` files. Skills need file access, Git for repository work, and any tools their steps name. Atomic is optional.
 
+## Safety Dance
+
+The local Safety Dance Git gate and durable validation daemon are documented in [docs/safety-dance.md](docs/safety-dance.md). Its binary releases are separate from skill installation and Changesets.
+
 ## Install
 
 Use Node 22.20 or newer. Run in your terminal:
