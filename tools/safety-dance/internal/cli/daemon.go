@@ -380,15 +380,6 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		if err := d.RecordResponse(db.Response{RunID: q.RunID, Step: string(q.Step), Action: string(q.Action), Payload: q}); err != nil {
 			return nil, err
 		}
-		if pipeline.StepName(q.Step) == pipeline.StepReview && q.Action == types.ActionApprove && r.WorktreeDir != nil {
-			head, headErr := git.Run(ctx, *r.WorktreeDir, "rev-parse", "HEAD")
-			if headErr != nil {
-				return nil, headErr
-			}
-			if headErr = d.UpdateRunReviewApprovedHeadSHA(q.RunID, strings.TrimSpace(head)); headErr != nil {
-				return nil, headErr
-			}
-		}
 		return ipc.RespondResult{OK: true}, nil
 	})
 	server.Handle(ipc.MethodCancelRun, func(ctx context.Context, raw json.RawMessage) (interface{}, error) {
@@ -503,24 +494,25 @@ func pinGatesForAdmission(ctx context.Context, p *paths.Paths, repo *db.Repo, wo
 		return "", fmt.Errorf("load pushed repository configuration: %w", err)
 	}
 	trusted := &config.RepoConfig{}
+	gateRepo := p.RepoDir(repo.ID)
 	ref := "refs/safety-dance/trusted/admission-" + nonce
-	if _, err := git.Run(ctx, repo.WorkingPath, "fetch", "--no-tags", "origin", "refs/heads/"+repo.DefaultBranch+":"+ref); err != nil {
+	if _, err := git.Run(ctx, gateRepo, "fetch", "--no-tags", "origin", "refs/heads/"+repo.DefaultBranch+":"+ref); err != nil {
 		return "", fmt.Errorf("fetch trusted configuration: %w", err)
 	}
-	defer func() { _, _ = git.Run(ctx, repo.WorkingPath, "update-ref", "-d", ref) }()
-	trustedRevision, err := git.Run(ctx, repo.WorkingPath, "rev-parse", ref)
+	defer func() { _, _ = git.Run(ctx, gateRepo, "update-ref", "-d", ref) }()
+	trustedRevision, err := git.Run(ctx, gateRepo, "rev-parse", ref)
 	if err != nil {
 		return "", fmt.Errorf("resolve trusted policy revision: %w", err)
 	}
 	if generation != nil {
 		*generation = strings.TrimSpace(trustedRevision)
 	}
-	entries, err := git.Run(ctx, repo.WorkingPath, "ls-tree", "-r", "--name-only", ref, "--", ".safety-dance.yaml")
+	entries, err := git.Run(ctx, gateRepo, "ls-tree", "-r", "--name-only", ref, "--", ".safety-dance.yaml")
 	if err != nil {
 		return "", fmt.Errorf("inspect trusted configuration: %w", err)
 	}
 	if strings.TrimSpace(entries) != "" {
-		raw, err := git.ShowFile(ctx, repo.WorkingPath, ref, ".safety-dance.yaml")
+		raw, err := git.ShowFile(ctx, gateRepo, ref, ".safety-dance.yaml")
 		if err != nil {
 			return "", fmt.Errorf("read trusted repository configuration: %w", err)
 		}
@@ -710,6 +702,7 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	if logErr != nil {
 		return fmt.Errorf("open run log: %w", logErr)
 	}
+	gateRepo := p.RepoDir(repo.ID)
 	defer logFile.Close()
 	_, _ = fmt.Fprintf(logFile, "run %s started for %s\n", run.ID, run.Branch)
 	defer func() { _, _ = fmt.Fprintf(logFile, "run %s finished\n", run.ID) }()
@@ -732,23 +725,23 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	}
 	trustedConfig := &config.RepoConfig{}
 	trustedRef := "refs/safety-dance/trusted/" + run.ID
-	if _, err := git.Run(ctx, repo.WorkingPath, "fetch", "--no-tags", "origin", "refs/heads/"+repo.DefaultBranch+":"+trustedRef); err != nil {
+	if _, err := git.Run(ctx, gateRepo, "fetch", "--no-tags", "origin", "refs/heads/"+repo.DefaultBranch+":"+trustedRef); err != nil {
 		return fmt.Errorf("fetch trusted configuration: %w", err)
 	}
-	defer func() { _, _ = git.Run(ctx, repo.WorkingPath, "update-ref", "-d", trustedRef) }()
-	trustedRevision, err := git.Run(ctx, repo.WorkingPath, "rev-parse", trustedRef)
+	defer func() { _, _ = git.Run(ctx, gateRepo, "update-ref", "-d", trustedRef) }()
+	trustedRevision, err := git.Run(ctx, gateRepo, "rev-parse", trustedRef)
 	if err != nil {
 		return fmt.Errorf("resolve trusted policy revision: %w", err)
 	}
 	if run.LaunchValidationGeneration != nil && strings.TrimSpace(*run.LaunchValidationGeneration) != "" && strings.TrimSpace(*run.LaunchValidationGeneration) != strings.TrimSpace(trustedRevision) {
 		return fmt.Errorf("trusted policy changed after admission: expected %s, got %s", *run.LaunchValidationGeneration, strings.TrimSpace(trustedRevision))
 	}
-	entries, err := git.Run(ctx, repo.WorkingPath, "ls-tree", "-r", "--name-only", trustedRef, "--", ".safety-dance.yaml")
+	entries, err := git.Run(ctx, gateRepo, "ls-tree", "-r", "--name-only", trustedRef, "--", ".safety-dance.yaml")
 	if err != nil {
 		return fmt.Errorf("inspect trusted configuration: %w", err)
 	}
 	if strings.TrimSpace(entries) != "" {
-		raw, showErr := git.ShowFile(ctx, repo.WorkingPath, trustedRef, ".safety-dance.yaml")
+		raw, showErr := git.ShowFile(ctx, gateRepo, trustedRef, ".safety-dance.yaml")
 		if showErr != nil {
 			return fmt.Errorf("read trusted repository configuration: %w", showErr)
 		}
@@ -833,7 +826,14 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	runner.SetOrder(order)
 	for gateStep, gate := range gateByStep {
 		gateStep, gate := gateStep, gate
-		runner.RegisterWithInputs(gateStep, pipeline.StepInputs{Command: gate.Command, Owner: "gate." + string(gateStep)}, func(stepCtx context.Context) error {
+		checkpoint := func() (string, error) {
+			head, headErr := git.Run(context.Background(), worktree, "rev-parse", "HEAD")
+			if headErr != nil {
+				return "", headErr
+			}
+			return strings.TrimSpace(head), nil
+		}
+		runner.RegisterWithInputsAndCheckpoint(gateStep, pipeline.StepInputs{Command: gate.Command, Owner: "gate." + string(gateStep)}, func(stepCtx context.Context) error {
 			name, args := "sh", []string{"-c", gate.Command}
 			if runtime.GOOS == "windows" {
 				name, args = "cmd.exe", []string{"/D", "/S", "/C", gate.Command}
@@ -846,11 +846,18 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 				return fmt.Errorf("custom gate %s: %s: %w", gate.Name, strings.TrimSpace(string(output)), commandErr)
 			}
 			return nil
-		})
+		}, checkpoint)
 	}
 	for _, name := range pipeline.CoreSteps {
 		name := name
-		runner.RegisterWithInputs(name, pipeline.StepInputs{CandidateHead: run.BaseSHA, Policy: mergedConfig.TrustedConfigSHA + "\x00" + string(mergedConfig.ReplayGlobalYAML) + "\x00" + string(mergedConfig.ReplayRepoYAML), Command: fmt.Sprintf("%#v", mergedConfig.Commands), Owner: "pipeline." + string(name), ValidationGeneration: valueOrEmpty(run.LaunchValidationGeneration)}, func(stepCtx context.Context) error {
+		checkpoint := func() (string, error) {
+			head, headErr := git.Run(context.Background(), worktree, "rev-parse", "HEAD")
+			if headErr != nil {
+				return "", headErr
+			}
+			return strings.TrimSpace(head), nil
+		}
+		runner.RegisterWithInputsAndCheckpoint(name, pipeline.StepInputs{CandidateHead: run.BaseSHA, Policy: mergedConfig.TrustedConfigSHA + "\x00" + string(mergedConfig.ReplayGlobalYAML) + "\x00" + string(mergedConfig.ReplayRepoYAML), Command: fmt.Sprintf("%#v", mergedConfig.Commands), Owner: "pipeline." + string(name), ValidationGeneration: valueOrEmpty(run.LaunchValidationGeneration)}, func(stepCtx context.Context) error {
 			stepCtx = steps.WithWorktree(stepCtx, worktree)
 			stepCtx = steps.WithConfig(stepCtx, mergedConfig)
 			stepCtx = steps.WithRun(stepCtx, database, run.ID)
@@ -876,18 +883,8 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 			default:
 				stepErr = fmt.Errorf("unknown pipeline step %s", name)
 			}
-			if stepErr != nil {
-				return stepErr
-			}
-			return nil
-		})
-		runner.RegisterWithCheckpoint(name, func() (string, error) {
-			head, headErr := git.Run(context.Background(), worktree, "rev-parse", "HEAD")
-			if headErr != nil {
-				return "", headErr
-			}
-			return strings.TrimSpace(head), nil
-		})
+			return stepErr
+		}, checkpoint)
 	}
 	runner.Register(pipeline.StepPush, func(pushCtx context.Context) error {
 		current, err := database.GetRun(run.ID)

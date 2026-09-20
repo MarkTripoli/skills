@@ -86,6 +86,18 @@ func (r *Runner) RegisterWithInputs(n StepName, in StepInputs, s Step) {
 	r.inputs[n] = in
 	delete(r.inputFuncs, n)
 }
+func (r *Runner) RegisterWithInputsAndCheckpoint(n StepName, in StepInputs, s Step, checkpoint func() (string, error)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.steps[n] = s
+	r.inputs[n] = in
+	delete(r.inputFuncs, n)
+	if checkpoint == nil {
+		delete(r.checkpointFuncs, n)
+	} else {
+		r.checkpointFuncs[n] = checkpoint
+	}
+}
 func (r *Runner) RegisterWithCheckpoint(n StepName, checkpoint func() (string, error)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -155,22 +167,20 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 			}
 			if persisted.Status == types.StepStatusAwaitingApproval || persisted.Status == types.StepStatusFixReview {
 				for {
-					response, responseErr := r.Database.ConsumeResponse(r.RunID, string(n))
+					checkpoint := ""
+					if checkpointFunc != nil {
+						checkpoint, err = checkpointFunc()
+						if err != nil {
+							return r.Results, fmt.Errorf("checkpoint parked step %s: %w", n, err)
+						}
+					}
+					response, responseErr := r.Database.ApplyResponse(r.RunID, string(n), persisted.ID, checkpoint, n == StepReview)
 					if responseErr != nil {
 						return r.Results, responseErr
 					}
 					if response != nil {
 						if response.Action == string(types.ActionAbort) {
 							return r.Results, fmt.Errorf("step %s aborted by operator", n)
-						}
-						if response.Action == string(types.ActionSkip) {
-							if err := r.Database.CompleteSkippedStep(persisted.ID, 0, 0, "", "operator skip"); err != nil {
-								return r.Results, err
-							}
-							break
-						}
-						if err := r.Database.CompleteStep(persisted.ID, 0, 0, ""); err != nil {
-							return r.Results, err
 						}
 						break
 					}
