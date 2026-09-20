@@ -24,7 +24,16 @@ import { spawn, execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildRuntime } from "../scripts/lib/build.mjs";
 import { subjectProblems } from "../scripts/check-commits.mjs";
-import { artifacts, failures, handoff, newest, placeholders } from "./lib.mjs";
+import {
+  artifacts,
+  diffRepositorySnapshots,
+  failures,
+  handoff,
+  newest,
+  placeholders,
+  snapshotRepository,
+  unexpectedRepositoryChanges,
+} from "./lib.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..");
@@ -87,6 +96,7 @@ function prepareRepo(scenario, dist) {
   git(repo, "init", "-q", "-b", "main");
   git(repo, "config", "user.email", "evals@example.com");
   git(repo, "config", "user.name", "Skills Evals");
+  for (const remote of scenario.gitRemotes ?? []) git(repo, "remote", "add", remote.name, remote.url);
   copyFixtures(scenario, repo, path.join(dist, "fixtures"));
   fs.cpSync(path.join(dist, "agents"), path.join(repo, ".omp", "agents"), { recursive: true });
   git(repo, "add", "-A");
@@ -110,6 +120,18 @@ function prepareRepo(scenario, dist) {
 // one pass has to come from the skill reading `task.md`; a phase that asks a question fails the
 // handoff check, which is the right signal.
 function phasePrompt(skillsDir, phase, taskRel) {
+  if (phase.phaseType === "terminal") {
+    return [
+      `Read and follow ${path.join(skillsDir, phase.skill, "SKILL.md")}, the installed \`${phase.skill}\` skill. Run it in the current repository and print its terminal answer.`,
+      "",
+      "Before acting or replying, read the pinned current guidance in this task repository: `shared/WRITING.md` and `shared/CONVENTIONS.md`. Do not fetch published copies or read the harness checkout.",
+      "Use only facts from this repository. Do not create or modify a task artifact and do not print a next-skill handoff fence.",
+      "",
+      phase.request ?? "",
+      "",
+      "Print the skill's terminal answer.",
+    ].join("\n").replace(/\n{3,}/g, "\n\n");
+  }
   return [
     `Read and follow ${path.join(skillsDir, phase.skill, "SKILL.md")}, the installed \`${phase.skill}\` skill, for task directory ${taskRel}.`,
     "",
@@ -184,6 +206,29 @@ function headArtifactCommitProblems(ctx) {
 // artifacts and `task.md` unchanged. Git-state checks need the live repository and are skipped when
 // re-grading a recording.
 function commonChecks(phase, ctx) {
+  if (phase.phaseType === "terminal") {
+    const out = [];
+    const h = handoff(ctx.answer);
+    if (h) out.push(`reply: terminal phase includes a /${h.skill} command fence`);
+    const currentArtifacts = artifacts(ctx.taskDir);
+    const beforeByFile = new Map(ctx.before.map((file) => [file.file, file.text]));
+    for (const artifact of currentArtifacts) {
+      if (!beforeByFile.has(artifact.file)) out.push(`${artifact.file}: terminal phase created a task artifact`);
+    }
+    for (const file of ctx.before) {
+      const full = path.join(ctx.taskDir, file.file);
+      if (!fs.existsSync(full)) out.push(`${file.file}: terminal phase removed task state`);
+      else if (fs.readFileSync(full, "utf8") !== file.text) out.push(`${file.file}: terminal phase modified task state`);
+    }
+    const unexpected = unexpectedRepositoryChanges(ctx.changedPaths ?? [], phase.allowedChangedPaths ?? []);
+    if (unexpected.length) out.push(`repository: unexpected changed paths: ${unexpected.join(", ")}`);
+    if (!ctx.live) return out;
+    const head = git(ctx.repo, "rev-parse", "HEAD");
+    if (head !== ctx.beforeHead) out.push(`git: HEAD changed from ${ctx.beforeHead} to ${head}`);
+    const excluded = git(ctx.repo, "status", "--porcelain", "--", ".agents", ".omp");
+    if (excluded) out.push(`repository: excluded harness paths changed:\n${excluded}`);
+    return out;
+  }
   const h = handoff(ctx.answer);
   const out = [];
   if (!h) out.push("reply: no `/<skill>` command fence");
@@ -249,9 +294,15 @@ async function runScenario(scenario, runDir, dist) {
     const label = `${index + 1}-${phase.skill}`;
     const out = path.join(resultDir, label);
     fs.mkdirSync(out, { recursive: true });
+    for (const overlay of [phase.fixtureOverlay ?? []].flat()) {
+      fs.cpSync(path.join(dist, "fixtures", overlay), repo, { recursive: true });
+    }
     const prompt = phasePrompt(skillsDir, phase, taskRel);
     fs.writeFileSync(path.join(out, "prompt.md"), prompt);
     const before = snapshot(taskDir);
+    const beforeHead = git(repo, "rev-parse", "HEAD");
+    const beforeRepository = phase.phaseType === "terminal" ? snapshotRepository(repo) : null;
+    if (beforeRepository) fs.writeFileSync(path.join(out, "repository-before.json"), `${JSON.stringify(beforeRepository, null, 2)}\n`);
     const template = templateFor(skillsDir, phase);
     const started = Date.now();
     console.log(`[${scenario.name}] ${label}: started`);
@@ -260,6 +311,11 @@ async function runScenario(scenario, runDir, dist) {
     fs.writeFileSync(path.join(out, "answer.md"), stdout);
     fs.writeFileSync(path.join(out, "stderr.log"), stderr);
     if (fs.existsSync(taskDir)) fs.cpSync(taskDir, path.join(out, "task"), { recursive: true });
+    const afterRepository = phase.phaseType === "terminal" ? snapshotRepository(repo) : null;
+    if (afterRepository) fs.writeFileSync(path.join(out, "repository-after.json"), `${JSON.stringify(afterRepository, null, 2)}\n`);
+    const repositoryDiff = beforeRepository && afterRepository
+      ? diffRepositorySnapshots(beforeRepository, afterRepository)
+      : { created: [], modified: [], deleted: [], changedPaths: [] };
 
     const ctx = {
       live: true,
@@ -268,9 +324,13 @@ async function runScenario(scenario, runDir, dist) {
       taskDir,
       fixtureSha,
       before,
+      beforeHead,
+      beforeRepository,
+      afterRepository,
+      ...repositoryDiff,
       template,
       answer: stdout,
-      artifact: newest(taskDir, phase.artifactType),
+      artifact: phase.artifactType ? newest(taskDir, phase.artifactType) : null,
       artifacts: artifacts(taskDir),
     };
     const problems = grade(phase, ctx, code);
@@ -316,7 +376,19 @@ async function gradeScenario(scenario, runDir) {
         console.log(`[${scenario.name}] ${label}: not recorded`);
         break;
       }
+      const beforeManifest = path.join(out, "repository-before.json");
+      const afterManifest = path.join(out, "repository-after.json");
+      if (phase.phaseType === "terminal" && (!fs.existsSync(beforeManifest) || !fs.existsSync(afterManifest))) {
+        console.log(`[${scenario.name}] ${label}: terminal repository manifests missing; skipped`);
+        result.skipped = true;
+        break;
+      }
       const previous = index === 0 ? null : path.join(resultDir, `${index}-${scenario.phases[index - 1].skill}`, "task");
+      const beforeRepository = phase.phaseType === "terminal" ? JSON.parse(fs.readFileSync(beforeManifest, "utf8")) : null;
+      const afterRepository = phase.phaseType === "terminal" ? JSON.parse(fs.readFileSync(afterManifest, "utf8")) : null;
+      const repositoryDiff = beforeRepository && afterRepository
+        ? diffRepositorySnapshots(beforeRepository, afterRepository)
+        : { created: [], modified: [], deleted: [], changedPaths: [] };
       const ctx = {
         live: false,
         repo: null,
@@ -324,9 +396,13 @@ async function gradeScenario(scenario, runDir) {
         taskDir,
         fixtureSha: null,
         before: previous && fs.existsSync(previous) ? snapshot(previous) : fs.existsSync(taskDir) ? [{ file: "task.md", text: fs.readFileSync(path.join(taskDir, "task.md"), "utf8") }] : [],
+        beforeHead: null,
+        beforeRepository,
+        afterRepository,
+        ...repositoryDiff,
         template: fs.existsSync(pinnedDist) ? templateFor(path.join(pinnedDist, "skills"), phase) : "",
         answer: fs.readFileSync(path.join(out, "answer.md"), "utf8"),
-        artifact: newest(taskDir, phase.artifactType),
+        artifact: phase.artifactType ? newest(taskDir, phase.artifactType) : null,
         artifacts: artifacts(taskDir),
       };
       const problems = grade(phase, ctx, 0);

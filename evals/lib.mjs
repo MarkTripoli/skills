@@ -4,6 +4,54 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
+
+const SNAPSHOT_EXCLUDED_DIRECTORIES = new Set([".git", ".agents", ".omp"]);
+
+export function snapshotRepository(root) {
+  const manifest = {};
+  const visit = (directory, relativeDirectory = "") => {
+    const entries = fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      if (entry.isDirectory() && SNAPSHOT_EXCLUDED_DIRECTORIES.has(entry.name)) continue;
+      const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
+      const fullPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(fullPath, relativePath);
+        continue;
+      }
+      if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+      const bytes = fs.readFileSync(fullPath);
+      manifest[relativePath] = {
+        bytes: bytes.toString("base64"),
+        sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
+      };
+    }
+  };
+  visit(root);
+  return manifest;
+}
+
+export function diffRepositorySnapshots(before, after) {
+  const beforePaths = new Set(Object.keys(before));
+  const afterPaths = new Set(Object.keys(after));
+  const created = [...afterPaths].filter((file) => !beforePaths.has(file)).sort();
+  const deleted = [...beforePaths].filter((file) => !afterPaths.has(file)).sort();
+  const modified = [...beforePaths]
+    .filter((file) => afterPaths.has(file) && before[file].sha256 !== after[file].sha256)
+    .sort();
+  return {
+    created,
+    modified,
+    deleted,
+    changedPaths: [...created, ...modified, ...deleted].sort(),
+  };
+}
+
+export function unexpectedRepositoryChanges(changedPaths, allowedChangedPaths = []) {
+  const allowed = new Set(allowedChangedPaths);
+  return [...changedPaths].filter((file) => !allowed.has(file)).sort();
+}
 
 export function frontmatter(text) {
   const match = /^---\n([\s\S]*?)\n---\n/.exec(text);
