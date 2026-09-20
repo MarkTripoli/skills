@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,9 +32,17 @@ func TestPublicBinarySmoke(t *testing.T) {
 	if err := os.WriteFile(gh, []byte("#!/bin/sh\ncase \"$1 $2\" in\n  'auth status') exit 0 ;;\n  'pr list') printf '%s\\n' '[]' ;;\n  'pr create') printf '%s\\n' 'https://github.com/example/project/pull/1' ;;\n  'pr view') printf '%s\\n' 'main' ;;\n  *) printf '%s\\n' '{}' ;;\nesac\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	gitBinary, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitWrapper := filepath.Join(root, "git")
+	wrapper := fmt.Sprintf("#!/bin/bash\nargs=()\nfor arg in \"$@\"; do\n  if [ \"$arg\" = \"https://github.com/example/project.git\" ]; then arg=%q; fi\n  args+=(\"$arg\")\ndone\nexec %q \"${args[@]}\"\n", upstream, gitBinary)
+	if err := os.WriteFile(gitWrapper, []byte(wrapper), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	gitRun(t, root, "init", "--bare", upstream)
 	gitRun(t, root, "init", "-b", "main", work)
-	gitRun(t, work, "config", "url."+upstream+".insteadOf", "https://github.com/example/project.git")
 	gitRun(t, work, "config", "user.email", "e2e@example.com")
 	gitRun(t, work, "config", "user.name", "Safety Dance E2E")
 	if err := os.WriteFile(filepath.Join(work, "README"), []byte("initial\n"), 0o600); err != nil {
@@ -52,13 +61,14 @@ func TestPublicBinarySmoke(t *testing.T) {
 	}
 	gitRun(t, work, "add", "README", ".safety-dance.yaml")
 	gitRun(t, work, "commit", "-m", "initial")
-	gitRun(t, work, "remote", "add", "origin", "https://github.com/example/project.git")
+	gitRun(t, work, "remote", "add", "origin", upstream)
 	gitRun(t, work, "push", "origin", "HEAD:refs/heads/main")
+	gitRun(t, work, "remote", "set-url", "origin", "https://github.com/example/project.git")
 
 	run := func(dir string, args ...string) string {
 		cmd := exec.Command(binary, args...)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "SD_HOME="+home, "SD_E2E_SCM=1", "PATH="+root+string(os.PathListSeparator)+os.Getenv("PATH"))
+		cmd.Env = append(os.Environ(), "SD_HOME="+home, "PATH="+root+string(os.PathListSeparator)+os.Getenv("PATH"))
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("%s %v: %v\n%s", binary, args, err, out)
@@ -99,7 +109,7 @@ func TestPublicBinarySmoke(t *testing.T) {
 	}
 	push := exec.Command("git", "push", "safety-dance", "HEAD:refs/heads/main")
 	push.Dir = work
-	push.Env = append(os.Environ(), "SD_HOME="+home, "SD_E2E_SCM=1", "PATH="+root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	push.Env = append(os.Environ(), "SD_HOME="+home, "PATH="+root+string(os.PathListSeparator)+os.Getenv("PATH"))
 	pushOutput, err := push.CombinedOutput()
 	if err != nil {
 		if strings.Contains(string(pushOutput), "could not obtain admission token") {

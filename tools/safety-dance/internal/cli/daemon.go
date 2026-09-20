@@ -707,9 +707,6 @@ func livePublicationHead(ctx context.Context, remote, ref string) string {
 }
 
 func newSCMHost(upstream, fork, worktree string) (scm.Host, error) {
-	if host := newTestSCMHost(); host != nil {
-		return host, nil
-	}
 	provider := scm.DetectProvider(upstream)
 	if provider != scm.ProviderGitHub {
 		return nil, fmt.Errorf("SCM provider %s is not supported by this build; refusing to start a publish pipeline", provider)
