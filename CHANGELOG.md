@@ -1,5 +1,11 @@
 # @marktripoli/skills
 
+## 3.1.0
+
+### Minor Changes
+
+- [#26](https://github.com/MarkTripoli/skills/pull/26) [`8cb65bc`](https://github.com/MarkTripoli/skills/commit/8cb65bc5a1cc98a7b87195ad05d938dfa261184d) Thanks [@Triippz](https://github.com/Triippz)! - Add the standalone `jev-ui` skill for bounded browser and Android emulator control. Live native use requires the documented external drivers and an explicitly selected target; model-backed runs require TypeSafe credentials and a configured text helper when text entry is needed.
+
 ## 3.0.0
 
 ### Major Changes
