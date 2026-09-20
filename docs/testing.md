@@ -62,6 +62,10 @@ Full controller end-to-end delivery, including every route and durable control, 
 
 Scenarios in `evals/scenarios/` check consumer-visible facts: source-backed claims, unresolved requirements, repository citations, artifact shape, the one-command operational handoff, unchanged prior artifacts, and no implementation changes by document phases. The artifact must be the only path at `HEAD`, and the commit must use a valid Conventional Commit subject with `docs(task):`. The subject is not compared with incidental wording. Read each scenario's source for its exact contract; do not pin wording or formatting alone.
 
+Terminal scenarios opt in with `phaseType: "terminal"`. They declare exact `allowedChangedPaths`, retain before/after repository manifests beside `answer.md`, require unchanged Git `HEAD` and task state, and reject next-skill handoff fences. Multiple terminal phases share one throwaway repository, so a scenario can prove a first run and byte-stable rerun. Regrading uses the retained manifests; older terminal recordings without both manifests are skipped instead of passed.
+
+Terminal repository manifests exclude `.git/`, `.agents/`, and `.omp/`; the runner checks those harness paths separately. A live OMP eval proves only local skill behavior exercised by its scenario. It does not prove provider observation or mutation, which remains outside the `/setup-repository` first-release evidence boundary.
+
 The fixture repository is the only codebase an artifact may describe. Saved source snapshots and local guides prevent reads from mutable host files. Regrading uses saved `.dist` templates and the fixture snapshot; legacy recordings without that snapshot are skipped.
 
 `verify-required-arguments` tests command discovery when a package build needs a runtime argument. It requires a passing verification artifact and `dist/runtime.txt` from the supported build; a bare invocation's usage error is not a product defect. The command below passed its one phase in 261 seconds with the final notification-CLI request and clarified evidence-retention guidance; results remain under `evals/results/20260919-170601/`:

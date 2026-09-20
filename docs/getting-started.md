@@ -14,6 +14,10 @@ npx github:MarkTripoli/skills oh-my-pi --skill create-research-questions --yes
 
 Repeat `--skill` to select more skills. Add `--project` to install only in this repository. See [all install options](cheatsheet.md#install).
 
+## Optionally set up repository metadata
+
+Before starting a task, run `/setup-repository` to create or reconcile local `ai-utilities.json`. Use `/setup-repository reset-managed` only for an explicit managed-state reset. This step is optional; every manual delivery phase remains independently usable.
+
 ## Run a phase by hand
 
 1. Open your coding agent in the repository you want to change.

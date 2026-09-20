@@ -38,6 +38,10 @@ Each step saves a task document, called an **artifact**. New tasks normally use 
 
 Install only the skills you need. A suggested next skill is not a hidden dependency. See [getting started](docs/getting-started.md) or [common skill sequences](workflows/delivery.md#workflow-choices-and-manual-chains).
 
+## Set up repository metadata
+
+Run `/setup-repository` to create or reconcile local `ai-utilities.json` metadata. Run `/setup-repository reset-managed` only when you explicitly want managed local state reset. The skill does not install skills or mutate ticketing, version-control, or other provider resources.
+
 ## Optional Atomic orchestration
 
 Atomic runs skills in separate sessions and pauses for your approval. Install and sign in to Atomic separately, then add the workflow:
@@ -66,7 +70,7 @@ Preserve task documents, published [changelog entries](CHANGELOG.md), and existi
 - [Workflow inputs and steps](workflows/delivery.md), [model selection](docs/model-routing.md), and [agent setup](runtimes/)
 - [Session memory](docs/context-management.md), [verification](docs/verification.md), and [app testing](docs/app-testing.md)
 
-Skill source: `skills/delivery/<name>/` and `skills/show-me/`.
+Skill source: `skills/delivery/<name>/`, `skills/show-me/`, and `skills/setup-repository/`.
 
 ## License
 
