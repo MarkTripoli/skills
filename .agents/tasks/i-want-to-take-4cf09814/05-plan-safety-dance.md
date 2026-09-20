@@ -172,6 +172,7 @@ safety-dance daemon notify-push --gate "$GATE_DIR" || {
 - [x] `cd tools/safety-dance && go test -race ./internal/config ./internal/paths ./internal/types ./internal/git ./internal/gate ./internal/ipc`
 - [x] `cd tools/safety-dance && go test ./internal/gate -run 'Init|Repair|Hook|Rollback|Preserve'`
 - [x] `cd tools/safety-dance && go test ./internal/git -run 'PreReceive|PostReceive|NotifyFailure|PushOptions'`
+- [ ] `cd tools/safety-dance && go test ./internal/gate ./internal/git -run 'Executable|TemporaryRepo|Authenticated|Replay|Mismatch'`
 
 Done when temporary Git repositories prove unauthenticated rejection, authenticated admission, accepted-ref notification, preserved user hooks, and rollback that touches only Safety Dance-owned state. No public binary entry point exists yet.
 
