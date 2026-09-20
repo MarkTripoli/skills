@@ -34,7 +34,15 @@ func TestPublicBinarySmoke(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(work, "README"), []byte("initial\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(work, ".safety-dance.yaml"), []byte("allow_repo_commands: true\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(work, ".safety-dance.yaml"), []byte("allow_repo_commands: true\nagent: claude\ncommands:\n  test: 'true'\n  lint: 'true'\n  format: 'true'\nno_ci: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fixtureAgent := filepath.Join(root, "fixture-agent")
+	fixtureOutput := `{"type":"result","subtype":"success","session_id":"fixture","structured_output":{"verdict":"pass","findings":[],"evidence":["fixture"]}}`
+	if err := os.WriteFile(fixtureAgent, []byte("#!/bin/sh\nprintf '%s\\n' '"+fixtureOutput+"'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "config.yaml"), []byte("agent: claude\nagent_path_override:\n  claude: "+fixtureAgent+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	gitRun(t, work, "add", "README", ".safety-dance.yaml")
@@ -94,37 +102,52 @@ func TestPublicBinarySmoke(t *testing.T) {
 		}
 		t.Fatalf("gate push: %v\n%s", err, pushOutput)
 	}
-	deadline := time.Now().Add(20 * time.Second)
-	observedRun := false
-	lastStatus := ""
-	for time.Now().Before(deadline) {
-		status := run(work, "status")
-		lastStatus = status
-		if strings.Contains(status, "run: ") {
-			observedRun = true
-			break
-		}
-		if strings.Contains(status, "status=failed") || strings.Contains(status, "status=blocked") {
-			t.Fatalf("gate run failed: %s", status)
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	if !observedRun {
-		t.Fatalf("timed out waiting for a durable run; last status: %s", lastStatus)
-	}
 	p := paths.WithRoot(home)
 	database, err := db.Open(p.DB())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer database.Close()
+	deadline := time.Now().Add(30 * time.Second)
+	completed := false
+	var runs []*db.Run
+	for time.Now().Before(deadline) {
+		repos, queryErr := database.GetRepos()
+		if queryErr == nil && len(repos) == 1 {
+			runs, queryErr = database.GetRunsByRepo(repos[0].ID)
+			if queryErr == nil && len(runs) == 1 {
+				if runs[0].Status == "completed" {
+					completed = true
+					break
+				}
+				if runs[0].Status == "failed" || runs[0].Status == "blocked" {
+					errorText := ""
+					if runs[0].Error != nil {
+						errorText = *runs[0].Error
+					}
+					t.Fatalf("gate run failed: status=%s error=%s", runs[0].Status, errorText)
+				}
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !completed {
+		t.Fatalf("timed out waiting for completed run: %+v; daemon log: %s", runs, run(work, "logs"))
+	}
 	repos, err := database.GetRepos()
 	if err != nil || len(repos) != 1 {
 		t.Fatalf("repositories = %d, err=%v", len(repos), err)
 	}
-	runs, err := database.GetRunsByRepo(repos[0].ID)
+	runs, err = database.GetRunsByRepo(repos[0].ID)
 	if err != nil || len(runs) != 1 || runs[0].HeadSHA != candidate {
 		t.Fatalf("runs = %#v, err=%v", runs, err)
+	}
+	publication, err := database.GetPublication(runs[0].ID)
+	if err != nil || publication == nil || publication.Candidate != candidate {
+		t.Fatalf("publication = %#v, err=%v", publication, err)
+	}
+	if got := gitRun(t, root, "--git-dir", upstream, "rev-parse", "refs/heads/main"); got != candidate {
+		t.Fatalf("upstream head = %s, want candidate %s", got, candidate)
 	}
 	if got := gitRun(t, root, "--git-dir", gate, "rev-parse", "refs/heads/main"); got != candidate {
 		t.Fatalf("gate head = %s, want candidate %s", got, candidate)

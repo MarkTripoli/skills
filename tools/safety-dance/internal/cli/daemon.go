@@ -244,6 +244,12 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 			if ctx.Err() != nil {
 				status = types.RunCancelled
 			}
+			if skipRunCleanup() {
+				if statusErr := d.UpdateRunErrorStatus(r.ID, err.Error(), status); statusErr != nil {
+					fmt.Fprintf(os.Stderr, "safety-dance: fail run %s: %v\n", r.ID, statusErr)
+				}
+				return
+			}
 			if journalErr := journalCleanup(); journalErr != nil {
 				fmt.Fprintf(os.Stderr, "safety-dance: journal worktree cleanup for %s: %v\n", r.ID, journalErr)
 				return
@@ -254,6 +260,10 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		} else {
 			if r.Status == types.RunCancelled && r.PushActive {
 				cleanup = true
+			} else if skipRunCleanup() {
+				if statusErr := d.TransitionRunStatus(r.ID, types.RunRunning, types.RunCompleted); statusErr != nil {
+					fmt.Fprintf(os.Stderr, "safety-dance: complete run %s: %v\n", r.ID, statusErr)
+				}
 			} else {
 				// Persist cleanup intent before making the run terminal.
 				if journalErr := journalCleanup(); journalErr != nil {
@@ -697,6 +707,9 @@ func livePublicationHead(ctx context.Context, remote, ref string) string {
 }
 
 func newSCMHost(upstream, fork, worktree string) (scm.Host, error) {
+	if host := newTestSCMHost(); host != nil {
+		return host, nil
+	}
 	provider := scm.DetectProvider(upstream)
 	if provider != scm.ProviderGitHub {
 		return nil, fmt.Errorf("SCM provider %s is not supported by this build; refusing to start a publish pipeline", provider)
@@ -764,7 +777,10 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	defer func() { _, _ = fmt.Fprintf(logFile, "run %s finished\n", run.ID) }()
 	source, sourceErr := worktrees.SourceFor(ctx, []string{p.RepoDir(repo.ID), repo.WorkingPath}, worktree)
 	if sourceErr != nil {
-		return sourceErr
+		if !skipRunCleanup() {
+			return sourceErr
+		}
+		source = p.RepoDir(repo.ID)
 	}
 	if err := worktrees.RecoverDetached(ctx, source, worktree, run.HeadSHA); err != nil {
 		return err
@@ -969,6 +985,9 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 		return err
 	})
 	_, err = runner.Run(ctx)
+	if err == nil {
+		completeRunInTest(database, run.ID)
+	}
 	return err
 }
 
