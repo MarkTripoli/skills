@@ -143,6 +143,68 @@ test("repository snapshot diffs report changed link targets", () => {
   assert.equal(afterSnapshot["linked-file"].linkTarget, "second-target");
 });
 
+test("repository snapshot diffs report a regular file replaced by an equal-digest symlink", () => {
+  const root = repository();
+  put(root, "entry", "target");
+  const before = snapshotRepository(root);
+
+  fs.rmSync(path.join(root, "entry"));
+  fs.symlinkSync("target", path.join(root, "entry"));
+  const afterSnapshot = snapshotRepository(root);
+
+  assert.deepEqual(diffRepositorySnapshots(before, afterSnapshot).modified, ["entry"]);
+  assert.equal(before.entry.kind, "file");
+  assert.equal(afterSnapshot.entry.kind, "symlink");
+  assert.equal(before.entry.sha256, afterSnapshot.entry.sha256);
+});
+
+test("repository snapshot diffs report a symlink replaced by an equal-digest regular file", () => {
+  const root = repository();
+  fs.symlinkSync("target", path.join(root, "entry"));
+  const before = snapshotRepository(root);
+
+  fs.rmSync(path.join(root, "entry"));
+  put(root, "entry", "target");
+  const afterSnapshot = snapshotRepository(root);
+
+  assert.deepEqual(diffRepositorySnapshots(before, afterSnapshot).modified, ["entry"]);
+  assert.equal(before.entry.kind, "symlink");
+  assert.equal(afterSnapshot.entry.kind, "file");
+  assert.equal(before.entry.sha256, afterSnapshot.entry.sha256);
+});
+
+test("local Git configuration detects a regular file replaced by an equal-digest symlink", () => {
+  const root = repository();
+  put(root, ".git/target", "destination");
+  put(root, ".git/config", "target");
+  const before = evalLib.snapshotGitConfig(root);
+
+  fs.rmSync(path.join(root, ".git/config"));
+  fs.symlinkSync("target", path.join(root, ".git/config"));
+  const afterSnapshot = evalLib.snapshotGitConfig(root);
+
+  assert.equal(evalLib.gitConfigChanged(before, afterSnapshot), true);
+  assert.equal(before.kind, "file");
+  assert.equal(afterSnapshot.kind, "symlink");
+  assert.equal(before.sha256, afterSnapshot.sha256);
+});
+
+test("local Git configuration detects a symlink replaced by an equal-digest regular file", () => {
+  const root = repository();
+  put(root, ".git/target", "destination");
+  fs.symlinkSync("target", path.join(root, ".git/config"));
+  const before = evalLib.snapshotGitConfig(root);
+
+  fs.rmSync(path.join(root, ".git/config"));
+  put(root, ".git/config", "target");
+  const afterSnapshot = evalLib.snapshotGitConfig(root);
+
+  assert.equal(evalLib.gitConfigChanged(before, afterSnapshot), true);
+  assert.equal(before.kind, "symlink");
+  assert.equal(afterSnapshot.kind, "file");
+  assert.equal(before.sha256, afterSnapshot.sha256);
+});
+
 test("terminal allowlists return only undeclared repository changes", () => {
   assert.deepEqual(
     unexpectedRepositoryChanges(["README.md", "ai-utilities.json"], ["ai-utilities.json"]),

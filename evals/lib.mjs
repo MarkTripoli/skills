@@ -5,11 +5,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 
 const SNAPSHOT_EXCLUDED_DIRECTORIES = new Set([".git", ".agents", ".omp"]);
 
 function snapshotBytes(bytes) {
   return {
+    kind: "file",
     bytes: bytes.toString("base64"),
     sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
   };
@@ -18,6 +20,7 @@ function snapshotBytes(bytes) {
 function snapshotSymbolicLink(file) {
   const linkTarget = fs.readlinkSync(file);
   return {
+    kind: "symlink",
     linkTarget,
     sha256: crypto.createHash("sha256").update(linkTarget).digest("hex"),
   };
@@ -33,7 +36,7 @@ export function snapshotGitConfig(root) {
 }
 
 export function gitConfigChanged(before, after) {
-  return (before?.sha256 ?? null) !== (after?.sha256 ?? null);
+  return !isDeepStrictEqual(before, after);
 }
 
 export function snapshotRepository(root) {
@@ -67,7 +70,7 @@ export function diffRepositorySnapshots(before, after) {
   const created = [...afterPaths].filter((file) => !beforePaths.has(file)).sort();
   const deleted = [...beforePaths].filter((file) => !afterPaths.has(file)).sort();
   const modified = [...beforePaths]
-    .filter((file) => afterPaths.has(file) && before[file].sha256 !== after[file].sha256)
+    .filter((file) => afterPaths.has(file) && !isDeepStrictEqual(before[file], after[file]))
     .sort();
   return {
     created,
