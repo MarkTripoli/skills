@@ -51,6 +51,34 @@ func gitTest(t *testing.T, dir string, args ...string) string {
 	return string(out)
 }
 
+func TestPushFastForwardUsesNormalPush(t *testing.T) {
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	work := filepath.Join(root, "work")
+	gitTest(t, root, "init", "--bare", remote)
+	gitTest(t, root, "init", work)
+	gitTest(t, work, "config", "user.email", "test@example.com")
+	gitTest(t, work, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(work, "file"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, work, "add", "file")
+	gitTest(t, work, "commit", "-m", "one")
+	gitTest(t, work, "push", remote, "HEAD:refs/heads/main")
+	base := strings.TrimSpace(gitTest(t, work, "rev-parse", "HEAD"))
+	if err := os.WriteFile(filepath.Join(work, "file"), []byte("two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, work, "commit", "-am", "two")
+	candidate := strings.TrimSpace(gitTest(t, work, "rev-parse", "HEAD"))
+	result, err := Push(context.Background(), PushRequest{Worktree: work, Remote: remote, Ref: "refs/heads/main", Candidate: candidate, ReviewedHead: candidate, VerifiedHead: base})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Lease != "" {
+		t.Fatalf("fast-forward used lease %q", result.Lease)
+	}
+}
 func TestPublishUpdatesMirrorAndRecordsBinding(t *testing.T) {
 	root := t.TempDir()
 	remote := filepath.Join(root, "remote.git")

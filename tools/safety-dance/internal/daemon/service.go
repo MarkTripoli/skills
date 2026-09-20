@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -36,8 +38,22 @@ type serviceRecovery struct {
 
 const serviceMarker = "SAFETY_DANCE_MANAGED"
 
+func serviceIdentity(root string) string {
+	canonical, err := filepath.Abs(filepath.Clean(root))
+	if err != nil {
+		canonical = filepath.Clean(root)
+	}
+	digest := sha256.Sum256([]byte(canonical))
+	readable := strings.NewReplacer("/", "-", "\\", "-", ".", "-", ":", "-").Replace(canonical)
+	readable = strings.Trim(readable, "-")
+	if len(readable) > 48 {
+		readable = readable[:48]
+	}
+	return readable + "-" + hex.EncodeToString(digest[:])[:16]
+}
+
 func (s Service) Label() string {
-	return "com-safety-dance-daemon-" + strings.NewReplacer("/", "-", "\\", "-", ".", "-", ":", "-").Replace(s.Home.Root())
+	return "com-safety-dance-daemon-" + serviceIdentity(s.Home.Root())
 }
 
 func windowsCmdValue(value string) string {
@@ -94,7 +110,7 @@ func (s Service) definitionPath() (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return filepath.Join(home, ".config", "systemd", "user", "safety-dance-"+strings.ReplaceAll(s.Home.Root(), "/", "-")+".service"), nil
+		return filepath.Join(home, ".config", "systemd", "user", "safety-dance-"+serviceIdentity(s.Home.Root())+".service"), nil
 	default:
 		return filepath.Join(s.Home.Root(), "safety-dance-task.definition"), nil
 	}
@@ -295,6 +311,17 @@ func (s Service) Stop() error {
 	}
 }
 
+func restartCommands(platform, label, path string, uid int) [][]string {
+	switch platform {
+	case "darwin":
+		return [][]string{{"launchctl", "kickstart", "-k", "gui/" + strconv.Itoa(uid) + "/" + label}}
+	case "linux":
+		return [][]string{{"systemctl", "--user", "restart", filepath.Base(path)}}
+	default:
+		return [][]string{{"schtasks", "/End", "/TN", label}, {"schtasks", "/Run", "/TN", label}}
+	}
+}
+
 // Restart restarts an owned service without removing its persistent definition.
 func (s Service) Restart() error {
 	if s.Executor == nil {
@@ -303,14 +330,17 @@ func (s Service) Restart() error {
 	if !s.DefinitionExists() {
 		return fmt.Errorf("service definition is not installed")
 	}
-	switch runtime.GOOS {
-	case "darwin":
-		return s.Executor.Run("launchctl", "kickstart", "gui/"+fmt.Sprint(os.Getuid())+"/"+s.Label())
-	case "linux":
-		path, _ := s.definitionPath()
-		_ = path
-		return s.Executor.Run("systemctl", "--user", "restart", filepath.Base(path))
-	default:
-		return s.Executor.Run("schtasks", "/Run", "/TN", s.Label())
+	path, err := s.definitionPath()
+	if err != nil {
+		return err
 	}
+	for _, command := range restartCommands(runtime.GOOS, s.Label(), path, os.Getuid()) {
+		if err := s.Executor.Run(command[0], command[1:]...); err != nil {
+			if runtime.GOOS == "windows" && command[1] == "/End" {
+				continue
+			}
+			return err
+		}
+	}
+	return nil
 }

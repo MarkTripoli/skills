@@ -50,14 +50,19 @@ cleanup() { rm -f "$INPUT" "$ACCEPTED"; if [ "$LOCK_OWNED" -eq 1 ]; then rm -f "
 trap cleanup EXIT INT TERM HUP
 lock_receipts() {
   i=0
-  # Legacy empty locks use owner case: case "$owner" in ''|*[!0-9]*) stale=0)
   candidate="$LOCK.$$"
   rm -rf "$candidate" 2>/dev/null || :
-  mkdir "$candidate" 2>/dev/null || return 1
-  if ! printf '%s\n' "$$" > "$candidate/pid" || ! mv "$candidate" "$LOCK" 2>/dev/null; then rm -rf "$candidate"; return 1; fi
-  LOCK_OWNED=1
-  return 0
-
+  while :; do
+    if mkdir "$candidate" 2>/dev/null; then
+      if printf '%s\n' "$$" > "$candidate/pid" && mv "$candidate" "$LOCK" 2>/dev/null; then LOCK_OWNED=1; return 0; fi
+      rm -rf "$candidate" 2>/dev/null || :
+    fi
+    i=$((i + 1)); [ "$i" -ge 300 ] && return 1
+    owner=$(cat "$LOCK/pid" 2>/dev/null || :)
+    case "$owner" in ''|*[!0-9]*) stale=0;; *) kill -0 "$owner" 2>/dev/null && stale=0 || stale=1;; esac
+    if [ "$stale" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; fi
+    sleep 0.1
+  done
 }
 unlock_receipts() { if [ "$LOCK_OWNED" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; LOCK_OWNED=0; fi; }
 remove_receipt() {
@@ -159,8 +164,22 @@ LOCK_OWNED=0
 cleanup_post() { rm -f "$INPUT"; if [ "$LOCK_OWNED" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; fi; }
 trap cleanup_post EXIT INT TERM HUP
 lock_age_stale() { return 1; }
-lock_receipts() { # case "$owner" in ''|*[!0-9]*) stale=0)
- candidate="$LOCK.$$"; rm -rf "$candidate" 2>/dev/null || :; mkdir "$candidate" 2>/dev/null || return 1; if ! printf '%s\n' "$$" > "$candidate/pid" || ! mv "$candidate" "$LOCK" 2>/dev/null; then rm -rf "$candidate"; return 1; fi; LOCK_OWNED=1; }
+lock_receipts() {
+  i=0
+  candidate="$LOCK.$$"
+  rm -rf "$candidate" 2>/dev/null || :
+  while :; do
+    if mkdir "$candidate" 2>/dev/null; then
+      if printf '%s\n' "$$" > "$candidate/pid" && mv "$candidate" "$LOCK" 2>/dev/null; then LOCK_OWNED=1; return 0; fi
+      rm -rf "$candidate" 2>/dev/null || :
+    fi
+    i=$((i + 1)); [ "$i" -ge 300 ] && return 1
+    owner=$(cat "$LOCK/pid" 2>/dev/null || :)
+    case "$owner" in ''|*[!0-9]*) stale=0;; *) kill -0 "$owner" 2>/dev/null && stale=0 || stale=1;; esac
+    if [ "$stale" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; fi
+    sleep 0.1
+  done
+}
 unlock_receipts() { if [ "$LOCK_OWNED" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; LOCK_OWNED=0; fi; }
 if ! cat > "$INPUT"; then
   printf '[%s] post-receive input capture failed after opening file; retrying from receipts\n' "$(date '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo unknown)" >> "$LOG"

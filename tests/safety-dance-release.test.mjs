@@ -33,3 +33,16 @@ test('packager emits executable archive and checksum manifest for Windows', asyn
   assert.match(await readFile(path.join(out, 'checksums.txt'), 'utf8'), /safety-dance_1\.2\.3_windows_amd64\.zip/);
   await rm(dir, { recursive: true, force: true });
 });
+
+test('packager enforces SemVer boundaries', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'safety-dance-semver-'));
+  const binary = path.join(dir, 'binary'); await writeFile(binary, 'fake');
+  const script = path.join(root, 'tools/safety-dance/scripts/package-release.sh');
+  for (const version of ['1.2.3-alpha.1', '1.2.3+build.7', '0.0.0']) {
+    await run('sh', [script, '--version', version, '--os', 'linux', '--arch', 'amd64', '--binary', binary, '--out', path.join(dir, version.replace(/[^A-Za-z0-9]/g, '_'))]);
+  }
+  for (const version of ['01.2.3', '1.02.3', '1.2.3-', '1.2.3+']) {
+    await assert.rejects(run('sh', [script, '--version', version, '--os', 'linux', '--arch', 'amd64', '--binary', binary, '--out', path.join(dir, 'invalid')]));
+  }
+  await rm(dir, { recursive: true, force: true });
+});

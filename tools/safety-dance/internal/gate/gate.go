@@ -275,14 +275,16 @@ func InitWithForkRollback(ctx context.Context, d *db.DB, p *paths.Paths, workDir
 	}
 	slog.Info("gate initialized", "repo_id", id, "path", absRoot, "upstream", redactedUpstreamURL)
 	return repo, true, func() error {
-		var first error
 		if err := d.DeleteRepo(id); err != nil {
-			first = err
+			// Keep the filesystem and remote intact when the database row survives.
+			// Destroying them would leave the row pointing at unusable resources.
+			return fmt.Errorf("delete repo during rollback: %w", err)
 		}
+		var first error
 		restoreRemote()
 		gateBefore.restore()
 		if !bareExisted {
-			if err := os.RemoveAll(bareDir); err != nil && first == nil {
+			if err := os.RemoveAll(bareDir); err != nil {
 				first = err
 			}
 		}

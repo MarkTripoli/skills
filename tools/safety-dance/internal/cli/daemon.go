@@ -325,13 +325,13 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		if err := worktrees.CreateDetached(ctx, repo.WorkingPath, worktree, q.HeadSHA); err != nil {
 			return nil, err
 		}
-		accepted := db.AcceptedRef{RepoID: q.RepoID, Branch: q.Branch, GateHead: q.HeadSHA, LaunchNonce: nonce}
+		accepted := db.AcceptedRef{RepoID: q.RepoID, Branch: canonicalRef(q.Branch), GateHead: q.HeadSHA, LaunchNonce: nonce}
 		gatesJSON, gatesErr := pinGatesForAdmission(ctx, p, repo, worktree, nonce)
 		if gatesErr != nil {
 			return nil, gatesErr
 		}
 		accepted.GatesJSON = gatesJSON
-		r, err := manager.Replace(ctx, daemon.BranchKey{RepositoryID: q.RepoID, Ref: q.Branch}, accepted, worktree)
+		r, err := manager.Replace(ctx, daemon.BranchKey{RepositoryID: q.RepoID, Ref: accepted.Branch}, accepted, worktree)
 		if err != nil {
 			return nil, err
 		}
@@ -565,7 +565,9 @@ func recordPush(d *db.DB, p *paths.Paths, manager *daemon.Manager, n daemon.Push
 		if filepath.Clean(expected) != filepath.Clean(gatePath) {
 			continue
 		}
-		branch := strings.TrimPrefix(n.Ref, "refs/heads/")
+		// Keep the canonical full ref as the coordination identity. A branch
+		// and tag can legally share the same short spelling.
+		branch := n.Ref
 		current, currentErr := git.RunBare(context.Background(), gatePath, "rev-parse", n.Ref)
 		if currentErr == nil && strings.TrimSpace(current) != strings.TrimSpace(n.New) {
 			// A delayed notification for an older accepted update must not replace
@@ -614,6 +616,15 @@ func recordPush(d *db.DB, p *paths.Paths, manager *daemon.Manager, n daemon.Push
 	}
 	return fmt.Errorf("unknown gate %q", n.Gate)
 }
+
+func canonicalRef(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if strings.HasPrefix(ref, "refs/") {
+		return ref
+	}
+	return "refs/heads/" + ref
+}
+
 func normalizeSHA(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" || strings.Trim(value, "0") == "" {
@@ -787,7 +798,14 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	if err != nil {
 		return err
 	}
-	request := steps.PushRequest{Worktree: worktree, Remote: repo.PushURL(), Ref: ref, Candidate: run.HeadSHA, VerifiedHead: verifiedHead, Rewrite: verifiedHead != "" && verifiedHead == normalizeSHA(run.BaseSHA), BeforePush: func() error {
+	// A lease is needed only when the reviewed candidate rewrites the live ref.
+	// Fast-forward candidates use ordinary Git push semantics.
+	rewrite := false
+	if verifiedHead != "" && verifiedHead != normalizeSHA(run.HeadSHA) {
+		_, mergeErr := git.Run(ctx, worktree, "merge-base", "--is-ancestor", verifiedHead, run.HeadSHA)
+		rewrite = mergeErr != nil
+	}
+	request := steps.PushRequest{Worktree: worktree, Remote: repo.PushURL(), Ref: ref, Candidate: run.HeadSHA, VerifiedHead: verifiedHead, Rewrite: rewrite, BeforePush: func() error {
 		current, checkErr := database.GetRun(run.ID)
 		if checkErr != nil {
 			return checkErr
@@ -818,7 +836,7 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	}
 	for _, name := range pipeline.CoreSteps {
 		name := name
-		runner.RegisterWithInputs(name, pipeline.StepInputs{CandidateHead: run.HeadSHA, Policy: mergedConfig.TrustedConfigSHA + "\x00" + string(mergedConfig.ReplayGlobalYAML) + "\x00" + string(mergedConfig.ReplayRepoYAML), Command: fmt.Sprintf("%#v", mergedConfig.Commands), Owner: "pipeline." + string(name), ValidationGeneration: valueOrEmpty(run.LaunchValidationGeneration)}, func(stepCtx context.Context) error {
+		runner.RegisterWithInputs(name, pipeline.StepInputs{CandidateHead: run.BaseSHA, Policy: mergedConfig.TrustedConfigSHA + "\x00" + string(mergedConfig.ReplayGlobalYAML) + "\x00" + string(mergedConfig.ReplayRepoYAML), Command: fmt.Sprintf("%#v", mergedConfig.Commands), Owner: "pipeline." + string(name), ValidationGeneration: valueOrEmpty(run.LaunchValidationGeneration)}, func(stepCtx context.Context) error {
 			stepCtx = steps.WithWorktree(stepCtx, worktree)
 			stepCtx = steps.WithConfig(stepCtx, mergedConfig)
 			stepCtx = steps.WithRun(stepCtx, database, run.ID)

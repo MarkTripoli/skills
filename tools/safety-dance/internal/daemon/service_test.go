@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -21,11 +22,40 @@ func TestServiceDefinitionBindsRuntimeHome(t *testing.T) {
 	}
 }
 
-type recordingExecutor struct{ names []string }
+type recordingExecutor struct {
+	names []string
+	args  [][]string
+}
 
 func (e *recordingExecutor) Run(name string, args ...string) error {
 	e.names = append(e.names, name)
+	e.args = append(e.args, append([]string(nil), args...))
 	return nil
+}
+
+func TestServiceIdentityDistinguishesNormalizedRoots(t *testing.T) {
+	a := serviceIdentity("/a-b/c")
+	b := serviceIdentity("/a/b-c")
+	if a == b {
+		t.Fatalf("service identities collide: %q", a)
+	}
+}
+
+func TestRestartCommandsUsePlatformRestartSequences(t *testing.T) {
+	label := "service-label"
+	for _, tc := range []struct {
+		platform string
+		want     [][]string
+	}{
+		{"darwin", [][]string{{"launchctl", "kickstart", "-k", "gui/42/" + label}}},
+		{"linux", [][]string{{"systemctl", "--user", "restart", "unit.service"}}},
+		{"windows", [][]string{{"schtasks", "/End", "/TN", label}, {"schtasks", "/Run", "/TN", label}}},
+	} {
+		got := restartCommands(tc.platform, label, "/tmp/unit.service", 42)
+		if fmt.Sprint(got) != fmt.Sprint(tc.want) {
+			t.Errorf("%s restart commands = %#v, want %#v", tc.platform, got, tc.want)
+		}
+	}
 }
 
 func TestServiceLifecycleUsesInjectedExecutor(t *testing.T) {

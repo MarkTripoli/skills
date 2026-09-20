@@ -9,13 +9,11 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ -n "$version" ] && [ -n "$os" ] && [ -n "$arch" ] && [ -f "$binary" ] && [ -n "$out" ] || usage
-case "$version" in
-  [0-9]*.[0-9]*.[0-9]*) ;;
-  *) echo "invalid semantic version: $version" >&2; exit 1;;
-esac
-case "$version" in *[!0-9.]*) echo "invalid semantic version: $version" >&2; exit 1;; esac
-oldIFS=$IFS; IFS=.; set -- $version; IFS=$oldIFS
-[ "$#" -eq 3 ] && [ -n "$1" ] && [ -n "$2" ] && [ -n "$3" ] || { echo "invalid semantic version: $version" >&2; exit 1; }
+semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+if ! printf '%s\n' "$version" | grep -Eq "$semver_re"; then
+	echo "invalid semantic version: $version" >&2
+	exit 1
+fi
 mkdir -p "$out"
 out=$(CDPATH= cd -- "$out" && pwd)
 binary_dir=$(CDPATH= cd -- "$(dirname "$binary")" && pwd)

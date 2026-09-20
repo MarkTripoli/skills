@@ -78,6 +78,41 @@ func TestDurableRunnerPersistsAndSkipsCompletedSteps(t *testing.T) {
 	}
 }
 
+func TestDurableRunnerReusesCompletedStepAfterRunHeadAdvances(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err := database.InsertRepoWithID("repo", "/checkout", "upstream", "main"); err != nil {
+		t.Fatal(err)
+	}
+	run, err := database.CreateRunFromAccepted(db.RunInput{Accepted: db.AcceptedRef{RepoID: "repo", Branch: "refs/heads/main", GateHead: "head", LaunchNonce: "nonce"}, BaseSHA: "base"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.TransitionRunStatus(run.ID, "pending", "running"); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	first := NewDurable(database, run.ID)
+	first.RegisterWithInputs(StepIntent, StepInputs{CandidateHead: "base", Owner: "intent"}, func(context.Context) error { calls++; return nil })
+	if _, err := first.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.UpdateRunHeadSHA(run.ID, "after-intent"); err != nil {
+		t.Fatal(err)
+	}
+	second := NewDurable(database, run.ID)
+	second.RegisterWithInputs(StepIntent, StepInputs{CandidateHead: "base", Owner: "intent"}, func(context.Context) error { calls++; return nil })
+	if _, err := second.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("completed step reran after head advance: calls=%d", calls)
+	}
+}
+
 func TestDurableRunnerInvalidatesChangedInputsAndDependents(t *testing.T) {
 	database, err := db.Open(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
