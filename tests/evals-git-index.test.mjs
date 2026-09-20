@@ -101,3 +101,35 @@ test("semantic Git index snapshots do not invoke Git through unsafe roots", () =
   // Then
   assert.deepEqual(snapshot, { kind: "unavailable", reason: "unsafe-git-root" });
 });
+
+test("semantic Git index snapshots ignore inherited repository routing variables", () => {
+  // Given
+  const requested = repository();
+  const redirected = repository();
+  fs.writeFileSync(path.join(redirected, "redirected.txt"), "redirected\n");
+  execFileSync("git", ["add", "redirected.txt"], { cwd: redirected });
+  const overrides = {
+    GIT_DIR: path.join(redirected, ".git"),
+    GIT_WORK_TREE: redirected,
+    GIT_INDEX_FILE: path.join(redirected, ".git", "index"),
+    GIT_COMMON_DIR: path.join(redirected, ".git"),
+    GIT_OBJECT_DIRECTORY: path.join(redirected, ".git", "objects"),
+    GIT_ALTERNATE_OBJECT_DIRECTORIES: path.join(requested, ".git", "objects"),
+  };
+  const original = Object.fromEntries(Object.keys(overrides).map((key) => [key, process.env[key]]));
+
+  // When
+  Object.assign(process.env, overrides);
+  let snapshot;
+  try {
+    snapshot = snapshotGitIndex(requested);
+  } finally {
+    for (const [key, value] of Object.entries(original)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+
+  // Then
+  assert.deepEqual(snapshot.map(({ path: trackedPath }) => trackedPath), ["README.md"]);
+});

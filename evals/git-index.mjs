@@ -4,6 +4,22 @@ import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+const GIT_ROUTING_ENVIRONMENT = [
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_CEILING_DIRECTORIES",
+  "GIT_COMMON_DIR",
+  "GIT_DIR",
+  "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+  "GIT_GRAFT_FILE",
+  "GIT_INDEX_FILE",
+  "GIT_NAMESPACE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_PREFIX",
+  "GIT_REPLACE_REF_BASE",
+  "GIT_SHALLOW_FILE",
+  "GIT_WORK_TREE",
+];
+
 function nulSeparated(buffer) {
   return buffer.toString("utf8").split("\0").filter(Boolean);
 }
@@ -20,6 +36,8 @@ export function snapshotGitIndex(root) {
   if (!gitRootStats.isDirectory() || gitRootStats.isSymbolicLink()) {
     return { kind: "unavailable", reason: "unsafe-git-root" };
   }
+  const gitEnvironment = { ...process.env };
+  for (const variable of GIT_ROUTING_ENVIRONMENT) delete gitEnvironment[variable];
 
   const indexDigest = () => {
     try {
@@ -41,7 +59,14 @@ export function snapshotGitIndex(root) {
   };
   const run = (operation, args) => {
     try {
-      return { ok: true, value: execFileSync("git", args, { cwd: root, stdio: ["ignore", "pipe", "pipe"] }) };
+      return {
+        ok: true,
+        value: execFileSync(
+          "git",
+          ["--git-dir", gitRoot, "--work-tree", root, ...args],
+          { cwd: root, env: gitEnvironment, stdio: ["ignore", "pipe", "pipe"] },
+        ),
+      };
     } catch (error) {
       return { ok: false, evidence: errorEvidence(operation, error) };
     }
