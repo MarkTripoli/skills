@@ -3,6 +3,7 @@ package steps
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/config"
@@ -38,7 +39,20 @@ func repoConfig(ctx context.Context) *config.RepoConfig {
 	return cfg
 }
 
-// Validate runs the stage-specific trusted command in the owned worktree.
+func runID(ctx context.Context) string {
+	id, _ := ctx.Value(runIDKey{}).(string)
+	return id
+}
+
+func requiredCommand(cfg *config.RepoConfig, name string) string {
+	if cfg == nil {
+		return ""
+	}
+	return map[string]string{"intent": cfg.Commands.Prepare, "rebase": cfg.Commands.Rebase, "review": cfg.Commands.Review, "test": cfg.Commands.Test, "lint": cfg.Commands.Lint, "document": cfg.Commands.Format, "pull-request": cfg.Commands.PullRequest, "ci": cfg.Commands.CI}[name]
+}
+
+// Validate runs a configured stage command in the owned worktree. Production
+// callers must provide a command for every stage that can approve publication.
 func Validate(ctx context.Context, name string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -47,18 +61,18 @@ func Validate(ctx context.Context, name string) error {
 	if dir == "" {
 		return fmt.Errorf("%s: owned worktree is required", name)
 	}
-	if cfg := repoConfig(ctx); cfg != nil {
-		command := map[string]string{"intent": cfg.Commands.Prepare, "rebase": cfg.Commands.Rebase, "review": cfg.Commands.Review, "test": cfg.Commands.Test, "lint": cfg.Commands.Lint, "document": cfg.Commands.Format, "pull-request": cfg.Commands.PullRequest, "ci": cfg.Commands.CI}[name]
-		if command != "" {
-			cmd := exec.CommandContext(ctx, "sh", "-c", command)
-			cmd.Dir = dir
-			if out, err := cmd.CombinedOutput(); err != nil {
-				return fmt.Errorf("%s: configured command failed: %s: %w", name, out, err)
-			}
-		}
+	command := requiredCommand(repoConfig(ctx), name)
+	if command == "" {
+		return fmt.Errorf("%s: configured validation command is required", name)
 	}
-	cmd := exec.CommandContext(ctx, "git", "-C", dir, "diff", "--check")
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "SD_PARENT_RUN_ID="+runID(ctx))
 	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%s: configured command failed: %s: %w", name, out, err)
+	}
+	check := exec.CommandContext(ctx, "git", "-C", dir, "diff", "--check")
+	if out, err := check.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s: git diff --check: %s: %w", name, out, err)
 	}
 	return nil

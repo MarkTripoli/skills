@@ -185,13 +185,20 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 	defer own.Close()
 	server := ipc.NewServer()
 	manager := daemon.NewManager(d, func(ctx context.Context, r *db.Run) {
-		if err := executeRun(ctx, d, p, r); err != nil {
-			_ = d.UpdateRunError(r.ID, err.Error())
-			_ = d.TransitionRunStatus(r.ID, types.RunRunning, types.RunFailed)
-			return
+		err := executeRun(ctx, d, p, r)
+		if err != nil {
+			status := types.RunFailed
+			if ctx.Err() != nil {
+				status = types.RunCancelled
+			}
+			_ = d.UpdateRunErrorStatus(r.ID, err.Error(), status)
+		} else if err := d.TransitionRunStatus(r.ID, types.RunRunning, types.RunCompleted); err != nil {
+			_ = d.UpdateRunErrorStatus(r.ID, err.Error(), types.RunFailed)
 		}
-		if err := d.TransitionRunStatus(r.ID, types.RunRunning, types.RunCompleted); err != nil {
-			_ = d.TransitionRunStatus(r.ID, types.RunRunning, types.RunFailed)
+		if r.WorktreeDir != nil {
+			if repo, e := d.GetRepo(r.RepoID); e == nil && repo != nil {
+				_ = worktrees.RemoveDetached(context.Background(), repo.WorkingPath, *r.WorktreeDir)
+			}
 		}
 	})
 	adm := daemon.NewAdmissionWithStore(server, func(ctx context.Context, n daemon.PushNotification) error { return recordPush(d, p, manager, n) }, filepath.Join(p.Root(), "admission-receipts.json"))
@@ -359,7 +366,7 @@ func recordPush(d *db.DB, p *paths.Paths, manager *daemon.Manager, n daemon.Push
 		if err := worktrees.CreateDetached(context.Background(), r.WorkingPath, worktree, n.New); err != nil {
 			return err
 		}
-		accepted := db.AcceptedRef{RepoID: r.ID, Branch: branch, GateHead: n.New, LaunchNonce: nonce, RequestedOptions: append([]string(nil), n.Options...)}
+		accepted := db.AcceptedRef{RepoID: r.ID, Branch: branch, GateHead: n.New, PreviousReconciledHead: n.Old, LaunchNonce: nonce, RequestedOptions: append([]string(nil), n.Options...)}
 		_, err = manager.Replace(context.Background(), daemon.BranchKey{RepositoryID: r.ID, Ref: branch}, accepted, worktree)
 		if err != nil {
 			_ = os.RemoveAll(worktree)
@@ -416,7 +423,7 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	if !strings.HasPrefix(ref, "refs/") {
 		ref = "refs/heads/" + ref
 	}
-	request := steps.PushRequest{Worktree: worktree, Remote: repo.PushURL(), Ref: ref, Candidate: run.HeadSHA, VerifiedHead: run.BaseSHA, BeforePush: func() error {
+	request := steps.PushRequest{Worktree: worktree, Remote: repo.PushURL(), Ref: ref, Candidate: run.HeadSHA, VerifiedHead: run.BaseSHA, Rewrite: run.BaseSHA != "", BeforePush: func() error {
 		current, checkErr := database.GetRun(run.ID)
 		if checkErr != nil {
 			return checkErr
@@ -432,33 +439,46 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 		runner.Register(name, func(stepCtx context.Context) error {
 			stepCtx = steps.WithWorktree(stepCtx, worktree)
 			stepCtx = steps.WithRepoConfig(stepCtx, effectiveConfig)
+			stepCtx = steps.WithRun(stepCtx, database, run.ID)
+			var stepErr error
 			switch name {
 			case pipeline.StepIntent:
-				return steps.Intent(stepCtx)
+				stepErr = steps.Intent(stepCtx)
 			case pipeline.StepRebase:
-				return steps.Rebase(stepCtx)
+				stepErr = steps.Rebase(stepCtx)
 			case pipeline.StepReview:
-				if err := steps.Review(stepCtx); err != nil {
-					return err
-				}
-				head, err := git.Run(stepCtx, worktree, "rev-parse", "HEAD")
-				if err != nil {
-					return err
-				}
-				return database.UpdateRunReviewApprovedHeadSHA(run.ID, head)
+				stepErr = steps.Review(stepCtx)
 			case pipeline.StepTest:
-				return steps.Test(stepCtx)
+				stepErr = steps.Test(stepCtx)
 			case pipeline.StepDocument:
-				return steps.Document(stepCtx)
+				stepErr = steps.Document(stepCtx)
 			case pipeline.StepLint:
-				return steps.Lint(stepCtx)
+				stepErr = steps.Lint(stepCtx)
 			case pipeline.StepPullRequest:
-				return steps.PR(stepCtx)
+				stepErr = steps.PR(stepCtx)
 			case pipeline.StepCI:
-				return steps.CI(stepCtx)
+				stepErr = steps.CI(stepCtx)
 			default:
-				return fmt.Errorf("unknown pipeline step %s", name)
+				stepErr = fmt.Errorf("unknown pipeline step %s", name)
 			}
+			if stepErr != nil {
+				return stepErr
+			}
+			// Persist the latest owned worktree head so restart recovery resumes
+			// from the output of the last completed modifying step.
+			if head, headErr := git.Run(stepCtx, worktree, "rev-parse", "HEAD"); headErr == nil {
+				if headErr = database.UpdateRunHeadSHA(run.ID, strings.TrimSpace(head)); headErr != nil {
+					return headErr
+				}
+			}
+			if name == pipeline.StepReview {
+				head, headErr := git.Run(stepCtx, worktree, "rev-parse", "HEAD")
+				if headErr != nil {
+					return headErr
+				}
+				return database.UpdateRunReviewApprovedHeadSHA(run.ID, strings.TrimSpace(head))
+			}
+			return nil
 		})
 	}
 	runner.Register(pipeline.StepPush, func(pushCtx context.Context) error {
@@ -466,8 +486,15 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 		if err != nil || current == nil || current.ReviewApprovedHeadSHA == nil {
 			return fmt.Errorf("review evidence is required before publication")
 		}
-		request.Candidate = *current.ReviewApprovedHeadSHA
-		request.ReviewedHead = *current.ReviewApprovedHeadSHA
+		head, err := git.Run(pushCtx, worktree, "rev-parse", "HEAD")
+		if err != nil {
+			return err
+		}
+		head = strings.TrimSpace(head)
+		if head != *current.ReviewApprovedHeadSHA {
+			return fmt.Errorf("worktree HEAD %s differs from reviewed head %s", head, *current.ReviewApprovedHeadSHA)
+		}
+		request.Candidate, request.ReviewedHead = head, *current.ReviewApprovedHeadSHA
 		_, err = steps.Publish(pushCtx, database, run.ID, request, func(mirrorCtx context.Context, candidate string) error {
 			_, err := git.RunBare(mirrorCtx, p.RepoDir(run.RepoID), "update-ref", ref, candidate)
 			return err

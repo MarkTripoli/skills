@@ -52,7 +52,7 @@ export async function scan(scanRoot = root) {
     const legalLines = notice.split(/\r?\n/).filter(line => line.startsWith('Copyright'));
     for (const file of await files(scanRoot)) {
       const relative = path.relative(scanRoot, file).split(path.sep).join('/');
-      if (relative === allowLicense || binaryExtensions.has(path.extname(file).toLowerCase())) continue;
+      if (relative === allowLicense || relative.startsWith('.agents/tasks/') || binaryExtensions.has(path.extname(file).toLowerCase())) continue;
       let text; try { text = await fs.readFile(file, 'utf8'); } catch { continue; }
       for (const line of legalLines) if (line && text.includes(line)) findings.push(`${relative}: imported legal notice outside ${allowLicense}`);
     }

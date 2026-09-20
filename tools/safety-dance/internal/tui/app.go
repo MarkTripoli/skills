@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -17,6 +19,28 @@ type App struct {
 	Refresh func() (Model, error)
 	Respond func(action string) error
 	Abort   func() error
+	Width   func() int
+}
+
+func terminalWidth(out io.Writer) int {
+	f, ok := out.(*os.File)
+	if !ok {
+		return 0
+	}
+	result, err := exec.Command("stty", "size", "-F", "/dev/tty").Output()
+	if err != nil {
+		return 0
+	}
+	parts := strings.Fields(string(result))
+	if len(parts) != 2 {
+		return 0
+	}
+	w, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0
+	}
+	_ = f
+	return w
 }
 
 // Run is the interactive terminal loop. It polls durable state so daemon
@@ -46,7 +70,13 @@ func (a *App) Run(ctx context.Context) error {
 			}
 			a.Model = m
 		}
-		_, err := fmt.Fprintln(a.Out, Render(a.Model, 0))
+		width := 0
+		if a.Width != nil {
+			width = a.Width()
+		} else {
+			width = terminalWidth(a.Out)
+		}
+		_, err := fmt.Fprintln(a.Out, Render(a.Model, width))
 		return err
 	}
 	if err := render(); err != nil {

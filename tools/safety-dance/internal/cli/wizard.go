@@ -2,8 +2,11 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/daemon"
@@ -40,22 +43,41 @@ func runWizard(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	service := daemon.Service{Home: p, Binary: "safety-dance", Executor: commandExecutor{}}
-	createdGate := false
+	executable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	executable, err = filepath.Abs(executable)
+	if err != nil {
+		return err
+	}
+	if info, statErr := os.Stat(executable); statErr != nil || info.IsDir() {
+		return fmt.Errorf("safety-dance executable is not a file: %s", executable)
+	}
+	service := daemon.Service{Home: p, Binary: executable, Executor: commandExecutor{}}
 	createdService := false
 	originalOrigin, originErr := git.GetRemoteURL(context.Background(), root, "origin")
 	hadOrigin := originErr == nil
 	if originErr != nil && !strings.Contains(originErr.Error(), "No such remote") {
 		return originErr
 	}
+	createdGate := false
+	configPath := filepath.Join(root, ".safety-dance.yaml")
+	configExisted := false
+	if _, statErr := os.Stat(configPath); statErr == nil {
+		configExisted = true
+	}
 	setup := wizard.Setup{
-		In:  cmd.InOrStdin(),
-		Out: cmd.OutOrStdout(),
+		In: cmd.InOrStdin(), Out: cmd.OutOrStdout(),
 		Write: func(model wizard.Model) error {
 			if model.Upstream != "" {
 				if err := git.EnsureRemote(context.Background(), root, "origin", model.Upstream); err != nil {
 					return err
 				}
+			}
+			content := fmt.Sprintf("gate: %q\nprovider: %q\n", model.Gate, model.Provider)
+			if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
+				return err
 			}
 			_, created, err := gate.Init(context.Background(), database, p, root)
 			createdGate = created
@@ -68,6 +90,9 @@ func runWizard(cmd *cobra.Command, args []string) error {
 					first = err
 				}
 			}
+			if !configExisted {
+				_ = os.Remove(configPath)
+			}
 			var restore error
 			if hadOrigin {
 				restore = git.EnsureRemote(context.Background(), root, "origin", originalOrigin)
@@ -75,15 +100,13 @@ func runWizard(cmd *cobra.Command, args []string) error {
 				restore = git.RemoveRemote(context.Background(), root, "origin")
 			}
 			if first != nil {
-				return first
+				return errors.Join(first, restore)
 			}
 			return restore
 		},
 		InstallService: func() error { createdService = !service.DefinitionExists(); return service.Install() },
-		StopService:    func() error { return service.Stop() },
-		ServiceCreated: func() bool { return createdService },
-		AskService:     true,
-		PromptLabels:   []string{"upstream"},
+		StopService:    func() error { return service.Stop() }, ServiceCreated: func() bool { return createdService },
+		AskService: true, PromptLabels: []string{"upstream", "gate", "provider"},
 	}
 	if err := setup.Run(context.Background()); err != nil {
 		return err

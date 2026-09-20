@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/types"
@@ -80,6 +81,35 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 				}
 			}
 			if persisted.Status == types.StepStatusCompleted || persisted.Status == types.StepStatusSkipped {
+				continue
+			}
+			if persisted.Status == types.StepStatusAwaitingApproval || persisted.Status == types.StepStatusFixReview {
+				for {
+					response, responseErr := r.Database.ConsumeResponse(r.RunID, string(n))
+					if responseErr != nil {
+						return r.Results, responseErr
+					}
+					if response != nil {
+						if response.Action == string(types.ActionAbort) {
+							return r.Results, fmt.Errorf("step %s aborted by operator", n)
+						}
+						if response.Action == string(types.ActionSkip) {
+							if err := r.Database.CompleteSkippedStep(persisted.ID, 0, 0, "", "operator skip"); err != nil {
+								return r.Results, err
+							}
+							break
+						}
+						if err := r.Database.CompleteStep(persisted.ID, 0, 0, ""); err != nil {
+							return r.Results, err
+						}
+						break
+					}
+					select {
+					case <-ctx.Done():
+						return r.Results, ctx.Err()
+					case <-time.After(100 * time.Millisecond):
+					}
+				}
 				continue
 			}
 			if err := r.Database.StartStep(persisted.ID); err != nil {

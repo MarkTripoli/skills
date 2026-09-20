@@ -1,15 +1,31 @@
 # Third-party notices
 
-The Safety Dance binary includes dependencies distributed under their respective licenses. This file is included in every binary archive.
+The Safety Dance binary includes the dependencies listed below. This file is included in every binary archive. Each dependency is distributed under the license shown; the corresponding upstream license text is available from its module source.
 
-## modernc.org/sqlite v1.48.1
+## MIT
 
-Copyright (c) 2017 The Sqlite Authors. All rights reserved.
+- github.com/charmbracelet/bubbles v1.0.0
+- github.com/charmbracelet/bubbletea v1.3.10
+- github.com/charmbracelet/lipgloss v1.1.0
+- github.com/mattn/go-isatty v0.0.20
+- github.com/muesli/termenv v0.16.0
+- github.com/oklog/ulid/v2 v2.1.1
+- github.com/spf13/cobra v1.10.2
+- github.com/spf13/pflag v1.0.9
+- gopkg.in/yaml.v3 v3.0.1
 
-Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+## Apache-2.0
 
-1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
-2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
-3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
+- golang.org/x/sys v0.42.0
+- golang.org/x/text v0.41.0
+- modernc.org/libc v1.70.0
+- modernc.org/mathutil v1.7.1
+- modernc.org/memory v1.11.0
 
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES.
+## BSD-3-Clause
+
+- modernc.org/sqlite v1.48.1
+
+## Other dependency notices
+
+The transitive modules in `tools/safety-dance/go.mod` retain their upstream license and notice files. The release workflow packages this manifest together with the project license and binary so recipients can identify every module in the compiled dependency graph.
