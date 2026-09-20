@@ -274,8 +274,8 @@ func (m *Manager) Replace(ctx context.Context, key BranchKey, accepted AcceptedR
 #### Automated Verification:
 
 - [ ] `cd tools/safety-dance && go test -race ./internal/db/... ./internal/daemon/... ./internal/custody/... ./internal/worktrees/...`
-- [ ] `cd tools/safety-dance && go test -race ./internal/daemon -run 'SameBranch|DifferentBranch|Restart|Singleton|Supersede'`
-- [ ] `cd tools/safety-dance && go test ./internal/worktrees -run 'Ownership|Cleanup|Recover|Preserve'`
+- [x] `cd tools/safety-dance && go test -race ./internal/daemon -run 'SameBranch|DifferentBranch|Restart|Singleton|Supersede'`
+- [x] `cd tools/safety-dance && go test ./internal/worktrees -run 'Ownership|Cleanup|Recover|Preserve'`
 
 Done when tests prove durable creation before execution, same-key cancellation and join, different-key overlap, singleton daemon ownership, restart classification, and worktree cleanup bounded by persisted ownership.
 
