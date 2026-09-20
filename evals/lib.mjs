@@ -35,15 +35,14 @@ function snapshotOther(stats) {
   return { kind: "other", type };
 }
 
-function snapshotEntry(file, stats) {
+function snapshotEntry(file, stats, omitFileContents = false) {
   if (stats.isSymbolicLink()) return snapshotSymbolicLink(file);
   if (stats.isDirectory()) return { kind: "directory" };
-  return stats.isFile()
-    ? snapshotBytes(fs.readFileSync(file))
-    : snapshotOther(stats);
+  if (!stats.isFile()) return snapshotOther(stats);
+  return omitFileContents ? { kind: "file" } : snapshotBytes(fs.readFileSync(file));
 }
 
-function snapshotTree(root, relativeRoot = "", excludedPaths = new Set()) {
+function snapshotTree(root, relativeRoot = "", excludedPaths = new Set(), contentlessFilePaths = new Set()) {
   const manifest = {};
   const fullRoot = path.join(root, relativeRoot);
   let rootStats;
@@ -56,7 +55,7 @@ function snapshotTree(root, relativeRoot = "", excludedPaths = new Set()) {
 
   const visit = (fullPath, relativePath, stats) => {
     if (excludedPaths.has(relativePath)) return;
-    if (relativePath) manifest[relativePath] = snapshotEntry(fullPath, stats);
+    if (relativePath) manifest[relativePath] = snapshotEntry(fullPath, stats, contentlessFilePaths.has(relativePath));
     if (!stats.isDirectory() || stats.isSymbolicLink()) return;
     const entries = fs.readdirSync(fullPath, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
@@ -90,11 +89,11 @@ export function snapshotRepository(root) {
   return snapshotTree(root, "", SNAPSHOT_EXCLUDED_DIRECTORIES);
 }
 
-export function snapshotNamedRoot(root, relativeRoot, { exclude = [] } = {}) {
+export function snapshotNamedRoot(root, relativeRoot, { exclude = [], omitFileContents = [] } = {}) {
   if (path.isAbsolute(relativeRoot) || path.dirname(relativeRoot) !== ".") {
     throw new Error(`snapshot root must be one repository-root entry: ${relativeRoot}`);
   }
-  return snapshotTree(root, relativeRoot, new Set(exclude));
+  return snapshotTree(root, relativeRoot, new Set(exclude), new Set(omitFileContents));
 }
 
 export function diffRepositorySnapshots(before, after) {

@@ -13,6 +13,10 @@ import {
 
 const temps = [];
 const fifoTest = process.platform === "win32" ? test.skip : test;
+const gitSnapshotOptions = {
+  exclude: [".git/config"],
+  omitFileContents: [".git/index"],
+};
 
 function repository() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "skills-excluded-root-eval-"));
@@ -24,6 +28,10 @@ function put(root, file, contents) {
   const target = path.join(root, file);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, contents);
+}
+
+function snapshotGitRoot(root) {
+  return snapshotNamedRoot(root, ".git", gitSnapshotOptions);
 }
 
 after(() => {
@@ -74,7 +82,7 @@ fifoTest("named excluded-root snapshots retain types without dereferencing paylo
   const before = {
     ".agents": snapshotNamedRoot(root, ".agents"),
     ".omp": snapshotNamedRoot(root, ".omp"),
-    ".git": snapshotNamedRoot(root, ".git", { exclude: [".git/config", ".git/index"] }),
+    ".git": snapshotGitRoot(root),
   };
 
   fs.rmSync(path.join(root, ".agents/file-to-directory"));
@@ -88,7 +96,7 @@ fifoTest("named excluded-root snapshots retain types without dereferencing paylo
   const afterSnapshot = {
     ".agents": snapshotNamedRoot(root, ".agents"),
     ".omp": snapshotNamedRoot(root, ".omp"),
-    ".git": snapshotNamedRoot(root, ".git", { exclude: [".git/config", ".git/index"] }),
+    ".git": snapshotGitRoot(root),
   };
 
   assert.deepEqual(diffExcludedRootSnapshots(before, afterSnapshot), {
@@ -123,19 +131,97 @@ test("excluded-root snapshots survive retained JSON round trips and legacy recor
   });
 });
 
-test("Git excluded-root snapshots omit only independently graded config and volatile index", () => {
+test("Git excluded-root snapshots omit only config and ordinary index contents", () => {
   const root = repository();
   put(root, ".git/config", "config\n");
   put(root, ".git/index", "volatile\n");
   put(root, ".git/hooks/outside-config", "before\n");
-  const before = snapshotNamedRoot(root, ".git", { exclude: [".git/config", ".git/index"] });
+  const before = snapshotGitRoot(root);
 
   put(root, ".git/config", "changed\n");
   put(root, ".git/index", "changed\n");
   put(root, ".git/hooks/outside-config", "after\n");
-  const afterSnapshot = snapshotNamedRoot(root, ".git", { exclude: [".git/config", ".git/index"] });
+  const afterSnapshot = snapshotGitRoot(root);
 
   assert.equal(".git/config" in afterSnapshot, false);
-  assert.equal(".git/index" in afterSnapshot, false);
+  assert.deepEqual(before[".git/index"], { kind: "file" });
+  assert.deepEqual(afterSnapshot[".git/index"], { kind: "file" });
   assert.deepEqual(diffRepositorySnapshots(before, afterSnapshot).changedPaths, [".git/hooks/outside-config"]);
+});
+
+test("Git excluded-root snapshots detect index file deletion and creation", () => {
+  const root = repository();
+  fs.mkdirSync(path.join(root, ".git"));
+  put(root, ".git/index", "before\n");
+  const fileSnapshot = snapshotGitRoot(root);
+
+  fs.rmSync(path.join(root, ".git/index"));
+  const absentSnapshot = snapshotGitRoot(root);
+
+  assert.deepEqual(diffRepositorySnapshots(fileSnapshot, absentSnapshot).changedPaths, [".git/index"]);
+  assert.deepEqual(diffRepositorySnapshots(absentSnapshot, fileSnapshot).changedPaths, [".git/index"]);
+});
+
+test("Git excluded-root snapshots detect index directories and descendants", () => {
+  const root = repository();
+  fs.mkdirSync(path.join(root, ".git"));
+  put(root, ".git/index", "before\n");
+  const fileSnapshot = snapshotGitRoot(root);
+
+  fs.rmSync(path.join(root, ".git/index"));
+  put(root, ".git/index/payload", "retained\n");
+  const directorySnapshot = snapshotGitRoot(root);
+
+  assert.deepEqual(directorySnapshot[".git/index"], { kind: "directory" });
+  assert.equal(directorySnapshot[".git/index/payload"].kind, "file");
+  assert.deepEqual(diffRepositorySnapshots(fileSnapshot, directorySnapshot).changedPaths, [
+    ".git/index",
+    ".git/index/payload",
+  ]);
+  assert.deepEqual(diffRepositorySnapshots(directorySnapshot, fileSnapshot).changedPaths, [
+    ".git/index",
+    ".git/index/payload",
+  ]);
+});
+
+test("Git excluded-root snapshots detect valid and dangling index symlinks without following them", () => {
+  const root = repository();
+  fs.mkdirSync(path.join(root, ".git"));
+  put(root, ".git/index-target", "private target bytes\n");
+  put(root, ".git/index", "before\n");
+  const fileSnapshot = snapshotGitRoot(root);
+
+  fs.rmSync(path.join(root, ".git/index"));
+  fs.symlinkSync("index-target", path.join(root, ".git/index"));
+  const validLinkSnapshot = snapshotGitRoot(root);
+  fs.rmSync(path.join(root, ".git/index"));
+  fs.symlinkSync("missing-target", path.join(root, ".git/index"));
+  const danglingLinkSnapshot = snapshotGitRoot(root);
+
+  assert.deepEqual(validLinkSnapshot[".git/index"], {
+    kind: "symlink",
+    linkTarget: "index-target",
+    sha256: "d679b9311d3065475ed2d49db173f2e6c062894f841be6b05dd2d73fe606ddce",
+  });
+  assert.equal("bytes" in validLinkSnapshot[".git/index"], false);
+  assert.equal(danglingLinkSnapshot[".git/index"].linkTarget, "missing-target");
+  assert.deepEqual(diffRepositorySnapshots(fileSnapshot, validLinkSnapshot).changedPaths, [".git/index"]);
+  assert.deepEqual(diffRepositorySnapshots(validLinkSnapshot, fileSnapshot).changedPaths, [".git/index"]);
+  assert.deepEqual(diffRepositorySnapshots(fileSnapshot, danglingLinkSnapshot).changedPaths, [".git/index"]);
+  assert.deepEqual(diffRepositorySnapshots(danglingLinkSnapshot, fileSnapshot).changedPaths, [".git/index"]);
+});
+
+fifoTest("Git excluded-root snapshots detect index FIFOs without reading payloads", () => {
+  const root = repository();
+  fs.mkdirSync(path.join(root, ".git"));
+  put(root, ".git/index", "before\n");
+  const fileSnapshot = snapshotGitRoot(root);
+
+  fs.rmSync(path.join(root, ".git/index"));
+  execFileSync("mkfifo", [path.join(root, ".git/index")]);
+  const fifoSnapshot = snapshotGitRoot(root);
+
+  assert.deepEqual(fifoSnapshot[".git/index"], { kind: "other", type: "fifo" });
+  assert.deepEqual(diffRepositorySnapshots(fileSnapshot, fifoSnapshot).changedPaths, [".git/index"]);
+  assert.deepEqual(diffRepositorySnapshots(fifoSnapshot, fileSnapshot).changedPaths, [".git/index"]);
 });

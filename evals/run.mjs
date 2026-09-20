@@ -47,7 +47,7 @@ const fixturesDir = path.join(here, "fixtures");
 const guidanceFiles = ["WRITING.md", "CONVENTIONS.md"];
 const excludedRootSpecs = [
   { root: ".agents", exclude: [] },
-  { root: ".git", exclude: [".git/config", ".git/index"] },
+  { root: ".git", exclude: [".git/config"], omitFileContents: [".git/index"] },
   { root: ".omp", exclude: [] },
 ];
 
@@ -192,9 +192,9 @@ function snapshot(taskDir) {
 }
 
 function snapshotExcludedRoots(root) {
-  return Object.fromEntries(excludedRootSpecs.map(({ root: relativeRoot, exclude }) => [
+  return Object.fromEntries(excludedRootSpecs.map(({ root: relativeRoot, ...options }) => [
     relativeRoot,
-    snapshotNamedRoot(root, relativeRoot, { exclude }),
+    snapshotNamedRoot(root, relativeRoot, options),
   ]));
 }
 
