@@ -10,11 +10,11 @@
 //   --keep     keep every scenario's temporary repository (failed ones are kept regardless)
 //   --model    pass an explicit model selector through to each spawned `omp` session
 //   --grade    no model: re-grade the recordings of an earlier run (`evals/results/<stamp>` or `latest`)
-//              with the current checks; git-state checks are skipped, everything else runs.
+//              with the current checks; live repository-only checks are skipped, retained evidence runs.
 //   SKILLS_EVAL_RESULTS_ROOT overrides `evals/results` for test isolation; relative paths resolve
 //              from the repository root. Leave unset for normal eval runs.
 //
-// Output: evals/results/<stamp>/<scenario>/<n>-<skill>/{prompt.md,answer.md,stderr.log,task/},
+// Output: evals/results/<stamp>/<scenario>/<n>-<skill>/{prompt.md,answer.md,stderr.log,exit-status.json,task/},
 // evals/results/<stamp>/<scenario>/report.json (written as each scenario ends),
 // evals/results/<stamp>/summary.json, and `evals/results/latest` pointing at the newest run.
 // Recordings are never deleted by a later run. Exit 1 when any phase fails.
@@ -30,6 +30,13 @@ import { buildRuntime } from "../scripts/lib/build.mjs";
 import { subjectProblems } from "../scripts/check-commits.mjs";
 import { CliArgumentError, parseEvalArgs } from "./cli.mjs";
 import { gitIndexChanged, snapshotGitIndex } from "./git-index.mjs";
+import {
+  excludedRootsManifestProblem,
+  gitConfigManifestProblem,
+  gitIndexManifestProblem,
+  phaseStatusProblem,
+  repositoryManifestProblem,
+} from "./manifest.mjs";
 import {
   artifacts,
   diffExcludedRootSnapshots,
@@ -181,9 +188,12 @@ function runOmp(prompt, cwd) {
         child.kill("SIGKILL");
       }
     }, (maxMinutes + 1) * 60 * 1000);
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
       clearTimeout(timer);
-      resolve({ code, stdout, stderr });
+      const status = code === null
+        ? { kind: "signal", signal: signal ?? "SIGUNKNOWN" }
+        : { kind: "exit", code };
+      resolve({ status, stdout, stderr });
     });
   });
 }
@@ -290,8 +300,13 @@ function commonChecks(phase, ctx) {
   return out;
 }
 
-function grade(phase, ctx, exitCode) {
-  return failures(exitCode === 0 ? null : `omp exited ${exitCode}`, commonChecks(phase, ctx), phase.check ? phase.check(ctx) : []);
+function statusFailure(status) {
+  if (status.kind === "exit") return status.code === 0 ? null : `omp exited ${status.code}`;
+  return `omp terminated by ${status.signal}`;
+}
+
+function grade(phase, ctx, status) {
+  return failures(statusFailure(status), commonChecks(phase, ctx), phase.check ? phase.check(ctx) : []);
 }
 
 function report(scenario, label, seconds, problems) {
@@ -305,6 +320,15 @@ function readJson(file) {
   } catch (error) {
     return { ok: false, problem: `recording: ${path.basename(file)} is unreadable or invalid JSON (${error.message})` };
   }
+}
+
+function readValidatedJson(file, validator) {
+  const parsed = readJson(file);
+  if (!parsed.ok) return parsed;
+  const problem = validator(parsed.value);
+  return problem
+    ? { ok: false, problem: `recording: ${path.basename(file)} manifest ${problem}` }
+    : parsed;
 }
 
 function completedRunProblems(runDir, selectedScenarios) {
@@ -387,19 +411,17 @@ async function runScenario(scenario, runDir, dist) {
     const template = templateFor(skillsDir, phase);
     const started = Date.now();
     console.log(`[${scenario.name}] ${label}: started`);
-    const { code, stdout, stderr } = await runOmp(prompt, repo);
+    const { status, stdout, stderr } = await runOmp(prompt, repo);
     const seconds = Math.round((Date.now() - started) / 1000);
     const afterRepository = phase.phaseType === "terminal" ? snapshotRepository(repo) : null;
     if (afterRepository) fs.writeFileSync(path.join(out, "repository-after.json"), `${JSON.stringify(afterRepository, null, 2)}\n`);
     const afterExcludedRoots = phase.phaseType === "terminal" ? snapshotExcludedRoots(repo) : null;
     if (afterExcludedRoots) fs.writeFileSync(path.join(out, "excluded-roots-after.json"), `${JSON.stringify(afterExcludedRoots, null, 2)}\n`);
     const afterGitConfig = phase.phaseType === "terminal" ? snapshotGitConfig(repo) : null;
-    const gitRootChanged = beforeExcludedRoots && afterExcludedRoots
-      ? diffExcludedRootSnapshots(beforeExcludedRoots, afterExcludedRoots)[".git"]?.length > 0
-      : false;
-    const afterGitIndex = phase.phaseType === "terminal" && !gitRootChanged ? snapshotGitIndex(repo) : null;
+    const afterGitIndex = phase.phaseType === "terminal" ? snapshotGitIndex(repo) : null;
     if (phase.phaseType === "terminal") fs.writeFileSync(path.join(out, "git-config-after.json"), `${JSON.stringify(afterGitConfig, null, 2)}\n`);
     if (phase.phaseType === "terminal") fs.writeFileSync(path.join(out, "git-index-after.json"), `${JSON.stringify(afterGitIndex, null, 2)}\n`);
+    fs.writeFileSync(path.join(out, "exit-status.json"), `${JSON.stringify(status, null, 2)}\n`);
     fs.writeFileSync(path.join(out, "answer.md"), stdout);
     fs.writeFileSync(path.join(out, "stderr.log"), stderr);
     if (fs.existsSync(taskDir)) fs.cpSync(taskDir, path.join(out, "task"), { recursive: true });
@@ -433,7 +455,7 @@ async function runScenario(scenario, runDir, dist) {
       artifact: phase.artifactType ? newest(taskDir, phase.artifactType) : null,
       artifacts: artifacts(taskDir),
     };
-    const problems = grade(phase, ctx, code);
+    const problems = grade(phase, ctx, status);
     result.phases.push({ phase: label, seconds, ok: problems.length === 0, problems });
     report(scenario.name, label, seconds, problems);
     if (problems.length) {
@@ -485,6 +507,22 @@ async function gradeScenario(scenario, runDir) {
         report(scenario.name, label, null, problems);
         break;
       }
+      const statusFile = path.join(out, "exit-status.json");
+      if (!fs.existsSync(statusFile)) {
+        const problems = ["recording: phase is incomplete (exit-status.json missing)"];
+        result.phases.push({ phase: label, seconds: null, ok: false, problems });
+        result.ok = false;
+        report(scenario.name, label, null, problems);
+        break;
+      }
+      const parsedStatus = readValidatedJson(statusFile, phaseStatusProblem);
+      if (!parsedStatus.ok) {
+        const problems = [parsedStatus.problem];
+        result.phases.push({ phase: label, seconds: null, ok: false, problems });
+        result.ok = false;
+        report(scenario.name, label, null, problems);
+        break;
+      }
       const beforeManifest = path.join(out, "repository-before.json");
       const afterManifest = path.join(out, "repository-after.json");
       const beforeGitConfigManifest = path.join(out, "git-config-before.json");
@@ -493,16 +531,27 @@ async function gradeScenario(scenario, runDir) {
       const afterGitIndexManifest = path.join(out, "git-index-after.json");
       const beforeExcludedRootsManifest = path.join(out, "excluded-roots-before.json");
       const afterExcludedRootsManifest = path.join(out, "excluded-roots-after.json");
-      const requiredManifests = [beforeManifest, afterManifest, beforeGitConfigManifest, afterGitConfigManifest, beforeGitIndexManifest, afterGitIndexManifest, beforeExcludedRootsManifest, afterExcludedRootsManifest];
-      if (phase.phaseType === "terminal" && requiredManifests.some((file) => !fs.existsSync(file))) {
-        const missing = requiredManifests.filter((file) => !fs.existsSync(file)).map((file) => path.basename(file));
+      const requiredManifests = [
+        { file: beforeManifest, validate: repositoryManifestProblem },
+        { file: afterManifest, validate: repositoryManifestProblem },
+        { file: beforeGitConfigManifest, validate: gitConfigManifestProblem },
+        { file: afterGitConfigManifest, validate: gitConfigManifestProblem },
+        { file: beforeGitIndexManifest, validate: gitIndexManifestProblem },
+        { file: afterGitIndexManifest, validate: gitIndexManifestProblem },
+        { file: beforeExcludedRootsManifest, validate: excludedRootsManifestProblem },
+        { file: afterExcludedRootsManifest, validate: excludedRootsManifestProblem },
+      ];
+      if (phase.phaseType === "terminal" && requiredManifests.some(({ file }) => !fs.existsSync(file))) {
+        const missing = requiredManifests.filter(({ file }) => !fs.existsSync(file)).map(({ file }) => path.basename(file));
         const problems = [`recording: phase is incomplete (required manifests missing: ${missing.join(", ")})`];
         result.phases.push({ phase: label, seconds: null, ok: false, problems });
         result.ok = false;
         report(scenario.name, label, null, problems);
         break;
       }
-      const parsedManifests = phase.phaseType === "terminal" ? requiredManifests.map(readJson) : [];
+      const parsedManifests = phase.phaseType === "terminal"
+        ? requiredManifests.map(({ file, validate }) => readValidatedJson(file, validate))
+        : [];
       const manifestProblems = parsedManifests.filter((manifest) => !manifest.ok).map((manifest) => manifest.problem);
       if (manifestProblems.length) {
         result.phases.push({ phase: label, seconds: null, ok: false, problems: manifestProblems });
@@ -543,7 +592,7 @@ async function gradeScenario(scenario, runDir) {
         artifact: phase.artifactType ? newest(taskDir, phase.artifactType) : null,
         artifacts: artifacts(taskDir),
       };
-      const problems = grade(phase, ctx, 0);
+      const problems = grade(phase, ctx, parsedStatus.value);
       result.phases.push({ phase: label, seconds: null, ok: problems.length === 0, problems });
       report(scenario.name, label, null, problems);
       if (problems.length) result.ok = false;

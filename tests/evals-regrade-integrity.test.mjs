@@ -62,15 +62,18 @@ function createHarness(prefix) {
     "    });",
     "  });",
     "  console.log('blocked scenario released');",
+    "  process.exitCode = Number(process.env.FAKE_OMP_EXIT ?? '0');",
     "  return;",
     "}",
     "const metadata = 'ai-utilities.json';",
     "if (fs.existsSync(metadata)) {",
     "  console.log('Mode: reconcile\\nObserved state: current\\nConflicts: none\\nWritten: none\\nVerification: unchanged bytes match\\nExternal operations: 0');",
+    "  process.exitCode = Number(process.env.FAKE_OMP_EXIT ?? '0');",
     "  return;",
     "}",
     "fs.writeFileSync(metadata, `${JSON.stringify({ vcs: { platform: 'github' }, onboarding: { schemaVersion: 1, profile: 'default', appliedRevision: 1, providers: {} } }, null, 2)}\\n`);",
     "console.log('Mode: reconcile\\nUnresolved choices: ticketing.tool\\nWritten: ai-utilities.json\\nVerification: success\\nExternal operations: 0');",
+    "process.exitCode = Number(process.env.FAKE_OMP_EXIT ?? '0');",
     "})();",
   ].join("\n"));
   fs.chmodSync(omp, 0o755);
@@ -143,6 +146,97 @@ test("regrade rejects a completed terminal recording with a required manifest re
     // Then
     assert.notEqual(regrade.status, 0);
     assert.match(regrade.stdout, /incomplete/i);
+  } finally {
+    removeFixtureRepositories(harness.resultsRoot);
+    fs.rmSync(harness.temp, { recursive: true, force: true });
+  }
+});
+
+test("live and retained grading preserve a nonzero OMP exit", async () => {
+  // Given
+  const harness = createHarness("skills-exit-status-regrade-");
+  const env = { ...harness.env, FAKE_OMP_EXIT: "7" };
+  try {
+    // When
+    const live = await runEval([basicScenario], ["--keep", "--max-time", "1"], env);
+    const runDir = fs.realpathSync(path.join(harness.resultsRoot, "latest"));
+    const regrade = await runEval([basicScenario], ["--grade", runDir], env);
+
+    // Then
+    assert.equal(live.status, 1);
+    assert.match(live.stdout, /omp exited 7/);
+    assert.equal(regrade.status, 1);
+    assert.match(regrade.stdout, /omp exited 7/);
+  } finally {
+    removeFixtureRepositories(harness.resultsRoot);
+    fs.rmSync(harness.temp, { recursive: true, force: true });
+  }
+});
+
+test("regrade rejects every malformed retained manifest shape even when before and after match", async (t) => {
+  // Given
+  const harness = createHarness("skills-manifest-schema-regrade-");
+  try {
+    const live = await runEval([basicScenario], ["--keep", "--max-time", "1"], harness.env);
+    assert.equal(live.status, 0, live.stderr || live.stdout);
+    const runDir = fs.realpathSync(path.join(harness.resultsRoot, "latest"));
+    const phaseDir = path.join(runDir, basicScenario, "1-setup-repository");
+    const cases = [
+      {
+        name: "repository",
+        files: ["repository-before.json", "repository-after.json"],
+        mutate(value) {
+          return { ...value, "malformed-record": { kind: "unknown" } };
+        },
+      },
+      {
+        name: "excluded roots",
+        files: ["excluded-roots-before.json", "excluded-roots-after.json"],
+        mutate(value) {
+          return {
+            ...value,
+            ".agents": { ...value[".agents"], ".agents/malformed": { kind: "unknown" } },
+          };
+        },
+      },
+      {
+        name: "Git config",
+        files: ["git-config-before.json", "git-config-after.json"],
+        mutate() {
+          return { kind: "file", sha256: "0".repeat(64), bytes: "c2VjcmV0" };
+        },
+      },
+      {
+        name: "Git index",
+        files: ["git-index-before.json", "git-index-after.json"],
+        mutate() {
+          return {};
+        },
+      },
+    ];
+
+    for (const manifestCase of cases) {
+      await t.test(manifestCase.name, async () => {
+        const originals = manifestCase.files.map((file) => fs.readFileSync(path.join(phaseDir, file), "utf8"));
+        try {
+          for (const [index, file] of manifestCase.files.entries()) {
+            const parsed = JSON.parse(originals[index]);
+            fs.writeFileSync(path.join(phaseDir, file), `${JSON.stringify(manifestCase.mutate(parsed), null, 2)}\n`);
+          }
+
+          // When
+          const regrade = await runEval([basicScenario], ["--grade", runDir], harness.env);
+
+          // Then
+          assert.equal(regrade.status, 1);
+          assert.match(regrade.stdout, /manifest|recording/i);
+        } finally {
+          for (const [index, file] of manifestCase.files.entries()) {
+            fs.writeFileSync(path.join(phaseDir, file), originals[index]);
+          }
+        }
+      });
+    }
   } finally {
     removeFixtureRepositories(harness.resultsRoot);
     fs.rmSync(harness.temp, { recursive: true, force: true });
