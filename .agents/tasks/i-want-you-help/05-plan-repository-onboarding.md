@@ -363,8 +363,8 @@ Migrate supported older onboarding state and profile revisions while preserving 
 
 #### Automated Verification:
 
-- [ ] `node scripts/validate.mjs`
-- [ ] `npm run evals -- setup-repository-migration --keep`
+- [x] `node scripts/validate.mjs`
+- [x] `npm run evals -- setup-repository-migration --keep`
 
 human-gated: false
 
