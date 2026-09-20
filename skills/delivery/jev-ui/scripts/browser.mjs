@@ -18,8 +18,14 @@ const safeRaw = (raw, elements, sensitiveElements=elements) => {
   const lines = text.split(/\r?\n/);
   const filtered = [];
   let redactNextStatic = false;
+  let sensitiveIndent = null;
   for (const line of lines) {
-    if (SECRET_NAME.test(line)) { redactNextStatic = true; continue; }
+    const indent = (line.match(/^\s*/)?.[0].length ?? 0);
+    if (sensitiveIndent !== null) {
+      if (line.trim() && indent > sensitiveIndent) continue;
+      sensitiveIndent = null;
+    }
+    if (SECRET_NAME.test(line)) { redactNextStatic = true; sensitiveIndent = indent; continue; }
     if (redactNextStatic && /statictext|textbox|input|value|text/i.test(line)) { redactNextStatic = false; continue; }
     redactNextStatic = false;
     filtered.push(line);
