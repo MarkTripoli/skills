@@ -6,11 +6,11 @@ import os from "node:os";
 import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const resultsRoot = path.join(repoRoot, "evals", "results");
 
 test("terminal capture diagnoses a symlinked Git root live and during retained regrade", () => {
   // Given
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "skills-git-root-runner-"));
+  const resultsRoot = path.join(temp, "results");
   const bin = path.join(temp, "bin");
   const external = path.join(temp, "external-git");
   fs.mkdirSync(bin);
@@ -24,10 +24,14 @@ test("terminal capture diagnoses a symlinked Git root live and during retained r
     'printf "unsafe mutation attempted\\n"',
   ].join("\n"));
   fs.chmodSync(omp, 0o755);
-  const latest = path.join(resultsRoot, "latest");
-  const previousLatest = fs.existsSync(latest) ? fs.readlinkSync(latest) : null;
   let runDir = null;
   let fixtureRepo = null;
+  const env = {
+    ...process.env,
+    CR008_EXTERNAL_GIT: external,
+    PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+    SKILLS_EVAL_RESULTS_ROOT: resultsRoot,
+  };
 
   try {
     // When
@@ -40,15 +44,12 @@ test("terminal capture diagnoses a symlinked Git root live and during retained r
     ], {
       cwd: repoRoot,
       encoding: "utf8",
-      env: {
-        ...process.env,
-        CR008_EXTERNAL_GIT: external,
-        PATH: `${bin}${path.delimiter}${process.env.PATH}`,
-      },
+      env,
     });
-    const runMatch = /recordings in (evals\/results\/[^\s]+)/.exec(live.stdout);
+    const runMatch = /recordings in ([^;\n]+)/.exec(live.stdout);
     assert.ok(runMatch, live.stderr || live.stdout);
-    runDir = path.join(repoRoot, runMatch[1]);
+    runDir = path.resolve(repoRoot, runMatch[1].trim());
+    assert.equal(path.dirname(runDir), resultsRoot);
     const phaseDir = path.join(runDir, "setup-repository-basic", "1-setup-repository");
     const report = JSON.parse(fs.readFileSync(path.join(runDir, "setup-repository-basic", "report.json"), "utf8"));
     fixtureRepo = report.repo;
@@ -66,7 +67,7 @@ test("terminal capture diagnoses a symlinked Git root live and during retained r
       "setup-repository-basic",
       "--grade",
       runDir,
-    ], { cwd: repoRoot, encoding: "utf8" });
+    ], { cwd: repoRoot, encoding: "utf8", env });
 
     // Then
     assert.equal(live.status, 1);
@@ -80,9 +81,6 @@ test("terminal capture diagnoses a symlinked Git root live and during retained r
     assert.doesNotMatch(`${live.stderr}\n${regrade.stderr}`, /ENOTDIR|not a directory/);
   } finally {
     if (fixtureRepo) fs.rmSync(fixtureRepo, { recursive: true, force: true });
-    if (runDir) fs.rmSync(runDir, { recursive: true, force: true });
-    fs.rmSync(latest, { force: true });
-    if (previousLatest !== null) fs.symlinkSync(previousLatest, latest);
     fs.rmSync(temp, { recursive: true, force: true });
   }
 });

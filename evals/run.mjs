@@ -11,6 +11,8 @@
 //   --model    pass an explicit model selector through to each spawned `omp` session
 //   --grade    no model: re-grade the recordings of an earlier run (`evals/results/<stamp>` or `latest`)
 //              with the current checks; git-state checks are skipped, everything else runs.
+//   SKILLS_EVAL_RESULTS_ROOT overrides `evals/results` for test isolation; relative paths resolve
+//              from the repository root. Leave unset for normal eval runs.
 //
 // Output: evals/results/<stamp>/<scenario>/<n>-<skill>/{prompt.md,answer.md,stderr.log,task/},
 // evals/results/<stamp>/<scenario>/report.json (written as each scenario ends),
@@ -41,7 +43,14 @@ import {
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..");
-const resultsRoot = path.join(here, "results");
+const configuredResultsRoot = process.env.SKILLS_EVAL_RESULTS_ROOT;
+if (configuredResultsRoot !== undefined && configuredResultsRoot.trim() === "") {
+  console.error("SKILLS_EVAL_RESULTS_ROOT needs a non-empty path");
+  process.exit(2);
+}
+const resultsRoot = configuredResultsRoot === undefined
+  ? path.join(here, "results")
+  : path.resolve(repoRoot, configuredResultsRoot);
 const scenariosDir = path.join(here, "scenarios");
 const fixturesDir = path.join(here, "fixtures");
 const guidanceFiles = ["WRITING.md", "CONVENTIONS.md"];
