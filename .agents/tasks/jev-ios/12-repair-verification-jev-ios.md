@@ -1,7 +1,7 @@
 ---
 type: repair-verification
 revision: bf603e1
-status: pending-independent-review
+status: complete
 summary: "Diagnosed repeated iOS WAIT decisions after text entry; iOS-only post-text confirmation now excludes WAIT while Android retains it. Plain omp -p replacement and rebuilt standalone Codex both pass with independent status observations."
 ---
 

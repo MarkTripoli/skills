@@ -1,8 +1,8 @@
 ---
 task: jev-ios
 type: verification
-summary: "Historical iOS acceptance and cleanup repair proof remain preserved; latest iOS WAIT repair and plain-helper native reruns pass, with independent review pending."
-status: pending-independent-review
+summary: "Historical iOS acceptance and cleanup repair proof remain preserved; latest iOS WAIT repair and plain-helper native reruns pass, with independent review complete."
+status: complete
 revision: bf603e1
 target: main
 ---
@@ -21,7 +21,7 @@ target: main
 
 | Id | Item | Decided by | Expected | Observed | Verdict | Confidence | Severity |
 |---|---|---|---|---|---|---|---|
-| C1 | Aggregate repository test. | `npm test` | Exits 0 with no failing test. | Exit 0; validation and plugin sync passed; Node reported `tests 149`, `pass 149`, `fail 0`, `skipped 0`, `todo 0`. | pass | 1.00 | 0 |
+| C1 | Aggregate repository test. | `npm test` | Exits 0 with no failing test. | Exit 0; validation and plugin sync passed; Node reported `tests 150`, `pass 150`, `fail 0`, `skipped 0`, `todo 0`. | pass | 1.00 | 0 |
 | C2 | Claude Code runtime build. | `node scripts/build-runtimes.mjs --runtime claude-code --dest /tmp/jev-ios-verify-8a45b9b.4fozOj/build-claude-code` | Exits 0 and builds the requested runtime. | Exit 0; `built claude-code: 43 skills, 7 workers`. | pass | 1.00 | 0 |
 | C3 | Codex runtime build. | `node scripts/build-runtimes.mjs --runtime codex --dest /tmp/jev-ios-verify-8a45b9b.4fozOj/build-codex` | Exits 0 and builds the requested runtime. | Exit 0; `built codex: 43 skills, 7 workers`. | pass | 1.00 | 0 |
 | C4 | Oh My Pi runtime build. | `node scripts/build-runtimes.mjs --runtime oh-my-pi --dest /tmp/jev-ios-verify-8a45b9b.4fozOj/build-oh-my-pi` | Exits 0 and builds the requested runtime. | Exit 0; `built oh-my-pi: 43 skills, 7 workers`. | pass | 1.00 | 0 |
@@ -42,8 +42,8 @@ target: main
 | A5 | Explicit identity and safe input replacement (`task.md:35`; claimed: yes). | Inspect the A2-A4 receipts and their independent observations. | Receipts prove device, app, driver, PID, and safe replacement without identity drift. | Receipts name the authorized UDID, `ai.typesafe.jevfixture`, `idb`, simulator identity, and one stable PID per run; current replacement changed Casey to Jordan under PID `39070` before independent Status changed. | pass | 0.80 | 0 |
 | A6 | Truthful blocked outcome and owned app/recording cleanup across outcomes (`task.md:35`; claimed: yes). | Run zero-action acceptance with `--max-actions 0`, inspect its receipt, query `idb list-apps`, inspect verifier-owned recording processes, then stop owned services. | Zero-action remains blocked, evidence is retained, and owned app, recording, companion, and simulator resources stop. | Current continuation zero-action exited 1 as expected with `blocked` / `action budget exhausted`; verified media was retained. The prior and current owned cleanup checks leave no verifier recorder, stop the companion, remove its socket, and return the simulator to `Shutdown`. | pass | 1.00 | 0 |
 | A7 | Installed standalone iOS execution uses external dependencies (`task.md:36`; claimed: yes). | Rebuilt `/tmp/jev-ios-cr001-codex/skills/jev-ui/scripts/acceptance.mjs` with external companion, plain `omp -p`, absolute record-evidence command. | Exit 0; independent `Confirmed Name`, stable PID `16750`, verified recording. | pass | hand | 0 |
-| A8 | Aggregate regression and packaging preserve browser and Android boundaries (`task.md:37`; claimed: yes). | C1-C5 and controller/cleanup probes. | C1 passed 149 tests; all four runtime packages passed; `jev-controller-probe` returned `TYPE_TEXT,WAIT,DONE`; no Android device was touched. | pass | hand | 0 |
-| A9 | Independent review follows verification (`task.md:37`; claimed: pending). | Next independent review after this repair. | Previous review findings are superseded by the current repair batch; no new review has run. | untested | hand | 0
+| A8 | Aggregate regression and packaging preserve browser and Android boundaries (`task.md:37`; claimed: yes). | C1-C5 and controller/cleanup probes. | C1 passed 150 tests; all four runtime packages passed; `jev-controller-probe` returned `TYPE_TEXT,WAIT,DONE`; no Android device was touched. | pass | hand | 0 |
+| A9 | Independent review follows verification (`task.md:37`; claimed: yes). | `13-code-review-jev-ios.md` at clean HEAD `c5fa96c`. | Independent review decision approve; no critical or major findings. | pass | hand | 0
 
 Verdicts: `pass`, `fail`, or `untested` (nothing in this environment could decide it). Confidence is the helper's probability for the verdict, or `hand` when decided without it; deterministic verdicts record `1.00`. Severity: 0 none, 1 cosmetic, 2 functional, 3 blocking.
 
@@ -53,7 +53,7 @@ The latest native reruns diagnosed repeated iOS WAIT decisions after successful 
 
 ## Missing
 
-No implementation or acceptance item remains open in this matrix; independent review of the product repair and current receipts remains pending.
+No implementation or acceptance item remains open in this matrix; independent review of the product repair and current receipts is complete.
 
 ## Human Review
 
@@ -65,10 +65,10 @@ No implementation or acceptance item remains open in this matrix; independent re
 
 - [x] `npm test` exits 0 with 150 passing tests and no failures.
 - [x] Four runtime builds exit 0 in `/tmp/jev-ios-final-builds/`.
-- [x] `node scripts/check-commits.mjs origin/main..HEAD` exits 0 with 16 valid subjects.
+- [x] `node scripts/check-commits.mjs origin/main..HEAD` exits 0 with 32 valid subjects.
 - [x] Historical `8a45b9b` receipts preserve Name, Casey-to-Jordan, standalone, and blocked flows; current repair probes and receipts preserve prior generic/failed outcomes.
 - [x] Affected generic, exact-Name, Casey-to-Jordan, blocked, and installed standalone native reruns after the chooser/parser repair.
-- [ ] Independent review of `bf603e1` and current native evidence.
+- [x] Independent review of `bf603e1` and current native evidence: `13-code-review-jev-ios.md` clean at `c5fa96c`.
 - [x] Authorized simulator is Shutdown, the owned IDB socket is absent, and no verifier-owned acceptance process remains.
 
 ### Known limits

@@ -1,7 +1,7 @@
 ---
 type: repair-verification
 revision: d57ae13
-status: pending-independent-review
+status: complete
 summary: "Full production text-helper protocol was probed with the raw goal and real iOS field context; direct literal fallback enabled exact Name and generic native proof, while Casey replacement and installed standalone remained blocked without budget changes."
 ---
 

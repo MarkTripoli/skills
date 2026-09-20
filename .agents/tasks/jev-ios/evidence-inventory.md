@@ -102,3 +102,12 @@ No credential-bearing files or video binaries are included in this committed inv
 - Final owned cleanup: authorized simulator `7A023F51-F0DA-4179-868B-19207E433651` was `Shutdown`; `/tmp/atomic-migration.JBu9Sk/jev-ios-idb.sock` was absent after stopping the owned companion.
 
 - Current blocked cleanup receipt: `continuation-20260920/zero-action/jev-receipt.json` reports `blocked` / `action budget exhausted` with verified recording; the companion-unavailable and action-budget failures remain non-green.
+
+## Final synchronization (2026-09-20)
+
+- Status: complete after independent clean review `13-code-review-jev-ios.md` at `c5fa96c`; no critical or major findings. Minor receipt-provenance suggestion is deferred.
+- Every pre-edit task artifact was byte-archived before editing under `evidence/final-sync-20260920/originals/`; hashes are in `evidence/final-sync-20260920/originals.sha256`.
+- Current replacement evidence was copied (not moved) from `/tmp/jev-ios-current-replacement` to ignored `evidence/final-sync-20260920/current-replacement/`. Standalone current receipt/media evidence was copied (not moved) from the retained standalone evidence source recorded in `source-sha256.txt` to ignored `evidence/final-sync-20260920/current-standalone/`. No video binary is committed or uploaded.
+- `source-sha256.txt` records SHA-256 for the current replacement receipt and standalone receipt. Accepted plain `omp -p` direct goals and their provenance are recorded verbatim in `11-repair-verification-jev-ios.md` and `12-repair-verification-jev-ios.md`.
+- The long goal's empty helper output, rejected rewriting wrapper, blocked attempts, and genuine failed cb7b53a outcome remain preserved as non-green historical evidence. No fabricated pass is claimed.
+- Final cleanup evidence: authorized simulator `Shutdown`; owned IDB socket absent; owned companion/recorder stopped; unrelated processes untouched. `task.md` remained byte-identical.

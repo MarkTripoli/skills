@@ -1,8 +1,8 @@
 ---
 task: jev-ios
 type: repair-verification
-summary: "The latest review batch is repaired as two root causes: ordinary native WAIT preservation and truthful iOS cleanup-state parsing. Offline regressions and probes pass; affected live iOS reruns were attempted but blocked by the external helper, so independent review remains pending."
-status: pending-affected-native-proof
+summary: "The latest review batch is repaired as two root causes: ordinary native WAIT preservation and truthful iOS cleanup-state parsing. Offline regressions and probes pass; affected live iOS reruns were attempted but blocked by the external helper, so independent review is complete."
+status: complete
 revision: b95285c
 ---
 
@@ -25,7 +25,7 @@ After `b95285c`:
 - `node --test --test-name-pattern='ordinary native text|iOS cleanup rejects' tests/jev-ui-controller.test.mjs` -> 2 passed.
 - `node /tmp/jev-controller-probe.mjs` -> `TYPE_TEXT,WAIT,DONE`, `passed`; origin baseline unchanged.
 - `node /tmp/jev-stop-probe.mjs` -> empty/malformed/interrupted-empty report `iOS app-state observation is unusable`; valid Unknown remains verified stopped.
-- `npm test` -> 149 passed, 0 failed, 0 skipped, 0 todo.
+- `npm test` -> 150 passed, 0 failed, 0 skipped, 0 todo.
 
 The durable tests are in `tests/jev-ui-controller.test.mjs`; no test is skipped or source-text-only.
 
@@ -40,7 +40,7 @@ No Android device or ADB server, unrelated process, old Atomic run, upload, push
 - Four runtime builds into `/tmp/jev-ios-cont-build-codex/` (Codex) and the recorded latest all-runtime destination passed: 43 skills/7 workers for claude-code, codex, oh-my-pi; 43 skills/0 workers for pi.
 - `node scripts/check-commits.mjs origin/main..HEAD` passed before this artifact commit with 16 valid subjects.
 - Bounded qlty check ran from `/tmp/jev-qlty-bin/qlty` and found one existing medium ShellCheck advisory at `skills/delivery/jev-ui/fixture/ios/install-authorized.sh:6:6`; no unrelated edit was made.
-- Final cleanup checked: authorized simulator `Shutdown`, owned IDB socket absent, and continuation companion process stopped. Independent review remains pending; this phase does not self-approve.
+- Final cleanup checked: authorized simulator `Shutdown`, owned IDB socket absent, and continuation companion process stopped. Independent review is complete; this phase does not self-approve.
 
 ## Next
 

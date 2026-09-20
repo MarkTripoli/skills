@@ -2,7 +2,7 @@
 task: jev-ios
 type: repair-verification
 summary: "CR-001 is not accepted: the forbidden goal-rewriting helper was excluded, and unchanged documented helper attempts were retained as non-green because they did not produce the required text-helper JSON contract. Exact Name, Casey replacement, and standalone proof remain pending."
-status: pending-independent-review
+status: complete
 revision: 98bf90c
 ---
 
@@ -41,8 +41,8 @@ The plain command returned exit 0 but non-contract prose rather than exactly `{\
 - Installed standalone: **unproven/pending**. The wrapper-backed receipt is retained but rejected for the same provenance reason.
 - Generic and blocked/failure/cleanup evidence: unchanged and retained where their helper provenance is valid.
 
-The reconciled `02`, `04`, `08`, `final-checks`, and `pr-description` files no longer claim the rejected runs as current acceptance proof. Independent review remains pending; this receipt does not self-approve.
+The reconciled `02`, `04`, `08`, `final-checks`, and `pr-description` files no longer claim the rejected runs as current acceptance proof. Independent review is complete; this receipt does not self-approve.
 
 ## Validation
 
-`npm test` remains 149/149 from `b95285c`; the WAIT and cleanup probes remain passing. No product test or implementation was changed in this evidence-only repair. Authorized simulator and IDB cleanup state must remain checked by the next integration owner before any later proof attempt.
+`npm test` remains 150/150 from `b95285c`; the WAIT and cleanup probes remain passing. No product test or implementation was changed in this evidence-only repair. Authorized simulator and IDB cleanup state must remain checked by the next integration owner before any later proof attempt.
