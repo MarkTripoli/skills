@@ -1,8 +1,8 @@
 ---
 task: jev-ios
 type: verification
-summary: "Repository tests, four runtime builds, commit validation, live iOS acceptance, installed standalone execution, truthful blocked handling, and owned cleanup are verified against implementation revision 8a45b9b. Independent code review remains pending; this artifact does not claim overall completion."
-status: pending-independent-review
+summary: "Repository tests, four runtime builds, commit validation, five live iOS acceptance cases, installed standalone execution, truthful blocked handling, and owned cleanup passed against revision 8a45b9b. The repaired label-equal Name case reached independently observed `Confirmed Name` after `TYPE_TEXT`, `TAP`, and `DONE`. Independent code review remains the next phase."
+status: passed
 revision: 8a45b9b
 target: main
 ---
