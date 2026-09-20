@@ -11,16 +11,6 @@ if (!url || !directory || !evidence) throw new Error("Usage: EVIDENCE=/path/evid
 const session = path.resolve(directory);
 if (!fs.existsSync(session)) throw new Error("Start an external recorder session before capture");
 if (fs.existsSync(path.join(session, "capture.json"))) throw new Error("Use a distinct recorder session for every capture");
-// The continuation evaluator pauses only this capture entry, before any new video starts.
-const pauseFile = process.env.ITERATE_EVIDENCE_CAPTURE_PAUSE;
-if (pauseFile && fs.existsSync(pauseFile)) {
-  const pause = JSON.parse(fs.readFileSync(pauseFile, "utf8"));
-  const hash = (file) => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
-  if (hash(path.join(pause.repo, "app.js")) !== pause.appSha256 && hash(path.join(pause.repo, "check.mjs")) !== pause.checkSha256 && !fs.existsSync(`${pauseFile}.released`)) {
-    fs.writeFileSync(`${pauseFile}.waiting`, JSON.stringify({ session, pid: process.pid, at: new Date().toISOString() }));
-    while (!fs.existsSync(`${pauseFile}.released`)) await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-}
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const annotate = (...args) => execFileSync("python3", [evidence, "annotate", session, ...args], { encoding: "utf8" });
 const browser = await chromium.launch();
@@ -34,23 +24,30 @@ try {
   await page.goto(url);
   const served = await (await servedResponse).body();
   fs.writeFileSync(path.join(session, "served-app.js"), served);
+  // Flush the initial paint before interactions; short captures otherwise lost this prefix.
+  await page.screenshot();
   const actions = [];
   const mark = (flow) => actions.push({ flow, wallTime: Date.now() / 1000, videoTime: Date.now() / 1000 - startedAt });
-  annotate("--type", "setup", "--message", "Fresh counter page at 1280 by 720");
-  await page.waitForTimeout(1000);
+  annotate("--type", "setup", "--message", "Fresh counters A-D at 1280 by 720");
+  await page.waitForTimeout(3000);
   mark("initial");
-  annotate("--type", "test_start", "--message", "One Add one activation from zero");
-  await page.getByRole("button", { name: "Add one", exact: true }).click();
-  await page.waitForTimeout(1000);
-  mark("increment");
-  annotate("--type", "assertion", "--result", "untested", "--message", "Recorded increment state; pixel inspection pending");
-  await page.waitForTimeout(1000);
-  annotate("--type", "test_start", "--message", "Reset from the current nonzero count");
-  await page.getByRole("button", { name: "Reset", exact: true }).click();
-  await page.waitForTimeout(1000);
-  mark("reset");
-  annotate("--type", "assertion", "--result", "untested", "--message", "Recorded Reset state; pixel inspection pending");
-  await page.waitForTimeout(1000);
+  for (const counter of ["A", "B", "C", "D"]) {
+    annotate("--type", "test_start", "--message", `${counter}-increment: Add one from zero`);
+    await page.locator(`#add-${counter}`).click();
+    await page.waitForTimeout(1000);
+    mark(`${counter}-increment`);
+    annotate("--type", "assertion", "--result", "untested", "--message", `${counter}-increment recorded; pixel inspection pending`);
+    await page.waitForTimeout(1000);
+  }
+  await page.waitForTimeout(3000);
+  for (const counter of ["A", "B", "C", "D"]) {
+    annotate("--type", "test_start", "--message", `${counter}-reset: Reset from the current nonzero count`);
+    await page.locator(`#reset-${counter}`).click();
+    await page.waitForTimeout(1000);
+    mark(`${counter}-reset`);
+    annotate("--type", "assertion", "--result", "untested", "--message", `${counter}-reset recorded; pixel inspection pending`);
+    await page.waitForTimeout(1000);
+  }
   const video = page.video();
   await context.close();
   context = null;

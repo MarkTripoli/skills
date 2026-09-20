@@ -98,7 +98,28 @@ Review the actual denied `read` result after successful capture, active tools, e
 
 The disagreement case supplies an external baseline with evaluator-added `passed` assertions through the unchanged recorder CLI. The subject receives no diagnosis, has limit `0`, and must inspect pixels against the unchanged specification. Original baseline media, labels, and metadata are hashed at every tool boundary. Independently open increment `2` and Reset `0`, retain timestamps and matching image-result hashes, and review failed/exhaustion with no source/check mutations. Fill each case's `review.json` from its retained review guide before saved grading. Original live reports remain pending-review evidence rather than being rewritten as successful runs.
 
-Saved regrading reads retained repair evidence, not a reconstructed original fixture or mutable host source. It does not execute the agent or supply missing inspection. The complete plan contains exactly seven live cases: primary repair, viewer blocked, label disagreement, no progress, zero limit, three rounds, and continuation. Only explicitly executed cases establish behavior; offline checks and this primary case do not prove the later cases.
+Phase 3 covers bounded work and a fresh-session continuation:
+
+```sh
+npm run evals -- iterate-evidence-no-progress iterate-evidence-zero-limit iterate-evidence-three-rounds iterate-evidence-continuation --keep --max-time 25
+```
+
+The no-progress subject delegates one unused-setting edit to a real, bounded OMP worker. Review its retained trace and the unchanged defective handler, not a simulated worker result. The zero-limit subject records truthful baseline evidence without editing source or checks. The four-counter case omits an explicit limit and requires baseline plus three productive passes: increment values `2222`, `1222`, `1122`, `1112`; every Reset stays `0`.
+
+Continuation pauses the fixed capture entry after source/check work and a persisted reservation. The harness terminates the owned subject and its paused capture child, preserves both traces and the receipt, then starts a new OMP invocation naming that receipt. Releasing an orphaned capture is not fresh-session proof: the accepted capture must start after the new session and complete the same consumed round without replaying edits.
+
+Open each case's recordings and exact retained subject image payloads before filling `review.json`. Large source PNG sheets may be resized to WebP by the subject's viewer; retain and independently inspect both identities instead of equating their hashes. Missing review, worker/session trace, transformed image, or any required pass observation must fail grading.
+
+Use explicit result directories, especially after rerunning only rejected cases. These retained commands each passed their named scenarios; original live reports and rejected attempts remain unchanged:
+
+```sh
+npm run evals -- iterate-evidence-no-progress iterate-evidence-zero-limit --grade evals/results/20260920-060301
+npm run evals -- iterate-evidence-three-rounds iterate-evidence-continuation --grade evals/results/20260920-061857
+```
+
+The first run's three-rounds recording missed its initial state, and its continuation left an orphaned capture alive. Neither establishes acceptance. The fresh second run follows a capture paint flush plus initial dwell, and termination of the paused owned capture before fresh-session launch. `phase-3-grade-controls.json` in each directory retains evidence-removal failures and the restored passing grade.
+
+Saved regrading reads retained repair evidence, not a reconstructed original fixture or mutable host source. It does not execute the agent or supply missing inspection. The complete plan contains exactly seven live cases: primary repair, viewer blocked, label disagreement, no progress, zero limit, three rounds, and continuation. Grade each phase's explicit directory separately: the runner skips absent names, and skipped names never count toward acceptance. These cases do not establish other harnesses, broader fault coverage, or Atomic execution.
 
 ## Adding a skill to the workflow
 

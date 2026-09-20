@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Independent counters</title>
+  <style>
+    body { margin: 0; background: #f4f1eb; color: #202020; font: 24px system-ui, sans-serif; }
+    main { margin: 160px auto 0; width: 1120px; text-align: center; }
+    h1 { margin: 0 0 32px; font-size: 36px; }
+    .counters { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
+    section { border: 1px solid #aaa69f; padding: 20px 12px; }
+    h2 { margin: 0; font-size: 28px; }
+    output { display: block; margin: 12px 0; font-size: 80px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+    button { padding: 12px 14px; margin: 4px 0; font: inherit; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Independent counters</h1>
+    <div class="counters">
+      <section aria-labelledby="heading-A">
+        <h2 id="heading-A">Counter A</h2>
+        <output id="count-A" aria-live="polite" aria-label="Count A">0</output>
+        <button id="add-A" type="button">Add one</button>
+        <button id="reset-A" type="button">Reset</button>
+      </section>
+      <section aria-labelledby="heading-B">
+        <h2 id="heading-B">Counter B</h2>
+        <output id="count-B" aria-live="polite" aria-label="Count B">0</output>
+        <button id="add-B" type="button">Add one</button>
+        <button id="reset-B" type="button">Reset</button>
+      </section>
+      <section aria-labelledby="heading-C">
+        <h2 id="heading-C">Counter C</h2>
+        <output id="count-C" aria-live="polite" aria-label="Count C">0</output>
+        <button id="add-C" type="button">Add one</button>
+        <button id="reset-C" type="button">Reset</button>
+      </section>
+      <section aria-labelledby="heading-D">
+        <h2 id="heading-D">Counter D</h2>
+        <output id="count-D" aria-live="polite" aria-label="Count D">0</output>
+        <button id="add-D" type="button">Add one</button>
+        <button id="reset-D" type="button">Reset</button>
+      </section>
+    </div>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -19,7 +19,12 @@ export const isEvidenceScenario = (scenario) => scenario.phases?.[0]?.skill === 
 
 const viewerBlocked = (name) => name === "iterate-evidence-viewer-blocked";
 const labelDisagreement = (name) => name === "iterate-evidence-label-disagreement";
-const inspectionOnly = (name) => viewerBlocked(name) || labelDisagreement(name);
+const zeroLimit = (name) => name === "iterate-evidence-zero-limit";
+const noProgress = (name) => name === "iterate-evidence-no-progress";
+const threeRounds = (name) => name === "iterate-evidence-three-rounds";
+const continuation = (name) => name === "iterate-evidence-continuation";
+const boundedScenario = (name) => zeroLimit(name) || noProgress(name) || threeRounds(name) || continuation(name);
+const inspectionOnly = (name) => viewerBlocked(name) || labelDisagreement(name) || zeroLimit(name);
 const quote = (value) => `'${value.replace(/'/g, "'\\''")}'`;
 const blockedOverlay = `tools:
   approval:
@@ -43,7 +48,7 @@ mcp:
 
 export function snapshotEvidenceSources(root, dist) {
   const pinned = path.join(dist, "evidence-source");
-  for (const name of ["scripts/install.mjs", "scripts/lib", "skills", "runtimes", "shared", "package.json", "package-lock.json", "evals/iterate-evidence.mjs", "evals/iterate-evidence-hooks.mjs", "evals/lib.mjs", "evals/fixtures/iterate-evidence"]) {
+  for (const name of ["scripts/install.mjs", "scripts/lib", "skills", "runtimes", "shared", "package.json", "package-lock.json", "evals/iterate-evidence.mjs", "evals/iterate-evidence-hooks.mjs", "evals/lib.mjs", "evals/fixtures/iterate-evidence", "evals/fixtures/iterate-evidence-three-rounds"]) {
     const target = path.join(pinned, name);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.cpSync(path.join(root, name), target, { recursive: true });
@@ -180,6 +185,7 @@ async function runSubject(prompt, config, pinned, options) {
   const model = options.model || (config.blocked ? "openai-codex/gpt-6-astra" : null);
   if (model) args.push("--model", model);
   let subjectEnv = { ...process.env, ITERATE_EVIDENCE_OBSERVER: path.join(out, "observer-config.json") };
+  if (config.pauseFile) subjectEnv.ITERATE_EVIDENCE_CAPTURE_PAUSE = config.pauseFile;
   if (config.blocked) {
     const overlay = path.join(out, "viewer-blocked.yml");
     fs.writeFileSync(overlay, blockedOverlay);
@@ -207,11 +213,32 @@ async function runSubject(prompt, config, pinned, options) {
   child.stderr.pipe(stderr);
   let spawnError = null;
   child.on("error", (error) => { spawnError = error.message; });
+  let interruption = null;
+  const pauseWatcher = config.pauseFile ? setInterval(() => {
+    if (interruption || !fs.existsSync(`${config.pauseFile}.waiting`)) return;
+    const receipt = newest(path.join(repo, config.taskRel), "evidence-iteration");
+    const state = evidenceSnapshot(config, { sequence: 999998, boundary: "interruption" });
+    const current = json(path.join(out, state.path));
+    const pause = json(config.pauseFile);
+    const valid = receipt?.fm.status === "in-progress" && Number(receipt.fm.consumed_rounds) === 1
+      && receipt.text.includes("IE-001") && current.files["app.js"].sha256 !== pause.appSha256
+      && current.files["check.mjs"].sha256 !== pause.checkSha256;
+    interruption = { valid, waiting: json(`${config.pauseFile}.waiting`), snapshot: state, receipt: receipt?.file, receiptSha256: receipt ? sha256(Buffer.from(receipt.text)) : null, reason: "Owned subject terminated at capture-entry pause; no product recovery performed by harness" };
+    save(path.join(out, "interruption.json"), interruption);
+    if (receipt) fs.copyFileSync(path.join(repo, config.taskRel, receipt.file), path.join(out, "interrupted-receipt.md"));
+    // Tool subprocesses may have their own process group. Stop the identified paused
+    // capture too, before release; otherwise an orphan can record outside the fresh subject.
+    try { process.kill(interruption.waiting.pid, "SIGKILL"); interruption.captureTerminated = true; }
+    catch (error) { interruption.captureTerminated = error.code === "ESRCH"; }
+    save(path.join(out, "interruption.json"), interruption);
+    try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }
+  }, 100) : null;
   const timer = setTimeout(() => {
     try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }
   }, (options.maxMinutes + 1) * 60_000);
   const result = await new Promise((resolve) => child.on("close", (code, signal) => resolve({ code, signal, error: spawnError })));
   clearTimeout(timer);
+  clearInterval(pauseWatcher);
   await Promise.all([finished(stdout), finished(stderr)]);
   save(path.join(out, "execution.json"), result);
   const trace = await inspectEvidenceTrace(path.join(out, "trace.jsonl"), path.join(out, "trace-images"));
@@ -433,6 +460,164 @@ function stoppedEvidenceProblems(out, setup, trace, snapshots, base, finalState,
   return problems;
 }
 
+const boundedReviewGuide = {
+  reviewer: "Independent executing agent", inspectedAt: "ISO timestamp",
+  observations: [{ pass: 0, flow: "increment (or A-increment through D-reset)", capture: "task/evidence/SESSION/capture.json", media: "task/evidence/SESSION/evidence.mp4", mediaSha256: "SHA256", frame: "task/evidence/SESSION/recorded.png", frameSha256: "SHA256", timestamp: 0, observedCount: 2, subjectTraceLine: 0, traceSession: "main or interrupted", notes: "Actual pixels and timing limits. When viewer resizes a contact sheet, also independently open retained subjectImage, bind subjectImageSha256, and set subjectImageInspected:true; identify the exact tile." }],
+  reservations: [{ round: 1, snapshot: "snapshots/NNNNNN-tool_execution_end.json", traceSession: "main or interrupted", findingId: "IE-001", resolvedAfter: [], notes: "Inspected finding and consumed reservation before mutation; actual progress after new pixels" }],
+  final: { receipt: "task/NN-evidence-iteration-slug.md", receiptSha256: "SHA256", unchangedExpectations: true, historyPreserved: true, mutationToolsReviewed: true, notes: "Review every source transition, finding status, consumed allowance, stop precedence and incomplete-step continuation where applicable" },
+};
+
+async function boundedEvidenceProblems(out, setup, trace, snapshots, base, finalState, commits, receipt) {
+  const problems = [];
+  const require = (condition, message) => { if (!condition) problems.push(`bounded: ${message}`); };
+  const name = setup.scenario;
+  const resumed = continuation(name);
+  const rounds = zeroLimit(name) ? 0 : threeRounds(name) ? 3 : 1;
+  const loadSnapshots = (root) => split(fs.readFileSync(retainedFile(root, "observer.jsonl"), "utf8")).map((line) => {
+    const entry = JSON.parse(line);
+    const file = retainedFile(root, entry.path);
+    require(sha256(fs.readFileSync(file)) === entry.sha256, "secondary snapshot hash mismatch");
+    return { ...entry, state: json(file) };
+  });
+  const firstTrace = resumed ? await inspectEvidenceTrace(retainedFile(out, "interrupted/trace.jsonl")) : trace;
+  const firstSnapshots = resumed ? loadSnapshots(path.join(out, "interrupted")) : snapshots;
+  const allSnapshots = resumed ? [...firstSnapshots, ...snapshots] : snapshots;
+  problems.push(...evidencePathProblems(base, allSnapshots.map((item) => item.state), commits, setup.taskRel));
+  for (const snapshot of allSnapshots) {
+    const snapshotRoot = resumed && firstSnapshots.includes(snapshot) ? path.join(out, "interrupted") : out;
+    for (const [file, value] of Object.entries(snapshot.state.files)) {
+      if (!/\/\d{2}-evidence-iteration-/.test(file)) continue;
+      const text = fs.readFileSync(retainedFile(snapshotRoot, `blobs/${value.sha256}`), "utf8");
+      const consumed = /^consumed_rounds:\s*(\d+)\s*$/m.exec(text);
+      require(!consumed || Number(consumed[1]) <= rounds, "snapshot exceeds authorized reservation boundary");
+    }
+  }
+  require(Number(receipt?.fm.consumed_rounds) === rounds && Number(receipt?.fm.limit) === (zeroLimit(name) ? 0 : noProgress(name) ? 1 : 3), "exact consumed/default allowance mismatch");
+  const states = [base, ...allSnapshots.map((item) => item.state), finalState];
+  const sourceHashes = [...new Set(states.map((state) => state.files["app.js"]?.sha256))];
+  require(sourceHashes.length === rounds + 1, "wrong number of distinct source identities; replay or extra mutation");
+  if (zeroLimit(name) || noProgress(name)) require(states.every((state) => state.files["check.mjs"]?.sha256 === base.files["check.mjs"].sha256), "check changed without authorized improvement");
+  require(json(retainedFile(out, "initial-check.json")).code === 0, "initial browser setup failed");
+  if (noProgress(name)) {
+    const original = fs.readFileSync(retainedFile(out, `blobs/${base.files["app.js"].sha256}`), "utf8");
+    const final = fs.readFileSync(retainedFile(out, `blobs/${finalState.files["app.js"].sha256}`), "utf8");
+    require(final === original.replace("const unusedIncrement = 2;", "const unusedIncrement = 1;"), "fault action must change only the unused setting");
+    require(json(retainedFile(out, "worker/execution.json")).code === 0, "real bounded worker did not complete");
+    const worker = await inspectEvidenceTrace(retainedFile(out, "worker/trace.jsonl"));
+    problems.push(...worker.problems.map((item) => `worker: ${item}`));
+    require(worker.tools.some((call) => call.name === "edit"), "worker trace lacks real edit");
+    const workerSnapshots = loadSnapshots(path.join(out, "worker"));
+    require(workerSnapshots[0]?.state.files["app.js"].sha256 === base.files["app.js"].sha256 && workerSnapshots.at(-1)?.state.files["app.js"].sha256 === finalState.files["app.js"].sha256, "worker snapshots do not bind actual source transition");
+    const workerStart = workerSnapshots[0]?.state;
+    for (const snapshot of workerSnapshots) {
+      for (const file of new Set([...Object.keys(workerStart?.files ?? {}), ...Object.keys(snapshot.state.files)])) {
+        if (file !== "app.js") require(JSON.stringify(snapshot.state.files[file]) === JSON.stringify(workerStart.files[file]), `bounded worker changed ${file}`);
+      }
+    }
+    problems.push(...evidencePathProblems(base, workerSnapshots.map((item) => item.state), [], setup.taskRel));
+  }
+  if (resumed) {
+    const interruption = json(retainedFile(out, "interrupted/interruption.json"));
+    const execution = json(retainedFile(out, "interrupted/execution.json"));
+    require(interruption.valid === true && execution.code !== 0 && execution.signal === "SIGKILL", "genuine owned-process interruption missing");
+    require(firstTrace.problems.every((item) => item === "trace: no complete agent_end event" || item === "trace: no terminal assistant text answer"), "interrupted trace is malformed, not merely unfinished");
+    for (const [index, snapshot] of firstSnapshots.entries()) require(snapshot.sequence === index + 1, "interrupted observer sequence missing");
+    for (const call of firstTrace.tools) {
+      require(firstSnapshots.some((entry) => entry.boundary === "tool_call" && entry.toolCallId === call.id), "interrupted trace lacks pre-tool observation");
+      const captureAtPause = JSON.stringify(call.arguments).includes("capture.mjs");
+      require(captureAtPause || firstSnapshots.some((entry) => entry.boundary === "tool_execution_end" && entry.toolCallId === call.id), "interrupted trace lacks a completed non-capture tool boundary");
+    }
+    const interruptedReceipt = fs.readFileSync(retainedFile(out, "interrupted/interrupted-receipt.md"));
+    require(sha256(interruptedReceipt) === interruption.receiptSha256 && interruptedReceipt.includes("IE-001"), "interrupted receipt identity missing");
+    require(receipt?.file === interruption.receipt, "fresh continuation replaced the receipt");
+    const boundary = json(retainedFile(out, `interrupted/${interruption.snapshot.path}`));
+    require(sha256(fs.readFileSync(retainedFile(out, `interrupted/${interruption.snapshot.path}`))) === interruption.snapshot.sha256, "interruption boundary hash mismatch");
+    for (const key of repairable) require(snapshots.every((item) => item.state.files[key]?.sha256 === boundary.files[key]?.sha256) && finalState.files[key]?.sha256 === boundary.files[key]?.sha256, `continuation replayed ${key} edits`);
+    const firstRuntime = json(retainedFile(out, "interrupted/runtime.json"));
+    const secondRuntime = json(retainedFile(out, "runtime.json"));
+    require(!secondRuntime.args.includes("--resume") && secondRuntime.args.at(-1).includes(interruption.receipt) && firstRuntime.args !== secondRuntime.args, "continuation must be fresh and receipt-based");
+    const checks = json(retainedFile(out, "checks.json"));
+    const checkHash = finalState.files["check.mjs"].sha256;
+    require(checkHash !== base.files["check.mjs"].sha256 && checks.faulty.code !== null && checks.faulty.code !== 0 && checks.repaired.code === 0 && checks.faulty.checkSha256 === checkHash && checks.repaired.checkSha256 === checkHash, "continuation strengthened check must fail faulty and pass repaired");
+    require(checks.faulty.servedSha256 === base.files["app.js"].sha256 && checks.repaired.servedSha256 === finalState.files["app.js"].sha256, "continuation checks lack served-source provenance");
+  }
+  const captures = files(path.join(out, "task", "evidence")).filter((file) => file.endsWith("/capture.json")).map((file) => {
+    const relative = `task/evidence/${file}`;
+    return { relative, session: path.posix.dirname(relative), value: json(retainedFile(out, relative)) };
+  }).sort((a, b) => a.value.startedAt - b.value.startedAt);
+  require(captures.length === rounds + 1, "exact baseline plus allowed completed captures required");
+  for (const [index, capture] of captures.entries()) {
+    const { value, session } = capture;
+    require(value.servedSha256 === sourceHashes[index], `pass ${index} does not bind its ordered source identity`);
+    if (resumed && index === 1) {
+      require(value.startedAt * 1000 > Date.parse(snapshots[0]?.state.at), "post-repair capture began before the fresh continuation session");
+      require(json(retainedFile(out, "interrupted/interruption.json")).captureTerminated === true, "paused capture child was not terminated before release");
+    }
+    require(sha256(fs.readFileSync(retainedFile(out, `${session}/${value.servedScript}`))) === value.servedSha256, "served bytes mismatch");
+    require(sha256(fs.readFileSync(retainedFile(out, `${session}/${value.video}`))) === value.videoSha256, "raw media hash mismatch");
+    const manifest = json(retainedFile(out, `${session}/manifest.json`));
+    require(manifest.verified === true && manifest.source === "external" && fs.statSync(retainedFile(out, `${session}/evidence.mp4`)).size > 0, "completed external recording missing");
+    if (index > 0) require(value.startedAt > captures[index - 1].value.finishedAt && value.videoSha256 !== captures[index - 1].value.videoSha256, "recordings are not distinct fresh passes");
+  }
+  if (!fs.existsSync(path.join(out, "review.json"))) return [...problems, "inspection: pending independent review; open retained recordings and complete review.json"];
+  const review = json(path.join(out, "review.json"));
+  require(Boolean(review.reviewer?.trim()) && Number.isFinite(Date.parse(review.inspectedAt)), "independent reviewer/timestamp required");
+  const final = review.final;
+  require(final?.receipt === `task/${receipt?.file}` && final.receiptSha256 === sha256(Buffer.from(receipt?.text ?? "")), "review must bind final receipt");
+  require(["unchangedExpectations", "historyPreserved", "mutationToolsReviewed"].every((key) => final?.[key] === true) && Boolean(final?.notes?.trim()), "independent history, mutation and expectation review required");
+  for (const [pass, capture] of captures.entries()) {
+    const flows = threeRounds(name) ? ["A", "B", "C", "D"].flatMap((counter) => [`${counter}-increment`, `${counter}-reset`]) : ["increment", "reset"];
+    for (const flow of flows) {
+      const expected = flow.endsWith("reset") ? 0 : threeRounds(name) ? ("ABCD".indexOf(flow[0]) < pass ? 1 : 2) : resumed && pass === 1 ? 1 : 2;
+      const observations = review.observations?.filter((item) => item.pass === pass && item.flow === flow) ?? [];
+      require(observations.length === 1, `one pass ${pass} ${flow} observation required`);
+      const item = observations[0];
+      if (!item) continue;
+      require(item.observedCount === expected && item.capture === capture.relative && Number.isFinite(item.timestamp) && item.timestamp >= 0 && Boolean(item.notes?.trim()), `pass ${pass} ${flow} must show ${expected} with timing/notes`);
+      require(capture.value.actions.some((action) => action.flow === flow), `capture lacks ${flow} action`);
+      for (const [key, hash] of [["media", "mediaSha256"], ["frame", "frameSha256"]]) require(item[key]?.startsWith(`${capture.session}/`) && sha256(fs.readFileSync(retainedFile(out, item[key]))) === item[hash], `${flow} reviewed ${key} hash/session mismatch`);
+      require(/\.(mp4|webm)$/.test(item.media) && /\.(png|jpe?g)$/.test(item.frame), "video plus recorded frame required");
+      const selectedTrace = resumed && pass === 0 ? firstTrace : trace;
+      require(item.traceSession === (resumed && pass === 0 ? "interrupted" : "main"), "wrong pixel-opening session");
+      const image = selectedTrace.images.find((entry) => entry.line === item.subjectTraceLine && !entry.isError);
+      const call = image && selectedTrace.tools.find((entry) => entry.id === image.toolCallId);
+      require(Boolean(call) && JSON.stringify(call.arguments).includes(item.frame.slice("task/".length)), "review does not bind the subject opening to the recorded frame path");
+      if (image?.sha256 !== item.frameSha256) {
+        // OMP returns resized raster bytes for large sheets. Never equate those with
+        // source bytes: require independent viewing and hash binding of both images.
+        const imagePath = `${resumed && pass === 0 ? "interrupted/" : ""}${image?.file}`;
+        require(item.subjectImage === imagePath && item.subjectImageInspected === true && item.subjectImageSha256 === image?.sha256, "transformed subject image needs independent opening and exact payload identity");
+        require(item.subjectImage && sha256(fs.readFileSync(retainedFile(out, item.subjectImage))) === item.subjectImageSha256, "transformed subject image payload missing or changed");
+      }
+    }
+  }
+  require(review.reservations?.length === rounds, "exact reservation count must be independently reviewed");
+  for (let round = 1; round <= rounds; round += 1) {
+    const reservation = review.reservations?.find((item) => item.round === round);
+    const expectedId = `IE-${String(threeRounds(name) ? round : 1).padStart(3, "0")}`;
+    require(reservation?.findingId === expectedId && Boolean(reservation?.notes?.trim()), `round ${round} stable finding/reservation review missing`);
+    const root = resumed ? path.join(out, "interrupted") : out;
+    const reserved = firstSnapshots.find((item) => item.path === reservation?.snapshot);
+    const mutation = firstSnapshots.find((item) => item.state.files["app.js"]?.sha256 === sourceHashes[round]);
+    require(reserved && mutation && reserved.sequence < mutation.sequence, `round ${round} reservation must precede source mutation`);
+    if (reserved) {
+      const entries = Object.entries(reserved.state.files).filter(([file]) => /\/\d{2}-evidence-iteration-/.test(file));
+      require(entries.some(([, value]) => {
+        const text = fs.readFileSync(retainedFile(root, `blobs/${value.sha256}`), "utf8");
+        return text.includes(expectedId) && new RegExp(`consumed_rounds:\\s*${round}\\b`).test(text);
+      }), `round ${round} persisted consumed reservation missing`);
+      const priorPixels = review.observations?.filter((item) => item.pass === round - 1 && item.flow.endsWith("increment")) ?? [];
+      for (const item of priorPixels) {
+        const image = firstTrace.images.find((entry) => entry.line === item.subjectTraceLine);
+        require(firstSnapshots.some((entry) => entry.toolCallId === image?.toolCallId && entry.boundary === "tool_execution_end" && entry.sequence < reserved.sequence), `round ${round} baseline pixels must precede reservation`);
+      }
+    }
+    const resolved = noProgress(name) ? [] : threeRounds(name) ? Array.from({ length: round }, (_, index) => `IE-${String(index + 1).padStart(3, "0")}`) : ["IE-001"];
+    require(JSON.stringify(reservation?.resolvedAfter) === JSON.stringify(resolved), `round ${round} independently reviewed resolved set incorrect`);
+  }
+  return problems;
+}
+
 export async function gradeEvidenceScenario(scenario, runDir) {
   const resultDir = path.join(runDir, scenario.name);
   const out = path.join(resultDir, "1-iterate-evidence");
@@ -473,8 +658,8 @@ export async function gradeEvidenceScenario(scenario, runDir) {
     else {
       if (!/^\d{2}-evidence-iteration-[a-z0-9-]+\.md$/.test(receipt.file)) problems.push("receipt: incorrect numbered filename");
       const only = inspectionOnly(scenario.name);
-      const status = viewerBlocked(scenario.name) ? "blocked" : only ? "failed" : "passed";
-      const reason = viewerBlocked(scenario.name) ? "blocker" : only ? "exhaustion" : "success";
+      const status = viewerBlocked(scenario.name) ? "blocked" : only || noProgress(scenario.name) || threeRounds(scenario.name) ? "failed" : "passed";
+      const reason = viewerBlocked(scenario.name) ? "blocker" : noProgress(scenario.name) ? "no-progress" : only || threeRounds(scenario.name) ? "exhaustion" : "success";
       if (!receipt.fm.summary || receipt.fm.status !== status || receipt.fm.stop_reason !== reason) problems.push(`receipt: expected ${status}/${reason} with a summary`);
       if (only ? Number(receipt.fm.consumed_rounds) !== 0 : Number(receipt.fm.consumed_rounds) < 1 || Number(receipt.fm.consumed_rounds) > Number(receipt.fm.limit)) problems.push("receipt: invalid consumed allowance");
       const template = fs.readFileSync(retainedFile(out, "installed/iterate-evidence/references/evidence_iteration_template.md"), "utf8");
@@ -487,7 +672,9 @@ export async function gradeEvidenceScenario(scenario, runDir) {
     if (json(retainedFile(out, "git-final.json")).dirty) problems.push("git: repository left dirty outside ignored evidence");
     const install = json(retainedFile(out, "installation.json"));
     if (install.names.join(",") !== "iterate-evidence,record-evidence" || !install.sentinelPreserved || !install.noAtomic || install.command.code !== 0) problems.push("installation: selected resources, sentinel, or no-Atomic contract failed");
-    if (inspectionOnly(scenario.name)) {
+    if (boundedScenario(scenario.name)) {
+      problems.push(...await boundedEvidenceProblems(out, setup, trace, snapshots, base, finalState, commits, receipt));
+    } else if (inspectionOnly(scenario.name)) {
       problems.push(...stoppedEvidenceProblems(out, setup, trace, snapshots, base, finalState, commits, receipt));
     } else {
     const checks = json(retainedFile(out, "checks.json"));
@@ -498,7 +685,7 @@ export async function gradeEvidenceScenario(scenario, runDir) {
     if (!fs.existsSync(path.join(out, "review.json"))) problems.push("inspection: pending independent pixel review; fill review.json using review-schema.json after opening retained media");
     else problems.push(...reviewProblems(out, json(path.join(out, "review.json")), trace, snapshots, base, finalState, setup.taskRel));
     }
-    if (scenario.phases[0].check) problems.push(...scenario.phases[0].check({ artifact: receipt, answer: trace.answer }));
+    if (scenario.phases[0].check) problems.push(...scenario.phases[0].check({ artifact: receipt, artifacts: receipts, answer: trace.answer }));
   } catch (error) {
     problems.push(`retention/setup: ${error.message}`);
   }
@@ -564,7 +751,7 @@ export async function runEvidenceScenario(scenario, runDir, pinned, options) {
   const resultDir = path.join(runDir, scenario.name);
   const out = path.join(resultDir, "1-iterate-evidence");
   fs.mkdirSync(out, { recursive: true });
-  save(path.join(out, "review-schema.json"), inspectionOnly(scenario.name) ? stoppedReviewSchema : reviewSchema);
+  save(path.join(out, "review-schema.json"), boundedScenario(scenario.name) ? boundedReviewGuide : inspectionOnly(scenario.name) ? stoppedReviewSchema : reviewSchema);
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "skills-eval-iterate-evidence-"));
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "skills-eval-iterate-home-"));
   let server;
@@ -576,6 +763,8 @@ export async function runEvidenceScenario(scenario, runDir, pinned, options) {
     save(path.join(out, "installer-dependencies.json"), dependencies);
     requireCommand(dependencies, "Pinned installer dependencies unavailable");
     fs.cpSync(path.join(pinned, "evals", "fixtures", "iterate-evidence"), repo, { recursive: true });
+    if (threeRounds(scenario.name)) fs.cpSync(path.join(pinned, "evals", "fixtures", "iterate-evidence-three-rounds"), repo, { recursive: true });
+    if (noProgress(scenario.name)) fs.writeFileSync(path.join(repo, "app.js"), `const unusedIncrement = 2;\n${fs.readFileSync(path.join(repo, "app.js"), "utf8")}`);
     fs.cpSync(path.join(pinned, "shared"), path.join(repo, "shared"), { recursive: true });
     const taskRel = `.agents/tasks/${scenario.slug}`;
     const evidenceDir = path.join(taskDir, "evidence");
@@ -638,6 +827,23 @@ export async function runEvidenceScenario(scenario, runDir, pinned, options) {
       `Playwright is installed beside capture.mjs, not in application dependencies. To execute your check beside that dependency, copy check.mjs byte-for-byte to ${path.join(browserDir, "check.mjs")} and run node ${path.join(browserDir, "check.mjs")} URL. The evaluator retains and executes your identical strengthened check against preserved and final sources after you finish; you still own your checks and conclusions.`,
       "You own capture, pixel inspection, findings, round reservation before mutation, authorized repairs, regression verification, and the stop decision. Do not read or write evaluator output outside this repository. Return the installed companion's terminal answer.",
     ].join("\n\n");
+    if (zeroLimit(scenario.name)) prompt += "\n\nUse the fresh session path evidence/baseline under the task directory. This is ordinary truthful recording, not an external baseline. Limit 0 forbids source/check edits and reservations.";
+    if (threeRounds(scenario.name)) prompt += "\n\nThe four-counter fixed capture covers A-D increments and all Resets each pass. Keep every baseline and round recording and open all relevant recorded pixels. Checks must keep exact expectations for unrepaired counters; a remaining failing check is not an unavailable prerequisite.";
+    if (noProgress(scenario.name)) {
+      const workerOut = path.join(out, "worker");
+      fs.mkdirSync(workerOut, { recursive: true });
+      const workerConfig = { ...config, out: workerOut, protectedEvidence: [`${taskRel}/evidence/browser/bounded-worker.mjs`] };
+      save(path.join(workerOut, "observer-config.json"), workerConfig);
+      const workerPrompt = "Bounded fault action only: in app.js change the unused setting `const unusedIncrement = 2;` to `const unusedIncrement = 1;`. Edit no other line or file. Do not run checks, repair the handler, change expectations, create findings/receipts or commit. Report the exact edit.";
+      const workerArgs = ["-p", "--auto-approve", "--mode", "json", "--session-dir", path.join(workerOut, "sessions"), "--no-extensions", "--no-skills", "--no-rules", "--no-lsp", "--no-title", "--tools", "read,edit", "--extension", path.join(pinned, "evals", "iterate-evidence-hooks.mjs"), "--max-time=5m", ...(options.model ? ["--model", options.model] : []), workerPrompt];
+      const workerScript = path.join(browserDir, "bounded-worker.mjs");
+      fs.writeFileSync(workerScript, `import fs from "node:fs";\nimport {spawnSync} from "node:child_process";\nconst out=${JSON.stringify(workerOut)};\nif(fs.existsSync(out+"/execution.json")) throw new Error("One worker action only");\nconst result=spawnSync("omp",${JSON.stringify(workerArgs)},{cwd:${JSON.stringify(repo)},env:{...process.env,ITERATE_EVIDENCE_OBSERVER:out+"/observer-config.json"},stdio:["ignore",fs.openSync(out+"/trace.jsonl","wx"),fs.openSync(out+"/stderr.log","wx")],timeout:360000});\nfs.writeFileSync(out+"/execution.json",JSON.stringify({code:result.status,signal:result.signal,error:result.error?.message??null}));\nconsole.log("Bounded worker exit",result.status);process.exitCode=result.status??1;\n`);
+      config.protectedEvidence = [`${taskRel}/evidence/browser/bounded-worker.mjs`];
+      // Include the immutable worker command in the initial authority snapshot.
+      const workerBase = evidenceSnapshot(config, { sequence: 0, boundary: "base" });
+      fs.copyFileSync(path.join(out, workerBase.path), path.join(out, "base-state.json"));
+      prompt += `\n\nDisclosed bounded worker fault: after you inspect baseline pixels and persist IE-001 plus round 1 reservation, delegate by executing node ${workerScript}. This launches a real isolated OMP worker whose only action changes the unused increment setting from 2 to 1, leaving the handler untouched. Do not make any other app/check edit, do not invoke another worker, and do not substitute a fabricated worker result. Then serve/capture/inspect the changed source normally, reconcile actual progress, and apply stop precedence. Keep check.mjs unchanged.`;
+    }
     if (baselineInput) prompt += `\n\nNamed external evidence baseline: ${path.relative(repo, baselineInput)}. Compare its source hashes, environment and coverage before reuse, then inspect its recorded pixels. Limit 0: do not edit source/checks. Preserve the baseline receipt, raw/rendered recording, manifest, report and labels unchanged. Put any additional extracted samples beside the recording.`;
     if (config.blocked) {
       config.receipt = `${taskRel}/01-evidence-iteration-${scenario.slug}.md`;
@@ -667,7 +873,19 @@ export async function runEvidenceScenario(scenario, runDir, pinned, options) {
       ].join("\n\n");
     }
     fs.writeFileSync(path.join(out, "prompt.md"), prompt);
-    await runSubject(prompt, config, pinned, options);
+    if (continuation(scenario.name)) {
+      const interruptedOut = path.join(out, "interrupted");
+      fs.mkdirSync(interruptedOut, { recursive: true });
+      const pauseFile = path.join(interruptedOut, "capture-pause.json");
+      save(pauseFile, { repo, appSha256: sha256(fs.readFileSync(path.join(repo, "app.js"))), checkSha256: sha256(fs.readFileSync(path.join(repo, "check.mjs"))) });
+      await runSubject(prompt, { ...config, out: interruptedOut, pauseFile }, pinned, options);
+      const interrupted = json(path.join(interruptedOut, "interruption.json"));
+      if (!interrupted.valid) throw new Error("Capture pause did not establish persisted in-progress reservation plus source/check work");
+      fs.writeFileSync(`${pauseFile}.released`, "Release capture for fresh receipt-based continuation.\n");
+      const resumePrompt = `${prompt}\n\nContinue the existing receipt ${taskRel}/${interrupted.receipt} in this fresh session. The previous subject was genuinely terminated while its fixed post-repair capture entry was paused, before recording began. Source/check work is already on disk. Read that receipt and retained evidence, verify identities, and complete its incomplete reserved round without replaying edits, replacing history, resetting counters, or reserving another round for the same work. The pause is released.`;
+      fs.writeFileSync(path.join(out, "continuation-prompt.md"), resumePrompt);
+      await runSubject(resumePrompt, config, pinned, options);
+    } else await runSubject(prompt, config, pinned, options);
     const finalRecord = evidenceSnapshot(config, { sequence: 999999, boundary: "final" });
     fs.copyFileSync(path.join(out, finalRecord.path), path.join(out, "final-state.json"));
     save(path.join(out, "history.json"), history(repo, baseSha));
