@@ -11,6 +11,6 @@ Use this skill to operate a local Safety Dance Git gate without weakening its re
 
 Before any mutating command, apply the nested-run fence: when `SD_PARENT_RUN_ID` is set, do not initialize a repository, start a run, respond to a prompt, abort a run, or bypass the parent run. Inspect status or logs only, then report the parent run.
 
-Confirm that the `safety-dance` executable is available before operating it. If it is missing, diagnose the installation and point to the repository installer or `scripts/install.mjs`; do not download or install a binary implicitly.
+Confirm that the `safety-dance` executable is available before operating it. If it is missing, install a checksummed `safety-dance-v*` release archive after verifying `checksums.txt`, or build `./tools/safety-dance/cmd/safety-dance`; `scripts/install.mjs` installs only this agent skill. Do not download or install a binary implicitly.
 
 Read [references/commands.md](references/commands.md) for command flows and [references/safety.md](references/safety.md) for the gate invariants.

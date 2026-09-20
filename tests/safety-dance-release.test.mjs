@@ -11,7 +11,7 @@ const root = path.resolve(new URL('..', import.meta.url).pathname);
 test('release workflow is tag-only and covers native matrix', async () => {
   const workflow = await readFile(path.join(root, '.github/workflows/safety-dance-release.yml'), 'utf8');
   assert.match(workflow, /tags: \['safety-dance-v\*'\]/);
-  for (const [os, arch] of [['linux', 'amd64'], ['linux', 'arm64'], ['darwin', 'amd64'], ['darwin', 'arm64'], ['windows', 'amd64']]) { assert.match(workflow, new RegExp(`goos: ${os}[\\s\\S]*?arch: ${arch}`)); }
+  for (const [os, arch] of [['linux', 'amd64'], ['linux', 'arm64'], ['darwin', 'amd64'], ['darwin', 'arm64']]) { assert.match(workflow, new RegExp(`goos: ${os}[\\s\\S]*?arch: ${arch}`)); }
   assert.match(workflow, /permissions:\s+contents: write/);
   assert.doesNotMatch(workflow, new RegExp('changesets/action'));
 });

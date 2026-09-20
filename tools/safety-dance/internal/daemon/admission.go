@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/git"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/ipc"
 )
 
@@ -84,11 +85,19 @@ func newAdmission(server *ipc.Server, notify func(context.Context, PushNotificat
 // InitError reports unreadable persisted receipts before the daemon announces readiness.
 func (a *Admission) InitError() error { return a.loadErr }
 
-// ReconcileOnce retries every accepted receipt until its durable callback succeeds.
+// ReconcileOnce retries receipts only while the gate still contains the exact admitted ref.
 func (a *Admission) ReconcileOnce(ctx context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for token, receipt := range a.receipts {
+		current, err := git.RunBare(ctx, receipt.Gate, "rev-parse", receipt.Ref)
+		if err != nil || strings.TrimSpace(current) != receipt.New {
+			delete(a.receipts, token)
+			if err := a.saveReceipts(); err != nil {
+				return fmt.Errorf("discard stale admission receipt: %w", err)
+			}
+			continue
+		}
 		if a.notify == nil {
 			continue
 		}
@@ -222,6 +231,9 @@ func (a *Admission) admit(ctx context.Context, raw json.RawMessage) (interface{}
 	a.mu.Lock()
 	a.receipts[p.Token] = p
 	saveErr := a.saveReceipts()
+	if saveErr != nil {
+		delete(a.receipts, p.Token)
+	}
 	a.mu.Unlock()
 	if saveErr != nil {
 		return nil, fmt.Errorf("persist admission receipt: %w", saveErr)

@@ -91,7 +91,8 @@ func (s Service) ownedDefinition() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return strings.Contains(string(raw), serviceMarker) && strings.Contains(string(raw), "home="+s.Home.Root()), nil
+	text := string(raw)
+	return strings.Contains(text, serviceMarker) && (strings.Contains(text, "home="+s.Home.Root()) || strings.Contains(text, "home=\""+s.Home.Root()+"\"") || strings.Contains(text, html.EscapeString(s.Home.Root()))), nil
 }
 
 func (s Service) DefinitionExists() bool {
@@ -193,7 +194,7 @@ func (s Service) Install() error {
 	case "linux":
 		activationErr = s.Executor.Run("systemctl", "--user", "enable", "--now", filepath.Base(path))
 	default:
-		action := fmt.Sprintf(`cmd /C "set SD_HOME=%s&& \"%s\" daemon serve"`, s.Home.Root(), s.Binary)
+		action := fmt.Sprintf(`cmd /C "set SD_HOME=%s&& set %s=1&& \\\"%s\\\" daemon serve"`, s.Home.Root(), serviceMarker, s.Binary)
 		activationErr = s.Executor.Run("schtasks", "/Create", "/TN", s.Label(), "/TR", action, "/F")
 	}
 	if activationErr == nil {
@@ -235,6 +236,10 @@ func (s Service) Stop() error {
 		}
 		return err
 	default:
+		owned, err := s.taskOwned()
+		if err != nil || !owned {
+			return fmt.Errorf("refusing to stop foreign scheduled task %s", s.Label())
+		}
 		return s.Executor.Run("schtasks", "/Delete", "/TN", s.Label(), "/F")
 	}
 }

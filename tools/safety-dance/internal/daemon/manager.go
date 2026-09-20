@@ -48,12 +48,19 @@ func (m *Manager) Replace(ctx context.Context, key BranchKey, accepted db.Accept
 		return nil, fmt.Errorf("branch key is required")
 	}
 	m.mu.Lock()
-	prior := m.keys[key]
-	if prior != nil {
-		if err := m.store.SupersedeRun(prior.Run.ID, types.RunCancelReasonSuperseded); err != nil {
+	if accepted.LaunchNonce != "" {
+		existing, err := m.db.GetRunByLaunchNonce(key.RepositoryID, key.Ref, accepted.LaunchNonce)
+		if err != nil {
 			m.mu.Unlock()
 			return nil, err
 		}
+		if existing != nil {
+			m.mu.Unlock()
+			return existing, nil
+		}
+	}
+	prior := m.keys[key]
+	if prior != nil {
 		prior.Cancel()
 		m.mu.Unlock()
 		prior.Wait()
@@ -61,6 +68,10 @@ func (m *Manager) Replace(ctx context.Context, key BranchKey, accepted db.Accept
 		if current, exists := m.keys[key]; exists && current != prior {
 			m.mu.Unlock()
 			return nil, fmt.Errorf("branch %s was replaced concurrently", key.Ref)
+		}
+		if err := m.store.SupersedeRun(prior.Run.ID, types.RunCancelReasonSuperseded); err != nil {
+			m.mu.Unlock()
+			return nil, err
 		}
 		delete(m.keys, key)
 	}

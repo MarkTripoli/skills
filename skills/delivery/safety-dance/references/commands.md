@@ -11,7 +11,7 @@ safety-dance logs
 safety-dance daemon status
 ```
 
-A missing executable is an installation issue. Use the repository's `scripts/install.mjs` or published installer, then start a new agent session. Do not pipe an untrusted download into a shell.
+A missing executable is a binary installation issue. Use a checksummed `safety-dance-v*` release archive or build `./tools/safety-dance/cmd/safety-dance`; `scripts/install.mjs` installs only the agent skill. Do not pipe an untrusted download into a shell.
 
 ## Initialize and run
 

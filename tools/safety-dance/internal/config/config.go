@@ -537,10 +537,14 @@ func (c *RepoConfig) UnmarshalYAML(value *yaml.Node) error {
 
 // Commands holds optional per-repo command overrides.
 type Commands struct {
-	Prepare string `yaml:"prepare"`
-	Lint    string `yaml:"lint"`
-	Test    string `yaml:"test"`
-	Format  string `yaml:"format"`
+	Prepare     string `yaml:"prepare"`
+	Rebase      string `yaml:"rebase"`
+	Review      string `yaml:"review"`
+	Test        string `yaml:"test"`
+	Lint        string `yaml:"lint"`
+	Format      string `yaml:"format"`
+	PullRequest string `yaml:"pull_request"`
+	CI          string `yaml:"ci"`
 }
 
 // AutoFixRaw is the YAML representation of auto-fix config.

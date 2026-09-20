@@ -2,6 +2,8 @@ package steps
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -131,7 +133,9 @@ func Publish(ctx context.Context, database *db.DB, runID string, req PushRequest
 	if err := ctx.Err(); err != nil {
 		return PushResult{}, err
 	}
-	if err := database.RecordPublicationAndBinding(db.Publication{RunID: runID, RepoID: run.RepoID, Ref: req.Ref, Candidate: result.Candidate, VerifiedUpstream: result.Upstream, GateMirror: result.Candidate}, db.PushBinding{HeadSHA: result.Candidate, TargetKind: "remote", TargetFingerprint: req.Remote, Ref: req.Ref}); err != nil {
+	fingerprint := sha256.Sum256([]byte(req.Remote))
+	binding := db.PushBinding{HeadSHA: result.Candidate, TargetKind: "remote", TargetFingerprint: hex.EncodeToString(fingerprint[:]), Ref: req.Ref}
+	if err := database.RecordPublicationAndBinding(db.Publication{RunID: runID, RepoID: run.RepoID, Ref: req.Ref, Candidate: result.Candidate, VerifiedUpstream: result.Upstream, GateMirror: result.Candidate}, binding); err != nil {
 		return PushResult{}, err
 	}
 	return result, nil

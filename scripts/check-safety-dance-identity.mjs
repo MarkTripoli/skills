@@ -8,10 +8,10 @@ const allowLicense = path.normalize('tools/safety-dance/LICENSE');
 // the identity it enforces, nor should a negative fixture be an accidental hit.
 const retired = [
   ['no', '-', 'mistakes'], ['no', '_', 'mistakes'], ['no', '-', 'mistakes', '-', 'home'],
-  ['NO', '_', 'MISTAKES'], ['No', ' ', 'Mistakes'],
+  ['no', ' ', 'mistakes'], ['no', '.', 'mistakes'],
 ];
-const retiredPatterns = retired.map(parts => new RegExp(parts.join(''), 'g'));
-const skipped = new Set(['.git', 'node_modules', 'dist', '.agents']);
+const retiredPatterns = retired.map(parts => new RegExp(parts.join(''), 'gi'));
+const skipped = new Set(['.git', 'node_modules', 'dist']);
 const binaryExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.ico', '.pdf', '.zip', '.gz', '.exe', '.dll', '.bin']);
 async function files(dir) {
   const out = [];

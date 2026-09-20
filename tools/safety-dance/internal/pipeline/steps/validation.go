@@ -6,10 +6,13 @@ import (
 	"os/exec"
 
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/config"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
 )
 
 type worktreeKey struct{}
 type repoConfigKey struct{}
+type databaseKey struct{}
+type runIDKey struct{}
 
 // WithWorktree binds the run-owned checkout to validation steps.
 func WithWorktree(ctx context.Context, dir string) context.Context {
@@ -19,6 +22,10 @@ func WithWorktree(ctx context.Context, dir string) context.Context {
 // WithRepoConfig binds the trusted repository policy to validation steps.
 func WithRepoConfig(ctx context.Context, cfg *config.RepoConfig) context.Context {
 	return context.WithValue(ctx, repoConfigKey{}, cfg)
+}
+func WithRun(ctx context.Context, database *db.DB, runID string) context.Context {
+	ctx = context.WithValue(ctx, databaseKey{}, database)
+	return context.WithValue(ctx, runIDKey{}, runID)
 }
 
 func worktree(ctx context.Context) string {
@@ -31,8 +38,7 @@ func repoConfig(ctx context.Context) *config.RepoConfig {
 	return cfg
 }
 
-// Validate runs the stage-specific trusted command, then the common diff check.
-// A configured command is executed in the run-owned worktree and must pass.
+// Validate runs the stage-specific trusted command in the owned worktree.
 func Validate(ctx context.Context, name string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -42,17 +48,7 @@ func Validate(ctx context.Context, name string) error {
 		return fmt.Errorf("%s: owned worktree is required", name)
 	}
 	if cfg := repoConfig(ctx); cfg != nil {
-		command := ""
-		switch name {
-		case "intent":
-			command = cfg.Commands.Prepare
-		case "test":
-			command = cfg.Commands.Test
-		case "lint":
-			command = cfg.Commands.Lint
-		case "document":
-			command = cfg.Commands.Format
-		}
+		command := map[string]string{"intent": cfg.Commands.Prepare, "rebase": cfg.Commands.Rebase, "review": cfg.Commands.Review, "test": cfg.Commands.Test, "lint": cfg.Commands.Lint, "document": cfg.Commands.Format, "pull-request": cfg.Commands.PullRequest, "ci": cfg.Commands.CI}[name]
 		if command != "" {
 			cmd := exec.CommandContext(ctx, "sh", "-c", command)
 			cmd.Dir = dir
