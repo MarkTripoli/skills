@@ -382,9 +382,9 @@ clear push_active
 
 #### Automated Verification:
 
-- [ ] `cd tools/safety-dance && go test -race ./internal/agent/... ./internal/branchsync/... ./internal/pipeline/...`
-- [ ] `cd tools/safety-dance && go test ./internal/pipeline/steps -run 'ReviewedHead|RemoteHead|Lease|PublishedRef|Mirror|Binding|Cancel'`
-- [ ] `cd tools/safety-dance && make e2e`
+- [x] `cd tools/safety-dance && go test -race ./internal/agent/... ./internal/branchsync/... ./internal/pipeline/...`
+- [x] `cd tools/safety-dance && go test ./internal/pipeline/steps -run 'ReviewedHead|RemoteHead|Lease|PublishedRef|Mirror|Binding|Cancel'`
+- [x] `cd tools/safety-dance && make e2e`
 
 Done when a temporary upstream accepts the reviewed candidate, rejects every stale or failed case, records the publication only after mirror reconciliation, and recovers without repeating a completed publication.
 
