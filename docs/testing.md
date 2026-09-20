@@ -66,6 +66,22 @@ Terminal scenarios opt in with `phaseType: "terminal"`. They declare exact `allo
 
 Terminal repository manifests exclude `.git/`, `.agents/`, and `.omp/`; the runner checks those harness paths separately. A live OMP eval proves only local skill behavior exercised by its scenario. It does not prove provider observation or mutation, which remains outside the `/setup-repository` first-release evidence boundary.
 
+### Repository setup release proof
+
+Run the provider contract before aggregate checks, then run the complete offline, portable-runtime, live-scenario, and inventory commands:
+
+```sh
+node --test tests/setup-repository-contract.test.mjs
+npm test
+npm run build -- --runtime portable && node scripts/validate.mjs --root dist/portable
+npm run evals -- setup-repository-basic setup-repository-migration setup-repository-safety --keep
+node --input-type=module -e 'import fs from "node:fs"; import { scanSkills } from "./scripts/lib/layout.mjs"; const skills = scanSkills("./skills").skills; const plugin = JSON.parse(fs.readFileSync("./.claude-plugin/plugin.json", "utf8")); if (skills.length !== 44 || skills.filter(({ name }) => name.startsWith("agent-")).length !== 7 || plugin.skills.length !== 37) process.exit(1);'
+```
+
+The offline fixture proves exactly five provider outcome categories, stable-identity and digest ownership shapes, foreign-name conflicts, reconcile drift conflicts, explicit-reset drift updates, and unsupported Jira provisioning. It contains provider-specific examples, not a generic label schema, provider operation, endpoint, or credential shape.
+
+These checks do not claim authenticated Linear, Jira, GitHub Issues, or GitHub resource behavior. That evidence requires a later provider-specific adapter, credentials supplied outside repository metadata, and separate live task artifacts recording the provider operation and observed identity.
+
 The fixture repository is the only codebase an artifact may describe. Saved source snapshots and local guides prevent reads from mutable host files. Regrading uses saved `.dist` templates and the fixture snapshot; legacy recordings without that snapshot are skipped.
 
 `verify-required-arguments` tests command discovery when a package build needs a runtime argument. It requires a passing verification artifact and `dist/runtime.txt` from the supported build; a bare invocation's usage error is not a product defect. The command below passed its one phase in 261 seconds with the final notification-CLI request and clarified evidence-retention guidance; results remain under `evals/results/20260919-170601/`:
