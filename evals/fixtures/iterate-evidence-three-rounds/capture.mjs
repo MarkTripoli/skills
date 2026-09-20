@@ -31,6 +31,7 @@ try {
   annotate("--type", "setup", "--message", "Fresh counters A-D at 1280 by 720");
   await page.waitForTimeout(3000);
   mark("initial");
+  await page.waitForTimeout(1000); // hold initial-zero state for clean video frames before the first click
   for (const counter of ["A", "B", "C", "D"]) {
     annotate("--type", "test_start", "--message", `${counter}-increment: Add one from zero`);
     await page.locator(`#add-${counter}`).click();

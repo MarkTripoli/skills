@@ -60,8 +60,8 @@ try {
   const actions = [];
   const mark = (flow) => actions.push({ flow, wallTime: Date.now() / 1000, videoTime: Date.now() / 1000 - startedAt });
   annotate("--type", "setup", "--message", "Fresh counter page at 1280 by 720");
-  await page.waitForTimeout(1000);
   mark("initial");
+  await page.waitForTimeout(1000); // hold initial-zero state for clean video frames before the first click
   annotate("--type", "test_start", "--message", "One Add one activation from zero");
   await page.getByRole("button", { name: "Add one", exact: true }).click();
   await page.waitForTimeout(1000);

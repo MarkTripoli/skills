@@ -240,7 +240,8 @@ async function runScenario(scenario, runDir, dist) {
   if (isEvidenceScenario(scenario)) {
     const pinned = path.join(dist, "evidence-source");
     const { runEvidenceScenario } = await import(pathToFileURL(path.join(pinned, "evals", "iterate-evidence.mjs")));
-    return runEvidenceScenario(scenario, runDir, pinned, { model, maxMinutes });
+    const effectiveMinutes = Math.max(maxMinutes, scenario.minMinutes ?? 0);
+    return runEvidenceScenario(scenario, runDir, pinned, { model, maxMinutes: effectiveMinutes });
   }
   const skillsDir = path.join(dist, "skills");
   const { repo, taskDir } = prepareRepo(scenario, dist);

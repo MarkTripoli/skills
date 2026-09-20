@@ -468,7 +468,7 @@ function activeReservation(text, round, limit, findingId, pendingRepair = false)
       if (["current step", "next incomplete step", "last completed step / next incomplete step",
         "current step / last completed step / next incomplete step"].includes(key)) stepDeclared = true;
       const value = field[2];
-      if (key === "current step") declarations.push(pending(value));
+      if (key === "current step") declarations.push(pending(value) || clean(value) === "reservation");
       if (key === "last completed step") declarations.push(reserved(value));
       if (key === "next incomplete step") declarations.push(pending(value));
       if (key === "last completed step / next incomplete step") {
@@ -479,7 +479,7 @@ function activeReservation(text, round, limit, findingId, pendingRepair = false)
         const parts = value.split("/");
         // Three-way slash-separated form: check current+last-completed; next-incomplete may use
         // non-canonical prose without contradicting the pending state.
-        if (parts.length === 3) declarations.push(pending(parts[0]) && reserved(parts[1]));
+        if (parts.length === 3) declarations.push((pending(parts[0]) || (clean(parts[0]) === "reservation" && pending(parts[2]))) && reserved(parts[1]));
         // Single-value form (parts.length===1): the semicolon-separated sub-fields are already
         // extracted by the split pattern above and handled by the individual "current step",
         // "last completed step", and "next incomplete step" key handlers below. Do not push
@@ -550,6 +550,14 @@ export function reviewProblems(out, review, trace, snapshots, base, finalState, 
     if (image?.sha256 !== item.frameSha256) {
       require(Boolean(image) && item.subjectImage === image.file && item.subjectImageInspected === true && item.subjectImageSha256 === image.sha256, `${flow} transformed subject image needs independent opening and exact payload identity`);
       require(Boolean(item.subjectImage) && sha256(fs.readFileSync(retainedFile(out, item.subjectImage))) === item.subjectImageSha256, `${flow} transformed subject image payload missing or changed`);
+    }
+    if (flow.endsWith("-initial")) {
+      require(path.basename(item.frame).toLowerCase().includes("initial"), `${flow} frame filename must contain 'initial' to identify the pre-click extraction`);
+      // Structural binding: initial frame must be before the first click's videoTime in the capture manifest.
+      const firstClickAction = Array.isArray(capture.actions) ? capture.actions.find((a) => a.flow !== "initial") : null;
+      if (firstClickAction) {
+        require(rawTimestamp < firstClickAction.videoTime, `${flow} frame (rawTimestamp=${rawTimestamp}s) must be strictly before the first click action '${firstClickAction.flow}' (videoTime=${firstClickAction.videoTime}s); extract at the manifest 'initial' action videoTime, not at or after the click`);
+      }
     }
     selected[flow] = { ...item, capture, image, session, rawTimestamp };
   }

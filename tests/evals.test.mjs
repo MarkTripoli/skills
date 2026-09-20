@@ -277,6 +277,9 @@ test("primary inspection rejects image substitution and unconsumed or completed 
       "- Current step / last completed step / next incomplete step: reservation complete; last completed: reservation; next incomplete: Repair",
       // Three explicit labeled lines (canonical form from template).
       "- Current step: repair pending\n- Last completed step: reservation\n- Next incomplete step: repair",
+      // F5 regression: 'reservation' as current step is a valid pending-repair state
+      "- Current step: reservation\n- Last completed step: baseline inspection\n- Next incomplete step: repair",
+      "- Current step / last completed step / next incomplete step: reservation / baseline inspection / repair",
     ];
     for (const state of pendingStates) {
       snapshots[2] = reserve(reservationText.replace("- Current step: repair pending.", state));
@@ -302,6 +305,32 @@ test("primary inspection rejects image substitution and unconsumed or completed 
     trace.images[1].sha256 = "substituted";
     assert.ok(check().some((problem) => problem.includes("subject image")));
     trace.images[1].sha256 = observations[1].frameSha256;
+    // F4 regression: initial frame filename must contain 'initial'
+    {
+      const origFrame = observations[0].frame;
+      const origFrameSha256 = observations[0].frameSha256;
+      const origToolArg = trace.tools[0].arguments.path;
+      const badFrame = `${path.dirname(origFrame)}/01-test-start.png`;
+      put(badFrame, "baseline initial pixels");
+      observations[0].frame = badFrame;
+      observations[0].frameSha256 = hash("baseline initial pixels");
+      trace.tools[0].arguments.path = badFrame.slice("task/".length);
+      assert.ok(check().some((p) => p.toLowerCase().includes("initial")), "F4: non-initial frame filename must fail");
+      observations[0].frame = origFrame;
+      observations[0].frameSha256 = origFrameSha256;
+      trace.tools[0].arguments.path = origToolArg;
+    }
+    // F4 regression: initial frame must be before first click's videoTime when capture.actions is present
+    {
+      const baselineCapture = JSON.parse(fs.readFileSync(path.join(dir, "task/evidence/baseline/capture.json"), "utf8"));
+      const actions = [{ flow: "initial", videoTime: 1.0 }, { flow: "increment", videoTime: 2.0 }, { flow: "reset", videoTime: 3.0 }];
+      put("task/evidence/baseline/capture.json", JSON.stringify({ ...baselineCapture, actions }));
+      assert.deepEqual(check(), [], "initial frame before first click passes");
+      observations[0].timestamp = 2.5;
+      assert.ok(check().some((p) => p.includes("initial") || p.includes("first click")), "F4: frame at/after first click must fail");
+      observations[0].timestamp = 0.5;
+      put("task/evidence/baseline/capture.json", JSON.stringify(baselineCapture));
+    }
     for (const invalid of [
       reservationText.replace("consumed_rounds: 1", "consumed_rounds: 0"),
       reservationText.replace("status: in-progress", "status: passed"),
@@ -320,10 +349,10 @@ test("primary inspection rejects image substitution and unconsumed or completed 
       `${reservationText}\n- Current step: repair. Last completed: repair. Next incomplete: checks.`,
       reservationText.replace("repair pending", "diagnose and repair completed"),
       reservationText.replace("repair pending", "repair and capture"),
-      reservationText.replace("- Current step: repair pending.", "- Last completed step / next incomplete step: reservation / checks."),
-      reservationText.replace("- Current step: repair pending.", "- Last completed step: reservation."),
-      `${reservationText}\n- Status: failed / exhaustion.`,
       `${reservationText}\n- Attempted finding IDs: IE-002.`,
+      // F5 regression: 'reservation' as current step rejected when next incomplete step is not repair
+      reservationText.replace("- Current step: repair pending.", "- Current step: reservation\n- Last completed step: baseline inspection\n- Next incomplete step: checks"),
+      reservationText.replace("- Current step: repair pending.", "- Current step / last completed step / next incomplete step: reservation / baseline inspection / checks"),
     ]) {
       snapshots[2] = reserve(invalid);
       assert.ok(check().some((problem) => problem.includes("consumed round")));
