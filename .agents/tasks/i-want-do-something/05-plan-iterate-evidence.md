@@ -235,13 +235,15 @@ npm run evals -- iterate-evidence-viewer-blocked iterate-evidence-label-disagree
 npm test
 ```
 
-- [ ] Blocked case contains an actual denied opening attempt after real capture, no usable alternative subject viewer, `blocked/blocker`, and no source mutation.
-- [ ] Disagreement case contains a pixel-opening trace, independently observed `2`, preserved passed metadata, failed flow, and `failed/exhaustion` at zero allowance.
-- [ ] Recorder source/routing/schema remain unchanged. Missing setup evidence cannot be accepted as the expected non-success branch.
+- [x] Blocked case contains an actual denied opening attempt after real capture, no usable alternative subject viewer, `blocked/blocker`, and no source mutation.
+- [x] Disagreement case contains a pixel-opening trace, independently observed `2`, preserved passed metadata, failed flow, and `failed/exhaustion` at zero allowance.
+- [x] Recorder source/routing/schema remain unchanged. Missing setup evidence cannot be accepted as the expected non-success branch.
 
 human-gated: false
 
 **Required executing-agent review:** Inspect the denial trace and capability restrictions, then independently open the disagreement footage and compare pixels with retained labels. Record observations in each retained run, not only a process exit code.
+
+**Phase 2 execution evidence:** [07-implementation-iterate-evidence.md](07-implementation-iterate-evidence.md) records code commit `05ae6eb`, 140 passing offline tests, and accepted evidence under `evals/results/20260920-054114/`. Both live subjects exited 0; original runner output retains pending-review and denial-boundary grading failures. The executing agent inspected the denial/capability records and independently opened disagreement frames/video, then saved grading passed `2/2` with the evidence-backed boundary correction. Negative controls reject missing review, mismatched image-result identity, and missing effective restrictions; restoring identical evidence passes. Initial diagnostic run `evals/results/20260920-053803/` remains retained and is not the accepted proof. Phase 3 remains unstarted.
 
 ---
 
