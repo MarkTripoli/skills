@@ -87,6 +87,10 @@ func (m *Manager) Replace(ctx context.Context, key BranchKey, accepted db.Accept
 		m.mu.Unlock()
 		prior.Wait()
 		m.mu.Lock()
+		if m.stopping {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("daemon manager is shutting down")
+		}
 		latest, loadErr := m.db.GetRun(prior.Run.ID)
 		if loadErr != nil {
 			m.mu.Unlock()
@@ -177,21 +181,27 @@ func (m *Manager) Resume(ctx context.Context, r *db.Run) error {
 	if r.Status.Terminal() {
 		return fmt.Errorf("run %s is already terminal", r.ID)
 	}
+	key := BranchKey{RepositoryID: r.RepoID, Ref: r.Branch}
+	m.mu.Lock()
+	if m.stopping {
+		m.mu.Unlock()
+		return fmt.Errorf("daemon manager is shutting down")
+	}
+	if existing := m.keys[key]; existing != nil {
+		m.mu.Unlock()
+		return nil
+	}
 	if r.Status == types.RunPending {
 		if err := m.db.TransitionRunStatus(r.ID, types.RunPending, types.RunRunning); err != nil {
+			m.mu.Unlock()
 			return err
 		}
 		r.Status = types.RunRunning
 	}
-	key := BranchKey{RepositoryID: r.RepoID, Ref: r.Branch}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if existing := m.keys[key]; existing != nil {
-		return nil
-	}
 	runctx, cancel := context.WithCancel(ctx)
 	h := &RunHandle{Run: r, cancel: cancel, done: make(chan struct{}), started: make(chan struct{})}
 	m.keys[key] = h
+	m.mu.Unlock()
 	go func() {
 		close(h.started)
 		defer close(h.done)

@@ -71,6 +71,16 @@ type Runner struct {
 }
 
 func (r *Runner) SetInteractive(enabled bool) { r.Interactive = enabled }
+func responseAllowed(step StepName, action types.ApprovalAction) bool {
+	switch step {
+	case StepPush, StepPullRequest, StepCI:
+		return action == types.ActionAbort || action == types.ActionFix
+	case StepReview:
+		return action != types.ActionSkip
+	default:
+		return true
+	}
+}
 
 func New() *Runner {
 	return &Runner{steps: map[StepName]Step{}, inputs: map[StepName]StepInputs{}, inputFuncs: map[StepName]func() StepInputs{}, checkpointFuncs: map[StepName]func() (string, error){}, Order: append([]StepName(nil), CoreSteps...)}
@@ -182,8 +192,16 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 						return r.Results, responseErr
 					}
 					if response != nil {
-						if response.Action == string(types.ActionAbort) {
+						action := types.ApprovalAction(response.Action)
+						if !responseAllowed(n, action) {
+							return r.Results, fmt.Errorf("response %s is not allowed for step %s", response.Action, n)
+						}
+						if action == types.ActionAbort {
 							return r.Results, fmt.Errorf("step %s aborted by operator", n)
+						}
+						if action == types.ActionFix {
+							persisted.Status = types.StepStatusFixing
+							break
 						}
 						break
 					}
@@ -193,7 +211,9 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 					case <-time.After(100 * time.Millisecond):
 					}
 				}
-				continue
+				if persisted.Status != types.StepStatusFixing {
+					continue
+				}
 			}
 			if err := r.Database.StartStep(persisted.ID); err != nil {
 				return r.Results, err
@@ -216,8 +236,16 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 			if awaitErr := r.Database.SetRunAwaitingAgent(r.RunID); awaitErr != nil {
 				return r.Results, awaitErr
 			}
+			rerun := false
 			for {
-				response, responseErr := r.Database.ApplyResponse(r.RunID, string(n), persisted.ID, "", n == StepReview)
+				checkpoint := ""
+				if checkpointFunc != nil {
+					checkpoint, err = checkpointFunc()
+					if err != nil {
+						return r.Results, fmt.Errorf("checkpoint response step %s: %w", n, err)
+					}
+				}
+				response, responseErr := r.Database.ApplyResponse(r.RunID, string(n), persisted.ID, checkpoint, n == StepReview)
 				if responseErr != nil {
 					return r.Results, responseErr
 				}
@@ -229,20 +257,25 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 					}
 					continue
 				}
+				action := types.ApprovalAction(response.Action)
+				if !responseAllowed(n, action) {
+					return r.Results, fmt.Errorf("response %s is not allowed for step %s", response.Action, n)
+				}
 				_ = r.Database.ClearRunAwaitingAgent(r.RunID)
-				if response.Action == string(types.ActionAbort) {
+				if action == types.ActionAbort {
 					return r.Results, fmt.Errorf("step %s aborted by operator", n)
 				}
-				if response.Action == string(types.ActionFix) {
+				if action == types.ActionFix {
 					if startErr := r.Database.StartStepFixRound(persisted.ID, 0); startErr != nil {
 						return r.Results, startErr
 					}
+					rerun = true
 					break
 				}
 				err = nil
 				break
 			}
-			if err == nil {
+			if !rerun {
 				break
 			}
 		}

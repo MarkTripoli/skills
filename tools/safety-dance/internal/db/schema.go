@@ -69,7 +69,8 @@ CREATE TABLE IF NOT EXISTS step_results (
     agent_pid        INTEGER,
     auto_fix_limit              INTEGER,
     ci_fix_attempts             INTEGER NOT NULL DEFAULT 0,
-    override_reason             TEXT
+    override_reason             TEXT,
+    prompt_generation           INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS step_rounds (
@@ -226,11 +227,12 @@ CREATE TABLE IF NOT EXISTS responses (
     run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
     step TEXT NOT NULL,
     step_id TEXT NOT NULL DEFAULT '',
+    prompt_generation INTEGER NOT NULL DEFAULT 0,
     action TEXT NOT NULL,
     payload TEXT NOT NULL,
     created_at INTEGER NOT NULL
 );
-
+CREATE UNIQUE INDEX IF NOT EXISTS idx_responses_prompt_generation ON responses(run_id, step, step_id, prompt_generation);
 CREATE INDEX IF NOT EXISTS idx_responses_prompt ON responses(run_id, step, step_id, created_at);
 `
 
@@ -239,6 +241,7 @@ CREATE INDEX IF NOT EXISTS idx_responses_prompt ON responses(run_id, step, step_
 // idempotent via its error being tolerated when the column already exists.
 var migrationStatements = []string{
 	`ALTER TABLE responses ADD COLUMN step_id TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE responses ADD COLUMN prompt_generation INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE runs ADD COLUMN pi_profile TEXT`,
 	`CREATE TRIGGER IF NOT EXISTS runs_pi_profile_immutable BEFORE UPDATE OF pi_profile ON runs WHEN NEW.pi_profile IS NOT OLD.pi_profile BEGIN SELECT RAISE(ABORT, 'run Pi profile is immutable'); END`,
 	`ALTER TABLE repos ADD COLUMN fork_url TEXT`,
@@ -329,6 +332,7 @@ var migrationStatements = []string{
 	// empty both mean the bare core pipeline, which is the only sequence a row
 	// written before this column existed can have had.
 	`ALTER TABLE runs ADD COLUMN gates_json TEXT`,
+	`ALTER TABLE step_results ADD COLUMN prompt_generation INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE step_results ADD COLUMN auto_fix_limit INTEGER`,
 	`ALTER TABLE step_results ADD COLUMN ci_fix_attempts INTEGER NOT NULL DEFAULT 0`,
 	// Non-nil exactly when a human answered ActionApprove on a step whose gate

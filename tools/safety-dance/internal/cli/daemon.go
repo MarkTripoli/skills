@@ -285,22 +285,20 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		}
 	})
 	adm := daemon.NewAdmissionWithStore(server, func(ctx context.Context, n daemon.PushNotification) error {
-		queued := daemon.PushNotification(n)
-		go func() {
-			if err := recordPush(d, p, manager, queued); err != nil {
-				fmt.Fprintf(os.Stderr, "safety-dance: queued push %s failed: %v\n", queued.New, err)
-			}
-		}()
-		return nil
+		return recordPush(d, p, manager, n)
 	}, filepath.Join(p.Root(), "admission-receipts.json"))
 	if err := adm.InitError(); err != nil {
 		return fmt.Errorf("load admission receipts: %w", err)
 	}
+	shutdown := make(chan struct{})
 	server.Handle(ipc.MethodShutdown, func(ctx context.Context, raw json.RawMessage) (interface{}, error) {
 		if err := daemon.AuthorizeMutationPeer(ipc.PeerPID(ctx)); err != nil {
 			return nil, err
 		}
-		go func() { _ = signalProcess(os.Getpid()) }()
+		select {
+		case shutdown <- struct{}{}:
+		default:
+		}
 		return ipc.ShutdownResult{OK: true}, nil
 	})
 	server.Handle(ipc.MethodHealth, func(context.Context, json.RawMessage) (interface{}, error) {
@@ -333,6 +331,11 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		layout := worktrees.New(p, globalConfig.WorktreeRoots)
 		if err := layout.ValidateCheckout(repo.WorkingPath); err != nil {
 			return nil, err
+		}
+		branchRef := canonicalRef(q.Branch)
+		verifiedHead, verifyErr := git.RunBare(ctx, p.RepoDir(repo.ID), "rev-parse", "--verify", branchRef+"^{commit}")
+		if verifyErr != nil || strings.TrimSpace(verifiedHead) != strings.TrimSpace(q.HeadSHA) {
+			return nil, fmt.Errorf("requested head %s is not the authenticated gate head for %s", q.HeadSHA, branchRef)
 		}
 		worktree := layout.Dir(q.RepoID, repo.WorkingPath, nonce)
 		if err := worktrees.CreateDetached(ctx, repo.WorkingPath, worktree, q.HeadSHA); err != nil {
@@ -368,6 +371,9 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		}
 		if q.Action != types.ActionApprove && q.Action != types.ActionFix && q.Action != types.ActionSkip && q.Action != types.ActionAbort {
 			return nil, fmt.Errorf("unsupported response action %q", q.Action)
+		}
+		if (q.Step == "push" || q.Step == "pull-request" || q.Step == "ci") && (q.Action == types.ActionApprove || q.Action == types.ActionSkip) {
+			return nil, fmt.Errorf("response %s is not allowed for step %s", q.Action, q.Step)
 		}
 		r, err := d.GetRun(q.RunID)
 		if err != nil {
@@ -495,7 +501,10 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	go server.ServeReady()
-	<-sig
+	select {
+	case <-sig:
+	case <-shutdown:
+	}
 	manager.Shutdown()
 	server.Close()
 	server.CloseListener()
@@ -510,7 +519,7 @@ func pinGatesForAdmission(ctx context.Context, p *paths.Paths, repo *db.Repo, wo
 	trusted := &config.RepoConfig{}
 	gateRepo := p.RepoDir(repo.ID)
 	ref := "refs/safety-dance/trusted/admission-" + nonce
-	if _, err := git.Run(ctx, gateRepo, "fetch", "--no-tags", repo.PushURL(), "refs/heads/"+repo.DefaultBranch+":"+ref); err != nil {
+	if _, err := git.Run(ctx, gateRepo, "fetch", "--no-tags", repo.UpstreamURL, "refs/heads/"+repo.DefaultBranch+":"+ref); err != nil {
 		return "", fmt.Errorf("fetch trusted configuration: %w", err)
 	}
 	defer func() { _, _ = git.Run(ctx, gateRepo, "update-ref", "-d", ref) }()
@@ -660,16 +669,22 @@ func livePublicationHead(ctx context.Context, remote, ref string) string {
 	return normalizeSHA(fields[0])
 }
 
-func newSCMHost(remote, worktree string) (scm.Host, error) {
-	provider := scm.DetectProvider(remote)
+func newSCMHost(upstream, fork, worktree string) (scm.Host, error) {
+	provider := scm.DetectProvider(upstream)
 	if provider != scm.ProviderGitHub {
 		return nil, fmt.Errorf("SCM provider %s is not supported by this build; refusing to start a publish pipeline", provider)
 	}
-	return github.New(func(commandCtx context.Context, name string, args ...string) *exec.Cmd {
+	factory := func(commandCtx context.Context, name string, args ...string) *exec.Cmd {
 		command := exec.CommandContext(commandCtx, name, args...)
 		command.Dir = worktree
 		return command
-	}, func() bool { _, err := exec.LookPath("gh"); return err == nil }, scm.ExtractHost(remote), github.HostPrefixedSlug(remote)), nil
+	}
+	host := scm.ExtractHost(upstream)
+	repoSlug := github.HostPrefixedSlug(upstream)
+	if strings.TrimSpace(fork) != "" {
+		return github.NewWithFork(factory, func() bool { _, err := exec.LookPath("gh"); return err == nil }, host, repoSlug, github.HostPrefixedSlug(fork), false), nil
+	}
+	return github.New(factory, func() bool { _, err := exec.LookPath("gh"); return err == nil }, host, repoSlug), nil
 }
 
 func recoverCancelledPublication(database *db.DB, p *paths.Paths, repo *db.Repo, run *db.Run, worktree string) error {
@@ -739,7 +754,7 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	}
 	trustedConfig := &config.RepoConfig{}
 	trustedRef := "refs/safety-dance/trusted/" + run.ID
-	if _, err := git.Run(ctx, gateRepo, "fetch", "--no-tags", repo.PushURL(), "refs/heads/"+repo.DefaultBranch+":"+trustedRef); err != nil {
+	if _, err := git.Run(ctx, gateRepo, "fetch", "--no-tags", repo.UpstreamURL, "refs/heads/"+repo.DefaultBranch+":"+trustedRef); err != nil {
 		return fmt.Errorf("fetch trusted configuration: %w", err)
 	}
 	defer func() { _, _ = git.Run(ctx, gateRepo, "update-ref", "-d", trustedRef) }()
@@ -813,7 +828,7 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	if verifiedHead == "" {
 		verifiedHead = normalizeSHA(run.BaseSHA)
 	}
-	scmHost, err := newSCMHost(repo.PushURL(), worktree)
+	scmHost, err := newSCMHost(repo.UpstreamURL, repo.ForkURL, worktree)
 	if err != nil {
 		return err
 	}

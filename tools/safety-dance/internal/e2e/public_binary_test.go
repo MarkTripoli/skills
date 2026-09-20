@@ -7,17 +7,27 @@ import (
 	"testing"
 )
 
-// TestPublicBinarySmoke ensures the e2e target executes the shipped command
-// rather than only calling internal packages.
+// TestPublicBinarySmoke exercises the built command against an isolated runtime
+// home, not only Cobra help rendering. Full gate journeys remain in e2e_test.go.
 func TestPublicBinarySmoke(t *testing.T) {
 	binary := strings.TrimSpace(os.Getenv("SD_E2E_BINARY"))
 	if binary == "" {
 		t.Skip("SD_E2E_BINARY is not set")
 	}
-	for _, args := range [][]string{{"--help"}, {"daemon", "--help"}, {"status", "--help"}} {
+	home := t.TempDir()
+	run := func(args ...string) string {
 		cmd := exec.Command(binary, args...)
-		if out, err := cmd.CombinedOutput(); err != nil {
+		cmd.Env = append(os.Environ(), "SD_HOME="+home)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
 			t.Fatalf("%s %v: %v\n%s", binary, args, err, out)
 		}
+		return string(out)
+	}
+	if output := run("status"); !strings.Contains(output, "runs: none") {
+		t.Fatalf("status output = %q", output)
+	}
+	for _, args := range [][]string{{"--help"}, {"daemon", "--help"}, {"status", "--help"}} {
+		run(args...)
 	}
 }
