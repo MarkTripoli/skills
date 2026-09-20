@@ -67,7 +67,10 @@ type Runner struct {
 	Database        *db.DB
 	RunID           string
 	Order           []StepName
+	Interactive     bool
 }
+
+func (r *Runner) SetInteractive(enabled bool) { r.Interactive = enabled }
 
 func New() *Runner {
 	return &Runner{steps: map[StepName]Step{}, inputs: map[StepName]StepInputs{}, inputFuncs: map[StepName]func() StepInputs{}, checkpointFuncs: map[StepName]func() (string, error){}, Order: append([]StepName(nil), CoreSteps...)}
@@ -196,8 +199,53 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 				return r.Results, err
 			}
 		}
-		sink := db.NewTypedEvidenceSink()
-		err = s(db.WithTypedEvidenceSink(ctx, sink))
+		var sink *db.TypedEvidenceSink
+		for {
+			sink = db.NewTypedEvidenceSink()
+			err = s(db.WithTypedEvidenceSink(ctx, sink))
+			if persisted == nil || err == nil || !r.Interactive {
+				break
+			}
+			findings := ""
+			if sink.Value != nil {
+				findings = sink.Value.FindingsJSON
+			}
+			if parkErr := r.Database.ParkStepForApproval(r.RunID, persisted.ID, types.StepStatusAwaitingApproval, 1, 0, &findings); parkErr != nil {
+				return r.Results, parkErr
+			}
+			if awaitErr := r.Database.SetRunAwaitingAgent(r.RunID); awaitErr != nil {
+				return r.Results, awaitErr
+			}
+			for {
+				response, responseErr := r.Database.ApplyResponse(r.RunID, string(n), persisted.ID, "", n == StepReview)
+				if responseErr != nil {
+					return r.Results, responseErr
+				}
+				if response == nil {
+					select {
+					case <-ctx.Done():
+						return r.Results, ctx.Err()
+					case <-time.After(100 * time.Millisecond):
+					}
+					continue
+				}
+				_ = r.Database.ClearRunAwaitingAgent(r.RunID)
+				if response.Action == string(types.ActionAbort) {
+					return r.Results, fmt.Errorf("step %s aborted by operator", n)
+				}
+				if response.Action == string(types.ActionFix) {
+					if startErr := r.Database.StartStepFixRound(persisted.ID, 0); startErr != nil {
+						return r.Results, startErr
+					}
+					break
+				}
+				err = nil
+				break
+			}
+			if err == nil {
+				break
+			}
+		}
 		result := StepResult{n, err == nil, err}
 		r.mu.Lock()
 		r.Results = append(r.Results, result)
@@ -211,24 +259,19 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 				}
 			}
 			findings := ""
-			if sink.Value != nil {
+			if sink != nil && sink.Value != nil {
 				findings = sink.Value.FindingsJSON
 			}
 			if err == nil {
 				if persistErr := r.Database.CompleteStepWithRunHead(persisted.ID, r.RunID, checkpoint, findings, n == StepReview); persistErr != nil {
 					return r.Results, fmt.Errorf("persist step %s: %w", n, persistErr)
 				}
-			} else {
-				if persistErr := r.Database.SetStepFindings(persisted.ID, findings); persistErr != nil {
-					return r.Results, fmt.Errorf("persist step %s findings: %w", n, persistErr)
-				}
-				if persistErr := r.Database.FailStep(persisted.ID, err.Error(), 0); persistErr != nil {
-					return r.Results, fmt.Errorf("persist step %s: %w", n, persistErr)
-				}
+			} else if persistErr := r.Database.FailStep(persisted.ID, err.Error(), 0); persistErr != nil {
+				return r.Results, fmt.Errorf("persist step %s: %w", n, persistErr)
 			}
-			if sink.Value != nil && len(sink.Value.Evidence) > 0 {
+			if sink != nil && sink.Value != nil && len(sink.Value.Evidence) > 0 {
 				if persistErr := r.Database.TouchStepActivity(persisted.ID, "evidence: "+strings.Join(sink.Value.Evidence, "; ")); persistErr != nil {
-					return r.Results, fmt.Errorf("persist step %s evidence: %w", n, persistErr)
+					return r.Results, persistErr
 				}
 			}
 		}

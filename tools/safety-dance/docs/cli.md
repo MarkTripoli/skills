@@ -8,6 +8,7 @@
 - `safety-dance logs` prints daemon logs.
 - `safety-dance daemon start|stop|restart|status` manages the local daemon.
 - `safety-dance wizard` interactively configures the upstream, gate directory, provider, validation commands, and daemon service before writing state. It rolls back writes made by the current attempt while preserving pre-existing Safety Dance configuration.
+The first release supports GitHub repositories for pull-request and CI stages. The wizard rejects other provider selections instead of creating a run that cannot publish; provider adapters remain a separate future change.
 - Running `safety-dance` without a subcommand opens the wizard when no repository is configured, or the terminal UI for the active run. Use `--plain` for ANSI-free status output in scripts and logs.
 
 Mutation commands refuse to run when `SD_PARENT_RUN_ID` identifies a validation child. Plain output contains no terminal control sequences.

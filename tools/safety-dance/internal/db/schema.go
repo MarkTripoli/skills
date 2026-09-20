@@ -225,16 +225,20 @@ CREATE TABLE IF NOT EXISTS responses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
     step TEXT NOT NULL,
+    step_id TEXT NOT NULL DEFAULT '',
     action TEXT NOT NULL,
     payload TEXT NOT NULL,
     created_at INTEGER NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_responses_prompt ON responses(run_id, step, step_id, created_at);
 `
 
 // migrationStatements hold additive schema changes applied to databases that
 // were created before the referenced columns existed. Each statement must be
 // idempotent via its error being tolerated when the column already exists.
 var migrationStatements = []string{
+	`ALTER TABLE responses ADD COLUMN step_id TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE runs ADD COLUMN pi_profile TEXT`,
 	`CREATE TRIGGER IF NOT EXISTS runs_pi_profile_immutable BEFORE UPDATE OF pi_profile ON runs WHEN NEW.pi_profile IS NOT OLD.pi_profile BEGIN SELECT RAISE(ABORT, 'run Pi profile is immutable'); END`,
 	`ALTER TABLE repos ADD COLUMN fork_url TEXT`,

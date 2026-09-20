@@ -12,6 +12,7 @@ import (
 type Response struct {
 	RunID   string
 	Step    string
+	StepID  string
 	Action  string
 	Payload any
 }
@@ -24,7 +25,7 @@ func (d *DB) RecordResponse(r Response) error {
 	if err != nil {
 		return fmt.Errorf("marshal response: %w", err)
 	}
-	_, err = d.sql.Exec(`INSERT INTO responses(run_id,step,action,payload,created_at) VALUES(?,?,?,?,?)`, r.RunID, r.Step, r.Action, string(payload), now())
+	_, err = d.sql.Exec(`INSERT INTO responses(run_id,step,step_id,action,payload,created_at) VALUES(?,?,?,?,?,?)`, r.RunID, r.Step, r.StepID, r.Action, string(payload), now())
 	if err != nil {
 		return fmt.Errorf("record response: %w", err)
 	}
@@ -41,7 +42,8 @@ func (d *DB) ConsumeResponse(runID, step string) (*Response, error) {
 	defer tx.Rollback()
 	var id int64
 	var action, payload string
-	err = tx.QueryRow(`SELECT rowid, action, payload FROM responses WHERE run_id=? AND step=? ORDER BY created_at, rowid LIMIT 1`, runID, step).Scan(&id, &action, &payload)
+	query := `SELECT rowid, action, payload FROM responses WHERE run_id=? AND step=? AND (?='' OR step_id=?) ORDER BY created_at, rowid LIMIT 1`
+	err = tx.QueryRow(query, runID, step, "", "").Scan(&id, &action, &payload)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -72,12 +74,28 @@ func (d *DB) ApplyResponse(runID, step, stepID, headSHA string, review bool) (*R
 	defer tx.Rollback()
 	var rowID int64
 	var action, payload string
-	err = tx.QueryRow(`SELECT rowid, action, payload FROM responses WHERE run_id=? AND step=? ORDER BY created_at, rowid LIMIT 1`, runID, step).Scan(&rowID, &action, &payload)
+	err = tx.QueryRow(`SELECT rowid, action, payload FROM responses WHERE run_id=? AND step=? AND step_id=? AND EXISTS (SELECT 1 FROM step_results WHERE id=? AND run_id=? AND step_name=? AND status IN (?, ?)) ORDER BY created_at, rowid LIMIT 1`, runID, step, stepID, stepID, runID, step, types.StepStatusAwaitingApproval, types.StepStatusFixReview).Scan(&rowID, &action, &payload)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("find response: %w", err)
+	}
+	if action == string(types.ActionFix) {
+		if _, err = tx.Exec(`UPDATE step_results SET status=?, last_activity_at=?, last_activity=? WHERE id=? AND run_id=? AND status IN (?, ?)`, types.StepStatusFixing, now(), "operator requested fix", stepID, runID, types.StepStatusAwaitingApproval, types.StepStatusFixReview); err != nil {
+			return nil, fmt.Errorf("start response fix: %w", err)
+		}
+		if _, err = tx.Exec(`DELETE FROM responses WHERE rowid=?`, rowID); err != nil {
+			return nil, fmt.Errorf("consume fix response: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("commit fix response: %w", err)
+		}
+		var decoded any
+		if json.Unmarshal([]byte(payload), &decoded) != nil {
+			decoded = payload
+		}
+		return &Response{RunID: runID, Step: step, StepID: stepID, Action: action, Payload: decoded}, nil
 	}
 	if _, err = tx.Exec(`DELETE FROM responses WHERE rowid=?`, rowID); err != nil {
 		return nil, fmt.Errorf("consume response: %w", err)
@@ -90,7 +108,7 @@ func (d *DB) ApplyResponse(runID, step, stepID, headSHA string, review bool) (*R
 		if json.Unmarshal([]byte(payload), &decoded) != nil {
 			decoded = payload
 		}
-		return &Response{RunID: runID, Step: step, Action: action, Payload: decoded}, nil
+		return &Response{RunID: runID, Step: step, StepID: stepID, Action: action, Payload: decoded}, nil
 	}
 	status := types.StepStatusCompleted
 	skipReason := ""
@@ -115,5 +133,5 @@ func (d *DB) ApplyResponse(runID, step, stepID, headSHA string, review bool) (*R
 	if json.Unmarshal([]byte(payload), &decoded) != nil {
 		decoded = payload
 	}
-	return &Response{RunID: runID, Step: step, Action: action, Payload: decoded}, nil
+	return &Response{RunID: runID, Step: step, StepID: stepID, Action: action, Payload: decoded}, nil
 }

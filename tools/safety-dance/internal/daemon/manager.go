@@ -31,12 +31,13 @@ func (h *RunHandle) Wait() {
 }
 
 type Manager struct {
-	db    *db.DB
-	store *custody.Store
-	mu    sync.Mutex
-	keys  map[BranchKey]*RunHandle
-	keyMu map[BranchKey]*sync.Mutex
-	run   func(context.Context, *db.Run)
+	db       *db.DB
+	store    *custody.Store
+	mu       sync.Mutex
+	keys     map[BranchKey]*RunHandle
+	keyMu    map[BranchKey]*sync.Mutex
+	run      func(context.Context, *db.Run)
+	stopping bool
 }
 
 func NewManager(database *db.DB, runner func(context.Context, *db.Run)) *Manager {
@@ -65,6 +66,10 @@ func (m *Manager) Replace(ctx context.Context, key BranchKey, accepted db.Accept
 	branchLock.Lock()
 	defer branchLock.Unlock()
 	m.mu.Lock()
+	if m.stopping {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("daemon manager is shutting down")
+	}
 	if accepted.LaunchNonce != "" {
 		existing, err := m.db.GetRunByLaunchNonce(key.RepositoryID, key.Ref, accepted.LaunchNonce)
 		if err != nil {
@@ -146,6 +151,22 @@ func (m *Manager) Cancel(key BranchKey, runID string) bool {
 	h.Cancel()
 	m.mu.Unlock()
 	return true
+}
+
+// Shutdown rejects new replacements, cancels every live run, and waits for
+// their cleanup before daemon ownership is released.
+func (m *Manager) Shutdown() {
+	m.mu.Lock()
+	m.stopping = true
+	handles := make([]*RunHandle, 0, len(m.keys))
+	for _, h := range m.keys {
+		handles = append(handles, h)
+		h.Cancel()
+	}
+	m.mu.Unlock()
+	for _, h := range handles {
+		h.Wait()
+	}
 }
 
 // Resume registers a durable pending/running run that has no live handle.

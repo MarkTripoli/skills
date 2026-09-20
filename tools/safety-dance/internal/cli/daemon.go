@@ -23,6 +23,7 @@ import (
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/pipeline"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/pipeline/steps"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/policy"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/procreap"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/scm"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/scm/github"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/shellenv"
@@ -158,17 +159,16 @@ func stopInstalledService(p *paths.Paths) error {
 	}
 	return service.Stop()
 }
-
 func stopDaemon(cmd *cobra.Command, args []string) error {
 	p, err := home()
 	if err != nil {
 		return err
 	}
-	if err := stopInstalledService(p); err != nil {
-		return fmt.Errorf("stop installed daemon service: %w", err)
-	}
 	path := p.PIDFile()
 	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if err := stopInstalledService(p); err != nil {
+			return fmt.Errorf("stop installed daemon service: %w", err)
+		}
 		fmt.Fprintln(cmd.OutOrStdout(), "daemon stopped")
 		return nil
 	} else if err != nil {
@@ -182,6 +182,9 @@ func stopDaemon(cmd *cobra.Command, args []string) error {
 	for time.Now().Before(deadline) {
 		var health ipc.HealthResult
 		if err := callDaemon(ipc.MethodHealth, ipc.HealthParams{}, &health); err != nil {
+			if err := stopInstalledService(p); err != nil {
+				return fmt.Errorf("stop installed daemon service: %w", err)
+			}
 			_ = os.Remove(path)
 			fmt.Fprintln(cmd.OutOrStdout(), "daemon stopped")
 			return nil
@@ -214,6 +217,7 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, terminationSignal(), os.Interrupt)
 	defer own.Close()
+	defer os.Remove(p.PIDFile())
 	server := ipc.NewServer()
 	manager := daemon.NewManager(d, func(ctx context.Context, r *db.Run) {
 		err := executeRun(ctx, d, p, r)
@@ -274,12 +278,21 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 				fmt.Fprintf(os.Stderr, "safety-dance: worktree source lookup for %s: %v\n", r.ID, sourceErr)
 				return
 			}
+			procreap.SweepRunWorktree(p.WorktreesDir(), r.RepoID, r.ID, *current.WorktreeDir, "run cleanup")
 			if removeErr := worktrees.RemoveDetached(context.Background(), source, *current.WorktreeDir); removeErr != nil {
 				fmt.Fprintf(os.Stderr, "safety-dance: worktree cleanup pending for %s: %v\n", r.ID, removeErr)
 			}
 		}
 	})
-	adm := daemon.NewAdmissionWithStore(server, func(ctx context.Context, n daemon.PushNotification) error { return recordPush(d, p, manager, n) }, filepath.Join(p.Root(), "admission-receipts.json"))
+	adm := daemon.NewAdmissionWithStore(server, func(ctx context.Context, n daemon.PushNotification) error {
+		queued := daemon.PushNotification(n)
+		go func() {
+			if err := recordPush(d, p, manager, queued); err != nil {
+				fmt.Fprintf(os.Stderr, "safety-dance: queued push %s failed: %v\n", queued.New, err)
+			}
+		}()
+		return nil
+	}, filepath.Join(p.Root(), "admission-receipts.json"))
 	if err := adm.InitError(); err != nil {
 		return fmt.Errorf("load admission receipts: %w", err)
 	}
@@ -367,17 +380,17 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return nil, err
 		}
-		waiting := false
+		waitingStepID := ""
 		for _, step := range steps {
 			if step.StepName == q.Step && (step.Status == types.StepStatusAwaitingApproval || step.Status == types.StepStatusFixReview) {
-				waiting = true
+				waitingStepID = step.ID
 				break
 			}
 		}
-		if !waiting {
+		if waitingStepID == "" {
 			return nil, fmt.Errorf("run %s is not awaiting a response for %s", q.RunID, q.Step)
 		}
-		if err := d.RecordResponse(db.Response{RunID: q.RunID, Step: string(q.Step), Action: string(q.Action), Payload: q}); err != nil {
+		if err := d.RecordResponse(db.Response{RunID: q.RunID, Step: string(q.Step), StepID: waitingStepID, Action: string(q.Action), Payload: q}); err != nil {
 			return nil, err
 		}
 		return ipc.RespondResult{OK: true}, nil
@@ -483,6 +496,7 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 	}
 	go server.ServeReady()
 	<-sig
+	manager.Shutdown()
 	server.Close()
 	server.CloseListener()
 	return nil
@@ -496,7 +510,7 @@ func pinGatesForAdmission(ctx context.Context, p *paths.Paths, repo *db.Repo, wo
 	trusted := &config.RepoConfig{}
 	gateRepo := p.RepoDir(repo.ID)
 	ref := "refs/safety-dance/trusted/admission-" + nonce
-	if _, err := git.Run(ctx, gateRepo, "fetch", "--no-tags", "origin", "refs/heads/"+repo.DefaultBranch+":"+ref); err != nil {
+	if _, err := git.Run(ctx, gateRepo, "fetch", "--no-tags", repo.PushURL(), "refs/heads/"+repo.DefaultBranch+":"+ref); err != nil {
 		return "", fmt.Errorf("fetch trusted configuration: %w", err)
 	}
 	defer func() { _, _ = git.Run(ctx, gateRepo, "update-ref", "-d", ref) }()
@@ -725,7 +739,7 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	}
 	trustedConfig := &config.RepoConfig{}
 	trustedRef := "refs/safety-dance/trusted/" + run.ID
-	if _, err := git.Run(ctx, gateRepo, "fetch", "--no-tags", "origin", "refs/heads/"+repo.DefaultBranch+":"+trustedRef); err != nil {
+	if _, err := git.Run(ctx, gateRepo, "fetch", "--no-tags", repo.PushURL(), "refs/heads/"+repo.DefaultBranch+":"+trustedRef); err != nil {
 		return fmt.Errorf("fetch trusted configuration: %w", err)
 	}
 	defer func() { _, _ = git.Run(ctx, gateRepo, "update-ref", "-d", trustedRef) }()
@@ -824,6 +838,7 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	}}
 	runner := pipeline.NewDurable(database, run.ID)
 	runner.SetOrder(order)
+	runner.SetInteractive(true)
 	for gateStep, gate := range gateByStep {
 		gateStep, gate := gateStep, gate
 		checkpoint := func() (string, error) {
