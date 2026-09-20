@@ -29,8 +29,10 @@ import {
   diffRepositorySnapshots,
   failures,
   handoff,
+  gitConfigChanged,
   newest,
   placeholders,
+  snapshotGitConfig,
   snapshotRepository,
   unexpectedRepositoryChanges,
 } from "./lib.mjs";
@@ -222,6 +224,7 @@ function commonChecks(phase, ctx) {
     }
     const unexpected = unexpectedRepositoryChanges(ctx.changedPaths ?? [], phase.allowedChangedPaths ?? []);
     if (unexpected.length) out.push(`repository: unexpected changed paths: ${unexpected.join(", ")}`);
+    if (gitConfigChanged(ctx.beforeGitConfig, ctx.afterGitConfig)) out.push("repository: local Git configuration changed");
     if (!ctx.live) return out;
     const head = git(ctx.repo, "rev-parse", "HEAD");
     if (head !== ctx.beforeHead) out.push(`git: HEAD changed from ${ctx.beforeHead} to ${head}`);
@@ -302,7 +305,9 @@ async function runScenario(scenario, runDir, dist) {
     const before = snapshot(taskDir);
     const beforeHead = git(repo, "rev-parse", "HEAD");
     const beforeRepository = phase.phaseType === "terminal" ? snapshotRepository(repo) : null;
+    const beforeGitConfig = phase.phaseType === "terminal" ? snapshotGitConfig(repo) : null;
     if (beforeRepository) fs.writeFileSync(path.join(out, "repository-before.json"), `${JSON.stringify(beforeRepository, null, 2)}\n`);
+    if (phase.phaseType === "terminal") fs.writeFileSync(path.join(out, "git-config-before.json"), `${JSON.stringify(beforeGitConfig, null, 2)}\n`);
     const template = templateFor(skillsDir, phase);
     const started = Date.now();
     console.log(`[${scenario.name}] ${label}: started`);
@@ -312,7 +317,9 @@ async function runScenario(scenario, runDir, dist) {
     fs.writeFileSync(path.join(out, "stderr.log"), stderr);
     if (fs.existsSync(taskDir)) fs.cpSync(taskDir, path.join(out, "task"), { recursive: true });
     const afterRepository = phase.phaseType === "terminal" ? snapshotRepository(repo) : null;
+    const afterGitConfig = phase.phaseType === "terminal" ? snapshotGitConfig(repo) : null;
     if (afterRepository) fs.writeFileSync(path.join(out, "repository-after.json"), `${JSON.stringify(afterRepository, null, 2)}\n`);
+    if (phase.phaseType === "terminal") fs.writeFileSync(path.join(out, "git-config-after.json"), `${JSON.stringify(afterGitConfig, null, 2)}\n`);
     const repositoryDiff = beforeRepository && afterRepository
       ? diffRepositorySnapshots(beforeRepository, afterRepository)
       : { created: [], modified: [], deleted: [], changedPaths: [] };
@@ -327,6 +334,8 @@ async function runScenario(scenario, runDir, dist) {
       beforeHead,
       beforeRepository,
       afterRepository,
+      beforeGitConfig,
+      afterGitConfig,
       ...repositoryDiff,
       template,
       answer: stdout,
@@ -378,14 +387,18 @@ async function gradeScenario(scenario, runDir) {
       }
       const beforeManifest = path.join(out, "repository-before.json");
       const afterManifest = path.join(out, "repository-after.json");
-      if (phase.phaseType === "terminal" && (!fs.existsSync(beforeManifest) || !fs.existsSync(afterManifest))) {
-        console.log(`[${scenario.name}] ${label}: terminal repository manifests missing; skipped`);
+      const beforeGitConfigManifest = path.join(out, "git-config-before.json");
+      const afterGitConfigManifest = path.join(out, "git-config-after.json");
+      if (phase.phaseType === "terminal" && [beforeManifest, afterManifest, beforeGitConfigManifest, afterGitConfigManifest].some((file) => !fs.existsSync(file))) {
+        console.log(`[${scenario.name}] ${label}: terminal repository or Git config manifests missing; skipped`);
         result.skipped = true;
         break;
       }
       const previous = index === 0 ? null : path.join(resultDir, `${index}-${scenario.phases[index - 1].skill}`, "task");
       const beforeRepository = phase.phaseType === "terminal" ? JSON.parse(fs.readFileSync(beforeManifest, "utf8")) : null;
       const afterRepository = phase.phaseType === "terminal" ? JSON.parse(fs.readFileSync(afterManifest, "utf8")) : null;
+      const beforeGitConfig = phase.phaseType === "terminal" ? JSON.parse(fs.readFileSync(beforeGitConfigManifest, "utf8")) : null;
+      const afterGitConfig = phase.phaseType === "terminal" ? JSON.parse(fs.readFileSync(afterGitConfigManifest, "utf8")) : null;
       const repositoryDiff = beforeRepository && afterRepository
         ? diffRepositorySnapshots(beforeRepository, afterRepository)
         : { created: [], modified: [], deleted: [], changedPaths: [] };
@@ -399,6 +412,8 @@ async function gradeScenario(scenario, runDir) {
         beforeHead: null,
         beforeRepository,
         afterRepository,
+        beforeGitConfig,
+        afterGitConfig,
         ...repositoryDiff,
         template: fs.existsSync(pinnedDist) ? templateFor(path.join(pinnedDist, "skills"), phase) : "",
         answer: fs.readFileSync(path.join(out, "answer.md"), "utf8"),

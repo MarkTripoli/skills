@@ -8,24 +8,53 @@ import crypto from "node:crypto";
 
 const SNAPSHOT_EXCLUDED_DIRECTORIES = new Set([".git", ".agents", ".omp"]);
 
+function snapshotBytes(bytes) {
+  return {
+    bytes: bytes.toString("base64"),
+    sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
+  };
+}
+
+function snapshotSymbolicLink(file) {
+  const linkTarget = fs.readlinkSync(file);
+  return {
+    linkTarget,
+    sha256: crypto.createHash("sha256").update(linkTarget).digest("hex"),
+  };
+}
+
+export function snapshotGitConfig(root) {
+  const config = path.join(root, ".git", "config");
+  if (!fs.existsSync(config)) return null;
+  const stats = fs.lstatSync(config);
+  if (stats.isSymbolicLink()) return snapshotSymbolicLink(config);
+  if (!stats.isFile()) return null;
+  return snapshotBytes(fs.readFileSync(config));
+}
+
+export function gitConfigChanged(before, after) {
+  return (before?.sha256 ?? null) !== (after?.sha256 ?? null);
+}
+
 export function snapshotRepository(root) {
   const manifest = {};
   const visit = (directory, relativeDirectory = "") => {
     const entries = fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
-      if (entry.isDirectory() && SNAPSHOT_EXCLUDED_DIRECTORIES.has(entry.name)) continue;
+      if (relativeDirectory === "" && entry.isDirectory() && SNAPSHOT_EXCLUDED_DIRECTORIES.has(entry.name)) continue;
       const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
       const fullPath = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
+      const stats = fs.lstatSync(fullPath);
+      if (stats.isDirectory()) {
         visit(fullPath, relativePath);
         continue;
       }
-      if (!entry.isFile() && !entry.isSymbolicLink()) continue;
-      const bytes = fs.readFileSync(fullPath);
-      manifest[relativePath] = {
-        bytes: bytes.toString("base64"),
-        sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
-      };
+      if (stats.isSymbolicLink()) {
+        manifest[relativePath] = snapshotSymbolicLink(fullPath);
+        continue;
+      }
+      if (!stats.isFile()) continue;
+      manifest[relativePath] = snapshotBytes(fs.readFileSync(fullPath));
     }
   };
   visit(root);

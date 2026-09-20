@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import * as evalLib from "../evals/lib.mjs";
 import {
   diffRepositorySnapshots,
   handoff,
@@ -71,6 +72,75 @@ test("repository snapshots preserve a byte-stable no-op and exclude harness path
     deleted: [],
     changedPaths: [],
   });
+});
+
+test("repository snapshots include nested directories named after harness paths", () => {
+  const root = repository();
+  const before = snapshotRepository(root);
+
+  put(root, "nested/.agents/hidden.txt", "agents\n");
+  put(root, "nested/.omp/hidden.txt", "omp\n");
+  const afterSnapshot = snapshotRepository(root);
+
+  assert.deepEqual(diffRepositorySnapshots(before, afterSnapshot).changedPaths, [
+    "nested/.agents/hidden.txt",
+    "nested/.omp/hidden.txt",
+  ]);
+});
+
+test("local Git configuration snapshots detect byte changes outside repository manifests", () => {
+  const root = repository();
+  put(root, ".git/config", "[core]\n\trepositoryformatversion = 0\n");
+  const beforeRepository = snapshotRepository(root);
+  const beforeConfig = evalLib.snapshotGitConfig(root);
+
+  put(root, ".git/config", "[core]\n\trepositoryformatversion = 0\n[review]\n\tmutation = detected\n");
+  const afterRepository = snapshotRepository(root);
+  const afterConfig = evalLib.snapshotGitConfig(root);
+
+  assert.deepEqual(diffRepositorySnapshots(beforeRepository, afterRepository).changedPaths, []);
+  assert.equal(evalLib.gitConfigChanged(beforeConfig, afterConfig), true);
+});
+
+test("repository snapshots retain file-link targets without copying target bytes", () => {
+  const root = repository();
+  const hostFile = path.join(path.dirname(root), `${path.basename(root)}-host-secret.txt`);
+  temps.push(hostFile);
+  fs.writeFileSync(hostFile, "host-only-secret\n");
+  fs.symlinkSync(`../${path.basename(hostFile)}`, path.join(root, "linked-secret"));
+
+  const manifest = snapshotRepository(root);
+
+  assert.equal(manifest["linked-secret"].linkTarget, `../${path.basename(hostFile)}`);
+  assert.equal("bytes" in manifest["linked-secret"], false);
+  assert.match(manifest["linked-secret"].sha256, /^[a-f0-9]{64}$/);
+});
+
+test("repository snapshots retain directory-link targets without traversing them", () => {
+  const root = repository();
+  const hostDirectory = path.join(path.dirname(root), `${path.basename(root)}-host-directory`);
+  temps.push(hostDirectory);
+  put(hostDirectory, "host-secret.txt", "host-only-secret\n");
+  fs.symlinkSync(`../${path.basename(hostDirectory)}`, path.join(root, "linked-directory"), "dir");
+
+  const manifest = snapshotRepository(root);
+
+  assert.deepEqual(Object.keys(manifest), ["linked-directory"]);
+  assert.equal(manifest["linked-directory"].linkTarget, `../${path.basename(hostDirectory)}`);
+  assert.equal("bytes" in manifest["linked-directory"], false);
+});
+
+test("repository snapshot diffs report changed link targets", () => {
+  const root = repository();
+  fs.symlinkSync("first-target", path.join(root, "linked-file"));
+  const before = snapshotRepository(root);
+
+  fs.rmSync(path.join(root, "linked-file"));
+  fs.symlinkSync("second-target", path.join(root, "linked-file"));
+  const afterSnapshot = snapshotRepository(root);
+
+  assert.deepEqual(diffRepositorySnapshots(before, afterSnapshot).modified, ["linked-file"]);
+  assert.equal(afterSnapshot["linked-file"].linkTarget, "second-target");
 });
 
 test("terminal allowlists return only undeclared repository changes", () => {
