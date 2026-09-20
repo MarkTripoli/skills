@@ -51,12 +51,14 @@ test('real exiting consumers await generateText and commandRunner descendant cle
   const runConsumer=async mode=>{
     const ready=path.join(root,`${mode}.ready`), pidFile=path.join(root,`${mode}.pid`), parentFile=path.join(root,`${mode}.parent`);
     const child=spawn(process.execPath,[consumer,mode,ready,pidFile,parentFile,helper],{stdio:'ignore'});
+    const exitPromise=new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',code=>code===0?resolve():reject(new Error(`${mode} consumer exited ${code}`)))}); exitPromise.catch(()=>{});
     const waitFor=async predicate=>{for(let i=0;i<100;i++){if(await predicate())return;await new Promise(resolve=>setTimeout(resolve,20));}throw new Error(`${mode} consumer did not become ready`)};
+    const waitForExit=()=>Promise.race([exitPromise,new Promise((_,reject)=>{const timer=setTimeout(()=>reject(new Error(`${mode} consumer exit timed out`)),5000);timer.unref?.();})]);
     try {
       await waitFor(async()=>{try{return (await fs.readFile(ready,'utf8'))==='ready'}catch{return false}});
       const owner=JSON.parse(await fs.readFile(parentFile,'utf8')); assert.ok(Number.isInteger(owner.pid)&&Number.isInteger(owner.pgid));
       const pid=Number(await fs.readFile(pidFile,'utf8'));
-      await new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',code=>code===0?resolve():reject(new Error(`${mode} consumer exited ${code}`)))});
+      await waitForExit();
       await waitFor(async()=>{try{process.kill(pid,0);return false}catch(error){return error.code==='ESRCH'}});
     } finally {
       try{child.kill('SIGKILL')}catch{}
