@@ -17,6 +17,30 @@ const split = (text) => text.split("\n").filter(Boolean);
 
 export const isEvidenceScenario = (scenario) => scenario.phases?.[0]?.skill === "iterate-evidence";
 
+const viewerBlocked = (name) => name === "iterate-evidence-viewer-blocked";
+const labelDisagreement = (name) => name === "iterate-evidence-label-disagreement";
+const inspectionOnly = (name) => viewerBlocked(name) || labelDisagreement(name);
+const quote = (value) => `'${value.replace(/'/g, "'\\''")}'`;
+const blockedOverlay = `tools:
+  approval:
+    read: deny
+    eval: deny
+    task: deny
+  xdev: false
+eval:
+  py: false
+  js: false
+browser:
+  enabled: false
+computer:
+  enabled: false
+images:
+  blockImages: true
+  describeForTextModels: false
+mcp:
+  enableProjectConfig: false
+`;
+
 export function snapshotEvidenceSources(root, dist) {
   const pinned = path.join(dist, "evidence-source");
   for (const name of ["scripts/install.mjs", "scripts/lib", "skills", "runtimes", "shared", "package.json", "package-lock.json", "evals/iterate-evidence.mjs", "evals/iterate-evidence-hooks.mjs", "evals/lib.mjs", "evals/fixtures/iterate-evidence"]) {
@@ -53,6 +77,10 @@ export function evidenceSnapshot(config, event) {
   const state = inventory(repo, exclude);
   const capture = `${evidenceRel}/browser/capture.mjs`;
   if (fs.existsSync(path.join(repo, capture))) state[capture] = { sha256: sha256(fs.readFileSync(path.join(repo, capture))) };
+  for (const name of config.protectedEvidence ?? []) {
+    const file = path.join(repo, name);
+    if (fs.existsSync(file)) state[name] = { sha256: sha256(fs.readFileSync(file)) };
+  }
   fs.mkdirSync(path.join(out, "blobs"), { recursive: true });
   for (const [name, item] of Object.entries(state)) {
     if (!item.sha256) continue;
@@ -109,7 +137,7 @@ async function startServer(root, logFile) {
 // Parse one event at a time, retaining the raw stream unchanged. A truncated last JSON record
 // remains a failure even when the process returned zero. Never infer the answer from tool turns.
 export async function inspectEvidenceTrace(file, imageDir = null) {
-  const index = { problems: [], terminal: false, answer: "", messages: [], images: [], tools: [], lines: 0 };
+  const index = { problems: [], terminal: false, answer: "", messages: [], images: [], tools: [], results: [], lines: 0 };
   if (!fs.existsSync(file)) return { ...index, problems: ["trace: missing trace.jsonl"] };
   if (imageDir) fs.mkdirSync(imageDir, { recursive: true });
   const calls = new Map();
@@ -129,6 +157,7 @@ export async function inspectEvidenceTrace(file, imageDir = null) {
       index.answer = content.some((block) => block.type === "toolCall") ? "" : content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
     }
     if (message.role === "toolResult") {
+      index.results.push({ line: index.lines, toolCallId: message.toolCallId, toolName: message.toolName, isError: Boolean(message.isError), text: content.filter((block) => block.type === "text").map((block) => block.text).join("\n") });
       for (const [offset, block] of content.entries()) {
         if (block.type !== "image" || typeof block.data !== "string") continue;
         const bytes = Buffer.from(block.data, "base64");
@@ -148,14 +177,32 @@ export async function inspectEvidenceTrace(file, imageDir = null) {
 async function runSubject(prompt, config, pinned, options) {
   const { out, repo } = config;
   const args = ["-p", "--auto-approve", "--mode", "json", "--session-dir", path.join(out, "sessions"), "--no-extensions", "--no-skills", "--no-rules", "--no-lsp", "--no-title", "--extension", path.join(pinned, "evals", "iterate-evidence-hooks.mjs"), `--max-time=${options.maxMinutes}m`];
-  if (options.model) args.push("--model", options.model);
+  const model = options.model || (config.blocked ? "openai-codex/gpt-6-astra" : null);
+  if (model) args.push("--model", model);
+  let subjectEnv = { ...process.env, ITERATE_EVIDENCE_OBSERVER: path.join(out, "observer-config.json") };
+  if (config.blocked) {
+    const overlay = path.join(out, "viewer-blocked.yml");
+    fs.writeFileSync(overlay, blockedOverlay);
+    args.push("--tools", "read,grep,glob,write,bash,todo", "--config", overlay);
+    // An ephemeral environment credential is supported by OMP; never persist its value.
+    if (!model.startsWith("openai-codex/")) throw new Error("Isolated viewer case requires an openai-codex model for the configured token export arrangement");
+    const token = command("omp", ["token", "openai-codex"], repo);
+    if (token.code !== 0 || !token.stdout.trim()) throw new Error("Isolated provider authentication unavailable");
+    subjectEnv = {
+      PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, HOME: config.home,
+      PI_CONFIG_DIR: path.join(config.home, ".omp"), PI_CODING_AGENT_DIR: path.join(config.home, ".omp", "agent"),
+      OPENAI_CODEX_OAUTH_TOKEN: token.stdout.trim(),
+      PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || path.join(os.homedir(), "Library", "Caches", "ms-playwright"),
+      ITERATE_EVIDENCE_OBSERVER: path.join(out, "observer-config.json"),
+    };
+  }
   args.push(prompt);
   const configPath = path.join(out, "observer-config.json");
   save(configPath, config);
-  save(path.join(out, "runtime.json"), { node: process.version, platform: process.platform, arch: process.arch, omp: command("omp", ["--version"], repo), model: options.model, args, authentication: "Caller environment/profile; no credentials copied into evidence" });
+  save(path.join(out, "runtime.json"), { node: process.version, platform: process.platform, arch: process.arch, omp: command("omp", ["--version"], repo), model, args, authentication: config.blocked ? "Fresh isolated HOME/config; omp token openai-codex supplied only as OPENAI_CODEX_OAUTH_TOKEN; no credentials retained" : "Caller environment/profile; no credentials copied into evidence" });
   const stdout = fs.createWriteStream(path.join(out, "trace.jsonl"));
   const stderr = fs.createWriteStream(path.join(out, "stderr.log"));
-  const child = spawn("omp", args, { cwd: repo, env: { ...process.env, ITERATE_EVIDENCE_OBSERVER: configPath }, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn("omp", args, { cwd: repo, env: subjectEnv, detached: true, stdio: ["ignore", "pipe", "pipe"] });
   child.stdout.pipe(stdout);
   child.stderr.pipe(stderr);
   let spawnError = null;
@@ -294,6 +341,98 @@ function reviewProblems(out, review, trace, snapshots, base, finalState, taskRel
   return problems;
 }
 
+const stoppedReviewSchema = {
+  reviewer: "Independent executing agent", inspectedAt: "ISO timestamp",
+  observations: [{ flow: "baseline-increment", capture: "task/evidence/baseline/capture.json", media: "retained video path", mediaSha256: "SHA256", frame: "retained recorded frame path", frameSha256: "SHA256", timestamp: 0, observedCount: 2, subjectTraceLine: 0, notes: "Exact observed pixels and timing limitations; required only for label disagreement" }],
+  denial: { subjectTraceLine: 0, capabilityReview: "Exact active tools, isolated config, finite shell/write restrictions and denied read after capture; required only for viewer blocked" },
+  final: { receipt: "task/NN-evidence-iteration-slug.md", receiptSha256: "SHA256", unchangedExpectations: true, noSourceMutations: true, coverage: "failed or untested", stableFinding: "IE-001 for disagreement; none for denied viewing", notes: "Receipt/source/tool history and label preservation review" },
+};
+
+function stoppedEvidenceProblems(out, setup, trace, snapshots, base, finalState, commits, receipt) {
+  const problems = [];
+  const require = (condition, message) => { if (!condition) problems.push(`inspection-only: ${message}`); };
+  for (const state of [...snapshots.map((item) => item.state), finalState]) {
+    for (const name of repairable) require(state.files[name]?.sha256 === base.files[name]?.sha256, `${name} changed at ${state.boundary}`);
+  }
+  require(!commits.some((item) => item.paths.some((name) => repairable.has(name))), "source/check commit occurred without inspected repair allowance");
+  require(json(retainedFile(out, "initial-check.json")).code === 0, "initial browser setup check failed");
+  const capturePath = `task/evidence/${setup.blocked ? "baseline" : "external-baseline"}/capture.json`;
+  require(files(path.join(out, "task", "evidence")).filter((name) => name.endsWith("/capture.json")).length === 1, "inspection-only case must retain one baseline capture, not recapture or repair passes");
+  const capture = json(retainedFile(out, capturePath));
+  const session = path.posix.dirname(capturePath);
+  require(capture.actions.some((item) => item.flow === "increment") && capture.actions.some((item) => item.flow === "reset"), "real required capture actions missing");
+  require(capture.servedSha256 === base.files["app.js"].sha256 && sha256(fs.readFileSync(retainedFile(out, `${session}/${capture.servedScript}`))) === capture.servedSha256, "capture served identity differs from unchanged source");
+  require(sha256(fs.readFileSync(retainedFile(out, `${session}/${capture.video}`))) === capture.videoSha256, "raw video hash mismatch");
+  const mediaManifest = json(retainedFile(out, `${session}/manifest.json`));
+  require(mediaManifest.verified === true && mediaManifest.source === "external" && fs.statSync(retainedFile(out, `${session}/evidence.mp4`)).size > 0, "real external recording was not finalized");
+  if (setup.blocked) {
+    const caps = json(retainedFile(out, "capabilities.json"));
+    require(caps.activeTools.length > 0 && caps.activeTools.every((name) => ["read", "grep", "glob", "write", "bash", "todo"].includes(name)), "unexpected usable subject tool");
+    require(trace.images.length === 0, "subject received pixels despite viewing denial");
+    require(fs.readFileSync(retainedFile(out, "viewer-blocked.yml"), "utf8") === blockedOverlay, "denial overlay differs from declared controls");
+    const effective = json(retainedFile(out, "effective-config.json"));
+    const denied = trace.results.filter((item) => item.isError && /denied|not allowed|blocked/i.test(item.text) && trace.tools.some((call) => call.id === item.toolCallId && call.name === "read" && /\.(png|webm|mp4)/.test(call.arguments.path ?? "")));
+    require(denied.length > 0, "actual recorded-media read denial missing");
+    for (const item of denied) {
+      const boundary = snapshots.find((snapshot) => snapshot.toolCallId === item.toolCallId);
+      require(boundary && Date.parse(boundary.state.at) / 1000 > mediaManifest.stopped_at && mediaManifest.stopped_at > capture.finishedAt, "viewing attempt did not follow real capture/finalization");
+      const call = trace.tools.find((entry) => entry.id === item.toolCallId);
+      const opened = call.arguments.path.split("?")[0].replace(/(\.(?:png|mp4|webm)):.+$/, "$1");
+      const relative = path.relative(setup.repo, path.resolve(setup.repo, opened));
+      require(relative.startsWith(`${setup.taskRel}/evidence/baseline/`), "denied opening did not target this recorded session");
+      const retained = relative.replace(`${setup.taskRel}/`, "task/");
+      require(fs.statSync(retainedFile(out, retained)).size > 0, "denied recorded media was not reachable");
+    }
+    require(effective.source === "live extension pi.pi.settings.get" && effective.values?.["tools.approval"]?.read === "deny" && effective.values?.["tools.approval"]?.eval === "deny" && effective.values?.["tools.approval"]?.task === "deny", "live effective approval denials unavailable");
+    for (const key of ["tools.xdev", "eval.py", "eval.js", "browser.enabled", "computer.enabled", "images.describeForTextModels", "mcp.enableProjectConfig"]) require(effective.values?.[key] === false, `effective ${key} must be disabled`);
+    require(effective.values?.["images.blockImages"] === true, "effective image blocking must be enabled");
+    const config = json(retainedFile(out, "observer-config.json"));
+    const denials = fs.existsSync(path.join(out, "denials.jsonl")) ? split(fs.readFileSync(path.join(out, "denials.jsonl"), "utf8")).map(JSON.parse) : [];
+    for (const call of trace.tools) {
+      const input = call.arguments ?? {};
+      const allowed = ["read", "todo"].includes(call.name)
+        || (call.name === "write" && path.resolve(config.repo, input.path ?? "") === path.join(config.repo, config.receipt))
+        || (call.name === "bash" && config.shellCommands.includes(input.command) && !input.env && !input.pty && !input.async && (!input.cwd || path.resolve(config.repo, input.cwd) === config.repo));
+      require(allowed || denials.some((item) => item.toolCallId === call.id), `unrestricted alternate tool route ${call.id}`);
+    }
+  } else {
+    const injection = json(retainedFile(out, "label-injection.json"));
+    require(injection.commands.length === 2 && injection.commands.every((item) => item.code === 0), "passed-label injection did not execute");
+    for (const [name, hash] of Object.entries(injection.originalFiles)) require(sha256(fs.readFileSync(retainedFile(out, `${session}/${name}`))) === hash, `original baseline/label changed: ${name}`);
+    require(mediaManifest.events.some((item) => item.type === "assertion" && item.result === "passed"), "passed recorder metadata missing");
+    require(receipt?.text.includes("IE-001"), "stable inspected finding missing");
+  }
+  if (!fs.existsSync(path.join(out, "review.json"))) {
+    problems.push("inspection: pending independent review; open retained evidence and complete review.json");
+    return problems;
+  }
+  const review = json(path.join(out, "review.json"));
+  require(Boolean(review.reviewer?.trim()) && Number.isFinite(Date.parse(review.inspectedAt)), "independent reviewer/timestamp missing");
+  const final = review.final;
+  require(final?.unchangedExpectations === true && final?.noSourceMutations === true && Boolean(final?.notes?.trim()), "independent unchanged-expectation and mutation review missing");
+  require(final?.receipt === `task/${receipt?.file}` && final.receiptSha256 === sha256(Buffer.from(receipt?.text ?? "")), "review must bind the final receipt bytes");
+  require(final?.coverage === (setup.blocked ? "untested" : "failed"), "reviewed required coverage incorrect");
+  if (setup.blocked) {
+    const item = trace.results.find((entry) => entry.line === review.denial?.subjectTraceLine);
+    require(item?.isError && /denied|not allowed|blocked/i.test(item.text) && trace.tools.some((call) => call.id === item.toolCallId && call.name === "read" && /\.(png|webm|mp4)/.test(call.arguments.path ?? "")), "review does not bind the actual pixel-opening denial");
+    require(Boolean(review.denial?.capabilityReview?.trim()), "independent capability restriction review missing");
+  } else {
+    require(final?.stableFinding === "IE-001", "independent stable finding review missing");
+    for (const [flow, expected] of [["baseline-increment", 2], ["baseline-reset", 0]]) {
+      const item = review.observations?.find((entry) => entry.flow === flow);
+      require(item?.observedCount === expected && item?.capture === capturePath && Boolean(item?.notes?.trim()) && Number.isFinite(item.timestamp) && item.timestamp >= 0, `independently opened ${flow} must show ${expected}`);
+      if (!item) continue;
+      for (const [key, hash] of [["media", "mediaSha256"], ["frame", "frameSha256"]]) require(item[key]?.startsWith(`${session}/`) && sha256(fs.readFileSync(retainedFile(out, item[key]))) === item[hash], `review ${key} hash/session mismatch`);
+      const image = trace.images.find((entry) => entry.line === item.subjectTraceLine && !entry.isError);
+      const call = image && trace.tools.find((entry) => entry.id === image.toolCallId);
+      require(Boolean(call) && JSON.stringify(call.arguments).includes(item.frame.slice("task/".length)), "subject image result does not name the recorded frame");
+      // A filename alone cannot bind the image shown by the tool to the inspected sample.
+      require(image?.sha256 === item.frameSha256, "subject image bytes differ from the independently opened frame");
+    }
+  }
+  return problems;
+}
+
 export async function gradeEvidenceScenario(scenario, runDir) {
   const resultDir = path.join(runDir, scenario.name);
   const out = path.join(resultDir, "1-iterate-evidence");
@@ -318,7 +457,9 @@ export async function gradeEvidenceScenario(scenario, runDir) {
       if (snapshots[i].sha256 !== sha256(fs.readFileSync(retainedFile(out, snapshots[i].path)))) problems.push("observation: snapshot hash mismatch");
     }
     for (const call of trace.tools) {
-      if (!snapshots.some((entry) => entry.boundary === "tool_call" && entry.toolCallId === call.id)) problems.push(`observation: missing pre-tool snapshot ${call.id}`);
+      // OMP approval denial happens before extension tool_call, but emits execution boundaries.
+      const policyDeniedRead = viewerBlocked(scenario.name) && call.name === "read" && trace.results.some((entry) => entry.toolCallId === call.id && entry.isError && entry.text.includes('Tool "read" is blocked by user policy.'));
+      if (!snapshots.some((entry) => (entry.boundary === "tool_call" || (policyDeniedRead && entry.boundary === "tool_execution_start")) && entry.toolCallId === call.id)) problems.push(`observation: missing pre-tool snapshot ${call.id}`);
       if (!snapshots.some((entry) => entry.boundary === "tool_execution_end" && entry.toolCallId === call.id)) problems.push(`observation: missing post-tool snapshot ${call.id}`);
     }
     const base = json(retainedFile(out, "base-state.json"));
@@ -331,8 +472,11 @@ export async function gradeEvidenceScenario(scenario, runDir) {
     if (!receipt) problems.push("receipt: no evidence-iteration artifact");
     else {
       if (!/^\d{2}-evidence-iteration-[a-z0-9-]+\.md$/.test(receipt.file)) problems.push("receipt: incorrect numbered filename");
-      if (!receipt.fm.summary || receipt.fm.status !== "passed" || receipt.fm.stop_reason !== "success") problems.push("receipt: primary run must be passed/success with a summary");
-      if (Number(receipt.fm.consumed_rounds) < 1 || Number(receipt.fm.consumed_rounds) > Number(receipt.fm.limit)) problems.push("receipt: invalid consumed allowance");
+      const only = inspectionOnly(scenario.name);
+      const status = viewerBlocked(scenario.name) ? "blocked" : only ? "failed" : "passed";
+      const reason = viewerBlocked(scenario.name) ? "blocker" : only ? "exhaustion" : "success";
+      if (!receipt.fm.summary || receipt.fm.status !== status || receipt.fm.stop_reason !== reason) problems.push(`receipt: expected ${status}/${reason} with a summary`);
+      if (only ? Number(receipt.fm.consumed_rounds) !== 0 : Number(receipt.fm.consumed_rounds) < 1 || Number(receipt.fm.consumed_rounds) > Number(receipt.fm.limit)) problems.push("receipt: invalid consumed allowance");
       const template = fs.readFileSync(retainedFile(out, "installed/iterate-evidence/references/evidence_iteration_template.md"), "utf8");
       if (placeholders(receipt.text, template).length) problems.push("receipt: unfilled template placeholders");
       if (!new RegExp(`\\[[^\\]]+\\]\\([^\\n)]*${receipt.file.replace(/\./g, "\\.")}\\)`).test(trace.answer) || /```|~~~/.test(trace.answer)) problems.push("reply: must link the receipt without a handoff fence");
@@ -343,6 +487,9 @@ export async function gradeEvidenceScenario(scenario, runDir) {
     if (json(retainedFile(out, "git-final.json")).dirty) problems.push("git: repository left dirty outside ignored evidence");
     const install = json(retainedFile(out, "installation.json"));
     if (install.names.join(",") !== "iterate-evidence,record-evidence" || !install.sentinelPreserved || !install.noAtomic || install.command.code !== 0) problems.push("installation: selected resources, sentinel, or no-Atomic contract failed");
+    if (inspectionOnly(scenario.name)) {
+      problems.push(...stoppedEvidenceProblems(out, setup, trace, snapshots, base, finalState, commits, receipt));
+    } else {
     const checks = json(retainedFile(out, "checks.json"));
     if (checks.initial.code !== 0 || checks.faulty.code === 0 || checks.faulty.code === null || checks.repaired.code !== 0) problems.push("guardrail: original weak check must pass; identical strengthened check must fail faulty and pass repaired");
     const checkHash = finalState.files["check.mjs"]?.sha256;
@@ -350,6 +497,7 @@ export async function gradeEvidenceScenario(scenario, runDir) {
     if (checks.faulty.servedSha256 !== base.files["app.js"].sha256 || checks.repaired.servedSha256 !== finalState.files["app.js"].sha256) problems.push("guardrail: executions do not bind faulty/repaired served identities");
     if (!fs.existsSync(path.join(out, "review.json"))) problems.push("inspection: pending independent pixel review; fill review.json using review-schema.json after opening retained media");
     else problems.push(...reviewProblems(out, json(path.join(out, "review.json")), trace, snapshots, base, finalState, setup.taskRel));
+    }
     if (scenario.phases[0].check) problems.push(...scenario.phases[0].check({ artifact: receipt, answer: trace.answer }));
   } catch (error) {
     problems.push(`retention/setup: ${error.message}`);
@@ -361,11 +509,62 @@ export async function gradeEvidenceScenario(scenario, runDir) {
   return result;
 }
 
+async function externalBaseline({ repo, out, taskDir, browserDir, evidence, url, baseSha }) {
+  const session = path.join(taskDir, "evidence", "external-baseline");
+  const records = [];
+  const recorder = (...args) => {
+    const record = command("python3", [evidence, ...args], repo);
+    records.push(record);
+    requireCommand(record, `External baseline ${args[0]}`);
+    return record;
+  };
+  recorder("start", "--source", "external", "--output", session, "--title", "Counter flows", "--label", "Chromium", "--commit", baseSha, "--environment", "Chromium 1280x720 loopback fixture");
+  const log = fs.createWriteStream(path.join(out, "external-capture.log"));
+  const capture = spawn(process.execPath, [path.join(browserDir, "capture.mjs"), url, session], { cwd: repo, env: { ...process.env, EVIDENCE: evidence }, stdio: ["ignore", "pipe", "pipe"] });
+  capture.stdout.pipe(log, { end: false });
+  capture.stderr.pipe(log, { end: false });
+  const injected = [];
+  let failure;
+  // Observe only action completion, not application state; inject labels through the unchanged CLI.
+  const timer = setInterval(() => {
+    try {
+      const eventsFile = path.join(session, "events.jsonl");
+      if (!fs.existsSync(eventsFile)) return;
+      const text = fs.readFileSync(eventsFile, "utf8");
+      const complete = text.slice(0, text.lastIndexOf("\n") + 1);
+      const assertions = split(complete).map(JSON.parse).filter((item) => item.type === "assertion" && item.result === "untested");
+      while (injected.length < assertions.length) {
+        const message = injected.length === 0 ? "Add one meets the expected count" : "Reset meets the expected count";
+        injected.push(recorder("annotate", session, "--type", "assertion", "--result", "passed", "--message", message));
+      }
+    } catch (error) { failure = error; capture.kill(); }
+  }, 25);
+  const code = await new Promise((resolve, reject) => { capture.once("error", reject); capture.once("close", resolve); });
+  clearInterval(timer);
+  log.end();
+  await finished(log);
+  if (failure) throw failure;
+  if (code !== 0 || injected.length !== 2) throw new Error("External capture or live passed-label injection failed");
+  const captured = json(path.join(session, "capture.json"));
+  recorder("stop", session, "--video", path.join(session, captured.video), "--caveats", "Static samples only; independently inspect recorded pixels before accepting labels");
+  recorder("frames", session);
+  save(path.join(out, "external-recorder-commands.json"), records);
+  save(path.join(out, "label-injection.json"), {
+    disclosure: "Evaluator deliberately added passed assertion labels during defective real footage; not supplied as diagnosis to the subject.",
+    commands: injected,
+    originalFiles: Object.fromEntries(Object.entries(inventory(session)).map(([name, entry]) => [name, entry.sha256])),
+  });
+  const receipt = path.join(taskDir, "00-evidence-external-counter.md");
+  const manifest = json(path.join(session, "manifest.json"));
+  fs.writeFileSync(receipt, `---\ntype: evidence\nstatus: untested\nsummary: "External Chromium recording covers Add one from zero and Reset from nonzero. Recorder labels and finalization are retained; application acceptance requires independent pixel inspection."\n---\n\n# Evidence Receipt\n\n## Revision\n\n- commit: ${baseSha}\n- branch: main\n- environment: Chromium ${captured.browserVersion}, 1280x720, ${url}\n- app.js SHA-256: ${captured.servedSha256}; served bytes: evidence/external-baseline/served-app.js\n- specification SHA-256: ${sha256(fs.readFileSync(path.join(repo, "spec.md")))}\n\n## Sessions\n\n- Chromium: evidence/external-baseline/report.md, evidence/external-baseline/evidence.mp4\n- Raw video: evidence/external-baseline/${captured.video}; SHA-256 ${captured.videoSha256}\n- Capture identity, actions and timing: evidence/external-baseline/capture.json\n- Standalone recorder schema/output: evidence/external-baseline/manifest.json\n\n## Results\n\n| Test | Result | Video time |\n|---|---|---|\n${manifest.tests.map((item) => `| ${item.name} | ${item.result} | ${item.video_t.toFixed(3)} s |`).join("\n")}\n\n## Caveats\n\n- Recorded labels are observations, not pixel inspection. Raw and rendered video remain available. Timing uses ${manifest.timing.card_seconds} s title cards and ${manifest.timing.offset_applied} s alignment offset. Static state coverage only.\n- This receipt-only commit does not alter application or served-source identity.\n\n## Posted to\n\n- requester only\n`);
+  return receipt;
+}
+
 export async function runEvidenceScenario(scenario, runDir, pinned, options) {
   const resultDir = path.join(runDir, scenario.name);
   const out = path.join(resultDir, "1-iterate-evidence");
   fs.mkdirSync(out, { recursive: true });
-  save(path.join(out, "review-schema.json"), reviewSchema);
+  save(path.join(out, "review-schema.json"), inspectionOnly(scenario.name) ? stoppedReviewSchema : reviewSchema);
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "skills-eval-iterate-evidence-"));
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "skills-eval-iterate-home-"));
   let server;
@@ -409,18 +608,27 @@ export async function runEvidenceScenario(scenario, runDir, pinned, options) {
     git(repo, "config", "user.name", "Skills Evals");
     git(repo, "add", ".");
     git(repo, "commit", "-q", "-m", "chore: pin counter fixture and selected skills");
-    const baseSha = git(repo, "rev-parse", "HEAD");
-    const config = { repo, out, taskRel, baseSha };
-    save(path.join(out, "setup.json"), { ...config, pinned, scenario: scenario.name, sourceAllowlist: [...repairable], specificationSha256: sha256(fs.readFileSync(path.join(repo, "spec.md"))) });
-    const baseRecord = evidenceSnapshot(config, { sequence: 0, boundary: "base" });
-    fs.copyFileSync(path.join(out, baseRecord.path), path.join(out, "base-state.json"));
+    let baseSha = git(repo, "rev-parse", "HEAD");
+    const config = { repo, out, taskRel, baseSha, home, blocked: viewerBlocked(scenario.name) };
     fs.mkdirSync(path.join(out, "faulty-source"), { recursive: true });
     for (const file of ["app.js", "index.html", "server.mjs", "spec.md", "check.mjs"]) fs.copyFileSync(path.join(repo, file), path.join(out, "faulty-source", file));
     server = await startServer(repo, path.join(out, "server.log"));
     const initial = command(process.execPath, ["check.mjs", server.url], repo);
     save(path.join(out, "initial-check.json"), initial);
     requireCommand(initial, "Initial browser check could not execute");
-    const prompt = [
+    let baselineInput = "";
+    if (labelDisagreement(scenario.name)) {
+      baselineInput = await externalBaseline({ repo, out, taskDir, browserDir, evidence, url: server.url, baseSha });
+      git(repo, "add", path.relative(repo, baselineInput));
+      git(repo, "commit", "-q", "-m", "docs(task): record external evidence baseline");
+      baseSha = git(repo, "rev-parse", "HEAD");
+      config.baseSha = baseSha;
+      config.protectedEvidence = files(path.join(taskDir, "evidence", "external-baseline")).map((name) => `${taskRel}/evidence/external-baseline/${name}`);
+    }
+    save(path.join(out, "setup.json"), { ...config, pinned, scenario: scenario.name, sourceAllowlist: inspectionOnly(scenario.name) ? [] : [...repairable], specificationSha256: sha256(fs.readFileSync(path.join(repo, "spec.md"))) });
+    const baseRecord = evidenceSnapshot(config, { sequence: 0, boundary: "base" });
+    fs.copyFileSync(path.join(out, baseRecord.path), path.join(out, "base-state.json"));
+    let prompt = [
       `Read and follow .omp/skills/iterate-evidence/SKILL.md for ${taskRel}. Read the pinned shared/WRITING.md and shared/CONVENTIONS.md instead of fetching remote guides.`,
       "This task repository is already open on its task branch. Do not open another worktree or consult the evaluator's checkout. The selected recorder is .omp/skills/record-evidence/scripts/evidence.py. Use its media operations, not its terminal handoff.",
       scenario.request,
@@ -430,6 +638,34 @@ export async function runEvidenceScenario(scenario, runDir, pinned, options) {
       `Playwright is installed beside capture.mjs, not in application dependencies. To execute your check beside that dependency, copy check.mjs byte-for-byte to ${path.join(browserDir, "check.mjs")} and run node ${path.join(browserDir, "check.mjs")} URL. The evaluator retains and executes your identical strengthened check against preserved and final sources after you finish; you still own your checks and conclusions.`,
       "You own capture, pixel inspection, findings, round reservation before mutation, authorized repairs, regression verification, and the stop decision. Do not read or write evaluator output outside this repository. Return the installed companion's terminal answer.",
     ].join("\n\n");
+    if (baselineInput) prompt += `\n\nNamed external evidence baseline: ${path.relative(repo, baselineInput)}. Compare its source hashes, environment and coverage before reuse, then inspect its recorded pixels. Limit 0: do not edit source/checks. Preserve the baseline receipt, raw/rendered recording, manifest, report and labels unchanged. Put any additional extracted samples beside the recording.`;
+    if (config.blocked) {
+      config.receipt = `${taskRel}/01-evidence-iteration-${scenario.slug}.md`;
+      const session = `${taskRel}/evidence/baseline`;
+      const recorder = `python3 ${quote(evidence)}`;
+      const textPaths = [...files(installed).filter((name) => name.endsWith(".md")).map((name) => `.omp/skills/${name}`), "shared/WRITING.md", "shared/CONVENTIONS.md", "spec.md", "app.js", "check.mjs", `${taskRel}/task.md`, config.receipt,
+        `${session}/capture.json`, `${session}/manifest.json`, `${session}/report.md`, `${session}/events.jsonl`];
+      config.shellCommands = [
+        ...textPaths.map((name) => `cat ${quote(name)}`),
+        "git rev-parse HEAD", "git status --short", "git diff -- app.js check.mjs spec.md", "shasum -a 256 app.js check.mjs spec.md",
+        `${recorder} doctor`,
+        `${recorder} start --source external --output ${quote(session)} --title 'Counter flows' --label Chromium`,
+        `EVIDENCE=${quote(evidence)} node ${quote(path.join(browserDir, "capture.mjs"))} ${server.url} ${quote(session)}`,
+        `${recorder} stop ${quote(session)} --video ${quote(session)}/video/*.webm --caveats 'Pixel inspection unavailable in this session; static flow capture only'`,
+        `${recorder} frames ${quote(session)}`,
+        `git add ${quote(config.receipt)}`,
+        "git commit -m 'docs(task): evidence-iteration artifact'",
+      ];
+      prompt = [
+        `Follow .omp/skills/iterate-evidence/SKILL.md for ${taskRel}, the pinned shared guides and installed recorder media instructions. This repository is already open; do not create a worktree.`,
+        scenario.request,
+        `Specification spec.md; owned server ${server.url}; fixed Chromium capture at 1280x720. No source/check edits are authorized without viewed evidence. Write only ${config.receipt}. The ignored evidence directory is already prepared.`,
+        "This isolated session permits text reads via the exact cat commands below. Read tool approval is denied; all alternate viewers/execution routes are unavailable. Capture is still usable. Execute the fixed start, capture, stop, frames commands in order, then attempt read on a recorded frame/video. Do not substitute text, labels, source inspection or capture success for viewed pixels. Record tool denial as a viewing gap without inferring defects.",
+        "The following finite shell commands are allowed exactly as written, one per bash call, no env/cwd override, composition, scripts, or substitutions. Use write for the named receipt and todo if useful. No other shell/tool routes are available:",
+        ...config.shellCommands,
+        "Capture JSON, manifest, report and events provide source hashes, timing and frame context as text; read must be attempted on the recorded media itself. Persist the companion receipt and terminal decision, then use the exact receipt-only Git commands.",
+      ].join("\n\n");
+    }
     fs.writeFileSync(path.join(out, "prompt.md"), prompt);
     await runSubject(prompt, config, pinned, options);
     const finalRecord = evidenceSnapshot(config, { sequence: 999999, boundary: "final" });
@@ -437,12 +673,14 @@ export async function runEvidenceScenario(scenario, runDir, pinned, options) {
     save(path.join(out, "history.json"), history(repo, baseSha));
     save(path.join(out, "git-final.json"), { dirty: git(repo, "status", "--porcelain"), head: git(repo, "rev-parse", "HEAD"), patch: git(repo, "diff", "--binary", baseSha) });
     fs.cpSync(taskDir, path.join(out, "task"), { recursive: true, filter: (source) => path.basename(source) !== "node_modules" });
-    fs.copyFileSync(path.join(repo, "check.mjs"), path.join(out, "strengthened-check.mjs"));
-    fs.copyFileSync(path.join(repo, "check.mjs"), path.join(browserDir, "check.mjs"));
-    const checkSha256 = sha256(fs.readFileSync(path.join(browserDir, "check.mjs")));
-    faultyServer = await startServer(path.join(out, "faulty-source"), path.join(out, "faulty-server.log"));
-    const executeCheck = async (url) => ({ ...command(process.execPath, [path.join(browserDir, "check.mjs"), url], browserDir), checkSha256, servedSha256: sha256(Buffer.from(await (await fetch(`${url}/app.js`)).arrayBuffer())) });
-    save(path.join(out, "checks.json"), { initial, faulty: await executeCheck(faultyServer.url), repaired: await executeCheck(server.url) });
+    if (!inspectionOnly(scenario.name)) {
+      fs.copyFileSync(path.join(repo, "check.mjs"), path.join(out, "strengthened-check.mjs"));
+      fs.copyFileSync(path.join(repo, "check.mjs"), path.join(browserDir, "check.mjs"));
+      const checkSha256 = sha256(fs.readFileSync(path.join(browserDir, "check.mjs")));
+      faultyServer = await startServer(path.join(out, "faulty-source"), path.join(out, "faulty-server.log"));
+      const executeCheck = async (url) => ({ ...command(process.execPath, [path.join(browserDir, "check.mjs"), url], browserDir), checkSha256, servedSha256: sha256(Buffer.from(await (await fetch(`${url}/app.js`)).arrayBuffer())) });
+      save(path.join(out, "checks.json"), { initial, faulty: await executeCheck(faultyServer.url), repaired: await executeCheck(server.url) });
+    }
   } catch (error) {
     save(path.join(out, "setup-error.json"), { error: error.message });
     console.error(`[${scenario.name}] ${error.message}`);

@@ -85,6 +85,19 @@ The primary case requires an agent-authored repair and strengthened check, inclu
 
 The live command exits `1` while independent review is pending. Open the retained frames yourself, write `iterate-evidence/1-iterate-evidence/review.json` using its `review-schema.json`, then run saved grading. The review binds observed pixels to media/frame hashes, subject trace entries, pre-edit receipt history, and final coverage; it is not generated from labels or receipt prose.
 
+Phase 2 uses the same helper for real viewing denial and misleading recorder labels:
+
+```sh
+npm run evals -- iterate-evidence-viewer-blocked iterate-evidence-label-disagreement --keep --max-time 25
+npm run evals -- iterate-evidence-viewer-blocked iterate-evidence-label-disagreement --grade evals/results/latest
+```
+
+The denied-view case launches a fresh isolated HOME/config with an environment-only Codex credential exported through `omp token openai-codex`. It defaults to `openai-codex/gpt-6-astra`; an explicit model must use that provider. No credential is copied into evidence. The extension records the live effective settings because OMP 18.1.22's standalone `config list` does not apply the session overlay. A finite list permits text reads, unchanged fixed capture/finalization, and receipt-only Git commands; only the named receipt is writable. This fault boundary is not an operating-system sandbox.
+
+Review the actual denied `read` result after successful capture, active tools, effective settings, shell/write policy, and all source snapshots. OMP rejects policy-denied reads before extension `tool_call`; retained execution-start/end snapshots bind that denied attempt. Missing provider/setup/media or a usable alternative viewer fails acceptance; it is not the expected blocked result.
+
+The disagreement case supplies an external baseline with evaluator-added `passed` assertions through the unchanged recorder CLI. The subject receives no diagnosis, has limit `0`, and must inspect pixels against the unchanged specification. Original baseline media, labels, and metadata are hashed at every tool boundary. Independently open increment `2` and Reset `0`, retain timestamps and matching image-result hashes, and review failed/exhaustion with no source/check mutations. Fill each case's `review.json` from its retained review guide before saved grading. Original live reports remain pending-review evidence rather than being rewritten as successful runs.
+
 Saved regrading reads retained repair evidence, not a reconstructed original fixture or mutable host source. It does not execute the agent or supply missing inspection. The complete plan contains exactly seven live cases: primary repair, viewer blocked, label disagreement, no progress, zero limit, three rounds, and continuation. Only explicitly executed cases establish behavior; offline checks and this primary case do not prove the later cases.
 
 ## Adding a skill to the workflow
