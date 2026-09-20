@@ -46,11 +46,11 @@ func renderTUI(cmd *cobra.Command, args []string) error {
 	if repo == nil {
 		return fmt.Errorf("repository is not registered")
 	}
-	branchRaw, err := git.Run(context.Background(), root, "symbolic-ref", "--short", "HEAD")
+	branchRaw, err := git.Run(context.Background(), root, "symbolic-ref", "HEAD")
 	if err != nil {
 		return err
 	}
-	branch := strings.TrimSpace(branchRaw)
+	branch := canonicalRef(strings.TrimSpace(branchRaw))
 	if branch == "" {
 		return fmt.Errorf("current checkout is detached")
 	}

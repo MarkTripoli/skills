@@ -82,9 +82,16 @@ func (m *Manager) Replace(ctx context.Context, key BranchKey, accepted db.Accept
 		m.mu.Unlock()
 		prior.Wait()
 		m.mu.Lock()
-		if err := m.store.SupersedeRun(prior.Run.ID, types.RunCancelReasonSuperseded); err != nil {
+		latest, loadErr := m.db.GetRun(prior.Run.ID)
+		if loadErr != nil {
 			m.mu.Unlock()
-			return nil, err
+			return nil, loadErr
+		}
+		if latest != nil && !latest.Status.Terminal() {
+			if err := m.store.SupersedeRun(prior.Run.ID, types.RunCancelReasonSuperseded); err != nil {
+				m.mu.Unlock()
+				return nil, err
+			}
 		}
 		delete(m.keys, key)
 	}

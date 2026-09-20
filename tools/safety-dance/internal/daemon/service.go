@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"os"
@@ -235,12 +236,25 @@ func (s Service) Install() error {
 		return nil
 	}
 	data, marshalErr := json.Marshal(recovery)
-	if marshalErr == nil {
-		_ = os.WriteFile(path+".recovery", data, 0600)
+	if marshalErr != nil {
+		return errors.Join(activationErr, fmt.Errorf("record service recovery: %w", marshalErr))
 	}
-	// Keep the owned definition in place until compensation can disable a
-	// service whose activation command may have partially succeeded.
-	return activationErr
+	if err := os.WriteFile(path+".recovery", data, 0600); err != nil {
+		return errors.Join(activationErr, fmt.Errorf("record service recovery: %w", err))
+	}
+	var cleanupErr error
+	switch runtime.GOOS {
+	case "darwin":
+		cleanupErr = s.Executor.Run("launchctl", "unload", "-w", path)
+	case "linux":
+		cleanupErr = s.Executor.Run("systemctl", "--user", "disable", "--now", filepath.Base(path))
+	default:
+		cleanupErr = s.Executor.Run("schtasks", "/Delete", "/TN", s.Label(), "/F")
+	}
+	if restoreErr := restoreServiceAfterStop(path); restoreErr != nil {
+		cleanupErr = errors.Join(cleanupErr, restoreErr)
+	}
+	return errors.Join(activationErr, cleanupErr)
 }
 
 func restoreServiceAfterStop(path string) error {

@@ -262,7 +262,10 @@ func RecoverDetached(ctx context.Context, source, dir, head string) error {
 		return fmt.Errorf("verify recovered worktree: %w", err)
 	}
 	if got := strings.TrimSpace(string(out)); got != head {
-		return fmt.Errorf("recovered worktree head mismatch: got %s want %s", got, head)
+		reset := exec.CommandContext(ctx, "git", "-C", dir, "reset", "--hard", head)
+		if resetOut, resetErr := reset.CombinedOutput(); resetErr != nil {
+			return fmt.Errorf("recover worktree head mismatch: got %s want %s: reset: %s: %w", got, head, strings.TrimSpace(string(resetOut)), resetErr)
+		}
 	}
 	return nil
 }

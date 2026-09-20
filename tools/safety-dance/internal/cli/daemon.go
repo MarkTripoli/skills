@@ -326,11 +326,13 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 			return nil, err
 		}
 		accepted := db.AcceptedRef{RepoID: q.RepoID, Branch: canonicalRef(q.Branch), GateHead: q.HeadSHA, LaunchNonce: nonce}
-		gatesJSON, gatesErr := pinGatesForAdmission(ctx, p, repo, worktree, nonce)
+		var validationGeneration string
+		gatesJSON, gatesErr := pinGatesForAdmission(ctx, p, repo, worktree, nonce, &validationGeneration)
 		if gatesErr != nil {
 			return nil, gatesErr
 		}
 		accepted.GatesJSON = gatesJSON
+		accepted.ValidationGeneration = validationGeneration
 		r, err := manager.Replace(ctx, daemon.BranchKey{RepositoryID: q.RepoID, Ref: accepted.Branch}, accepted, worktree)
 		if err != nil {
 			return nil, err
@@ -495,7 +497,7 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func pinGatesForAdmission(ctx context.Context, p *paths.Paths, repo *db.Repo, worktree, nonce string) (string, error) {
+func pinGatesForAdmission(ctx context.Context, p *paths.Paths, repo *db.Repo, worktree, nonce string, generation *string) (string, error) {
 	pushed, err := config.LoadRepo(worktree)
 	if err != nil {
 		return "", fmt.Errorf("load pushed repository configuration: %w", err)
@@ -509,6 +511,9 @@ func pinGatesForAdmission(ctx context.Context, p *paths.Paths, repo *db.Repo, wo
 	trustedRevision, err := git.Run(ctx, repo.WorkingPath, "rev-parse", ref)
 	if err != nil {
 		return "", fmt.Errorf("resolve trusted policy revision: %w", err)
+	}
+	if generation != nil {
+		*generation = strings.TrimSpace(trustedRevision)
 	}
 	entries, err := git.Run(ctx, repo.WorkingPath, "ls-tree", "-r", "--name-only", ref, "--", ".safety-dance.yaml")
 	if err != nil {
@@ -603,12 +608,16 @@ func recordPush(d *db.DB, p *paths.Paths, manager *daemon.Manager, n daemon.Push
 		if err := worktrees.CreateDetached(context.Background(), gatePath, worktree, n.New); err != nil {
 			return err
 		}
-		accepted := db.AcceptedRef{RepoID: r.ID, Branch: branch, GateHead: n.New, PreviousReconciledHead: n.Old, LaunchNonce: nonce, RequestedOptions: append([]string(nil), n.Options...)}
-		gatesJSON, gatesErr := pinGatesForAdmission(context.Background(), p, r, worktree, nonce)
+		var validationGeneration string
+		accepted := db.AcceptedRef{RepoID: r.ID, Branch: branch, GateHead: n.New, PreviousReconciledHead: n.Old, LaunchNonce: nonce, ValidationGeneration: n.ValidationGeneration, RequestedOptions: append([]string(nil), n.Options...)}
+		gatesJSON, gatesErr := pinGatesForAdmission(context.Background(), p, r, worktree, nonce, &validationGeneration)
 		if gatesErr != nil {
 			return gatesErr
 		}
 		accepted.GatesJSON = gatesJSON
+		if accepted.ValidationGeneration == "" {
+			accepted.ValidationGeneration = validationGeneration
+		}
 		if _, err = manager.Replace(context.Background(), daemon.BranchKey{RepositoryID: r.ID, Ref: branch}, accepted, worktree); err != nil {
 			return err
 		}
@@ -731,6 +740,9 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	if err != nil {
 		return fmt.Errorf("resolve trusted policy revision: %w", err)
 	}
+	if run.LaunchValidationGeneration != nil && strings.TrimSpace(*run.LaunchValidationGeneration) != "" && strings.TrimSpace(*run.LaunchValidationGeneration) != strings.TrimSpace(trustedRevision) {
+		return fmt.Errorf("trusted policy changed after admission: expected %s, got %s", *run.LaunchValidationGeneration, strings.TrimSpace(trustedRevision))
+	}
 	entries, err := git.Run(ctx, repo.WorkingPath, "ls-tree", "-r", "--name-only", trustedRef, "--", ".safety-dance.yaml")
 	if err != nil {
 		return fmt.Errorf("inspect trusted configuration: %w", err)
@@ -798,20 +810,24 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	if err != nil {
 		return err
 	}
-	// A lease is needed only when the reviewed candidate rewrites the live ref.
-	// Fast-forward candidates use ordinary Git push semantics.
 	rewrite := false
-	if verifiedHead != "" && verifiedHead != normalizeSHA(run.HeadSHA) {
-		_, mergeErr := git.Run(ctx, worktree, "merge-base", "--is-ancestor", verifiedHead, run.HeadSHA)
-		rewrite = mergeErr != nil
-	}
-	request := steps.PushRequest{Worktree: worktree, Remote: repo.PushURL(), Ref: ref, Candidate: run.HeadSHA, VerifiedHead: verifiedHead, Rewrite: rewrite, BeforePush: func() error {
+	var request steps.PushRequest
+	request = steps.PushRequest{Worktree: worktree, Remote: repo.PushURL(), Ref: ref, Candidate: run.HeadSHA, VerifiedHead: verifiedHead, BeforePush: func() error {
 		current, checkErr := database.GetRun(run.ID)
 		if checkErr != nil {
 			return checkErr
 		}
 		if current == nil || current.Status == types.RunFailed || (current.Status == types.RunCancelled && !current.PushActive) {
 			return fmt.Errorf("run %s was superseded before publication", run.ID)
+		}
+		candidate, headErr := git.Run(context.Background(), worktree, "rev-parse", "HEAD")
+		if headErr != nil {
+			return headErr
+		}
+		if verifiedHead != "" && strings.TrimSpace(candidate) != verifiedHead {
+			_, mergeErr := git.Run(context.Background(), worktree, "merge-base", "--is-ancestor", verifiedHead, strings.TrimSpace(candidate))
+			rewrite = mergeErr != nil
+			request.Rewrite = rewrite
 		}
 		return nil
 	}}

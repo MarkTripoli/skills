@@ -18,7 +18,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version-file: tools/safety-dance/go.mod }
+        with:
+          go-version-file: tools/safety-dance/go.mod
       - name: Validate tag
         id: version
         shell: bash
@@ -41,15 +42,20 @@ jobs:
           go build -ldflags "$ldflags" -o "dist/safety-dance$suffix" ./cmd/safety-dance
           ./scripts/package-release.sh --version "${{ steps.version.outputs.version }}" --os "${{ matrix.os }}" --arch "${{ matrix.arch }}" --binary "dist/safety-dance$suffix" --out dist
       - uses: actions/upload-artifact@v4
-        with: { name: release-${{ matrix.os }}-${{ matrix.arch }}, path: tools/safety-dance/dist/* }
+        with:
+          name: release-${{ matrix.os }}-${{ matrix.arch }}
+          path: tools/safety-dance/dist/*
   publish:
     needs: release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
-        with: { path: dist, pattern: release-* }
+        with:
+          path: dist
+          pattern: release-*
       - name: Publish release assets
-        env: { GH_TOKEN: ${{ github.token }} }
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           find dist -type f -not -name checksums.txt -exec cp {} . \;
           sha256sum safety-dance_* > checksums.txt

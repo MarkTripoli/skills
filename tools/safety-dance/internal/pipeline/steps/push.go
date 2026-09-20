@@ -11,6 +11,7 @@ import (
 
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/branchsync"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/shellenv"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/types"
 )
 
@@ -58,7 +59,8 @@ func Push(ctx context.Context, req PushRequest) (PushResult, error) {
 	if req.Worktree != "" {
 		cmd.Dir = req.Worktree
 	}
-	if out, e := cmd.CombinedOutput(); e != nil {
+	shellenv.ConfigureShellCommand(cmd)
+	if out, e := shellenv.CombinedOutputShellCommand(cmd); e != nil {
 		return PushResult{}, fmt.Errorf("push: %s: %w", strings.TrimSpace(string(out)), e)
 	}
 	after, err := s.LiveHead(ctx)

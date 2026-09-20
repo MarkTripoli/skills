@@ -433,10 +433,14 @@ func Eject(ctx context.Context, d *db.DB, p *paths.Paths, workDir string) (*db.R
 	// Remove remote from working repo (non-fatal).
 	_ = git.RemoveRemote(ctx, absRoot, RemoteName)
 	bareDir := p.RepoDir(repo.ID)
-	if target, linkErr := os.Readlink(bareDir); linkErr == nil && filepath.IsAbs(target) {
-		_ = os.Remove(target)
+	if target, linkErr := os.Readlink(bareDir); linkErr == nil && filepath.IsAbs(target) && filepath.Base(filepath.Clean(target)) == repo.ID+".git" && filepath.Clean(target) != filepath.Clean(absRoot) {
+		if err := os.RemoveAll(target); err != nil {
+			slog.Warn("failed to remove custom gate target", "path", target, "error", err)
+		}
 	}
-	os.RemoveAll(bareDir)
+	if err := os.RemoveAll(bareDir); err != nil {
+		return nil, fmt.Errorf("remove gate: %w", err)
+	}
 	// Delete worktrees for this repo. This happens before the repo record is
 	// deleted, because in a configured root the run rows are what identify
 	// which directories are ours to remove.

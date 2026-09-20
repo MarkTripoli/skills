@@ -45,6 +45,7 @@ func (a *Admission) saveReceipts() error {
 type PushNotification struct {
 	Gate, Ref, Old, New, Token string
 	Options                    []string
+	ValidationGeneration       string
 }
 
 // Admission owns the receive-hook trust boundary. Tokens are issued by the
@@ -396,6 +397,14 @@ func (a *Admission) notifyPush(ctx context.Context, raw json.RawMessage) (interf
 			break
 		}
 	}
+	if p.ValidationGeneration == "" {
+		for _, option := range p.PushOptions {
+			if strings.HasPrefix(option, "safety-dance-validation-generation=") {
+				p.ValidationGeneration = strings.TrimPrefix(option, "safety-dance-validation-generation=")
+				break
+			}
+		}
+	}
 	if token == "" {
 		return nil, errors.New("admission receipt is required")
 	}
@@ -418,7 +427,7 @@ func (a *Admission) notifyPush(ctx context.Context, raw json.RawMessage) (interf
 	a.claimed[token] = true
 	a.mu.Unlock()
 	if a.notify != nil {
-		if err := a.notify(ctx, PushNotification{Gate: p.Gate, Ref: p.Ref, Old: p.Old, New: p.New, Token: token, Options: append([]string(nil), p.PushOptions...)}); err != nil {
+		if err := a.notify(ctx, PushNotification{Gate: p.Gate, Ref: p.Ref, Old: p.Old, New: p.New, Token: token, Options: append([]string(nil), p.PushOptions...), ValidationGeneration: p.ValidationGeneration}); err != nil {
 			a.mu.Lock()
 			delete(a.claimed, token)
 			a.mu.Unlock()

@@ -65,6 +65,8 @@ func runWizard(cmd *cobra.Command, args []string) error {
 		return originErr
 	}
 	var gateRollback gate.Rollback
+	customGateTarget := ""
+	customGateDefault := ""
 	configPath := filepath.Join(root, ".safety-dance.yaml")
 	bootstrapPath := ""
 	var originalBootstrap []byte
@@ -183,8 +185,10 @@ func runWizard(cmd *cobra.Command, args []string) error {
 				if err := os.Rename(defaultGate, customGate); err != nil {
 					return fmt.Errorf("move gate to selected location: %w", err)
 				}
+				customGateTarget, customGateDefault = customGate, defaultGate
 				if err := os.Symlink(customGate, defaultGate); err != nil {
 					_ = os.Rename(customGate, defaultGate)
+					customGateTarget, customGateDefault = "", ""
 					return fmt.Errorf("link selected gate location: %w", err)
 				}
 			}
@@ -192,8 +196,17 @@ func runWizard(cmd *cobra.Command, args []string) error {
 		},
 		Compensate: func(model wizard.Model) error {
 			var first error
+			if customGateTarget != "" {
+				if err := os.Remove(customGateDefault); err != nil && !os.IsNotExist(err) {
+					first = err
+				}
+				if err := os.Rename(customGateTarget, customGateDefault); err != nil && first == nil {
+					first = err
+				}
+				customGateTarget, customGateDefault = "", ""
+			}
 			if gateRollback != nil {
-				if err := gateRollback(); err != nil {
+				if err := gateRollback(); err != nil && first == nil {
 					first = err
 				}
 			}

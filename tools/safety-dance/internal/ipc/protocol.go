@@ -245,11 +245,12 @@ type RevokePushReceiptParams struct {
 
 // NotifyPushParams describes an update after Git accepted the ref.
 type NotifyPushParams struct {
-	Gate        string   `json:"gate"`
-	Ref         string   `json:"ref"`
-	Old         string   `json:"old"`
-	New         string   `json:"new"`
-	PushOptions []string `json:"push_options,omitempty"`
+	Gate                 string   `json:"gate"`
+	Ref                  string   `json:"ref"`
+	Old                  string   `json:"old"`
+	New                  string   `json:"new"`
+	PushOptions          []string `json:"push_options,omitempty"`
+	ValidationGeneration string   `json:"validation_generation,omitempty"`
 }
 
 // HealthParams has no fields but exists for consistency.

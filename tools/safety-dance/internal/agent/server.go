@@ -53,11 +53,12 @@ const defaultHealthTimeout = 60 * time.Second
 type managedServer struct {
 	cmd           *exec.Cmd
 	port          int
-	pidFile       string        // path to the on-disk PID record; empty if tracking disabled
-	exited        chan struct{} // closed exactly once when cmd.Wait returns
-	waitErr       error         // result of cmd.Wait; only read after exited is closed
-	healthTimeout time.Duration // health-check deadline; defaults to defaultHealthTimeout when zero
+	pidFile       string
+	exited        chan struct{}
+	waitErr       error
+	healthTimeout time.Duration
 	stopping      atomic.Bool
+	release       func()
 }
 
 // getAvailablePort finds an ephemeral port by binding to :0 and releasing.
@@ -89,6 +90,11 @@ func startServerWithPort(ctx context.Context, agentName, bin string, args []stri
 		slog.Warn("managed agent server failed to start", "agent", agentName, "error", err)
 		return nil, fmt.Errorf("start server %s: %w", bin, err)
 	}
+	release, jobErr := attachManagedProcess(cmd)
+	if jobErr != nil {
+		_ = cmd.Process.Kill()
+		return nil, fmt.Errorf("contain server process tree: %w", jobErr)
+	}
 	slog.Info("managed agent server started", "agent", agentName, "pid", cmd.Process.Pid)
 
 	pidFile := writeServerPIDFile(currentServerPIDsDir(), ServerPIDInfo{
@@ -102,7 +108,7 @@ func startServerWithPort(ctx context.Context, agentName, bin string, args []stri
 		StartedAt:      time.Now().UTC(),
 	})
 
-	srv := &managedServer{cmd: cmd, port: port, pidFile: pidFile, exited: make(chan struct{}), healthTimeout: defaultHealthTimeout}
+	srv := &managedServer{cmd: cmd, port: port, pidFile: pidFile, exited: make(chan struct{}), healthTimeout: defaultHealthTimeout, release: release}
 	go func() {
 		srv.waitErr = cmd.Wait()
 		if srv.stopping.Load() {
@@ -193,6 +199,11 @@ func serverExitedBeforeHealthyError(waitErr error) error {
 // exited - if SIGKILL fails to reap it, the file is left on disk so a
 // future daemon can finish the job.
 func (s *managedServer) shutdown() {
+	defer func() {
+		if s.release != nil {
+			s.release()
+		}
+	}()
 	s.stopping.Store(true)
 	if s.cmd == nil || s.cmd.Process == nil {
 		removeServerPIDFile(s.pidFile)

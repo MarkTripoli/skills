@@ -93,13 +93,14 @@ func (s Setup) Run(ctx context.Context) error {
 		return nil
 	}
 	if err := s.InstallService(); err != nil {
+		var cleanupErr error
 		if s.StopService != nil && (s.ServiceCreated == nil || s.ServiceCreated()) {
-			_ = s.StopService()
+			cleanupErr = s.StopService()
 		}
 		if s.Compensate != nil {
-			return errors.Join(err, s.Compensate(m))
+			cleanupErr = errors.Join(cleanupErr, s.Compensate(m))
 		}
-		return err
+		return errors.Join(err, cleanupErr)
 	}
 	return nil
 }
