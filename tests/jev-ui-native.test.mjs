@@ -41,11 +41,15 @@ test('native static labels do not advertise tap actions without interaction meta
   assert.equal(android.elements[0].operations.includes('TAP'),false);
 });
 test('enabled checkable Android controls expose TAP while disabled/static rows do not',()=>{
-  const android=normalizeAndroid('<hierarchy package="ai.typesafe.jevfixture"><node class="android.widget.CheckedTextView" text="Email" checkable="true" clickable="false" enabled="true" bounds="[10,20][210,80]"/><node class="android.widget.CheckedTextView" text="Phone" checkable="true" clickable="false" enabled="false" bounds="[10,90][210,150]"/><node class="android.widget.TextView" text="Static" checkable="false" clickable="false" enabled="true" bounds="[10,160][210,220]"/></hierarchy>',{id:'emulator-5560',app:'ai.typesafe.jevfixture',driver:'adb',simulator:true});
-  assert.equal(android.elements[0].operations.includes('TAP'),true);
-  assert.equal(android.elements[1].operations.includes('TAP'),false);
-  assert.equal(android.elements[2].operations.includes('TAP'),false);
-  assert.deepEqual(android.elements[0].bounds,{x:110,y:50});
+  const xml='<hierarchy package="ai.typesafe.jevfixture"><node class="android.widget.Spinner" text="Channel" clickable="true" enabled="true" bounds="[0,0][220,60]"><node class="android.widget.CheckedTextView" text="Phone" checkable="true" clickable="false" enabled="true" checked="false" bounds="[10,10][210,50]"/></node><node class="android.widget.CheckedTextView" text="Email" checkable="true" clickable="false" enabled="true" bounds="[10,70][210,130]"/><node class="android.widget.CheckedTextView" text="Disabled" checkable="true" clickable="false" enabled="false" bounds="[10,140][210,200]"/><node class="android.widget.TextView" text="Static" checkable="false" clickable="false" enabled="true" bounds="[10,210][210,270]"/></hierarchy>';
+  const android=normalizeAndroid(xml,{id:'emulator-5560',app:'ai.typesafe.jevfixture',driver:'adb',simulator:true});
+  const byName=name=>android.elements.find(element=>element.name===name);
+  assert.equal(byName('Channel').operations.includes('TAP'),true);
+  assert.equal(byName('Phone').operations.includes('TAP'),false);
+  assert.equal(byName('Email').operations.includes('TAP'),true);
+  assert.equal(byName('Disabled').operations.includes('TAP'),false);
+  assert.equal(byName('Static').operations.includes('TAP'),false);
+  assert.deepEqual(byName('Email').bounds,{x:110,y:100});
 });
 test('native editable values equal to labels are preserved without placeholder metadata', () => {
   const android=normalizeAndroid('<node class="android.widget.EditText" text="Name" content-desc="Name" enabled="true" bounds="[1,2][101,202]"/>',{id:'emulator-5560',driver:'adb',simulator:true});

@@ -4,23 +4,27 @@ function parseBounds(value) { const m = String(value || '').match(/\[(\d+),(\d+)
 function decodeXml(value) { return String(value).replace(/&(?:amp|lt|gt|quot|apos|#x([0-9a-f]+)|#(\d+));/gi, (_, hex, dec) => { const code=hex?parseInt(hex,16):dec?Number(dec):null; if(code!=null && Number.isSafeInteger(code)) return String.fromCodePoint(code); return ({amp:'&',lt:'<',gt:'>',quot:'"',apos:"'"}[String(_).slice(1,-1)] || _); }); }
 function attrs(tag) { const out={}; for (const m of tag.matchAll(/([\w:-]+)="([^"]*)"/g)) out[m[1]]=decodeXml(m[2]); return out; }
 export function normalizeHierarchy(xml, identity) {
-  const source=String(xml||''); const elements=[]; const sensitiveValues=[]; const packages=new Set(); for (const match of source.matchAll(/<node\b[^>]*>/g)) { const a=attrs(match[0]);
+  const source=String(xml||''); const elements=[]; const sensitiveValues=[]; const packages=new Set(); const stack=[];
+  for (const match of source.matchAll(/<\/?node\b[^>]*>/g)) {
+    const token=match[0];
+    if (token.startsWith('</')) { stack.pop(); continue; }
+    const a=attrs(token); const insideSpinner=stack.some(parent=>parent.class==='android.widget.Spinner');
     if (a.package) packages.add(a.package);
-    if (a['visible-to-user'] === 'false' || (!a.text && !a['content-desc'] && a.clickable !== 'true' && a.class !== 'android.widget.EditText')) continue;
-    const name=a['content-desc'] || a.text || a['resource-id'] || a.class;
-    const element={name,id:a['resource-id'],role:a.class,password:a.password,editable:a.class === 'android.widget.EditText'};
-    // Equal label/value observations are ambiguous when Android omits placeholder state.
-    // Preserve the value and tell the chooser that the first text action is still meaningful.
-    const rawValue=a.text || '';
-    const explicitPlaceholder = ['hint','placeholder','placeholder-state','is-placeholder'].some(key => a[key] != null);
-    const editable=element.editable;
-    const valueAmbiguous = editable && rawValue !== '' && rawValue === (a['content-desc'] || '') && !explicitPlaceholder;
-    const operations=[];
-    if (editable) operations.push('TYPE_TEXT');
-    else if (a.clickable === 'true' || (a.checkable === 'true' && a.enabled === 'true') || /(?:Button|CheckBox|RadioButton|Switch|ToggleButton|ImageButton)$/.test(String(a.class || ''))) operations.push('TAP');
-    operations.push('WAIT');
-    const value=safeNativeValue(rawValue,element); if (value === undefined) sensitiveValues.push(a.text);
-    elements.push({id:`native-${elements.length}`,name:safeNativeName(name,element),value,...(valueAmbiguous ? {valueAmbiguous:true} : {}),role:element.role,editable:element.editable,operations,bounds:parseBounds(a.bounds)});
+    if (a['visible-to-user'] !== 'false' && (a.text || a['content-desc'] || a.clickable === 'true' || a.class === 'android.widget.EditText')) {
+      const name=a['content-desc'] || a.text || a['resource-id'] || a.class;
+      const element={name,id:a['resource-id'],role:a.class,password:a.password,editable:a.class === 'android.widget.EditText'};
+      const rawValue=a.text || '';
+      const explicitPlaceholder = ['hint','placeholder','placeholder-state','is-placeholder'].some(key => a[key] != null);
+      const editable=element.editable;
+      const valueAmbiguous = editable && rawValue !== '' && rawValue === (a['content-desc'] || '') && !explicitPlaceholder;
+      const operations=[];
+      if (editable) operations.push('TYPE_TEXT');
+      else if (a.clickable === 'true' || (!insideSpinner && a.checkable === 'true' && a.enabled === 'true') || /(?:Button|CheckBox|RadioButton|Switch|ToggleButton|ImageButton)$/.test(String(a.class || ''))) operations.push('TAP');
+      operations.push('WAIT');
+      const value=safeNativeValue(rawValue,element); if (value === undefined) sensitiveValues.push(a.text);
+      elements.push({id:`native-${elements.length}`,name:safeNativeName(name,element),value,...(valueAmbiguous ? {valueAmbiguous:true} : {}),role:element.role,editable:element.editable,operations,bounds:parseBounds(a.bounds)});
+    }
+    if (!token.endsWith('/>')) stack.push({class:a.class});
   }
   if (identity.app && packages.size && [...packages].some(value => value !== identity.app)) throw new Error('android app identity mismatch');
   return {surface:'android',target:{id:identity.id,name:identity.name,app:identity.app||identity.package||null,simulator:!!identity.simulator,driver:identity.driver},elements,fingerprint:hash(safeNativeSource(source,sensitiveValues))};
