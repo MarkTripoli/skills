@@ -67,6 +67,9 @@ func runWizard(cmd *cobra.Command, args []string) error {
 	var gateRollback gate.Rollback
 	configPath := filepath.Join(root, ".safety-dance.yaml")
 	bootstrapPath := ""
+	var originalBootstrap []byte
+	var originalBootstrapMode os.FileMode
+	bootstrapExisted := false
 	configExisted := false
 	var originalConfig []byte
 	var originalConfigMode os.FileMode
@@ -86,14 +89,15 @@ func runWizard(cmd *cobra.Command, args []string) error {
 					return err
 				}
 			}
-			switch strings.ToLower(strings.TrimSpace(model.Provider)) {
-			case "github":
-			default:
-				return errors.New("provider must be github")
+			provider := strings.ToLower(strings.TrimSpace(model.Provider))
+			if provider != "github" {
+				return fmt.Errorf("unsupported provider %q", model.Provider)
 			}
 			gateChoice := strings.TrimSpace(model.Gate)
-			if gateChoice == "" || (gateChoice != "default" && filepath.Clean(gateChoice) != filepath.Clean(p.ReposDir())) {
-				return fmt.Errorf("gate must be default or %s", p.ReposDir())
+			if gateChoice == "" || gateChoice == "default" {
+				gateChoice = p.ReposDir()
+			} else if !filepath.IsAbs(gateChoice) {
+				return errors.New("gate must be default or an absolute directory")
 			}
 			if len(model.ValidationCommands) != 8 {
 				return errors.New("eight validation commands are required")
@@ -107,7 +111,9 @@ func runWizard(cmd *cobra.Command, args []string) error {
 			content, marshalErr := yaml.Marshal(struct {
 				Commands          config.Commands `yaml:"commands"`
 				AllowRepoCommands bool            `yaml:"allow_repo_commands"`
-			}{Commands: commands, AllowRepoCommands: true})
+				Provider          string          `yaml:"provider"`
+				Gate              string          `yaml:"gate"`
+			}{Commands: commands, AllowRepoCommands: true, Provider: provider, Gate: gateChoice})
 			if marshalErr != nil {
 				return marshalErr
 			}
@@ -133,13 +139,45 @@ func runWizard(cmd *cobra.Command, args []string) error {
 				return errors.New("wizard repository was not registered")
 			}
 			bootstrapPath = p.BootstrapConfigFile(repo.ID)
-			initialRevision, revErr := git.Run(context.Background(), root, "rev-parse", "HEAD")
+			if info, statErr := os.Stat(bootstrapPath); statErr == nil {
+				bootstrapExisted = true
+				originalBootstrap, err = os.ReadFile(bootstrapPath)
+				if err != nil {
+					return err
+				}
+				originalBootstrapMode = info.Mode().Perm()
+			} else if !os.IsNotExist(statErr) {
+				return statErr
+			}
+			if _, fetchErr := git.Run(context.Background(), root, "fetch", "--no-tags", "origin", "refs/heads/"+repo.DefaultBranch); fetchErr != nil {
+				return fmt.Errorf("fetch trusted default branch: %w", fetchErr)
+			}
+			initialRevision, revErr := git.Run(context.Background(), root, "rev-parse", "FETCH_HEAD")
 			if revErr != nil {
 				return revErr
 			}
 			parsed, parseErr := config.LoadRepoFromBytes(content)
 			if parseErr != nil {
 				return parseErr
+			}
+			if gateChoice != p.ReposDir() {
+				defaultGate := p.RepoDir(repo.ID)
+				customGate := filepath.Join(gateChoice, repo.ID+".git")
+				if err := os.MkdirAll(filepath.Dir(customGate), 0700); err != nil {
+					return err
+				}
+				if _, statErr := os.Stat(customGate); statErr == nil {
+					return fmt.Errorf("custom gate already exists: %s", customGate)
+				} else if !os.IsNotExist(statErr) {
+					return statErr
+				}
+				if err := os.Rename(defaultGate, customGate); err != nil {
+					return fmt.Errorf("move gate to selected location: %w", err)
+				}
+				if err := os.Symlink(customGate, defaultGate); err != nil {
+					_ = os.Rename(customGate, defaultGate)
+					return fmt.Errorf("link selected gate location: %w", err)
+				}
 			}
 			return policy.Store(p, repo.ID, strings.TrimSpace(initialRevision), parsed)
 		},
@@ -158,7 +196,11 @@ func runWizard(cmd *cobra.Command, args []string) error {
 				_ = os.Remove(configPath)
 			}
 			if bootstrapPath != "" {
-				if err := os.Remove(bootstrapPath); err != nil && !os.IsNotExist(err) && first == nil {
+				if bootstrapExisted {
+					if err := os.WriteFile(bootstrapPath, originalBootstrap, originalBootstrapMode); err != nil && first == nil {
+						first = err
+					}
+				} else if err := os.Remove(bootstrapPath); err != nil && !os.IsNotExist(err) && first == nil {
 					first = err
 				}
 			}

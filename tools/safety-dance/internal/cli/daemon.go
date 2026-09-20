@@ -242,12 +242,15 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		} else {
 			if r.Status == types.RunCancelled && r.PushActive {
 				cleanup = true
-			} else if statusErr := d.TransitionRunStatus(r.ID, types.RunRunning, types.RunCompleted); statusErr == nil {
-				cleanup = true
-			}
-			if journalErr := journalCleanup(); journalErr != nil {
-				fmt.Fprintf(os.Stderr, "safety-dance: journal worktree cleanup for %s: %v\n", r.ID, journalErr)
-				return
+			} else {
+				// Persist cleanup intent before making the run terminal.
+				if journalErr := journalCleanup(); journalErr != nil {
+					fmt.Fprintf(os.Stderr, "safety-dance: journal worktree cleanup for %s: %v\n", r.ID, journalErr)
+					return
+				}
+				if statusErr := d.TransitionRunStatus(r.ID, types.RunRunning, types.RunCompleted); statusErr == nil {
+					cleanup = true
+				}
 			}
 		}
 		if !cleanup {

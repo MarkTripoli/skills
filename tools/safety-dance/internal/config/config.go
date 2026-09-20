@@ -260,10 +260,11 @@ type ForgeProfile struct {
 // ForgeProfiles maps a remote host token to its machine-local provider profile.
 type ForgeProfiles map[string]ForgeProfile
 
-// RepoConfig represents .safety-dance.yaml in a repo root.
 type RepoConfig struct {
 	Agent          types.AgentName   `yaml:"agent"`
 	Agents         []types.AgentName `yaml:"-"`
+	Provider       string            `yaml:"provider,omitempty"`
+	Gate           string            `yaml:"gate,omitempty"`
 	Commands       Commands          `yaml:"commands"`
 	IgnorePatterns []string          `yaml:"ignore_patterns"`
 	// ProtectedPaths prevents automatic staging of dirty matching paths. It is
@@ -491,6 +492,8 @@ func RenderedInstructions(instructions string) string {
 func (c *RepoConfig) UnmarshalYAML(value *yaml.Node) error {
 	type repoConfigRaw struct {
 		Agent                  agentList    `yaml:"agent"`
+		Provider               string       `yaml:"provider"`
+		Gate                   string       `yaml:"gate"`
 		Commands               Commands     `yaml:"commands"`
 		IgnorePatterns         []string     `yaml:"ignore_patterns"`
 		ProtectedPaths         []string     `yaml:"protected_paths"`
@@ -514,6 +517,8 @@ func (c *RepoConfig) UnmarshalYAML(value *yaml.Node) error {
 		return err
 	}
 	c.Agent = firstAgent(raw.Agent)
+	c.Provider = raw.Provider
+	c.Gate = raw.Gate
 	c.Agents = copyAgents(raw.Agent)
 	c.Commands = raw.Commands
 	c.IgnorePatterns = raw.IgnorePatterns

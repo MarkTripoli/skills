@@ -150,6 +150,7 @@ func (p *Paths) EnsureDirs() error {
 		p.WorktreesDir(),
 		p.LogsDir(),
 		p.ServerPIDsDir(),
+		filepath.Join(p.root, "bootstrap"),
 	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(d, 0o700); err != nil {

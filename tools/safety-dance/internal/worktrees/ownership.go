@@ -19,23 +19,16 @@ func metadataDir(dir string) string {
 	if configured := strings.TrimSpace(os.Getenv("SD_HOME")); configured != "" {
 		root, err := filepath.Abs(configured)
 		if err == nil {
-			worktreeRoot := filepath.Join(root, "worktrees")
-			rel, relErr := filepath.Rel(worktreeRoot, clean)
+			defaultRoot := filepath.Join(root, "worktrees")
+			rel, relErr := filepath.Rel(defaultRoot, clean)
 			if relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				return filepath.Join(worktreeRoot, ".safety-dance-journals")
+				return filepath.Join(defaultRoot, ".safety-dance-journals")
 			}
 		}
 	}
-	parts := strings.Split(clean, string(filepath.Separator))
-	for i := len(parts) - 1; i >= 0; i-- {
-		if parts[i] == "worktrees" {
-			root := strings.Join(parts[:i+1], string(filepath.Separator))
-			if root == "" {
-				root = string(filepath.Separator)
-			}
-			return filepath.Join(root, ".safety-dance-journals")
-		}
-	}
+	// Custom roots own their journal beside the run directory. Do not infer
+	// ownership from an ancestor named "worktrees": operators may nest a
+	// configured root below such a directory.
 	return filepath.Join(filepath.Dir(clean), ".safety-dance-journals")
 }
 

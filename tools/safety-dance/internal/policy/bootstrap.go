@@ -3,11 +3,13 @@ package policy
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/config"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/paths"
 	"gopkg.in/yaml.v3"
-	"os"
-	"path/filepath"
 )
 
 type Bootstrap struct {
@@ -30,7 +32,13 @@ func Store(p *paths.Paths, repository, revision string, policy *config.RepoConfi
 	return os.WriteFile(p.BootstrapConfigFile(repository), raw, 0600)
 }
 func Resolve(p *paths.Paths, repository, trustedRevision string, committed *config.RepoConfig) (*config.RepoConfig, error) {
+	if strings.TrimSpace(repository) == "" || strings.TrimSpace(trustedRevision) == "" {
+		return nil, errors.New("bootstrap policy requires repository and trusted revision")
+	}
 	if committed != nil {
+		if err := os.MkdirAll(filepath.Dir(p.BootstrapRetiredFile(repository)), 0700); err != nil {
+			return nil, fmt.Errorf("prepare bootstrap retirement: %w", err)
+		}
 		if err := os.WriteFile(p.BootstrapRetiredFile(repository), []byte(trustedRevision+"\n"), 0600); err != nil {
 			return nil, fmt.Errorf("retire bootstrap policy: %w", err)
 		}

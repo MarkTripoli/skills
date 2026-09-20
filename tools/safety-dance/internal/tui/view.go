@@ -16,6 +16,34 @@ func truncate(s string, width int) string {
 	}
 	return string(runes[:width-1]) + "…"
 }
+func compactLines(line string, width int) []string {
+	if width <= 0 || utf8.RuneCountInString(line) <= width {
+		return []string{line}
+	}
+	if width <= 8 {
+		if strings.HasPrefix(line, "keys: ") {
+			value := strings.TrimPrefix(line, "keys: ")
+			if strings.Contains(value, "approve") && strings.Contains(value, "abort") {
+				return []string{"a/f/s/x"}
+			}
+			line = value
+		}
+		if strings.HasPrefix(line, "prompt: ") {
+			line = strings.TrimPrefix(line, "prompt: ")
+		}
+	}
+	runes := []rune(line)
+	out := make([]string, 0, (len(runes)+width-1)/width)
+	for len(runes) > 0 {
+		n := width
+		if n > len(runes) {
+			n = len(runes)
+		}
+		out = append(out, string(runes[:n]))
+		runes = runes[n:]
+	}
+	return out
+}
 
 // Render is the semantic status view shared by interactive and plain output.
 // Width limits each line independently so terminal status and prompts remain visible.
@@ -25,7 +53,7 @@ func Render(m Model, width int) string {
 		status = "idle"
 	}
 	header := fmt.Sprintf("Safety Dance  %s  %s", status, m.Branch)
-	if width > 0 && len(header) > width {
+	if width > 8 && width > 0 && utf8.RuneCountInString(header) > width {
 		header = truncate(status+" "+m.Branch, width)
 	}
 	lines := []string{header}
@@ -50,20 +78,9 @@ func Render(m Model, width int) string {
 	if m.Error != "" {
 		lines = append(lines, "error: "+m.Error)
 	}
-	for i := range lines {
-		if width > 0 && width <= 8 {
-			switch {
-			case strings.HasPrefix(lines[i], "prompt: "):
-				lines[i] = strings.TrimPrefix(lines[i], "prompt: ")
-			case strings.HasPrefix(lines[i], "keys: "):
-				lines[i] = strings.TrimPrefix(lines[i], "keys: ")
-			}
-		}
-		lines[i] = truncate(lines[i], width)
+	rendered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		rendered = append(rendered, compactLines(line, width)...)
 	}
-	out := lines[0]
-	for _, line := range lines[1:] {
-		out += "\n" + line
-	}
-	return out
+	return strings.Join(rendered, "\n")
 }
