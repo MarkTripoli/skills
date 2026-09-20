@@ -102,6 +102,43 @@ test("local Git configuration snapshots detect byte changes outside repository m
   assert.equal(evalLib.gitConfigChanged(beforeConfig, afterConfig), true);
 });
 
+test("local Git configuration detects a dangling symlink created from absence", () => {
+  const root = repository();
+  fs.mkdirSync(path.join(root, ".git"));
+  const before = evalLib.snapshotGitConfig(root);
+
+  fs.symlinkSync("missing-target", path.join(root, ".git/config"));
+  const afterSnapshot = evalLib.snapshotGitConfig(root);
+
+  assert.equal(evalLib.gitConfigChanged(before, afterSnapshot), true);
+  assert.equal(before, null);
+  assert.deepEqual(afterSnapshot, {
+    kind: "symlink",
+    linkTarget: "missing-target",
+    sha256: "b8abc156514f90734512db29fc73063a442613dc9aae4dce9a39470905fb6fc6",
+  });
+  assert.equal("bytes" in afterSnapshot, false);
+});
+
+test("local Git configuration detects a dangling symlink deleted to absence", () => {
+  const root = repository();
+  fs.mkdirSync(path.join(root, ".git"));
+  fs.symlinkSync("missing-target", path.join(root, ".git/config"));
+  const before = evalLib.snapshotGitConfig(root);
+
+  fs.rmSync(path.join(root, ".git/config"));
+  const afterSnapshot = evalLib.snapshotGitConfig(root);
+
+  assert.equal(evalLib.gitConfigChanged(before, afterSnapshot), true);
+  assert.deepEqual(before, {
+    kind: "symlink",
+    linkTarget: "missing-target",
+    sha256: "b8abc156514f90734512db29fc73063a442613dc9aae4dce9a39470905fb6fc6",
+  });
+  assert.equal("bytes" in before, false);
+  assert.equal(afterSnapshot, null);
+});
+
 test("repository snapshots retain file-link targets without copying target bytes", () => {
   const root = repository();
   const hostFile = path.join(path.dirname(root), `${path.basename(root)}-host-secret.txt`);

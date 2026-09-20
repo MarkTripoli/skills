@@ -28,8 +28,13 @@ function snapshotSymbolicLink(file) {
 
 export function snapshotGitConfig(root) {
   const config = path.join(root, ".git", "config");
-  if (!fs.existsSync(config)) return null;
-  const stats = fs.lstatSync(config);
+  let stats;
+  try {
+    stats = fs.lstatSync(config);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
   if (stats.isSymbolicLink()) return snapshotSymbolicLink(config);
   if (!stats.isFile()) return null;
   return snapshotBytes(fs.readFileSync(config));
