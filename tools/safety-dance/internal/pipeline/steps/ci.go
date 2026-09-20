@@ -1,13 +1,6 @@
 package steps
 
-import (
-	"context"
-	"fmt"
-)
+import "context"
 
-func CI(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return fmt.Errorf("ci gate is unavailable: configured CI owner is not connected")
-}
+// CI performs the configured CI gate when one is configured.
+func CI(ctx context.Context) error { return Validate(ctx, "ci") }

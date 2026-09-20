@@ -2,13 +2,19 @@ package daemon
 
 import (
 	"fmt"
-	"github.com/MarkTripoli/skills/tools/safety-dance/internal/paths"
+	"html"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/paths"
 )
 
+type serviceOutputExecutor interface {
+	Output(name string, args ...string) ([]byte, error)
+}
 type ServiceExecutor interface {
 	Run(name string, args ...string) error
 }
@@ -16,6 +22,10 @@ type Service struct {
 	Home     *paths.Paths
 	Binary   string
 	Executor ServiceExecutor
+}
+
+func systemdQuote(value string) string {
+	return strconv.Quote(value)
 }
 
 const serviceMarker = "SAFETY_DANCE_MANAGED"
@@ -32,9 +42,12 @@ func (s Service) Definition() (string, error) {
 	}
 	switch runtime.GOOS {
 	case "darwin":
-		return fmt.Sprintf("<!-- %s home=%s --><plist><dict><key>Label</key><string>%s</string><key>ProgramArguments</key><array><string>%s</string><string>daemon</string><string>serve</string></array><key>EnvironmentVariables</key><dict><key>SD_HOME</key><string>%s</string></dict><key>KeepAlive</key><true/></dict></plist>", serviceMarker, s.Home.Root(), s.Label(), s.Binary, s.Home.Root()), nil
+		root := html.EscapeString(s.Home.Root())
+		binary := html.EscapeString(s.Binary)
+		label := html.EscapeString(s.Label())
+		return fmt.Sprintf("<!-- %s home=%s --><plist><dict><key>Label</key><string>%s</string><key>ProgramArguments</key><array><string>%s</string><string>daemon</string><string>serve</string></array><key>EnvironmentVariables</key><dict><key>SD_HOME</key><string>%s</string></dict><key>KeepAlive</key><true/></dict></plist>", serviceMarker, root, label, binary, root), nil
 	case "linux":
-		return fmt.Sprintf("# %s home=%s\n[Unit]\nDescription=Safety Dance daemon\n[Service]\nExecStart=%s daemon serve\nEnvironment=SD_HOME=%s\nRestart=on-failure\n", serviceMarker, s.Home.Root(), s.Binary, s.Home.Root()), nil
+		return fmt.Sprintf("# %s home=%s\n[Unit]\nDescription=Safety Dance daemon\n[Service]\nExecStart=%s daemon serve\nEnvironment=SD_HOME=%s\nRestart=on-failure\n", serviceMarker, systemdQuote(s.Home.Root()), systemdQuote(s.Binary), systemdQuote(s.Home.Root())), nil
 	default:
 		return fmt.Sprintf("%s home=%s\nSafety Dance Task\nName=%s\nBinary=%s daemon serve\nSD_HOME=%s\n", serviceMarker, s.Home.Root(), s.Label(), filepath.Clean(s.Binary), s.Home.Root()), nil
 	}
@@ -63,7 +76,7 @@ func (s Service) definitionPath() (string, error) {
 		}
 		return filepath.Join(home, ".config", "systemd", "user", "safety-dance-"+strings.ReplaceAll(s.Home.Root(), "/", "-")+".service"), nil
 	default:
-		return "", nil
+		return filepath.Join(s.Home.Root(), "safety-dance-task.definition"), nil
 	}
 }
 func (s Service) ownedDefinition() (bool, error) {
@@ -105,6 +118,7 @@ func (s Service) writeDefinition() error {
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
 	if err := tmp.Chmod(0o600); err != nil {
+
 		_ = tmp.Close()
 		return err
 	}
@@ -116,6 +130,19 @@ func (s Service) writeDefinition() error {
 		return err
 	}
 	return os.Rename(tmpPath, path)
+}
+
+func (s Service) taskOwned() (bool, error) {
+	executor, ok := s.Executor.(serviceOutputExecutor)
+	if !ok {
+		return false, nil
+	}
+	out, err := executor.Output("schtasks", "/Query", "/TN", s.Label(), "/FO", "LIST")
+	if err != nil {
+		return false, nil
+	}
+	raw := string(out)
+	return strings.Contains(raw, serviceMarker) && strings.Contains(raw, s.Home.Root()), nil
 }
 
 func (s Service) Install() error {
@@ -153,6 +180,13 @@ func (s Service) Install() error {
 		return fmt.Errorf("write service definition: %w", err)
 	}
 	var activationErr error
+	if runtime.GOOS == "windows" {
+		if executor, ok := s.Executor.(serviceOutputExecutor); ok {
+			if out, queryErr := executor.Output("schtasks", "/Query", "/TN", s.Label(), "/FO", "LIST"); queryErr == nil && (!strings.Contains(string(out), serviceMarker) || !strings.Contains(string(out), s.Home.Root())) {
+				return fmt.Errorf("foreign scheduled task collision: %s", s.Label())
+			}
+		}
+	}
 	switch runtime.GOOS {
 	case "darwin":
 		activationErr = s.Executor.Run("launchctl", "load", "-w", path)

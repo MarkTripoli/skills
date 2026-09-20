@@ -1,13 +1,6 @@
 package steps
 
-import (
-	"context"
-	"fmt"
-)
+import "context"
 
-func Review(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return fmt.Errorf("review gate is unavailable: configured agent owner is not connected")
-}
+// Review performs the configured review gate in the run-owned worktree.
+func Review(ctx context.Context) error { return Validate(ctx, "review") }

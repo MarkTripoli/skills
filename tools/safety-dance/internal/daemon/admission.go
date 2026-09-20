@@ -118,7 +118,11 @@ func managedHookPeer(pid int, gate string) bool {
 	gate = cleanPath(gate)
 	for depth := 0; pid > 1 && depth < 64; depth++ {
 		ppid, command, err := processInfo(pid)
-		if raw, readErr := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/environ"); readErr == nil && strings.Contains(string(raw), "SD_PARENT_RUN_ID=") {
+		env, envErr := processEnvironment(pid)
+		if envErr != nil {
+			return false
+		}
+		if strings.Contains(string(env), "SD_PARENT_RUN_ID=") {
 			return false
 		}
 		if err != nil {
@@ -171,7 +175,11 @@ func AuthorizeMutationPeer(pid int) error {
 		if err != nil {
 			return err
 		}
-		if raw, readErr := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/environ"); readErr == nil && strings.Contains(string(raw), "SD_PARENT_RUN_ID=") {
+		env, envErr := processEnvironment(pid)
+		if envErr != nil {
+			return fmt.Errorf("cannot verify IPC peer environment: %w", envErr)
+		}
+		if strings.Contains(string(env), "SD_PARENT_RUN_ID=") {
 			return errors.New("nested validation process cannot mutate daemon state")
 		}
 		if strings.Contains(command, "safety-dance") {

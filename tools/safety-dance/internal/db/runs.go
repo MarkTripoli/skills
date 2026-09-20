@@ -93,6 +93,22 @@ func (d *DB) CancelRun(id, reason string) error {
 	}
 	return nil
 }
+
+// SupersedeRun records replacement even while an older run owns publication.
+// Publication checks the status again before the irreversible Git write.
+func (d *DB) SupersedeRun(id, reason string) error {
+	if reason == "" {
+		reason = types.RunCancelReasonSuperseded
+	}
+	result, err := d.sql.Exec(`UPDATE runs SET status=?,error=?,updated_at=? WHERE id=? AND status IN (?,?)`, types.RunCancelled, reason, now(), id, types.RunPending, types.RunRunning)
+	if err != nil {
+		return fmt.Errorf("supersede run: %w", err)
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return fmt.Errorf("run %s is no longer supersedable", id)
+	}
+	return nil
+}
 func (d *DB) RecoverableRuns() ([]*Run, error) {
 	rows, err := d.sql.Query(`SELECT `+runColumns+` FROM runs WHERE status IN (?,?,?) ORDER BY created_at`, types.RunPending, types.RunRunning, types.RunCancelled)
 	if err != nil {

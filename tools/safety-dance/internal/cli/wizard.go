@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/daemon"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/gate"
@@ -16,6 +17,10 @@ type commandExecutor struct{}
 
 func (commandExecutor) Run(name string, args ...string) error {
 	return exec.Command(name, args...).Run()
+}
+
+func (commandExecutor) Output(name string, args ...string) ([]byte, error) {
+	return exec.Command(name, args...).CombinedOutput()
 }
 
 func newWizard() *cobra.Command {
@@ -38,6 +43,11 @@ func runWizard(cmd *cobra.Command, args []string) error {
 	service := daemon.Service{Home: p, Binary: "safety-dance", Executor: commandExecutor{}}
 	createdGate := false
 	createdService := false
+	originalOrigin, originErr := git.GetRemoteURL(context.Background(), root, "origin")
+	hadOrigin := originErr == nil
+	if originErr != nil && !strings.Contains(originErr.Error(), "No such remote") {
+		return originErr
+	}
 	setup := wizard.Setup{
 		In:  cmd.InOrStdin(),
 		Out: cmd.OutOrStdout(),
@@ -52,11 +62,22 @@ func runWizard(cmd *cobra.Command, args []string) error {
 			return err
 		},
 		Compensate: func(model wizard.Model) error {
-			if !createdGate {
-				return nil
+			var first error
+			if createdGate {
+				if _, err := gate.Eject(context.Background(), database, p, root); err != nil {
+					first = err
+				}
 			}
-			_, err := gate.Eject(context.Background(), database, p, root)
-			return err
+			var restore error
+			if hadOrigin {
+				restore = git.EnsureRemote(context.Background(), root, "origin", originalOrigin)
+			} else {
+				restore = git.RemoveRemote(context.Background(), root, "origin")
+			}
+			if first != nil {
+				return first
+			}
+			return restore
 		},
 		InstallService: func() error { createdService = !service.DefinitionExists(); return service.Install() },
 		StopService:    func() error { return service.Stop() },

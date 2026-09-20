@@ -57,6 +57,14 @@ func (s *Store) CancelRun(id, reason string) error {
 	return s.db.CancelRun(id, reason)
 }
 
+// SupersedeRun records replacement without waiting for publication ownership.
+func (s *Store) SupersedeRun(id, reason string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("custody store is not initialized")
+	}
+	return s.db.SupersedeRun(id, reason)
+}
+
 // RecoverableRuns returns records whose durable state permits restart recovery.
 func (s *Store) RecoverableRuns() ([]*db.Run, error) {
 	if s == nil || s.db == nil {

@@ -3,9 +3,11 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"sync"
+
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/custody"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/types"
-	"sync"
 )
 
 type BranchKey struct{ RepositoryID, Ref string }
@@ -27,14 +29,16 @@ func (h *RunHandle) Wait() {
 }
 
 type Manager struct {
-	db   *db.DB
-	mu   sync.Mutex
-	keys map[BranchKey]*RunHandle
-	run  func(context.Context, *db.Run)
+	db    *db.DB
+	store *custody.Store
+	mu    sync.Mutex
+	keys  map[BranchKey]*RunHandle
+	run   func(context.Context, *db.Run)
 }
 
 func NewManager(database *db.DB, runner func(context.Context, *db.Run)) *Manager {
-	return &Manager{db: database, keys: make(map[BranchKey]*RunHandle), run: runner}
+	store, _ := custody.New(database)
+	return &Manager{db: database, store: store, keys: make(map[BranchKey]*RunHandle), run: runner}
 }
 
 // Replace serializes cancellation, joining, persistence, and assignment for one
@@ -46,7 +50,7 @@ func (m *Manager) Replace(ctx context.Context, key BranchKey, accepted db.Accept
 	m.mu.Lock()
 	prior := m.keys[key]
 	if prior != nil {
-		if err := m.db.CancelRun(prior.Run.ID, types.RunCancelReasonSuperseded); err != nil {
+		if err := m.store.SupersedeRun(prior.Run.ID, types.RunCancelReasonSuperseded); err != nil {
 			m.mu.Unlock()
 			return nil, err
 		}
@@ -60,12 +64,12 @@ func (m *Manager) Replace(ctx context.Context, key BranchKey, accepted db.Accept
 		}
 		delete(m.keys, key)
 	}
-	r, err := m.db.CreateRunFromAccepted(db.RunInput{Accepted: accepted, WorktreeDir: worktree})
+	r, err := m.store.CreateRun(db.RunInput{Accepted: accepted, WorktreeDir: worktree})
 	if err != nil {
 		m.mu.Unlock()
 		return nil, err
 	}
-	if err = m.db.TransitionRunStatus(r.ID, types.RunPending, types.RunRunning); err != nil {
+	if err = m.store.TransitionRunStatus(r.ID, types.RunPending, types.RunRunning); err != nil {
 		m.mu.Unlock()
 		return nil, err
 	}

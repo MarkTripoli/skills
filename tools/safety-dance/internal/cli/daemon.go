@@ -376,18 +376,43 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	}
 	trustedConfig := &config.RepoConfig{}
 	trustedRef := "refs/remotes/origin/" + repo.DefaultBranch
-	if raw, showErr := git.ShowFile(ctx, repo.WorkingPath, trustedRef, ".safety-dance.yaml"); showErr == nil {
-		trustedConfig, err = config.LoadRepoFromBytes([]byte(raw))
-		if err != nil {
-			return fmt.Errorf("load trusted repository configuration: %w", err)
+	trustedExists, err := git.RefExists(ctx, repo.WorkingPath, trustedRef)
+	if err != nil {
+		return fmt.Errorf("verify trusted configuration ref %s: %w", trustedRef, err)
+	}
+	if trustedExists {
+		entries, listErr := git.Run(ctx, repo.WorkingPath, "ls-tree", "-r", "--name-only", trustedRef, "--", ".safety-dance.yaml")
+		if listErr != nil {
+			return fmt.Errorf("inspect trusted configuration: %w", listErr)
 		}
+		if strings.TrimSpace(entries) != "" {
+			raw, showErr := git.ShowFile(ctx, repo.WorkingPath, trustedRef, ".safety-dance.yaml")
+			if showErr != nil {
+				return fmt.Errorf("read trusted repository configuration: %w", showErr)
+			}
+			trustedConfig, err = config.LoadRepoFromBytes([]byte(raw))
+			if err != nil {
+				return fmt.Errorf("load trusted repository configuration: %w", err)
+			}
+		}
+	} else {
+		return fmt.Errorf("trusted configuration ref %s is unavailable", trustedRef)
 	}
 	effectiveConfig := config.EffectiveRepoConfig(pushedConfig, trustedConfig, trustedConfig.AllowRepoCommands)
 	ref := run.Branch
 	if !strings.HasPrefix(ref, "refs/") {
 		ref = "refs/heads/" + ref
 	}
-	request := steps.PushRequest{Worktree: worktree, Remote: repo.PushURL(), Ref: ref, Candidate: run.HeadSHA, ReviewedHead: run.HeadSHA, VerifiedHead: run.BaseSHA}
+	request := steps.PushRequest{Worktree: worktree, Remote: repo.PushURL(), Ref: ref, Candidate: run.HeadSHA, ReviewedHead: run.HeadSHA, VerifiedHead: run.BaseSHA, BeforePush: func() error {
+		current, checkErr := database.GetRun(run.ID)
+		if checkErr != nil {
+			return checkErr
+		}
+		if current == nil || current.Status == types.RunCancelled || current.Status == types.RunFailed {
+			return fmt.Errorf("run %s was superseded before publication", run.ID)
+		}
+		return nil
+	}}
 	runner := pipeline.NewDurable(database, run.ID)
 	for _, name := range pipeline.CoreSteps {
 		name := name
