@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -50,6 +51,14 @@ func Render(m Model, width int) string {
 		lines = append(lines, "error: "+m.Error)
 	}
 	for i := range lines {
+		if width > 0 && width <= 8 {
+			switch {
+			case strings.HasPrefix(lines[i], "prompt: "):
+				lines[i] = strings.TrimPrefix(lines[i], "prompt: ")
+			case strings.HasPrefix(lines[i], "keys: "):
+				lines[i] = strings.TrimPrefix(lines[i], "keys: ")
+			}
+		}
 		lines[i] = truncate(lines[i], width)
 	}
 	out := lines[0]

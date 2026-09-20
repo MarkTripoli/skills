@@ -86,6 +86,15 @@ func runWizard(cmd *cobra.Command, args []string) error {
 					return err
 				}
 			}
+			switch strings.ToLower(strings.TrimSpace(model.Provider)) {
+			case "github":
+			default:
+				return errors.New("provider must be github")
+			}
+			gateChoice := strings.TrimSpace(model.Gate)
+			if gateChoice == "" || (gateChoice != "default" && filepath.Clean(gateChoice) != filepath.Clean(p.ReposDir())) {
+				return fmt.Errorf("gate must be default or %s", p.ReposDir())
+			}
 			if len(model.ValidationCommands) != 8 {
 				return errors.New("eight validation commands are required")
 			}
@@ -166,7 +175,7 @@ func runWizard(cmd *cobra.Command, args []string) error {
 		},
 		InstallService: func() error { createdService = !service.DefinitionExists(); return service.Install() },
 		StopService:    func() error { return service.Stop() }, ServiceCreated: func() bool { return createdService },
-		AskService: true, PromptLabels: []string{"upstream", "commands"},
+		AskService: true, PromptLabels: []string{"upstream", "gate", "provider", "commands"},
 	}
 	if err := setup.Run(context.Background()); err != nil {
 		return err
