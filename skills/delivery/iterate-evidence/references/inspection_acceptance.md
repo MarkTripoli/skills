@@ -13,6 +13,8 @@ Open recorded media before diagnosing a visual defect and before resolving it. R
 
 Recorder `frames` extracts event samples, not every frame of an interaction. Open those samples for static assertions; use an available video viewer or sequential extraction for a temporal claim. Record exact extraction/viewing commands and cadence when taking additional samples. A contact sheet with unreadable detail needs focused frames. Uncertain pixels require further inspection within the existing footage or a blocker; they do not justify guessing a repair.
 
+**Per-flow individual frame requirement:** Before marking any required flow as passed, failed, or untested in the coverage table, open that flow's specific extracted frame by name as a distinct viewer call and record what its pixels show. A contact sheet or composite view covering multiple flows at once does not count as individual per-flow inspection; each coverage-table row must be backed by its own named opened frame and an observed pixel value. A flow whose frame was not individually opened may only be recorded as `untested` with the reason.
+
 DOM/accessibility trees, console output, probes, narration, overlays, assertion tallies, `verified: true`, and file existence are corroboration, not recorded-pixel inspection. A passed label over failing application pixels remains failed; retain both observations without rewriting labels to conceal disagreement. A successful recorder finalization proves media processing, not application correctness.
 
 ## Preserve time and surface identity

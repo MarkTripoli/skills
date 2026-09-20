@@ -146,11 +146,11 @@ Baseline is capture and inspection at consumed `0`, not a repair reservation. Ap
 
 ## Final coverage
 
-Keep this seven-column schema for every terminal outcome: passed, failed, or blocked. List every required target and regression flow/configuration separately at the actual latest application revision. Bind each verdict to its evidence/checks and finding IDs; state unavailable values and reasons in their cells. Prior passing evidence is history if its revision differs. Untested is never passed.
+Keep this seven-column schema for every terminal outcome: passed, failed, or blocked. List every required target and regression flow/configuration separately at the actual latest application revision. Bind each verdict to its evidence/checks and finding IDs; state unavailable values and reasons in their cells. Prior passing evidence is history if its revision differs. Untested is never passed. Each row's inspected evidence must cite the specific extracted frame that was individually opened for that flow by name; a contact sheet or composite view opening does not supply per-flow evidence.
 
 | Flow/configuration | Target or regression | Latest revision | Recorded session and inspected evidence | Required checks/state probes | Result: passed/failed/untested | Reason and limits |
 | --- | --- | --- | --- | --- | --- | --- |
-| [flow] | [role] | [actual identity, or unknown with reason] | [session/inspection and exact sample/interval, or unavailable with reason] | [result references, or unavailable/not applicable with reason] | [result] | [finding IDs or None.; actual outcome, missing proof, or limitation] |
+| [flow] | [role] | [actual identity, or unknown with reason] | [session and individually opened frame path by name, observed pixel value, and timestamp; or unavailable with reason] | [result references, or unavailable/not applicable with reason] | [result] | [finding IDs or None.; actual outcome, missing proof, or limitation] |
 
 ## Stop decision
 
