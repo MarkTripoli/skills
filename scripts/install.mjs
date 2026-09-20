@@ -29,6 +29,14 @@ const TARGET_LABEL = {
   pi: "Pi",
   portable: "Portable",
 };
+const SKILL_DEPENDENCIES = { "jev-ui": ["typed-judgment", "record-evidence"] };
+
+function dependencyClosure(names) {
+  const result = new Set(names);
+  const visit = (name) => { for (const dependency of SKILL_DEPENDENCIES[name] || []) if (!result.has(dependency)) { result.add(dependency); visit(dependency); } };
+  for (const name of names) visit(name);
+  return [...result];
+}
 const BINARY = { "claude-code": "claude", codex: "codex", "oh-my-pi": "omp", pi: "pi" };
 const MARK_BEGIN = "# >>> MarkTripoli/skills workers (managed by the installer; edits inside are overwritten)";
 const MARK_END = "# <<< MarkTripoli/skills workers";
@@ -174,7 +182,8 @@ export function plan(options) {
   const { targets, project = false, atomic = false, cwd = process.cwd(), home = os.homedir(), env = process.env } = options;
   const { skills } = scanSkills(path.join(repoRoot, "skills"));
   const allNames = skills.map((skill) => skill.name);
-  const names = resolveSkillNames(options.skillNames ?? [], skills);
+  const requestedNames = resolveSkillNames(options.skillNames ?? [], skills);
+  const names = dependencyClosure(requestedNames);
   if (atomic && names.length !== allNames.length) throw new Error("--atomic requires all skills; remove --skill selections or pass --skill '*' (omit --atomic for independent skills)");
   const allWorkerNames = allNames.filter((name) => name.startsWith("agent-"));
   const workerNames = names.filter((name) => name.startsWith("agent-"));
@@ -189,7 +198,7 @@ export function plan(options) {
       return dest;
     }
     skillDirsClaimed.set(dest.skills, target);
-    steps.push({ target, kind: "skills", from: target === "portable" ? "canonical" : `built for ${target}`, to: dest.skills, names });
+    steps.push({ target, kind: "skills", from: target === "portable" ? "canonical" : `built for ${target}`, to: dest.skills, names, removeNames: requestedNames });
     return dest;
   };
   // Atomic reads canonical skills, even when Codex shares the portable destination.
@@ -204,7 +213,7 @@ export function plan(options) {
   if (!atomic && targets.includes("codex") && !project && (targets.includes("pi") || targets.includes("oh-my-pi"))) {
     notes.push("Pi and Oh My Pi also read ~/.agents/skills, where the Codex copy lives; their own skill directories are installed too, so a skill may appear twice by name in those runtimes");
   }
-  return { steps, notes, names };
+  return { steps, notes, names, requestedNames };
 }
 
 function short(file, home) {
@@ -288,12 +297,12 @@ export function apply(planned, { built, uninstall, home }) {
     const tree = built.get(step.target);
     switch (step.kind) {
       case "skills": {
-        for (const name of step.names) {
+        for (const name of (uninstall ? (step.removeNames || step.names) : step.names)) {
           const to = path.join(step.to, name);
           if (uninstall) fs.rmSync(to, { recursive: true, force: true });
           else copyDir(path.join(tree, "skills", name), to);
         }
-        done.push(`${uninstall ? "removed" : "wrote"} ${step.names.length} skills under ${short(step.to, home)}`);
+        done.push(`${uninstall ? "removed" : "wrote"} ${(uninstall ? (step.removeNames || step.names) : step.names).length} skills under ${short(step.to, home)}`);
         break;
       }
       case "agents": {

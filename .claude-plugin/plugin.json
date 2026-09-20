@@ -44,6 +44,7 @@
     "./skills/delivery/iterate-research-questions",
     "./skills/delivery/iterate-structure-outline",
     "./skills/delivery/iterate-tdd",
+    "./skills/delivery/jev-ui",
     "./skills/delivery/record-evidence",
     "./skills/delivery/reproduce-bug",
     "./skills/delivery/resolve-pr-reviews",

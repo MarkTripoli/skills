@@ -171,6 +171,7 @@ Artifact type is the template's frontmatter `type`. Human gates apply only when 
 | verify-implementation | verification | no | Before review unless `verify=false`; also by hand |
 | test-app | app-test | no | When `app_test` is enabled; also by hand |
 | typed-judgment | none | no | Optional skill judgments and controller JEV routing |
+| jev-ui | none | no | By hand; bounded browser and Android control |
 | describe-pr | pr-description | yes | Final PR description and its revisions |
 | resolve-pr-reviews | pr-review | no | Existing PR review round |
 | ci-commit | commit | no | By hand; explicit-path commit conventions |
