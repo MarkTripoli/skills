@@ -28,6 +28,8 @@ summary: "This iteration repairs ordinary gate notification by normalizing gate 
 - result: passed.
 - command: `go test -race ./internal/daemon -run 'ExecutableGate|Authenticated|Replay|Mismatch|AcceptedRefNotification' -v`
 - result: passed; authenticated, replay, mismatch, executable-hook, and notification tests passed.
+- command: `npm test`
+- result: passed; root validation, plugin synchronization, 136 Node tests, Safety Dance race/vet/build checks, identity, and release-contract tests passed.
 - deferred human evidence: A1 must still be re-run through a built binary and temporary initialized repository to confirm accepted_refs and runs in the real operator flow. A3, A12, A13, A14, A15 remain incomplete as listed below.
 
 ## Remaining Work
