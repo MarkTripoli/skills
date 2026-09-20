@@ -50,3 +50,13 @@ Read `/tmp/atomic-migration.JBu9Sk/acceptance-environment.json` for the existing
 ## Implementation ownership
 
 The Luna-fast writer owns product/tests/docs changes only in this release worktree. Remove the iOS-specific parts of the imported JEV skill, adapt shared call sites and tests, update its changeset and user-facing registration/documentation, and report changed paths and the iOS restoration boundary. Do not commit, publish, merge, edit the original worktree, reset devices, or resume the paused workflow. Skip formatters, linters, builds, and tests during the edit phase; the supervisor runs final checks after the tree is coherent. Keep the extraction separate from unrelated fixes so iOS can be restored cleanly on the fresh branch.
+
+## Additional publication authorization
+
+The user subsequently instructed:
+
+> I would just ask you: once everything is good here, and the merge request is up and it's settled, please just merge it in once all checks are good.
+
+> And also, then cut a new release.
+
+Merge without another confirmation after local acceptance and GitHub checks pass. Use the existing Changesets versioning/release flow for the browser/Android-only release, verify the version PR and resulting release, then base the fresh local iOS branch on the released main. Do not publish iOS or upload recordings.
