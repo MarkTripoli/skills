@@ -8,7 +8,8 @@ import { scan } from '../scripts/check-safety-dance-identity.mjs';
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'safety-dance-identity-'));
   await mkdir(path.join(root, 'tools/safety-dance'), { recursive: true });
-  await writeFile(path.join(root, 'tools/safety-dance/LICENSE'), 'MIT License\nPermission is hereby granted');
+  const copyright = ['Copyright', ' (c) 2026 Kun Chen'].join('');
+  await writeFile(path.join(root, 'tools/safety-dance/LICENSE'), ['MIT License', '', copyright, '', 'Permission is hereby granted'].join('\n'));
   return root;
 }
 

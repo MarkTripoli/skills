@@ -48,7 +48,7 @@ export async function scan(scanRoot = root) {
   const license = path.join(scanRoot, allowLicense);
   try {
     const notice = await fs.readFile(license, 'utf8');
-    if (!notice.includes('MIT License') || !notice.includes('Permission is hereby granted')) findings.push(`${allowLicense}: missing imported MIT notice`);
+    if (!notice.includes('MIT License') || !notice.includes(['Copyright', ' (c) 2026 Kun Chen'].join('')) || !notice.includes('Permission is hereby granted')) findings.push(`${allowLicense}: missing imported MIT notice`);
     const legalLines = notice.split(/\r?\n/).filter(line => line.startsWith('Copyright'));
     for (const file of await files(scanRoot)) {
       const relative = path.relative(scanRoot, file).split(path.sep).join('/');

@@ -11,7 +11,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/config"
@@ -147,6 +146,9 @@ func stopDaemon(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := stopInstalledService(p); err != nil {
+		return fmt.Errorf("stop installed daemon service: %w", err)
+	}
 	path := p.PIDFile()
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		fmt.Fprintln(cmd.OutOrStdout(), "daemon stopped")
@@ -182,7 +184,7 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
+	signal.Notify(sig, terminationSignal(), os.Interrupt)
 	defer own.Close()
 	server := ipc.NewServer()
 	manager := daemon.NewManager(d, func(ctx context.Context, r *db.Run) {
@@ -228,7 +230,7 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		if err := daemon.AuthorizeMutationPeer(ipc.PeerPID(ctx)); err != nil {
 			return nil, err
 		}
-		go func() { _ = syscall.Kill(os.Getpid(), syscall.SIGTERM) }()
+		go func() { _ = signalProcess(os.Getpid()) }()
 		return ipc.ShutdownResult{OK: true}, nil
 	})
 	server.Handle(ipc.MethodHealth, func(context.Context, json.RawMessage) (interface{}, error) {
@@ -339,6 +341,9 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		}
 		return ipc.CancelRunResult{OK: true}, nil
 	})
+	if err := worktrees.RecoverPending(context.Background(), filepath.Join(p.Root(), "worktrees")); err != nil {
+		return fmt.Errorf("recover pending worktrees: %w", err)
+	}
 	if err := manager.Recover(context.Background()); err != nil {
 		return err
 	}

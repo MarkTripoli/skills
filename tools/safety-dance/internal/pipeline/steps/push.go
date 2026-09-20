@@ -105,15 +105,25 @@ func Publish(ctx context.Context, database *db.DB, runID string, req PushRequest
 		if liveErr != nil {
 			return PushResult{}, fmt.Errorf("reconcile active publication: %w", liveErr)
 		}
-		if live != req.Candidate {
+		if live == req.Candidate {
+			result = PushResult{Candidate: req.Candidate, Upstream: live, GateMirror: req.GateMirror}
+		} else if live == strings.TrimSpace(req.VerifiedHead) && strings.TrimSpace(req.VerifiedHead) != "" && strings.Trim(req.VerifiedHead, "0") != "" {
+			if err := database.SetRunPushActive(runID, false); err != nil {
+				return PushResult{}, fmt.Errorf("release interrupted publication claim: %w", err)
+			}
+			claimed = false
+			run.PushActive = false
+		} else {
 			return PushResult{}, fmt.Errorf("active publication requires reconciliation: live head %s, candidate %s", live, req.Candidate)
 		}
-		result = PushResult{Candidate: req.Candidate, Upstream: live, GateMirror: req.GateMirror}
-	} else {
-		if err := database.AcquireRunPushActive(runID); err != nil {
-			return PushResult{}, err
+	}
+	if !run.PushActive {
+		if !claimed {
+			if err := database.AcquireRunPushActive(runID); err != nil {
+				return PushResult{}, err
+			}
+			claimed = true
 		}
-		claimed = true
 	}
 	defer func() {
 		if !claimed {

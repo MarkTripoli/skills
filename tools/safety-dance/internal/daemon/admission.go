@@ -126,6 +126,7 @@ func managedHookPeer(pid int, gate string) bool {
 	}
 	gate = cleanPath(gate)
 	var managedHook bool
+	expected := map[string]bool{cleanPath(filepath.Join(gate, "hooks", "pre-receive")): true, cleanPath(filepath.Join(gate, "hooks", "post-receive")): true}
 	for depth := 0; pid > 1 && depth < 64; depth++ {
 		ppid, command, err := processInfo(pid)
 		if err != nil {
@@ -138,8 +139,10 @@ func managedHookPeer(pid int, gate string) bool {
 		fields := strings.Fields(command)
 		if len(fields) > 0 {
 			executable := cleanPath(fields[0])
-			if (strings.HasSuffix(command, "hooks/pre-receive") || strings.HasSuffix(command, "hooks/post-receive")) && strings.Contains(executable, gate) {
-				managedHook = true
+			for hook := range expected {
+				if executable == hook || strings.Contains(string(env), "SD_MANAGED_HOOK="+hook) {
+					managedHook = true
+				}
 			}
 		}
 		pid = ppid

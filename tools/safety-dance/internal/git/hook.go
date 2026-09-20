@@ -57,10 +57,10 @@ while read line; do
 	fi
 	if [ "$token_option_present" -eq 1 ] && [ -z "$token" ]; then rm -f "$TMP"; printf 'safety-dance: empty admission token\n' >&2; exit 1; fi
 	if [ -z "$token" ]; then
-		token=$(SD_HOOK_HELPER=1 "$SD_BIN" daemon issue-push-token --gate "$GATE_DIR" --ref "$refname" 2>/dev/null) || { rm -f "$TMP"; printf 'safety-dance: could not obtain admission token\n' >&2; exit 1; }
+    token=$(SD_MANAGED_HOOK="$0" SD_HOOK_HELPER=1 "$SD_BIN" daemon issue-push-token --gate "$GATE_DIR" --ref "$refname" 2>/dev/null) || { rm -f "$TMP"; printf 'safety-dance: could not obtain admission token\n' >&2; exit 1; }
 	fi
   printf '%s\t%s\t%s\t%s\n' "$oldrev" "$newrev" "$refname" "$token" >> "$GATE_DIR/.safety-dance-receipts"
-  out=$(printf '%s\n' "$line" | SD_HOOK_HELPER=1 "$SD_BIN" daemon admit-push --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --token "$token" 2>&1)
+  out=$(printf '%s\n' "$line" | SD_MANAGED_HOOK="$0" SD_HOOK_HELPER=1 "$SD_BIN" daemon admit-push --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --token "$token" 2>&1)
   status=$?
   if [ $status -ne 0 ]; then rm -f "$TMP"; printf 'safety-dance: gate push refused before ref mutation:\n%s\n' "$out" >&2; exit $status; fi
 done < "$TMP"
