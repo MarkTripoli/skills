@@ -16,7 +16,7 @@ function flowName(label) {
 }
 
 function identity(label) {
-  const [name, ...details] = label.split(/[,;]|\s+\/\s+/).map((part) => part.trim());
+  const [name, ...details] = label.split(/[,;:]|\s+\/\s+/).map((part) => part.trim());
   const direct = flowName(name);
   const match = direct ? null : /^([a-z0-9][a-z0-9_-]*)(?:\s+(.+))?$/i.exec(name);
   const suffix = flowName(match?.[2] ?? "");
