@@ -1,12 +1,12 @@
 ---
 task: jev-ios
 type: evidence-inventory
-status: complete
+status: not-ready
 ---
 
 # Evidence inventory
 
-This inventory covers non-sensitive JSON/Markdown receipts and manifests only. Native recordings, screenshots, raw logs, credentials, and helper configuration remain local and ignored. The original four edited artifacts are byte-archived under `evidence/final-reconciliation-20260920/originals/` and their SHA-256 values are recorded below.
+This inventory covers non-sensitive JSON/Markdown receipts and manifests only. Native recordings, screenshots, raw logs, credentials, and helper configuration remain local and ignored. The edited artifacts are byte-archived under unique ignored evidence directories; the latest originals are under `evidence/native-safety-current-20260920T084236-2488/originals-before-final-sync/` and their SHA-256 values are recorded below.
 
 ## Archived originals
 
@@ -105,9 +105,9 @@ No credential-bearing files or video binaries are included in this committed inv
 
 ## Final synchronization (2026-09-20)
 
-- Status: complete after independent clean review `13-code-review-jev-ios.md` at `c5fa96c`; no critical or major findings. Minor receipt-provenance suggestion is deferred.
+- Status: superseded. Independent review is now recorded in `15-code-review-jev-ios.md`: product safety is clean; CR-001 preservation loss remains the sole unresolved requirement.
 - Every pre-edit task artifact was byte-archived before editing under `evidence/final-sync-20260920/originals/`; hashes are in `evidence/final-sync-20260920/originals.sha256`.
-- Current replacement evidence was copied (not moved) from `/tmp/jev-ios-current-replacement` to ignored `evidence/final-sync-20260920/current-replacement/`. Standalone current receipt/media evidence was copied (not moved) from the retained standalone evidence source recorded in `source-sha256.txt` to ignored `evidence/final-sync-20260920/current-standalone/`. No video binary is committed or uploaded.
+- Current replacement evidence was copied (not moved) from `/tmp/jev-ios-native-safety-current-20260920T084236-2488` to ignored `evidence/native-safety-current-20260920T084236-2488/replacement-corrected-1789908188-8659/`. Standalone current receipt/media evidence was copied (not moved) from `/tmp/jev-ios-native-safety-current-20260920T084236-2488/standalone-1789908337-26043/` to ignored `evidence/native-safety-current-20260920T084236-2488/standalone-1789908337-26043/`; receipt status is passed, PID 29301. The old blocked copy remains untouched. No video binary is committed or uploaded.
 - `source-sha256.txt` records SHA-256 for the current replacement receipt and standalone receipt. Accepted plain `omp -p` direct goals and their provenance are recorded verbatim in `11-repair-verification-jev-ios.md` and `12-repair-verification-jev-ios.md`.
 - The long goal's empty helper output, rejected rewriting wrapper, blocked attempts, and genuine failed cb7b53a outcome remain preserved as non-green historical evidence. No fabricated pass is claimed.
 - Final cleanup evidence: authorized simulator `Shutdown`; owned IDB socket absent; owned companion/recorder stopped; unrelated processes untouched. `task.md` remained byte-identical.
@@ -116,6 +116,13 @@ No credential-bearing files or video binaries are included in this committed inv
 ## Safety repair recovery (2026-09-20)
 
 - Pre-edit byte archives and recovery copies are under the unique ignored `evidence/safety-repair-current-20260920T083906-79975/`; `SHA256SUMS` records every copied file.
-- Passing standalone PID16750 evidence was copied from `/tmp/jev-ios-current-standalone`; the historical `final-sync-20260920/current-standalone` blocked run remains untouched.
+- Passing standalone PID29301 evidence was copied from `/tmp/jev-ios-native-safety-current-20260920T084236-2488/standalone-1789908337-26043`; the historical `final-sync-20260920/current-standalone` blocked run remains untouched.
 - Raw transcript excerpts and reconstructed PID98075 receipt were copied from `/tmp/jev-ios-evidence-recovery-current-20260920T123601Z-61502`. The PID98075 original video/media is irrecoverable after an avoidable earlier worker deletion; reconstructed JSON and transcript are not video recovery.
-- Overall preservation requirement: **NOT MET**. No claim of complete evidence preservation or overall acceptance pass is made.
+- Overall preservation requirement: **NOT MET (sole unresolved requirement)**. No claim of complete evidence preservation or overall acceptance pass is made; preservation remains NOT MET solely for missing original failed recordings.
+
+
+## Current native safety receipts
+
+- Replacement receipt: `evidence/native-safety-current-20260920T084236-2488/replacement-corrected-1789908188-8659/jev-receipt.json`, status `passed`, same-launch PID `9661`; SHA-256 `1e6dc76a99f5decbe74e019e45608199ef3870e4e9bba65b695f4522a17f4049`.
+- Standalone receipt: `evidence/native-safety-current-20260920T084236-2488/standalone-1789908337-26043/jev-receipt.json`, status `passed`, PID `29301`; SHA-256 `ecf7c247a4c3d4492b9f06e938e953fdd8f2cd75c32c2fe50606d8a1520abe40`.
+- These current receipts prove product safety only; they do not restore deleted original recordings.
