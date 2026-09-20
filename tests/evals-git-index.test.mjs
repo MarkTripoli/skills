@@ -69,3 +69,35 @@ test("semantic Git index snapshots ignore read-only Git stat-cache refreshes", (
   assert.equal(gitIndexChanged(before, afterSnapshot), false);
   assert.deepEqual(afterSnapshot, before);
 });
+
+test("semantic Git index snapshots return typed bounded evidence for corrupt regular indexes", () => {
+  // Given
+  const root = repository();
+  const before = snapshotGitIndex(root);
+  fs.writeFileSync(path.join(root, ".git", "index"), "credential-shaped-stderr-sentinel\n");
+
+  // When
+  const afterSnapshot = snapshotGitIndex(root);
+
+  // Then
+  assert.equal(afterSnapshot.kind, "error");
+  assert.equal(afterSnapshot.code, "exit-128");
+  assert.match(afterSnapshot.indexSha256, /^[a-f0-9]{64}$/);
+  assert.equal(JSON.stringify(afterSnapshot).includes("credential-shaped-stderr-sentinel"), false);
+  assert.equal(gitIndexChanged(before, afterSnapshot), true);
+});
+
+test("semantic Git index snapshots do not invoke Git through unsafe roots", () => {
+  // Given
+  const root = repository();
+  const external = fs.mkdtempSync(path.join(os.tmpdir(), "skills-git-index-external-"));
+  temps.push(external);
+  fs.rmSync(path.join(root, ".git"), { recursive: true });
+  fs.symlinkSync(external, path.join(root, ".git"), "dir");
+
+  // When
+  const snapshot = snapshotGitIndex(root);
+
+  // Then
+  assert.deepEqual(snapshot, { kind: "unavailable", reason: "unsafe-git-root" });
+});

@@ -1,4 +1,7 @@
 import { execFileSync } from "node:child_process";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 function nulSeparated(buffer) {
@@ -6,26 +9,59 @@ function nulSeparated(buffer) {
 }
 
 export function snapshotGitIndex(root) {
-  const visibleIntentPaths = new Set(nulSeparated(execFileSync("git", [
-    "diff",
-    "--cached",
-    "--name-only",
-    "-z",
-    "--ita-visible-in-index",
-  ], { cwd: root })));
-  const ordinaryStagedPaths = new Set(nulSeparated(execFileSync("git", [
-    "diff",
-    "--cached",
-    "--name-only",
-    "-z",
-    "--ita-invisible-in-index",
-  ], { cwd: root })));
-  const staged = nulSeparated(execFileSync("git", ["ls-files", "--stage", "-v", "-z"], { cwd: root }));
-  return staged.map((record) => {
+  const gitRoot = path.join(root, ".git");
+  let gitRootStats;
+  try {
+    gitRootStats = fs.lstatSync(gitRoot);
+  } catch (error) {
+    if (error?.code === "ENOENT") return { kind: "unavailable", reason: "absent-git-root" };
+    return { kind: "unavailable", reason: "unreadable-git-root" };
+  }
+  if (!gitRootStats.isDirectory() || gitRootStats.isSymbolicLink()) {
+    return { kind: "unavailable", reason: "unsafe-git-root" };
+  }
+
+  const indexDigest = () => {
+    try {
+      const index = path.join(gitRoot, "index");
+      const stats = fs.lstatSync(index);
+      if (!stats.isFile() || stats.isSymbolicLink()) return null;
+      return crypto.createHash("sha256").update(fs.readFileSync(index)).digest("hex");
+    } catch (error) {
+      if (error?.code === "ENOENT") return null;
+      return null;
+    }
+  };
+  const errorEvidence = (operation, error, fallbackCode = null) => {
+    let code = fallbackCode;
+    if (code === null && Number.isInteger(error?.status) && error.status > 0) code = `exit-${error.status}`;
+    else if (code === null && error?.code === "ENOENT") code = "spawn-enoent";
+    else if (code === null) code = "spawn-error";
+    return { kind: "error", operation, code, indexSha256: indexDigest() };
+  };
+  const run = (operation, args) => {
+    try {
+      return { ok: true, value: execFileSync("git", args, { cwd: root, stdio: ["ignore", "pipe", "pipe"] }) };
+    } catch (error) {
+      return { ok: false, evidence: errorEvidence(operation, error) };
+    }
+  };
+
+  const visible = run("diff-visible-intent", ["diff", "--cached", "--name-only", "-z", "--ita-visible-in-index"]);
+  if (!visible.ok) return visible.evidence;
+  const ordinary = run("diff-ordinary-staged", ["diff", "--cached", "--name-only", "-z", "--ita-invisible-in-index"]);
+  if (!ordinary.ok) return ordinary.evidence;
+  const stagedResult = run("ls-files", ["ls-files", "--stage", "-v", "-z"]);
+  if (!stagedResult.ok) return stagedResult.evidence;
+
+  const visibleIntentPaths = new Set(nulSeparated(visible.value));
+  const ordinaryStagedPaths = new Set(nulSeparated(ordinary.value));
+  const entries = [];
+  for (const record of nulSeparated(stagedResult.value)) {
     const match = /^([A-Za-z?]) ([0-7]{6}) ([0-9a-f]+) ([0-3])\t([\s\S]+)$/.exec(record);
-    if (!match) throw new Error(`unexpected git ls-files record: ${JSON.stringify(record)}`);
+    if (!match) return errorEvidence("parse-ls-files", null, "unexpected-record");
     const [, tag, mode, object, stage, trackedPath] = match;
-    return {
+    entries.push({
       path: trackedPath,
       stage: Number(stage),
       mode,
@@ -33,8 +69,9 @@ export function snapshotGitIndex(root) {
       assumeUnchanged: tag !== "?" && tag === tag.toLowerCase(),
       skipWorktree: tag.toUpperCase() === "S",
       intentToAdd: visibleIntentPaths.has(trackedPath) && !ordinaryStagedPaths.has(trackedPath),
-    };
-  });
+    });
+  }
+  return entries;
 }
 
 export function gitIndexChanged(before, after) {
