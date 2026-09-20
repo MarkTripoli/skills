@@ -100,11 +100,7 @@ func Publish(ctx context.Context, database *db.DB, runID string, req PushRequest
 		return PushResult{}, err
 	}
 	if run.PushActive {
-		// A single daemon owns a run; after restart a stale claim is safe to
-		// reclaim only after the current run is still active.
-		if err := database.SetRunPushActive(runID, false); err != nil {
-			return PushResult{}, err
-		}
+		return PushResult{}, fmt.Errorf("run %s has an active publication claim; reconcile before retry", runID)
 	}
 	if err := database.AcquireRunPushActive(runID); err != nil {
 		return PushResult{}, err

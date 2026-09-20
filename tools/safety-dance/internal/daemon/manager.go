@@ -85,7 +85,9 @@ func (m *Manager) Replace(ctx context.Context, key BranchKey, accepted db.Accept
 		return nil, err
 	}
 	r.Status = types.RunRunning
-	runctx, cancel := context.WithCancel(ctx)
+	// A request only submits work. The daemon owns the run until it reaches a
+	// durable terminal state, so an IPC disconnect must not cancel it.
+	runctx, cancel := context.WithCancel(context.Background())
 	h := &RunHandle{Run: r, cancel: cancel, done: make(chan struct{})}
 	m.keys[key] = h
 	m.mu.Unlock()

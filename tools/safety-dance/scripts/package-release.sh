@@ -20,8 +20,12 @@ mkdir -p "$out"
 name="safety-dance_${version}_${os}_${arch}"
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
-cp "$(dirname "$0")/../LICENSE" "$stage/LICENSE"
-cp "$(dirname "$0")/../THIRD_PARTY_NOTICES.md" "$stage/THIRD_PARTY_NOTICES.md"
+toolroot=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+cp "$toolroot/LICENSE" "$stage/LICENSE"
+if ! (cd "$toolroot" && go run ./scripts/generate-notices.go) > "$stage/THIRD_PARTY_NOTICES.md"; then
+	echo "unable to generate dependency notices from the module graph" >&2
+	exit 1
+fi
 if [ "$os" = windows ]; then cp "$binary" "$stage/safety-dance.exe"; (cd "$stage" && zip -q "$out/$name.zip" safety-dance.exe LICENSE THIRD_PARTY_NOTICES.md)
 else cp "$binary" "$stage/safety-dance"; tar -C "$stage" -czf "$out/$name.tar.gz" safety-dance LICENSE THIRD_PARTY_NOTICES.md; fi
 (cd "$out" && sha256sum safety-dance_${version}_${os}_${arch}.*) > "$out/checksums.txt"

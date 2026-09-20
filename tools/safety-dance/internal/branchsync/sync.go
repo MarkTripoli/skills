@@ -26,7 +26,7 @@ func (s Syncer) LiveHead(ctx context.Context) (string, error) {
 	}
 	f := strings.Fields(string(out))
 	if len(f) < 1 {
-		return "", fmt.Errorf("upstream ref %s not found", s.Ref)
+		return "", nil
 	}
 	return f[0], nil
 }

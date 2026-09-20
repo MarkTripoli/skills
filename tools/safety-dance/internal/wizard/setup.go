@@ -49,6 +49,20 @@ func (s Setup) Run(ctx context.Context) error {
 			dst = &m.Gate
 		case "provider":
 			dst = &m.Provider
+		case "commands":
+			fmt.Fprint(s.Out, "validation commands (intent;rebase;review;test;document;lint;pull-request;ci): ")
+			var raw string
+			if _, err := fmt.Fscanln(s.In, &raw); err != nil {
+				return err
+			}
+			parts := strings.Split(raw, ";")
+			if len(parts) != 8 {
+				return fmt.Errorf("validation commands require eight semicolon-separated commands")
+			}
+			for i := range parts {
+				m.ValidationCommands = append(m.ValidationCommands, strings.TrimSpace(parts[i]))
+			}
+			continue
 		default:
 			return fmt.Errorf("unknown wizard prompt %q", label)
 		}

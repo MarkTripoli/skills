@@ -14,6 +14,7 @@ jobs:
           - { os: linux, goos: linux, arch: arm64 }
           - { os: macos, goos: darwin, arch: amd64 }
           - { os: macos, goos: darwin, arch: arm64 }
+          - { os: windows, goos: windows, arch: amd64 }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

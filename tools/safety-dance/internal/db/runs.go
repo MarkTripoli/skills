@@ -100,7 +100,7 @@ func (d *DB) SupersedeRun(id, reason string) error {
 	if reason == "" {
 		reason = types.RunCancelReasonSuperseded
 	}
-	result, err := d.sql.Exec(`UPDATE runs SET status=?,error=?,push_active=0,updated_at=? WHERE id=? AND status IN (?,?,?)`, types.RunCancelled, reason, now(), id, types.RunPending, types.RunRunning, types.RunFailed)
+	result, err := d.sql.Exec(`UPDATE runs SET status=?,error=?,push_active=0,updated_at=? WHERE id=? AND status IN (?,?,?,?)`, types.RunCancelled, reason, now(), id, types.RunPending, types.RunRunning, types.RunFailed, types.RunCancelled)
 	if err != nil {
 		return fmt.Errorf("supersede run: %w", err)
 	}

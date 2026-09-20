@@ -125,8 +125,12 @@ func managedHookPeer(pid int, gate string) bool {
 		return false
 	}
 	gate = cleanPath(gate)
+	var managedHook bool
 	for depth := 0; pid > 1 && depth < 64; depth++ {
 		ppid, command, err := processInfo(pid)
+		if err != nil {
+			return false
+		}
 		env, envErr := processEnvironment(pid)
 		if envErr != nil {
 			return false
@@ -134,15 +138,12 @@ func managedHookPeer(pid int, gate string) bool {
 		if strings.Contains(string(env), "SD_PARENT_RUN_ID=") {
 			return false
 		}
-		if err != nil {
-			return false
-		}
-		if (strings.Contains(command, "hooks/pre-receive") || strings.Contains(command, "hooks/post-receive")) && strings.Contains(cleanPath(command), gate) {
-			return true
+		if (strings.HasSuffix(command, "hooks/pre-receive") || strings.HasSuffix(command, "hooks/post-receive")) && strings.Contains(cleanPath(command), gate) {
+			managedHook = true
 		}
 		pid = ppid
 	}
-	return false
+	return managedHook
 }
 
 func processInfo(pid int) (int, string, error) {
@@ -179,6 +180,7 @@ func AuthorizeMutationPeer(pid int) error {
 	if runtime.GOOS == "windows" || pid <= 0 {
 		return errors.New("unsupported or unauthenticated IPC peer")
 	}
+	var cliPeer bool
 	for depth := 0; pid > 1 && depth < 64; depth++ {
 		parent, command, err := processInfo(pid)
 		if err != nil {
@@ -191,10 +193,17 @@ func AuthorizeMutationPeer(pid int) error {
 		if strings.Contains(string(env), "SD_PARENT_RUN_ID=") {
 			return errors.New("nested validation process cannot mutate daemon state")
 		}
-		if strings.Contains(command, "safety-dance") {
-			return nil
+		fields := strings.Fields(command)
+		if len(fields) > 0 {
+			name := filepath.Base(fields[0])
+			if name == "safety-dance" || name == "safety-dance.exe" {
+				cliPeer = true
+			}
 		}
 		pid = parent
+	}
+	if cliPeer {
+		return nil
 	}
 	return errors.New("mutation requires a Safety Dance CLI peer")
 }

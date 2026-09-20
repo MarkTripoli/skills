@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -27,7 +28,11 @@ func terminalWidth(out io.Writer) int {
 	if !ok {
 		return 0
 	}
-	result, err := exec.Command("stty", "size", "-F", "/dev/tty").Output()
+	args := []string{"size", "-F", f.Name()}
+	if runtime.GOOS == "darwin" {
+		args = []string{"-f", f.Name(), "size"}
+	}
+	result, err := exec.Command("stty", args...).Output()
 	if err != nil {
 		return 0
 	}
@@ -39,8 +44,8 @@ func terminalWidth(out io.Writer) int {
 	if err != nil {
 		return 0
 	}
-	_ = f
 	return w
+
 }
 
 // Run is the interactive terminal loop. It polls durable state so daemon
