@@ -24,7 +24,7 @@ The implementation files are unchanged from `8a45b9b` (`git diff --name-only 8a4
 |---|---|---|---|
 | P1 | Continue on existing `feat/jev-ios` checkout/worktree and preserve task metadata. | `git branch --show-current` is `feat/jev-ios`; task metadata and `task.md` are unchanged. | pass |
 | P2 | Preserve original artifacts, failed evidence, recordings, and worktrees. | Byte archive above; prior `verification-8a45b9b`, `verification-20260920`, `repair-label-equal`, and `.atomic-delivery` remain present. Local evidence is unstaged. | pass |
-| P3 | Reconcile verification status and item verdicts truthfully. | `02-verification-jev-ios.md` now reconciles historical and current proof, marks A9 pass from independent review, and reports overall status passed. | pass |
+| P3 | Reconcile verification status and item verdicts truthfully. | `02-verification-jev-ios.md` is revised only in summary/status. C1-C6 and A1-A8 remain pass on their cited receipts; A9 remains `untested`; overall status is pending review. | pass |
 | P4 | Exact implementation and test authorship remains Luna-fast; no product changes in this phase. | No implementation/test/diagnostic files changed. This phase changed only verification prose and the archival note. | pass |
 | P5 | Fresh iOS-only proof uses real adapter and real JEV, without resuming old all-platform run. | Retained receipts identify `idb`, model `jev-1.13.0`, authorized simulator `7A023F51-F0DA-4179-868B-19207E433651`, and bundle `ai.typesafe.jevfixture`. No old run was resumed. | pass |
 | P6 | Prove generic confirmation from independent UI status. | `evidence/verification-8a45b9b/generic/` receipt/report: passed, independent status `Confirmed`, stable PID, one assertion. | pass |
