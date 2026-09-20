@@ -285,6 +285,10 @@ test("primary inspection rejects image substitution and unconsumed or completed 
       "- Current step / last completed step / next incomplete step: reservation persisted / reservation / repair",
       "- Current step: reserved\n- Last completed step: baseline inspection\n- Next incomplete step: repair",
       "- Current step: reservation persisted\n- Last completed step: reservation\n- Next incomplete step: repair",
+      // F_NEW_PRIM regressions: last-completed-step may carry parentheticals or prose; only
+      // an explicit repair-completed/done/resolved/finalized declaration is rejected.
+      "- Current step: repair pending.\n- Last completed step: reservation (consumed_rounds set to 1, round 1 record persisted).\n- Next incomplete step: repair.",
+      "- Current step: repair pending.\n- Last completed step: baseline inspection and reservation written to disk.\n- Next incomplete step: repair.",
     ];
     for (const state of pendingStates) {
       snapshots[2] = reserve(reservationText.replace("- Current step: repair pending.", state));
@@ -416,6 +420,9 @@ test("primary inspection rejects image substitution and unconsumed or completed 
       reservationText.replace("- Current step: repair pending.", "- Current step / last completed step / next incomplete step: repair completed / reservation / repair."),
       `${reservationText}\n| Step | State | Evidence |\n| --- | --- | --- |\n| Repair | done | Confirmed |`,
       `${reservationText}\n## Delivery and known limits\n- Current step: repair resolved. Last completed: reservation.`,
+      // F_NEW_PRIM: last-completed-step explicitly declaring repair completed/done is rejected
+      reservationText.replace("- Current step: repair pending.", "- Current step: repair pending.\n- Last completed step: repair completed.\n- Next incomplete step: repair."),
+      reservationText.replace("- Current step: repair pending.", "- Current step: repair pending.\n- Last completed step: repair done and verified.\n- Next incomplete step: repair."),
     ]) {
       snapshots[2] = reserve(invalid);
       assert.ok(check().some((problem) => problem.includes("consumed round")));

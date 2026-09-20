@@ -453,13 +453,11 @@ function activeReservation(text, round, limit, findingId, pendingRepair = false)
   // "reserved repair" and "pending repair" both indicate repair is scheduled; strip either prefix.
   const pending = (value) => steps(value).every((step) =>
     ["diagnose", "diagnosis", "repair"].includes(step.replace(/^(?:pending|reserved)\s+|\s+(?:pending|not started)$/g, "")));
-  // The last-completed step may be named "baseline inspection", "baseline inspection complete",
-  // "baseline pixel inspection", or "reservation"; prefix matching avoids requiring one exact phrase.
-  const reserved = (value) => {
-    const completed = steps(value);
-    return completed.length > 0 && completed.every((step) =>
-      step === "reservation" || step.startsWith("baseline inspection") || step.startsWith("baseline pixel inspection"));
-  };
+  // The last-completed-step is proven by the frontmatter consumed_rounds, the round
+  // record heading, and the reservation row. Its wording may carry parentheticals or
+  // prose; it is rejected only when it explicitly declares the repair completed/done/
+  // resolved/finalized — a structural conflict with the pending state.
+  const reserved = (value) => !terminalRepair(value);
   // terminalRepair: the repair step itself is declared completed/done/resolved/finalized — a conflict.
   const terminalRepair = (value) => {
     const s = clean(value);

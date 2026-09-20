@@ -120,6 +120,7 @@ Baseline is capture and inspection at consumed `0`, not a repair reservation. Ap
 ### Round [reserved number]
 
 - Reservation persisted at: [saved receipt/trace boundary before mutation/delegation; observed timestamp and source, or timestamp unavailable; independent of the last completed step's name]
+- Reservation persisted before any edit: [yes — confirmed on disk (consumed_rounds read back) before first source/check edit or worker delegation; or blocked with reason]
 - Consumed count / authorized limit: [count / limit]
 - Attempted finding IDs: [existing inspected required findings]
 - Pre-round unresolved required IDs: [set]
@@ -141,6 +142,15 @@ Baseline is capture and inspection at consumed `0`, not a repair reservation. Ap
 - Current step / last completed step / next incomplete step: [actual saved boundary, also reflected in current Delivery before action; last completed need not be reservation; none pending after reconciliation]
 - Interruption, continuation, or operational failure: [observed time/source or timestamp unavailable; actual state, authorization/restored prerequisite and evidence, or None.]
 - Decision / next action: [precedence evaluation or reserved work to complete; label superseded pending boundaries historical and retain them]
+
+**Frame completion self-check (required before writing any coverage row for this pass):** List every required frame before writing entries in the coverage table or round inspection summary.
+
+| Required frame | Pass | Session | Opened path | Opener call reference | Confirmed |
+| --- | --- | --- | --- | --- | --- |
+| initial-zero | [this round] | [session ID] | [exact path] | [trace/tool call ref] | [yes — opened before this row] |
+| [flow name] | [this round] | [session ID] | [exact path] | [trace/tool call ref] | [yes — opened before this row] |
+
+Total opened: [N]. Required: [1 initial + M flows] = [N]. Count matches: [yes — required before writing any coverage row; a row for a flow with no opened frame in this list is a false claim].
 
 ## Guardrails
 
