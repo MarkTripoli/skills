@@ -651,7 +651,7 @@ func recordPush(d *db.DB, p *paths.Paths, manager *daemon.Manager, n daemon.Push
 			return err
 		}
 		worktree := layout.Dir(r.ID, r.WorkingPath, nonce)
-		if err := worktrees.CreateDetached(context.Background(), gatePath, worktree, n.New); err != nil {
+		if err := worktrees.CreateDetached(context.Background(), r.WorkingPath, worktree, n.New); err != nil {
 			return err
 		}
 		var validationGeneration string

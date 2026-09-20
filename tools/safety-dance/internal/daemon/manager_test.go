@@ -2,11 +2,15 @@ package daemon
 
 import (
 	"context"
-	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
+	"crypto/sha256"
+	"encoding/hex"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
 )
 
 func TestSameBranchSupersede(t *testing.T) {
@@ -106,5 +110,43 @@ func TestRestartRecoveryListsActiveRuns(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("manager did not resume recovered run")
+	}
+}
+
+func TestOwnershipJournalFailureDoesNotStrandRunningRun(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SD_HOME", home)
+	d, err := db.Open(filepath.Join(home, "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if _, err = d.InsertRepoWithID("repo", "/checkout", "upstream", "main"); err != nil {
+		t.Fatal(err)
+	}
+	worktree := filepath.Join(home, "worktrees", "repo", "run")
+	sum := sha256.Sum256([]byte(filepath.Clean(worktree)))
+	marker := filepath.Join(home, "worktrees", ".safety-dance-journals", hex.EncodeToString(sum[:])+".safety-dance-pending.json")
+	if err := os.MkdirAll(marker, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(marker, "keep"), []byte("occupied"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(d, func(context.Context, *db.Run) { t.Error("stranded run started") })
+	key := BranchKey{"repo", "refs/heads/main"}
+	_, err = m.Replace(context.Background(), key, db.AcceptedRef{RepoID: "repo", Branch: key.Ref, GateHead: "head", LaunchNonce: "nonce"}, worktree)
+	if err == nil {
+		t.Fatal("expected ownership journal failure")
+	}
+	if m.Active(key) != nil {
+		t.Fatal("failed ownership commit registered an active run")
+	}
+	runs, err := d.GetRunsByRepo("repo")
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("runs=%v err=%v", runs, err)
+	}
+	if runs[0].Status != "failed" {
+		t.Fatalf("run status=%s, want failed", runs[0].Status)
 	}
 }

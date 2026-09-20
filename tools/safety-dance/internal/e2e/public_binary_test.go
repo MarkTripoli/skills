@@ -27,8 +27,13 @@ func TestPublicBinarySmoke(t *testing.T) {
 	root := t.TempDir()
 	work := filepath.Join(root, "work")
 	upstream := filepath.Join(root, "upstream.git")
+	gh := filepath.Join(root, "gh")
+	if err := os.WriteFile(gh, []byte("#!/bin/sh\ncase \"$1 $2\" in\n  'auth status') exit 0 ;;\n  'pr list') printf '%s\\n' '[]' ;;\n  'pr create') printf '%s\\n' 'https://github.com/example/project/pull/1' ;;\n  'pr view') printf '%s\\n' 'main' ;;\n  *) printf '%s\\n' '{}' ;;\nesac\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	gitRun(t, root, "init", "--bare", upstream)
 	gitRun(t, root, "init", "-b", "main", work)
+	gitRun(t, work, "config", "url."+upstream+".insteadOf", "https://github.com/example/project.git")
 	gitRun(t, work, "config", "user.email", "e2e@example.com")
 	gitRun(t, work, "config", "user.name", "Safety Dance E2E")
 	if err := os.WriteFile(filepath.Join(work, "README"), []byte("initial\n"), 0o600); err != nil {
@@ -47,13 +52,13 @@ func TestPublicBinarySmoke(t *testing.T) {
 	}
 	gitRun(t, work, "add", "README", ".safety-dance.yaml")
 	gitRun(t, work, "commit", "-m", "initial")
-	gitRun(t, work, "remote", "add", "origin", upstream)
+	gitRun(t, work, "remote", "add", "origin", "https://github.com/example/project.git")
 	gitRun(t, work, "push", "origin", "HEAD:refs/heads/main")
 
 	run := func(dir string, args ...string) string {
 		cmd := exec.Command(binary, args...)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "SD_HOME="+home)
+		cmd.Env = append(os.Environ(), "SD_HOME="+home, "SD_E2E_SCM=1", "PATH="+root+string(os.PathListSeparator)+os.Getenv("PATH"))
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("%s %v: %v\n%s", binary, args, err, out)
@@ -94,11 +99,11 @@ func TestPublicBinarySmoke(t *testing.T) {
 	}
 	push := exec.Command("git", "push", "safety-dance", "HEAD:refs/heads/main")
 	push.Dir = work
-	push.Env = append(os.Environ(), "SD_HOME="+home)
+	push.Env = append(os.Environ(), "SD_HOME="+home, "SD_E2E_SCM=1", "PATH="+root+string(os.PathListSeparator)+os.Getenv("PATH"))
 	pushOutput, err := push.CombinedOutput()
 	if err != nil {
 		if strings.Contains(string(pushOutput), "could not obtain admission token") {
-			t.Skipf("built-binary hook ancestry is unavailable: %s", pushOutput)
+			t.Fatalf("built-binary hook ancestry unavailable: %s", pushOutput)
 		}
 		t.Fatalf("gate push: %v\n%s", err, pushOutput)
 	}

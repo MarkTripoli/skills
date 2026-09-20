@@ -130,11 +130,13 @@ func (m *Manager) replaceValidated(ctx context.Context, key BranchKey, accepted 
 		m.mu.Unlock()
 		return nil, err
 	}
-	if err = m.store.TransitionRunStatus(r.ID, types.RunPending, types.RunRunning); err != nil {
+	if err = worktrees.CommitOwnership(worktree); err != nil {
+		_ = m.db.UpdateRunErrorStatus(r.ID, err.Error(), types.RunFailed)
 		m.mu.Unlock()
 		return nil, err
 	}
-	if err = worktrees.CommitOwnership(worktree); err != nil {
+	if err = m.store.TransitionRunStatus(r.ID, types.RunPending, types.RunRunning); err != nil {
+		_ = m.db.UpdateRunErrorStatus(r.ID, err.Error(), types.RunFailed)
 		m.mu.Unlock()
 		return nil, err
 	}

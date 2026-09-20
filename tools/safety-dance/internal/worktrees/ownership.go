@@ -192,6 +192,25 @@ func SourceFor(ctx context.Context, sources []string, dir string) (string, error
 			}
 		}
 	}
+	common, commonErr := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--git-common-dir").Output()
+	if commonErr == nil {
+		commonPath, absErr := filepath.Abs(strings.TrimSpace(string(common)))
+		if absErr == nil {
+			for _, source := range sources {
+				if source == "" {
+					continue
+				}
+				sourceCommon, sourceErr := exec.CommandContext(ctx, "git", "-C", source, "rev-parse", "--git-common-dir").Output()
+				if sourceErr != nil {
+					continue
+				}
+				candidate, candidateErr := filepath.Abs(strings.TrimSpace(string(sourceCommon)))
+				if candidateErr == nil && candidate == commonPath {
+					return source, nil
+				}
+			}
+		}
+	}
 	return "", fmt.Errorf("worktree %s is not registered with a known source", dir)
 }
 
