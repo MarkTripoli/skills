@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   excludedRootsManifestProblem,
+  gitIndexManifestProblem,
   repositoryManifestProblem,
 } from "../evals/manifest.mjs";
 
@@ -113,4 +114,32 @@ test("manifests require normalized permission bits for regular files and directo
     }),
     /file record is malformed/,
   );
+});
+
+test("Git index manifests reject impossible entry identities", () => {
+  // Given
+  const entry = {
+    assumeUnchanged: false,
+    intentToAdd: false,
+    mode: "100644",
+    object: "0".repeat(40),
+    path: "tracked.txt",
+    skipWorktree: false,
+    stage: 0,
+  };
+
+  // When / Then
+  for (const invalidPath of ["../outside", "/absolute", "C:\\absolute", "nested/../outside"]) {
+    assert.match(gitIndexManifestProblem([{ ...entry, path: invalidPath }]), /invalid path/, invalidPath);
+  }
+  for (const invalidLength of [39, 41, 63, 65]) {
+    assert.match(
+      gitIndexManifestProblem([{ ...entry, object: "0".repeat(invalidLength) }]),
+      /object id is malformed/,
+      String(invalidLength),
+    );
+  }
+  assert.match(gitIndexManifestProblem([entry, { ...entry }]), /duplicate entry identity/);
+  assert.equal(gitIndexManifestProblem([entry, { ...entry, stage: 1 }]), null);
+  assert.equal(gitIndexManifestProblem([{ ...entry, object: "0".repeat(64) }]), null);
 });

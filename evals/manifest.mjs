@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 
 const HASH = /^[a-f0-9]{64}$/;
-const OBJECT_ID = /^[a-f0-9]{40,64}$/;
+const OBJECT_ID = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const FILE_MODE = /^[0-7]{6}$/;
 const PERMISSION_MODE = /^[0-7]{4}$/;
 const OTHER_TYPES = new Set(["other", "fifo", "socket", "block-device", "character-device"]);
@@ -29,7 +29,7 @@ function payloadDigest(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
-function pathProblem(file, ownedRoot = null) {
+function relativePathProblem(file) {
   const normalized = file.replaceAll("\\", "/");
   const segments = normalized.split("/");
   if (
@@ -39,6 +39,13 @@ function pathProblem(file, ownedRoot = null) {
     || /^[A-Za-z]:\//.test(normalized)
     || segments.some((segment) => segment === "" || segment === "." || segment === "..")
   ) return `has invalid path ${JSON.stringify(file)}`;
+  return null;
+}
+
+function pathProblem(file, ownedRoot = null) {
+  const invalidPath = relativePathProblem(file);
+  if (invalidPath) return invalidPath;
+  const segments = file.split("/");
   if (ownedRoot === null && [".agents", ".git", ".omp"].includes(segments[0])) {
     return `has reserved root path ${JSON.stringify(file)}`;
   }
@@ -148,6 +155,8 @@ function indexEntryProblem(entry) {
   const keys = ["assumeUnchanged", "intentToAdd", "mode", "object", "path", "skipWorktree", "stage"];
   if (!record(entry) || !exactKeys(entry, keys)) return "entry has unknown or missing fields";
   if (typeof entry.path !== "string" || entry.path === "") return "entry path must be non-empty";
+  const invalidPath = relativePathProblem(entry.path);
+  if (invalidPath) return invalidPath;
   if (!Number.isInteger(entry.stage) || entry.stage < 0 || entry.stage > 3) return "entry stage must be 0 through 3";
   if (typeof entry.mode !== "string" || !FILE_MODE.test(entry.mode)) return "entry mode is malformed";
   if (typeof entry.object !== "string" || !OBJECT_ID.test(entry.object)) return "entry object id is malformed";
@@ -159,9 +168,13 @@ function indexEntryProblem(entry) {
 
 export function gitIndexManifestProblem(value) {
   if (Array.isArray(value)) {
+    const identities = new Set();
     for (const entry of value) {
       const problem = indexEntryProblem(entry);
       if (problem) return problem;
+      const identity = JSON.stringify([entry.path, entry.stage]);
+      if (identities.has(identity)) return `duplicate entry identity ${identity}`;
+      identities.add(identity);
     }
     return null;
   }

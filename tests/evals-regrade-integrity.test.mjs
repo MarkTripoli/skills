@@ -10,6 +10,19 @@ const basicScenario = "setup-repository-basic";
 const blockedScenario = "setup-repository-unresolved";
 const readErrorsScenario = "setup-repository-read-errors";
 
+function indexEntry(overrides = {}) {
+  return {
+    assumeUnchanged: false,
+    intentToAdd: false,
+    mode: "100644",
+    object: "0".repeat(40),
+    path: "tracked.txt",
+    skipWorktree: false,
+    stage: 0,
+    ...overrides,
+  };
+}
+
 function runEval(scenarios, args, env) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, ["evals/run.mjs", ...scenarios, ...args], {
@@ -278,6 +291,28 @@ test("regrade rejects every malformed retained manifest shape even when before a
         files: ["git-index-before.json", "git-index-after.json"],
         mutate() {
           return {};
+        },
+      },
+      {
+        name: "Git index path ownership",
+        files: ["git-index-before.json", "git-index-after.json"],
+        mutate() {
+          return [indexEntry({ path: "../outside" })];
+        },
+      },
+      {
+        name: "Git index object identity",
+        files: ["git-index-before.json", "git-index-after.json"],
+        mutate() {
+          return [indexEntry({ object: "0".repeat(41) })];
+        },
+      },
+      {
+        name: "Git index duplicate identity",
+        files: ["git-index-before.json", "git-index-after.json"],
+        mutate() {
+          const entry = indexEntry();
+          return [entry, { ...entry }];
         },
       },
     ];
