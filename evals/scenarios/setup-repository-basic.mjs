@@ -58,6 +58,8 @@ export default {
         bytes(beforeRepository, "ai-utilities.json")?.equals(bytes(afterRepository, "ai-utilities.json"))
           ? null
           : "repository: rerun changed ai-utilities.json bytes",
+        expect.matches("receipt: current observed state", answer, /Observed state:\s*current\b/i),
+        expect.matches("receipt: no conflicts", answer, /Conflicts:\s*none\b/i),
         expect.matches("receipt: no written paths", answer, /Written:\s*(?:none|nothing)/i),
         expect.matches("receipt: unchanged verification", answer, /Verification:[^\n]*(?:unchanged|match)/i),
         expect.matches("receipt: no external operations", answer, /External operations:\s*0/i),

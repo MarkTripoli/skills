@@ -9,6 +9,7 @@ import {
   snapshotRepository,
   unexpectedRepositoryChanges,
 } from "../evals/lib.mjs";
+import setupRepositoryBasic from "../evals/scenarios/setup-repository-basic.mjs";
 
 const temps = [];
 
@@ -88,4 +89,38 @@ test("terminal answers contain no next-skill command fence", () => {
   ].join("\n");
 
   assert.equal(handoff(answer), null);
+});
+
+test("basic rerun rejects a false conflict for valid current metadata", () => {
+  const metadata = Buffer.from(`${JSON.stringify({
+    vcs: { platform: "github" },
+    onboarding: {
+      schemaVersion: 1,
+      profile: "default",
+      appliedRevision: 1,
+      providers: {},
+    },
+  }, null, 2)}\n`);
+  const manifest = {
+    "ai-utilities.json": { bytes: metadata.toString("base64") },
+  };
+  const answer = [
+    "Mode: reconcile",
+    "Observed state: conflict",
+    "Written: none",
+    "Conflicts: `ai-utilities.json` at `$`: observed null; expected a top-level JSON object.",
+    "Verification: unchanged bytes match observation.",
+    "External operations: 0",
+  ].join("\n");
+
+  const problems = setupRepositoryBasic.phases[1].check({
+    answer,
+    beforeRepository: manifest,
+    afterRepository: manifest,
+    changedPaths: [],
+  });
+
+  assert.equal(problems.length, 2);
+  assert.match(problems[0], /^receipt: current observed state:/);
+  assert.match(problems[1], /^receipt: no conflicts:/);
 });
