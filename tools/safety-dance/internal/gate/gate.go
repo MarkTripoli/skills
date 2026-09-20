@@ -26,38 +26,53 @@ var ensureGateHooksPathIsolation = git.EnsureHooksPathIsolation
 var sweepRunWorktrees = procreap.SweepRunWorktrees
 
 type gateSnapshot struct {
-	files   map[string][]byte
-	missing map[string]bool
+	files    map[string][]byte
+	modes    map[string]os.FileMode
+	paths    map[string]bool
+	hooksDir string
 }
 
 func snapshotGate(dir string) gateSnapshot {
-	s := gateSnapshot{files: map[string][]byte{}, missing: map[string]bool{}}
-	paths := []string{filepath.Join(dir, "config")}
-	if entries, err := os.ReadDir(filepath.Join(dir, "hooks")); err == nil {
+	s := gateSnapshot{files: map[string][]byte{}, modes: map[string]os.FileMode{}, paths: map[string]bool{}, hooksDir: filepath.Join(dir, "hooks")}
+	paths := []string{filepath.Join(dir, "config"), filepath.Join(dir, "config.worktree"), filepath.Join(dir, "safety-dance-gate-config")}
+	if entries, err := os.ReadDir(s.hooksDir); err == nil {
 		for _, entry := range entries {
 			if !entry.IsDir() {
-				paths = append(paths, filepath.Join(dir, "hooks", entry.Name()))
+				paths = append(paths, filepath.Join(s.hooksDir, entry.Name()))
 			}
 		}
 	}
 	for _, path := range paths {
-		raw, err := os.ReadFile(path)
-		if err == nil {
-			s.files[path] = raw
-		} else if os.IsNotExist(err) {
-			s.missing[path] = true
+		s.paths[path] = false
+		if info, err := os.Stat(path); err == nil {
+			s.paths[path] = true
+			s.modes[path] = info.Mode().Perm()
+			if raw, readErr := os.ReadFile(path); readErr == nil {
+				s.files[path] = raw
+			}
 		}
 	}
 	return s
 }
 
 func (s gateSnapshot) restore() {
-	for path := range s.missing {
-		_ = os.Remove(path)
+	if entries, err := os.ReadDir(s.hooksDir); err == nil {
+		for _, entry := range entries {
+			path := filepath.Join(s.hooksDir, entry.Name())
+			if !s.paths[path] && !entry.IsDir() {
+				_ = os.Remove(path)
+			}
+		}
 	}
-	for path, raw := range s.files {
-		_ = os.MkdirAll(filepath.Dir(path), 0755)
-		_ = os.WriteFile(path, raw, 0600)
+	for path, existed := range s.paths {
+		if existed {
+			if raw, ok := s.files[path]; ok {
+				_ = os.WriteFile(path, raw, s.modes[path])
+				_ = os.Chmod(path, s.modes[path])
+			}
+		} else {
+			_ = os.Remove(path)
+		}
 	}
 }
 

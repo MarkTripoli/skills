@@ -1218,3 +1218,51 @@ func TestInitRedactsCredentialURL(t *testing.T) {
 		t.Errorf("gate origin = %q, want full credentialled URL %q (credential must be preserved for pushes)", gateOrigin, credURL)
 	}
 }
+func TestGateSnapshotRestoresMetadataModesAndCreatedHooks(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "gate.git")
+	hooks := filepath.Join(dir, "hooks")
+	if err := os.MkdirAll(hooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(dir, "config")
+	worktree := filepath.Join(dir, "config.worktree")
+	stamp := filepath.Join(dir, "safety-dance-gate-config")
+	userHook := filepath.Join(hooks, "pre-receive")
+	for path, data := range map[string]string{config: "config", worktree: "worktree", stamp: "stamp", userHook: "user"} {
+		if err := os.WriteFile(path, []byte(data), 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := snapshotGate(dir)
+	if err := os.WriteFile(worktree, []byte("mutated"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hooks, "new-hook"), []byte("created"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s.restore()
+	if _, err := os.Stat(filepath.Join(hooks, "new-hook")); !os.IsNotExist(err) {
+		t.Fatal("created hook survived rollback")
+	}
+	for path, want := range map[string]string{config: "config", worktree: "worktree", stamp: "stamp", userHook: "user"} {
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Errorf("%s = %q, want %q", path, got, want)
+		}
+		if mode := fileMode(t, path); mode != 0o640 {
+			t.Errorf("%s mode = %o, want 640", path, mode)
+		}
+	}
+}
+
+func fileMode(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info.Mode().Perm()
+}

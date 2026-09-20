@@ -24,28 +24,35 @@ func statusCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer d.Close()
 	fmt.Fprintf(cmd.OutOrStdout(), "home: %s\n", p.Root())
-	runs, err := d.GetActiveRuns()
+	active, err := d.GetActiveRuns()
 	if err != nil {
 		return err
 	}
-	if len(runs) == 0 {
-		repos, repoErr := d.GetRepos()
-		if repoErr != nil {
-			return repoErr
+	// Keep one current record per repository/branch, then fill branches that
+	// have no active run with their newest terminal outcome.
+	runs := make([]*db.Run, 0, len(active))
+	seen := make(map[string]bool)
+	for _, run := range active {
+		key := run.RepoID + "\x00" + run.Branch
+		seen[key] = true
+		runs = append(runs, run)
+	}
+	repos, repoErr := d.GetRepos()
+	if repoErr != nil {
+		return repoErr
+	}
+	for _, repo := range repos {
+		history, historyErr := d.GetRunsByRepo(repo.ID)
+		if historyErr != nil {
+			return historyErr
 		}
-		for _, repo := range repos {
-			history, historyErr := d.GetRunsByRepo(repo.ID)
-			if historyErr != nil {
-				return historyErr
+		for _, run := range history {
+			key := run.RepoID + "\x00" + run.Branch
+			if seen[key] {
+				continue
 			}
-			seen := map[string]bool{}
-			for _, run := range history {
-				if seen[run.Branch] {
-					continue
-				}
-				seen[run.Branch] = true
-				runs = append(runs, run)
-			}
+			seen[key] = true
+			runs = append(runs, run)
 		}
 	}
 	if len(runs) == 0 {

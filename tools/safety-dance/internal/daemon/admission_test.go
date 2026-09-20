@@ -110,3 +110,70 @@ func TestAdmissionReceiptLoadFailureIsVisible(t *testing.T) {
 		t.Fatal("expected receipt load failure")
 	}
 }
+func TestCommandHasExecutablePreservesQuotedPaths(t *testing.T) {
+	hook := filepath.Join(t.TempDir(), "A User", "gate", "hooks", "pre-receive")
+	if !commandHasExecutable(`/bin/sh "`+hook+`"`, map[string]bool{cleanPath(hook): true}) {
+		t.Fatalf("quoted hook path was not recognized: %q", hook)
+	}
+}
+func TestAdmissionNotificationClaimsReceiptBeforeCallback(t *testing.T) {
+	dir := t.TempDir()
+	socket := filepath.Join("/tmp", "sd-claim-"+filepath.Base(dir)+".sock")
+	defer os.Remove(socket)
+	server := ipc.NewServer()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var calls int
+	a := NewAdmission(server, func(_ context.Context, _ PushNotification) error {
+		calls++
+		close(started)
+		<-release
+		return nil
+	})
+	if err := server.Listen(socket); err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = server.ServeReady() }()
+	defer server.Close()
+	client1, err := ipc.Dial(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client1.Close()
+	client2, err := ipc.Dial(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client2.Close()
+	token, err := a.Issue("/tmp/gate.git", "refs/heads/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	params := ipc.AdmitPushParams{Gate: "/tmp/gate.git", Ref: "refs/heads/main", Old: "0", New: "1", Token: token}
+	var accepted ipc.AdmitPushResult
+	if err := client1.CallWithTimeout(ipc.MethodAdmitPush, params, &accepted, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	notification := ipc.NotifyPushParams{Gate: params.Gate, Ref: params.Ref, Old: params.Old, New: params.New, PushOptions: []string{"safety-dance-token=" + token}}
+	firstErr := make(chan error, 1)
+	go func() {
+		var result map[string]bool
+		firstErr <- client1.CallWithTimeout(ipc.MethodNotifyPush, notification, &result, time.Second)
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first callback did not start")
+	}
+	var result map[string]bool
+	if err := client2.CallWithTimeout(ipc.MethodNotifyPush, notification, &result, time.Second); err == nil {
+		t.Fatal("duplicate notification was accepted")
+	}
+	close(release)
+	if err := <-firstErr; err != nil {
+		t.Fatalf("first notification: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("callback calls = %d, want 1", calls)
+	}
+}

@@ -54,6 +54,7 @@ type Admission struct {
 	notify      func(context.Context, PushNotification) error
 	mu          sync.Mutex
 	receipts    map[string]ipc.AdmitPushParams
+	claimed     map[string]bool
 	receiptFile string
 	loadErr     error
 }
@@ -69,7 +70,7 @@ func NewAdmissionWithStore(server *ipc.Server, notify func(context.Context, Push
 }
 
 func newAdmission(server *ipc.Server, notify func(context.Context, PushNotification) error, file string) *Admission {
-	a := &Admission{auth: ipc.NewAuthenticator(), notify: notify, receipts: make(map[string]ipc.AdmitPushParams), receiptFile: file}
+	a := &Admission{auth: ipc.NewAuthenticator(), notify: notify, receipts: make(map[string]ipc.AdmitPushParams), claimed: make(map[string]bool), receiptFile: file}
 	if file != "" {
 		a.loadErr = a.loadReceipts()
 	}
@@ -156,13 +157,45 @@ var processInfoFunc = processInfo
 var processEnvironmentFunc = processEnvironment
 
 func commandHasExecutable(command string, expected map[string]bool) bool {
-	for _, field := range strings.Fields(command) {
+	for _, field := range commandLineFields(command) {
 		field = strings.Trim(field, "\"'(),")
 		if expected[cleanPath(field)] {
 			return true
 		}
 	}
 	return false
+}
+
+// commandLineFields keeps quoted Windows paths intact. strings.Fields splits a
+// hook path such as C:\\Users\\A User\\... and makes ancestry authorization fail.
+func commandLineFields(command string) []string {
+	var fields []string
+	var b strings.Builder
+	var quote rune
+	flush := func() {
+		if b.Len() > 0 {
+			fields = append(fields, b.String())
+			b.Reset()
+		}
+	}
+	for _, r := range command {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				b.WriteRune(r)
+			}
+		case r == '\'' || r == '"':
+			quote = r
+		case r == ' ' || r == '\t' || r == '\r' || r == '\n':
+			flush()
+		default:
+			b.WriteRune(r)
+		}
+	}
+	flush()
+	return fields
 }
 
 func isGitReceiveCommand(command string) bool {
@@ -292,18 +325,30 @@ func (a *Admission) notifyPush(ctx context.Context, raw json.RawMessage) (interf
 		a.mu.Unlock()
 		return nil, errors.New("notification does not match admitted update")
 	}
+	if a.claimed[token] {
+		a.mu.Unlock()
+		return nil, errors.New("notification is already being processed")
+	}
+	// Claim before invoking the run-start callback. A second post-receive
+	// delivery must not cancel or replace the run started by the first one.
+	a.claimed[token] = true
 	a.mu.Unlock()
 	if a.notify != nil {
 		if err := a.notify(ctx, PushNotification{Gate: p.Gate, Ref: p.Ref, Old: p.Old, New: p.New, Token: token, Options: append([]string(nil), p.PushOptions...)}); err != nil {
+			a.mu.Lock()
+			delete(a.claimed, token)
+			a.mu.Unlock()
 			return nil, err
 		}
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if current, exists := a.receipts[token]; !exists || current.Gate != receipt.Gate || current.Ref != receipt.Ref || current.New != receipt.New {
+		delete(a.claimed, token)
 		return nil, errors.New("admission receipt changed while processing notification")
 	}
 	delete(a.receipts, token)
+	delete(a.claimed, token)
 	if err := a.saveReceipts(); err != nil {
 		return nil, fmt.Errorf("remove admission receipt: %w", err)
 	}

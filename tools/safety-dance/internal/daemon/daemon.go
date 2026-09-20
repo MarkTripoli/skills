@@ -12,8 +12,9 @@ import (
 // Ownership is a process lock for one SD_HOME. The lock is created before IPC
 // binding and never replaced by a second daemon.
 type Ownership struct {
-	file *os.File
-	path string
+	file   *os.File
+	path   string
+	closed bool
 }
 
 func AcquireOwnership(p *paths.Paths) (*Ownership, error) {
@@ -41,16 +42,18 @@ func AcquireOwnership(p *paths.Paths) (*Ownership, error) {
 	return &Ownership{file: f, path: p.LockFile()}, nil
 }
 func (o *Ownership) Close() error {
-	if o == nil || o.file == nil {
+	if o == nil || o.file == nil || o.closed {
 		return nil
 	}
+	o.closed = true
+	// Keep the pathname in place. The OS lock belongs to the open inode; removing
+	// the pathname after unlock lets a replacement daemon create a second lock
+	// while this close is still unwinding.
 	err := unlockRuntimeFile(o.file)
 	if closeErr := o.file.Close(); err == nil {
 		err = closeErr
 	}
-	if rm := os.Remove(o.path); err == nil {
-		err = rm
-	}
+	o.file = nil
 	return err
 }
 
