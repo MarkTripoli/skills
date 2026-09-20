@@ -29,9 +29,22 @@ import (
 
 func newDaemon() *cobra.Command {
 	d := &cobra.Command{Use: "daemon", Short: "manage daemon"}
-	d.AddCommand(&cobra.Command{Use: "start", RunE: startDaemon})
-	d.AddCommand(&cobra.Command{Use: "stop", RunE: stopDaemon})
+	d.AddCommand(&cobra.Command{Use: "start", RunE: func(cmd *cobra.Command, args []string) error {
+		if err := nestedMutation(); err != nil {
+			return err
+		}
+		return startDaemon(cmd, args)
+	}})
+	d.AddCommand(&cobra.Command{Use: "stop", RunE: func(cmd *cobra.Command, args []string) error {
+		if err := nestedMutation(); err != nil {
+			return err
+		}
+		return stopDaemon(cmd, args)
+	}})
 	d.AddCommand(&cobra.Command{Use: "restart", RunE: func(cmd *cobra.Command, args []string) error {
+		if err := nestedMutation(); err != nil {
+			return err
+		}
 		if err := stopDaemon(cmd, args); err != nil {
 			return err
 		}
@@ -121,11 +134,23 @@ func waitForDaemon(timeout time.Duration) error {
 	return last
 }
 
+func stopInstalledService(p *paths.Paths) error {
+	service := daemon.Service{Home: p, Binary: "safety-dance", Executor: commandExecutor{}}
+	if !service.DefinitionExists() {
+		return nil
+	}
+	return service.Stop()
+}
+
 func stopDaemon(cmd *cobra.Command, args []string) error {
-	path, err := pidPath()
+	p, err := home()
 	if err != nil {
 		return err
 	}
+	if err := stopInstalledService(p); err != nil {
+		return err
+	}
+	path := p.PIDFile()
 	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		fmt.Fprintln(cmd.OutOrStdout(), "daemon stopped")

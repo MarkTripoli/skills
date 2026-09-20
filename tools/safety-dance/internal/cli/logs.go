@@ -2,19 +2,25 @@ package cli
 
 import (
 	"fmt"
-	"github.com/spf13/cobra"
 	"os"
+	"path/filepath"
+
+	"github.com/spf13/cobra"
 )
 
 func newLogs() *cobra.Command {
-	return &cobra.Command{Use: "logs", Short: "read daemon logs", RunE: func(cmd *cobra.Command, args []string) error {
+	return &cobra.Command{Use: "logs [run-id]", Short: "read daemon or run logs", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		p, err := home()
 		if err != nil {
 			return err
 		}
-		b, err := os.ReadFile(p.DaemonLog())
+		path := p.DaemonLog()
+		if len(args) == 1 {
+			path = filepath.Join(p.RunLogDir(args[0]), "run.log")
+		}
+		b, err := os.ReadFile(path)
 		if os.IsNotExist(err) {
-			fmt.Fprintln(cmd.OutOrStdout(), "no daemon logs")
+			fmt.Fprintln(cmd.OutOrStdout(), "no logs")
 			return nil
 		}
 		if err != nil {

@@ -44,19 +44,21 @@ case "$GATE_DIR" in /*) ;; *) HOOK_DIR=${0%/*}; GATE_DIR=$(cd "$HOOK_DIR/.." 2>/
 TMP=$(mktemp "$GATE_DIR/.safety-dance-receive.XXXXXX") || exit 1
 cat > "$TMP"
 while read line; do
-  set -- $line; oldrev=$1; newrev=$2; refname=$3
-  token=""
-  if [ "${GIT_PUSH_OPTION_COUNT:-0}" -gt 0 ]; then
-    i=0
-    while [ "$i" -lt "${GIT_PUSH_OPTION_COUNT:-0}" ]; do
-      opt=$(printenv "GIT_PUSH_OPTION_$i" 2>/dev/null || :)
-      case "$opt" in safety-dance-token=*) token=${opt#*=};; esac
-      i=$((i + 1))
-    done
-  fi
-  if [ -z "$token" ]; then
-    token=$(SD_HOOK_HELPER=1 "$SD_BIN" daemon issue-push-token --gate "$GATE_DIR" --ref "$refname" 2>/dev/null) || { rm -f "$TMP"; printf 'safety-dance: could not obtain admission token\n' >&2; exit 1; }
-  fi
+	set -- $line; oldrev=$1; newrev=$2; refname=$3
+	token=""
+	token_option_present=0
+	if [ "${GIT_PUSH_OPTION_COUNT:-0}" -gt 0 ]; then
+		i=0
+		while [ "$i" -lt "${GIT_PUSH_OPTION_COUNT:-0}" ]; do
+			opt=$(printenv "GIT_PUSH_OPTION_$i" 2>/dev/null || :)
+			case "$opt" in safety-dance-token=*) token=${opt#*=}; token_option_present=1;; esac
+			i=$((i + 1))
+		done
+	fi
+	if [ "$token_option_present" -eq 1 ] && [ -z "$token" ]; then rm -f "$TMP"; printf 'safety-dance: empty admission token\n' >&2; exit 1; fi
+	if [ -z "$token" ]; then
+		token=$(SD_HOOK_HELPER=1 "$SD_BIN" daemon issue-push-token --gate "$GATE_DIR" --ref "$refname" 2>/dev/null) || { rm -f "$TMP"; printf 'safety-dance: could not obtain admission token\n' >&2; exit 1; }
+	fi
   printf '%s\t%s\t%s\t%s\n' "$oldrev" "$newrev" "$refname" "$token" >> "$GATE_DIR/.safety-dance-receipts"
   out=$(printf '%s\n' "$line" | SD_HOOK_HELPER=1 "$SD_BIN" daemon admit-push --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --token "$token" 2>&1)
   status=$?
@@ -229,6 +231,9 @@ func RefreshManagedPostReceiveHook(bareDir string) (bool, error) {
 		return false, err
 	}
 	if err := writeHookFileAtomic(hookPath, desired); err != nil {
+		if _, statErr := os.Stat(companion); statErr == nil {
+			_ = os.Rename(companion, hookPath)
+		}
 		return false, err
 	}
 	return true, nil

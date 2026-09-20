@@ -97,7 +97,7 @@ func Publish(ctx context.Context, database *db.DB, runID string, req PushRequest
 	if err := ctx.Err(); err != nil {
 		return PushResult{}, err
 	}
-	if err := database.SetRunPushActive(runID, true); err != nil {
+	if err := database.AcquireRunPushActive(runID); err != nil {
 		return PushResult{}, err
 	}
 	defer database.SetRunPushActive(runID, false)

@@ -40,6 +40,14 @@ func Open(path string) (*DB, error) {
 			return nil, fmt.Errorf("migrate db: %w", err)
 		}
 	}
+	// SQLite creates state files lazily; tighten every state file after
+	// migration so an existing world-readable database is repaired too.
+	for _, statePath := range []string{path, path + "-wal", path + "-shm"} {
+		if err := os.Chmod(statePath, 0o600); err != nil && !os.IsNotExist(err) {
+			sqlDB.Close()
+			return nil, fmt.Errorf("protect db: %w", err)
+		}
+	}
 	return &DB{sql: sqlDB}, nil
 }
 

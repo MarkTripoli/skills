@@ -554,8 +554,22 @@ func (d *DB) SetRunsCustodyReturned(ids []string) error {
 	return nil
 }
 
-// SetRunPushActive marks whether a pipeline phase currently owns a possible
-// branch-head update. Sync refuses while this marker is set.
+// AcquireRunPushActive atomically claims publication ownership for a live run.
+// Cancellation changes the status to cancelled, so a cancelled run cannot
+// begin an external Git operation after the claim.
+func (d *DB) AcquireRunPushActive(id string) error {
+	r, err := d.sql.Exec(`UPDATE runs SET push_active = 1, updated_at = ? WHERE id = ? AND status IN (?,?) AND push_active = 0`, now(), id, types.RunPending, types.RunRunning)
+	if err != nil {
+		return fmt.Errorf("acquire run push active: %w", err)
+	}
+	n, _ := r.RowsAffected()
+	if n != 1 {
+		return fmt.Errorf("run %s is no longer publishable", id)
+	}
+	return nil
+}
+
+// SetRunPushActive clears publication ownership after the guarded operation.
 func (d *DB) SetRunPushActive(id string, active bool) error {
 	_, err := d.sql.Exec(`UPDATE runs SET push_active = ?, updated_at = ? WHERE id = ?`, active, now(), id)
 	if err != nil {

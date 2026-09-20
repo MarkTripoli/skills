@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -2080,6 +2081,13 @@ func LoadGlobalFromBytes(data []byte) (*GlobalConfig, error) {
 	if err := dec.Decode(&raw); err != nil {
 		return nil, fmt.Errorf("parse global config: %w", err)
 	}
+	var extra yaml.Node
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("parse global config: multiple YAML documents are not allowed")
+		}
+		return nil, fmt.Errorf("parse global config: %w", err)
+	}
 	if err := validateGlobalCommitRaw(raw.Commit); err != nil {
 		return nil, fmt.Errorf("parse global config: %w", err)
 	}
@@ -2356,6 +2364,13 @@ func parseRepoConfig(data []byte) (*RepoConfig, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(cfg); err != nil {
+		return nil, fmt.Errorf("parse repo config: %w", err)
+	}
+	var extra yaml.Node
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("parse repo config: multiple YAML documents are not allowed")
+		}
 		return nil, fmt.Errorf("parse repo config: %w", err)
 	}
 	if err := validateCommitRaw(cfg.Commit); err != nil {

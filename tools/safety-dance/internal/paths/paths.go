@@ -142,7 +142,10 @@ func (p *Paths) EnsureDirs() error {
 		p.ServerPIDsDir(),
 	}
 	for _, d := range dirs {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			return err
+		}
+		if err := os.Chmod(d, 0o700); err != nil {
 			return err
 		}
 	}

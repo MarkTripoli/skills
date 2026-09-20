@@ -115,22 +115,37 @@ func (s Service) Install() error {
 	if err := s.Validate(); err != nil {
 		return err
 	}
+	path, err := s.definitionPath()
+	if err != nil {
+		return err
+	}
+	previous, readErr := os.ReadFile(path)
+	existed := readErr == nil
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return readErr
+	}
 	if err := s.writeDefinition(); err != nil {
 		return fmt.Errorf("write service definition: %w", err)
 	}
+	var activationErr error
 	switch runtime.GOOS {
 	case "darwin":
-		path, _ := s.definitionPath()
-		return s.Executor.Run("launchctl", "load", "-w", path)
+		activationErr = s.Executor.Run("launchctl", "load", "-w", path)
 	case "linux":
-		path, _ := s.definitionPath()
-		return s.Executor.Run("systemctl", "--user", "enable", "--now", filepath.Base(path))
+		activationErr = s.Executor.Run("systemctl", "--user", "enable", "--now", filepath.Base(path))
 	default:
-		// cmd.exe is used only as the task action so the selected runtime
-		// home is explicit and cannot silently fall back to the user's default.
 		action := fmt.Sprintf(`cmd /C "set SD_HOME=%s&& \"%s\" daemon serve"`, s.Home.Root(), s.Binary)
-		return s.Executor.Run("schtasks", "/Create", "/TN", s.Label(), "/TR", action, "/F")
+		activationErr = s.Executor.Run("schtasks", "/Create", "/TN", s.Label(), "/TR", action, "/F")
 	}
+	if activationErr == nil {
+		return nil
+	}
+	if existed {
+		_ = os.WriteFile(path, previous, 0o600)
+	} else {
+		_ = os.Remove(path)
+	}
+	return activationErr
 }
 func (s Service) Stop() error {
 	if s.Executor == nil {

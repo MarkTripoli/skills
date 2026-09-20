@@ -85,10 +85,10 @@ func (a *Admission) issue(ctx context.Context, raw json.RawMessage) (interface{}
 	if ipc.PeerPID(ctx) <= 0 {
 		return nil, errors.New("unauthenticated IPC peer")
 	}
-	// Only the managed receive-hook helper may mint a one-use push token.
-	// Validation children inherit SD_PARENT_RUN_ID and are never permitted to
-	// enter this issuance path.
-	if os.Getenv("SD_HOOK_HELPER") != "1" || strings.TrimSpace(os.Getenv("SD_PARENT_RUN_ID")) != "" {
+	// The IPC transport authenticates the peer PID. Hook ancestry is checked
+	// separately by the managed receive path; daemon startup must not depend on
+	// an environment variable inherited by the long-lived server.
+	if strings.TrimSpace(os.Getenv("SD_PARENT_RUN_ID")) != "" {
 		return nil, errors.New("push-token issuance is restricted to the managed git hook")
 	}
 	var p ipc.IssuePushTokenParams
@@ -146,8 +146,8 @@ func (a *Admission) notifyPush(ctx context.Context, raw json.RawMessage) (interf
 		return nil, errors.New("admission receipt is required")
 	}
 	a.mu.Lock()
+	defer a.mu.Unlock()
 	receipt, ok := a.receipts[token]
-	a.mu.Unlock()
 	if !ok || receipt.Gate != p.Gate || receipt.Ref != p.Ref || receipt.Old != p.Old || receipt.New != p.New {
 		return nil, errors.New("notification does not match admitted update")
 	}
@@ -156,11 +156,8 @@ func (a *Admission) notifyPush(ctx context.Context, raw json.RawMessage) (interf
 			return nil, err
 		}
 	}
-	a.mu.Lock()
 	delete(a.receipts, token)
-	err := a.saveReceipts()
-	a.mu.Unlock()
-	if err != nil {
+	if err := a.saveReceipts(); err != nil {
 		return nil, fmt.Errorf("remove admission receipt: %w", err)
 	}
 	return map[string]bool{"ok": true}, nil
