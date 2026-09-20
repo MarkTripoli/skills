@@ -28,6 +28,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { buildRuntime } from "../scripts/lib/build.mjs";
 import { subjectProblems } from "../scripts/check-commits.mjs";
+import { CliArgumentError, parseEvalArgs } from "./cli.mjs";
 import { gitIndexChanged, snapshotGitIndex } from "./git-index.mjs";
 import {
   artifacts,
@@ -63,25 +64,17 @@ const excludedRootSpecs = [
   { root: ".omp", exclude: [] },
 ];
 
-const args = process.argv.slice(2);
-const keep = args.includes("--keep");
-const flagValue = (flag) => {
-  const i = args.indexOf(flag);
-  return i === -1 ? null : (args[i + 1] ?? "");
-};
-const modelIndex = args.indexOf("--model");
-if (modelIndex !== -1 && (!args[modelIndex + 1] || args[modelIndex + 1].startsWith("--"))) {
-  console.error("--model needs a value");
-  process.exit(2);
+let options;
+try {
+  options = parseEvalArgs(process.argv.slice(2));
+} catch (error) {
+  if (error instanceof CliArgumentError) {
+    console.error(error.message);
+    process.exit(2);
+  }
+  throw error;
 }
-const model = modelIndex === -1 ? null : args[modelIndex + 1];
-const maxMinutes = flagValue("--max-time") === null ? 25 : Number(flagValue("--max-time"));
-if (!Number.isFinite(maxMinutes) || maxMinutes <= 0) {
-  console.error("--max-time needs a positive number of minutes");
-  process.exit(2);
-}
-const gradeDir = flagValue("--grade");
-const names = args.filter((a, i) => !a.startsWith("--") && !["--max-time", "--grade", "--model"].includes(args[i - 1]));
+const { gradeDir, keep, maxMinutes, model, names } = options;
 
 const git = (cwd, ...argv) => execFileSync("git", argv, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 
