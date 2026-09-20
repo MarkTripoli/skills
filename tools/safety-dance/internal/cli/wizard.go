@@ -7,6 +7,7 @@ import (
 
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/daemon"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/gate"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/git"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/wizard"
 	"github.com/spf13/cobra"
 )
@@ -41,6 +42,11 @@ func runWizard(cmd *cobra.Command, args []string) error {
 		In:  cmd.InOrStdin(),
 		Out: cmd.OutOrStdout(),
 		Write: func(model wizard.Model) error {
+			if model.Upstream != "" {
+				if err := git.EnsureRemote(context.Background(), root, "origin", model.Upstream); err != nil {
+					return err
+				}
+			}
 			_, created, err := gate.Init(context.Background(), database, p, root)
 			createdGate = created
 			return err
@@ -55,6 +61,8 @@ func runWizard(cmd *cobra.Command, args []string) error {
 		InstallService: func() error { createdService = !service.DefinitionExists(); return service.Install() },
 		StopService:    func() error { return service.Stop() },
 		ServiceCreated: func() bool { return createdService },
+		AskService:     true,
+		PromptLabels:   []string{"upstream"},
 	}
 	if err := setup.Run(context.Background()); err != nil {
 		return err

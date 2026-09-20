@@ -70,7 +70,7 @@ func Push(ctx context.Context, req PushRequest) (PushResult, error) {
 
 // Publish performs the durable publication sequence around Push. The mirror
 // callback must update the gate ref and return only after that update succeeds.
-func Publish(ctx context.Context, database *db.DB, runID string, req PushRequest, mirror func(context.Context, string) error) (PushResult, error) {
+func Publish(ctx context.Context, database *db.DB, runID string, req PushRequest, mirror func(context.Context, string) error) (result PushResult, err error) {
 	if database == nil || runID == "" {
 		return PushResult{}, fmt.Errorf("database and run id are required")
 	}
@@ -100,8 +100,12 @@ func Publish(ctx context.Context, database *db.DB, runID string, req PushRequest
 	if err := database.AcquireRunPushActive(runID); err != nil {
 		return PushResult{}, err
 	}
-	defer database.SetRunPushActive(runID, false)
-	result := PushResult{}
+	defer func() {
+		if clearErr := database.SetRunPushActive(runID, false); clearErr != nil && err == nil {
+			result = PushResult{}
+			err = fmt.Errorf("clear publication ownership: %w", clearErr)
+		}
+	}()
 	if live, liveErr := (branchsync.Syncer{Remote: req.Remote, Ref: req.Ref}).LiveHead(ctx); liveErr == nil && live == req.Candidate {
 		result = PushResult{Candidate: req.Candidate, Upstream: live, GateMirror: req.GateMirror}
 	} else {

@@ -212,6 +212,9 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		return ipc.HealthResult{Status: "ok"}, nil
 	})
 	server.Handle(ipc.MethodStartFreshRun, func(ctx context.Context, raw json.RawMessage) (interface{}, error) {
+		if err := daemon.AuthorizeMutationPeer(ipc.PeerPID(ctx)); err != nil {
+			return nil, err
+		}
 		var q ipc.StartFreshRunParams
 		if err := json.Unmarshal(raw, &q); err != nil {
 			return nil, err
@@ -241,6 +244,9 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		return ipc.StartFreshRunResult{Receipt: ipc.LaunchReceipt{RunID: r.ID, Branch: r.Branch, HeadSHA: r.HeadSHA, SubmittedHeadSHA: r.HeadSHA, Disposition: "created"}}, nil
 	})
 	server.Handle(ipc.MethodRespond, func(ctx context.Context, raw json.RawMessage) (interface{}, error) {
+		if err := daemon.AuthorizeMutationPeer(ipc.PeerPID(ctx)); err != nil {
+			return nil, err
+		}
 		var q ipc.RespondParams
 		if err := json.Unmarshal(raw, &q); err != nil {
 			return nil, err
@@ -261,6 +267,9 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		return ipc.RespondResult{OK: true}, nil
 	})
 	server.Handle(ipc.MethodCancelRun, func(ctx context.Context, raw json.RawMessage) (interface{}, error) {
+		if err := daemon.AuthorizeMutationPeer(ipc.PeerPID(ctx)); err != nil {
+			return nil, err
+		}
 		var q ipc.CancelRunParams
 		if err := json.Unmarshal(raw, &q); err != nil {
 			return nil, err
@@ -320,11 +329,15 @@ func recordPush(d *db.DB, p *paths.Paths, manager *daemon.Manager, n daemon.Push
 			continue
 		}
 		branch := strings.TrimPrefix(n.Ref, "refs/heads/")
-		nonceBytes := make([]byte, 16)
-		if _, err := rand.Read(nonceBytes); err != nil {
-			return err
+		nonce := n.Token
+		if nonce == "" {
+			return fmt.Errorf("accepted push has no durable identity")
 		}
-		nonce := hex.EncodeToString(nonceBytes)
+		if existing, err := d.GetRunByLaunchNonce(r.ID, branch, nonce); err != nil {
+			return err
+		} else if existing != nil {
+			return nil
+		}
 		worktree := p.WorktreeDir(r.ID, nonce)
 		if err := worktrees.CreateDetached(context.Background(), r.WorkingPath, worktree, n.New); err != nil {
 			return err
@@ -357,10 +370,19 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	if _, err := os.Stat(worktree); err != nil {
 		return fmt.Errorf("owned worktree unavailable: %w", err)
 	}
-	trustedConfig, err := config.LoadRepo(repo.WorkingPath)
+	pushedConfig, err := config.LoadRepo(worktree)
 	if err != nil {
-		return fmt.Errorf("load trusted repository configuration: %w", err)
+		return fmt.Errorf("load pushed repository configuration: %w", err)
 	}
+	trustedConfig := &config.RepoConfig{}
+	trustedRef := "refs/remotes/origin/" + repo.DefaultBranch
+	if raw, showErr := git.ShowFile(ctx, repo.WorkingPath, trustedRef, ".safety-dance.yaml"); showErr == nil {
+		trustedConfig, err = config.LoadRepoFromBytes([]byte(raw))
+		if err != nil {
+			return fmt.Errorf("load trusted repository configuration: %w", err)
+		}
+	}
+	effectiveConfig := config.EffectiveRepoConfig(pushedConfig, trustedConfig, trustedConfig.AllowRepoCommands)
 	ref := run.Branch
 	if !strings.HasPrefix(ref, "refs/") {
 		ref = "refs/heads/" + ref
@@ -371,7 +393,7 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 		name := name
 		runner.Register(name, func(stepCtx context.Context) error {
 			stepCtx = steps.WithWorktree(stepCtx, worktree)
-			stepCtx = steps.WithRepoConfig(stepCtx, trustedConfig)
+			stepCtx = steps.WithRepoConfig(stepCtx, effectiveConfig)
 			switch name {
 			case pipeline.StepIntent:
 				return steps.Intent(stepCtx)
@@ -390,7 +412,7 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 			case pipeline.StepCI:
 				return steps.CI(stepCtx)
 			default:
-				return nil
+				return fmt.Errorf("unknown pipeline step %s", name)
 			}
 		})
 	}

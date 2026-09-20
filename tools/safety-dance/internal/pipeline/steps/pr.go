@@ -1,5 +1,13 @@
 package steps
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
-func PR(ctx context.Context) error { return Validate(ctx, "pull-request") }
+func PR(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return fmt.Errorf("pull-request gate is unavailable: configured provider owner is not connected")
+}

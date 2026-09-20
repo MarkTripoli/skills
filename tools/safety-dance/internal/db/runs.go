@@ -80,9 +80,16 @@ func (d *DB) CancelRun(id, reason string) error {
 	if reason == "" {
 		reason = types.RunCancelReasonSuperseded
 	}
-	_, err := d.sql.Exec(`UPDATE runs SET status=?,error=?,push_active=0,updated_at=? WHERE id=? AND status IN (?,?)`, types.RunCancelled, reason, now(), id, types.RunPending, types.RunRunning)
+	result, err := d.sql.Exec(`UPDATE runs SET status=?,error=?,updated_at=? WHERE id=? AND status IN (?,?) AND push_active=0`, types.RunCancelled, reason, now(), id, types.RunPending, types.RunRunning)
 	if err != nil {
 		return fmt.Errorf("cancel run: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cancel run rows affected: %w", err)
+	}
+	if n != 1 {
+		return fmt.Errorf("run %s is publishing or no longer cancellable", id)
 	}
 	return nil
 }

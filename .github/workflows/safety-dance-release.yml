@@ -34,7 +34,10 @@ jobs:
         run: |
           mkdir -p dist
           suffix=""; [ "$GOOS" = windows ] && suffix=.exe
-          go build -o "dist/safety-dance$suffix" ./cmd/safety-dance
+          commit="${GITHUB_SHA:0:12}"
+          date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          ldflags="-X github.com/MarkTripoli/skills/tools/safety-dance/internal/buildinfo.Version=${{ steps.version.outputs.version }} -X github.com/MarkTripoli/skills/tools/safety-dance/internal/buildinfo.Commit=$commit -X github.com/MarkTripoli/skills/tools/safety-dance/internal/buildinfo.Date=$date"
+          go build -ldflags "$ldflags" -o "dist/safety-dance$suffix" ./cmd/safety-dance
           ./scripts/package-release.sh --version "${{ steps.version.outputs.version }}" --os "${{ matrix.os }}" --arch "${{ matrix.arch }}" --binary "dist/safety-dance$suffix" --out dist
       - uses: actions/upload-artifact@v4
         with: { name: release-${{ matrix.os }}-${{ matrix.arch }}, path: tools/safety-dance/dist/* }

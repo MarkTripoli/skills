@@ -92,10 +92,14 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 		r.Results = append(r.Results, result)
 		r.mu.Unlock()
 		if persisted != nil {
+			var persistErr error
 			if err != nil {
-				_ = r.Database.FailStep(persisted.ID, err.Error(), 0)
+				persistErr = r.Database.FailStep(persisted.ID, err.Error(), 0)
 			} else {
-				_ = r.Database.CompleteStep(persisted.ID, 0, 0, "")
+				persistErr = r.Database.CompleteStep(persisted.ID, 0, 0, "")
+			}
+			if persistErr != nil {
+				return r.Results, fmt.Errorf("persist step %s: %w", n, persistErr)
 			}
 		}
 		if err != nil {

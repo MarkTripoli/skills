@@ -26,15 +26,25 @@ func renderTUI(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer database.Close()
+	root, err := gitRoot()
+	if err != nil {
+		return err
+	}
+	repo, err := database.GetRepoByPath(root)
+	if err != nil {
+		return err
+	}
+	if repo == nil {
+		return fmt.Errorf("repository is not registered")
+	}
 	model := func() (tui.Model, error) {
-		runs, err := database.GetActiveRuns()
+		run, err := database.GetActiveRun(repo.ID, "")
 		if err != nil {
 			return tui.Model{}, err
 		}
-		if len(runs) == 0 {
+		if run == nil {
 			return tui.Model{Status: types.RunCompleted}, nil
 		}
-		run := runs[0]
 		m := tui.Model{RunID: run.ID, Branch: run.Branch, Status: run.Status}
 		if run.Error != nil {
 			m.Error = *run.Error

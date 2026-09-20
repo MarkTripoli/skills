@@ -45,8 +45,8 @@ func (a *Admission) saveReceipts() error {
 // the gate. Admission is deliberately separate: a notification can never
 // authorize a ref update.
 type PushNotification struct {
-	Gate, Ref, Old, New string
-	Options             []string
+	Gate, Ref, Old, New, Token string
+	Options                    []string
 }
 
 // Admission owns the receive-hook trust boundary. Tokens are issued by the
@@ -92,7 +92,7 @@ func (a *Admission) ReconcileOnce(ctx context.Context) error {
 		if a.notify == nil {
 			continue
 		}
-		if err := a.notify(ctx, PushNotification{Gate: receipt.Gate, Ref: receipt.Ref, Old: receipt.Old, New: receipt.New}); err != nil {
+		if err := a.notify(ctx, PushNotification{Gate: receipt.Gate, Ref: receipt.Ref, Old: receipt.Old, New: receipt.New, Token: token}); err != nil {
 			return err
 		}
 		delete(a.receipts, token)
@@ -155,6 +155,28 @@ func cleanPath(value string) string {
 		return filepath.Clean(value)
 	}
 	return filepath.Clean(cleaned)
+}
+
+// AuthorizeMutationPeer permits only the Safety Dance CLI and rejects any
+// validation descendant carrying the parent-run marker.
+func AuthorizeMutationPeer(pid int) error {
+	if runtime.GOOS == "windows" || pid <= 0 {
+		return errors.New("unsupported or unauthenticated IPC peer")
+	}
+	for depth := 0; pid > 1 && depth < 64; depth++ {
+		parent, command, err := processInfo(pid)
+		if err != nil {
+			return err
+		}
+		if raw, readErr := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/environ"); readErr == nil && strings.Contains(string(raw), "SD_PARENT_RUN_ID=") {
+			return errors.New("nested validation process cannot mutate daemon state")
+		}
+		if strings.Contains(command, "safety-dance") {
+			return nil
+		}
+		pid = parent
+	}
+	return errors.New("mutation requires a Safety Dance CLI peer")
 }
 func (a *Admission) issue(ctx context.Context, raw json.RawMessage) (interface{}, error) {
 	peer := ipc.PeerPID(ctx)
@@ -225,7 +247,7 @@ func (a *Admission) notifyPush(ctx context.Context, raw json.RawMessage) (interf
 		return nil, errors.New("notification does not match admitted update")
 	}
 	if a.notify != nil {
-		if err := a.notify(ctx, PushNotification{Gate: p.Gate, Ref: p.Ref, Old: p.Old, New: p.New, Options: append([]string(nil), p.PushOptions...)}); err != nil {
+		if err := a.notify(ctx, PushNotification{Gate: p.Gate, Ref: p.Ref, Old: p.Old, New: p.New, Token: token, Options: append([]string(nil), p.PushOptions...)}); err != nil {
 			return nil, err
 		}
 	}

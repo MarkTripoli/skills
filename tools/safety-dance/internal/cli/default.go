@@ -7,7 +7,7 @@ func launchDefault(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return statusCommand(cmd, args)
 	}
-	p, database, err := openRuntime()
+	_, database, err := openRuntime()
 	if err != nil {
 		return err
 	}
@@ -16,17 +16,17 @@ func launchDefault(cmd *cobra.Command, args []string) error {
 		database.Close()
 		return err
 	}
-	runs, runsErr := database.GetActiveRuns()
-	database.Close()
-	if runsErr != nil {
-		return runsErr
-	}
 	if repo == nil {
+		database.Close()
 		return runWizard(cmd, args)
 	}
-	if len(runs) > 0 {
+	run, err := database.GetActiveRun(repo.ID, "")
+	database.Close()
+	if err != nil {
+		return err
+	}
+	if run != nil {
 		return renderTUI(cmd, args)
 	}
-	_ = p
 	return statusCommand(cmd, args)
 }

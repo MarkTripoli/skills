@@ -18,6 +18,8 @@ type Service struct {
 	Executor ServiceExecutor
 }
 
+const serviceMarker = "SAFETY_DANCE_MANAGED"
+
 func (s Service) Label() string {
 	return "com.safety-dance.daemon." + strings.NewReplacer("/", "-", "\\", "-", ".", "-").Replace(s.Home.Root())
 }
@@ -30,11 +32,11 @@ func (s Service) Definition() (string, error) {
 	}
 	switch runtime.GOOS {
 	case "darwin":
-		return fmt.Sprintf("<?xml version=\"1.0\"?><plist><dict><key>Label</key><string>%s</string><key>ProgramArguments</key><array><string>%s</string><string>daemon</string><string>serve</string></array><key>EnvironmentVariables</key><dict><key>SD_HOME</key><string>%s</string></dict><key>KeepAlive</key><true/></dict></plist>", s.Label(), s.Binary, s.Home.Root()), nil
+		return fmt.Sprintf("<!-- %s home=%s --><plist><dict><key>Label</key><string>%s</string><key>ProgramArguments</key><array><string>%s</string><string>daemon</string><string>serve</string></array><key>EnvironmentVariables</key><dict><key>SD_HOME</key><string>%s</string></dict><key>KeepAlive</key><true/></dict></plist>", serviceMarker, s.Home.Root(), s.Label(), s.Binary, s.Home.Root()), nil
 	case "linux":
-		return fmt.Sprintf("[Unit]\nDescription=Safety Dance daemon\n[Service]\nExecStart=%s daemon serve\nEnvironment=SD_HOME=%s\nRestart=on-failure\n", s.Binary, s.Home.Root()), nil
+		return fmt.Sprintf("# %s home=%s\n[Unit]\nDescription=Safety Dance daemon\n[Service]\nExecStart=%s daemon serve\nEnvironment=SD_HOME=%s\nRestart=on-failure\n", serviceMarker, s.Home.Root(), s.Binary, s.Home.Root()), nil
 	default:
-		return fmt.Sprintf("Safety Dance Task\nName=%s\nBinary=%s daemon serve\nSD_HOME=%s\n", s.Label(), filepath.Clean(s.Binary), s.Home.Root()), nil
+		return fmt.Sprintf("%s home=%s\nSafety Dance Task\nName=%s\nBinary=%s daemon serve\nSD_HOME=%s\n", serviceMarker, s.Home.Root(), s.Label(), filepath.Clean(s.Binary), s.Home.Root()), nil
 	}
 }
 func (s Service) Validate() error {
@@ -64,16 +66,24 @@ func (s Service) definitionPath() (string, error) {
 		return "", nil
 	}
 }
-
-// DefinitionExists reports whether this runtime home's managed definition was
-// present before an install attempt.
-func (s Service) DefinitionExists() bool {
+func (s Service) ownedDefinition() (bool, error) {
 	path, err := s.definitionPath()
 	if err != nil || path == "" {
-		return false
+		return false, err
 	}
-	_, err = os.Stat(path)
-	return err == nil
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(string(raw), serviceMarker) && strings.Contains(string(raw), "home="+s.Home.Root()), nil
+}
+
+func (s Service) DefinitionExists() bool {
+	owned, err := s.ownedDefinition()
+	return err == nil && owned
 }
 
 func (s Service) writeDefinition() error {
@@ -116,6 +126,21 @@ func (s Service) Install() error {
 		return err
 	}
 	path, err := s.definitionPath()
+	if path != "" {
+		exists, readErr := os.Stat(path)
+		if readErr == nil {
+			owned, ownerErr := s.ownedDefinition()
+			if ownerErr != nil {
+				return ownerErr
+			}
+			if !owned {
+				return fmt.Errorf("service definition collision at %s", path)
+			}
+		} else if !os.IsNotExist(readErr) {
+			return readErr
+		}
+		_ = exists
+	}
 	if err != nil {
 		return err
 	}
@@ -150,6 +175,15 @@ func (s Service) Install() error {
 func (s Service) Stop() error {
 	if s.Executor == nil {
 		return fmt.Errorf("service executor is required")
+	}
+	if path, pathErr := s.definitionPath(); pathErr == nil && path != "" {
+		owned, ownerErr := s.ownedDefinition()
+		if ownerErr != nil {
+			return ownerErr
+		}
+		if !owned {
+			return fmt.Errorf("refusing to stop foreign service definition %s", path)
+		}
 	}
 	switch runtime.GOOS {
 	case "darwin":
