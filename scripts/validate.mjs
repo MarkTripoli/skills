@@ -16,7 +16,7 @@ const rootIndex = args.indexOf("--root");
 const root = rootIndex === -1 ? repoRoot : path.resolve(args[rootIndex + 1] ?? "");
 const generated = root !== repoRoot;
 
-const EXPECTED_SKILL_COUNT = 43;
+const EXPECTED_SKILL_COUNT = 44;
 const SHARED_LINKS = {
   "shared/WRITING.md": "https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md",
   "shared/CONVENTIONS.md": "https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md",
@@ -84,6 +84,7 @@ const ANSWER_INVENTORY = {
   "review-code/references/code_review_clean_answer.md": "describe-pr",
   "review-code/references/code_review_findings_answer.md": "fix-code-review",
   "show-me/references/show_me_final_answer.md": TERMINAL_ANSWER,
+  "setup-repository/references/setup-final-answer.md": TERMINAL_ANSWER,
   "start-epic-delivery/references/epic_delivery_final_answer.md": TERMINAL_ANSWER,
   "test-app/references/app_test_passed_answer.md": "describe-pr",
   "test-app/references/app_test_failed_answer.md": "iterate-implementation",
@@ -574,4 +575,3 @@ function report() {
     `ok: ${skillNames.length} skills, ${answerFiles.length} answer templates, ${HUMAN_REVIEW_TEMPLATES.length} human-review templates, ${EXECUTION_DAG_TEMPLATES.length} execution-DAG templates, ${WORK_BREAKDOWN_TEMPLATES.length} work-breakdown templates, ${bannedHits} banned tokens${generated ? ` (generated tree ${root})` : ", Atomic entry checked"}`,
   );
 }
-

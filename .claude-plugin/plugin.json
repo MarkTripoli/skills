@@ -50,6 +50,7 @@
     "./skills/delivery/resolve-pr-reviews",
     "./skills/delivery/review-artifact-comments",
     "./skills/delivery/review-code",
+    "./skills/setup-repository",
     "./skills/show-me",
     "./skills/delivery/start-epic-delivery",
     "./skills/delivery/test-app",
