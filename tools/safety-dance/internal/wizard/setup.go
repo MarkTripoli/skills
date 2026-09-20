@@ -1,6 +1,7 @@
 package wizard
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -24,6 +25,14 @@ type Setup struct {
 	PromptLabels   []string
 }
 
+func readAnswer(r *bufio.Reader) (string, error) {
+	line, err := r.ReadString('\n')
+	if err != nil && len(line) == 0 {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
+}
+
 func (s Setup) Run(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -31,6 +40,7 @@ func (s Setup) Run(ctx context.Context) error {
 	if s.In == nil || s.Out == nil || s.Write == nil {
 		return fmt.Errorf("wizard requires input, output, and writer")
 	}
+	reader := bufio.NewReader(s.In)
 	m := Model{}
 	labels := s.PromptLabels
 	if len(labels) == 0 {
@@ -50,17 +60,16 @@ func (s Setup) Run(ctx context.Context) error {
 		case "provider":
 			dst = &m.Provider
 		case "commands":
-			fmt.Fprint(s.Out, "validation commands (intent;rebase;review;test;document;lint;pull-request;ci): ")
-			var raw string
-			if _, err := fmt.Fscanln(s.In, &raw); err != nil {
+			if raw, err := readAnswer(reader); err != nil {
 				return err
-			}
-			parts := strings.Split(raw, ";")
-			if len(parts) != 8 {
-				return fmt.Errorf("validation commands require eight semicolon-separated commands")
-			}
-			for i := range parts {
-				m.ValidationCommands = append(m.ValidationCommands, strings.TrimSpace(parts[i]))
+			} else {
+				parts := strings.Split(raw, ";")
+				if len(parts) != 8 {
+					return fmt.Errorf("validation commands require eight semicolon-separated commands")
+				}
+				for i := range parts {
+					m.ValidationCommands = append(m.ValidationCommands, strings.TrimSpace(parts[i]))
+				}
 			}
 			continue
 		default:
@@ -73,22 +82,21 @@ func (s Setup) Run(ctx context.Context) error {
 	}
 	for _, p := range prompts {
 		fmt.Fprintf(s.Out, "%s: ", p.label)
-		var v string
-		if _, err := fmt.Fscanln(s.In, &v); err != nil {
+		v, err := readAnswer(reader)
+		if err != nil {
 			return err
 		}
-		*p.dst = strings.TrimSpace(v)
+		*p.dst = v
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 	}
 	if s.AskService {
 		fmt.Fprint(s.Out, "install service (yes/no): ")
-		var answer string
-		if _, err := fmt.Fscanln(s.In, &answer); err != nil {
+		answer, err := readAnswer(reader)
+		if err != nil {
 			return err
 		}
-		answer = strings.TrimSpace(answer)
 		m.ConfirmService = strings.EqualFold(answer, "yes") || strings.EqualFold(answer, "y")
 	}
 	if err := s.Write(m); err != nil {

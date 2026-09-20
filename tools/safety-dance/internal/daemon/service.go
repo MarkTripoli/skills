@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
 	"html"
 	"os"
@@ -26,6 +27,11 @@ type Service struct {
 
 func systemdQuote(value string) string {
 	return strconv.Quote(value)
+}
+
+type serviceRecovery struct {
+	Existed  bool   `json:"existed"`
+	Previous []byte `json:"previous"`
 }
 
 const serviceMarker = "SAFETY_DANCE_MANAGED"
@@ -173,10 +179,10 @@ func (s Service) Install() error {
 		return err
 	}
 	previous, readErr := os.ReadFile(path)
-	existed := readErr == nil
 	if readErr != nil && !os.IsNotExist(readErr) {
 		return readErr
 	}
+	recovery := serviceRecovery{Existed: readErr == nil, Previous: previous}
 	if err := s.writeDefinition(); err != nil {
 		return fmt.Errorf("write service definition: %w", err)
 	}
@@ -200,12 +206,35 @@ func (s Service) Install() error {
 	if activationErr == nil {
 		return nil
 	}
-	if existed {
-		_ = os.WriteFile(path, previous, 0o600)
+	data, marshalErr := json.Marshal(recovery)
+	if marshalErr == nil {
+		_ = os.WriteFile(path+".recovery", data, 0600)
+	}
+	// Keep the owned definition in place until compensation can disable a
+	// service whose activation command may have partially succeeded.
+	return activationErr
+}
+
+func restoreServiceAfterStop(path string) error {
+	raw, err := os.ReadFile(path + ".recovery")
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var recovery serviceRecovery
+	if err := json.Unmarshal(raw, &recovery); err != nil {
+		return err
+	}
+	if recovery.Existed {
+		if err := os.WriteFile(path, recovery.Previous, 0600); err != nil {
+			return err
+		}
 	} else {
 		_ = os.Remove(path)
 	}
-	return activationErr
+	return os.Remove(path + ".recovery")
 }
 func (s Service) Stop() error {
 	if s.Executor == nil {
@@ -226,6 +255,9 @@ func (s Service) Stop() error {
 		err := s.Executor.Run("launchctl", "unload", "-w", path)
 		if err == nil {
 			_ = os.Remove(path)
+			if restoreErr := restoreServiceAfterStop(path); restoreErr != nil {
+				return restoreErr
+			}
 		}
 		return err
 	case "linux":
@@ -233,6 +265,9 @@ func (s Service) Stop() error {
 		err := s.Executor.Run("systemctl", "--user", "disable", "--now", filepath.Base(path))
 		if err == nil {
 			_ = os.Remove(path)
+			if restoreErr := restoreServiceAfterStop(path); restoreErr != nil {
+				return restoreErr
+			}
 		}
 		return err
 	default:
@@ -240,6 +275,10 @@ func (s Service) Stop() error {
 		if err != nil || !owned {
 			return fmt.Errorf("refusing to stop foreign scheduled task %s", s.Label())
 		}
-		return s.Executor.Run("schtasks", "/Delete", "/TN", s.Label(), "/F")
+		if err := s.Executor.Run("schtasks", "/Delete", "/TN", s.Label(), "/F"); err != nil {
+			return err
+		}
+		path, _ := s.definitionPath()
+		return restoreServiceAfterStop(path)
 	}
 }

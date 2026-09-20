@@ -66,6 +66,20 @@ func configuredCommand(ctx context.Context, name string) string {
 }
 
 // Typed delegates non-shell validation to the configured typed agent owner.
+func parseTypedVerdict(raw []byte) (string, error) {
+	var verdict struct {
+		Verdict string `json:"verdict"`
+	}
+	if err := json.Unmarshal(raw, &verdict); err != nil {
+		return "", fmt.Errorf("invalid verdict: %w", err)
+	}
+	if verdict.Verdict != "pass" && verdict.Verdict != "fail" && verdict.Verdict != "blocked" {
+		return "", fmt.Errorf("invalid verdict %q", verdict.Verdict)
+	}
+	return verdict.Verdict, nil
+}
+
+// Typed delegates non-shell validation to the configured typed agent owner.
 func Typed(ctx context.Context, name string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -85,17 +99,29 @@ func Typed(ctx context.Context, name string) error {
 	if err != nil {
 		return fmt.Errorf("%s: construct typed validation owner: %w", name, err)
 	}
+	if err := agent.EnsureGateNeutralized(a); err != nil {
+		_ = a.Close()
+		return fmt.Errorf("%s: unsafe typed validation owner: %w", name, err)
+	}
 	defer a.Close()
 	res, err := a.Run(ctx, agent.RunOpts{
 		CWD: worktree(ctx), Purpose: name,
+		Env:        []string{"SD_PARENT_RUN_ID=" + runID(ctx)},
 		Prompt:     fmt.Sprintf("Run the typed %s validation for this checkout and return the structured verdict.", name),
-		JSONSchema: json.RawMessage(`{"type":"object","required":["verdict"],"properties":{"verdict":{"type":"string"}}}`),
+		JSONSchema: json.RawMessage(`{"type":"object","required":["verdict"],"properties":{"verdict":{"type":"string","enum":["pass","fail","blocked"]}}}`),
 	})
 	if err != nil {
 		return fmt.Errorf("%s: typed validation failed: %w", name, err)
 	}
 	if res == nil || len(res.Output) == 0 {
 		return fmt.Errorf("%s: typed validation returned no verdict", name)
+	}
+	verdict, err := parseTypedVerdict(res.Output)
+	if err != nil {
+		return fmt.Errorf("%s: typed validation returned invalid verdict: %w", name, err)
+	}
+	if verdict != "pass" {
+		return fmt.Errorf("%s: typed validation verdict %q", name, verdict)
 	}
 	return nil
 }

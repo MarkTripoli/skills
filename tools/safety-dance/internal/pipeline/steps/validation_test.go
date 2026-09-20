@@ -39,3 +39,19 @@ func TestTypedStageDoesNotRunRepositoryCommand(t *testing.T) {
 		t.Fatal("typed stage executed repository command")
 	}
 }
+
+func TestParseTypedVerdictRejectsFailureAsApproval(t *testing.T) {
+	verdict, err := parseTypedVerdict([]byte(`{"verdict":"fail"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verdict == "pass" {
+		t.Fatal("failing typed verdict was accepted as approval")
+	}
+}
+
+func TestParseTypedVerdictRejectsUnknownValue(t *testing.T) {
+	if _, err := parseTypedVerdict([]byte(`{"verdict":"maybe"}`)); err == nil {
+		t.Fatal("unknown typed verdict was accepted")
+	}
+}

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"syscall"
 
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/paths"
@@ -21,32 +20,34 @@ func AcquireOwnership(p *paths.Paths) (*Ownership, error) {
 	if err := os.MkdirAll(p.Root(), 0755); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(p.LockFile(), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil && os.IsExist(err) {
-		if data, readErr := os.ReadFile(p.LockFile()); readErr == nil {
-			if pid, parseErr := strconv.Atoi(string(data)); parseErr == nil {
-				if proc, procErr := os.FindProcess(pid); procErr == nil && proc.Signal(syscall.Signal(0)) != nil {
-					_ = os.Remove(p.LockFile())
-					f, err = os.OpenFile(p.LockFile(), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-				}
-			}
-		}
-	}
+	f, err := os.OpenFile(p.LockFile(), os.O_RDWR|os.O_CREATE, 0600)
 	if err != nil {
+		return nil, fmt.Errorf("open daemon lock: %w", err)
+	}
+	if err := lockRuntimeFile(f); err != nil {
+		_ = f.Close()
 		return nil, fmt.Errorf("daemon already owns runtime home: %w", err)
 	}
-	if _, err = f.WriteString(strconv.Itoa(os.Getpid())); err != nil {
-		f.Close()
-		os.Remove(p.LockFile())
+	if err := f.Truncate(0); err != nil {
+		_ = unlockRuntimeFile(f)
+		_ = f.Close()
+		return nil, err
+	}
+	if _, err := f.WriteString(strconv.Itoa(os.Getpid())); err != nil {
+		_ = unlockRuntimeFile(f)
+		_ = f.Close()
 		return nil, err
 	}
 	return &Ownership{file: f, path: p.LockFile()}, nil
 }
 func (o *Ownership) Close() error {
-	if o == nil {
+	if o == nil || o.file == nil {
 		return nil
 	}
-	err := o.file.Close()
+	err := unlockRuntimeFile(o.file)
+	if closeErr := o.file.Close(); err == nil {
+		err = closeErr
+	}
 	if rm := os.Remove(o.path); err == nil {
 		err = rm
 	}

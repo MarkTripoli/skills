@@ -29,6 +29,26 @@ func statusCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if len(runs) == 0 {
+		repos, repoErr := d.GetRepos()
+		if repoErr != nil {
+			return repoErr
+		}
+		for _, repo := range repos {
+			history, historyErr := d.GetRunsByRepo(repo.ID)
+			if historyErr != nil {
+				return historyErr
+			}
+			seen := map[string]bool{}
+			for _, run := range history {
+				if seen[run.Branch] {
+					continue
+				}
+				seen[run.Branch] = true
+				runs = append(runs, run)
+			}
+		}
+	}
+	if len(runs) == 0 {
 		fmt.Fprintln(cmd.OutOrStdout(), "runs: none")
 		return nil
 	}

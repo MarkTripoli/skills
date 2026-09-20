@@ -32,8 +32,9 @@ func CreateDetached(ctx context.Context, source, dir, head string) (err error) {
 	if err = os.WriteFile(marker, raw, 0600); err != nil {
 		return fmt.Errorf("journal worktree creation: %w", err)
 	}
+	created := false
 	defer func() {
-		if err != nil {
+		if err != nil && !created {
 			_ = os.Remove(marker)
 		}
 	}()
@@ -41,6 +42,7 @@ func CreateDetached(ctx context.Context, source, dir, head string) (err error) {
 	if out, runErr := cmd.CombinedOutput(); runErr != nil {
 		return fmt.Errorf("create worktree: %w: %s", runErr, out)
 	}
+	created = true
 	verify := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "HEAD")
 	out, err := verify.Output()
 	if err != nil {
@@ -60,8 +62,6 @@ func CommitOwnership(dir string) error {
 	return nil
 }
 
-// RemoveDetached records removal before attempting it. A failed removal leaves
-// the record for startup retry.
 func RemoveDetached(ctx context.Context, source, dir string) error {
 	if source == "" || dir == "" {
 		return fmt.Errorf("source and directory are required")
@@ -74,8 +74,23 @@ func RemoveDetached(ctx context.Context, source, dir string) error {
 	if err := os.WriteFile(marker, raw, 0600); err != nil {
 		return fmt.Errorf("journal worktree removal: %w", err)
 	}
+	if _, sourceErr := os.Stat(source); sourceErr != nil {
+		return fmt.Errorf("inspect worktree source: %w", sourceErr)
+	}
+	if _, statErr := os.Stat(dir); os.IsNotExist(statErr) {
+		_ = os.Remove(marker)
+		_ = os.Remove(journalPath(dir))
+		return nil
+	} else if statErr != nil {
+		return fmt.Errorf("inspect worktree before removal: %w", statErr)
+	}
 	cmd := exec.CommandContext(ctx, "git", "-C", source, "worktree", "remove", "--force", dir)
 	if out, err := cmd.CombinedOutput(); err != nil {
+		if _, statErr := os.Stat(dir); os.IsNotExist(statErr) {
+			_ = os.Remove(marker)
+			_ = os.Remove(journalPath(dir))
+			return nil
+		}
 		return fmt.Errorf("remove worktree: %w: %s", err, out)
 	}
 	if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {

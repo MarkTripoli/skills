@@ -25,6 +25,42 @@ var ensureGateHooksPathIsolation = git.EnsureHooksPathIsolation
 
 var sweepRunWorktrees = procreap.SweepRunWorktrees
 
+type gateSnapshot struct {
+	files   map[string][]byte
+	missing map[string]bool
+}
+
+func snapshotGate(dir string) gateSnapshot {
+	s := gateSnapshot{files: map[string][]byte{}, missing: map[string]bool{}}
+	paths := []string{filepath.Join(dir, "config")}
+	if entries, err := os.ReadDir(filepath.Join(dir, "hooks")); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				paths = append(paths, filepath.Join(dir, "hooks", entry.Name()))
+			}
+		}
+	}
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if err == nil {
+			s.files[path] = raw
+		} else if os.IsNotExist(err) {
+			s.missing[path] = true
+		}
+	}
+	return s
+}
+
+func (s gateSnapshot) restore() {
+	for path := range s.missing {
+		_ = os.Remove(path)
+	}
+	for path, raw := range s.files {
+		_ = os.MkdirAll(filepath.Dir(path), 0755)
+		_ = os.WriteFile(path, raw, 0600)
+	}
+}
+
 // RemoteName is the name of the git remote that points to the local gate.
 const RemoteName = "safety-dance"
 
@@ -139,10 +175,14 @@ func InitWithFork(ctx context.Context, d *db.DB, p *paths.Paths, workDir, forkUR
 		}
 	}
 	// Provision (or repair) the on-disk gate. This is idempotent.
+	gateBefore := snapshotGate(bareDir)
 	if err := provisionGate(ctx, bareDir, absRoot, upstreamURL, p.ReposDir(), existing != nil); err != nil {
 		if existing == nil {
 			restoreRemote()
 			_ = os.RemoveAll(bareDir)
+		} else {
+			gateBefore.restore()
+			restoreRemote()
 		}
 		return nil, false, err
 	}
@@ -157,6 +197,8 @@ func InitWithFork(ctx context.Context, d *db.DB, p *paths.Paths, workDir, forkUR
 			repo, err = d.UpdateRepoMetadata(existing.ID, redactedUpstreamURL, branch)
 		}
 		if err != nil {
+			gateBefore.restore()
+			restoreRemote()
 			return nil, false, fmt.Errorf("update repo metadata: %w", err)
 		}
 		slog.Info("gate refreshed", "repo_id", repo.ID, "path", absRoot)

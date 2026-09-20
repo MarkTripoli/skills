@@ -444,6 +444,20 @@ func (d *DB) GetActiveRun(repoID, branch string) (*Run, error) {
 	return r, nil
 }
 
+// GetLatestRun returns the newest run, including terminal outcomes, for a
+// repository branch.
+func (d *DB) GetLatestRun(repoID, branch string) (*Run, error) {
+	r := &Run{}
+	err := scanRun(d.sql.QueryRow(`SELECT `+runColumns+` FROM runs WHERE repo_id = ? AND branch = ? ORDER BY created_at DESC, id DESC LIMIT 1`, repoID, branch), r)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get latest run: %w", err)
+	}
+	return r, nil
+}
+
 // GetActiveRuns returns all pending or running runs across all repos, newest first.
 func (d *DB) GetActiveRuns() ([]*Run, error) {
 	rows, err := d.sql.Query(

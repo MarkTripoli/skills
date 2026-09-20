@@ -133,9 +133,12 @@ func managedHookPeer(pid int, gate string) bool {
 		if err != nil {
 			return false
 		}
-		// The marker is supplied by the hook and is therefore caller-controlled.
-		// Only process metadata can establish that this request descended from
-		// the installed hook and Git's receive process.
+		if strings.Contains(command, "SD_MANAGED_HOOK=") {
+			return false
+		}
+		if env, envErr := processEnvironmentFunc(pid); envErr == nil && strings.Contains(string(env), "SD_MANAGED_HOOK=") {
+			return false
+		}
 		if commandHasExecutable(command, expected) {
 			managedHook = true
 		}
@@ -150,6 +153,7 @@ func managedHookPeer(pid int, gate string) bool {
 // processInfoFunc is a test seam for deterministic ancestry cases. Production
 // authorization always uses the platform process table implementation.
 var processInfoFunc = processInfo
+var processEnvironmentFunc = processEnvironment
 
 func commandHasExecutable(command string, expected map[string]bool) bool {
 	for _, field := range strings.Fields(command) {

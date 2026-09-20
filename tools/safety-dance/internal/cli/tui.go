@@ -53,7 +53,13 @@ func renderTUI(cmd *cobra.Command, args []string) error {
 			return tui.Model{}, err
 		}
 		if run == nil {
-			return tui.Model{Status: types.RunCompleted}, nil
+			run, err = database.GetLatestRun(repo.ID, branch)
+			if err != nil {
+				return tui.Model{}, err
+			}
+			if run == nil {
+				return tui.Model{}, nil
+			}
 		}
 		m := tui.Model{RunID: run.ID, Branch: run.Branch, Status: run.Status}
 		if run.Error != nil {
