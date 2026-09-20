@@ -3,8 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { evidencePathProblems, inspectEvidenceTrace, isEvidenceScenario } from "../evals/iterate-evidence.mjs";
+import { evidencePathProblems, inspectEvidenceTrace, isEvidenceScenario, viewerTemporaryProof, reviewProblems } from "../evals/iterate-evidence.mjs";
 import { viewerToolDenial } from "../evals/iterate-evidence-hooks.mjs";
+import { createHash } from "node:crypto";
+import primaryScenario from "../evals/scenarios/iterate-evidence.mjs";
 
 const task = ".agents/tasks/counter-evidence";
 const base = { files: { "app.js": { sha256: "faulty" }, "spec.md": { sha256: "expectation" }, [`${task}/task.md`]: { sha256: "request" } } };
@@ -102,4 +104,120 @@ test("a denied media opening remains linked to its read call, not inferred from 
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("viewer ownership requires internal allocation, matching pixels and bounded read lifetime", () => {
+  const name = "omp-video-frame-abc123/frame.png";
+  const allocation = { output: name, cwd: "/fixture", command: ["/usr/bin/ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", "2.2", "-i", "/fixture/evidence/raw.webm", "-frames:v", "1", name], code: 0, sha256: "pixels", stack: "Error: viewer process\n    at observer (hooks.mjs:1:1)\n    at reader (/$bunfs/root/omp-darwin-arm64:100:22)", calls: [{ id: "view", name: "read" }] };
+  const trace = { tools: [{ id: "view", name: "read", arguments: { path: "evidence/raw.webm:2.2s" } }], images: [{ toolCallId: "view", sha256: "pixels", isError: false }] };
+  const snapshots = [
+    { sequence: 1, boundary: "tool_execution_start", toolCallId: "view", toolName: "read", files: base.files },
+    { sequence: 2, boundary: "tool_execution_end", toolCallId: "other-read", toolName: "read", files: { ...base.files, [name]: { sha256: "pixels" } } },
+    { sequence: 3, boundary: "tool_execution_end", toolCallId: "view", toolName: "read", files: base.files },
+  ];
+  const check = (allocations = [allocation], selectedTrace = trace, states = snapshots, final = base) =>
+    evidencePathProblems(base, states, [], task, viewerTemporaryProof(allocations, selectedTrace, states, base, final));
+  assert.deepEqual(check(), []);
+  assert.ok(check([]).some((problem) => problem.includes(name)));
+  assert.ok(check([{ ...allocation, stack: "at arbitraryWrite" }]).length);
+  assert.ok(check([{ ...allocation, calls: [{ id: "writer", name: "bash" }] }]).length);
+  assert.ok(check([allocation], { ...trace, images: [{ ...trace.images[0], sha256: "different" }] }).length);
+  assert.ok(check([allocation], { ...trace, images: [{ ...trace.images[0], isError: true }] }).length);
+  assert.ok(check([allocation], trace, snapshots, snapshots[1]).length);
+  const writer = { sequence: 0, boundary: "tool_execution_start", toolCallId: "writer", toolName: "write", files: base.files };
+  assert.ok(check([allocation], trace, [writer, ...snapshots]).length);
+  const unrelated = snapshots.map((snapshot) => snapshot.sequence === 2 ? { ...snapshot, files: { ...snapshot.files, "omp-video-frame-unknown/frame.png": { sha256: "pixels" } } } : snapshot);
+  assert.ok(check([allocation], trace, unrelated).some((problem) => problem.includes("unknown")));
+  const proven = viewerTemporaryProof([allocation], trace, snapshots, base, base);
+  assert.ok(evidencePathProblems(base, snapshots, [{ sha: "bad", subject: "chore: retain viewer output", paths: [name] }], task, proven).some((problem) => problem.includes("committed")));
+});
+
+test("primary inspection rejects image substitution and unconsumed or completed reservations", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "evidence-primary-"));
+  const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
+  const put = (relative, bytes) => {
+    const file = path.join(dir, relative);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, bytes);
+    return hash(bytes);
+  };
+  try {
+    const original = { files: { "app.js": { sha256: hash("faulty") }, "check.mjs": { sha256: "weak" } } };
+    const repaired = { files: { "app.js": { sha256: hash("fixed") }, "check.mjs": { sha256: "strong" } } };
+    const receiptText = "---\ntype: evidence-iteration\n---\nFinal";
+    const receipt = "task/01-evidence-iteration-counter.md";
+    const final = { receipt, receiptSha256: put(receipt, receiptText), requiredCoveragePassed: true, findingsResolved: true, unchangedExpectations: true, historyPreserved: true, mutationToolsReviewed: true, notes: "Reviewed histories" };
+    const trace = { tools: [], images: [] };
+    const snapshots = [];
+    const observations = [];
+    let line = 0;
+    for (const phase of ["baseline", "repaired"]) {
+      const session = `task/evidence/${phase}`;
+      const source = phase === "baseline" ? "faulty" : "fixed";
+      const media = `${session}/raw.webm`;
+      const mediaSha256 = put(media, `${phase} video`);
+      put(`${session}/served-app.js`, source);
+      put(`${session}/manifest.json`, "{}");
+      put(`${session}/capture.json`, JSON.stringify({ video: "raw.webm", videoSha256: mediaSha256, servedScript: "served-app.js", servedSha256: hash(source), startedAt: phase === "baseline" ? 1 : 10, finishedAt: phase === "baseline" ? 5 : 15 }));
+      for (const [flow, observedCount, timestamp] of [["initial", 0, 0.5], ["increment", phase === "baseline" ? 2 : 1, 2], ...(phase === "repaired" ? [["reset", 0, 4]] : [])]) {
+        line += 1;
+        const frame = `${session}/${flow}.png`;
+        const frameSha256 = put(frame, `${phase} ${flow} pixels`);
+        trace.tools.push({ id: String(line), arguments: { path: frame.slice("task/".length) } });
+        trace.images.push({ line, toolCallId: String(line), sha256: frameSha256 });
+        snapshots.push({ sequence: phase === "baseline" ? line : line + 10, boundary: "tool_execution_end", toolCallId: String(line), state: phase === "baseline" ? original : repaired });
+        observations.push({ flow: `${phase}-${flow}`, capture: `${session}/capture.json`, media, mediaSha256, frame, frameSha256, timestamp, observedCount, subjectTraceLine: line, notes: "Opened recorded pixels" });
+      }
+    }
+    const reservationText = "---\nstatus: in-progress\nconsumed_rounds: 1\nlimit: 3\n---\n### Round 1\nReservation persisted; IE-001; repair pending.";
+    const reserve = (text) => {
+      const sha = hash(text);
+      put(`blobs/${sha}`, text);
+      return { path: "snapshots/reserved.json", sequence: 3, state: { files: { ...original.files, [`${task}/01-evidence-iteration-counter.md`]: { sha256: sha } } } };
+    };
+    snapshots.splice(2, 0, reserve(reservationText));
+    const review = { reviewer: "test reviewer", inspectedAt: "2026-09-20T00:00:00Z", observations, reservation: { snapshot: "snapshots/reserved.json", findingId: "IE-001", round: 1, notes: "Persisted before mutation" }, final };
+    const check = () => reviewProblems(dir, review, trace, snapshots, original, repaired, task);
+    assert.deepEqual(check(), []);
+    const increment = observations[1];
+    const originalSample = { ...increment };
+    increment.media = "task/evidence/baseline/evidence.mp4";
+    increment.mediaSha256 = put(increment.media, "rendered baseline");
+    increment.timestamp = 6;
+    const manifest = { source: "external", video: `${task}/evidence/baseline/evidence.mp4`, render: { layout: "overlay" }, raw: { duration: 5 }, timing: { card_seconds: 4, tail_hold: 0 } };
+    put("task/evidence/baseline/manifest.json", JSON.stringify(manifest));
+    assert.deepEqual(check(), []);
+    observations[0].timestamp = 2.5;
+    assert.ok(check().some((problem) => problem.includes("initial zero must precede")));
+    observations[0].timestamp = 0.5;
+    manifest.timing.tail_hold = 1;
+    put("task/evidence/baseline/manifest.json", JSON.stringify(manifest));
+    assert.ok(check().some((problem) => problem.includes("unheld")));
+    Object.assign(increment, originalSample);
+    put("task/evidence/baseline/manifest.json", "{}");
+    trace.images[1].sha256 = "substituted";
+    assert.ok(check().some((problem) => problem.includes("subject image")));
+    trace.images[1].sha256 = observations[1].frameSha256;
+    for (const invalid of [
+      reservationText.replace("consumed_rounds: 1", "consumed_rounds: 0"),
+      reservationText.replace("status: in-progress", "status: passed"),
+      reservationText.replace("limit: 3", "limit: 4"),
+      reservationText.replace("repair pending", "repair completed"),
+    ]) {
+      snapshots[2] = reserve(invalid);
+      assert.ok(check().some((problem) => problem.includes("consumed round")));
+    }
+    snapshots[2] = reserve(reservationText);
+    review.observations = observations.filter((item) => item.flow !== "repaired-initial");
+    assert.ok(check().some((problem) => problem.includes("repaired-initial")));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("primary scenario rejects an altered default allowance", () => {
+  const artifact = { fm: { type: "evidence-iteration", limit: "3" } };
+  assert.deepEqual(primaryScenario.phases[0].check({ artifact }), []);
+  artifact.fm.limit = "4";
+  assert.ok(primaryScenario.phases[0].check({ artifact }).length);
 });

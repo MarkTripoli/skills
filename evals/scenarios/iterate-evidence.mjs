@@ -8,6 +8,9 @@ export default {
     skill: "iterate-evidence",
     artifactType: "evidence-iteration",
     template: "evidence_iteration_template.md",
-    check: ({ artifact }) => artifact?.fm.type === "evidence-iteration" ? [] : ["primary: evidence-iteration receipt missing"],
+    check: ({ artifact }) => [
+      ...(artifact?.fm.type === "evidence-iteration" ? [] : ["primary: evidence-iteration receipt missing"]),
+      ...(artifact?.fm.limit === "3" ? [] : ["primary: default allowance must be exactly 3"]),
+    ],
   }],
 };

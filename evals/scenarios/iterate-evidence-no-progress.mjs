@@ -1,4 +1,5 @@
 import { failures, section } from "../lib.mjs";
+import { counterFlowCoverage } from "../evidence-flows.mjs";
 
 export default {
   slug: "counter-no-progress",
@@ -16,9 +17,7 @@ export default {
         .filter((line) => /^\s*\|/.test(line))
         .map((line) => line.trim().slice(1, -1).split("|").map((cell) => cell.replace(/[`*_]/g, "").trim()))
         .filter((cells) => /^IE-\d{3,}$/.test(cells[0]));
-      const coverage = (section(text, "## Final coverage") ?? "").split("\n")
-        .filter((line) => /^\s*\|/.test(line))
-        .map((line) => line.trim().slice(1, -1).split("|").map((cell) => cell.replace(/[`*_]/g, "").trim()));
+      const coverage = counterFlowCoverage(text);
       return failures(
         artifact?.fm?.type === "evidence-iteration" ? null : "no-progress: evidence-iteration receipt missing",
         artifact?.fm?.status === "failed" ? null : "no-progress: inspected defect must leave the receipt failed",
@@ -29,9 +28,9 @@ export default {
           ? null : "no-progress: original finding IE-001 must remain open after fresh inspection",
         findings.every((cells) => !cells.some((cell) => cell.toLowerCase() === "resolved"))
           ? null : "no-progress: ineffective repair must not resolve a finding",
-        coverage.some((cells) => cells.length === 7 && cells[5]?.toLowerCase() === "failed")
+        coverage.increment
           ? null : "no-progress: increment coverage must remain failed",
-        coverage.some((cells) => cells.length === 7 && cells[5]?.toLowerCase() === "passed")
+        coverage.reset
           ? null : "no-progress: Reset requires its own inspected passing coverage",
       );
     },

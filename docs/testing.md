@@ -81,9 +81,13 @@ npm run evals -- iterate-evidence --keep --max-time 25
 npm run evals -- iterate-evidence --grade evals/results/latest
 ```
 
-The primary case requires an agent-authored repair and strengthened check, including failure against preserved defective source and success against repaired source. Independent recorded-pixel review must observe baseline `2`, repaired increment `1`, and Reset `0`. Save exact media hashes, sample timestamps, observations, and subject trace references in the retained review. Automated evidence retention alone leaves inspection pending; missing review cannot pass saved regrading.
+The primary case requires an agent-authored repair and strengthened check, including failure against preserved defective source and success against repaired source. Independent recorded-pixel review must observe baseline initial `0` then increment `2`, repaired initial `0` then increment `1`, and Reset `0`. Bind each initial/increment pair to one recording; normalize raw/overlay coordinates using the retained manifest's title-card duration, excluding cards and held tails. The fixed capture waits for a real post-navigation screencast frame before clicking; a screenshot flushes paint but does not substitute for video. A missing frame fails after a bounded wait, without retrying or manufacturing footage.
 
 The live command exits `1` while independent review is pending. Open the retained frames yourself, write `iterate-evidence/1-iterate-evidence/review.json` using its `review-schema.json`, then run saved grading. The review binds observed pixels to media/frame hashes, subject trace entries, pre-edit receipt history, and final coverage; it is not generated from labels or receipt prose.
+
+Primary grading checks returned image bytes, or separately inspected and hash-bound transformed payloads, rather than accepting a matching path alone. Its pre-mutation receipt must persist `in-progress`, consumed round `1`, default limit `3`, the inspected finding, and pending repair. A final receipt with a different default limit fails. The disagreement, zero-limit, and no-progress predicates require failed Increment and passed Reset; stable IDs acquire meaning only from their own receipt's target/action mapping.
+
+OMP 18.1.22's video reader creates relative temporary frame directories. The observer records its actual ffmpeg invocation, runtime call stack, active reads, exit, and output hash. A transient frame is attributed only when that process matches the video/second-selector read, its output equals the returned image bytes, it disappears before the read ends, and no writer overlaps. Unknown files, unmatched bytes, persistent files, and committed viewer output remain forbidden. This narrow provenance check is not a filename-prefix exception or an operating-system sandbox; unsupported viewer shapes fail closed.
 
 Phase 2 uses the same helper for real viewing denial and misleading recorder labels:
 

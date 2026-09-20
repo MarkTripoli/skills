@@ -1,4 +1,5 @@
-import { failures, section } from "../lib.mjs";
+import { failures } from "../lib.mjs";
+import { counterFlowCoverage } from "../evidence-flows.mjs";
 
 export default {
   slug: "counter-recording-review",
@@ -11,18 +12,16 @@ export default {
     artifactType: "evidence-iteration",
     template: "evidence_iteration_template.md",
     check: ({ artifact }) => {
-      const rows = (section(artifact?.text ?? "", "## Final coverage") ?? "").split("\n")
-        .filter((line) => /^\s*\|/.test(line))
-        .map((line) => line.trim().slice(1, -1).split("|").map((cell) => cell.replace(/[`*_]/g, "").trim()));
+      const coverage = counterFlowCoverage(artifact?.text ?? "");
       return failures(
         artifact?.fm?.type === "evidence-iteration" ? null : "label-disagreement: evidence-iteration receipt missing",
         artifact?.fm?.status === "failed" ? null : "label-disagreement: inspected defect must leave the receipt failed",
         artifact?.fm?.stop_reason === "exhaustion" ? null : "label-disagreement: zero repair allowance must stop at exhaustion",
         artifact?.fm?.limit === "0" ? null : "label-disagreement: receipt must retain the explicit zero limit",
         artifact?.fm?.consumed_rounds === "0" ? null : "label-disagreement: inspection must consume no repair round",
-        rows.some((cells) => cells.length === 7 && cells[5]?.toLowerCase() === "failed")
+        coverage.increment
           ? null : "label-disagreement: increment coverage must remain failed",
-        rows.some((cells) => cells.length === 7 && cells[5]?.toLowerCase() === "passed")
+        coverage.reset
           ? null : "label-disagreement: Reset requires its own inspected passing coverage",
       );
     },

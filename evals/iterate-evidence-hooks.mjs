@@ -1,7 +1,43 @@
 // Observe every tool boundary; the viewer fault has a finite, evaluator-owned denial policy.
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { evidenceSnapshot } from "./iterate-evidence.mjs";
+
+// Observe the reader's actual ffmpeg process and bytes, not a filename exemption.
+// OMP 18.1.22 uses a relative TempDir prefix, so these files can appear in cwd.
+function observeViewerTemps(pi, config, observeProcess) {
+  const active = new Map();
+  const original = Bun.spawn;
+  const pending = new Set();
+  Bun.spawn = function (...args) {
+    const command = Array.isArray(args[0]) ? args[0] : args[0]?.cmd;
+    const stack = new Error("viewer process").stack;
+    const calls = [...active.values()];
+    const child = original.apply(this, args);
+    if (Array.isArray(command) && path.basename(String(command[0])) === "ffmpeg") {
+      const output = path.resolve(config.repo, command.at(-1));
+      const record = { output: path.relative(config.repo, output), cwd: config.repo, command, stack, calls, pid: child.pid, at: new Date().toISOString() };
+      const operation = child.exited.then((code) => {
+        record.code = code;
+        if (code === 0 && fs.existsSync(output)) record.sha256 = createHash("sha256").update(fs.readFileSync(output)).digest("hex");
+        fs.appendFileSync(path.join(config.out, "viewer-temporaries.jsonl"), `${JSON.stringify(record)}\n`);
+        // Snapshot while the real output still exists, before the reader's
+        // cleanup. Do not depend on a concurrent tool happening to catch it.
+        observeProcess({ toolName: "read", input: { viewerProcess: record } });
+      });
+      pending.add(operation);
+      operation.finally(() => pending.delete(operation)).catch(() => {});
+    }
+    return child;
+  };
+  pi.on("tool_execution_start", (event) => active.set(event.toolCallId, { id: event.toolCallId, name: event.toolName }));
+  pi.on("tool_execution_end", (event) => active.delete(event.toolCallId));
+  pi.on("session_shutdown", async () => {
+    await Promise.allSettled(pending);
+    Bun.spawn = original;
+  });
+}
 
 export function viewerToolDenial(config, event) {
   if (!config.blocked) return null;
@@ -17,6 +53,7 @@ export default function (pi) {
   const configPath = process.env.ITERATE_EVIDENCE_OBSERVER;
   if (!configPath) throw new Error("ITERATE_EVIDENCE_OBSERVER must name the evaluator-owned configuration");
   const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  observeViewerTemps(pi, config, (event) => observe("viewer_process_end", event));
   let sequence = 0;
   const observe = (boundary, event = {}) => {
     const snapshot = evidenceSnapshot(config, { sequence: ++sequence, boundary, toolCallId: event.toolCallId ?? null, toolName: event.toolName ?? null, input: event.input ?? null });

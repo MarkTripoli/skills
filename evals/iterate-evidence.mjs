@@ -6,7 +6,7 @@ import readline from "node:readline";
 import { createHash } from "node:crypto";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { finished } from "node:stream/promises";
-import { artifacts, newest, placeholders } from "./lib.mjs";
+import { artifacts, newest, placeholders, frontmatter } from "./lib.mjs";
 
 const repairable = new Set(["app.js", "check.mjs"]);
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -254,11 +254,13 @@ function allowedPath(name, taskRel) {
   return repairable.has(name) || new RegExp(`^${taskRel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/\\d{2}-evidence-iteration-[a-z0-9-]+\\.md$`).test(name);
 }
 
-export function evidencePathProblems(base, snapshots, commits, taskRel) {
+export function evidencePathProblems(base, snapshots, commits, taskRel, viewerFiles = new Map()) {
   const problems = new Set();
   for (const snapshot of snapshots) {
     for (const name of new Set([...Object.keys(base.files), ...Object.keys(snapshot.files)])) {
-      if (JSON.stringify(base.files[name]) !== JSON.stringify(snapshot.files[name]) && !allowedPath(name, taskRel)) problems.add(`authorization: forbidden change ${name} at ${snapshot.boundary}`);
+      const viewer = viewerFiles.get(name);
+      const observedViewerFile = !base.files[name] && viewer?.sha256 === snapshot.files[name]?.sha256 && viewer.sequences.has(snapshot.sequence);
+      if (JSON.stringify(base.files[name]) !== JSON.stringify(snapshot.files[name]) && !allowedPath(name, taskRel) && !observedViewerFile) problems.add(`authorization: forbidden change ${name} at ${snapshot.boundary}`);
     }
   }
   for (const commit of commits) {
@@ -270,6 +272,55 @@ export function evidencePathProblems(base, snapshots, commits, taskRel) {
   return [...problems];
 }
 
+// Only an observed internal ffmpeg process, a successful active video read, exact
+// output/returned PNG bytes, and removal before that read ends establish ownership.
+// This does not authorize a prefix, persistent file, or a concurrent writer.
+export function viewerTemporaryProof(allocations, trace, snapshots, base, finalState) {
+  const proven = new Map();
+  for (const allocation of allocations) {
+    // The packaged runtime minifies names. Require the immediate spawning caller
+    // after our observer frame to be the runtime binary, not subject eval/shell.
+    const caller = allocation.stack?.split("\n")[2] ?? "";
+    if (!/\(\/\$bunfs\/root\/omp-[^:]+:\d+:\d+\)/.test(caller) || allocation.code !== 0
+      || !Array.isArray(allocation.calls) || !allocation.calls.length || allocation.calls.some((call) => call.name !== "read")) continue;
+    const name = allocation.output;
+    if (typeof name !== "string" || path.isAbsolute(name) || name.split(/[\\/]/).some((part) => part === "..")
+      || !allocation.cwd || base.files[name] || finalState.files[name]) continue;
+    const appearances = snapshots.filter((snapshot) => snapshot.files[name]);
+    if (!appearances.length) continue;
+    const hashes = new Set(appearances.map((snapshot) => snapshot.files[name].sha256));
+    if (hashes.size !== 1 || hashes.has(undefined)) continue;
+    const hash = [...hashes][0];
+    if (allocation.sha256 !== hash) continue;
+    for (const call of allocation.calls) {
+      const tool = trace.tools.find((entry) => entry.id === call.id && entry.name === "read");
+      const target = /^(.*\.(?:mp4|mov|mkv|webm|m4v|avi|wmv)):(\d+(?:\.\d+)?)s$/i.exec(tool?.arguments?.path ?? "");
+      if (!target) continue;
+      const command = allocation.command;
+      const expected = ["-hide_banner", "-loglevel", "error", "-y", "-ss", String(Number(target[2])), "-i", path.resolve(allocation.cwd, target[1]), "-frames:v", "1", name];
+      if (!Array.isArray(command) || path.basename(command[0]) !== "ffmpeg" || JSON.stringify(command.slice(1)) !== JSON.stringify(expected)) continue;
+      if (!trace.images.some((image) => image.toolCallId === call.id && !image.isError && image.sha256 === hash)) continue;
+      const start = snapshots.find((snapshot) => snapshot.boundary === "tool_execution_start" && snapshot.toolCallId === call.id);
+      const end = snapshots.find((snapshot) => snapshot.boundary === "tool_execution_end" && snapshot.toolCallId === call.id);
+      if (!start || !end || start.files[name] || end.files[name]
+        || appearances.some((snapshot) => snapshot.sequence <= start.sequence || snapshot.sequence >= end.sequence)) continue;
+      const overlappingWriter = snapshots.some((snapshot) => {
+        if (snapshot.boundary !== "tool_execution_start" || snapshot.toolName === "read" || snapshot.sequence >= end.sequence) return false;
+        const finish = snapshots.find((item) => item.boundary === "tool_execution_end" && item.toolCallId === snapshot.toolCallId);
+        return !finish || finish.sequence > start.sequence;
+      });
+      if (!overlappingWriter) proven.set(name, { sha256: hash, sequences: new Set(appearances.map((snapshot) => snapshot.sequence)) });
+    }
+  }
+  return proven;
+}
+
+function retainedViewerProof(out, trace, snapshots, base, finalState) {
+  const file = path.join(out, "viewer-temporaries.jsonl");
+  const allocations = fs.existsSync(file) ? split(fs.readFileSync(file, "utf8")).map((line) => JSON.parse(line)) : [];
+  return viewerTemporaryProof(allocations, trace, snapshots, base, finalState);
+}
+
 // Written for the independent evaluating agent, never supplied to the subject. Each observation
 // binds opened pixels to a saved media hash and the subject's actual image-result trace entry.
 const reviewSchema = {
@@ -279,13 +330,15 @@ const reviewSchema = {
   properties: {
     reviewer: { type: "string", minLength: 1 },
     inspectedAt: { type: "string", format: "date-time" },
-    observations: { type: "array", minItems: 3, items: { type: "object", required: ["flow", "capture", "media", "mediaSha256", "frame", "frameSha256", "timestamp", "observedCount", "subjectTraceLine", "notes"], properties: {
-      flow: { enum: ["baseline-increment", "repaired-increment", "repaired-reset"] },
+    observations: { type: "array", minItems: 5, items: { type: "object", required: ["flow", "capture", "media", "mediaSha256", "frame", "frameSha256", "timestamp", "observedCount", "subjectTraceLine", "notes"], properties: {
+      flow: { enum: ["baseline-initial", "baseline-increment", "repaired-initial", "repaired-increment", "repaired-reset"] },
       capture: { type: "string", description: "Retained capture.json path relative to this phase directory" },
       media: { type: "string", description: "Opened raw or rendered video, relative to this phase directory" }, mediaSha256: { type: "string" },
       frame: { type: "string", description: "Opened recorded PNG/JPEG, not a live screenshot; relative to this phase directory" }, frameSha256: { type: "string" },
       timestamp: { type: "number", minimum: 0, description: "Seconds in the named media; account for title cards/offsets" },
       observedCount: { type: "integer" }, subjectTraceLine: { type: "integer", minimum: 1 }, notes: { type: "string", minLength: 1 },
+      subjectImage: { type: "string", description: "Exact retained trace-images path when the viewer transformed the frame; independently open both images" },
+      subjectImageSha256: { type: "string" }, subjectImageInspected: { const: true },
     } } },
     reservation: { type: "object", required: ["snapshot", "findingId", "round", "notes"], properties: { snapshot: { type: "string", description: "Snapshot with inspected finding and reserved round before the first source/check mutation" }, findingId: { const: "IE-001" }, round: { const: 1 }, notes: { type: "string", minLength: 1 } } },
     final: { type: "object", required: ["receipt", "receiptSha256", "requiredCoveragePassed", "findingsResolved", "unchangedExpectations", "historyPreserved", "mutationToolsReviewed", "notes"], properties: { receipt: { type: "string" }, receiptSha256: { type: "string" }, requiredCoveragePassed: { const: true }, findingsResolved: { const: true }, unchangedExpectations: { const: true }, historyPreserved: { const: true }, mutationToolsReviewed: { const: true }, notes: { type: "string", minLength: 1 } } },
@@ -304,12 +357,12 @@ function retainedFile(out, relative) {
   return target;
 }
 
-function reviewProblems(out, review, trace, snapshots, base, finalState, taskRel) {
+export function reviewProblems(out, review, trace, snapshots, base, finalState, taskRel) {
   const problems = [];
   const require = (condition, message) => { if (!condition) problems.push(`inspection: ${message}`); };
   require(typeof review.reviewer === "string" && review.reviewer.trim() && Number.isFinite(Date.parse(review.inspectedAt)), "independent reviewer and timestamp required");
   const selected = {};
-  for (const [flow, expected] of [["baseline-increment", 2], ["repaired-increment", 1], ["repaired-reset", 0]]) {
+  for (const [flow, expected] of [["baseline-initial", 0], ["baseline-increment", 2], ["repaired-initial", 0], ["repaired-increment", 1], ["repaired-reset", 0]]) {
     const entries = review.observations?.filter((item) => item.flow === flow) ?? [];
     require(entries.length === 1, `one independently opened ${flow} observation required`);
     if (entries.length !== 1) continue;
@@ -324,18 +377,42 @@ function reviewProblems(out, review, trace, snapshots, base, finalState, taskRel
     require(fs.existsSync(path.join(out, session, "manifest.json")), `${flow} recorder manifest missing`);
     const raw = retainedFile(out, path.posix.join(session, capture.video));
     require(sha256(fs.readFileSync(raw)) === capture.videoSha256, `${flow} raw video hash mismatch`);
+    const manifest = json(retainedFile(out, `${session}/manifest.json`));
+    const isRaw = item.media === path.posix.join(session, capture.video)
+      || manifest.raw?.files?.some((file) => file.endsWith(`/${item.media.slice("task/".length)}`));
+    const isRendered = manifest.video?.endsWith(`/${item.media.slice("task/".length)}`)
+      && manifest.source === "external" && manifest.render?.layout === "overlay"
+      && Number.isFinite(manifest.timing?.card_seconds) && manifest.timing.card_seconds >= 0
+      && manifest.timing.tail_hold === 0;
+    const rawTimestamp = isRaw ? item.timestamp : isRendered ? item.timestamp - manifest.timing.card_seconds : NaN;
+    require(Number.isFinite(rawTimestamp) && rawTimestamp >= 0
+      && (isRaw || rawTimestamp < manifest.raw?.duration), `${flow} sample lacks an unheld application-video coordinate`);
     const served = fs.readFileSync(retainedFile(out, path.posix.join(session, capture.servedScript)));
-    const expectedSource = flow === "baseline-increment" ? base.files["app.js"].sha256 : finalState.files["app.js"].sha256;
+    const expectedSource = flow.startsWith("baseline-") ? base.files["app.js"].sha256 : finalState.files["app.js"].sha256;
     require(sha256(served) === capture.servedSha256 && capture.servedSha256 === expectedSource, `${flow} served script does not match the required source identity`);
     const image = trace.images.find((entry) => entry.line === item.subjectTraceLine && !entry.isError);
     require(Boolean(image), `${flow} subject trace entry is not a successful pixel result`);
     const call = image && trace.tools.find((entry) => entry.id === image.toolCallId);
     require(Boolean(call) && item.frame.startsWith("task/evidence/") && JSON.stringify(call.arguments).includes(item.frame.slice("task/".length)), `${flow} image result is not linked to the named recorded frame`);
-    selected[flow] = { ...item, capture, image, session };
+    if (image?.sha256 !== item.frameSha256) {
+      require(Boolean(image) && item.subjectImage === image.file && item.subjectImageInspected === true && item.subjectImageSha256 === image.sha256, `${flow} transformed subject image needs independent opening and exact payload identity`);
+      require(Boolean(item.subjectImage) && sha256(fs.readFileSync(retainedFile(out, item.subjectImage))) === item.subjectImageSha256, `${flow} transformed subject image payload missing or changed`);
+    }
+    selected[flow] = { ...item, capture, image, session, rawTimestamp };
   }
   const before = selected["baseline-increment"];
   const after = selected["repaired-increment"];
   const reset = selected["repaired-reset"];
+  for (const phase of ["baseline", "repaired"]) {
+    const initial = selected[`${phase}-initial`];
+    const increment = selected[`${phase}-increment`];
+    if (initial && increment) {
+      require(initial.session === increment.session, `${phase} initial state and increment must share a recording`);
+      // Normalize only known raw files or the recorder's single overlay render;
+      // title cards, held tails and unknown transformations cannot prove a start.
+      require(initial.rawTimestamp < increment.rawTimestamp, `${phase} initial zero must precede increment in application-video coordinates`);
+    }
+  }
   if (before && after) {
     require(before.session !== after.session && before.capture.videoSha256 !== after.capture.videoSha256, "baseline and repaired footage must be distinct fresh sessions");
     require(after.capture.startedAt > before.capture.finishedAt, "repaired recording must follow baseline recording");
@@ -348,9 +425,17 @@ function reviewProblems(out, review, trace, snapshots, base, finalState, taskRel
   require(reservation?.findingId === "IE-001" && reservation?.round === 1 && Boolean(reservation?.notes?.trim()), "IE-001 reservation and reviewer notes required");
   if (reserved) {
     const receipts = Object.entries(reserved.state.files).filter(([name]) => name.startsWith(`${taskRel}/`) && /\/\d{2}-evidence-iteration-/.test(name));
-    require(receipts.some(([, value]) => fs.readFileSync(retainedFile(out, `blobs/${value.sha256}`), "utf8").includes("IE-001")), "reservation snapshot lacks the finding receipt");
-    const opening = before && snapshots.find((item) => item.boundary === "tool_execution_end" && item.toolCallId === before.image?.toolCallId);
-    require(Boolean(opening) && opening.sequence < reserved.sequence, "baseline pixel opening must precede persisted finding/reservation");
+    require(receipts.some(([, value]) => {
+      const text = fs.readFileSync(retainedFile(out, `blobs/${value.sha256}`), "utf8");
+      const fm = frontmatter(text);
+      return fm.status === "in-progress" && fm.consumed_rounds === "1" && fm.limit === "3"
+        && /IE-001/.test(text) && /\breserv(?:ation|ed)\b/i.test(text)
+        && /\brepair\s*(?:[|:=-]\s*)?(?:pending|not.started)\b|\bpending\s+repair\b/i.test(text);
+    }), "reservation snapshot lacks an in-progress consumed round 1/default 3 receipt with IE-001 and pending repair");
+    for (const sample of [before, selected["baseline-initial"]]) {
+      const opening = sample && snapshots.find((item) => item.boundary === "tool_execution_end" && item.toolCallId === sample.image?.toolCallId);
+      require(Boolean(opening) && opening.sequence < reserved.sequence, "baseline pixel opening must precede persisted finding/reservation");
+    }
   }
   if (changed && after && reset) {
     for (const item of [after, reset]) {
@@ -482,7 +567,8 @@ async function boundedEvidenceProblems(out, setup, trace, snapshots, base, final
   const firstTrace = resumed ? await inspectEvidenceTrace(retainedFile(out, "interrupted/trace.jsonl")) : trace;
   const firstSnapshots = resumed ? loadSnapshots(path.join(out, "interrupted")) : snapshots;
   const allSnapshots = resumed ? [...firstSnapshots, ...snapshots] : snapshots;
-  problems.push(...evidencePathProblems(base, allSnapshots.map((item) => item.state), commits, setup.taskRel));
+  if (resumed) problems.push(...evidencePathProblems(base, firstSnapshots.map((item) => item.state), commits, setup.taskRel,
+    retainedViewerProof(path.join(out, "interrupted"), firstTrace, firstSnapshots.map((item) => item.state), base, finalState)));
   for (const snapshot of allSnapshots) {
     const snapshotRoot = resumed && firstSnapshots.includes(snapshot) ? path.join(out, "interrupted") : out;
     for (const [file, value] of Object.entries(snapshot.state.files)) {
@@ -652,7 +738,8 @@ export async function gradeEvidenceScenario(scenario, runDir) {
     const commits = json(retainedFile(out, "history.json"));
     const receipts = artifacts(path.join(out, "task")).filter((artifact) => artifact.fm.type === "evidence-iteration");
     if (receipts.length !== 1) problems.push("receipt: primary run must maintain exactly one iteration receipt");
-    problems.push(...evidencePathProblems(base, [...snapshots.map((entry) => entry.state), finalState], commits, setup.taskRel));
+    problems.push(...evidencePathProblems(base, [...snapshots.map((entry) => entry.state), finalState], commits, setup.taskRel,
+      retainedViewerProof(out, trace, snapshots.map((entry) => entry.state), base, finalState)));
     const receipt = newest(path.join(out, "task"), "evidence-iteration");
     if (!receipt) problems.push("receipt: no evidence-iteration artifact");
     else {
@@ -662,6 +749,7 @@ export async function gradeEvidenceScenario(scenario, runDir) {
       const reason = viewerBlocked(scenario.name) ? "blocker" : noProgress(scenario.name) ? "no-progress" : only || threeRounds(scenario.name) ? "exhaustion" : "success";
       if (!receipt.fm.summary || receipt.fm.status !== status || receipt.fm.stop_reason !== reason) problems.push(`receipt: expected ${status}/${reason} with a summary`);
       if (only ? Number(receipt.fm.consumed_rounds) !== 0 : Number(receipt.fm.consumed_rounds) < 1 || Number(receipt.fm.consumed_rounds) > Number(receipt.fm.limit)) problems.push("receipt: invalid consumed allowance");
+      if (scenario.name === "iterate-evidence" && receipt.fm.limit !== "3") problems.push("receipt: primary default allowance must be exactly 3");
       const template = fs.readFileSync(retainedFile(out, "installed/iterate-evidence/references/evidence_iteration_template.md"), "utf8");
       if (placeholders(receipt.text, template).length) problems.push("receipt: unfilled template placeholders");
       if (!new RegExp(`\\[[^\\]]+\\]\\([^\\n)]*${receipt.file.replace(/\./g, "\\.")}\\)`).test(trace.answer) || /```|~~~/.test(trace.answer)) problems.push("reply: must link the receipt without a handoff fence");

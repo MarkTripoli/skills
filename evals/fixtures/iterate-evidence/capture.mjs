@@ -31,9 +31,32 @@ try {
   const page = await context.newPage();
   fs.writeFileSync(path.join(session, "video-started-at"), String(startedAt));
   const servedResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/app.js");
+  // recordVideo starts asynchronously. Wait for a real frame from this navigation,
+  // not merely a loaded DOM or a fixed delay, before changing the visible state.
+  let navigationStartedAt = Infinity;
+  let resolveInitialFrame;
+  const initialFrame = new Promise((resolve) => { resolveInitialFrame = resolve; });
+  await page.screencast.start({ onFrame: ({ timestamp }) => {
+    if (timestamp >= navigationStartedAt) resolveInitialFrame();
+  } });
+  navigationStartedAt = Date.now();
   await page.goto(url);
   const served = await (await servedResponse).body();
   fs.writeFileSync(path.join(session, "served-app.js"), served);
+  await page.screenshot();
+  let frameTimeout;
+  try {
+    await Promise.race([
+      initialFrame,
+      new Promise((_, reject) => {
+        frameTimeout = setTimeout(() => reject(new Error("No post-navigation video frame before initial interaction")), 10000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(frameTimeout);
+    // This removes only the observation client; recordVideo continues unchanged.
+    await page.screencast.stop();
+  }
   const actions = [];
   const mark = (flow) => actions.push({ flow, wallTime: Date.now() / 1000, videoTime: Date.now() / 1000 - startedAt });
   annotate("--type", "setup", "--message", "Fresh counter page at 1280 by 720");
