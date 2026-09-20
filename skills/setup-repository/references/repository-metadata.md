@@ -28,6 +28,7 @@ The current local schema is version 1 and profile revision 1:
 
 Validate all managed state before constructing a plan or temporary file:
 
+- Before any payload read, inspect `ai-utilities.json` with `lstat`. Continue only when it is absent or a regular non-symlink file. A directory, valid or dangling symlink, FIFO, socket, block device, or character device is a path/type conflict. Do not open or follow the entry, read a target, create a temporary file, or perform an external operation.
 - The top-level JSON value and any present `onboarding` value must be objects, not arrays or null.
 - `schemaVersion` and `appliedRevision` must be present integers in the supported migration table. Report newer schema conflicts as `supported: 1, observed: <version>` in both modes.
 - Current schema 1 at revision 1 requires `profile: "default"`. Supported older rows may omit current defaults because their plan replaces the owned subtree.
@@ -139,6 +140,6 @@ Without unambiguous inference, omit `vcs` and begin with `onboarding`.
 
 Compare parsed documents for semantic equality before serialization. A semantic no-op preserves the exact observed bytes, including indentation, key order, and final newline state.
 
-After a semantic change, serialize exactly once with `JSON.stringify(document, null, 2) + "\n"`. The write target is only `ai-utilities.json` at the Git root. Use a temporary sibling and atomic rename; no validation or planning failure may leave either temporary or final metadata behind when the file was originally absent.
+After a semantic change, serialize exactly once with `JSON.stringify(document, null, 2) + "\n"`. The write target is only `ai-utilities.json` at the Git root. Use a regular temporary sibling and atomic rename. Before rename, apply the existing regular metadata file's permission bits to the temporary file. For first creation, request mode `0600`; where POSIX modes apply, require the result to remain owner-writable and not world-writable after the platform umask. Do not copy ownership or dereference an entry. No validation, planning, permission, or rename failure may leave a temporary sibling or a new final file when metadata was originally absent.
 
 This release performs no provider observation or operation. Existing provider ownership records are not authority to call a provider.

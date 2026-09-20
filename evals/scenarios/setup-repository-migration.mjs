@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { expect, failures } from "../lib.mjs";
 
 const expectedForeignState = {
@@ -43,15 +45,19 @@ export default {
     {
       phaseType: "terminal",
       skill: "setup-repository",
+      prepareFixture: (root) => fs.chmodSync(path.join(root, "ai-utilities.json"), 0o600),
       request: "Run `/setup-repository` in exact `reconcile` mode and migrate supported managed metadata.",
       allowedChangedPaths: ["ai-utilities.json"],
-      check: ({ answer, afterRepository, changedPaths }) => {
+      check: ({ answer, beforeRepository, afterRepository, changedPaths }) => {
         const metadata = parseMetadata(afterRepository);
         const foreignState = metadata
           ? { vcs: metadata.vcs, ticketing: metadata.ticketing, custom: metadata.custom }
           : null;
         return failures(
           expect.includes("repository: only metadata changed", changedPaths.join("\n"), "ai-utilities.json"),
+          beforeRepository["ai-utilities.json"].mode === afterRepository["ai-utilities.json"].mode
+            ? null
+            : "repository: migration changed metadata permissions",
           metadata ? null : "repository: ai-utilities.json missing or invalid",
           JSON.stringify(foreignState) === JSON.stringify(expectedForeignState)
             ? null

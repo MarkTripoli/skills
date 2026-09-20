@@ -40,7 +40,7 @@ Install only the skills you need. A suggested next skill is not a hidden depende
 
 ## Set up repository metadata
 
-Run `/setup-repository` to create or reconcile local `ai-utilities.json` metadata. Run `/setup-repository reset-managed` only when you explicitly want managed local state reset. The skill does not install skills or mutate ticketing, version-control, or other provider resources.
+Run `/setup-repository` or `/setup-repository reconcile` to create or reconcile local `ai-utilities.json` metadata. Run `/setup-repository reset-managed` only when you explicitly want managed local state reset. Setup reads metadata only when `ai-utilities.json` is a regular non-symlink file; directories, links, FIFOs, sockets, and devices fail closed. The skill does not install skills or mutate ticketing, version-control, or other provider resources.
 
 ## Optional Atomic orchestration
 
