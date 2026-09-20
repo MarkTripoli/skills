@@ -17,7 +17,7 @@ export function normalizeHierarchy(xml, identity) {
     const valueAmbiguous = editable && rawValue !== '' && rawValue === (a['content-desc'] || '') && !explicitPlaceholder;
     const operations=[];
     if (editable) operations.push('TYPE_TEXT');
-    else if (a.clickable === 'true' || /(?:Button|CheckBox|RadioButton|Switch|ToggleButton|ImageButton)$/.test(String(a.class || ''))) operations.push('TAP');
+    else if (a.clickable === 'true' || (a.checkable === 'true' && a.enabled === 'true') || /(?:Button|CheckBox|RadioButton|Switch|ToggleButton|ImageButton)$/.test(String(a.class || ''))) operations.push('TAP');
     operations.push('WAIT');
     const value=safeNativeValue(rawValue,element); if (value === undefined) sensitiveValues.push(a.text);
     elements.push({id:`native-${elements.length}`,name:safeNativeName(name,element),value,...(valueAmbiguous ? {valueAmbiguous:true} : {}),role:element.role,editable:element.editable,operations,bounds:parseBounds(a.bounds)});

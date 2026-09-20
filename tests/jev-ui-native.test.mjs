@@ -40,6 +40,13 @@ test('native static labels do not advertise tap actions without interaction meta
   const android=normalizeAndroid('<node class="android.widget.TextView" text="Delivery check-in" enabled="true" bounds="[1,2][101,202]"/>',{id:'emulator-5560',driver:'adb',simulator:true});
   assert.equal(android.elements[0].operations.includes('TAP'),false);
 });
+test('enabled checkable Android controls expose TAP while disabled/static rows do not',()=>{
+  const android=normalizeAndroid('<hierarchy package="ai.typesafe.jevfixture"><node class="android.widget.CheckedTextView" text="Email" checkable="true" clickable="false" enabled="true" bounds="[10,20][210,80]"/><node class="android.widget.CheckedTextView" text="Phone" checkable="true" clickable="false" enabled="false" bounds="[10,90][210,150]"/><node class="android.widget.TextView" text="Static" checkable="false" clickable="false" enabled="true" bounds="[10,160][210,220]"/></hierarchy>',{id:'emulator-5560',app:'ai.typesafe.jevfixture',driver:'adb',simulator:true});
+  assert.equal(android.elements[0].operations.includes('TAP'),true);
+  assert.equal(android.elements[1].operations.includes('TAP'),false);
+  assert.equal(android.elements[2].operations.includes('TAP'),false);
+  assert.deepEqual(android.elements[0].bounds,{x:110,y:50});
+});
 test('native editable values equal to labels are preserved without placeholder metadata', () => {
   const android=normalizeAndroid('<node class="android.widget.EditText" text="Name" content-desc="Name" enabled="true" bounds="[1,2][101,202]"/>',{id:'emulator-5560',driver:'adb',simulator:true});
   assert.equal(android.elements[0].value,'Name'); assert.equal(android.elements[0].valueAmbiguous,true); assert.equal(android.elements[0].editable,true); assert.equal(android.elements[0].role,'android.widget.EditText');
