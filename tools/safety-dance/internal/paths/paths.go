@@ -39,8 +39,13 @@ func (p *Paths) PIDFile() string    { return filepath.Join(p.root, "daemon.pid")
 func (p *Paths) ConfigFile() string { return filepath.Join(p.root, "config.yaml") }
 
 // BootstrapConfigFile stores the operator-approved initial policy created by the wizard.
-func (p *Paths) BootstrapConfigFile() string {
-	return filepath.Join(p.root, "bootstrap-repo-config.yaml")
+func (p *Paths) BootstrapConfigFile(repository string) string {
+	return filepath.Join(p.root, "bootstrap", repository+".yaml")
+}
+
+// BootstrapRetiredFile records permanent retirement after committed policy observation.
+func (p *Paths) BootstrapRetiredFile(repository string) string {
+	return filepath.Join(p.root, "bootstrap", repository+".retired")
 }
 
 // LockFile is the OS-level advisory lock used to enforce a single live daemon

@@ -1,0 +1,60 @@
+package policy
+
+import (
+	"errors"
+	"fmt"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/config"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/paths"
+	"gopkg.in/yaml.v3"
+	"os"
+	"path/filepath"
+)
+
+type Bootstrap struct {
+	Repository string            `yaml:"repository"`
+	Revision   string            `yaml:"revision"`
+	Policy     config.RepoConfig `yaml:"policy"`
+}
+
+func Store(p *paths.Paths, repository, revision string, policy *config.RepoConfig) error {
+	if repository == "" || revision == "" || policy == nil {
+		return errors.New("bootstrap policy requires repository, revision, and policy")
+	}
+	raw, err := yaml.Marshal(Bootstrap{Repository: repository, Revision: revision, Policy: *policy})
+	if err != nil {
+		return err
+	}
+	if err = os.MkdirAll(filepath.Dir(p.BootstrapConfigFile(repository)), 0700); err != nil {
+		return err
+	}
+	return os.WriteFile(p.BootstrapConfigFile(repository), raw, 0600)
+}
+func Resolve(p *paths.Paths, repository, trustedRevision string, committed *config.RepoConfig) (*config.RepoConfig, error) {
+	if committed != nil {
+		if err := os.WriteFile(p.BootstrapRetiredFile(repository), []byte(trustedRevision+"\n"), 0600); err != nil {
+			return nil, fmt.Errorf("retire bootstrap policy: %w", err)
+		}
+		_ = os.Remove(p.BootstrapConfigFile(repository))
+		return committed, nil
+	}
+	if _, err := os.Stat(p.BootstrapRetiredFile(repository)); err == nil {
+		return nil, errors.New("bootstrap policy is permanently retired; commit .safety-dance.yaml on the default branch")
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	raw, err := os.ReadFile(p.BootstrapConfigFile(repository))
+	if err != nil {
+		return nil, fmt.Errorf("trusted repository configuration is not committed on the default branch: %w", err)
+	}
+	var b Bootstrap
+	if err = yaml.Unmarshal(raw, &b); err != nil {
+		return nil, fmt.Errorf("load wizard bootstrap configuration: %w", err)
+	}
+	if b.Repository != repository {
+		return nil, errors.New("bootstrap policy belongs to another repository")
+	}
+	if b.Revision == "" || b.Revision != trustedRevision {
+		return nil, errors.New("bootstrap policy is stale for the default branch revision")
+	}
+	return &b.Policy, nil
+}

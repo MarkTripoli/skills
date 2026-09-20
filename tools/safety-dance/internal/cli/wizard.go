@@ -13,6 +13,7 @@ import (
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/daemon"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/gate"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/git"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/policy"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/wizard"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -65,10 +66,9 @@ func runWizard(cmd *cobra.Command, args []string) error {
 	}
 	var gateRollback gate.Rollback
 	configPath := filepath.Join(root, ".safety-dance.yaml")
-	bootstrapPath := p.BootstrapConfigFile()
+	bootstrapPath := ""
 	configExisted := false
 	var originalConfig []byte
-	var originalBootstrap []byte
 	var originalConfigMode os.FileMode
 	if info, statErr := os.Stat(configPath); statErr == nil {
 		configExisted = true
@@ -77,11 +77,6 @@ func runWizard(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		originalConfigMode = info.Mode().Perm()
-	}
-	if raw, readErr := os.ReadFile(bootstrapPath); readErr == nil {
-		originalBootstrap = raw
-	} else if !os.IsNotExist(readErr) {
-		return readErr
 	}
 	setup := wizard.Setup{
 		In: cmd.InOrStdin(), Out: cmd.OutOrStdout(),
@@ -110,9 +105,6 @@ func runWizard(cmd *cobra.Command, args []string) error {
 			if _, parseErr := config.LoadRepoFromBytes(content); parseErr != nil {
 				return fmt.Errorf("validate generated configuration: %w", parseErr)
 			}
-			if err := os.WriteFile(bootstrapPath, content, 0600); err != nil {
-				return err
-			}
 			if err := os.WriteFile(configPath, content, 0600); err != nil {
 				return err
 			}
@@ -121,7 +113,26 @@ func runWizard(cmd *cobra.Command, args []string) error {
 			}
 			_, _, rollback, err := gate.InitWithRollback(context.Background(), database, p, root)
 			gateRollback = rollback
-			return err
+			if err != nil {
+				return err
+			}
+			repo, repoErr := database.GetRepoByPath(root)
+			if repoErr != nil || repo == nil {
+				if repoErr != nil {
+					return repoErr
+				}
+				return errors.New("wizard repository was not registered")
+			}
+			bootstrapPath = p.BootstrapConfigFile(repo.ID)
+			initialRevision, revErr := git.Run(context.Background(), root, "rev-parse", "HEAD")
+			if revErr != nil {
+				return revErr
+			}
+			parsed, parseErr := config.LoadRepoFromBytes(content)
+			if parseErr != nil {
+				return parseErr
+			}
+			return policy.Store(p, repo.ID, strings.TrimSpace(initialRevision), parsed)
 		},
 		Compensate: func(model wizard.Model) error {
 			var first error
@@ -137,12 +148,10 @@ func runWizard(cmd *cobra.Command, args []string) error {
 			} else {
 				_ = os.Remove(configPath)
 			}
-			if len(originalBootstrap) > 0 {
-				if err := os.WriteFile(bootstrapPath, originalBootstrap, 0600); err != nil && first == nil {
+			if bootstrapPath != "" {
+				if err := os.Remove(bootstrapPath); err != nil && !os.IsNotExist(err) && first == nil {
 					first = err
 				}
-			} else if err := os.Remove(bootstrapPath); err != nil && !os.IsNotExist(err) && first == nil {
-				first = err
 			}
 			var restore error
 			if hadOrigin {
