@@ -2,7 +2,7 @@
 slug: i-want-you-help
 title: "I want you to help me come up with a skill that helps onboard a repository to our skills, essentially."
 workflow: full
-gates: all
+gates: none
 routed_by: deliver
 created: 2026-09-20
 route_confidence: 0.71
