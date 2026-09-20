@@ -59,6 +59,6 @@ The implementation files are unchanged from `8a45b9b` (`git diff --name-only 8a4
 ## Commands and outcomes
 
 - `npm test` -> exit 0, 147/147 passing.
-- `node scripts/build-runtimes.mjs --runtime {claude-code,codex,oh-my-pi,pi} --dest /tmp/jev-ios-phase1.T58mi5/{runtime}` -> all exit 0 with counts above.
-- `node scripts/check-commits.mjs origin/main..HEAD` -> exit 0, `ok: 11 subjects`.
+- `node scripts/build-runtimes.mjs --runtime {claude-code,codex,oh-my-pi,pi} --dest /tmp/jev-ios-final-builds/{runtime}` -> all exit 0 with counts above.
+- `node scripts/check-commits.mjs origin/main..HEAD` -> exit 0, `ok: 13 subjects`.
 - Final scope includes the reviewed implementation repair and explicit task artifacts; historical source revision `8a45b9b` remains the provenance for Name/replacement/standalone runs, while `cb7b53a` is the cleanup repair revision.
