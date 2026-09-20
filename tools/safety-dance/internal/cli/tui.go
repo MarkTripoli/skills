@@ -70,12 +70,23 @@ func renderTUI(cmd *cobra.Command, args []string) error {
 			current = m
 		}
 		return m, err
-	}, Respond: func() error {
-		if current.RunID == "" || current.Step == "" {
+	}, Respond: func(action string) error {
+		if current.RunID == "" || current.Step == "" || current.Prompt == "" {
 			return fmt.Errorf("no durable prompt is available")
 		}
+		var selected types.ApprovalAction
+		switch action {
+		case "approve":
+			selected = types.ActionApprove
+		case "fix":
+			selected = types.ActionFix
+		case "skip":
+			selected = types.ActionSkip
+		default:
+			return fmt.Errorf("unsupported response action %q", action)
+		}
 		var out ipc.RespondResult
-		return callDaemon(ipc.MethodRespond, ipc.RespondParams{RunID: current.RunID, Step: types.StepName(current.Step), Action: types.ActionApprove}, &out)
+		return callDaemon(ipc.MethodRespond, ipc.RespondParams{RunID: current.RunID, Step: types.StepName(current.Step), Action: selected}, &out)
 	}, Abort: func() error {
 		if current.RunID == "" {
 			return fmt.Errorf("no active run")

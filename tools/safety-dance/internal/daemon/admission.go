@@ -6,6 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -46,12 +50,14 @@ type PushNotification struct {
 }
 
 // Admission owns the receive-hook trust boundary. Tokens are issued by the
+// managed hook and receipts survive daemon restarts.
 type Admission struct {
 	auth        *ipc.Authenticator
 	notify      func(context.Context, PushNotification) error
 	mu          sync.Mutex
 	receipts    map[string]ipc.AdmitPushParams
 	receiptFile string
+	loadErr     error
 }
 
 func NewAdmission(server *ipc.Server, notify func(context.Context, PushNotification) error) *Admission {
@@ -67,7 +73,7 @@ func NewAdmissionWithStore(server *ipc.Server, notify func(context.Context, Push
 func newAdmission(server *ipc.Server, notify func(context.Context, PushNotification) error, file string) *Admission {
 	a := &Admission{auth: ipc.NewAuthenticator(), notify: notify, receipts: make(map[string]ipc.AdmitPushParams), receiptFile: file}
 	if file != "" {
-		_ = a.loadReceipts()
+		a.loadErr = a.loadReceipts()
 	}
 	server.Handle(ipc.MethodAdmitPush, a.admit)
 	server.Handle(ipc.MethodNotifyPush, a.notifyPush)
@@ -75,25 +81,92 @@ func newAdmission(server *ipc.Server, notify func(context.Context, PushNotificat
 	return a
 }
 
+// InitError reports unreadable persisted receipts before the daemon announces readiness.
+func (a *Admission) InitError() error { return a.loadErr }
+
+// ReconcileOnce retries every accepted receipt until its durable callback succeeds.
+func (a *Admission) ReconcileOnce(ctx context.Context) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for token, receipt := range a.receipts {
+		if a.notify == nil {
+			continue
+		}
+		if err := a.notify(ctx, PushNotification{Gate: receipt.Gate, Ref: receipt.Ref, Old: receipt.Old, New: receipt.New}); err != nil {
+			return err
+		}
+		delete(a.receipts, token)
+		if err := a.saveReceipts(); err != nil {
+			return fmt.Errorf("remove admission receipt: %w", err)
+		}
+	}
+	return nil
+}
 func (a *Admission) Issue(gate, ref string) (string, error) {
 	if a == nil || a.auth == nil {
 		return "", errors.New("admission is not initialized")
 	}
 	return a.auth.Issue(gate, ref)
 }
-func (a *Admission) issue(ctx context.Context, raw json.RawMessage) (interface{}, error) {
-	if ipc.PeerPID(ctx) <= 0 {
-		return nil, errors.New("unauthenticated IPC peer")
+
+// managedHookPeer proves that a token request came through a managed receive
+// hook, rather than merely from another process owned by the same user.
+func managedHookPeer(pid int, gate string) bool {
+	if runtime.GOOS == "windows" || pid <= 0 {
+		return false
 	}
-	// The IPC transport authenticates the peer PID. Hook ancestry is checked
-	// separately by the managed receive path; daemon startup must not depend on
-	// an environment variable inherited by the long-lived server.
-	if strings.TrimSpace(os.Getenv("SD_PARENT_RUN_ID")) != "" {
-		return nil, errors.New("push-token issuance is restricted to the managed git hook")
+	gate = cleanPath(gate)
+	for depth := 0; pid > 1 && depth < 64; depth++ {
+		ppid, command, err := processInfo(pid)
+		if err != nil {
+			return false
+		}
+		if (strings.Contains(command, "hooks/pre-receive") || strings.Contains(command, "hooks/post-receive")) && strings.Contains(cleanPath(command), gate) {
+			return true
+		}
+		pid = ppid
+	}
+	return false
+}
+
+func processInfo(pid int) (int, string, error) {
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "ppid=,command=").Output()
+	if err != nil {
+		return 0, "", err
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) < 2 {
+		return 0, "", errors.New("process information is incomplete")
+	}
+	parent, err := strconv.Atoi(fields[0])
+	if err != nil {
+		return 0, "", err
+	}
+	return parent, strings.Join(fields[1:], " "), nil
+}
+
+func cleanPath(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	cleaned, err := filepath.Abs(value)
+	if err != nil {
+		return filepath.Clean(value)
+	}
+	return filepath.Clean(cleaned)
+}
+func (a *Admission) issue(ctx context.Context, raw json.RawMessage) (interface{}, error) {
+	peer := ipc.PeerPID(ctx)
+	if peer <= 0 {
+		return nil, errors.New("unauthenticated IPC peer")
 	}
 	var p ipc.IssuePushTokenParams
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, err
+	}
+	if !managedHookPeer(peer, p.Gate) {
+		return nil, errors.New("push-token issuance requires a managed git hook")
 	}
 	token, err := a.Issue(p.Gate, p.Ref)
 	if err != nil {

@@ -55,3 +55,22 @@ func TestAdmissionAuthenticatedReplayAndMismatch(t *testing.T) {
 		t.Fatalf("unexpected notification: %#v", got)
 	}
 }
+
+func TestAdmissionRejectsUnmanagedTokenPeer(t *testing.T) {
+	if managedHookPeer(os.Getpid(), t.TempDir()) {
+		t.Fatal("ordinary test process was classified as a managed hook")
+	}
+}
+
+func TestAdmissionReceiptLoadFailureIsVisible(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "receipts.json")
+	if err := os.Mkdir(file, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	server := ipc.NewServer()
+	a := NewAdmissionWithStore(server, nil, file)
+	if a.InitError() == nil {
+		t.Fatal("expected receipt load failure")
+	}
+}

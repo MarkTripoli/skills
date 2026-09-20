@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/config"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/daemon"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/git"
@@ -194,7 +195,19 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		}
 	})
 	adm := daemon.NewAdmissionWithStore(server, func(ctx context.Context, n daemon.PushNotification) error { return recordPush(d, p, manager, n) }, filepath.Join(p.Root(), "admission-receipts.json"))
-	_ = adm
+	if err := adm.InitError(); err != nil {
+		return fmt.Errorf("load admission receipts: %w", err)
+	}
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			if err := adm.ReconcileOnce(context.Background()); err != nil {
+				// The receipt remains persisted and will be retried on the next tick.
+			}
+			<-ticker.C
+		}
+	}()
 	server.Handle(ipc.MethodHealth, func(context.Context, json.RawMessage) (interface{}, error) {
 		return ipc.HealthResult{Status: "ok"}, nil
 	})
@@ -344,6 +357,10 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	if _, err := os.Stat(worktree); err != nil {
 		return fmt.Errorf("owned worktree unavailable: %w", err)
 	}
+	trustedConfig, err := config.LoadRepo(repo.WorkingPath)
+	if err != nil {
+		return fmt.Errorf("load trusted repository configuration: %w", err)
+	}
 	ref := run.Branch
 	if !strings.HasPrefix(ref, "refs/") {
 		ref = "refs/heads/" + ref
@@ -354,6 +371,7 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 		name := name
 		runner.Register(name, func(stepCtx context.Context) error {
 			stepCtx = steps.WithWorktree(stepCtx, worktree)
+			stepCtx = steps.WithRepoConfig(stepCtx, trustedConfig)
 			switch name {
 			case pipeline.StepIntent:
 				return steps.Intent(stepCtx)
