@@ -7,12 +7,12 @@ export async function generateText({command, goal, field, timeoutMs=Number(proce
   return await new Promise(resolve => {
     const stdinMode=rest.includes('-p'); const p=spawn(bin,stdinMode?rest:[...rest,prompt],{stdio:[stdinMode?'pipe':'ignore','pipe','ignore'],detached:true}); let out=''; let settled=false; let timed=false; let timer,grace;
     const signal=kind=>{try{if(p.pid)process.kill(-p.pid,kind)}catch{try{p.kill(kind)}catch{}}};
-    const finish=result=>{if(settled)return;settled=true;clearTimeout(timer);clearTimeout(grace);resolve(result)};
-    const timedOut=reason=>{timed=true;signal('SIGTERM');grace=setTimeout(()=>signal('SIGKILL'),250);};
+    const finish=result=>{if(settled)return;settled=true;clearTimeout(timer);resolve(result)};
+    const timedOut=reason=>{timed=true;signal('SIGTERM');grace=setTimeout(()=>signal('SIGKILL'),250); grace.unref?.();};
     if(stdinMode) { p.stdin.write(prompt); p.stdin.end(); }
     timer=setTimeout(()=>{timedOut('timeout');},deadline);
     p.stdout.on('data',d=>{out+=d;if(out.length>maxOutput)timedOut('output');});
     p.on('error',()=>finish({text:null,rejected:true,reason:'text helper failed'}));
-    p.on('close',()=>{if(settled)return;if(timed)return finish({text:null,rejected:true,reason:'text helper timeout'});const candidate=out.trim().replace(/^Working(?:…|\.\.\.)\s*/i,'').trim();try{const value=JSON.parse(candidate);const keys=Object.keys(value||{});if(keys.length!==1||keys[0]!=='text'||typeof value.text!=='string'||!value.text.trim()||value.text.length>1000)return finish({text:null,rejected:true,reason:'text helper returned invalid text'});finish({text:value.text});}catch{finish({text:null,rejected:true,reason:'text helper returned invalid JSON'});}});
+    p.on('close',()=>{if(settled)return;if(!timed){signal('SIGTERM');grace=setTimeout(()=>signal('SIGKILL'),250);grace.unref?.();}if(timed)return finish({text:null,rejected:true,reason:'text helper timeout'});const candidate=out.trim().replace(/^Working(?:…|\.\.\.)\s*/i,'').trim();try{const value=JSON.parse(candidate);const keys=Object.keys(value||{});if(keys.length!==1||keys[0]!=='text'||typeof value.text!=='string'||!value.text.trim()||value.text.length>1000)return finish({text:null,rejected:true,reason:'text helper returned invalid text'});finish({text:value.text});}catch{finish({text:null,rejected:true,reason:'text helper returned invalid JSON'});}});
   });
 }

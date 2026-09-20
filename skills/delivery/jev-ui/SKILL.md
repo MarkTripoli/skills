@@ -7,7 +7,7 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 # JEV UI
 
-`jev-ui` runs a bounded observe, choose, validate, act, observe loop against an isolated browser session or an explicitly selected Android device/emulator. Invoke `node scripts/jev-ui.mjs --help`; provide a goal, expected postconditions, and a browser URL or native `--target` ID. Browser control requires Node, `agent-browser`, and TypeSafe credentials (`TYPESAFE_API_KEY`, `TYPESAFE_API_KEY_FILE`, or `~/.config/typesafe/api_key`). Android control requires `adb`. A separately configured text helper may supply validated field text.
+`jev-ui` runs a bounded observe, choose, validate, act, observe loop against an isolated browser session or an explicitly selected Android device/emulator. Invoke `node scripts/jev-ui.mjs --help`; provide a goal, expected postconditions, and a browser URL or native `--target` ID. Browser control requires Node 22+, `agent-browser`, and TypeSafe credentials (`TYPESAFE_API_KEY`, `TYPESAFE_API_KEY_FILE`, or `~/.config/typesafe/api_key`). Android control requires `adb`. A separately configured text helper may supply validated field text.
 
 The controller accepts only indexed known operation and target values returned by the current observation. It does not accept selectors, coordinates, commands, code, or screenshot input. Screenshots and recordings remain evidence artifacts and never enter JEV state. Each run has finite action and model budgets and ends exactly `passed`, `failed`, or `blocked`; `DONE` passes only when an independently observed non-editable control satisfies every expected postcondition.
 

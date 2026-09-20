@@ -83,3 +83,18 @@ test('text helper timeout kills SIGTERM-ignoring helper and descendant',async()=
   await new Promise(resolve=>setTimeout(resolve,50));
   for(const pid of [pids.parent,pids.descendant]) assert.throws(()=>process.kill(pid,0),/ESRCH/);
 });
+
+test('text helper timeout kills descendant after parent exits',async()=>{
+  const scratch=await fs.mkdtemp(path.join(os.tmpdir(),'jev-helper-parent-exits-'));
+  const pidFile=path.join(scratch,'pid');
+  const childCode=`const fs=require('node:fs');const {spawn}=require('node:child_process');const d=spawn(process.execPath,['-e',"process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"],{stdio:'ignore'});fs.writeFileSync(${JSON.stringify(pidFile)},String(d.pid));setTimeout(()=>process.exit(0),10);`;
+  const result=await generateText({command:[process.execPath,'-e',childCode],timeoutMs:40});
+  assert.match(result.reason,/text helper (timeout|returned invalid JSON)/);
+  const pid=Number(await fs.readFile(pidFile,'utf8')); await new Promise(resolve=>setTimeout(resolve,320));
+  assert.throws(()=>process.kill(pid,0),/ESRCH/);
+});
+
+test('android decodes XML entities once for independent text',()=>{
+  const snap=normalizeAndroid('<node class="android.widget.EditText" text="A &amp; B &quot;Q&quot; &amp;amp;" content-desc="Entry" enabled="true" bounds="[1,2][101,202]"/>',{id:'emulator-5560',driver:'adb',simulator:true});
+  assert.equal(snap.elements[0].value,'A & B "Q" &amp;');
+});

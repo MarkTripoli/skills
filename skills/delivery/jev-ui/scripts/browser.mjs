@@ -5,6 +5,8 @@ const SUPPORTED = new Set(['CLICK','FILL','SELECT','SCROLL','WAIT']);
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0,16);
 const asText = x => typeof x === 'string' ? x : (x?.text ?? x?.name ?? '');
 const SECRET_NAME = /(?:password|passcode|token|secret|api[ _-]?key|authorization|cookie|credit[ _-]?card|ssn|private[ _-]?key)/i;
+const DEFAULT_TIMEOUT_MS = 15000;
+const timeoutError = label => Object.assign(new Error(`${label} timed out`), {code:'driver-timeout'});
 const sensitive = element => SECRET_NAME.test([element?.name, element?.label, element?.id, element?.placeholder].filter(Boolean).join(' '));
 const safeRaw = (raw, elements, sensitiveElements=elements) => {
   let text = String(raw || '');
@@ -32,7 +34,8 @@ export function makeSnapshot({surface='browser', target, elements=[], raw=''}) {
       if (option && typeof option === 'object') return {value: String(option.value ?? option.label ?? ''), label: asText(option.label ?? option.name ?? option.value), ...(option.selected === true ? {selected:true} : {})};
       return {value: String(option), label: String(option)};
     }).filter(option => option.value !== '') : undefined;
-    const item = {id: String(e.id ?? `e${i+1}`), ref: e.ref, role: String(e.role ?? 'element'), name: asText(e.name ?? e.label ?? e.text), value: safeValue(e.value, e), options, operations: [...new Set((e.operations ?? e.actions ?? ['CLICK']).map(x=>String(x).toUpperCase()).filter(x => SUPPORTED.has(x) || ['SCROLL_UP','SCROLL_DOWN'].includes(x)))]};
+    const isSensitive = sensitive(e);
+    const item = {id: String(e.id ?? `e${i+1}`), ref: e.ref, role: String(e.role ?? 'element'), name: isSensitive ? '[REDACTED SENSITIVE CONTROL]' : asText(e.name ?? e.label ?? e.text), value: safeValue(e.value, e), ...(isSensitive ? {} : {options}), operations: [...new Set((e.operations ?? e.actions ?? ['CLICK']).map(x=>String(x).toUpperCase()).filter(x => SUPPORTED.has(x) || ['SCROLL_UP','SCROLL_DOWN'].includes(x)))]};
     return Object.fromEntries(Object.entries(item).filter(([,v]) => v !== undefined));
   });
   const safeText = safeRaw(raw, normalized, sensitiveElements);
@@ -60,7 +63,7 @@ function originOf(value) {
 function observedUrl(output) { const match=String(output||'').match(/https?:\/\/[^\s"']+/); return match?.[0]; }
 export function assertOrigin(url, origin) { if (url && originOf(url) !== origin) throw Object.assign(new Error('browser navigation left the selected origin'), {code:'origin-drift'}); }
 // CDP is used at the browser boundary because hostname-only allowlists cannot protect first navigation or redirects.
-export async function cdpOriginGuard(cdpUrl, selectedOrigin, {WebSocketImpl = globalThis.WebSocket, cleanupTimeoutMs = 500} = {}) {
+export async function cdpOriginGuard(cdpUrl, selectedOrigin, {WebSocketImpl = globalThis.WebSocket, cleanupTimeoutMs = 500, timeoutMs = DEFAULT_TIMEOUT_MS} = {}) {
   if (!cdpUrl || typeof WebSocketImpl !== 'function') throw Object.assign(new Error('CDP transport is unavailable'), {code:'origin-guard'});
   const origin = originOf(selectedOrigin), socket = new WebSocketImpl(cdpUrl);
   let nextId=1, closed=false, closePromise; const pending=new Map(); const targets=new Set(); const ready=[];
@@ -70,10 +73,11 @@ export async function cdpOriginGuard(cdpUrl, selectedOrigin, {WebSocketImpl = gl
   socket.addEventListener('error', () => { closed=true; rejectPending(transportError()); });
   const send=(method,params={},sessionId)=>new Promise((resolve,reject)=>{
     if (closed || socket.readyState === 2 || socket.readyState === 3) return reject(transportError());
-    const id=nextId++; pending.set(id,{resolve,reject});
+    const id=nextId++; const timer=setTimeout(()=>{pending.delete(id); reject(timeoutError(`CDP ${method}`));}, timeoutMs);
+    pending.set(id,{resolve:value=>{clearTimeout(timer);resolve(value)},reject:error=>{clearTimeout(timer);reject(error)}});
     try { socket.send(JSON.stringify({id,method,params,...(sessionId?{sessionId}:{})})); } catch (error) { pending.delete(id); reject(error); }
   });
-  await new Promise((resolve,reject)=>{socket.addEventListener('open',resolve,{once:true});socket.addEventListener('error',()=>reject(new Error('CDP connection failed')),{once:true});});
+  await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(timeoutError('CDP connection')),timeoutMs); socket.addEventListener('open',()=>{clearTimeout(timer);resolve()},{once:true});socket.addEventListener('error',()=>{clearTimeout(timer);reject(new Error('CDP connection failed'))},{once:true});});
   socket.addEventListener('message',async event=>{let msg; try { msg=JSON.parse(typeof event.data==='string'?event.data:await new Response(event.data).text()); } catch { return; } if(msg.id&&pending.has(msg.id)){const p=pending.get(msg.id);pending.delete(msg.id);msg.error?p.reject(new Error(msg.error.message)):p.resolve(msg.result);return;} if(msg.method==='Target.attachedToTarget'){targets.add(msg.params.sessionId);const setup=send('Fetch.enable',{patterns:[{requestStage:'Request'}]},msg.params.sessionId).then(()=>send('Runtime.runIfWaitingForDebugger',{},msg.params.sessionId));ready.push(setup);} if(msg.method==='Fetch.requestPaused'){try{assertOrigin(msg.params.request?.url,origin);await send('Fetch.continueRequest',{requestId:msg.params.requestId},msg.sessionId);}catch{await send('Fetch.failRequest',{requestId:msg.params.requestId,errorReason:'BlockedByClient'},msg.sessionId).catch(()=>{});}}});
   await send('Target.setAutoAttach',{autoAttach:true,waitForDebuggerOnStart:true,flatten:true}); await send('Target.setDiscoverTargets',{discover:true});
   const {targetInfos=[]}=await send('Target.getTargets'); for(const info of targetInfos.filter(x=>x.type==='page'&&!x.attached)) await send('Target.attachToTarget',{targetId:info.targetId,flatten:true}); await Promise.all(ready);
@@ -88,6 +92,7 @@ async function ownedCdpUrl(run) {
 }
 export async function open({url, command='agent-browser', sessionId, origin} = {}) {
   if (!url) throw Object.assign(new Error('browser URL is required'), {code:'invalid-target'});
+  if (Number(process.versions.node.split('.')[0]) < 22 || typeof globalThis.WebSocket !== 'function') throw Object.assign(new Error('JEV browser control requires Node 22+ with WebSocket transport'), {code:'transport-unavailable'});
   const selectedOrigin=originOf(origin || url); assertOrigin(url, selectedOrigin);
   const id=sessionId ?? `jev-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
   const run = (args) => commandRunner(command, ['--session', id, ...args]);
@@ -120,5 +125,6 @@ export async function act(session, snapshot, action) {
 }
 
 export function commandRunner(command, args=[], options={}) {
-  return new Promise((resolve,reject) => { const p=spawn(command,args,{stdio:['ignore','pipe','pipe'],...options}); let out='',err=''; p.stdout.on('data',d=>out+=d); p.stderr.on('data',d=>err+=d); p.on('error',reject); p.on('close',code=>code===0?resolve(out):reject(Object.assign(new Error(err||`command exited ${code}`),{code:'driver-error'}))); });
+  const timeoutMs=Number(options.timeoutMs||DEFAULT_TIMEOUT_MS); const {timeoutMs:_, ...spawnOptions}=options;
+  return new Promise((resolve,reject) => { const p=spawn(command,args,{stdio:['ignore','pipe','pipe'],detached:true,...spawnOptions}); let out='',err='',timer; const kill=signal=>{try{if(p.pid)process.kill(-p.pid,signal);else p.kill(signal)}catch{}}; const finish=(fn,value)=>{clearTimeout(timer);fn(value)}; timer=setTimeout(()=>{kill('SIGTERM');setTimeout(()=>kill('SIGKILL'),250).unref?.();finish(reject,timeoutError(`browser command ${command}`));},timeoutMs); p.stdout.on('data',d=>{out+=d;if(out.length>65536){kill('SIGKILL');finish(reject,new Error('browser command output exceeded limit'));}}); p.stderr.on('data',d=>{err+=d;if(err.length>65536)err=err.slice(-65536)}); p.on('error',e=>finish(reject,e)); p.on('close',code=>{if(code===0)finish(resolve,out);else finish(reject,Object.assign(new Error(err||`command exited ${code}`),{code:'driver-error'}));}); });
 }

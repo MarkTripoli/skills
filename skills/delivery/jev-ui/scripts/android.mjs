@@ -1,7 +1,8 @@
 import {exec as defaultExec, boundedRunner} from './drivers.mjs';
 import {safeNativeSource, safeNativeValue, safeNativeName} from './native-safe.mjs';
 function parseBounds(value) { const m = String(value || '').match(/\[(\d+),(\d+)\]\[(\d+),(\d+)\]/); return m ? {x:(+m[1]+ +m[3])/2,y:(+m[2]+ +m[4])/2} : null; }
-function attrs(tag) { const out={}; for (const m of tag.matchAll(/([\w:-]+)="([^"]*)"/g)) out[m[1]]=m[2]; return out; }
+function decodeXml(value) { return String(value).replace(/&(?:amp|lt|gt|quot|apos|#x([0-9a-f]+)|#(\d+));/gi, (_, hex, dec) => { const code=hex?parseInt(hex,16):dec?Number(dec):null; if(code!=null && Number.isSafeInteger(code)) return String.fromCodePoint(code); return ({amp:'&',lt:'<',gt:'>',quot:'"',apos:"'"}[String(_).slice(1,-1)] || _); }); }
+function attrs(tag) { const out={}; for (const m of tag.matchAll(/([\w:-]+)="([^"]*)"/g)) out[m[1]]=decodeXml(m[2]); return out; }
 export function normalizeHierarchy(xml, identity) {
   const source=String(xml||''); const elements=[]; const sensitiveValues=[]; const packages=new Set(); for (const match of source.matchAll(/<node\b[^>]*>/g)) { const a=attrs(match[0]);
     if (a.package) packages.add(a.package);
