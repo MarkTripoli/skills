@@ -287,6 +287,7 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 	adm := daemon.NewAdmissionWithStore(server, func(ctx context.Context, n daemon.PushNotification) error {
 		return recordPush(d, p, manager, n)
 	}, filepath.Join(p.Root(), "admission-receipts.json"))
+	adm.DeferNotifications()
 	if err := adm.InitError(); err != nil {
 		return fmt.Errorf("load admission receipts: %w", err)
 	}
@@ -349,7 +350,13 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		}
 		accepted.GatesJSON = gatesJSON
 		accepted.ValidationGeneration = validationGeneration
-		r, err := manager.Replace(ctx, daemon.BranchKey{RepositoryID: q.RepoID, Ref: accepted.Branch}, accepted, worktree)
+		r, err := manager.ReplaceValidated(ctx, daemon.BranchKey{RepositoryID: q.RepoID, Ref: accepted.Branch}, accepted, worktree, func() error {
+			current, err := git.RunBare(ctx, p.RepoDir(repo.ID), "rev-parse", "--verify", branchRef+"^{commit}")
+			if err != nil || strings.TrimSpace(current) != strings.TrimSpace(q.HeadSHA) {
+				return fmt.Errorf("requested head %s is no longer the authenticated gate head for %s", q.HeadSHA, branchRef)
+			}
+			return nil
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -366,14 +373,14 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		if err := json.Unmarshal(raw, &q); err != nil {
 			return nil, err
 		}
-		if q.RunID == "" || q.Step == "" || q.Action == "" {
-			return nil, fmt.Errorf("run, step, and action are required")
+		if q.RunID == "" || q.Step == "" || q.StepID == "" || q.Generation <= 0 || q.Action == "" {
+			return nil, fmt.Errorf("run, step, step id, generation, and action are required")
+		}
+		if !types.ResponseAllowed(q.Step, q.Action) {
+			return nil, fmt.Errorf("response %s is not allowed for step %s", q.Action, q.Step)
 		}
 		if q.Action != types.ActionApprove && q.Action != types.ActionFix && q.Action != types.ActionSkip && q.Action != types.ActionAbort {
 			return nil, fmt.Errorf("unsupported response action %q", q.Action)
-		}
-		if (q.Step == "push" || q.Step == "pull-request" || q.Step == "ci") && (q.Action == types.ActionApprove || q.Action == types.ActionSkip) {
-			return nil, fmt.Errorf("response %s is not allowed for step %s", q.Action, q.Step)
 		}
 		r, err := d.GetRun(q.RunID)
 		if err != nil {
@@ -390,13 +397,16 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		for _, step := range steps {
 			if step.StepName == q.Step && (step.Status == types.StepStatusAwaitingApproval || step.Status == types.StepStatusFixReview) {
 				waitingStepID = step.ID
+				if step.ID != q.StepID || step.PromptGeneration != q.Generation {
+					return nil, fmt.Errorf("response prompt identity is stale")
+				}
 				break
 			}
 		}
 		if waitingStepID == "" {
 			return nil, fmt.Errorf("run %s is not awaiting a response for %s", q.RunID, q.Step)
 		}
-		if err := d.RecordResponse(db.Response{RunID: q.RunID, Step: string(q.Step), StepID: waitingStepID, Action: string(q.Action), Payload: q}); err != nil {
+		if err := d.RecordResponse(db.Response{RunID: q.RunID, Step: string(q.Step), StepID: q.StepID, Generation: q.Generation, Action: string(q.Action), Payload: q}); err != nil {
 			return nil, err
 		}
 		return ipc.RespondResult{OK: true}, nil
@@ -633,7 +643,13 @@ func recordPush(d *db.DB, p *paths.Paths, manager *daemon.Manager, n daemon.Push
 		if accepted.ValidationGeneration == "" {
 			accepted.ValidationGeneration = validationGeneration
 		}
-		if _, err = manager.Replace(context.Background(), daemon.BranchKey{RepositoryID: r.ID, Ref: branch}, accepted, worktree); err != nil {
+		if _, err = manager.ReplaceValidated(context.Background(), daemon.BranchKey{RepositoryID: r.ID, Ref: branch}, accepted, worktree, func() error {
+			current, err := git.RunBare(context.Background(), gatePath, "rev-parse", "--verify", branch+"^{commit}")
+			if err != nil || strings.TrimSpace(current) != strings.TrimSpace(n.New) {
+				return fmt.Errorf("accepted push head %s was superseded before run creation", n.New)
+			}
+			return nil
+		}); err != nil {
 			return err
 		}
 		return worktrees.CommitOwnership(worktree)
@@ -682,7 +698,7 @@ func newSCMHost(upstream, fork, worktree string) (scm.Host, error) {
 	host := scm.ExtractHost(upstream)
 	repoSlug := github.HostPrefixedSlug(upstream)
 	if strings.TrimSpace(fork) != "" {
-		return github.NewWithFork(factory, func() bool { _, err := exec.LookPath("gh"); return err == nil }, host, repoSlug, github.HostPrefixedSlug(fork), false), nil
+		return github.NewWithFork(factory, func() bool { _, err := exec.LookPath("gh"); return err == nil }, host, repoSlug, github.RepoSlug(fork), false), nil
 	}
 	return github.New(factory, func() bool { _, err := exec.LookPath("gh"); return err == nil }, host, repoSlug), nil
 }

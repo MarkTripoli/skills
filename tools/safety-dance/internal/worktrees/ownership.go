@@ -48,7 +48,8 @@ func removingJournalPath(dir string) string {
 }
 
 // CreateDetached journals ownership before Git creates the worktree. The
-// journal remains until the run row has committed ownership.
+// journal remains until the run row has committed ownership. A matching
+// journal and checkout are safe replay of an interrupted admission.
 func CreateDetached(ctx context.Context, source, dir, head string) (err error) {
 	if source == "" || dir == "" || head == "" {
 		return fmt.Errorf("source, directory, and head are required")
@@ -59,6 +60,14 @@ func CreateDetached(ctx context.Context, source, dir, head string) (err error) {
 	marker := journalPath(dir)
 	if err = os.MkdirAll(filepath.Dir(marker), 0700); err != nil {
 		return err
+	}
+	if raw, readErr := os.ReadFile(marker); readErr == nil {
+		var pending pendingWorktree
+		if json.Unmarshal(raw, &pending) == nil && filepath.Clean(pending.Source) == filepath.Clean(source) && filepath.Clean(pending.Dir) == filepath.Clean(dir) && pending.Head == head {
+			if out, verifyErr := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "HEAD").Output(); verifyErr == nil && strings.TrimSpace(string(out)) == head {
+				return nil
+			}
+		}
 	}
 	raw, err := json.Marshal(pendingWorktree{Source: source, Dir: dir, Head: head})
 	if err != nil {

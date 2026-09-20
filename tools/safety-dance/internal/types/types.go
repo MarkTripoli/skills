@@ -277,6 +277,20 @@ const (
 	ActionAbort   ApprovalAction = "abort"
 )
 
+// ResponseAllowed is the single policy for operator actions at pipeline gates.
+// Keeping it in the shared types package lets IPC admission and durable
+// application reject the same forbidden action before either can persist it.
+func ResponseAllowed(step StepName, action ApprovalAction) bool {
+	switch step {
+	case StepPush, StepPR, StepCI:
+		return action == ActionAbort || action == ActionFix
+	case StepReview:
+		return action == ActionApprove || action == ActionFix || action == ActionAbort
+	default:
+		return action == ActionApprove || action == ActionFix || action == ActionSkip || action == ActionAbort
+	}
+}
+
 // AgentName identifies a supported agent backend. Explicit ACP targets use
 // dynamic acp:<target> values; first-class ACP aliases have constants below.
 type AgentName string

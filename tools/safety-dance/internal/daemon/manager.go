@@ -56,15 +56,30 @@ func (m *Manager) branchLock(key BranchKey) *sync.Mutex {
 	return lock
 }
 
-// Replace serializes cancellation, joining, persistence, and assignment for one
-// branch key. Different keys never share this lock and may execute concurrently.
+// Replace preserves the historical API for callers that already validated
+// their accepted head.
 func (m *Manager) Replace(ctx context.Context, key BranchKey, accepted db.AcceptedRef, worktree string) (*db.Run, error) {
+	return m.replaceValidated(ctx, key, accepted, worktree, nil)
+}
+
+// ReplaceValidated rechecks the accepted gate state while holding the branch
+// lock, before cancelling or persisting a replacement run.
+func (m *Manager) ReplaceValidated(ctx context.Context, key BranchKey, accepted db.AcceptedRef, worktree string, validate func() error) (*db.Run, error) {
+	return m.replaceValidated(ctx, key, accepted, worktree, validate)
+}
+
+func (m *Manager) replaceValidated(ctx context.Context, key BranchKey, accepted db.AcceptedRef, worktree string, validate func() error) (*db.Run, error) {
 	if key.RepositoryID == "" || key.Ref == "" {
 		return nil, fmt.Errorf("branch key is required")
 	}
 	branchLock := m.branchLock(key)
 	branchLock.Lock()
 	defer branchLock.Unlock()
+	if validate != nil {
+		if err := validate(); err != nil {
+			return nil, err
+		}
+	}
 	m.mu.Lock()
 	if m.stopping {
 		m.mu.Unlock()

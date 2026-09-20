@@ -72,14 +72,7 @@ type Runner struct {
 
 func (r *Runner) SetInteractive(enabled bool) { r.Interactive = enabled }
 func responseAllowed(step StepName, action types.ApprovalAction) bool {
-	switch step {
-	case StepPush, StepPullRequest, StepCI:
-		return action == types.ActionAbort || action == types.ActionFix
-	case StepReview:
-		return action != types.ActionSkip
-	default:
-		return true
-	}
+	return types.ResponseAllowed(types.StepName(step), action)
 }
 
 func New() *Runner {
@@ -144,6 +137,7 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 			continue
 		}
 		var persisted *db.StepResult
+		responseCompleted := false
 		var err error
 		if r.Database != nil && r.RunID != "" {
 			rows, queryErr := r.Database.GetStepsByRun(r.RunID)
@@ -272,6 +266,7 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 					rerun = true
 					break
 				}
+				responseCompleted = true
 				err = nil
 				break
 			}
@@ -285,7 +280,7 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 		r.mu.Unlock()
 		if persisted != nil {
 			checkpoint := ""
-			if err == nil && checkpointFunc != nil {
+			if err == nil && checkpointFunc != nil && !responseCompleted {
 				checkpoint, err = checkpointFunc()
 				if err != nil {
 					return r.Results, fmt.Errorf("checkpoint step %s: %w", n, err)
@@ -295,12 +290,14 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 			if sink != nil && sink.Value != nil {
 				findings = sink.Value.FindingsJSON
 			}
-			if err == nil {
+			if err == nil && !responseCompleted {
 				if persistErr := r.Database.CompleteStepWithRunHead(persisted.ID, r.RunID, checkpoint, findings, n == StepReview); persistErr != nil {
 					return r.Results, fmt.Errorf("persist step %s: %w", n, persistErr)
 				}
-			} else if persistErr := r.Database.FailStep(persisted.ID, err.Error(), 0); persistErr != nil {
-				return r.Results, fmt.Errorf("persist step %s: %w", n, persistErr)
+			} else if err != nil {
+				if persistErr := r.Database.FailStep(persisted.ID, err.Error(), 0); persistErr != nil {
+					return r.Results, fmt.Errorf("persist step %s: %w", n, persistErr)
+				}
 			}
 			if sink != nil && sink.Value != nil && len(sink.Value.Evidence) > 0 {
 				if persistErr := r.Database.TouchStepActivity(persisted.ID, "evidence: "+strings.Join(sink.Value.Evidence, "; ")); persistErr != nil {

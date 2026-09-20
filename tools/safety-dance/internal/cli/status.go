@@ -71,7 +71,7 @@ func statusCommand(cmd *cobra.Command, args []string) error {
 		}
 		for _, step := range steps {
 			if step.Status == types.StepStatusAwaitingApproval || step.Status == types.StepStatusFixReview {
-				fmt.Fprintf(cmd.OutOrStdout(), "prompt: run=%s step=%s actions=approve,fix,skip,abort\n", run.ID, step.StepName)
+				fmt.Fprintf(cmd.OutOrStdout(), "prompt: run=%s step=%s step_id=%s generation=%d actions=approve,fix,skip,abort\n", run.ID, step.StepName, step.ID, step.PromptGeneration)
 			}
 		}
 	}

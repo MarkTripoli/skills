@@ -19,8 +19,11 @@ type Response struct {
 }
 
 func (d *DB) RecordResponse(r Response) error {
-	if r.RunID == "" || r.Step == "" || r.StepID == "" || r.Action == "" {
-		return fmt.Errorf("response run, step, step id, and action are required")
+	if r.RunID == "" || r.Step == "" || r.StepID == "" || r.Action == "" || r.Generation <= 0 {
+		return fmt.Errorf("response run, step, step id, generation, and action are required")
+	}
+	if !types.ResponseAllowed(types.StepName(r.Step), types.ApprovalAction(r.Action)) {
+		return fmt.Errorf("response %s is not allowed for step %s", r.Action, r.Step)
 	}
 	payload, err := json.Marshal(r.Payload)
 	if err != nil {
@@ -35,7 +38,7 @@ func (d *DB) RecordResponse(r Response) error {
 	if err := tx.QueryRow(`SELECT prompt_generation FROM step_results WHERE id=? AND run_id=? AND step_name=? AND status IN (?, ?)`, r.StepID, r.RunID, r.Step, types.StepStatusAwaitingApproval, types.StepStatusFixReview).Scan(&generation); err != nil {
 		return fmt.Errorf("response prompt is not parked: %w", err)
 	}
-	if r.Generation != 0 && r.Generation != generation {
+	if r.Generation != generation {
 		return fmt.Errorf("response prompt generation is stale")
 	}
 	if _, err := tx.Exec(`INSERT INTO responses(run_id,step,step_id,prompt_generation,action,payload,created_at) VALUES(?,?,?,?,?,?,?)`, r.RunID, r.Step, r.StepID, generation, r.Action, string(payload), now()); err != nil {
@@ -94,6 +97,9 @@ func (d *DB) ApplyResponse(runID, step, stepID, headSHA string, review bool) (*R
 	}
 	if err != nil {
 		return nil, fmt.Errorf("find response: %w", err)
+	}
+	if !types.ResponseAllowed(types.StepName(step), types.ApprovalAction(action)) {
+		return nil, fmt.Errorf("response %s is not allowed for step %s", action, step)
 	}
 	if action == string(types.ActionFix) {
 		if _, err = tx.Exec(`UPDATE step_results SET status=?, last_activity_at=?, last_activity=? WHERE id=? AND run_id=? AND status IN (?, ?)`, types.StepStatusFixing, now(), "operator requested fix", stepID, runID, types.StepStatusAwaitingApproval, types.StepStatusFixReview); err != nil {

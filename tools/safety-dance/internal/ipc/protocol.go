@@ -200,6 +200,8 @@ type SubscribeParams struct {
 type RespondParams struct {
 	RunID          string               `json:"run_id"`
 	Step           types.StepName       `json:"step"`
+	StepID         string               `json:"step_id"`
+	Generation     int                  `json:"generation"`
 	Action         types.ApprovalAction `json:"action"`
 	FindingIDs     []string             `json:"finding_ids,omitempty"`
 	Instructions   map[string]string    `json:"instructions,omitempty"`

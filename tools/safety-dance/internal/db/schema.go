@@ -232,8 +232,6 @@ CREATE TABLE IF NOT EXISTS responses (
     payload TEXT NOT NULL,
     created_at INTEGER NOT NULL
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_responses_prompt_generation ON responses(run_id, step, step_id, prompt_generation);
-CREATE INDEX IF NOT EXISTS idx_responses_prompt ON responses(run_id, step, step_id, created_at);
 `
 
 // migrationStatements hold additive schema changes applied to databases that
@@ -242,6 +240,10 @@ CREATE INDEX IF NOT EXISTS idx_responses_prompt ON responses(run_id, step, step_
 var migrationStatements = []string{
 	`ALTER TABLE responses ADD COLUMN step_id TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE responses ADD COLUMN prompt_generation INTEGER NOT NULL DEFAULT 0`,
+	// Upgrade old response rows before adding the generation uniqueness rule.
+	`DELETE FROM responses WHERE rowid NOT IN (SELECT MIN(rowid) FROM responses GROUP BY run_id, step, step_id, prompt_generation)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_responses_prompt_generation ON responses(run_id, step, step_id, prompt_generation)`,
+	`CREATE INDEX IF NOT EXISTS idx_responses_prompt ON responses(run_id, step, step_id, created_at)`,
 	`ALTER TABLE runs ADD COLUMN pi_profile TEXT`,
 	`CREATE TRIGGER IF NOT EXISTS runs_pi_profile_immutable BEFORE UPDATE OF pi_profile ON runs WHEN NEW.pi_profile IS NOT OLD.pi_profile BEGIN SELECT RAISE(ABORT, 'run Pi profile is immutable'); END`,
 	`ALTER TABLE repos ADD COLUMN fork_url TEXT`,

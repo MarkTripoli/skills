@@ -86,6 +86,8 @@ func renderTUI(cmd *cobra.Command, args []string) error {
 		if len(steps) > 0 {
 			step := steps[len(steps)-1]
 			m.Step = string(step.StepName)
+			m.StepID = step.ID
+			m.Generation = step.PromptGeneration
 			if step.FindingsJSON != nil {
 				m.Findings = []string{*step.FindingsJSON}
 			}
@@ -126,7 +128,7 @@ func renderTUI(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("unsupported response action %q", action)
 		}
 		var out ipc.RespondResult
-		return callDaemon(ipc.MethodRespond, ipc.RespondParams{RunID: current.RunID, Step: types.StepName(current.Step), Action: selected}, &out)
+		return callDaemon(ipc.MethodRespond, ipc.RespondParams{RunID: current.RunID, Step: types.StepName(current.Step), StepID: current.StepID, Generation: current.Generation, Action: selected}, &out)
 	}, Abort: func() error {
 		if current.RunID == "" {
 			return fmt.Errorf("no active run")

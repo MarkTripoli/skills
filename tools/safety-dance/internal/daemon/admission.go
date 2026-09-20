@@ -53,12 +53,17 @@ type PushNotification struct {
 type Admission struct {
 	auth        *ipc.Authenticator
 	notify      func(context.Context, PushNotification) error
+	deferred    bool
 	mu          sync.Mutex
 	receipts    map[string]ipc.AdmitPushParams
 	claimed     map[string]bool
 	receiptFile string
 	loadErr     error
 }
+
+// DeferNotifications keeps an accepted receipt durably queued so the
+// reconciliation worker, not post-receive, performs run construction.
+func (a *Admission) DeferNotifications() { a.deferred = true }
 
 func NewAdmission(server *ipc.Server, notify func(context.Context, PushNotification) error) *Admission {
 	return newAdmission(server, notify, "")
@@ -426,6 +431,13 @@ func (a *Admission) notifyPush(ctx context.Context, raw json.RawMessage) (interf
 	}
 	a.claimed[token] = true
 	a.mu.Unlock()
+	if a.deferred {
+		a.mu.Lock()
+		delete(a.claimed, token)
+		_ = a.saveReceipts()
+		a.mu.Unlock()
+		return map[string]bool{"ok": true}, nil
+	}
 	if a.notify != nil {
 		if err := a.notify(ctx, PushNotification{Gate: p.Gate, Ref: p.Ref, Old: p.Old, New: p.New, Token: token, Options: append([]string(nil), p.PushOptions...), ValidationGeneration: p.ValidationGeneration}); err != nil {
 			a.mu.Lock()
