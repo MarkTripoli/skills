@@ -354,6 +354,7 @@ function readValidatedJson(file, validator) {
 
 function retainedTreeProblem(root) {
   const pending = [root];
+  const fileIdentities = new Set();
   while (pending.length > 0) {
     const current = pending.pop();
     let stats;
@@ -365,6 +366,13 @@ function retainedTreeProblem(root) {
     const relative = path.relative(root, current) || ".";
     if (stats.isSymbolicLink() || (!stats.isDirectory() && !stats.isFile())) {
       return `recording: retained run contains unsafe retained entry ${JSON.stringify(relative)}`;
+    }
+    if (stats.isFile()) {
+      const identity = `${stats.dev}:${stats.ino}`;
+      if (stats.nlink !== 1 || fileIdentities.has(identity)) {
+        return `recording: retained run contains unsafe retained entry ${JSON.stringify(relative)}`;
+      }
+      fileIdentities.add(identity);
     }
     if (stats.isDirectory()) {
       let names;

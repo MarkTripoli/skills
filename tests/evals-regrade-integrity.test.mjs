@@ -305,6 +305,31 @@ test("regrade rejects symlinks across every retained input class", async (t) => 
   }
 });
 
+test("regrade rejects retained files with external hard-link aliases", async () => {
+  // Given
+  const harness = createHarness("skills-retained-hardlink-regrade-");
+  try {
+    const live = await runEval([basicScenario], ["--keep", "--max-time", "1"], harness.env);
+    assert.equal(live.status, 0, live.stderr || live.stdout);
+    const runDir = fs.realpathSync(path.join(harness.resultsRoot, "latest"));
+    const answer = path.join(runDir, basicScenario, "1-setup-repository", "answer.md");
+    const external = path.join(harness.temp, "external-answer.md");
+    fs.copyFileSync(answer, external);
+    fs.rmSync(answer);
+    fs.linkSync(external, answer);
+
+    // When
+    const regrade = await runEval([basicScenario], ["--grade", runDir], harness.env);
+
+    // Then
+    assert.equal(regrade.status, 1);
+    assert.match(`${regrade.stdout}\n${regrade.stderr}`, /unsafe retained/);
+  } finally {
+    removeFixtureRepositories(harness.resultsRoot);
+    fs.rmSync(harness.temp, { recursive: true, force: true });
+  }
+});
+
 test("regrade rejects every malformed retained manifest shape even when before and after match", async (t) => {
   // Given
   const harness = createHarness("skills-manifest-schema-regrade-");
