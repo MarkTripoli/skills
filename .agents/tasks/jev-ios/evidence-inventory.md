@@ -100,3 +100,5 @@ No credential-bearing files or video binaries are included in this committed inv
 - Current generic, exact-Name, and Casey-to-Jordan evidence is retained under `evidence/continuation-20260920/`; installed standalone evidence remains at `/tmp/jev-ios-cont-standalone` because it is external ignored output.
 - Earlier invalid-helper blocked attempts under `evidence/repair-risk-20260920065808/` remain preserved and are not relabeled.
 - Final owned cleanup: authorized simulator `7A023F51-F0DA-4179-868B-19207E433651` was `Shutdown`; `/tmp/atomic-migration.JBu9Sk/jev-ios-idb.sock` was absent after stopping the owned companion.
+
+- Current blocked cleanup receipt: `continuation-20260920/zero-action/jev-receipt.json` reports `blocked` / `action budget exhausted` with verified recording; the companion-unavailable and action-budget failures remain non-green.
