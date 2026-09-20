@@ -46,49 +46,33 @@ func (s Setup) Run(ctx context.Context) error {
 	if len(labels) == 0 {
 		labels = []string{"upstream", "gate", "provider"}
 	}
-	prompts := make([]struct {
-		dst   *string
-		label string
-	}, 0, len(labels))
 	for _, label := range labels {
-		var dst *string
-		switch label {
-		case "upstream":
-			dst = &m.Upstream
-		case "gate":
-			dst = &m.Gate
-		case "provider":
-			dst = &m.Provider
-		case "commands":
-			if raw, err := readAnswer(reader); err != nil {
-				return err
-			} else {
-				parts := strings.Split(raw, ";")
-				if len(parts) != 8 {
-					return fmt.Errorf("validation commands require eight semicolon-separated commands")
-				}
-				for i := range parts {
-					m.ValidationCommands = append(m.ValidationCommands, strings.TrimSpace(parts[i]))
-				}
-			}
-			continue
-		default:
-			return fmt.Errorf("unknown wizard prompt %q", label)
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		prompts = append(prompts, struct {
-			dst   *string
-			label string
-		}{dst, label})
-	}
-	for _, p := range prompts {
-		fmt.Fprintf(s.Out, "%s: ", p.label)
-		v, err := readAnswer(reader)
+		fmt.Fprintf(s.Out, "%s: ", label)
+		raw, err := readAnswer(reader)
 		if err != nil {
 			return err
 		}
-		*p.dst = v
-		if err := ctx.Err(); err != nil {
-			return err
+		switch label {
+		case "upstream":
+			m.Upstream = raw
+		case "gate":
+			m.Gate = raw
+		case "provider":
+			m.Provider = raw
+		case "commands":
+			parts := strings.Split(raw, ";")
+			if len(parts) != 8 {
+				return fmt.Errorf("validation commands require eight semicolon-separated commands")
+			}
+			m.ValidationCommands = m.ValidationCommands[:0]
+			for _, part := range parts {
+				m.ValidationCommands = append(m.ValidationCommands, strings.TrimSpace(part))
+			}
+		default:
+			return fmt.Errorf("unknown wizard prompt %q", label)
 		}
 	}
 	if s.AskService {

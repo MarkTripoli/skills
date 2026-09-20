@@ -13,9 +13,10 @@ import (
 
 type BranchKey struct{ RepositoryID, Ref string }
 type RunHandle struct {
-	Run    *db.Run
-	cancel context.CancelFunc
-	done   chan struct{}
+	Run     *db.Run
+	cancel  context.CancelFunc
+	done    chan struct{}
+	started chan struct{}
 }
 
 func (h *RunHandle) Cancel() {
@@ -96,10 +97,11 @@ func (m *Manager) Replace(ctx context.Context, key BranchKey, accepted db.Accept
 	// A request only submits work. The daemon owns the run until it reaches a
 	// durable terminal state, so an IPC disconnect must not cancel it.
 	runctx, cancel := context.WithCancel(context.Background())
-	h := &RunHandle{Run: r, cancel: cancel, done: make(chan struct{})}
+	h := &RunHandle{Run: r, cancel: cancel, done: make(chan struct{}), started: make(chan struct{})}
 	m.keys[key] = h
 	m.mu.Unlock()
 	go func() {
+		close(h.started)
 		defer close(h.done)
 		if m.run != nil {
 			m.run(runctx, r)
@@ -110,12 +112,56 @@ func (m *Manager) Replace(ctx context.Context, key BranchKey, accepted db.Accept
 		}
 		m.mu.Unlock()
 	}()
+	<-h.started
 	return r, nil
 }
 func (m *Manager) Active(key BranchKey) *RunHandle {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.keys[key]
+}
+
+// Cancel stops only the currently registered handle for runID. It never
+// follows a branch key to a replacement run.
+func (m *Manager) Cancel(key BranchKey, runID string) bool {
+	m.mu.Lock()
+	h := m.keys[key]
+	if h == nil || h.Run == nil || h.Run.ID != runID {
+		m.mu.Unlock()
+		return false
+	}
+	h.Cancel()
+	m.mu.Unlock()
+	return true
+}
+
+// Resume registers a durable pending/running run that has no live handle.
+func (m *Manager) Resume(ctx context.Context, r *db.Run) error {
+	if r == nil {
+		return fmt.Errorf("run is required")
+	}
+	key := BranchKey{RepositoryID: r.RepoID, Ref: r.Branch}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if existing := m.keys[key]; existing != nil {
+		return nil
+	}
+	runctx, cancel := context.WithCancel(ctx)
+	h := &RunHandle{Run: r, cancel: cancel, done: make(chan struct{}), started: make(chan struct{})}
+	m.keys[key] = h
+	go func() {
+		close(h.started)
+		defer close(h.done)
+		if m.run != nil {
+			m.run(runctx, r)
+		}
+		m.mu.Lock()
+		if m.keys[key] == h {
+			delete(m.keys, key)
+		}
+		m.mu.Unlock()
+	}()
+	return nil
 }
 
 // Recover re-registers durable active runs after a daemon restart and resumes

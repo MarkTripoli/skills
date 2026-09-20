@@ -21,6 +21,8 @@ import (
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/paths"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/pipeline"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/pipeline/steps"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/scm"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/scm/github"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/types"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/worktrees"
 	"github.com/spf13/cobra"
@@ -258,7 +260,15 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 			return nil, err
 		}
 		nonce := hex.EncodeToString(nonceBytes)
-		worktree := p.WorktreeDir(q.RepoID, nonce)
+		globalConfig, err := config.LoadGlobal(p.ConfigFile())
+		if err != nil {
+			return nil, fmt.Errorf("load global configuration: %w", err)
+		}
+		layout := worktrees.New(p, globalConfig.WorktreeRoots)
+		if err := layout.ValidateCheckout(repo.WorkingPath); err != nil {
+			return nil, err
+		}
+		worktree := layout.Dir(q.RepoID, repo.WorkingPath, nonce)
 		if err := worktrees.CreateDetached(ctx, repo.WorkingPath, worktree, q.HeadSHA); err != nil {
 			return nil, err
 		}
@@ -329,19 +339,20 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		if err := json.Unmarshal(raw, &q); err != nil {
 			return nil, err
 		}
-		if err := d.CancelRun(q.RunID, "cancelled"); err != nil {
-			return nil, err
-		}
 		run, err := d.GetRun(q.RunID)
 		if err != nil {
 			return nil, err
 		}
-		if run != nil {
-			active := manager.Active(daemon.BranchKey{RepositoryID: run.RepoID, Ref: run.Branch})
-			if active != nil {
-				active.Cancel()
-				active.Wait()
-			}
+		if run == nil {
+			return nil, fmt.Errorf("run %s not found", q.RunID)
+		}
+		if err := d.CancelRun(q.RunID, "cancelled"); err != nil {
+			return nil, err
+		}
+		active := manager.Active(daemon.BranchKey{RepositoryID: run.RepoID, Ref: run.Branch})
+		if active != nil && active.Run != nil && active.Run.ID == run.ID {
+			active.Cancel()
+			active.Wait()
 		}
 		return ipc.CancelRunResult{OK: true}, nil
 	})
@@ -405,15 +416,27 @@ func recordPush(d *db.DB, p *paths.Paths, manager *daemon.Manager, n daemon.Push
 		if existing, err := d.GetRunByLaunchNonce(r.ID, branch, nonce); err != nil {
 			return err
 		} else if existing != nil {
+			if manager.Active(daemon.BranchKey{RepositoryID: r.ID, Ref: branch}) == nil {
+				if err := manager.Resume(context.Background(), existing); err != nil {
+					return err
+				}
+			}
 			return nil
 		}
-		worktree := p.WorktreeDir(r.ID, nonce)
+		globalConfig, err := config.LoadGlobal(p.ConfigFile())
+		if err != nil {
+			return fmt.Errorf("load global configuration: %w", err)
+		}
+		layout := worktrees.New(p, globalConfig.WorktreeRoots)
+		if err := layout.ValidateCheckout(r.WorkingPath); err != nil {
+			return err
+		}
+		worktree := layout.Dir(r.ID, r.WorkingPath, nonce)
 		if err := worktrees.CreateDetached(context.Background(), r.WorkingPath, worktree, n.New); err != nil {
 			return err
 		}
 		accepted := db.AcceptedRef{RepoID: r.ID, Branch: branch, GateHead: n.New, PreviousReconciledHead: n.Old, LaunchNonce: nonce, RequestedOptions: append([]string(nil), n.Options...)}
-		_, err = manager.Replace(context.Background(), daemon.BranchKey{RepositoryID: r.ID, Ref: branch}, accepted, worktree)
-		if err != nil {
+		if _, err = manager.Replace(context.Background(), daemon.BranchKey{RepositoryID: r.ID, Ref: branch}, accepted, worktree); err != nil {
 			return err
 		}
 		return worktrees.CommitOwnership(worktree)
@@ -488,6 +511,9 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 		return fmt.Errorf("load global configuration: %w", globalErr)
 	}
 	mergedConfig := config.Merge(globalConfig, effectiveConfig)
+	if err := mergedConfig.ResolveAgent(ctx, exec.LookPath); err != nil {
+		return fmt.Errorf("resolve validation agent: %w", err)
+	}
 	ref := run.Branch
 	if !strings.HasPrefix(ref, "refs/") {
 		ref = "refs/heads/" + ref
@@ -495,6 +521,14 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	verifiedHead := livePublicationHead(ctx, repo.PushURL(), ref)
 	if verifiedHead == "" {
 		verifiedHead = normalizeSHA(run.BaseSHA)
+	}
+	var scmHost scm.Host
+	if scm.DetectProvider(repo.PushURL()) == scm.ProviderGitHub {
+		scmHost = github.New(func(commandCtx context.Context, name string, args ...string) *exec.Cmd {
+			command := exec.CommandContext(commandCtx, name, args...)
+			command.Dir = worktree
+			return command
+		}, func() bool { _, err := exec.LookPath("gh"); return err == nil }, scm.ExtractHost(repo.PushURL()), github.HostPrefixedSlug(repo.PushURL()))
 	}
 	request := steps.PushRequest{Worktree: worktree, Remote: repo.PushURL(), Ref: ref, Candidate: run.HeadSHA, VerifiedHead: verifiedHead, Rewrite: verifiedHead != "" && verifiedHead == normalizeSHA(run.BaseSHA), BeforePush: func() error {
 		current, checkErr := database.GetRun(run.ID)
@@ -513,6 +547,7 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 			stepCtx = steps.WithWorktree(stepCtx, worktree)
 			stepCtx = steps.WithConfig(stepCtx, mergedConfig)
 			stepCtx = steps.WithRun(stepCtx, database, run.ID)
+			stepCtx = steps.WithSCM(stepCtx, scmHost)
 			var stepErr error
 			switch name {
 			case pipeline.StepIntent:

@@ -200,7 +200,7 @@ func (s Service) Install() error {
 	case "linux":
 		activationErr = s.Executor.Run("systemctl", "--user", "enable", "--now", filepath.Base(path))
 	default:
-		action := fmt.Sprintf(`cmd /C "set SD_HOME=%s&& set %s=1&& \\\"%s\\\" daemon serve"`, s.Home.Root(), serviceMarker, s.Binary)
+		action := fmt.Sprintf(`cmd /C "set SD_HOME=%s&& set %s=1&& "%s" daemon serve"`, s.Home.Root(), serviceMarker, s.Binary)
 		activationErr = s.Executor.Run("schtasks", "/Create", "/TN", s.Label(), "/TR", action, "/F")
 	}
 	if activationErr == nil {

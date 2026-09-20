@@ -137,7 +137,7 @@ func managedHookPeer(pid int, gate string) bool {
 		if strings.Contains(command, "SD_MANAGED_HOOK=") {
 			return false
 		}
-		if env, envErr := processEnvironmentFunc(pid); envErr == nil && strings.Contains(string(env), "SD_MANAGED_HOOK=") {
+		if env, envErr := processEnvironmentFunc(pid); envErr == nil && environmentHas(env, "SD_MANAGED_HOOK=") {
 			return false
 		}
 		if commandHasExecutable(command, expected) {
@@ -237,7 +237,7 @@ func AuthorizeMutationPeer(pid int) error {
 		if envErr != nil {
 			return fmt.Errorf("cannot verify IPC peer environment: %w", envErr)
 		}
-		if strings.Contains(string(env), "SD_PARENT_RUN_ID=") {
+		if environmentHas(env, "SD_PARENT_RUN_ID=") {
 			return errors.New("nested validation process cannot mutate daemon state")
 		}
 		fields := strings.Fields(command)

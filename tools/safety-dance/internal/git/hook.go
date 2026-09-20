@@ -81,9 +81,12 @@ GATE_DIR=$(git rev-parse --absolute-git-dir 2>/dev/null || :)
 case "$GATE_DIR" in /*) ;; *) HOOK_DIR=${0%/*}; GATE_DIR=$(cd "$HOOK_DIR/.." 2>/dev/null && pwd -P || :);; esac
 LOG="$GATE_DIR/notify-push.log"
 cat >&2 <<'BANNER'
-_  _ ____    _  _ _ ____ ___ ____ _  _ ____ ____
-|\ | |  |    |\/| | [__   |  |__| |_/  |___ [__
-| \| |__|    |  | | ___]  |  |  | | \_ |___ ___]
+ _____         __      ____ance
+/ ___/____ ___ / /__   / __/ /_  ____ _____ ____
+\__ \/ __ '__ \/ / _ \/ /_/ __ \/ __ '/ __ '/ _ \\
+___/ / / / / / / /  __/ /_/ / / / /_/ / /_/ /  __/
+/____/_/ /_/ /_/_/\___/\____/_/ /_/\__,_/\__, /\___/
+                                       /____/
 
   * Pipeline started
   Run safety-dance to review.

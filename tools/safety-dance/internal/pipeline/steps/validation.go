@@ -10,12 +10,21 @@ import (
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/agent"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/config"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/scm"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/types"
 )
 
 type worktreeKey struct{}
 type repoConfigKey struct{}
 type configKey struct{}
 type databaseKey struct{}
+type scmKey struct{}
+
+func WithSCM(ctx context.Context, host scm.Host) context.Context {
+	return context.WithValue(ctx, scmKey{}, host)
+}
+func scmHost(ctx context.Context) scm.Host { host, _ := ctx.Value(scmKey{}).(scm.Host); return host }
+
 type runIDKey struct{}
 
 func WithWorktree(ctx context.Context, dir string) context.Context {
@@ -42,6 +51,10 @@ func worktree(ctx context.Context) string { dir, _ := ctx.Value(worktreeKey{}).(
 func repoConfig(ctx context.Context) *config.RepoConfig {
 	cfg, _ := ctx.Value(repoConfigKey{}).(*config.RepoConfig)
 	return cfg
+}
+func dbValue(ctx context.Context) *db.DB {
+	database, _ := ctx.Value(databaseKey{}).(*db.DB)
+	return database
 }
 func mergedConfig(ctx context.Context) *config.Config {
 	cfg, _ := ctx.Value(configKey{}).(*config.Config)
@@ -91,39 +104,49 @@ func Typed(ctx context.Context, name string) error {
 	if cfg == nil || cfg.Agent == "" {
 		return fmt.Errorf("%s: typed validation owner is required", name)
 	}
-	a, err := agent.NewWithOptions(cfg.Agent, cfg.AgentPath(), cfg.AgentArgs(), agent.Options{
-		ACPRegistryOverrides:   cfg.ACPRegistryOverrides,
-		DisableProjectSettings: cfg.DisableProjectSettings,
-		Profile:                cfg.AgentProfileFor(cfg.Agent),
-	})
-	if err != nil {
-		return fmt.Errorf("%s: construct typed validation owner: %w", name, err)
+	roleCfg := cfg
+	if name == "review" {
+		if entry, ok := cfg.ReviewAgents["reviewer"]; ok {
+			roleCfg = cfg.ForReviewAgent(entry)
+		}
 	}
-	if err := agent.EnsureGateNeutralized(a); err != nil {
+	candidates := append([]types.AgentName(nil), roleCfg.Agents...)
+	if len(candidates) == 0 {
+		candidates = []types.AgentName{roleCfg.Agent}
+	}
+	var lastErr error
+	for _, candidate := range candidates {
+		a, err := agent.NewWithOptions(candidate, roleCfg.AgentPathFor(candidate), roleCfg.AgentArgsFor(candidate), agent.Options{ACPRegistryOverrides: roleCfg.ACPRegistryOverrides, DisableProjectSettings: roleCfg.DisableProjectSettings, Profile: roleCfg.AgentProfileFor(candidate)})
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if err := agent.EnsureGateNeutralized(a); err != nil {
+			_ = a.Close()
+			lastErr = err
+			continue
+		}
+		res, runErr := a.Run(ctx, agent.RunOpts{CWD: worktree(ctx), Purpose: name, Env: []string{"SD_PARENT_RUN_ID=" + runID(ctx)}, Prompt: fmt.Sprintf("Run the typed %s validation for this checkout and return the structured verdict.", name), JSONSchema: json.RawMessage(`{"type":"object","required":["verdict"],"properties":{"verdict":{"type":"string","enum":["pass","fail","blocked"]}}}`)})
 		_ = a.Close()
-		return fmt.Errorf("%s: unsafe typed validation owner: %w", name, err)
+		if runErr != nil {
+			lastErr = runErr
+			continue
+		}
+		if res == nil || len(res.Output) == 0 {
+			lastErr = fmt.Errorf("no verdict")
+			continue
+		}
+		verdict, parseErr := parseTypedVerdict(res.Output)
+		if parseErr != nil {
+			lastErr = parseErr
+			continue
+		}
+		if verdict != "pass" {
+			return fmt.Errorf("%s: typed validation verdict %q", name, verdict)
+		}
+		return nil
 	}
-	defer a.Close()
-	res, err := a.Run(ctx, agent.RunOpts{
-		CWD: worktree(ctx), Purpose: name,
-		Env:        []string{"SD_PARENT_RUN_ID=" + runID(ctx)},
-		Prompt:     fmt.Sprintf("Run the typed %s validation for this checkout and return the structured verdict.", name),
-		JSONSchema: json.RawMessage(`{"type":"object","required":["verdict"],"properties":{"verdict":{"type":"string","enum":["pass","fail","blocked"]}}}`),
-	})
-	if err != nil {
-		return fmt.Errorf("%s: typed validation failed: %w", name, err)
-	}
-	if res == nil || len(res.Output) == 0 {
-		return fmt.Errorf("%s: typed validation returned no verdict", name)
-	}
-	verdict, err := parseTypedVerdict(res.Output)
-	if err != nil {
-		return fmt.Errorf("%s: typed validation returned invalid verdict: %w", name, err)
-	}
-	if verdict != "pass" {
-		return fmt.Errorf("%s: typed validation verdict %q", name, verdict)
-	}
-	return nil
+	return fmt.Errorf("%s: typed validation failed: %w", name, lastErr)
 }
 
 // Validate runs an explicitly configured repository check in the owned worktree.

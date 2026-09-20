@@ -29,11 +29,12 @@ type gateSnapshot struct {
 	files    map[string][]byte
 	modes    map[string]os.FileMode
 	paths    map[string]bool
+	links    map[string]string
 	hooksDir string
 }
 
 func snapshotGate(dir string) gateSnapshot {
-	s := gateSnapshot{files: map[string][]byte{}, modes: map[string]os.FileMode{}, paths: map[string]bool{}, hooksDir: filepath.Join(dir, "hooks")}
+	s := gateSnapshot{files: map[string][]byte{}, modes: map[string]os.FileMode{}, paths: map[string]bool{}, links: map[string]string{}, hooksDir: filepath.Join(dir, "hooks")}
 	paths := []string{filepath.Join(dir, "config"), filepath.Join(dir, "config.worktree"), filepath.Join(dir, "safety-dance-gate-config")}
 	if entries, err := os.ReadDir(s.hooksDir); err == nil {
 		for _, entry := range entries {
@@ -44,12 +45,20 @@ func snapshotGate(dir string) gateSnapshot {
 	}
 	for _, path := range paths {
 		s.paths[path] = false
-		if info, err := os.Stat(path); err == nil {
-			s.paths[path] = true
-			s.modes[path] = info.Mode().Perm()
-			if raw, readErr := os.ReadFile(path); readErr == nil {
-				s.files[path] = raw
+		info, err := os.Lstat(path)
+		if err != nil {
+			continue
+		}
+		s.paths[path] = true
+		s.modes[path] = info.Mode().Perm()
+		if info.Mode()&os.ModeSymlink != 0 {
+			if target, readErr := os.Readlink(path); readErr == nil {
+				s.links[path] = target
 			}
+			continue
+		}
+		if raw, readErr := os.ReadFile(path); readErr == nil {
+			s.files[path] = raw
 		}
 	}
 	return s
@@ -65,13 +74,18 @@ func (s gateSnapshot) restore() {
 		}
 	}
 	for path, existed := range s.paths {
-		if existed {
-			if raw, ok := s.files[path]; ok {
-				_ = os.WriteFile(path, raw, s.modes[path])
-				_ = os.Chmod(path, s.modes[path])
-			}
-		} else {
+		if !existed {
 			_ = os.Remove(path)
+			continue
+		}
+		_ = os.Remove(path)
+		if target, ok := s.links[path]; ok {
+			_ = os.Symlink(target, path)
+			continue
+		}
+		if raw, ok := s.files[path]; ok {
+			_ = os.WriteFile(path, raw, s.modes[path])
+			_ = os.Chmod(path, s.modes[path])
 		}
 	}
 }
@@ -190,11 +204,15 @@ func InitWithFork(ctx context.Context, d *db.DB, p *paths.Paths, workDir, forkUR
 		}
 	}
 	// Provision (or repair) the on-disk gate. This is idempotent.
+	_, bareStatErr := os.Stat(bareDir)
+	bareExisted := bareStatErr == nil
 	gateBefore := snapshotGate(bareDir)
 	if err := provisionGate(ctx, bareDir, absRoot, upstreamURL, p.ReposDir(), existing != nil); err != nil {
 		if existing == nil {
 			restoreRemote()
-			_ = os.RemoveAll(bareDir)
+			if !bareExisted {
+				_ = os.RemoveAll(bareDir)
+			}
 		} else {
 			gateBefore.restore()
 			restoreRemote()
@@ -223,12 +241,12 @@ func InitWithFork(ctx context.Context, d *db.DB, p *paths.Paths, workDir, forkUR
 	// Insert repo record with deterministic ID.
 	repo, err := d.InsertRepoWithIDAndFork(id, absRoot, redactedUpstreamURL, forkURL, branch)
 	if err != nil {
-		// Rollback only state created by this transaction.
 		restoreRemote()
-		_ = os.RemoveAll(bareDir)
+		if !bareExisted {
+			_ = os.RemoveAll(bareDir)
+		}
 		return nil, false, fmt.Errorf("insert repo: %w", err)
 	}
-
 	slog.Info("gate initialized", "repo_id", id, "path", absRoot, "upstream", redactedUpstreamURL)
 	return repo, true, nil
 }
