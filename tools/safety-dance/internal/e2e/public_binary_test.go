@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/paths"
 )
 
 // TestPublicBinarySmoke drives a built Safety Dance command through gate
@@ -47,6 +50,13 @@ func TestPublicBinarySmoke(t *testing.T) {
 		return string(out)
 	}
 	run(work, "init")
+	// Create the candidate only after the upstream base and gate are initialized.
+	if err := os.WriteFile(filepath.Join(work, "README"), []byte("candidate\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, work, "add", "README")
+	gitRun(t, work, "commit", "-m", "candidate")
+	candidate := gitRun(t, work, "rev-parse", "HEAD")
 	run(work, "daemon", "start")
 	t.Cleanup(func() {
 		cmd := exec.Command(binary, "daemon", "stop")
@@ -74,28 +84,54 @@ func TestPublicBinarySmoke(t *testing.T) {
 	push := exec.Command("git", "push", "safety-dance", "HEAD:refs/heads/main")
 	push.Dir = work
 	push.Env = append(os.Environ(), "SD_HOME="+home)
-	if output, err := push.CombinedOutput(); err != nil {
-		if strings.Contains(string(output), "could not obtain admission token") {
-			t.Skipf("built-binary hook ancestry is unavailable: %s", output)
+	pushOutput, err := push.CombinedOutput()
+	if err != nil {
+		if strings.Contains(string(pushOutput), "could not obtain admission token") {
+			t.Skipf("built-binary hook ancestry is unavailable: %s", pushOutput)
 		}
-		t.Fatalf("gate push: %v\n%s", err, output)
+		t.Fatalf("gate push: %v\n%s", err, pushOutput)
 	}
 	deadline := time.Now().Add(20 * time.Second)
+	observedCompleted := false
+	lastStatus := ""
 	for time.Now().Before(deadline) {
 		status := run(work, "status")
-		if strings.Contains(status, "completed") || strings.Contains(status, "published") {
+		lastStatus = status
+		if strings.Contains(status, "status=completed") {
+			observedCompleted = true
 			break
 		}
-		if strings.Contains(status, "failed") || strings.Contains(status, "blocked") {
+		if strings.Contains(status, "status=failed") || strings.Contains(status, "status=blocked") {
 			t.Fatalf("gate run failed: %s", status)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if got := gitRun(t, root, "--git-dir", upstream, "rev-parse", "refs/heads/main"); got != gitRun(t, work, "rev-parse", "HEAD") {
-		t.Fatalf("upstream head = %s, want candidate", got)
+	if !observedCompleted {
+		t.Fatalf("timed out waiting for a completed durable run; last status: %s", lastStatus)
 	}
-	if got := gitRun(t, root, "--git-dir", gate, "rev-parse", "refs/heads/main"); got != gitRun(t, work, "rev-parse", "HEAD") {
-		t.Fatalf("gate head = %s, want candidate", got)
+	p := paths.WithRoot(home)
+	database, err := db.Open(p.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	repos, err := database.GetRepos()
+	if err != nil || len(repos) != 1 {
+		t.Fatalf("repositories = %d, err=%v", len(repos), err)
+	}
+	runs, err := database.GetRunsByRepo(repos[0].ID)
+	if err != nil || len(runs) != 1 || runs[0].HeadSHA != candidate {
+		t.Fatalf("runs = %#v, err=%v", runs, err)
+	}
+	publication, err := database.GetPublication(runs[0].ID)
+	if err != nil || publication == nil || publication.Candidate != candidate {
+		t.Fatalf("publication = %#v, err=%v", publication, err)
+	}
+	if got := gitRun(t, root, "--git-dir", upstream, "rev-parse", "refs/heads/main"); got != candidate {
+		t.Fatalf("upstream head = %s, want candidate %s", got, candidate)
+	}
+	if got := gitRun(t, root, "--git-dir", gate, "rev-parse", "refs/heads/main"); got != candidate {
+		t.Fatalf("gate head = %s, want candidate %s", got, candidate)
 	}
 	run(work, "daemon", "stop")
 }

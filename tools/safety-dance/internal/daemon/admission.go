@@ -90,7 +90,16 @@ func (a *Admission) ImportGateReceipts(ctx context.Context, gates []string) erro
 			if err != nil || strings.TrimSpace(current) != fields[1] {
 				continue
 			}
-			if _, exists := a.receipts[fields[3]]; exists {
+			if existing, exists := a.receipts[fields[3]]; exists {
+				if existing.Gate != gate || existing.Ref != fields[2] || existing.Old != fields[0] || existing.New != fields[1] {
+					return fmt.Errorf("gate receipt %s conflicts with persisted admission", fields[3])
+				}
+				// Keep notification metadata already persisted by the daemon, but
+				// promote the matching pre-receive receipt to accepted custody.
+				if !existing.Accepted {
+					existing.Accepted = true
+					a.receipts[fields[3]] = existing
+				}
 				continue
 			}
 			a.receipts[fields[3]] = ipc.AdmitPushParams{Gate: gate, Ref: fields[2], Old: fields[0], New: fields[1], Token: fields[3], Accepted: true}

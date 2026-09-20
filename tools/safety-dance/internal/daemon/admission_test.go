@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -65,6 +66,40 @@ func TestReconcileOncePreservesAcceptedNotificationMetadata(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Options, []string{"safety-dance-validation=custom", "safety-dance-intent=ship"}) || got.ValidationGeneration != "generation-7" {
 		t.Fatalf("notification metadata = options %v, generation %q", got.Options, got.ValidationGeneration)
+	}
+}
+
+func TestImportGateReceiptsPromotesPersistedPreAcceptanceReceipt(t *testing.T) {
+	a, gate := reconcileAdmission(t, nil)
+	revision := setGateRef(t, gate)
+	a.receiptFile = filepath.Join(t.TempDir(), "receipts.json")
+	a.receipts["crash"] = ipc.AdmitPushParams{
+		Gate: gate, Ref: "refs/heads/main", Old: "old", New: revision, Token: "crash",
+		PushOptions: []string{"safety-dance-intent=preserve"}, Accepted: false,
+	}
+	journal := fmt.Sprintf("old %s refs/heads/main crash\n", revision)
+	if err := os.WriteFile(filepath.Join(gate, ".safety-dance-receipts"), []byte(journal), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ImportGateReceipts(context.Background(), []string{gate}); err != nil {
+		t.Fatal(err)
+	}
+	receipt := a.receipts["crash"]
+	if !receipt.Accepted || !reflect.DeepEqual(receipt.PushOptions, []string{"safety-dance-intent=preserve"}) {
+		t.Fatalf("imported receipt = %#v, want accepted with metadata preserved", receipt)
+	}
+}
+
+func TestImportGateReceiptsRejectsPersistedReceiptConflict(t *testing.T) {
+	a, gate := reconcileAdmission(t, nil)
+	revision := setGateRef(t, gate)
+	a.receipts["conflict"] = ipc.AdmitPushParams{Gate: gate, Ref: "refs/heads/main", Old: "different", New: revision, Token: "conflict"}
+	journal := fmt.Sprintf("old %s refs/heads/main conflict\n", revision)
+	if err := os.WriteFile(filepath.Join(gate, ".safety-dance-receipts"), []byte(journal), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ImportGateReceipts(context.Background(), []string{gate}); err == nil || !strings.Contains(err.Error(), "conflicts") {
+		t.Fatalf("ImportGateReceipts error = %v, want conflict", err)
 	}
 }
 
