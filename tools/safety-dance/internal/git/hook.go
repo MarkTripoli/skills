@@ -53,34 +53,43 @@ lock_receipts() {
   while ! mkdir "$LOCK" 2>/dev/null; do
     i=$((i + 1)); [ "$i" -ge 300 ] && return 1
     owner=$(cat "$LOCK/pid" 2>/dev/null || :)
-    if [ -z "$owner" ] && [ "$i" -ge 10 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; continue; fi
-    case "$owner" in ''|*[!0-9]*) stale=1;; *) kill -0 "$owner" 2>/dev/null && stale=0 || stale=1;; esac
+    case "$owner" in ''|*[!0-9]*) stale=0;; *) kill -0 "$owner" 2>/dev/null && stale=0 || stale=1;; esac
     if [ "$stale" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; continue; fi
     sleep 0.1
   done
-  printf '%s\n' "$$" > "$LOCK/pid"; LOCK_OWNED=1; return 0
+  LOCK_OWNED=1
+  if ! printf '%s\n' "$$" > "$LOCK/pid"; then unlock_receipts; return 1; fi
+  return 0
 }
 unlock_receipts() { if [ "$LOCK_OWNED" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; LOCK_OWNED=0; fi; }
 remove_receipt() {
   old=$1; new=$2; ref=$3; tok=$4
-  lock_receipts || return
+  lock_receipts || return 1
+  status=0
   if [ -f "$RECEIPTS" ]; then
-    out=$(mktemp "$GATE_DIR/.safety-dance-receipts.XXXXXX") || { unlock_receipts; return; }
-    awk -v o="$old" -v n="$new" -v r="$ref" -v t="$tok" '$1!=o || $2!=n || $3!=r || $4!=t' "$RECEIPTS" > "$out" && mv "$out" "$RECEIPTS" || rm -f "$out"
+    out=$(mktemp "$GATE_DIR/.safety-dance-receipts.XXXXXX") || status=1
+    if [ "$status" -eq 0 ] && ! awk -v o="$old" -v n="$new" -v r="$ref" -v t="$tok" '$1!=o || $2!=n || $3!=r || $4!=t' "$RECEIPTS" > "$out"; then status=1; fi
+    if [ "$status" -eq 0 ] && ! mv "$out" "$RECEIPTS"; then status=1; fi
+    [ "$status" -eq 0 ] || rm -f "$out"
   fi
   unlock_receipts
+  return "$status"
+}
+revoke_one() {
+  old=$1; new=$2; ref=$3; token=$4
+  "$SD_BIN" daemon revoke-push-receipt --gate "$GATE_DIR" --ref "$ref" --old "$old" --new "$new" --token "$token" >/dev/null 2>&1
 }
 revoke_accepted() {
   failed=0
   while read receipt_line; do
     set -- $receipt_line; oldrev=$1; newrev=$2; refname=$3; token=$4
     [ -n "$token" ] || continue
-    if "$SD_BIN" daemon revoke-push-receipt --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --token "$token" >/dev/null 2>&1 && remove_receipt "$oldrev" "$newrev" "$refname" "$token"; then :; else failed=1; fi
+    if revoke_one "$oldrev" "$newrev" "$refname" "$token" && remove_receipt "$oldrev" "$newrev" "$refname" "$token"; then :; else failed=1; fi
   done < "$ACCEPTED"
   cleanup
   return "$failed"
 }
-cat > "$INPUT"
+if ! cat > "$INPUT"; then revoke_accepted; exit 1; fi
 while read line; do
   set -- $line; oldrev=$1; newrev=$2; refname=$3
   token=""; token_option_present=0
@@ -99,9 +108,9 @@ while read line; do
   out=$(printf '%s\n' "$line" | "$SD_BIN" daemon admit-push --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --token "$token" 2>&1)
   status=$?
   if [ $status -ne 0 ]; then revoke_accepted; printf 'safety-dance: gate push refused before ref mutation:\n%s\n' "$out" >&2; exit $status; fi
-  printf '%s\t%s\t%s\t%s\n' "$oldrev" "$newrev" "$refname" "$token" >> "$ACCEPTED"
+  if ! printf '%s\t%s\t%s\t%s\n' "$oldrev" "$newrev" "$refname" "$token" >> "$ACCEPTED"; then revoke_one "$oldrev" "$newrev" "$refname" "$token"; revoke_accepted; exit 1; fi
   lock_receipts || { revoke_accepted; printf '%s\n' 'safety-dance: receipt lock unavailable' >&2; exit 1; }
-  printf '%s\t%s\t%s\t%s\n' "$oldrev" "$newrev" "$refname" "$token" >> "$RECEIPTS"
+  if ! printf '%s\t%s\t%s\t%s\n' "$oldrev" "$newrev" "$refname" "$token" >> "$RECEIPTS"; then unlock_receipts; revoke_accepted; printf '%s\n' 'safety-dance: could not persist admission receipt' >&2; exit 1; fi
   unlock_receipts
 done < "$INPUT"
 USER_HOOK="$GATE_DIR/hooks/pre-receive.safety-dance-user"
@@ -139,9 +148,9 @@ LOCK="$GATE_DIR/.safety-dance-receipts.lock"
 LOCK_OWNED=0
 cleanup_post() { rm -f "$INPUT"; if [ "$LOCK_OWNED" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; fi; }
 trap cleanup_post EXIT INT TERM HUP
-lock_receipts() { i=0; while ! mkdir "$LOCK" 2>/dev/null; do i=$((i + 1)); [ "$i" -ge 300 ] && return 1; owner=$(cat "$LOCK/pid" 2>/dev/null || :); if [ -z "$owner" ] && [ "$i" -ge 10 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; continue; fi; case "$owner" in ''|*[!0-9]*) stale=1;; *) kill -0 "$owner" 2>/dev/null && stale=0 || stale=1;; esac; if [ "$stale" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; continue; fi; sleep 0.1; done; printf '%s\n' "$$" > "$LOCK/pid"; LOCK_OWNED=1; }
+lock_receipts() { i=0; while ! mkdir "$LOCK" 2>/dev/null; do i=$((i + 1)); [ "$i" -ge 300 ] && return 1; owner=$(cat "$LOCK/pid" 2>/dev/null || :); case "$owner" in ''|*[!0-9]*) stale=0;; *) kill -0 "$owner" 2>/dev/null && stale=0 || stale=1;; esac; if [ "$stale" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; continue; fi; sleep 0.1; done; LOCK_OWNED=1; if ! printf '%s\n' "$$" > "$LOCK/pid"; then unlock_receipts; return 1; fi; }
 unlock_receipts() { if [ "$LOCK_OWNED" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; LOCK_OWNED=0; fi; }
-cat > "$INPUT"
+if ! cat > "$INPUT"; then exit 0; fi
 while read oldrev newrev refname; do
   set -- --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev"
   i=0

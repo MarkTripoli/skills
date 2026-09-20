@@ -33,6 +33,31 @@ func TestPreReceiveHookScript(t *testing.T) {
 	}
 }
 
+func TestPreReceiveHookChecksReceiptCustodyAndRemovalFailures(t *testing.T) {
+	script := preReceiveHookScript("safety-dance")
+	for _, want := range []string{
+		`if ! cat > "$INPUT"`,
+		`if ! printf '%s\t%s\t%s\t%s\n' "$oldrev" "$newrev" "$refname" "$token" >> "$ACCEPTED"`,
+		`if ! printf '%s\t%s\t%s\t%s\n' "$oldrev" "$newrev" "$refname" "$token" >> "$RECEIPTS"`,
+		`if [ "$status" -eq 0 ] && ! mv "$out" "$RECEIPTS"`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("pre-receive hook missing custody check %q", want)
+		}
+	}
+}
+
+func TestReceiptLockNeverReclaimsUnpublishedCreator(t *testing.T) {
+	for _, script := range []string{preReceiveHookScript("safety-dance"), postReceiveHookScript("safety-dance")} {
+		if strings.Contains(script, `[ -z "$owner" ] && [ "$i" -ge 10 ]`) {
+			t.Fatal("receipt lock must not reclaim an empty lock while its creator publishes pid")
+		}
+		if !strings.Contains(script, `case "$owner" in ''|*[!0-9]*) stale=0`) {
+			t.Fatal("receipt lock must wait for an unpublished creator")
+		}
+	}
+}
+
 func TestRefreshManagedPreReceiveHookPreservesCustomHook(t *testing.T) {
 	bare := t.TempDir()
 	hooks := filepath.Join(bare, "hooks")
