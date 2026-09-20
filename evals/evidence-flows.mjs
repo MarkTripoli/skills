@@ -27,7 +27,11 @@ function identity(label) {
 }
 
 function actionFlow(action) {
-  return flowName(action.replace(/^(?:activate|click)\s+/i, "").replace(/\s+(?:exactly\s+)?once\b/i, ""));
+  const stripped = action.replace(/^(?:activate|click)\s+/i, "").replace(/\s+(?:exactly\s+)?once\b/i, "").trim();
+  // Strip matching surrounding quotes (single, double, backtick) so 'Add one', "Add one",
+  // and `Add one` in charter action descriptions resolve to the same flow as unquoted forms.
+  const unquoted = /^(["'`])(.+)\1$/.exec(stripped);
+  return flowName(unquoted ? unquoted[2].trim() : stripped);
 }
 
 // Stable IDs have meaning only within this receipt's frozen target charter.

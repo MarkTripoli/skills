@@ -222,16 +222,25 @@ async function runSubject(prompt, config, pinned, options) {
   let interruption = null;
   const pauseWatcher = config.pauseFile ? setInterval(() => {
     if (interruption || !fs.existsSync(`${config.pauseFile}.waiting`)) return;
-    const receipt = newest(path.join(repo, config.taskRel), "evidence-iteration");
+    // Locate the receipt by filename pattern rather than type frontmatter, which the
+    // subject may omit, and validate structurally with the same activeReservation predicate
+    // the grader uses. This avoids false negatives from a missing or misspelled type field.
+    const taskDir = path.join(repo, config.taskRel);
+    const receiptFiles = fs.existsSync(taskDir)
+      ? fs.readdirSync(taskDir).filter((f) => /^\d{2}-evidence-iteration-[a-z0-9-]+\.md$/.test(f)).sort().reverse()
+      : [];
+    const receiptFile = receiptFiles[0] ?? null;
+    const receiptText = receiptFile !== null ? fs.readFileSync(path.join(taskDir, receiptFile), "utf8") : null;
     const state = evidenceSnapshot(config, { sequence: 999998, boundary: "interruption" });
     const current = json(path.join(out, state.path));
     const pause = json(config.pauseFile);
-    const valid = receipt?.fm.status === "in-progress" && Number(receipt.fm.consumed_rounds) === 1
-      && receipt.text.includes("IE-001") && current.files["app.js"].sha256 !== pause.appSha256
-      && current.files["check.mjs"].sha256 !== pause.checkSha256;
-    interruption = { valid, waiting: json(`${config.pauseFile}.waiting`), snapshot: state, receipt: receipt?.file, receiptSha256: receipt ? sha256(Buffer.from(receipt.text)) : null, reason: "Owned subject terminated at capture-entry pause; no product recovery performed by harness" };
+    const valid = receiptText !== null
+      && activeReservation(receiptText, 1, 3, "IE-001")
+      && current.files["app.js"]?.sha256 !== pause.appSha256
+      && current.files["check.mjs"]?.sha256 !== pause.checkSha256;
+    interruption = { valid, waiting: json(`${config.pauseFile}.waiting`), snapshot: state, receipt: receiptFile, receiptSha256: receiptText !== null ? sha256(Buffer.from(receiptText)) : null, reason: "Owned subject terminated at capture-entry pause; no product recovery performed by harness" };
     save(path.join(out, "interruption.json"), interruption);
-    if (receipt) fs.copyFileSync(path.join(repo, config.taskRel, receipt.file), path.join(out, "interrupted-receipt.md"));
+    if (receiptFile) fs.copyFileSync(path.join(taskDir, receiptFile), path.join(out, "interrupted-receipt.md"));
     // Tool subprocesses may have their own process group. Stop the identified paused
     // capture too, before release; otherwise an orphan can record outside the fresh subject.
     try { process.kill(interruption.waiting.pid, "SIGKILL"); interruption.captureTerminated = true; }

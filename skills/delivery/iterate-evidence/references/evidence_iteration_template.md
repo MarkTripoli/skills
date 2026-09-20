@@ -16,6 +16,10 @@ Use `NN-evidence-iteration-<slug>.md`; continuation revises this file. Fill ever
 
 `status`: `in-progress`, `passed`, `blocked`, or `failed`. `stop_reason`: `none` while active/interrupted; otherwise `success`, `blocker`, `no-progress`, or `exhaustion`. `limit` and `consumed_rounds` are nonnegative integers. A reserved round consumes allowance before delegation or mutation; baseline consumes zero. While active, frontmatter's consumed number selects the matching numbered round, whose scoped record owns repair state, not the last historical heading. Apply the skill's [reservation boundary](../SKILL.md#4-reserve-and-complete-one-repair-round) before action, including continuation.
 
+**Frontmatter is append/update-only.** At reservation, update only `status`, `stop_reason`, and `consumed_rounds`; retain every other field — `type`, `limit`, `task`, `summary`, `branch`, and `current_application_revision` — unchanged and present. The entire frontmatter block must always include every previously established field. Never remove, replace with a different field, or collapse existing fields. Rewriting a frontmatter block that omits any prior field is wrong even if the intent is to update a single value.
+
+**Initial-zero frame per session.** For every recording session — baseline and each repair pass — open the initial application state before the first action as a separately named frame (the initial-zero count before any interaction) as a distinct viewer call. This is required alongside the per-flow action result frames; do not infer the starting state from a fresh page or a probe.
+
 ## Scope
 
 - Invocation and primary inputs: [task, request, named iteration/evidence receipt, source links]

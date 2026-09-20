@@ -92,6 +92,33 @@ for (const scenario of [disagreement, zeroLimit, noProgress]) {
   });
 }
 
+for (const scenario of [disagreement, zeroLimit, noProgress]) {
+  const increment = "failed";
+  const reset = "passed";
+  const coverage = [coverageRow("F1", increment), coverageRow("F2", reset)];
+
+  test(`${scenario.slug}: quoted action labels resolve to the same flows as unquoted`, () => {
+    for (const quote of [`"`, `'`, "`"]) {
+      // Quoted label in charter action must map F1→increment, F2→reset.
+      const charter = [charterRow("F1", `Click ${quote}Add one${quote} once`), charterRow("F2", `Click ${quote}Reset${quote}`)];
+      assert.deepEqual(check(scenario, coverage, charter), [], `${quote} quoted`);
+      assert.deepEqual(check(scenario, [...coverage].reverse(), [...charter].reverse()), [], `${quote} quoted, reordered`);
+      // Mixed: one quoted, one unquoted.
+      const mixed = [charterRow("F1", `Click ${quote}Add one${quote} once`), charterRow("F2", "Click Reset once")];
+      assert.deepEqual(check(scenario, coverage, mixed), [], `${quote} mixed quoted`);
+      // Activate verb with quoted label.
+      const activate = [charterRow("F1", `Activate ${quote}Add one${quote} once`), charterRow("F2", `Activate ${quote}Reset${quote}`)];
+      assert.deepEqual(check(scenario, coverage, activate), [], `${quote} Activate quoted`);
+    }
+    // Unknown label with quotes must not match any known flow; increment coverage stays unresolved.
+    const unknownCharter = [charterRow("F1", `Click "Do something" once`), charterRow("F2", "Click Reset once")];
+    assert.ok(check(scenario, coverage, unknownCharter).length >= 1, "unknown quoted label must not match");
+    // Mismatched quotes are not stripped (e.g. "Add one' is not a clean quoted form); F1 stays unmapped.
+    const mismatched = [charterRow("F1", `Click "Add one' once`), charterRow("F2", "Click Reset once")];
+    assert.ok(check(scenario, coverage, mismatched).length >= 1, "mismatched quotes must not resolve");
+  });
+}
+
 for (const scenario of [disagreement, zeroLimit, noProgress, viewerBlocked]) {
   const increment = scenario === viewerBlocked ? "untested" : "failed";
   const reset = scenario === viewerBlocked ? "untested" : "passed";
