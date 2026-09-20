@@ -118,6 +118,9 @@ func managedHookPeer(pid int, gate string) bool {
 	gate = cleanPath(gate)
 	for depth := 0; pid > 1 && depth < 64; depth++ {
 		ppid, command, err := processInfo(pid)
+		if raw, readErr := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/environ"); readErr == nil && strings.Contains(string(raw), "SD_PARENT_RUN_ID=") {
+			return false
+		}
 		if err != nil {
 			return false
 		}
