@@ -94,4 +94,17 @@ func TestRestartRecoveryListsActiveRuns(t *testing.T) {
 	if len(active) != 1 || active[0].ID != r.ID {
 		t.Fatalf("recovery=%v", active)
 	}
+	resumed := make(chan string, 1)
+	recovered := NewManager(d, func(ctx context.Context, run *db.Run) { resumed <- run.ID })
+	if err := recovered.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-resumed:
+		if got != r.ID {
+			t.Fatalf("resumed run=%s, want %s", got, r.ID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("manager did not resume recovered run")
+	}
 }

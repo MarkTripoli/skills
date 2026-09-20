@@ -2,11 +2,14 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -15,6 +18,7 @@ import (
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/ipc"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/paths"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/types"
 	"github.com/spf13/cobra"
 )
 
@@ -124,11 +128,16 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 	}
 	defer own.Close()
 	server := ipc.NewServer()
+	manager := daemon.NewManager(d, func(ctx context.Context, r *db.Run) {
+		if err := d.TransitionRunStatus(r.ID, types.RunRunning, types.RunCompleted); err != nil {
+			_ = d.TransitionRunStatus(r.ID, types.RunRunning, types.RunFailed)
+		}
+	})
+	adm := daemon.NewAdmission(server, func(ctx context.Context, n daemon.PushNotification) error { return recordPush(d, p, manager, n) })
+	_ = adm
 	server.Handle(ipc.MethodHealth, func(context.Context, json.RawMessage) (interface{}, error) {
 		return ipc.HealthResult{Status: "ok"}, nil
 	})
-	adm := daemon.NewAdmission(server, func(ctx context.Context, n daemon.PushNotification) error { return recordPush(d, p, n) })
-	_ = adm
 	server.Handle(ipc.MethodStartFreshRun, func(ctx context.Context, raw json.RawMessage) (interface{}, error) {
 		var q ipc.StartFreshRunParams
 		if err := json.Unmarshal(raw, &q); err != nil {
@@ -177,17 +186,37 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func recordPush(d *db.DB, p *paths.Paths, n daemon.PushNotification) error {
+func recordPush(d *db.DB, p *paths.Paths, manager *daemon.Manager, n daemon.PushNotification) error {
 	repos, err := d.GetRepos()
 	if err != nil {
 		return err
 	}
+	gatePath, err := filepath.Abs(n.Gate)
+	if err != nil {
+		return err
+	}
+	if resolved, resolveErr := filepath.EvalSymlinks(gatePath); resolveErr == nil {
+		gatePath = resolved
+	}
 	for _, r := range repos {
-		if p.RepoDir(r.ID) == n.Gate {
-			branch := strings.TrimPrefix(n.Ref, "refs/heads/")
-			_, err := d.InsertRun(r.ID, branch, n.New, n.Old)
+		expected, expectedErr := filepath.Abs(p.RepoDir(r.ID))
+		if expectedErr != nil {
+			continue
+		}
+		if resolved, resolveErr := filepath.EvalSymlinks(expected); resolveErr == nil {
+			expected = resolved
+		}
+		if filepath.Clean(expected) != filepath.Clean(gatePath) {
+			continue
+		}
+		branch := strings.TrimPrefix(n.Ref, "refs/heads/")
+		nonceBytes := make([]byte, 16)
+		if _, err := rand.Read(nonceBytes); err != nil {
 			return err
 		}
+		accepted := db.AcceptedRef{RepoID: r.ID, Branch: branch, GateHead: n.New, LaunchNonce: hex.EncodeToString(nonceBytes), RequestedOptions: append([]string(nil), n.Options...)}
+		_, err = manager.Replace(context.Background(), daemon.BranchKey{RepositoryID: r.ID, Ref: branch}, accepted, p.WorktreeDir(r.ID, hex.EncodeToString(nonceBytes)))
+		return err
 	}
 	return fmt.Errorf("unknown gate %q", n.Gate)
 }
