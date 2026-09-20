@@ -16,3 +16,5 @@
 - Verification bytes: [planned bytes match reread bytes, observed bytes remain unchanged, or failed]
 - External operations: 0
 - Safe rerun: [one inline `/setup-repository` or `/setup-repository reset-managed` command when useful, or none]
+
+A successfully parsed and validated schema-1 revision-1 document requires `Observed state: current` and `Conflicts: none`. A byte-stable no-op cannot use a conflict receipt.
