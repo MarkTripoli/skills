@@ -222,11 +222,12 @@ type GateContextParams struct {
 // AdmitPushParams asks whether a local receive hook's authenticated process
 // ancestry is allowed to mutate one managed gate ref.
 type AdmitPushParams struct {
-	Gate  string `json:"gate"`
-	Ref   string `json:"ref"`
-	Old   string `json:"old"`
-	New   string `json:"new"`
-	Token string `json:"token"`
+	Gate     string `json:"gate"`
+	Ref      string `json:"ref"`
+	Old      string `json:"old"`
+	New      string `json:"new"`
+	Token    string `json:"token"`
+	Accepted bool   `json:"accepted,omitempty"`
 }
 
 type IssuePushTokenParams struct {

@@ -430,7 +430,7 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 			roots = append(roots, root)
 		}
 	}
-	if outside, outsideErr := d.ActiveRunWorktreesOutside(filepath.Join(p.Root(), "worktrees")); outsideErr == nil {
+	if outside, outsideErr := d.RunWorktreesOutside(filepath.Join(p.Root(), "worktrees")); outsideErr == nil {
 		for _, placement := range outside {
 			root := filepath.Dir(worktrees.JournalRootFor(placement.Dir))
 			seen := false
@@ -704,10 +704,15 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 		if err != nil {
 			return fmt.Errorf("load trusted repository configuration: %w", err)
 		}
-	} else if pushedConfig.AllowRepoCommands {
-		// A wizard-created repository explicitly opts into its initial local policy.
-		// Subsequent runs use the committed default-branch copy once it exists.
-		trustedConfig = pushedConfig
+	} else {
+		raw, readErr := os.ReadFile(p.BootstrapConfigFile())
+		if readErr != nil {
+			return fmt.Errorf("trusted repository configuration is not committed on the default branch: %w", readErr)
+		}
+		trustedConfig, err = config.LoadRepoFromBytes(raw)
+		if err != nil {
+			return fmt.Errorf("load wizard bootstrap configuration: %w", err)
+		}
 	}
 	effectiveConfig := config.EffectiveRepoConfig(pushedConfig, trustedConfig, trustedConfig.AllowRepoCommands)
 	globalConfig, globalErr := config.LoadGlobal(p.ConfigFile())

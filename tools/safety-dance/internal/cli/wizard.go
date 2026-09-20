@@ -65,8 +65,10 @@ func runWizard(cmd *cobra.Command, args []string) error {
 	}
 	var gateRollback gate.Rollback
 	configPath := filepath.Join(root, ".safety-dance.yaml")
+	bootstrapPath := p.BootstrapConfigFile()
 	configExisted := false
 	var originalConfig []byte
+	var originalBootstrap []byte
 	var originalConfigMode os.FileMode
 	if info, statErr := os.Stat(configPath); statErr == nil {
 		configExisted = true
@@ -75,6 +77,11 @@ func runWizard(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		originalConfigMode = info.Mode().Perm()
+	}
+	if raw, readErr := os.ReadFile(bootstrapPath); readErr == nil {
+		originalBootstrap = raw
+	} else if !os.IsNotExist(readErr) {
+		return readErr
 	}
 	setup := wizard.Setup{
 		In: cmd.InOrStdin(), Out: cmd.OutOrStdout(),
@@ -103,6 +110,9 @@ func runWizard(cmd *cobra.Command, args []string) error {
 			if _, parseErr := config.LoadRepoFromBytes(content); parseErr != nil {
 				return fmt.Errorf("validate generated configuration: %w", parseErr)
 			}
+			if err := os.WriteFile(bootstrapPath, content, 0600); err != nil {
+				return err
+			}
 			if err := os.WriteFile(configPath, content, 0600); err != nil {
 				return err
 			}
@@ -126,6 +136,13 @@ func runWizard(cmd *cobra.Command, args []string) error {
 				}
 			} else {
 				_ = os.Remove(configPath)
+			}
+			if len(originalBootstrap) > 0 {
+				if err := os.WriteFile(bootstrapPath, originalBootstrap, 0600); err != nil && first == nil {
+					first = err
+				}
+			} else if err := os.Remove(bootstrapPath); err != nil && !os.IsNotExist(err) && first == nil {
+				first = err
 			}
 			var restore error
 			if hadOrigin {

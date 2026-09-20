@@ -38,6 +38,11 @@ func (p *Paths) Socket() string     { return filepath.Join(p.root, "socket") }
 func (p *Paths) PIDFile() string    { return filepath.Join(p.root, "daemon.pid") }
 func (p *Paths) ConfigFile() string { return filepath.Join(p.root, "config.yaml") }
 
+// BootstrapConfigFile stores the operator-approved initial policy created by the wizard.
+func (p *Paths) BootstrapConfigFile() string {
+	return filepath.Join(p.root, "bootstrap-repo-config.yaml")
+}
+
 // LockFile is the OS-level advisory lock used to enforce a single live daemon
 // per SD_HOME (see the singleton lock in internal/daemon). Distinct from
 // PIDFile, which is an informational record a live daemon writes for

@@ -84,23 +84,23 @@ func newAdmission(server *ipc.Server, notify func(context.Context, PushNotificat
 // InitError reports unreadable persisted receipts before the daemon announces readiness.
 func (a *Admission) InitError() error { return a.loadErr }
 
-// ReconcileOnce retries receipts without treating a transient pre-receive state as stale.
+// ReconcileOnce retries only receipts durably marked accepted by post-receive.
 func (a *Admission) ReconcileOnce(ctx context.Context) error {
-	a.mu.Lock()
-	tokens := make([]string, 0, len(a.receipts))
-	for token := range a.receipts {
-		if !a.claimed[token] {
-			a.claimed[token] = true
-			tokens = append(tokens, token)
-		}
-	}
-	a.mu.Unlock()
-	for _, token := range tokens {
+	var errs []error
+	for {
 		a.mu.Lock()
-		receipt, exists := a.receipts[token]
+		var token string
+		var receipt ipc.AdmitPushParams
+		for candidate, value := range a.receipts {
+			if value.Accepted && !a.claimed[candidate] {
+				token, receipt = candidate, value
+				a.claimed[candidate] = true
+				break
+			}
+		}
 		a.mu.Unlock()
-		if !exists {
-			continue
+		if token == "" {
+			break
 		}
 		current, err := git.RunBare(ctx, receipt.Gate, "rev-parse", receipt.Ref)
 		if err != nil || strings.TrimSpace(current) != receipt.New {
@@ -119,22 +119,23 @@ func (a *Admission) ReconcileOnce(ctx context.Context) error {
 			a.mu.Lock()
 			delete(a.claimed, token)
 			a.mu.Unlock()
-			return err
+			errs = append(errs, err)
+			continue
 		}
 		a.mu.Lock()
 		if currentReceipt, ok := a.receipts[token]; ok && currentReceipt.Gate == receipt.Gate && currentReceipt.Ref == receipt.Ref && currentReceipt.New == receipt.New {
 			delete(a.receipts, token)
 			delete(a.claimed, token)
 			if err := a.saveReceipts(); err != nil {
-				a.mu.Unlock()
-				return fmt.Errorf("remove admission receipt: %w", err)
+				a.receipts[token] = currentReceipt
+				errs = append(errs, fmt.Errorf("remove admission receipt: %w", err))
 			}
 		} else {
 			delete(a.claimed, token)
 		}
 		a.mu.Unlock()
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (a *Admission) Issue(gate, ref string) (string, error) {
@@ -387,8 +388,12 @@ func (a *Admission) notifyPush(ctx context.Context, raw json.RawMessage) (interf
 		a.mu.Unlock()
 		return nil, errors.New("notification is already being processed")
 	}
-	// Claim before invoking the run-start callback. A second post-receive
-	// delivery must not cancel or replace the run started by the first one.
+	receipt.Accepted = true
+	a.receipts[token] = receipt
+	if err := a.saveReceipts(); err != nil {
+		a.mu.Unlock()
+		return nil, fmt.Errorf("persist accepted receipt: %w", err)
+	}
 	a.claimed[token] = true
 	a.mu.Unlock()
 	if a.notify != nil {

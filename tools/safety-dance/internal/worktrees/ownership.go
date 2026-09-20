@@ -16,9 +16,19 @@ type pendingWorktree struct{ Source, Dir, Head string }
 
 func metadataDir(dir string) string {
 	clean := filepath.Clean(dir)
+	if configured := strings.TrimSpace(os.Getenv("SD_HOME")); configured != "" {
+		root, err := filepath.Abs(configured)
+		if err == nil {
+			worktreeRoot := filepath.Join(root, "worktrees")
+			rel, relErr := filepath.Rel(worktreeRoot, clean)
+			if relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return filepath.Join(root, ".safety-dance-journals")
+			}
+		}
+	}
 	parts := strings.Split(clean, string(filepath.Separator))
-	for i, part := range parts {
-		if part == "worktrees" {
+	for i := len(parts) - 1; i >= 0; i-- {
+		if parts[i] == "worktrees" {
 			root := strings.Join(parts[:i+1], string(filepath.Separator))
 			if root == "" {
 				root = string(filepath.Separator)

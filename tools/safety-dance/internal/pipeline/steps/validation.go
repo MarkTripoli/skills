@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/agent"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/config"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/scm"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/shellenv"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/types"
 )
 
@@ -204,10 +206,15 @@ func Validate(ctx context.Context, name string) error {
 	if command == "" {
 		return fmt.Errorf("%s: configured repository check is required", name)
 	}
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	shell, args := "sh", []string{"-c", command}
+	if runtime.GOOS == "windows" {
+		shell, args = "cmd.exe", []string{"/D", "/S", "/C", command}
+	}
+	cmd := exec.CommandContext(ctx, shell, args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "SD_PARENT_RUN_ID="+runID(ctx))
-	if out, err := cmd.CombinedOutput(); err != nil {
+	shellenv.ConfigureShellCommand(cmd)
+	if out, err := shellenv.CombinedOutputShellCommand(cmd); err != nil {
 		return fmt.Errorf("%s: configured command failed: %s: %w", name, out, err)
 	}
 	check := exec.CommandContext(ctx, "git", "-C", dir, "diff", "--check")
