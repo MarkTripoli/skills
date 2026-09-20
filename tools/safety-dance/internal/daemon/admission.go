@@ -128,7 +128,7 @@ func (a *Admission) ReconcileOnce(ctx context.Context) error {
 			errs = append(errs, fmt.Errorf("reconcile receipt %s: notification callback is nil", token))
 			continue
 		}
-		if err := a.notify(ctx, PushNotification{Gate: receipt.Gate, Ref: receipt.Ref, Old: receipt.Old, New: receipt.New, Token: token}); err != nil {
+		if err := a.notify(ctx, PushNotification{Gate: receipt.Gate, Ref: receipt.Ref, Old: receipt.Old, New: receipt.New, Token: token, Options: append([]string(nil), receipt.PushOptions...), ValidationGeneration: receipt.ValidationGeneration}); err != nil {
 			a.releaseClaim(token)
 			errs = append(errs, fmt.Errorf("reconcile receipt %s: notify: %w", token, err))
 			continue
@@ -423,6 +423,8 @@ func (a *Admission) notifyPush(ctx context.Context, raw json.RawMessage) (interf
 		a.mu.Unlock()
 		return nil, errors.New("notification is already being processed")
 	}
+	receipt.PushOptions = append([]string(nil), p.PushOptions...)
+	receipt.ValidationGeneration = p.ValidationGeneration
 	receipt.Accepted = true
 	a.receipts[token] = receipt
 	if err := a.saveReceipts(); err != nil {

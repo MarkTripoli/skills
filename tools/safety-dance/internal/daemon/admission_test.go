@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -46,6 +47,25 @@ func setGateRef(t *testing.T, gate string) string {
 
 func acceptedReceipt(gate, token, revision string) ipc.AdmitPushParams {
 	return ipc.AdmitPushParams{Gate: gate, Ref: "refs/heads/main", Old: "old", New: revision, Token: token, Accepted: true}
+}
+
+func TestReconcileOncePreservesAcceptedNotificationMetadata(t *testing.T) {
+	var got PushNotification
+	a, gate := reconcileAdmission(t, func(_ context.Context, n PushNotification) error {
+		got = n
+		return nil
+	})
+	revision := setGateRef(t, gate)
+	a.receipts["metadata"] = ipc.AdmitPushParams{
+		Gate: gate, Ref: "refs/heads/main", Old: "old", New: revision, Token: "metadata", Accepted: true,
+		PushOptions: []string{"safety-dance-validation=custom", "safety-dance-intent=ship"}, ValidationGeneration: "generation-7",
+	}
+	if err := a.ReconcileOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Options, []string{"safety-dance-validation=custom", "safety-dance-intent=ship"}) || got.ValidationGeneration != "generation-7" {
+		t.Fatalf("notification metadata = options %v, generation %q", got.Options, got.ValidationGeneration)
+	}
 }
 
 func TestReconcileOnceStaleReceiptIsAttemptedOnceAndPreserved(t *testing.T) {
