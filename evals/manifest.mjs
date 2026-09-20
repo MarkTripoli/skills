@@ -34,6 +34,7 @@ function relativePathProblem(file) {
   const segments = normalized.split("/");
   if (
     file === ""
+    || file.includes("\0")
     || normalized !== file
     || normalized.startsWith("/")
     || /^[A-Za-z]:\//.test(normalized)

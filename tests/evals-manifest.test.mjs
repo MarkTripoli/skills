@@ -20,6 +20,7 @@ test("repository manifests reject paths outside repository ownership", () => {
     "C:\\absolute",
     "./relative",
     "nested//file",
+    "bad\0name",
   ];
 
   // When / Then
@@ -49,6 +50,14 @@ test("excluded-root manifests reject paths assigned to the wrong bucket", () => 
 
   // Then
   assert.match(problem, /\.agents.*outside bucket/);
+  assert.match(
+    excludedRootsManifestProblem({
+      ".agents": { ".agents/bad\0name": { kind: "directory", mode: "0755" } },
+      ".git": {},
+      ".omp": {},
+    }),
+    /invalid path/,
+  );
 });
 
 test("manifests verify file and symlink payload digests", () => {
