@@ -9,12 +9,13 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ -n "$version" ] && [ -n "$os" ] && [ -n "$arch" ] && [ -f "$binary" ] && [ -n "$out" ] || usage
-case "$version" in *[!0-9.]*|'') echo "invalid semantic version: $version" >&2; exit 1;; esac
-case "$version" in *.*.*.*|.*|*.) ;; esac
+case "$version" in [0-9]*.[0-9]*.[0-9]*) ;; *) echo "invalid semantic version: $version" >&2; exit 1;; esac
+case "$version" in *[!0-9.]*) echo "invalid semantic version: $version" >&2; exit 1;; esac
 mkdir -p "$out"
 name="safety-dance_${version}_${os}_${arch}"
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
-if [ "$os" = windows ]; then cp "$binary" "$stage/safety-dance.exe"; (cd "$stage" && zip -q "$out/$name.zip" safety-dance.exe)
-else cp "$binary" "$stage/safety-dance"; tar -C "$stage" -czf "$out/$name.tar.gz" safety-dance; fi
+cp "$(dirname "$0")/../LICENSE" "$stage/LICENSE"
+if [ "$os" = windows ]; then cp "$binary" "$stage/safety-dance.exe"; (cd "$stage" && zip -q "$out/$name.zip" safety-dance.exe LICENSE)
+else cp "$binary" "$stage/safety-dance"; tar -C "$stage" -czf "$out/$name.tar.gz" safety-dance LICENSE; fi
 (cd "$out" && sha256sum safety-dance_${version}_${os}_${arch}.*) > "$out/checksums.txt"

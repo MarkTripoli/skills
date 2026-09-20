@@ -3,10 +3,12 @@ package steps
 import (
 	"context"
 	"fmt"
-	"github.com/MarkTripoli/skills/tools/safety-dance/internal/branchsync"
-	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
 	"os/exec"
 	"strings"
+
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/branchsync"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/types"
 )
 
 type PushRequest struct {
@@ -82,6 +84,19 @@ func Publish(ctx context.Context, database *db.DB, runID string, req PushRequest
 		}
 		return PushResult{Candidate: publication.Candidate, Upstream: publication.VerifiedUpstream, GateMirror: publication.GateMirror}, nil
 	}
+	run, err := database.GetRun(runID)
+	if err != nil {
+		return PushResult{}, err
+	}
+	if run == nil || run.Status == types.RunCancelled || run.Status == types.RunFailed {
+		return PushResult{}, fmt.Errorf("run %s is not publishable", runID)
+	}
+	if req.Candidate == "" || req.ReviewedHead == "" || req.Candidate != req.ReviewedHead {
+		return PushResult{}, fmt.Errorf("candidate is not reviewed head")
+	}
+	if err := ctx.Err(); err != nil {
+		return PushResult{}, err
+	}
 	if err := database.SetRunPushActive(runID, true); err != nil {
 		return PushResult{}, err
 	}
@@ -102,7 +117,7 @@ func Publish(ctx context.Context, database *db.DB, runID string, req PushRequest
 	if err := mirror(ctx, result.Candidate); err != nil {
 		return PushResult{}, fmt.Errorf("update gate mirror: %w", err)
 	}
-	run, err := database.GetRun(runID)
+	run, err = database.GetRun(runID)
 	if err != nil {
 		return PushResult{}, err
 	}

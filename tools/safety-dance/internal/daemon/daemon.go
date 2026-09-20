@@ -2,10 +2,12 @@ package daemon
 
 import (
 	"fmt"
-	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
-	"github.com/MarkTripoli/skills/tools/safety-dance/internal/paths"
 	"os"
 	"strconv"
+	"syscall"
+
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/paths"
 )
 
 // Ownership is a process lock for one SD_HOME. The lock is created before IPC
@@ -20,6 +22,16 @@ func AcquireOwnership(p *paths.Paths) (*Ownership, error) {
 		return nil, err
 	}
 	f, err := os.OpenFile(p.LockFile(), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil && os.IsExist(err) {
+		if data, readErr := os.ReadFile(p.LockFile()); readErr == nil {
+			if pid, parseErr := strconv.Atoi(string(data)); parseErr == nil {
+				if proc, procErr := os.FindProcess(pid); procErr == nil && proc.Signal(syscall.Signal(0)) != nil {
+					_ = os.Remove(p.LockFile())
+					f, err = os.OpenFile(p.LockFile(), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+				}
+			}
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("daemon already owns runtime home: %w", err)
 	}

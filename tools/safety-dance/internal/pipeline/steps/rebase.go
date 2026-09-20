@@ -1,12 +1,15 @@
 package steps
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 func Rebase(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
-		return nil
+		return fmt.Errorf("rebase validation implementation is not configured")
 	}
 }

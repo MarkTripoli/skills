@@ -23,6 +23,7 @@ import (
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/pipeline"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/pipeline/steps"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/types"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/worktrees"
 	"github.com/spf13/cobra"
 )
 
@@ -177,8 +178,26 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		if err := json.Unmarshal(raw, &q); err != nil {
 			return nil, err
 		}
-		r, err := d.InsertRun(q.RepoID, q.Branch, q.HeadSHA, "")
+		repo, err := d.GetRepo(q.RepoID)
 		if err != nil {
+			return nil, err
+		}
+		if repo == nil {
+			return nil, fmt.Errorf("repository %s not found", q.RepoID)
+		}
+		nonceBytes := make([]byte, 16)
+		if _, err := rand.Read(nonceBytes); err != nil {
+			return nil, err
+		}
+		nonce := hex.EncodeToString(nonceBytes)
+		worktree := p.WorktreeDir(q.RepoID, nonce)
+		if err := worktrees.CreateDetached(ctx, repo.WorkingPath, worktree, q.HeadSHA); err != nil {
+			return nil, err
+		}
+		accepted := db.AcceptedRef{RepoID: q.RepoID, Branch: q.Branch, GateHead: q.HeadSHA, LaunchNonce: nonce}
+		r, err := manager.Replace(ctx, daemon.BranchKey{RepositoryID: q.RepoID, Ref: q.Branch}, accepted, worktree)
+		if err != nil {
+			_ = os.RemoveAll(worktree)
 			return nil, err
 		}
 		return ipc.StartFreshRunResult{Receipt: ipc.LaunchReceipt{RunID: r.ID, Branch: r.Branch, HeadSHA: r.HeadSHA, SubmittedHeadSHA: r.HeadSHA, Disposition: "created"}}, nil
@@ -191,9 +210,11 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		if q.RunID == "" || q.Step == "" || q.Action == "" {
 			return nil, fmt.Errorf("run, step, and action are required")
 		}
-		if r, err := d.GetRun(q.RunID); err != nil {
+		r, err := d.GetRun(q.RunID)
+		if err != nil {
 			return nil, err
-		} else if r == nil {
+		}
+		if r == nil {
 			return nil, fmt.Errorf("run %s not found", q.RunID)
 		}
 		if err := d.RecordResponse(db.Response{RunID: q.RunID, Step: string(q.Step), Action: string(q.Action), Payload: q}); err != nil {
@@ -206,7 +227,21 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		if err := json.Unmarshal(raw, &q); err != nil {
 			return nil, err
 		}
-		return ipc.CancelRunResult{OK: d.CancelRun(q.RunID, "cancelled") == nil}, nil
+		if err := d.CancelRun(q.RunID, "cancelled"); err != nil {
+			return nil, err
+		}
+		run, err := d.GetRun(q.RunID)
+		if err != nil {
+			return nil, err
+		}
+		if run != nil {
+			active := manager.Active(daemon.BranchKey{RepositoryID: run.RepoID, Ref: run.Branch})
+			if active != nil {
+				active.Cancel()
+				active.Wait()
+			}
+		}
+		return ipc.CancelRunResult{OK: true}, nil
 	})
 	if err := manager.Recover(context.Background()); err != nil {
 		return err
@@ -251,8 +286,16 @@ func recordPush(d *db.DB, p *paths.Paths, manager *daemon.Manager, n daemon.Push
 		if _, err := rand.Read(nonceBytes); err != nil {
 			return err
 		}
-		accepted := db.AcceptedRef{RepoID: r.ID, Branch: branch, GateHead: n.New, LaunchNonce: hex.EncodeToString(nonceBytes), RequestedOptions: append([]string(nil), n.Options...)}
-		_, err = manager.Replace(context.Background(), daemon.BranchKey{RepositoryID: r.ID, Ref: branch}, accepted, p.WorktreeDir(r.ID, hex.EncodeToString(nonceBytes)))
+		nonce := hex.EncodeToString(nonceBytes)
+		worktree := p.WorktreeDir(r.ID, nonce)
+		if err := worktrees.CreateDetached(context.Background(), r.WorkingPath, worktree, n.New); err != nil {
+			return err
+		}
+		accepted := db.AcceptedRef{RepoID: r.ID, Branch: branch, GateHead: n.New, LaunchNonce: nonce, RequestedOptions: append([]string(nil), n.Options...)}
+		_, err = manager.Replace(context.Background(), daemon.BranchKey{RepositoryID: r.ID, Ref: branch}, accepted, worktree)
+		if err != nil {
+			_ = os.RemoveAll(worktree)
+		}
 		return err
 	}
 	return fmt.Errorf("unknown gate %q", n.Gate)
@@ -266,11 +309,15 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	if repo == nil || repo.PushURL() == "" {
 		return fmt.Errorf("repository %s has no publication remote", run.RepoID)
 	}
-	worktree := repo.WorkingPath
-	if run.WorktreeDir != nil && *run.WorktreeDir != "" {
-		if _, statErr := os.Stat(*run.WorktreeDir); statErr == nil {
-			worktree = *run.WorktreeDir
-		}
+	if run.WorktreeDir == nil || *run.WorktreeDir == "" {
+		return fmt.Errorf("run %s has no owned worktree", run.ID)
+	}
+	worktree := *run.WorktreeDir
+	if err := worktrees.RecoverDetached(ctx, repo.WorkingPath, worktree, run.HeadSHA); err != nil {
+		return err
+	}
+	if _, err := os.Stat(worktree); err != nil {
+		return fmt.Errorf("owned worktree unavailable: %w", err)
 	}
 	ref := run.Branch
 	if !strings.HasPrefix(ref, "refs/") {

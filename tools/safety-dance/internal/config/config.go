@@ -2339,6 +2339,19 @@ func LoadRepoFromBytes(data []byte) (*RepoConfig, error) {
 }
 
 func parseRepoConfig(data []byte) (*RepoConfig, error) {
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		return nil, fmt.Errorf("parse repo config: %w", err)
+	}
+	allowed := map[string]bool{"agent": true, "commands": true, "ignore_patterns": true, "protected_paths": true, "allow_repo_commands": true, "auto_fix": true, "ci": true, "rebase": true, "review": true, "test": true, "gates": true, "pr": true, "document": true}
+	if len(document.Content) > 0 && document.Content[0].Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(document.Content[0].Content); i += 2 {
+			key := document.Content[0].Content[i].Value
+			if !allowed[key] {
+				return nil, fmt.Errorf("parse repo config: unknown field %q", key)
+			}
+		}
+	}
 	cfg := &RepoConfig{}
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse repo config: %w", err)

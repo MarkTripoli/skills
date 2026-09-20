@@ -53,9 +53,8 @@ while read line; do
       case "$opt" in safety-dance-token=*) token=${opt#*=};; esac
       i=$((i + 1))
     done
-  else
-    token=$(SD_HOOK_HELPER=1 "$SD_BIN" daemon issue-push-token --gate "$GATE_DIR" --ref "$refname" 2>/dev/null) || { rm -f "$TMP"; printf 'safety-dance: could not obtain admission token\n' >&2; exit 1; }
   fi
+  if [ -z "$token" ]; then rm -f "$TMP"; printf 'safety-dance: authorized admission token is required\n' >&2; exit 1; fi
   out=$(printf '%s\n' "$line" | SD_HOOK_HELPER=1 "$SD_BIN" daemon admit-push --gate "$GATE_DIR" --ref "$refname" --token "$token" 2>&1)
   status=$?
   if [ $status -ne 0 ]; then rm -f "$TMP"; printf 'safety-dance: gate push refused before ref mutation:\n%s\n' "$out" >&2; exit $status; fi
@@ -84,6 +83,9 @@ _  _ ____    _  _ _ ____ ___ ____ _  _ ____ ____
   * Pipeline started
   Run safety-dance to review.
 BANNER
+INPUT=$(mktemp "$GATE_DIR/.safety-dance-post.XXXXXX") || exit 0
+trap 'rm -f "$INPUT"' EXIT
+cat > "$INPUT"
 while read oldrev newrev refname; do
   set -- --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev"
   i=0
@@ -92,7 +94,9 @@ while read oldrev newrev refname; do
     out=$(SD_HOOK_HELPER=1 "$SD_BIN" daemon notify-push "$@" 2>&1); status=$?
     if [ $status -ne 0 ]; then printf '[%s] notify-push failed for %s (exit %d)\n%s\n\n' "$(date '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo unknown)" "$refname" "$status" "$out" >> "$LOG"; printf 'safety-dance: notify-push failed for %s (exit %d); see %s\n%s\n' "$refname" "$status" "$LOG" "$out" >&2; fi
   ) &
-done
+done < "$INPUT"
+USER_HOOK="$GATE_DIR/hooks/post-receive.safety-dance-user"
+if [ -x "$USER_HOOK" ]; then "$USER_HOOK" < "$INPUT" || true; fi
 exit 0
 `
 }
@@ -199,16 +203,20 @@ func RefreshManagedPostReceiveHook(bareDir string) (bool, error) {
 		return false, err
 	}
 	hookPath := filepath.Join(hooksDir, "post-receive")
+	companion := filepath.Join(hooksDir, "post-receive.safety-dance-user")
 	desired := []byte(PostReceiveHookScript())
 	existing, err := os.ReadFile(hookPath)
-	if err == nil {
-		if string(existing) == string(desired) {
-			return false, nil
+	if err == nil && string(existing) == string(desired) {
+		return false, nil
+	}
+	if err == nil && !isManagedPostReceiveHook(existing) {
+		if _, statErr := os.Stat(companion); statErr == nil {
+			return false, fmt.Errorf("preserve post-receive hook: companion already exists")
 		}
-		if !isManagedPostReceiveHook(existing) {
-			return false, nil
+		if err := os.Rename(hookPath, companion); err != nil {
+			return false, err
 		}
-	} else if !os.IsNotExist(err) {
+	} else if err != nil && !os.IsNotExist(err) {
 		return false, err
 	}
 	if err := writeHookFileAtomic(hookPath, desired); err != nil {

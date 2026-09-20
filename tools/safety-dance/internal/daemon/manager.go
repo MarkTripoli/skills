@@ -46,14 +46,19 @@ func (m *Manager) Replace(ctx context.Context, key BranchKey, accepted db.Accept
 	m.mu.Lock()
 	prior := m.keys[key]
 	if prior != nil {
-		_ = m.db.CancelRun(prior.Run.ID, types.RunCancelReasonSuperseded)
+		if err := m.db.CancelRun(prior.Run.ID, types.RunCancelReasonSuperseded); err != nil {
+			m.mu.Unlock()
+			return nil, err
+		}
 		prior.Cancel()
 		m.mu.Unlock()
 		prior.Wait()
 		m.mu.Lock()
-		if m.keys[key] == prior {
-			delete(m.keys, key)
+		if current, exists := m.keys[key]; exists && current != prior {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("branch %s was replaced concurrently", key.Ref)
 		}
+		delete(m.keys, key)
 	}
 	r, err := m.db.CreateRunFromAccepted(db.RunInput{Accepted: accepted, WorktreeDir: worktree})
 	if err != nil {

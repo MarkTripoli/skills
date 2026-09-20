@@ -17,7 +17,9 @@ type Service struct {
 	Executor ServiceExecutor
 }
 
-func (s Service) Label() string { return "com.safety-dance.daemon" }
+func (s Service) Label() string {
+	return "com.safety-dance.daemon." + strings.NewReplacer("/", "-", "\\", "-", ".", "-").Replace(s.Home.Root())
+}
 func (s Service) Definition() (string, error) {
 	if s.Home == nil {
 		return "", fmt.Errorf("runtime home is required")
@@ -27,11 +29,11 @@ func (s Service) Definition() (string, error) {
 	}
 	switch runtime.GOOS {
 	case "darwin":
-		return fmt.Sprintf("<?xml version=\"1.0\"?><plist><dict><key>Label</key><string>%s</string><key>ProgramArguments</key><array><string>%s</string><string>daemon</string></array><key>EnvironmentVariables</key><dict><key>SD_HOME</key><string>%s</string></dict><key>KeepAlive</key><true/></dict></plist>", s.Label(), s.Binary, s.Home.Root()), nil
+		return fmt.Sprintf("<?xml version=\"1.0\"?><plist><dict><key>Label</key><string>%s</string><key>ProgramArguments</key><array><string>%s</string><string>daemon</string><string>serve</string></array><key>EnvironmentVariables</key><dict><key>SD_HOME</key><string>%s</string></dict><key>KeepAlive</key><true/></dict></plist>", s.Label(), s.Binary, s.Home.Root()), nil
 	case "linux":
-		return fmt.Sprintf("[Unit]\nDescription=Safety Dance daemon\n[Service]\nExecStart=%s daemon\nEnvironment=SD_HOME=%s\nRestart=on-failure\n", s.Binary, s.Home.Root()), nil
+		return fmt.Sprintf("[Unit]\nDescription=Safety Dance daemon\n[Service]\nExecStart=%s daemon serve\nEnvironment=SD_HOME=%s\nRestart=on-failure\n", s.Binary, s.Home.Root()), nil
 	default:
-		return fmt.Sprintf("Safety Dance Task\nBinary=%s\nSD_HOME=%s\n", filepath.Clean(s.Binary), s.Home.Root()), nil
+		return fmt.Sprintf("Safety Dance Task\nName=%s\nBinary=%s daemon serve\nSD_HOME=%s\n", s.Label(), filepath.Clean(s.Binary), s.Home.Root()), nil
 	}
 }
 func (s Service) Validate() error {
@@ -52,34 +54,28 @@ func (s Service) Install() error {
 	if err := s.Validate(); err != nil {
 		return err
 	}
-	return s.Executor.Run(serviceInstallCommand())
+	if err := s.Validate(); err != nil {
+		return err
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return s.Executor.Run("launchctl", "load", "-w", filepath.Join(s.Home.Root(), "safety-dance.plist"))
+	case "linux":
+		return s.Executor.Run("systemctl", "--user", "enable", "--now", "safety-dance-"+strings.ReplaceAll(s.Home.Root(), "/", "-")+".service")
+	default:
+		return s.Executor.Run("schtasks", "/Create", "/TN", s.Label(), "/TR", s.Binary+" daemon serve", "/F")
+	}
 }
-
 func (s Service) Stop() error {
 	if s.Executor == nil {
 		return fmt.Errorf("service executor is required")
 	}
-	return s.Executor.Run(serviceStopCommand())
-}
-
-func serviceInstallCommand() string {
 	switch runtime.GOOS {
 	case "darwin":
-		return "launchctl"
+		return s.Executor.Run("launchctl", "unload", "-w", filepath.Join(s.Home.Root(), "safety-dance.plist"))
 	case "linux":
-		return "systemctl"
+		return s.Executor.Run("systemctl", "--user", "disable", "--now", "safety-dance-"+strings.ReplaceAll(s.Home.Root(), "/", "-")+".service")
 	default:
-		return "schtasks"
-	}
-}
-
-func serviceStopCommand() string {
-	switch runtime.GOOS {
-	case "darwin":
-		return "launchctl"
-	case "linux":
-		return "systemctl"
-	default:
-		return "schtasks"
+		return s.Executor.Run("schtasks", "/End", "/TN", s.Label())
 	}
 }
