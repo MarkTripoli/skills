@@ -243,6 +243,7 @@ function commonChecks(phase, ctx) {
     }
     if (gitConfigChanged(ctx.beforeGitConfig, ctx.afterGitConfig)) out.push("repository: local Git configuration changed");
     if (!ctx.live) return out;
+    if (ctx.excludedRootChanges?.[".git"]?.length) return out;
     const head = git(ctx.repo, "rev-parse", "HEAD");
     if (head !== ctx.beforeHead) out.push(`git: HEAD changed from ${ctx.beforeHead} to ${head}`);
     return out;
@@ -320,25 +321,25 @@ async function runScenario(scenario, runDir, dist) {
     const before = snapshot(taskDir);
     const beforeHead = git(repo, "rev-parse", "HEAD");
     const beforeRepository = phase.phaseType === "terminal" ? snapshotRepository(repo) : null;
-    const beforeGitConfig = phase.phaseType === "terminal" ? snapshotGitConfig(repo) : null;
     const beforeExcludedRoots = phase.phaseType === "terminal" ? snapshotExcludedRoots(repo) : null;
+    const beforeGitConfig = phase.phaseType === "terminal" ? snapshotGitConfig(repo) : null;
     if (beforeRepository) fs.writeFileSync(path.join(out, "repository-before.json"), `${JSON.stringify(beforeRepository, null, 2)}\n`);
-    if (phase.phaseType === "terminal") fs.writeFileSync(path.join(out, "git-config-before.json"), `${JSON.stringify(beforeGitConfig, null, 2)}\n`);
     if (beforeExcludedRoots) fs.writeFileSync(path.join(out, "excluded-roots-before.json"), `${JSON.stringify(beforeExcludedRoots, null, 2)}\n`);
+    if (phase.phaseType === "terminal") fs.writeFileSync(path.join(out, "git-config-before.json"), `${JSON.stringify(beforeGitConfig, null, 2)}\n`);
     const template = templateFor(skillsDir, phase);
     const started = Date.now();
     console.log(`[${scenario.name}] ${label}: started`);
     const { code, stdout, stderr } = await runOmp(prompt, repo);
     const seconds = Math.round((Date.now() - started) / 1000);
     const afterRepository = phase.phaseType === "terminal" ? snapshotRepository(repo) : null;
-    const afterGitConfig = phase.phaseType === "terminal" ? snapshotGitConfig(repo) : null;
+    if (afterRepository) fs.writeFileSync(path.join(out, "repository-after.json"), `${JSON.stringify(afterRepository, null, 2)}\n`);
     const afterExcludedRoots = phase.phaseType === "terminal" ? snapshotExcludedRoots(repo) : null;
+    if (afterExcludedRoots) fs.writeFileSync(path.join(out, "excluded-roots-after.json"), `${JSON.stringify(afterExcludedRoots, null, 2)}\n`);
+    const afterGitConfig = phase.phaseType === "terminal" ? snapshotGitConfig(repo) : null;
+    if (phase.phaseType === "terminal") fs.writeFileSync(path.join(out, "git-config-after.json"), `${JSON.stringify(afterGitConfig, null, 2)}\n`);
     fs.writeFileSync(path.join(out, "answer.md"), stdout);
     fs.writeFileSync(path.join(out, "stderr.log"), stderr);
     if (fs.existsSync(taskDir)) fs.cpSync(taskDir, path.join(out, "task"), { recursive: true });
-    if (afterRepository) fs.writeFileSync(path.join(out, "repository-after.json"), `${JSON.stringify(afterRepository, null, 2)}\n`);
-    if (phase.phaseType === "terminal") fs.writeFileSync(path.join(out, "git-config-after.json"), `${JSON.stringify(afterGitConfig, null, 2)}\n`);
-    if (afterExcludedRoots) fs.writeFileSync(path.join(out, "excluded-roots-after.json"), `${JSON.stringify(afterExcludedRoots, null, 2)}\n`);
     const repositoryDiff = beforeRepository && afterRepository
       ? diffRepositorySnapshots(beforeRepository, afterRepository)
       : { created: [], modified: [], deleted: [], changedPaths: [] };
