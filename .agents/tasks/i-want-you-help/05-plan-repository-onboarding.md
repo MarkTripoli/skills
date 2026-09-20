@@ -457,8 +457,8 @@ reset-managed
 
 #### Automated Verification:
 
-- [ ] `node scripts/validate.mjs`
-- [ ] `npm run evals -- setup-repository-safety --keep`
+- [x] `node scripts/validate.mjs`
+- [x] `npm run evals -- setup-repository-safety --keep`
 
 human-gated: false
 
