@@ -23,6 +23,7 @@ import (
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/pipeline/steps"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/scm"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/scm/github"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/shellenv"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/types"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/worktrees"
 	"github.com/spf13/cobra"
@@ -237,12 +238,14 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 				cleanup = true
 			}
 		} else {
+			if r.Status == types.RunCancelled && r.PushActive {
+				cleanup = true
+			} else if statusErr := d.TransitionRunStatus(r.ID, types.RunRunning, types.RunCompleted); statusErr == nil {
+				cleanup = true
+			}
 			if journalErr := journalCleanup(); journalErr != nil {
 				fmt.Fprintf(os.Stderr, "safety-dance: journal worktree cleanup for %s: %v\n", r.ID, journalErr)
 				return
-			}
-			if statusErr := d.TransitionRunStatus(r.ID, types.RunRunning, types.RunCompleted); statusErr == nil {
-				cleanup = true
 			}
 		}
 		if !cleanup {
@@ -457,6 +460,40 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func pinGatesForAdmission(ctx context.Context, p *paths.Paths, repo *db.Repo, worktree, nonce string) (string, error) {
+	pushed, err := config.LoadRepo(worktree)
+	if err != nil {
+		return "", fmt.Errorf("load pushed repository configuration: %w", err)
+	}
+	trusted := &config.RepoConfig{}
+	ref := "refs/safety-dance/trusted/admission-" + nonce
+	if _, err := git.Run(ctx, repo.WorkingPath, "fetch", "--no-tags", "origin", "refs/heads/"+repo.DefaultBranch+":"+ref); err != nil {
+		return "", fmt.Errorf("fetch trusted configuration: %w", err)
+	}
+	defer func() { _, _ = git.Run(ctx, repo.WorkingPath, "update-ref", "-d", ref) }()
+	entries, err := git.Run(ctx, repo.WorkingPath, "ls-tree", "-r", "--name-only", ref, "--", ".safety-dance.yaml")
+	if err != nil {
+		return "", fmt.Errorf("inspect trusted configuration: %w", err)
+	}
+	if strings.TrimSpace(entries) != "" {
+		raw, err := git.ShowFile(ctx, repo.WorkingPath, ref, ".safety-dance.yaml")
+		if err != nil {
+			return "", fmt.Errorf("read trusted repository configuration: %w", err)
+		}
+		trusted, err = config.LoadRepoFromBytes([]byte(raw))
+		if err != nil {
+			return "", fmt.Errorf("load trusted repository configuration: %w", err)
+		}
+	}
+	effective := config.EffectiveRepoConfig(pushed, trusted, trusted.AllowRepoCommands)
+	global, err := config.LoadGlobal(p.ConfigFile())
+	if err != nil {
+		return "", fmt.Errorf("load global configuration: %w", err)
+	}
+	merged := config.Merge(global, effective)
+	return config.MarshalGates(merged.Gates)
+}
+
 func recordPush(d *db.DB, p *paths.Paths, manager *daemon.Manager, n daemon.PushNotification) error {
 	repos, err := d.GetRepos()
 	if err != nil {
@@ -517,6 +554,11 @@ func recordPush(d *db.DB, p *paths.Paths, manager *daemon.Manager, n daemon.Push
 			return err
 		}
 		accepted := db.AcceptedRef{RepoID: r.ID, Branch: branch, GateHead: n.New, PreviousReconciledHead: n.Old, LaunchNonce: nonce, RequestedOptions: append([]string(nil), n.Options...)}
+		gatesJSON, gatesErr := pinGatesForAdmission(context.Background(), p, r, worktree, nonce)
+		if gatesErr != nil {
+			return gatesErr
+		}
+		accepted.GatesJSON = gatesJSON
 		if _, err = manager.Replace(context.Background(), daemon.BranchKey{RepositoryID: r.ID, Ref: branch}, accepted, worktree); err != nil {
 			return err
 		}
@@ -556,6 +598,27 @@ func newSCMHost(remote, worktree string) (scm.Host, error) {
 	}, func() bool { _, err := exec.LookPath("gh"); return err == nil }, scm.ExtractHost(remote), github.HostPrefixedSlug(remote)), nil
 }
 
+func recoverCancelledPublication(database *db.DB, p *paths.Paths, repo *db.Repo, run *db.Run, worktree string) error {
+	if run.ReviewApprovedHeadSHA == nil || strings.TrimSpace(*run.ReviewApprovedHeadSHA) == "" {
+		return fmt.Errorf("cancelled run %s has no reviewed publication head", run.ID)
+	}
+	ref := run.Branch
+	if !strings.HasPrefix(ref, "refs/") {
+		ref = "refs/heads/" + ref
+	}
+	verified := livePublicationHead(context.Background(), repo.PushURL(), ref)
+	recoveryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err := steps.Publish(recoveryCtx, database, run.ID, steps.PushRequest{
+		Worktree: worktree, Remote: repo.PushURL(), Ref: ref,
+		Candidate: *run.ReviewApprovedHeadSHA, ReviewedHead: *run.ReviewApprovedHeadSHA,
+		VerifiedHead: verified, Rewrite: verified != "" && verified == normalizeSHA(run.BaseSHA),
+	}, func(ctx context.Context, candidate string) error {
+		_, err := git.RunBare(ctx, p.RepoDir(run.RepoID), "update-ref", ref, candidate)
+		return err
+	})
+	return err
+}
 func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Run) error {
 	repo, err := database.GetRepo(run.RepoID)
 	if err != nil {
@@ -588,6 +651,9 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	}
 	if _, err := os.Stat(worktree); err != nil {
 		return fmt.Errorf("owned worktree unavailable: %w", err)
+	}
+	if run.Status == types.RunCancelled && run.PushActive {
+		return recoverCancelledPublication(database, p, repo, run, worktree)
 	}
 	pushedConfig, err := config.LoadRepo(worktree)
 	if err != nil {
@@ -627,15 +693,7 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 		return gateErr
 	}
 	if strings.TrimSpace(gatePayload) == "" {
-		gatePayload, gateErr = config.MarshalGates(mergedConfig.Gates)
-		if gateErr != nil {
-			return gateErr
-		}
-		if gatePayload != "" {
-			if gateErr = database.SetRunGates(run.ID, gatePayload); gateErr != nil {
-				return gateErr
-			}
-		}
+		return fmt.Errorf("run %s has no pinned gate policy", run.ID)
 	}
 	gates, gateErr := config.ParseGates(gatePayload)
 	if gateErr != nil {
@@ -682,6 +740,8 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 		runner.RegisterWithInputs(gateStep, pipeline.StepInputs{Command: gate.Command, Owner: "gate." + string(gateStep)}, func(stepCtx context.Context) error {
 			command := exec.CommandContext(stepCtx, "sh", "-c", gate.Command)
 			command.Dir = worktree
+			command.Env = append(os.Environ(), "SD_PARENT_RUN_ID="+run.ID)
+			shellenv.ConfigureShellCommand(command)
 			if output, commandErr := command.CombinedOutput(); commandErr != nil {
 				return fmt.Errorf("custom gate %s: %s: %w", gate.Name, strings.TrimSpace(string(output)), commandErr)
 			}

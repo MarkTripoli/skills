@@ -10,6 +10,7 @@ import (
 type AcceptedRef struct {
 	ID, RepoID, Branch, GateHead, PreviousReconciledHead, LaunchNonce, ValidationGeneration string
 	RequestedOptions                                                                        []string
+	GatesJSON                                                                               string
 	AcceptedAt                                                                              int64
 }
 type RunInput struct {
@@ -44,7 +45,11 @@ func (d *DB) CreateRunFromAccepted(in RunInput) (*Run, error) {
 	if base == "" {
 		base = a.PreviousReconciledHead
 	}
-	_, err = tx.Exec(`INSERT INTO runs(id,repo_id,branch,head_sha,base_sha,submitted_head_sha,status,launch_nonce,launch_validation_generation,worktree_dir,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, id, a.RepoID, a.Branch, a.GateHead, base, a.GateHead, types.RunPending, a.LaunchNonce, a.ValidationGeneration, nullableString(in.WorktreeDir), ts, ts)
+	gates := a.GatesJSON
+	if gates == "" {
+		gates = "[]"
+	}
+	_, err = tx.Exec(`INSERT INTO runs(id,repo_id,branch,head_sha,base_sha,submitted_head_sha,status,launch_nonce,launch_validation_generation,worktree_dir,gates_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, a.RepoID, a.Branch, a.GateHead, base, a.GateHead, types.RunPending, a.LaunchNonce, a.ValidationGeneration, nullableString(in.WorktreeDir), gates, ts, ts)
 	if err != nil {
 		return nil, fmt.Errorf("run: %w", err)
 	}

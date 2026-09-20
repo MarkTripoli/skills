@@ -41,50 +41,61 @@ SD_BIN=` + shellSingleQuote(command) + `
 if [ ! -f "$SD_BIN" ]; then SD_BIN="$(command -v safety-dance 2>/dev/null || echo safety-dance)"; fi
 GATE_DIR=$(git rev-parse --absolute-git-dir 2>/dev/null || :)
 case "$GATE_DIR" in /*) ;; *) HOOK_DIR=${0%/*}; GATE_DIR=$(cd "$HOOK_DIR/.." 2>/dev/null && pwd -P || :);; esac
-TMP=$(mktemp "$GATE_DIR/.safety-dance-receive.XXXXXX") || exit 1
-cat > "$TMP"
+INPUT=$(mktemp "$GATE_DIR/.safety-dance-receive.XXXXXX") || exit 1
+ACCEPTED=$(mktemp "$GATE_DIR/.safety-dance-accepted.XXXXXX") || { rm -f "$INPUT"; exit 1; }
+RECEIPTS="$GATE_DIR/.safety-dance-receipts"
+LOCK="$GATE_DIR/.safety-dance-receipts.lock"
+cleanup() { rm -f "$INPUT" "$ACCEPTED"; }
+lock_receipts() { while ! mkdir "$LOCK" 2>/dev/null; do sleep 1; done; }
+unlock_receipts() { rmdir "$LOCK" 2>/dev/null || :; }
+remove_receipt() {
+  old=$1; new=$2; ref=$3
+  lock_receipts
+  if [ -f "$RECEIPTS" ]; then
+    out=$(mktemp "$GATE_DIR/.safety-dance-receipts.XXXXXX") || { unlock_receipts; return; }
+    awk -v o="$old" -v n="$new" -v r="$ref" '$1!=o || $2!=n || $3!=r' "$RECEIPTS" > "$out" && mv "$out" "$RECEIPTS" || rm -f "$out"
+  fi
+  unlock_receipts
+}
+revoke_accepted() {
+  while read receipt_line; do
+    set -- $receipt_line; oldrev=$1; newrev=$2; refname=$3; token=$4
+    [ -n "$token" ] || continue
+    "$SD_BIN" daemon revoke-push-receipt --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --token "$token" >/dev/null 2>&1 || true
+    remove_receipt "$oldrev" "$newrev" "$refname"
+  done < "$ACCEPTED"
+  cleanup
+}
+cat > "$INPUT"
 while read line; do
-	set -- $line; oldrev=$1; newrev=$2; refname=$3
-	token=""
-	token_option_present=0
-	if [ "${GIT_PUSH_OPTION_COUNT:-0}" -gt 0 ]; then
-		i=0
-		while [ "$i" -lt "${GIT_PUSH_OPTION_COUNT:-0}" ]; do
-			opt=$(printenv "GIT_PUSH_OPTION_$i" 2>/dev/null || :)
-			case "$opt" in safety-dance-token=*) token=${opt#*=}; token_option_present=1;; esac
-			i=$((i + 1))
-		done
-	fi
-	if [ "$token_option_present" -eq 1 ] && [ -z "$token" ]; then rm -f "$TMP"; printf 'safety-dance: empty admission token\n' >&2; exit 1; fi
-	if [ -z "$token" ]; then
-    token=$("$SD_BIN" daemon issue-push-token --gate "$GATE_DIR" --ref "$refname" 2>/dev/null) || { rm -f "$TMP"; printf 'safety-dance: could not obtain admission token\n' >&2; exit 1; }
-	fi
-  printf '%s\t%s\t%s\t%s\n' "$oldrev" "$newrev" "$refname" "$token" >> "$GATE_DIR/.safety-dance-receipts"
+  set -- $line; oldrev=$1; newrev=$2; refname=$3
+  token=""; token_option_present=0
+  if [ "${GIT_PUSH_OPTION_COUNT:-0}" -gt 0 ]; then
+    i=0
+    while [ "$i" -lt "${GIT_PUSH_OPTION_COUNT:-0}" ]; do
+      opt=$(printenv "GIT_PUSH_OPTION_$i" 2>/dev/null || :)
+      case "$opt" in safety-dance-token=*) token=${opt#*=}; token_option_present=1;; esac
+      i=$((i + 1))
+    done
+  fi
+  if [ "$token_option_present" -eq 1 ] && [ -z "$token" ]; then revoke_accepted; printf 'safety-dance: empty admission token\n' >&2; exit 1; fi
+  if [ -z "$token" ]; then
+    token=$("$SD_BIN" daemon issue-push-token --gate "$GATE_DIR" --ref "$refname" 2>/dev/null) || { revoke_accepted; printf 'safety-dance: could not obtain admission token\n' >&2; exit 1; }
+  fi
   out=$(printf '%s\n' "$line" | "$SD_BIN" daemon admit-push --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --token "$token" 2>&1)
   status=$?
-  if [ $status -ne 0 ]; then rm -f "$TMP"; printf 'safety-dance: gate push refused before ref mutation:\n%s\n' "$out" >&2; exit $status; fi
-done < "$TMP"
+  if [ $status -ne 0 ]; then revoke_accepted; printf 'safety-dance: gate push refused before ref mutation:\n%s\n' "$out" >&2; exit $status; fi
+  printf '%s\t%s\t%s\t%s\n' "$oldrev" "$newrev" "$refname" "$token" >> "$ACCEPTED"
+  lock_receipts
+  printf '%s\t%s\t%s\t%s\n' "$oldrev" "$newrev" "$refname" "$token" >> "$RECEIPTS"
+  unlock_receipts
+done < "$INPUT"
 USER_HOOK="$GATE_DIR/hooks/pre-receive.safety-dance-user"
 if [ -x "$USER_HOOK" ]; then
-  "$USER_HOOK" < "$TMP"; status=$?
-	if [ $status -ne 0 ]; then
-		while read receipt_line; do
-			set -- $receipt_line; oldrev=$1; newrev=$2; refname=$3
-            token=$(awk -v o="$oldrev" -v n="$newrev" -v r="$refname" '$1==o && $2==n && $3==r {print $4; exit}' "$GATE_DIR/.safety-dance-receipts")
-			if [ -n "$token" ]; then
-				"$SD_BIN" daemon revoke-push-receipt --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --token "$token" >/dev/null 2>&1 || true
-			fi
-		 done < "$TMP"
-		receipts_tmp="$GATE_DIR/.safety-dance-receipts.cleanup"
-        awk 'NR==FNR {bad[$1 FS $2 FS $3]=1; next} !bad[$1 FS $2 FS $3]' "$TMP" "$GATE_DIR/.safety-dance-receipts" > "$receipts_tmp" 2>/dev/null || true
-		mv "$receipts_tmp" "$GATE_DIR/.safety-dance-receipts" 2>/dev/null || true
-		rm -f "$TMP"
-	else
-		rm -f "$TMP"
-	fi
-  exit $status
+  "$USER_HOOK" < "$INPUT"; status=$?
+  if [ $status -ne 0 ]; then revoke_accepted; exit $status; fi
 fi
-rm -f "$TMP"
+cleanup
 exit 0
 `
 }
@@ -110,6 +121,10 @@ ___/ / / / / / / /  __/ /_/ / / / /_/ / /_/ /  __/
 BANNER
 INPUT=$(mktemp "$GATE_DIR/.safety-dance-post.XXXXXX") || exit 0
 trap 'rm -f "$INPUT"' EXIT
+RECEIPTS="$GATE_DIR/.safety-dance-receipts"
+LOCK="$GATE_DIR/.safety-dance-receipts.lock"
+lock_receipts() { while ! mkdir "$LOCK" 2>/dev/null; do sleep 1; done; }
+unlock_receipts() { rmdir "$LOCK" 2>/dev/null || :; }
 cat > "$INPUT"
 while read oldrev newrev refname; do
   set -- --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev"
@@ -117,9 +132,14 @@ while read oldrev newrev refname; do
   token=""
   while [ "$i" -lt "${GIT_PUSH_OPTION_COUNT:-0}" ]; do opt=$(printenv "GIT_PUSH_OPTION_$i" 2>/dev/null || :); case "$opt" in safety-dance-token=*) token=${opt#*=};; esac; set -- "$@" --push-option "$opt"; i=$((i + 1)); done
   (
-  if [ -z "${token:-}" ] && [ -f "$GATE_DIR/.safety-dance-receipts" ]; then
-    token=$(awk -v o="$oldrev" -v n="$newrev" -v r="$refname" '$1==o && $2==n && $3==r {print $4; exit}' "$GATE_DIR/.safety-dance-receipts")
-    if [ -n "$token" ]; then sed -i.bak "\|^$oldrev[[:space:]]\+$newrev[[:space:]]\+$refname[[:space:]]|d" "$GATE_DIR/.safety-dance-receipts" 2>/dev/null || true; rm -f "$GATE_DIR/.safety-dance-receipts.bak"; fi
+  if [ -z "${token:-}" ] && [ -f "$RECEIPTS" ]; then
+    lock_receipts
+    token=$(awk -v o="$oldrev" -v n="$newrev" -v r="$refname" '$1==o && $2==n && $3==r {print $4; exit}' "$RECEIPTS")
+    if [ -n "$token" ]; then
+      receipts_tmp=$(mktemp "$GATE_DIR/.safety-dance-receipts.XXXXXX") || receipts_tmp=""
+      if [ -n "$receipts_tmp" ]; then awk -v o="$oldrev" -v n="$newrev" -v r="$refname" '$1!=o || $2!=n || $3!=r' "$RECEIPTS" > "$receipts_tmp" && mv "$receipts_tmp" "$RECEIPTS" || rm -f "$receipts_tmp"; fi
+    fi
+    unlock_receipts
     if [ -n "${token:-}" ]; then set -- "$@" --push-option "safety-dance-token=$token"; fi
   fi
     out=$("$SD_BIN" daemon notify-push "$@" 2>&1); status=$?
