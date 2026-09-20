@@ -87,8 +87,8 @@ test('text helper timeout kills SIGTERM-ignoring helper and descendant',async()=
 test('text helper timeout kills descendant after parent exits',async()=>{
   const scratch=await fs.mkdtemp(path.join(os.tmpdir(),'jev-helper-parent-exits-'));
   const pidFile=path.join(scratch,'pid');
-  const childCode=`const fs=require('node:fs');const {spawn}=require('node:child_process');const d=spawn(process.execPath,['-e',"process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"],{stdio:'ignore'});fs.writeFileSync(${JSON.stringify(pidFile)},String(d.pid));setTimeout(()=>process.exit(0),10);`;
-  const result=await generateText({command:[process.execPath,'-e',childCode],timeoutMs:40});
+  const childCode=`const fs=require('node:fs');const {spawn}=require('node:child_process');const d=spawn(process.execPath,['-e',"process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"],{stdio:'ignore'});fs.writeFileSync(${JSON.stringify(pidFile)},String(d.pid));setTimeout(()=>process.exit(0),50);`;
+  const result=await generateText({command:[process.execPath,'-e',childCode],timeoutMs:500});
   assert.match(result.reason,/text helper (timeout|returned invalid JSON)/);
   const pid=Number(await fs.readFile(pidFile,'utf8')); await new Promise(resolve=>setTimeout(resolve,320));
   assert.throws(()=>process.kill(pid,0),/ESRCH/);
