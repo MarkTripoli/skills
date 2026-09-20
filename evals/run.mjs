@@ -29,6 +29,7 @@ import { isDeepStrictEqual } from "node:util";
 import { buildRuntime } from "../scripts/lib/build.mjs";
 import { subjectProblems } from "../scripts/check-commits.mjs";
 import { CliArgumentError, parseEvalArgs } from "./cli.mjs";
+import { sanitizedGitEnvironment } from "./git-environment.mjs";
 import { gitIndexChanged, snapshotGitIndex } from "./git-index.mjs";
 import {
   excludedRootsManifestProblem,
@@ -82,8 +83,14 @@ try {
   throw error;
 }
 const { gradeDir, keep, maxMinutes, model, names } = options;
+const gitEnvironment = sanitizedGitEnvironment();
 
-const git = (cwd, ...argv) => execFileSync("git", argv, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+const git = (cwd, ...argv) => execFileSync("git", argv, {
+  cwd,
+  encoding: "utf8",
+  env: gitEnvironment,
+  stdio: ["ignore", "pipe", "pipe"],
+}).trim();
 
 function loadScenarios() {
   const files = fs
@@ -174,7 +181,7 @@ function runOmp(prompt, cwd) {
     const child = spawn("omp", ompArgs, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
+      env: gitEnvironment,
       detached: true,
     });
     let stdout = "";
@@ -331,8 +338,8 @@ function report(scenario, label, seconds, problems) {
 function readJson(file) {
   try {
     return { ok: true, value: JSON.parse(fs.readFileSync(file, "utf8")) };
-  } catch (error) {
-    return { ok: false, problem: `recording: ${path.basename(file)} is unreadable or invalid JSON (${error.message})` };
+  } catch {
+    return { ok: false, problem: `recording: ${path.basename(file)} is unreadable or invalid JSON` };
   }
 }
 
@@ -346,7 +353,8 @@ function readValidatedJson(file, validator) {
 }
 
 function completedRunProblems(runDir, selectedScenarios) {
-  const summaryFile = path.join(runDir, "summary.json");
+  const canonicalRunDir = fs.realpathSync(runDir);
+  const summaryFile = path.join(canonicalRunDir, "summary.json");
   if (!fs.existsSync(summaryFile)) return ["recording: run is incomplete (summary.json missing)"];
   const parsed = readJson(summaryFile);
   if (!parsed.ok) return [parsed.problem];
@@ -355,6 +363,7 @@ function completedRunProblems(runDir, selectedScenarios) {
   }
   const problems = [];
   const names = new Set();
+  const selectedNames = new Set(selectedScenarios.map((scenario) => scenario.name));
   for (const result of parsed.value) {
     if (!result || typeof result !== "object" || Array.isArray(result)) {
       problems.push("recording: summary.json contains a non-object scenario result");
@@ -366,13 +375,41 @@ function completedRunProblems(runDir, selectedScenarios) {
     }
     if (names.has(result.name)) problems.push(`recording: summary.json repeats scenario ${result.name}`);
     names.add(result.name);
+    if (!selectedNames.has(result.name)) {
+      problems.push(`recording: summary.json contains unselected scenario ${result.name}`);
+      continue;
+    }
     if (typeof result.ok !== "boolean" || !Array.isArray(result.phases) || result.phases.length === 0) {
       problems.push(`recording: summary.json has incomplete result metadata for ${result.name}`);
       continue;
     }
-    const reportFile = path.join(runDir, result.name, "report.json");
-    if (!fs.existsSync(reportFile)) {
+    const scenarioDir = path.join(canonicalRunDir, result.name);
+    let scenarioStats;
+    try {
+      scenarioStats = fs.lstatSync(scenarioDir);
+    } catch {
       problems.push(`recording: completed scenario ${result.name} is missing report.json`);
+      continue;
+    }
+    if (!scenarioStats.isDirectory() || scenarioStats.isSymbolicLink()) {
+      problems.push(`recording: completed scenario ${result.name} has unsafe scenario directory`);
+      continue;
+    }
+    const reportFile = path.join(scenarioDir, "report.json");
+    let reportStats;
+    try {
+      reportStats = fs.lstatSync(reportFile);
+    } catch {
+      problems.push(`recording: completed scenario ${result.name} is missing report.json`);
+      continue;
+    }
+    if (!reportStats.isFile() || reportStats.isSymbolicLink()) {
+      problems.push(`recording: completed scenario ${result.name} has unsafe report.json`);
+      continue;
+    }
+    const relativeReport = path.relative(canonicalRunDir, fs.realpathSync(reportFile));
+    if (path.isAbsolute(relativeReport) || relativeReport === ".." || relativeReport.startsWith(`..${path.sep}`)) {
+      problems.push(`recording: completed scenario ${result.name} has unsafe report.json`);
       continue;
     }
     const recorded = readJson(reportFile);
@@ -381,8 +418,8 @@ function completedRunProblems(runDir, selectedScenarios) {
       problems.push(`recording: summary.json disagrees with ${result.name}/report.json`);
     }
   }
-  for (const scenario of selectedScenarios) {
-    if (!names.has(scenario.name)) problems.push(`recording: selected scenario ${scenario.name} is absent from summary.json`);
+  for (const scenarioName of selectedNames) {
+    if (!names.has(scenarioName)) problems.push(`recording: selected scenario ${scenarioName} is absent from summary.json`);
   }
   return problems;
 }

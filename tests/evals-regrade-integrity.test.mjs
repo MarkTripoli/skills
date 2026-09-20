@@ -211,6 +211,57 @@ test("live and retained grading complete with unreadable regular-file evidence",
   }
 });
 
+test("regrade rejects unselected summary paths without exposing parser excerpts", async () => {
+  // Given
+  const harness = createHarness("skills-summary-path-regrade-");
+  try {
+    const live = await runEval([basicScenario], ["--keep", "--max-time", "1"], harness.env);
+    assert.equal(live.status, 0, live.stderr || live.stdout);
+    const runDir = fs.realpathSync(path.join(harness.resultsRoot, "latest"));
+    const summaryFile = path.join(runDir, "summary.json");
+    const summary = JSON.parse(fs.readFileSync(summaryFile, "utf8"));
+    const outside = path.join(harness.temp, "outside");
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, "report.json"), "credential-shaped-parser-sentinel");
+    fs.writeFileSync(summaryFile, `${JSON.stringify([...summary, { ...summary[0], name: "../../outside" }], null, 2)}\n`);
+
+    // When
+    const regrade = await runEval([basicScenario], ["--grade", runDir], harness.env);
+
+    // Then
+    assert.equal(regrade.status, 1);
+    assert.match(`${regrade.stdout}\n${regrade.stderr}`, /unselected scenario/);
+    assert.doesNotMatch(`${regrade.stdout}\n${regrade.stderr}`, /credential-shaped-parser-sentinel/);
+  } finally {
+    removeFixtureRepositories(harness.resultsRoot);
+    fs.rmSync(harness.temp, { recursive: true, force: true });
+  }
+});
+
+test("regrade rejects symlinked scenario directories", async () => {
+  // Given
+  const harness = createHarness("skills-summary-symlink-regrade-");
+  try {
+    const live = await runEval([basicScenario], ["--keep", "--max-time", "1"], harness.env);
+    assert.equal(live.status, 0, live.stderr || live.stdout);
+    const runDir = fs.realpathSync(path.join(harness.resultsRoot, "latest"));
+    const scenarioDir = path.join(runDir, basicScenario);
+    const external = path.join(harness.temp, "external-scenario");
+    fs.renameSync(scenarioDir, external);
+    fs.symlinkSync(external, scenarioDir, "dir");
+
+    // When
+    const regrade = await runEval([basicScenario], ["--grade", runDir], harness.env);
+
+    // Then
+    assert.equal(regrade.status, 1);
+    assert.match(`${regrade.stdout}\n${regrade.stderr}`, /unsafe scenario directory/);
+  } finally {
+    removeFixtureRepositories(harness.resultsRoot);
+    fs.rmSync(harness.temp, { recursive: true, force: true });
+  }
+});
+
 test("regrade rejects every malformed retained manifest shape even when before and after match", async (t) => {
   // Given
   const harness = createHarness("skills-manifest-schema-regrade-");
@@ -313,6 +364,34 @@ test("regrade rejects every malformed retained manifest shape even when before a
         mutate() {
           const entry = indexEntry();
           return [entry, { ...entry }];
+        },
+      },
+      {
+        name: "Git index mode identity",
+        files: ["git-index-before.json", "git-index-after.json"],
+        mutate() {
+          return [indexEntry({ mode: "777777" })];
+        },
+      },
+      {
+        name: "Git index reserved path identity",
+        files: ["git-index-before.json", "git-index-after.json"],
+        mutate() {
+          return [indexEntry({ path: ".git/config" })];
+        },
+      },
+      {
+        name: "Git index NUL path identity",
+        files: ["git-index-before.json", "git-index-after.json"],
+        mutate() {
+          return [indexEntry({ path: "bad\0name" })];
+        },
+      },
+      {
+        name: "Git index object format identity",
+        files: ["git-index-before.json", "git-index-after.json"],
+        mutate() {
+          return [indexEntry(), indexEntry({ object: "0".repeat(64), path: "other.txt" })];
         },
       },
     ];
