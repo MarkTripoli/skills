@@ -129,7 +129,7 @@ test("Git index manifests reject impossible entry identities", () => {
   };
 
   // When / Then
-  for (const invalidPath of ["../outside", "/absolute", "C:\\absolute", "nested/../outside"]) {
+  for (const invalidPath of ["../outside", "/absolute", "C:\\absolute", "nested/../outside", ".git/config", "bad\0name"]) {
     assert.match(gitIndexManifestProblem([{ ...entry, path: invalidPath }]), /invalid path/, invalidPath);
   }
   for (const invalidLength of [39, 41, 63, 65]) {
@@ -139,7 +139,17 @@ test("Git index manifests reject impossible entry identities", () => {
       String(invalidLength),
     );
   }
+  for (const invalidMode of ["000000", "100600", "777777"]) {
+    assert.match(gitIndexManifestProblem([{ ...entry, mode: invalidMode }]), /mode is malformed/, invalidMode);
+  }
   assert.match(gitIndexManifestProblem([entry, { ...entry }]), /duplicate entry identity/);
+  assert.match(
+    gitIndexManifestProblem([entry, { ...entry, object: "0".repeat(64), path: "other.txt" }]),
+    /object id widths differ/,
+  );
   assert.equal(gitIndexManifestProblem([entry, { ...entry, stage: 1 }]), null);
   assert.equal(gitIndexManifestProblem([{ ...entry, object: "0".repeat(64) }]), null);
+  for (const validMode of ["040000", "100644", "100755", "120000", "160000"]) {
+    assert.equal(gitIndexManifestProblem([{ ...entry, mode: validMode }]), null, validMode);
+  }
 });

@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 
 const HASH = /^[a-f0-9]{64}$/;
 const OBJECT_ID = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
-const FILE_MODE = /^[0-7]{6}$/;
+const INDEX_MODES = new Set(["040000", "100644", "100755", "120000", "160000"]);
 const PERMISSION_MODE = /^[0-7]{4}$/;
 const OTHER_TYPES = new Set(["other", "fifo", "socket", "block-device", "character-device"]);
 const READ_ERROR_CLASSES = new Set(["io-error", "permission-denied", "read-failure"]);
@@ -51,6 +51,15 @@ function pathProblem(file, ownedRoot = null) {
   }
   if (ownedRoot !== null && segments[0] !== ownedRoot) {
     return `has path outside bucket ${JSON.stringify(file)}`;
+  }
+  return null;
+}
+
+function indexPathProblem(file) {
+  const invalidPath = relativePathProblem(file);
+  if (invalidPath) return invalidPath;
+  if (file.includes("\0") || file.split("/")[0].toLowerCase() === ".git") {
+    return `has invalid path ${JSON.stringify(file)}`;
   }
   return null;
 }
@@ -155,10 +164,10 @@ function indexEntryProblem(entry) {
   const keys = ["assumeUnchanged", "intentToAdd", "mode", "object", "path", "skipWorktree", "stage"];
   if (!record(entry) || !exactKeys(entry, keys)) return "entry has unknown or missing fields";
   if (typeof entry.path !== "string" || entry.path === "") return "entry path must be non-empty";
-  const invalidPath = relativePathProblem(entry.path);
+  const invalidPath = indexPathProblem(entry.path);
   if (invalidPath) return invalidPath;
   if (!Number.isInteger(entry.stage) || entry.stage < 0 || entry.stage > 3) return "entry stage must be 0 through 3";
-  if (typeof entry.mode !== "string" || !FILE_MODE.test(entry.mode)) return "entry mode is malformed";
+  if (typeof entry.mode !== "string" || !INDEX_MODES.has(entry.mode)) return "entry mode is malformed";
   if (typeof entry.object !== "string" || !OBJECT_ID.test(entry.object)) return "entry object id is malformed";
   if ([entry.assumeUnchanged, entry.skipWorktree, entry.intentToAdd].some((flag) => typeof flag !== "boolean")) {
     return "entry flags must be boolean";
@@ -169,9 +178,12 @@ function indexEntryProblem(entry) {
 export function gitIndexManifestProblem(value) {
   if (Array.isArray(value)) {
     const identities = new Set();
+    const objectIdWidths = new Set();
     for (const entry of value) {
       const problem = indexEntryProblem(entry);
       if (problem) return problem;
+      objectIdWidths.add(entry.object.length);
+      if (objectIdWidths.size > 1) return "entry object id widths differ";
       const identity = JSON.stringify([entry.path, entry.stage]);
       if (identities.has(identity)) return `duplicate entry identity ${identity}`;
       identities.add(identity);
