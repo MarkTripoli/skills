@@ -72,10 +72,11 @@ See [verification](verification.md) and [app testing](app-testing.md) for comman
 
 ## Run JEV UI by hand
 
-Install the standalone `jev-ui` skill with its `typed-judgment` and `record-evidence` dependencies. Use an explicitly selected browser or Android target; the skill does not provide iOS control.
+Install the standalone `jev-ui` skill with its `typed-judgment` and `record-evidence` dependencies. Use an explicitly selected browser, Android target, or iOS simulator. Browser control requires Node 22+; iOS continuation support remains pending independent native acceptance.
 
 ```sh
 node skills/delivery/jev-ui/scripts/jev-ui.mjs --platform android --target "$ANDROID_SERIAL" --app "$ANDROID_APP" --goal 'Complete the selected app task' --expected 'Expected status'
+IDB_COMPANION=/path/to/idb-companion.sock node skills/delivery/jev-ui/scripts/jev-ui.mjs --platform ios --target "$IOS_UDID" --app "$IOS_BUNDLE_ID" --goal 'Complete the selected app task' --expected 'Expected status'
 ```
 
 ## Continue existing work
