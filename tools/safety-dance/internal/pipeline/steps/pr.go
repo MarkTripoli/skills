@@ -1,15 +1,5 @@
 package steps
 
-import (
-	"context"
-	"fmt"
-)
+import "context"
 
-func PR(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-		return fmt.Errorf("pr validation implementation is not configured")
-	}
-}
+func PR(ctx context.Context) error { return Validate(ctx, "pull-request") }

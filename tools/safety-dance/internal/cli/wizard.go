@@ -36,6 +36,7 @@ func runWizard(cmd *cobra.Command, args []string) error {
 	}
 	service := daemon.Service{Home: p, Binary: "safety-dance", Executor: commandExecutor{}}
 	createdGate := false
+	createdService := false
 	setup := wizard.Setup{
 		In:  cmd.InOrStdin(),
 		Out: cmd.OutOrStdout(),
@@ -51,8 +52,9 @@ func runWizard(cmd *cobra.Command, args []string) error {
 			_, err := gate.Eject(context.Background(), database, p, root)
 			return err
 		},
-		InstallService: func() error { return service.Install() },
+		InstallService: func() error { createdService = !service.DefinitionExists(); return service.Install() },
 		StopService:    func() error { return service.Stop() },
+		ServiceCreated: func() bool { return createdService },
 	}
 	if err := setup.Run(context.Background()); err != nil {
 		return err

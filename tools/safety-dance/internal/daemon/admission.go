@@ -5,11 +5,37 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/ipc"
 )
+
+func (a *Admission) loadReceipts() error {
+	raw, err := os.ReadFile(a.receiptFile)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, &a.receipts)
+}
+func (a *Admission) saveReceipts() error {
+	if a.receiptFile == "" {
+		return nil
+	}
+	raw, err := json.Marshal(a.receipts)
+	if err != nil {
+		return err
+	}
+	tmp := a.receiptFile + ".tmp"
+	if err = os.WriteFile(tmp, raw, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, a.receiptFile)
+}
 
 // PushNotification is the accepted ref update delivered after Git has changed
 // the gate. Admission is deliberately separate: a notification can never
@@ -20,17 +46,29 @@ type PushNotification struct {
 }
 
 // Admission owns the receive-hook trust boundary. Tokens are issued by the
-// daemon and consumed exactly once by an authenticated IPC peer. A consumed
-// token becomes a receipt that binds the later post-receive notification.
 type Admission struct {
-	auth     *ipc.Authenticator
-	notify   func(context.Context, PushNotification) error
-	mu       sync.Mutex
-	receipts map[string]ipc.AdmitPushParams
+	auth        *ipc.Authenticator
+	notify      func(context.Context, PushNotification) error
+	mu          sync.Mutex
+	receipts    map[string]ipc.AdmitPushParams
+	receiptFile string
 }
 
 func NewAdmission(server *ipc.Server, notify func(context.Context, PushNotification) error) *Admission {
-	a := &Admission{auth: ipc.NewAuthenticator(), notify: notify, receipts: make(map[string]ipc.AdmitPushParams)}
+	return newAdmission(server, notify, "")
+}
+
+// NewAdmissionWithStore retains admitted updates across daemon restarts. The
+// receipt is removed only after a matching notification is accepted.
+func NewAdmissionWithStore(server *ipc.Server, notify func(context.Context, PushNotification) error, file string) *Admission {
+	return newAdmission(server, notify, file)
+}
+
+func newAdmission(server *ipc.Server, notify func(context.Context, PushNotification) error, file string) *Admission {
+	a := &Admission{auth: ipc.NewAuthenticator(), notify: notify, receipts: make(map[string]ipc.AdmitPushParams), receiptFile: file}
+	if file != "" {
+		_ = a.loadReceipts()
+	}
 	server.Handle(ipc.MethodAdmitPush, a.admit)
 	server.Handle(ipc.MethodNotifyPush, a.notifyPush)
 	server.Handle(ipc.MethodIssuePushToken, a.issue)
@@ -46,6 +84,12 @@ func (a *Admission) Issue(gate, ref string) (string, error) {
 func (a *Admission) issue(ctx context.Context, raw json.RawMessage) (interface{}, error) {
 	if ipc.PeerPID(ctx) <= 0 {
 		return nil, errors.New("unauthenticated IPC peer")
+	}
+	// Only the managed receive-hook helper may mint a one-use push token.
+	// Validation children inherit SD_PARENT_RUN_ID and are never permitted to
+	// enter this issuance path.
+	if os.Getenv("SD_HOOK_HELPER") != "1" || strings.TrimSpace(os.Getenv("SD_PARENT_RUN_ID")) != "" {
+		return nil, errors.New("push-token issuance is restricted to the managed git hook")
 	}
 	var p ipc.IssuePushTokenParams
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -71,7 +115,11 @@ func (a *Admission) admit(ctx context.Context, raw json.RawMessage) (interface{}
 	}
 	a.mu.Lock()
 	a.receipts[p.Token] = p
+	saveErr := a.saveReceipts()
 	a.mu.Unlock()
+	if saveErr != nil {
+		return nil, fmt.Errorf("persist admission receipt: %w", saveErr)
+	}
 	return ipc.AdmitPushResult{}, nil
 }
 
@@ -99,9 +147,6 @@ func (a *Admission) notifyPush(ctx context.Context, raw json.RawMessage) (interf
 	}
 	a.mu.Lock()
 	receipt, ok := a.receipts[token]
-	if ok {
-		delete(a.receipts, token)
-	}
 	a.mu.Unlock()
 	if !ok || receipt.Gate != p.Gate || receipt.Ref != p.Ref || receipt.Old != p.Old || receipt.New != p.New {
 		return nil, errors.New("notification does not match admitted update")
@@ -110,6 +155,13 @@ func (a *Admission) notifyPush(ctx context.Context, raw json.RawMessage) (interf
 		if err := a.notify(ctx, PushNotification{Gate: p.Gate, Ref: p.Ref, Old: p.Old, New: p.New, Options: append([]string(nil), p.PushOptions...)}); err != nil {
 			return nil, err
 		}
+	}
+	a.mu.Lock()
+	delete(a.receipts, token)
+	err := a.saveReceipts()
+	a.mu.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("remove admission receipt: %w", err)
 	}
 	return map[string]bool{"ok": true}, nil
 }

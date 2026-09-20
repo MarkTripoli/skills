@@ -168,7 +168,7 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 			_ = d.TransitionRunStatus(r.ID, types.RunRunning, types.RunFailed)
 		}
 	})
-	adm := daemon.NewAdmission(server, func(ctx context.Context, n daemon.PushNotification) error { return recordPush(d, p, manager, n) })
+	adm := daemon.NewAdmissionWithStore(server, func(ctx context.Context, n daemon.PushNotification) error { return recordPush(d, p, manager, n) }, filepath.Join(p.Root(), "admission-receipts.json"))
 	_ = adm
 	server.Handle(ipc.MethodHealth, func(context.Context, json.RawMessage) (interface{}, error) {
 		return ipc.HealthResult{Status: "ok"}, nil
@@ -328,6 +328,7 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	for _, name := range pipeline.CoreSteps {
 		name := name
 		runner.Register(name, func(stepCtx context.Context) error {
+			stepCtx = steps.WithWorktree(stepCtx, worktree)
 			switch name {
 			case pipeline.StepIntent:
 				return steps.Intent(stepCtx)

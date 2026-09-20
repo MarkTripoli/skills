@@ -54,7 +54,10 @@ while read line; do
       i=$((i + 1))
     done
   fi
-  if [ -z "$token" ]; then rm -f "$TMP"; printf 'safety-dance: authorized admission token is required\n' >&2; exit 1; fi
+  if [ -z "$token" ]; then
+    token=$(SD_HOOK_HELPER=1 "$SD_BIN" daemon issue-push-token --gate "$GATE_DIR" --ref "$refname" 2>/dev/null) || { rm -f "$TMP"; printf 'safety-dance: could not obtain admission token\n' >&2; exit 1; }
+  fi
+  printf '%s\t%s\t%s\t%s\n' "$oldrev" "$newrev" "$refname" "$token" >> "$GATE_DIR/.safety-dance-receipts"
   out=$(printf '%s\n' "$line" | SD_HOOK_HELPER=1 "$SD_BIN" daemon admit-push --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --token "$token" 2>&1)
   status=$?
   if [ $status -ne 0 ]; then rm -f "$TMP"; printf 'safety-dance: gate push refused before ref mutation:\n%s\n' "$out" >&2; exit $status; fi
@@ -89,8 +92,14 @@ cat > "$INPUT"
 while read oldrev newrev refname; do
   set -- --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev"
   i=0
-  while [ "$i" -lt "${GIT_PUSH_OPTION_COUNT:-0}" ]; do opt=$(printenv "GIT_PUSH_OPTION_$i" 2>/dev/null || :); set -- "$@" --push-option "$opt"; i=$((i + 1)); done
+  token=""
+  while [ "$i" -lt "${GIT_PUSH_OPTION_COUNT:-0}" ]; do opt=$(printenv "GIT_PUSH_OPTION_$i" 2>/dev/null || :); case "$opt" in safety-dance-token=*) token=${opt#*=};; esac; set -- "$@" --push-option "$opt"; i=$((i + 1)); done
   (
+  if [ -z "${token:-}" ] && [ -f "$GATE_DIR/.safety-dance-receipts" ]; then
+    token=$(awk -F '\t' -v o="$oldrev" -v n="$newrev" -v r="$refname" '$1==o && $2==n && $3==r {print $4; exit}' "$GATE_DIR/.safety-dance-receipts")
+    if [ -n "$token" ]; then sed -i.bak "\\|^$oldrev[[:space:]]\\+$newrev[[:space:]]\\+$refname[[:space:]]|d" "$GATE_DIR/.safety-dance-receipts" 2>/dev/null || true; rm -f "$GATE_DIR/.safety-dance-receipts.bak"; fi
+    if [ -n "${token:-}" ]; then set -- "$@" --push-option "safety-dance-token=$token"; fi
+  fi
     out=$(SD_HOOK_HELPER=1 "$SD_BIN" daemon notify-push "$@" 2>&1); status=$?
     if [ $status -ne 0 ]; then printf '[%s] notify-push failed for %s (exit %d)\n%s\n\n' "$(date '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo unknown)" "$refname" "$status" "$out" >> "$LOG"; printf 'safety-dance: notify-push failed for %s (exit %d); see %s\n%s\n' "$refname" "$status" "$LOG" "$out" >&2; fi
   ) &

@@ -1,15 +1,5 @@
 package steps
 
-import (
-	"context"
-	"fmt"
-)
+import "context"
 
-func Intent(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-		return fmt.Errorf("intent validation implementation is not configured")
-	}
-}
+func Intent(ctx context.Context) error { return Validate(ctx, "intent") }

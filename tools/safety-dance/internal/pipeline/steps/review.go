@@ -1,15 +1,5 @@
 package steps
 
-import (
-	"context"
-	"fmt"
-)
+import "context"
 
-func Review(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-		return fmt.Errorf("review validation implementation is not configured")
-	}
-}
+func Review(ctx context.Context) error { return Validate(ctx, "review") }

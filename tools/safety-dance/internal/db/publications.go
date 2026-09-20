@@ -3,6 +3,8 @@ package db
 import (
 	"database/sql"
 	"fmt"
+
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/types"
 )
 
 type Publication struct {
@@ -30,4 +32,30 @@ func (d *DB) GetPublication(runID string) (*Publication, error) {
 		return nil, fmt.Errorf("get publication: %w", err)
 	}
 	return &p, nil
+}
+
+// RecordPublicationAndBinding commits the final publication receipt only while
+// the run is still running. Cancellation therefore serializes with this write
+// instead of racing two independent updates.
+func (d *DB) RecordPublicationAndBinding(p Publication, binding PushBinding) error {
+	if p.RunID == "" || p.Candidate == "" || p.VerifiedUpstream != p.Candidate {
+		return fmt.Errorf("publication candidate is not verified")
+	}
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(`UPDATE runs SET last_pushed_sha=?, push_target_kind=?, push_target_fingerprint=?, push_ref=?, last_pushed_at=?, push_generation=COALESCE(push_generation,0)+1, updated_at=? WHERE id=? AND status IN (?,?) AND push_active=1`, binding.HeadSHA, binding.TargetKind, binding.TargetFingerprint, binding.Ref, now(), now(), p.RunID, types.RunPending, types.RunRunning)
+	if err != nil {
+		return fmt.Errorf("guard publication binding: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n != 1 {
+		return fmt.Errorf("run %s is no longer publishable", p.RunID)
+	}
+	if _, err = tx.Exec(`INSERT INTO publications(run_id,repo_id,ref,candidate,verified_upstream,gate_mirror,published_at) VALUES(?,?,?,?,?,?,?)`, p.RunID, p.RepoID, p.Ref, p.Candidate, p.VerifiedUpstream, p.GateMirror, now()); err != nil {
+		return fmt.Errorf("record publication: %w", err)
+	}
+	return tx.Commit()
 }

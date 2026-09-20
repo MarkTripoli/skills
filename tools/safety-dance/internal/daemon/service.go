@@ -65,6 +65,17 @@ func (s Service) definitionPath() (string, error) {
 	}
 }
 
+// DefinitionExists reports whether this runtime home's managed definition was
+// present before an install attempt.
+func (s Service) DefinitionExists() bool {
+	path, err := s.definitionPath()
+	if err != nil || path == "" {
+		return false
+	}
+	_, err = os.Stat(path)
+	return err == nil
+}
+
 func (s Service) writeDefinition() error {
 	path, err := s.definitionPath()
 	if err != nil || path == "" {
@@ -115,7 +126,10 @@ func (s Service) Install() error {
 		path, _ := s.definitionPath()
 		return s.Executor.Run("systemctl", "--user", "enable", "--now", filepath.Base(path))
 	default:
-		return s.Executor.Run("schtasks", "/Create", "/TN", s.Label(), "/TR", s.Binary+" daemon serve", "/F")
+		// cmd.exe is used only as the task action so the selected runtime
+		// home is explicit and cannot silently fall back to the user's default.
+		action := fmt.Sprintf(`cmd /C "set SD_HOME=%s&& \"%s\" daemon serve"`, s.Home.Root(), s.Binary)
+		return s.Executor.Run("schtasks", "/Create", "/TN", s.Label(), "/TR", action, "/F")
 	}
 }
 func (s Service) Stop() error {
@@ -138,6 +152,6 @@ func (s Service) Stop() error {
 		}
 		return err
 	default:
-		return s.Executor.Run("schtasks", "/End", "/TN", s.Label())
+		return s.Executor.Run("schtasks", "/Delete", "/TN", s.Label(), "/F")
 	}
 }

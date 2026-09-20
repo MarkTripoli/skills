@@ -1,15 +1,5 @@
 package steps
 
-import (
-	"context"
-	"fmt"
-)
+import "context"
 
-func Test(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-		return fmt.Errorf("test validation implementation is not configured")
-	}
-}
+func Test(ctx context.Context) error { return Validate(ctx, "test") }

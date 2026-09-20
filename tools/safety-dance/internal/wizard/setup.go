@@ -17,6 +17,9 @@ type Setup struct {
 	Compensate     func(Model) error
 	InstallService func() error
 	StopService    func() error
+	// ServiceCreated reports whether this attempt created the service. A
+	// repaired pre-existing service is never stopped during compensation.
+	ServiceCreated func() bool
 }
 
 func (s Setup) Run(ctx context.Context) error {
@@ -52,7 +55,7 @@ func (s Setup) Run(ctx context.Context) error {
 		return nil
 	}
 	if err := s.InstallService(); err != nil {
-		if s.StopService != nil {
+		if s.StopService != nil && (s.ServiceCreated == nil || s.ServiceCreated()) {
 			_ = s.StopService()
 		}
 		if s.Compensate != nil {

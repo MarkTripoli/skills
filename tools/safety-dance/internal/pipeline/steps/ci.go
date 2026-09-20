@@ -1,15 +1,5 @@
 package steps
 
-import (
-	"context"
-	"fmt"
-)
+import "context"
 
-func CI(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-		return fmt.Errorf("ci validation implementation is not configured")
-	}
-}
+func CI(ctx context.Context) error { return Validate(ctx, "ci") }
