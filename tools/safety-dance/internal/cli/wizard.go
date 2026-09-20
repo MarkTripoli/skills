@@ -94,8 +94,9 @@ func runWizard(cmd *cobra.Command, args []string) error {
 				}
 			}
 			content, marshalErr := yaml.Marshal(struct {
-				Commands config.Commands `yaml:"commands"`
-			}{Commands: commands})
+				Commands          config.Commands `yaml:"commands"`
+				AllowRepoCommands bool            `yaml:"allow_repo_commands"`
+			}{Commands: commands, AllowRepoCommands: true})
 			if marshalErr != nil {
 				return marshalErr
 			}

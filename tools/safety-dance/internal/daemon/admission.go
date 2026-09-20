@@ -87,28 +87,56 @@ func (a *Admission) InitError() error { return a.loadErr }
 // ReconcileOnce retries receipts without treating a transient pre-receive state as stale.
 func (a *Admission) ReconcileOnce(ctx context.Context) error {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	for token, receipt := range a.receipts {
+	tokens := make([]string, 0, len(a.receipts))
+	for token := range a.receipts {
+		if !a.claimed[token] {
+			a.claimed[token] = true
+			tokens = append(tokens, token)
+		}
+	}
+	a.mu.Unlock()
+	for _, token := range tokens {
+		a.mu.Lock()
+		receipt, exists := a.receipts[token]
+		a.mu.Unlock()
+		if !exists {
+			continue
+		}
 		current, err := git.RunBare(ctx, receipt.Gate, "rev-parse", receipt.Ref)
 		if err != nil || strings.TrimSpace(current) != receipt.New {
-			continue
-		}
-		if a.notify == nil || a.claimed[token] {
-			continue
-		}
-		a.claimed[token] = true
-		if err := a.notify(ctx, PushNotification{Gate: receipt.Gate, Ref: receipt.Ref, Old: receipt.Old, New: receipt.New, Token: token}); err != nil {
+			a.mu.Lock()
 			delete(a.claimed, token)
+			a.mu.Unlock()
+			continue
+		}
+		if a.notify == nil {
+			a.mu.Lock()
+			delete(a.claimed, token)
+			a.mu.Unlock()
+			continue
+		}
+		if err := a.notify(ctx, PushNotification{Gate: receipt.Gate, Ref: receipt.Ref, Old: receipt.Old, New: receipt.New, Token: token}); err != nil {
+			a.mu.Lock()
+			delete(a.claimed, token)
+			a.mu.Unlock()
 			return err
 		}
-		delete(a.receipts, token)
-		delete(a.claimed, token)
-		if err := a.saveReceipts(); err != nil {
-			return fmt.Errorf("remove admission receipt: %w", err)
+		a.mu.Lock()
+		if currentReceipt, ok := a.receipts[token]; ok && currentReceipt.Gate == receipt.Gate && currentReceipt.Ref == receipt.Ref && currentReceipt.New == receipt.New {
+			delete(a.receipts, token)
+			delete(a.claimed, token)
+			if err := a.saveReceipts(); err != nil {
+				a.mu.Unlock()
+				return fmt.Errorf("remove admission receipt: %w", err)
+			}
+		} else {
+			delete(a.claimed, token)
 		}
+		a.mu.Unlock()
 	}
 	return nil
 }
+
 func (a *Admission) Issue(gate, ref string) (string, error) {
 	if a == nil || a.auth == nil {
 		return "", errors.New("admission is not initialized")
@@ -116,19 +144,14 @@ func (a *Admission) Issue(gate, ref string) (string, error) {
 	return a.auth.Issue(gate, ref)
 }
 
-// managedHookPeer proves that a token request came through a managed receive
-// hook, rather than merely from another process owned by the same user.
+// managedHookPeer proves that a token request came through a managed receive hook.
 func managedHookPeer(pid int, gate string) bool {
 	if pid <= 0 {
 		return false
 	}
 	gate = cleanPath(gate)
-	expected := map[string]bool{
-		cleanPath(filepath.Join(gate, "hooks", "pre-receive")):  true,
-		cleanPath(filepath.Join(gate, "hooks", "post-receive")): true,
-	}
-	managedHook := false
-	gitReceive := false
+	expected := map[string]bool{cleanPath(filepath.Join(gate, "hooks", "pre-receive")): true, cleanPath(filepath.Join(gate, "hooks", "post-receive")): true}
+	managedHook, gitReceive := false, false
 	for depth := 0; pid > 1 && depth < 64; depth++ {
 		ppid, command, err := processInfoFunc(pid)
 		if err != nil {
@@ -137,10 +160,8 @@ func managedHookPeer(pid int, gate string) bool {
 		if strings.Contains(command, "SD_PARENT_RUN_ID=") {
 			return false
 		}
-		if env, envErr := processEnvironmentFunc(pid); envErr == nil {
-			if environmentHas(env, "SD_PARENT_RUN_ID=") || environmentHas(env, "SD_MANAGED_HOOK=") {
-				return false
-			}
+		if env, envErr := processEnvironmentFunc(pid); envErr == nil && (environmentHas(env, "SD_PARENT_RUN_ID=") || environmentHas(env, "SD_MANAGED_HOOK=")) {
+			return false
 		}
 		if commandHasExecutable(command, expected) {
 			managedHook = true
@@ -314,16 +335,23 @@ func (a *Admission) revoke(ctx context.Context, raw json.RawMessage) (interface{
 		return nil, errors.New("gate, ref, and token are required")
 	}
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	receipt, ok := a.receipts[p.Token]
 	if !ok || receipt.Gate != p.Gate || receipt.Ref != p.Ref || receipt.Old != p.Old || receipt.New != p.New {
+		a.mu.Unlock()
 		return nil, errors.New("receipt does not match admitted update")
 	}
+	wasClaimed := a.claimed[p.Token]
 	delete(a.receipts, p.Token)
 	delete(a.claimed, p.Token)
 	if err := a.saveReceipts(); err != nil {
+		a.receipts[p.Token] = receipt
+		if wasClaimed {
+			a.claimed[p.Token] = true
+		}
+		a.mu.Unlock()
 		return nil, fmt.Errorf("persist receipt revocation: %w", err)
 	}
+	a.mu.Unlock()
 	return map[string]bool{"ok": true}, nil
 }
 

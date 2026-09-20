@@ -45,15 +45,26 @@ INPUT=$(mktemp "$GATE_DIR/.safety-dance-receive.XXXXXX") || exit 1
 ACCEPTED=$(mktemp "$GATE_DIR/.safety-dance-accepted.XXXXXX") || { rm -f "$INPUT"; exit 1; }
 RECEIPTS="$GATE_DIR/.safety-dance-receipts"
 LOCK="$GATE_DIR/.safety-dance-receipts.lock"
-cleanup() { rm -f "$INPUT" "$ACCEPTED"; }
-lock_receipts() { while ! mkdir "$LOCK" 2>/dev/null; do sleep 1; done; }
-unlock_receipts() { rmdir "$LOCK" 2>/dev/null || :; }
+LOCK_OWNED=0
+cleanup() { rm -f "$INPUT" "$ACCEPTED"; if [ "$LOCK_OWNED" -eq 1 ]; then rmdir "$LOCK" 2>/dev/null || :; fi; }
+trap cleanup EXIT INT TERM HUP
+lock_receipts() {
+  i=0
+  while ! mkdir "$LOCK" 2>/dev/null; do
+    i=$((i + 1)); [ "$i" -ge 300 ] && return 1
+    owner=$(cat "$LOCK/pid" 2>/dev/null || :)
+    if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then rmdir "$LOCK" 2>/dev/null || :; continue; fi
+    sleep 0.1
+  done
+  printf '%s\n' "$$" > "$LOCK/pid"; LOCK_OWNED=1; return 0
+}
+unlock_receipts() { if [ "$LOCK_OWNED" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; LOCK_OWNED=0; fi; }
 remove_receipt() {
-  old=$1; new=$2; ref=$3
-  lock_receipts
+  old=$1; new=$2; ref=$3; tok=$4
+  lock_receipts || return
   if [ -f "$RECEIPTS" ]; then
     out=$(mktemp "$GATE_DIR/.safety-dance-receipts.XXXXXX") || { unlock_receipts; return; }
-    awk -v o="$old" -v n="$new" -v r="$ref" '$1!=o || $2!=n || $3!=r' "$RECEIPTS" > "$out" && mv "$out" "$RECEIPTS" || rm -f "$out"
+    awk -v o="$old" -v n="$new" -v r="$ref" -v t="$tok" '$1!=o || $2!=n || $3!=r || $4!=t' "$RECEIPTS" > "$out" && mv "$out" "$RECEIPTS" || rm -f "$out"
   fi
   unlock_receipts
 }
@@ -62,7 +73,7 @@ revoke_accepted() {
     set -- $receipt_line; oldrev=$1; newrev=$2; refname=$3; token=$4
     [ -n "$token" ] || continue
     "$SD_BIN" daemon revoke-push-receipt --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --token "$token" >/dev/null 2>&1 || true
-    remove_receipt "$oldrev" "$newrev" "$refname"
+    remove_receipt "$oldrev" "$newrev" "$refname" "$token"
   done < "$ACCEPTED"
   cleanup
 }
@@ -86,7 +97,7 @@ while read line; do
   status=$?
   if [ $status -ne 0 ]; then revoke_accepted; printf 'safety-dance: gate push refused before ref mutation:\n%s\n' "$out" >&2; exit $status; fi
   printf '%s\t%s\t%s\t%s\n' "$oldrev" "$newrev" "$refname" "$token" >> "$ACCEPTED"
-  lock_receipts
+  lock_receipts || { revoke_accepted; printf '%s\n' 'safety-dance: receipt lock unavailable' >&2; exit 1; }
   printf '%s\t%s\t%s\t%s\n' "$oldrev" "$newrev" "$refname" "$token" >> "$RECEIPTS"
   unlock_receipts
 done < "$INPUT"
@@ -110,7 +121,7 @@ case "$GATE_DIR" in /*) ;; *) HOOK_DIR=${0%/*}; GATE_DIR=$(cd "$HOOK_DIR/.." 2>/
 LOG="$GATE_DIR/notify-push.log"
 cat >&2 <<'BANNER'
  _____         __      ____ance
-/ ___/____ ___ / /__   / __/ /_  ____ _____ ____
+ / ___/____ ___ / /__   / __/ /_  ____ _____ ____
 \__ \/ __ '__ \/ / _ \/ /_/ __ \/ __ '/ __ '/ _ \\
 ___/ / / / / / / /  __/ /_/ / / / /_/ / /_/ /  __/
 /____/_/ /_/ /_/_/\___/\____/_/ /_/\__,_/\__, /\___/
@@ -120,11 +131,13 @@ ___/ / / / / / / /  __/ /_/ / / / /_/ / /_/ /  __/
   Run safety-dance to review.
 BANNER
 INPUT=$(mktemp "$GATE_DIR/.safety-dance-post.XXXXXX") || exit 0
-trap 'rm -f "$INPUT"' EXIT
 RECEIPTS="$GATE_DIR/.safety-dance-receipts"
 LOCK="$GATE_DIR/.safety-dance-receipts.lock"
-lock_receipts() { while ! mkdir "$LOCK" 2>/dev/null; do sleep 1; done; }
-unlock_receipts() { rmdir "$LOCK" 2>/dev/null || :; }
+LOCK_OWNED=0
+cleanup_post() { rm -f "$INPUT"; if [ "$LOCK_OWNED" -eq 1 ]; then rmdir "$LOCK" 2>/dev/null || :; fi; }
+trap cleanup_post EXIT INT TERM HUP
+lock_receipts() { i=0; while ! mkdir "$LOCK" 2>/dev/null; do i=$((i + 1)); [ "$i" -ge 300 ] && return 1; owner=$(cat "$LOCK/pid" 2>/dev/null || :); if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then rmdir "$LOCK" 2>/dev/null || :; continue; fi; sleep 0.1; done; printf '%s\n' "$$" > "$LOCK/pid"; LOCK_OWNED=1; }
+unlock_receipts() { if [ "$LOCK_OWNED" -eq 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || :; LOCK_OWNED=0; fi; }
 cat > "$INPUT"
 while read oldrev newrev refname; do
   set -- --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev"
@@ -133,17 +146,21 @@ while read oldrev newrev refname; do
   while [ "$i" -lt "${GIT_PUSH_OPTION_COUNT:-0}" ]; do opt=$(printenv "GIT_PUSH_OPTION_$i" 2>/dev/null || :); case "$opt" in safety-dance-token=*) token=${opt#*=};; esac; set -- "$@" --push-option "$opt"; i=$((i + 1)); done
   (
   if [ -z "${token:-}" ] && [ -f "$RECEIPTS" ]; then
-    lock_receipts
+    lock_receipts || exit 0
     token=$(awk -v o="$oldrev" -v n="$newrev" -v r="$refname" '$1==o && $2==n && $3==r {print $4; exit}' "$RECEIPTS")
-    if [ -n "$token" ]; then
-      receipts_tmp=$(mktemp "$GATE_DIR/.safety-dance-receipts.XXXXXX") || receipts_tmp=""
-      if [ -n "$receipts_tmp" ]; then awk -v o="$oldrev" -v n="$newrev" -v r="$refname" '$1!=o || $2!=n || $3!=r' "$RECEIPTS" > "$receipts_tmp" && mv "$receipts_tmp" "$RECEIPTS" || rm -f "$receipts_tmp"; fi
-    fi
     unlock_receipts
     if [ -n "${token:-}" ]; then set -- "$@" --push-option "safety-dance-token=$token"; fi
   fi
-    out=$("$SD_BIN" daemon notify-push "$@" 2>&1); status=$?
-    if [ $status -ne 0 ]; then printf '[%s] notify-push failed for %s (exit %d)\n%s\n\n' "$(date '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo unknown)" "$refname" "$status" "$out" >> "$LOG"; printf 'safety-dance: notify-push failed for %s (exit %d); see %s\n%s\n' "$refname" "$status" "$LOG" "$out" >&2; fi
+  out=$("$SD_BIN" daemon notify-push "$@" 2>&1); status=$?
+  if [ $status -eq 0 ] && [ -n "${token:-}" ]; then
+    lock_receipts || status=1
+    if [ $status -eq 0 ]; then
+      receipts_tmp=$(mktemp "$GATE_DIR/.safety-dance-receipts.XXXXXX") || status=1
+      if [ $status -eq 0 ]; then awk -v o="$oldrev" -v n="$newrev" -v r="$refname" -v t="$token" '$1!=o || $2!=n || $3!=r || $4!=t' "$RECEIPTS" > "$receipts_tmp" && mv "$receipts_tmp" "$RECEIPTS" || { rm -f "$receipts_tmp"; status=1; }; fi
+      unlock_receipts
+    fi
+  fi
+  if [ $status -ne 0 ]; then printf '[%s] notify-push failed for %s (exit %d)\n%s\n\n' "$(date '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo unknown)" "$refname" "$status" "$out" >> "$LOG"; printf 'safety-dance: notify-push failed for %s (exit %d); see %s\n%s\n' "$refname" "$status" "$LOG" "$out" >&2; fi
   ) &
 done < "$INPUT"
 USER_HOOK="$GATE_DIR/hooks/post-receive.safety-dance-user"

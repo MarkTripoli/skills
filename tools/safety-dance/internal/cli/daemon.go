@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -313,6 +314,11 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 			return nil, err
 		}
 		accepted := db.AcceptedRef{RepoID: q.RepoID, Branch: q.Branch, GateHead: q.HeadSHA, LaunchNonce: nonce}
+		gatesJSON, gatesErr := pinGatesForAdmission(ctx, p, repo, worktree, nonce)
+		if gatesErr != nil {
+			return nil, gatesErr
+		}
+		accepted.GatesJSON = gatesJSON
 		r, err := manager.Replace(ctx, daemon.BranchKey{RepositoryID: q.RepoID, Ref: q.Branch}, accepted, worktree)
 		if err != nil {
 			return nil, err
@@ -423,6 +429,23 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		if !seen {
 			roots = append(roots, root)
 		}
+	}
+	if outside, outsideErr := d.ActiveRunWorktreesOutside(filepath.Join(p.Root(), "worktrees")); outsideErr == nil {
+		for _, placement := range outside {
+			root := filepath.Dir(worktrees.JournalRootFor(placement.Dir))
+			seen := false
+			for _, existing := range roots {
+				if existing == root {
+					seen = true
+					break
+				}
+			}
+			if !seen {
+				roots = append(roots, root)
+			}
+		}
+	} else {
+		return fmt.Errorf("find worktree journals outside configured roots: %w", outsideErr)
 	}
 	for _, root := range roots {
 		if _, statErr := os.Stat(root); os.IsNotExist(statErr) {
@@ -607,12 +630,15 @@ func recoverCancelledPublication(database *db.DB, p *paths.Paths, repo *db.Repo,
 		ref = "refs/heads/" + ref
 	}
 	verified := livePublicationHead(context.Background(), repo.PushURL(), ref)
+	if verified != normalizeSHA(*run.ReviewApprovedHeadSHA) {
+		return fmt.Errorf("cancelled run %s was not published; remote remains at %s", run.ID, verified)
+	}
 	recoveryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_, err := steps.Publish(recoveryCtx, database, run.ID, steps.PushRequest{
 		Worktree: worktree, Remote: repo.PushURL(), Ref: ref,
 		Candidate: *run.ReviewApprovedHeadSHA, ReviewedHead: *run.ReviewApprovedHeadSHA,
-		VerifiedHead: verified, Rewrite: verified != "" && verified == normalizeSHA(run.BaseSHA),
+		VerifiedHead: verified, Rewrite: false,
 	}, func(ctx context.Context, candidate string) error {
 		_, err := git.RunBare(ctx, p.RepoDir(run.RepoID), "update-ref", ref, candidate)
 		return err
@@ -678,6 +704,10 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 		if err != nil {
 			return fmt.Errorf("load trusted repository configuration: %w", err)
 		}
+	} else if pushedConfig.AllowRepoCommands {
+		// A wizard-created repository explicitly opts into its initial local policy.
+		// Subsequent runs use the committed default-branch copy once it exists.
+		trustedConfig = pushedConfig
 	}
 	effectiveConfig := config.EffectiveRepoConfig(pushedConfig, trustedConfig, trustedConfig.AllowRepoCommands)
 	globalConfig, globalErr := config.LoadGlobal(p.ConfigFile())
@@ -738,11 +768,15 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	for gateStep, gate := range gateByStep {
 		gateStep, gate := gateStep, gate
 		runner.RegisterWithInputs(gateStep, pipeline.StepInputs{Command: gate.Command, Owner: "gate." + string(gateStep)}, func(stepCtx context.Context) error {
-			command := exec.CommandContext(stepCtx, "sh", "-c", gate.Command)
+			name, args := "sh", []string{"-c", gate.Command}
+			if runtime.GOOS == "windows" {
+				name, args = "cmd.exe", []string{"/D", "/S", "/C", gate.Command}
+			}
+			command := exec.CommandContext(stepCtx, name, args...)
 			command.Dir = worktree
 			command.Env = append(os.Environ(), "SD_PARENT_RUN_ID="+run.ID)
 			shellenv.ConfigureShellCommand(command)
-			if output, commandErr := command.CombinedOutput(); commandErr != nil {
+			if output, commandErr := shellenv.CombinedOutputShellCommand(command); commandErr != nil {
 				return fmt.Errorf("custom gate %s: %s: %w", gate.Name, strings.TrimSpace(string(output)), commandErr)
 			}
 			return nil

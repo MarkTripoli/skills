@@ -28,6 +28,9 @@ func metadataDir(dir string) string {
 	}
 	return filepath.Join(filepath.Dir(clean), ".safety-dance-journals")
 }
+
+// JournalRootFor returns the durable journal directory for a recorded worktree.
+func JournalRootFor(dir string) string { return metadataDir(dir) }
 func journalName(dir, kind string) string {
 	sum := sha256.Sum256([]byte(filepath.Clean(dir)))
 	return hex.EncodeToString(sum[:]) + ".safety-dance-" + kind + ".json"
