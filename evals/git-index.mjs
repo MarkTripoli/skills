@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { sanitizedGitEnvironment } from "./git-environment.mjs";
@@ -47,7 +48,13 @@ export function snapshotGitIndex(root) {
         ok: true,
         value: execFileSync(
           "git",
-          ["--git-dir", gitRoot, "--work-tree", root, ...args],
+          [
+            "--git-dir", gitRoot,
+            "--work-tree", root,
+            "-c", "core.fsmonitor=false",
+            "-c", `core.hooksPath=${os.devNull}`,
+            ...args,
+          ],
           { cwd: root, env: gitEnvironment, stdio: ["ignore", "pipe", "pipe"] },
         ),
       };
@@ -56,9 +63,9 @@ export function snapshotGitIndex(root) {
     }
   };
 
-  const visible = run("diff-visible-intent", ["diff", "--cached", "--name-only", "-z", "--ita-visible-in-index"]);
+  const visible = run("diff-visible-intent", ["diff", "--no-ext-diff", "--cached", "--name-only", "-z", "--ita-visible-in-index"]);
   if (!visible.ok) return visible.evidence;
-  const ordinary = run("diff-ordinary-staged", ["diff", "--cached", "--name-only", "-z", "--ita-invisible-in-index"]);
+  const ordinary = run("diff-ordinary-staged", ["diff", "--no-ext-diff", "--cached", "--name-only", "-z", "--ita-invisible-in-index"]);
   if (!ordinary.ok) return ordinary.evidence;
   const stagedResult = run("ls-files", ["ls-files", "--stage", "-v", "-z"]);
   if (!stagedResult.ok) return stagedResult.evidence;

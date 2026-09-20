@@ -162,3 +162,19 @@ test("semantic Git index snapshots ignore inherited Git configuration", () => {
   // Then
   assert.equal(fs.existsSync(marker), false);
 });
+
+test("semantic Git index snapshots disable repository-local helpers", () => {
+  // Given
+  const root = repository();
+  const marker = path.join(root, "local-fsmonitor-ran");
+  const monitor = path.join(root, "local-fsmonitor.sh");
+  fs.writeFileSync(monitor, `#!/bin/sh\nprintf ran > ${JSON.stringify(marker)}\nprintf '0\\n'\n`);
+  fs.chmodSync(monitor, 0o755);
+  execFileSync("git", ["config", "core.fsmonitor", monitor], { cwd: root });
+
+  // When
+  snapshotGitIndex(root);
+
+  // Then
+  assert.equal(fs.existsSync(marker), false);
+});
