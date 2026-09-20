@@ -339,7 +339,11 @@ func cleanPath(value string) string {
 	if err != nil {
 		return filepath.Clean(value)
 	}
-	return filepath.Clean(cleaned)
+	cleaned = filepath.Clean(cleaned)
+	if resolved, resolveErr := filepath.EvalSymlinks(cleaned); resolveErr == nil {
+		return filepath.Clean(resolved)
+	}
+	return cleaned
 }
 
 // AuthorizeMutationPeer permits only the Safety Dance CLI and rejects any
