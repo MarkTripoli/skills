@@ -12,6 +12,11 @@ const expectedOnboarding = {
   appliedRevision: 1,
   providers: {},
 };
+const expectedRevisionZeroForeignState = {
+  vcs: { platform: "github", repository: "acme/revision-zero" },
+  ticketing: { tool: "jira", project: "REV0" },
+  custom: { nested: { keep: "exactly", values: [1, 2, 3] } },
+};
 
 function bytes(manifest, file) {
   const encoded = manifest?.[file]?.bytes;
@@ -74,6 +79,44 @@ export default {
           : "repository: rerun changed ai-utilities.json bytes",
         expect.matches("receipt: no written paths", answer, /Written:\s*(?:none|nothing)/i),
         expect.matches("receipt: unchanged bytes", answer, /Verification bytes:[^\n]*(?:unchanged|match)/i),
+        expect.matches("receipt: no external operations", answer, /External operations:\s*0/i),
+      ),
+    },
+    {
+      phaseType: "terminal",
+      skill: "setup-repository",
+      request: "Run `/setup-repository` in exact `reconcile` mode. Migrate schema 1 at supported revision 0 without changing foreign top-level state.",
+      fixtureOverlay: "setup-repository-migration-revision-zero",
+      allowedChangedPaths: ["ai-utilities.json"],
+      check: ({ answer, afterRepository, changedPaths }) => {
+        const metadata = parseMetadata(afterRepository);
+        const foreignState = metadata
+          ? { vcs: metadata.vcs, ticketing: metadata.ticketing, custom: metadata.custom }
+          : null;
+        return failures(
+          expect.includes("repository: only metadata changed", changedPaths.join("\n"), "ai-utilities.json"),
+          JSON.stringify(foreignState) === JSON.stringify(expectedRevisionZeroForeignState)
+            ? null
+            : `repository: foreign top-level state changed ${JSON.stringify(foreignState)}`,
+          metadata && JSON.stringify(metadata.onboarding) === JSON.stringify(expectedOnboarding)
+            ? null
+            : `repository: unexpected onboarding state ${JSON.stringify(metadata?.onboarding)}`,
+          expect.matches("receipt: revision advanced", answer, /(?:Old version|Observed version):[^\n]*1[^\n]*0[\s\S]*New version:[^\n]*1[^\n]*1/i),
+          expect.matches("receipt: no external operations", answer, /External operations:\s*0/i),
+        );
+      },
+    },
+    {
+      phaseType: "terminal",
+      skill: "setup-repository",
+      request: "Run `/setup-repository` again in exact `reconcile` mode after the revision-0 migration.",
+      allowedChangedPaths: [],
+      check: ({ answer, beforeRepository, afterRepository, changedPaths }) => failures(
+        changedPaths.length === 0 ? null : `repository: rerun changed ${changedPaths.join(", ")}`,
+        bytes(beforeRepository, "ai-utilities.json")?.equals(bytes(afterRepository, "ai-utilities.json"))
+          ? null
+          : "repository: rerun changed revision-zero migration bytes",
+        expect.matches("receipt: no written paths", answer, /Written:\s*(?:none|nothing)/i),
         expect.matches("receipt: no external operations", answer, /External operations:\s*0/i),
       ),
     },

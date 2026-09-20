@@ -1,0 +1,20 @@
+{
+  "vcs": {
+    "platform": "github",
+    "repository": "acme/revision-zero"
+  },
+  "ticketing": {
+    "tool": "jira",
+    "project": "REV0"
+  },
+  "custom": {
+    "nested": {
+      "keep": "exactly",
+      "values": [1, 2, 3]
+    }
+  },
+  "onboarding": {
+    "schemaVersion": 1,
+    "appliedRevision": 0
+  }
+}
