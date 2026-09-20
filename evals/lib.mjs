@@ -35,6 +35,41 @@ function snapshotOther(stats) {
   return { kind: "other", type };
 }
 
+function snapshotEntry(file, stats) {
+  if (stats.isSymbolicLink()) return snapshotSymbolicLink(file);
+  if (stats.isDirectory()) return { kind: "directory" };
+  return stats.isFile()
+    ? snapshotBytes(fs.readFileSync(file))
+    : snapshotOther(stats);
+}
+
+function snapshotTree(root, relativeRoot = "", excludedPaths = new Set()) {
+  const manifest = {};
+  const fullRoot = path.join(root, relativeRoot);
+  let rootStats;
+  try {
+    rootStats = fs.lstatSync(fullRoot);
+  } catch (error) {
+    if (error?.code === "ENOENT") return manifest;
+    throw error;
+  }
+
+  const visit = (fullPath, relativePath, stats) => {
+    if (excludedPaths.has(relativePath)) return;
+    if (relativePath) manifest[relativePath] = snapshotEntry(fullPath, stats);
+    if (!stats.isDirectory() || stats.isSymbolicLink()) return;
+    const entries = fs.readdirSync(fullPath, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      const childRelativePath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+      const childPath = path.join(fullPath, entry.name);
+      visit(childPath, childRelativePath, fs.lstatSync(childPath));
+    }
+  };
+
+  visit(fullRoot, relativeRoot, rootStats);
+  return manifest;
+}
+
 export function snapshotGitConfig(root) {
   const config = path.join(root, ".git", "config");
   let stats;
@@ -44,11 +79,7 @@ export function snapshotGitConfig(root) {
     if (error?.code === "ENOENT") return null;
     throw error;
   }
-  if (stats.isSymbolicLink()) return snapshotSymbolicLink(config);
-  if (stats.isDirectory()) return { kind: "directory" };
-  return stats.isFile()
-    ? snapshotBytes(fs.readFileSync(config))
-    : snapshotOther(stats);
+  return snapshotEntry(config, stats);
 }
 
 export function gitConfigChanged(before, after) {
@@ -56,30 +87,14 @@ export function gitConfigChanged(before, after) {
 }
 
 export function snapshotRepository(root) {
-  const manifest = {};
-  const visit = (directory, relativeDirectory = "") => {
-    const entries = fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
-    for (const entry of entries) {
-      if (relativeDirectory === "" && entry.isDirectory() && SNAPSHOT_EXCLUDED_DIRECTORIES.has(entry.name)) continue;
-      const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
-      const fullPath = path.join(directory, entry.name);
-      const stats = fs.lstatSync(fullPath);
-      if (stats.isDirectory()) {
-        manifest[relativePath] = { kind: "directory" };
-        visit(fullPath, relativePath);
-        continue;
-      }
-      if (stats.isSymbolicLink()) {
-        manifest[relativePath] = snapshotSymbolicLink(fullPath);
-        continue;
-      }
-      manifest[relativePath] = stats.isFile()
-        ? snapshotBytes(fs.readFileSync(fullPath))
-        : snapshotOther(stats);
-    }
-  };
-  visit(root);
-  return manifest;
+  return snapshotTree(root, "", SNAPSHOT_EXCLUDED_DIRECTORIES);
+}
+
+export function snapshotNamedRoot(root, relativeRoot, { exclude = [] } = {}) {
+  if (path.isAbsolute(relativeRoot) || path.dirname(relativeRoot) !== ".") {
+    throw new Error(`snapshot root must be one repository-root entry: ${relativeRoot}`);
+  }
+  return snapshotTree(root, relativeRoot, new Set(exclude));
 }
 
 export function diffRepositorySnapshots(before, after) {
@@ -110,6 +125,14 @@ export function diffRepositorySnapshots(before, after) {
     deleted,
     changedPaths: [...created, ...modified, ...deleted].sort(),
   };
+}
+
+export function diffExcludedRootSnapshots(before, after) {
+  const roots = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort();
+  return Object.fromEntries(roots.map((root) => [
+    root,
+    diffRepositorySnapshots(before[root] ?? {}, after[root] ?? {}).changedPaths,
+  ]));
 }
 
 export function unexpectedRepositoryChanges(changedPaths, allowedChangedPaths = []) {

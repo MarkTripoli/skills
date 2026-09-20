@@ -26,6 +26,7 @@ import { buildRuntime } from "../scripts/lib/build.mjs";
 import { subjectProblems } from "../scripts/check-commits.mjs";
 import {
   artifacts,
+  diffExcludedRootSnapshots,
   diffRepositorySnapshots,
   failures,
   handoff,
@@ -33,6 +34,7 @@ import {
   newest,
   placeholders,
   snapshotGitConfig,
+  snapshotNamedRoot,
   snapshotRepository,
   unexpectedRepositoryChanges,
 } from "./lib.mjs";
@@ -43,6 +45,11 @@ const resultsRoot = path.join(here, "results");
 const scenariosDir = path.join(here, "scenarios");
 const fixturesDir = path.join(here, "fixtures");
 const guidanceFiles = ["WRITING.md", "CONVENTIONS.md"];
+const excludedRootSpecs = [
+  { root: ".agents", exclude: [] },
+  { root: ".git", exclude: [".git/config", ".git/index"] },
+  { root: ".omp", exclude: [] },
+];
 
 const args = process.argv.slice(2);
 const keep = args.includes("--keep");
@@ -184,6 +191,13 @@ function snapshot(taskDir) {
   return files;
 }
 
+function snapshotExcludedRoots(root) {
+  return Object.fromEntries(excludedRootSpecs.map(({ root: relativeRoot, exclude }) => [
+    relativeRoot,
+    snapshotNamedRoot(root, relativeRoot, { exclude }),
+  ]));
+}
+
 // Checks every phase must pass before its own: one handoff fence naming the next skill directly after
 // the handoff sentences, the artifact with its type and summary, no template placeholder left anywhere
 // in it (frontmatter included), its commit carrying that file, a repository that is otherwise untouched
@@ -224,12 +238,13 @@ function commonChecks(phase, ctx) {
     }
     const unexpected = unexpectedRepositoryChanges(ctx.changedPaths ?? [], phase.allowedChangedPaths ?? []);
     if (unexpected.length) out.push(`repository: unexpected changed paths: ${unexpected.join(", ")}`);
+    for (const [root, changedPaths] of Object.entries(ctx.excludedRootChanges ?? {})) {
+      if (changedPaths.length) out.push(`repository: excluded root ${root} changed paths: ${changedPaths.join(", ")}`);
+    }
     if (gitConfigChanged(ctx.beforeGitConfig, ctx.afterGitConfig)) out.push("repository: local Git configuration changed");
     if (!ctx.live) return out;
     const head = git(ctx.repo, "rev-parse", "HEAD");
     if (head !== ctx.beforeHead) out.push(`git: HEAD changed from ${ctx.beforeHead} to ${head}`);
-    const excluded = git(ctx.repo, "status", "--porcelain", "--", ".agents", ".omp");
-    if (excluded) out.push(`repository: excluded harness paths changed:\n${excluded}`);
     return out;
   }
   const h = handoff(ctx.answer);
@@ -306,23 +321,30 @@ async function runScenario(scenario, runDir, dist) {
     const beforeHead = git(repo, "rev-parse", "HEAD");
     const beforeRepository = phase.phaseType === "terminal" ? snapshotRepository(repo) : null;
     const beforeGitConfig = phase.phaseType === "terminal" ? snapshotGitConfig(repo) : null;
+    const beforeExcludedRoots = phase.phaseType === "terminal" ? snapshotExcludedRoots(repo) : null;
     if (beforeRepository) fs.writeFileSync(path.join(out, "repository-before.json"), `${JSON.stringify(beforeRepository, null, 2)}\n`);
     if (phase.phaseType === "terminal") fs.writeFileSync(path.join(out, "git-config-before.json"), `${JSON.stringify(beforeGitConfig, null, 2)}\n`);
+    if (beforeExcludedRoots) fs.writeFileSync(path.join(out, "excluded-roots-before.json"), `${JSON.stringify(beforeExcludedRoots, null, 2)}\n`);
     const template = templateFor(skillsDir, phase);
     const started = Date.now();
     console.log(`[${scenario.name}] ${label}: started`);
     const { code, stdout, stderr } = await runOmp(prompt, repo);
     const seconds = Math.round((Date.now() - started) / 1000);
+    const afterRepository = phase.phaseType === "terminal" ? snapshotRepository(repo) : null;
+    const afterGitConfig = phase.phaseType === "terminal" ? snapshotGitConfig(repo) : null;
+    const afterExcludedRoots = phase.phaseType === "terminal" ? snapshotExcludedRoots(repo) : null;
     fs.writeFileSync(path.join(out, "answer.md"), stdout);
     fs.writeFileSync(path.join(out, "stderr.log"), stderr);
     if (fs.existsSync(taskDir)) fs.cpSync(taskDir, path.join(out, "task"), { recursive: true });
-    const afterRepository = phase.phaseType === "terminal" ? snapshotRepository(repo) : null;
-    const afterGitConfig = phase.phaseType === "terminal" ? snapshotGitConfig(repo) : null;
     if (afterRepository) fs.writeFileSync(path.join(out, "repository-after.json"), `${JSON.stringify(afterRepository, null, 2)}\n`);
     if (phase.phaseType === "terminal") fs.writeFileSync(path.join(out, "git-config-after.json"), `${JSON.stringify(afterGitConfig, null, 2)}\n`);
+    if (afterExcludedRoots) fs.writeFileSync(path.join(out, "excluded-roots-after.json"), `${JSON.stringify(afterExcludedRoots, null, 2)}\n`);
     const repositoryDiff = beforeRepository && afterRepository
       ? diffRepositorySnapshots(beforeRepository, afterRepository)
       : { created: [], modified: [], deleted: [], changedPaths: [] };
+    const excludedRootChanges = beforeExcludedRoots && afterExcludedRoots
+      ? diffExcludedRootSnapshots(beforeExcludedRoots, afterExcludedRoots)
+      : {};
 
     const ctx = {
       live: true,
@@ -336,6 +358,9 @@ async function runScenario(scenario, runDir, dist) {
       afterRepository,
       beforeGitConfig,
       afterGitConfig,
+      beforeExcludedRoots,
+      afterExcludedRoots,
+      excludedRootChanges,
       ...repositoryDiff,
       template,
       answer: stdout,
@@ -389,8 +414,10 @@ async function gradeScenario(scenario, runDir) {
       const afterManifest = path.join(out, "repository-after.json");
       const beforeGitConfigManifest = path.join(out, "git-config-before.json");
       const afterGitConfigManifest = path.join(out, "git-config-after.json");
-      if (phase.phaseType === "terminal" && [beforeManifest, afterManifest, beforeGitConfigManifest, afterGitConfigManifest].some((file) => !fs.existsSync(file))) {
-        console.log(`[${scenario.name}] ${label}: terminal repository or Git config manifests missing; skipped`);
+      const beforeExcludedRootsManifest = path.join(out, "excluded-roots-before.json");
+      const afterExcludedRootsManifest = path.join(out, "excluded-roots-after.json");
+      if (phase.phaseType === "terminal" && [beforeManifest, afterManifest, beforeGitConfigManifest, afterGitConfigManifest, beforeExcludedRootsManifest, afterExcludedRootsManifest].some((file) => !fs.existsSync(file))) {
+        console.log(`[${scenario.name}] ${label}: terminal repository, Git config, or excluded-root manifests missing; skipped`);
         result.skipped = true;
         break;
       }
@@ -399,9 +426,14 @@ async function gradeScenario(scenario, runDir) {
       const afterRepository = phase.phaseType === "terminal" ? JSON.parse(fs.readFileSync(afterManifest, "utf8")) : null;
       const beforeGitConfig = phase.phaseType === "terminal" ? JSON.parse(fs.readFileSync(beforeGitConfigManifest, "utf8")) : null;
       const afterGitConfig = phase.phaseType === "terminal" ? JSON.parse(fs.readFileSync(afterGitConfigManifest, "utf8")) : null;
+      const beforeExcludedRoots = phase.phaseType === "terminal" ? JSON.parse(fs.readFileSync(beforeExcludedRootsManifest, "utf8")) : null;
+      const afterExcludedRoots = phase.phaseType === "terminal" ? JSON.parse(fs.readFileSync(afterExcludedRootsManifest, "utf8")) : null;
       const repositoryDiff = beforeRepository && afterRepository
         ? diffRepositorySnapshots(beforeRepository, afterRepository)
         : { created: [], modified: [], deleted: [], changedPaths: [] };
+      const excludedRootChanges = beforeExcludedRoots && afterExcludedRoots
+        ? diffExcludedRootSnapshots(beforeExcludedRoots, afterExcludedRoots)
+        : {};
       const ctx = {
         live: false,
         repo: null,
@@ -414,6 +446,9 @@ async function gradeScenario(scenario, runDir) {
         afterRepository,
         beforeGitConfig,
         afterGitConfig,
+        beforeExcludedRoots,
+        afterExcludedRoots,
+        excludedRootChanges,
         ...repositoryDiff,
         template: fs.existsSync(pinnedDist) ? templateFor(path.join(pinnedDist, "skills"), phase) : "",
         answer: fs.readFileSync(path.join(out, "answer.md"), "utf8"),
