@@ -513,7 +513,7 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		defer ticker.Stop()
 		for {
 			if err := adm.ReconcileOnce(context.Background()); err != nil {
-				// The receipt remains persisted and will be retried on the next tick.
+				_, _ = fmt.Fprintf(logFile, "reconcile admission: %v\n", err)
 			}
 			<-ticker.C
 		}

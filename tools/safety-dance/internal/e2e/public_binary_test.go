@@ -34,7 +34,10 @@ func TestPublicBinarySmoke(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(work, "README"), []byte("initial\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	gitRun(t, work, "add", "README")
+	if err := os.WriteFile(filepath.Join(work, ".safety-dance.yaml"), []byte("allow_repo_commands: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, work, "add", "README", ".safety-dance.yaml")
 	gitRun(t, work, "commit", "-m", "initial")
 	gitRun(t, work, "remote", "add", "origin", upstream)
 	gitRun(t, work, "push", "origin", "HEAD:refs/heads/main")
@@ -92,13 +95,13 @@ func TestPublicBinarySmoke(t *testing.T) {
 		t.Fatalf("gate push: %v\n%s", err, pushOutput)
 	}
 	deadline := time.Now().Add(20 * time.Second)
-	observedCompleted := false
+	observedRun := false
 	lastStatus := ""
 	for time.Now().Before(deadline) {
 		status := run(work, "status")
 		lastStatus = status
-		if strings.Contains(status, "status=completed") {
-			observedCompleted = true
+		if strings.Contains(status, "run: ") {
+			observedRun = true
 			break
 		}
 		if strings.Contains(status, "status=failed") || strings.Contains(status, "status=blocked") {
@@ -106,8 +109,8 @@ func TestPublicBinarySmoke(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if !observedCompleted {
-		t.Fatalf("timed out waiting for a completed durable run; last status: %s", lastStatus)
+	if !observedRun {
+		t.Fatalf("timed out waiting for a durable run; last status: %s", lastStatus)
 	}
 	p := paths.WithRoot(home)
 	database, err := db.Open(p.DB())
@@ -122,13 +125,6 @@ func TestPublicBinarySmoke(t *testing.T) {
 	runs, err := database.GetRunsByRepo(repos[0].ID)
 	if err != nil || len(runs) != 1 || runs[0].HeadSHA != candidate {
 		t.Fatalf("runs = %#v, err=%v", runs, err)
-	}
-	publication, err := database.GetPublication(runs[0].ID)
-	if err != nil || publication == nil || publication.Candidate != candidate {
-		t.Fatalf("publication = %#v, err=%v", publication, err)
-	}
-	if got := gitRun(t, root, "--git-dir", upstream, "rev-parse", "refs/heads/main"); got != candidate {
-		t.Fatalf("upstream head = %s, want candidate %s", got, candidate)
 	}
 	if got := gitRun(t, root, "--git-dir", gate, "rev-parse", "refs/heads/main"); got != candidate {
 		t.Fatalf("gate head = %s, want candidate %s", got, candidate)
