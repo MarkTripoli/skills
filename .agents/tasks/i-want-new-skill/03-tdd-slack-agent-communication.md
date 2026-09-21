@@ -1,7 +1,7 @@
 ---
 type: design-tdd
 task: i-want-new-skill
-summary: "A repo-owned per-user daemon and embedded SQLite database are authoritative for coordinator-only operational state, while Jira-linked runs project the Slack thread URL into an administrator-created custom field configured by stable field ID. Setup installs a native per-user supervisor: a launchd user agent on macOS or a systemd user service on Linux; login starts the daemon and the OS restarts crashes, while Windows service support is deferred. Agent adapters and the operator CLI use filesystem-protected Unix-domain socket RPC, and state-changing actions require one-shot generation-fenced permits. Break-glass uses a trusted same-user boundary with interactive CLI confirmation and a durable audit receipt; credential authorization and recovery details remain open."
+summary: "A repo-owned per-user daemon and embedded SQLite database are authoritative for coordinator-only operational state, while Jira-linked runs project the Slack thread URL into an administrator-created custom field configured by stable field ID. Setup installs a launchd user agent on macOS or a systemd user service on Linux; updates preserve SQLite and configuration, atomically replace the executable and native service definition, and immediately restart the daemon, while Windows service support is deferred. Agent adapters and the operator CLI use filesystem-protected Unix-domain socket RPC, and state-changing actions require one-shot generation-fenced permits. Break-glass uses a trusted same-user boundary with interactive CLI confirmation and a durable audit receipt; credential authorization and recovery details remain open."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 36d73c2fdbd605df9a6f55904f80fcdda7f418fc
@@ -107,6 +107,8 @@ Setup installs one operating-system-native per-user service for the coordinator.
 
 The canonical daemon source, service definitions, and installation logic remain repository-owned. Runtime state stays user-scoped. The daemon owns the Slack app's Socket Mode connection, quiet-hour timers, owner-input inbox, and run-to-thread mapping after an agent process exits or becomes idle. A later agent session reconnects through user-local IPC and resumes the same run state.
 
+Rerunning setup stages and validates the replacement executable and native service definition without modifying SQLite or user configuration. It atomically replaces each staged file, then immediately asks the native supervisor to restart the daemon. During the restart, coordinator IPC is unavailable, so active Slack-enabled runs pause every state-changing boundary under the existing fail-closed gate. The new daemon completes migrations, restores durable run state, re-establishes Socket Mode and required delivery health, then accepts IPC; agents resume only after those health conditions pass.
+
 ```mermaid
 flowchart TD
     S[Setup] --> P{Host platform}
@@ -127,7 +129,7 @@ flowchart TD
     W[Later session or worktree] <-->|Reconnect by run identity| D
 ```
 
-Run IDs must be globally unique within the per-user SQLite database and namespaced with repository and task identity. Service update behavior, database location, and Socket Mode reconnect and replay policy remain open.
+Run IDs must be globally unique within the per-user SQLite database and namespaced with repository and task identity. Database location and Socket Mode reconnect and replay policy remain open.
 
 #### SQLite persists coordinator authority across restarts
 
@@ -258,24 +260,26 @@ type BeginActionResult =
 
 All runtime adapters must route the six `ActionBoundaryKind` operations through one boundary hook and must not execute when `beginAction` returns `stale` or `unavailable`. Local file reads and in-process reasoning bypass that hook. A coordinator IPC failure is treated as `unavailable` even though no response can arrive. `LocalOperatorControl` is intentionally absent from the agent runtime interface. SQLite is injected behind the coordinator's state-store boundary.
 
-#### Setup dispatches to one native user-service installer
+#### Setup dispatches to native user-service install and update adapters
 
-The setup entrypoint detects the host platform and delegates to one platform adapter. The macOS adapter installs and loads a launchd user-agent definition with restart-on-crash behavior. The Linux adapter installs a systemd user unit, reloads the user manager, and enables the unit so it starts at login and restarts after a crash. An unsupported Windows host returns an explicit setup error without installing a partial service.
+The setup entrypoint detects the host platform and delegates service-manager operations to one platform adapter. The macOS adapter installs and loads a launchd user-agent definition with restart-on-crash behavior. The Linux adapter installs a systemd user unit, reloads the user manager, and enables the unit so it starts at login and restarts after a crash. An unsupported Windows host returns an explicit setup error without installing a partial service.
 
 ```text
 setupCoordinatorService(input)
-├── darwin
-│   ├── installLaunchdUserAgent(input)
-│   └── load user agent
-├── linux
-│   ├── installSystemdUserService(input)
-│   ├── reload user manager
-│   └── enable user service
-└── win32
-    └── return unsupported_platform
+├── detect host platform
+├── fresh install
+│   ├── darwin ──▶ install and load launchd user agent
+│   ├── linux ───▶ install, reload, and enable systemd user service
+│   └── win32 ───▶ return unsupported_platform
+└── update existing install
+    ├── stage and validate executable and native service definition
+    ├── atomically replace executable and service definition
+    ├── preserve SQLite database and user configuration
+    ├── restart native user service immediately
+    └── wait for coordinator health before reporting success
 ```
 
-The adapters own service-manager commands and definitions. The coordinator process receives the same executable path, user-local configuration, database path, and socket path on both supported platforms; it contains no launchd or systemd branches.
+The adapters own service-manager commands and definitions. The coordinator process receives the same executable path, user-local configuration, database path, and socket path on both supported platforms; it contains no launchd or systemd branches. Setup reports update success only after the restarted daemon accepts IPC with its durable state loaded and Slack health restored. Until then, agent adapters treat coordinator unavailability as fail-closed and do not begin state-changing actions.
 
 #### A filesystem-protected Unix-domain socket carries typed local RPC
 
@@ -391,6 +395,7 @@ The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input
 
 - Install a launchd user agent on macOS and a systemd user service on Linux. Configure each to start the coordinator at user login and restart it after an unexpected exit.
 - Keep the service per-user. Setup must not require or install a system-wide daemon.
+- On update, preserve the SQLite database and user configuration, atomically replace the executable and native service definition, restart the daemon immediately, and wait for coordinator and Slack health before reporting success.
 - Store exactly one SQLite database in the operating-system user's application-state directory, never in a repository or worktree. The exact platform path remains open.
 - Enable write-ahead logging, foreign keys, and a bounded busy timeout on every connection.
 - Run ordered, transactional schema migrations before opening Socket Mode or local IPC.
@@ -435,6 +440,7 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 - [ ] Confirm an unavailable coordinator, Socket Mode connection, or required Slack delivery pauses state-changing actions until recovery or durable local break-glass.
 - [ ] Confirm one per-user SQLite database durably owns coordinator-only timers, owner input, permits, deduplication, interruptions, and the local channel/thread identifier.
 - [ ] Confirm setup installs a launchd user agent on macOS or a systemd user service on Linux, and each starts at login and restarts crashes without a system-wide daemon.
+- [ ] Confirm an update preserves SQLite and configuration, atomically replaces the executable and native service definition, restarts immediately, pauses active Slack-enabled runs fail-closed, and resumes them from durable state only after health is restored.
 - [ ] Confirm a Jira-linked run projects its Slack thread URL to a dedicated custom field without giving Jira authority over timers, steering, or permits.
 - [ ] Confirm Jira outages leave the backlink pending without pausing Slack coordination and non-Jira runs stay local-only.
 - [ ] Confirm agent adapters and the operator CLI use framed typed request/response RPC over a filesystem-protected Unix-domain socket with no TCP listener.
@@ -444,7 +450,7 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 - [ ] Confirm Slack-disabled runs retain existing workflow behavior.
 
 ### Known limits
-- Service update behavior, SQLite file location, driver packaging, migrations, and backup policy.
+- SQLite file location, driver packaging, migrations, and backup policy.
 - Slack app installation, authorization, and Socket Mode reconnect, acknowledgement, and replay behavior.
 - Same-user agent processes can construct the break-glass RPC and bypass the CLI confirmation; this is an accepted release limitation.
 - A crash after permit consumption but before an external effect is observed requires action-specific idempotency or reconciliation.
