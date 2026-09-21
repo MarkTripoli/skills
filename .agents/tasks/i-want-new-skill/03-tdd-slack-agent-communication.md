@@ -1,7 +1,7 @@
 ---
 type: design-tdd
 task: i-want-new-skill
-summary: "A repo-owned per-user daemon and embedded SQLite database are authoritative for coordinator-only operational state, while Jira-linked runs project the Slack thread URL into an administrator-created custom field configured by stable field ID. Setup validates the Jira field; runtime requires no Jira admin privileges. Agent adapters and the operator CLI use filesystem-protected Unix-domain socket RPC with framed typed requests and responses; Windows named pipes are deferred. Socket Mode is primary, MCP is non-authoritative, state-changing boundaries fail closed on coordination failure, and local break-glass can disable Slack for one run. Credential authorization, recovery details, break-glass caller authorization, and permit fencing remain open."
+summary: "A repo-owned per-user daemon and embedded SQLite database are authoritative for coordinator-only operational state, while Jira-linked runs project the Slack thread URL into an administrator-created custom field configured by stable field ID. Agent adapters and the operator CLI use filesystem-protected Unix-domain socket RPC; Windows named pipes are deferred. Break-glass uses a trusted same-user boundary: the CLI requires interactive confirmation and returns a durable audit receipt, but same-user agent processes can construct the RPC. Socket Mode is primary, MCP is non-authoritative, and state-changing boundaries fail closed on coordination failure. Credential authorization, recovery details, and permit fencing remain open."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 36d73c2fdbd605df9a6f55904f80fcdda7f418fc
@@ -91,7 +91,7 @@ flowchart TD
     I -. Slack later recovers .-> N[Post reconciliation status to original thread]
 ```
 
-The break-glass command is a local operator control, not an agent, Slack app, or MCP capability. It must durably record the run, outage cause and start time, override time, and resumed-without-Slack state before work continues. If that record cannot be committed, the run remains paused. The original thread mapping remains available so a later reconciliation status can record the interruption using the existing status message schema. Before break-glass, required delivery includes start, status, completion, owner-response, and reconciliation messages when each becomes due.
+The supported break-glass path is the local operator CLI. It requires explicit interactive confirmation, then asks the daemon to atomically disable Slack, record the interruption, and persist an audit receipt before work resumes. The receipt identifies the run, interruption, OS user, confirmation time, and disable time. If the transaction fails, the run remains paused. This release trusts the operating-system user: the agent adapter omits break-glass, but a same-user agent process can construct the RPC and bypass the CLI prompt. The prompt is a safety rail, not a security boundary. The original thread mapping remains available for later reconciliation through the existing status schema.
 
 #### One per-user daemon outlives agent sessions and worktrees
 
@@ -125,10 +125,11 @@ One per-user SQLite database is the canonical durable state. The daemon is its o
 | `message_deliveries` | `delivery_id` primary key; unique idempotency key per run | Required outbound message, attempts, confirmation, and Slack message identity |
 | `action_permits` | `permit_id` primary key | Boundary kind, permit state, fencing data, issue time, and consumption time |
 | `interruptions` | `interruption_id` primary key | Availability cause, break-glass transition, local resumption, and reconciliation |
+| `break_glass_receipts` | `receipt_id` primary key; unique `interruption_id` | Run, interruption, OS user, confirmation time, and Slack-disable time |
 | `schema_migrations` | Migration version primary key | Applied schema version and checksum |
 | `jira_backlinks` | `run_id` primary key | Optional Jira issue locator, derived thread URL, custom-field delivery state, attempts, and last error |
 
-The coordinator commits related facts atomically: Slack thread identity with a pending Jira backlink for Jira-linked runs, owner-event deduplication with pending-input state, permit creation with the gate decision, timer advancement with a queued status delivery, and break-glass mode with its interruption record. Process exit between those writes cannot expose a partially applied transition.
+The coordinator commits related facts atomically: Slack thread identity with a pending Jira backlink for Jira-linked runs, owner-event deduplication with pending-input state, permit creation with the gate decision, timer advancement with a queued status delivery, and break-glass mode with its interruption and audit receipt. Process exit between those writes cannot expose a partially applied transition.
 
 #### Jira stores a discoverable backlink, not coordinator authority
 
@@ -211,8 +212,11 @@ interface LocalOperatorControl {
 }
 
 interface BreakGlassReceipt {
+  receiptId: string;
   runId: RunId;
   interruptionId: string;
+  invokedByUid: string;
+  confirmedAt: string;
   disabledAt: string;
 }
 
@@ -276,7 +280,7 @@ interface RpcError {
 }
 ```
 
-The agent adapter omits `disable_slack_with_break_glass`; only the local operator CLI presents that command. Because both run as the same operating-system user, socket permissions alone cannot prevent a same-user process from constructing the operator request. The CLI first starts or recovers the daemon through its supervisor, then sends the request. If the daemon cannot commit the override to SQLite, the run remains paused.
+The agent adapter omits `disable_slack_with_break_glass`; the local operator CLI requires explicit interactive confirmation before presenting that request. The daemon commits the mode change, interruption, and audit receipt in one SQLite transaction and returns the persisted receipt. Because the filesystem boundary trusts the OS user, any same-user process can manually construct the RPC; the confirmation cannot be treated as authorization. The CLI first starts or recovers the daemon through its supervisor. If the daemon cannot commit the transaction, the run remains paused.
 
 ### Type Definitions
 
@@ -345,6 +349,7 @@ The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input
 - Keep Slack credentials outside SQLite; the authorization and secret-storage mechanism remains open.
 - Configure each Jira site with the stable field ID of an administrator-created dedicated Slack-thread field. Setup must validate existence, writability for the intended issue scope, and acceptance of the canonical Slack thread URL.
 - Keep Jira credentials outside SQLite. Runtime may edit the configured issue field but must not require Jira administration privileges, create fields, or discover them by name.
+- Treat the Unix-socket owner as trusted for this release. The CLI confirmation is mandatory in the supported path, but the daemon does not require stronger caller authentication.
 
 ### Local Patterns
 
@@ -384,11 +389,12 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 - [ ] Confirm Jira outages leave the backlink pending without pausing Slack coordination and non-Jira runs stay local-only.
 - [ ] Confirm agent adapters and the operator CLI use framed typed request/response RPC over a filesystem-protected Unix-domain socket with no TCP listener.
 - [ ] Confirm Jira setup validates an administrator-created field by stable per-site ID and runtime requires no Jira admin privileges.
+- [ ] Confirm break-glass requires interactive CLI confirmation and a durable audit receipt while explicitly treating same-user RPC callers as trusted.
 - [ ] Confirm Slack-disabled runs retain existing workflow behavior.
 
 ### Known limits
 - Per-user daemon supervision, startup/update mechanism, SQLite file location, driver packaging, migrations, and backup policy.
 - Slack app installation, authorization, and Socket Mode reconnect, acknowledgement, and replay behavior.
-- The exact permit-fencing mechanism and authorization beyond same-user filesystem protection for the break-glass RPC.
+- Same-user agent processes can construct the break-glass RPC and bypass the CLI confirmation; this is an accepted release limitation.
 - Jira credential authorization, validation scope, existing-value conflicts, and retry guarantees.
 - Slack retry schedule, replay ordering, and reconciliation delivery guarantees.

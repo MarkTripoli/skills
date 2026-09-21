@@ -88,6 +88,9 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - WHEN the coordinator, Slack event connection, or required message delivery is unavailable, the system shall pause the Slack-enabled run before its next state-changing action.
 - WHEN service recovers before an override, the system shall process pending owner input and resume the run.
 - IF the local operator invokes the explicit break-glass command, THEN the system shall disable Slack for that run and resume its existing non-Slack workflow.
+- The supported break-glass CLI shall require explicit interactive confirmation before sending the override.
+- BEFORE work resumes, the system shall persist and return an audit receipt for the confirmed override.
+- The confirmation shall be treated as a same-user safety rail, not a security boundary; a same-user agent process may construct the underlying RPC.
 - WHEN break-glass resumes a run, the system shall retain the original thread mapping and a durable interruption record.
 - WHEN Slack delivery later recovers, the system shall post a status update to the original thread that records the interruption and local resumption.
 
@@ -120,6 +123,7 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - [ ] Confirm that start, status, and completion are the required message types.
 - [ ] Confirm that owner instructions take effect before the agent begins its next work action.
 - [ ] Confirm Slack outages pause state-changing work and only explicit local break-glass resumes the run without Slack.
+- [ ] Confirm break-glass requires interactive CLI confirmation and persists an audit receipt before work resumes.
 - [ ] Confirm Jira-linked runs write the Slack thread URL to a dedicated custom field while Jira outages do not pause coordination.
 - [ ] Confirm runs without Jira perform no Jira operation.
 - [ ] Confirm setup validates an administrator-created Jira field by stable per-site ID and runtime requires no Jira admin privileges.
@@ -129,4 +133,5 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - Non-owner comments are deferred.
 - GitHub, Linear, and non-owner participation are deferred.
 - Jira credential authorization, validation scope, conflicting existing values, and retry guarantees remain technical-design decisions.
+- Same-user agent processes can construct the break-glass RPC and bypass the supported CLI confirmation.
 - Slack setup, authorization, retry schedule, reconciliation guarantees, and runtime wiring remain technical-design decisions.
