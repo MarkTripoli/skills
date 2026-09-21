@@ -1,7 +1,7 @@
 ---
 type: design-prd
 task: i-want-new-skill
-summary: "This PRD defines one optional Slack thread per agent work run with fixed updates and owner steering in administrator-approved public or private channels. Each workspace deployment uses one administrator-installed Slack app from a repository-owned manifest, with headless setup accepting protected bot and Socket Mode tokens and validating the intended app, workspace, scopes, and connection before use. A Jira-linked run writes the thread URL to an administrator-created dedicated custom field, and Slack-enabled work pauses during integration outages unless the local operator explicitly disables Slack for that run. Browser OAuth, direct-message channels, Windows service support, non-owner participation, non-Jira ticket systems, and multiple independent daemons sharing one app are deferred."
+summary: "This PRD defines one optional Slack thread per agent work run with fixed updates and owner steering in invited public or private channels. Each repository declares its default Slack channel in its root `AGENTS.md`; an explicit channel in the controlling person's run instruction overrides that default, with no workspace default, mapping table, or routing subsystem. Each workspace deployment uses one administrator-installed app from a repository-owned manifest, and headless setup validates protected bot and Socket Mode tokens before use. Jira receives an optional discoverability backlink, while browser OAuth, direct messages, Windows services, non-owner participation, non-Jira ticket systems, and shared app connections are deferred."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 472270dd717873b0f4fb002487ca0fa1abe92607
@@ -43,6 +43,7 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - One workspace deployment uses one Slack app Socket Mode connection owned by one per-user daemon.
 - An administrator installs the repo-owned Slack app manifest; headless setup accepts injected bot and Socket Mode tokens and rejects an installation that does not match the expected app, workspace, scopes, and Socket Mode access.
 - Work threads may use public or private channels after an administrator invites the app; direct messages and multi-person direct messages are not supported.
+- Channel selection uses the repository root `AGENTS.md` default unless the person controlling the run explicitly names a different channel for that run.
 
 ### Alternative Solutions Considered
 
@@ -51,6 +52,7 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - Allow free-form updates - rejected because the requested message shape must be deterministic.
 - Store the Slack thread URL in a Jira label - rejected because labels are categorization metadata, not a dedicated backlink field.
 - Create or discover the Jira custom field at runtime - rejected because runtime shall not require Jira administration privileges.
+- Add a workspace default, repository mapping table, or routing service - rejected because the two instruction sources already define deterministic precedence.
 
 ### Solution Details
 
@@ -59,6 +61,14 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - WHEN the person controlling the agent enables Slack for a work run, the system shall record that person as owner and create one thread.
 - WHEN the system creates the thread, the root message shall show `Work`, `Goal`, `Scope`, `Owner`, `Links`, and `Started at` in that order.
 - IF Slack is not enabled for a work run, THEN the system shall proceed without Slack setup or Slack messages.
+
+#### The run instruction overrides the repository channel default
+
+- Each repository shall declare one default Slack channel in its root `AGENTS.md`.
+- WHEN the person controlling a Slack-enabled run explicitly names a different Slack channel in the run instruction, the system shall use that channel for the run.
+- IF the run instruction does not name a Slack channel, THEN the system shall use the repository's `AGENTS.md` default.
+- IF neither source yields an accessible invited public or private channel, THEN the system shall reject Slack run creation before posting the root message.
+- The system shall not use a workspace default, repository-to-channel mapping table, or separate routing subsystem.
 
 #### Administrators provision Slack before headless setup
 
@@ -126,6 +136,7 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - Per-user Slack app provisioning.
 - Browser-based Slack OAuth installation and token refresh.
 - Direct messages and multi-person direct messages.
+- Workspace default channels, repository-to-channel mapping tables, and separate channel-routing services.
 
 ## Human Review
 
@@ -150,6 +161,7 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - [ ] Confirm administrators install the repo-owned manifest and setup accepts protected headless token injection while rejecting the wrong app, workspace, scopes, or Socket Mode access.
 - [ ] Confirm setup never reads repository-local `.env` files.
 - [ ] Confirm work threads support invited public and private channels while direct messages, multi-person direct messages, automatic channel joining, and posting without membership remain unsupported.
+- [ ] Confirm each repository's root `AGENTS.md` supplies the default channel, an explicit runtime instruction overrides it, and no third routing source exists.
 
 ### Known limits
 
@@ -159,4 +171,5 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - Same-user agent processes can construct the break-glass RPC and bypass the supported CLI confirmation.
 - Windows service support for the per-user coordinator daemon is deferred.
 - Slack retry schedule, reconciliation guarantees, deployed event-subscription drift, and agent runtime adapter wiring remain technical-design decisions.
+- The exact machine-readable `AGENTS.md` declaration and runtime channel-reference syntax remain technical-design decisions.
 - One Slack app connection supports one per-user daemon for a workspace deployment; multiple independent users or daemons sharing that app are deferred.
