@@ -4,9 +4,9 @@ date: 2026-09-21
 branch: one-thing-i-m
 base_branch: origin/main
 base_sha: 1837afdde1ce8d17e892c379d39ef5e585e9dfc3
-head_sha: 4091674e7dc0dd78e38d85792911a97381dd49d3
+head_sha: 2e67fcdaf07045dfa0b95b264e43b89ec51c95dd
 status: clean
-summary: "The complete origin/main...HEAD routing diff satisfies the revised portable-routing plan and the passed verification artifact. Earlier release, Herdr, standalone fallback, helper-shape, and Stop-hook cleanup findings are fixed; no current critical, major, or advisory findings remain."
+summary: "The complete origin/main...HEAD routing diff satisfies the portable model-routing request, including configure-model-routing, cross-harness generation, transactional profile replacement, project-only verification, and deliver reachability. Prior Codex invocation, rollback-safety, and environment-shadowing findings are fixed; current checks pass with no actionable findings."
 ---
 
 # Code Review
@@ -14,20 +14,23 @@ summary: "The complete origin/main...HEAD routing diff satisfies the revised por
 ## Scope
 
 - merge base: `origin/main` at `1837afdde1ce8d17e892c379d39ef5e585e9dfc3`
-- reviewed HEAD: `4091674e7dc0dd78e38d85792911a97381dd49d3`
-- commits: 30 commits after the merge base
-- staged and unstaged changes: none before this artifact
+- reviewed HEAD: `2e67fcdaf07045dfa0b95b264e43b89ec51c95dd`
+- commits: 36 commits after the merge base
+- staged and unstaged changes: none before this artifact revision
 - task-owned untracked files: none
-- excluded changes: task artifacts under `.agents/tasks/one-thing-i-m/` were not implementation review subjects, except the task, revised plan, passed verification artifact, prior review findings, and PR description used as requirements and evidence
+- excluded changes: task artifacts under `.agents/tasks/one-thing-i-m/` were not implementation review subjects, except the task, plan, passed verification artifact, prior review artifacts, and PR description used as requirements and evidence
 
 ## Previous Round
 
-- previous artifact: `11-code-review-one-thing-i-m.md`
+- previous artifact: `13-code-review-one-thing-i-m.md`, revised in place for this review
 - CR-001 changeset level disagreed with the approved plan: fixed
 - CR-002 automatic Herdr Stop hook omitted native model arguments: fixed in `00dbe01`
 - CR-003 standalone selective route-model installation had no usable JEV-unavailable path: fixed in `00dbe01` and covered by `tests/install.test.mjs`
 - CR-004 standalone routing did not fall back when the helper lacked `systemOne`: fixed in `2f83f59` and covered by `tests/route-model.test.mjs`
 - CR-005 Stop-hook cleanup could leak a created tab when its identity field was absent: fixed in `2f83f59` and covered by the Herdr contract test
+- CR-006 Codex setup invocation used the slash form: fixed in `0c49c2b` across the skill, Codex adapter, and onboarding docs
+- CR-007 profile replacement was not explicitly transactional: fixed in `0c49c2b` with same-directory temporary validation, atomic replacement, backup restore, and cleanup instructions
+- CR-008 project verification could be shadowed by `SKILLS_MODEL_CANDIDATES_FILE`: fixed in `2b19167` with `--project-only` lookup and regression coverage
 
 ## Requirements and Standards
 
@@ -38,52 +41,53 @@ summary: "The complete origin/main...HEAD routing diff satisfies the revised por
 
 ## Change Profile
 
-- intent and expected behavior: Route eligible non-mutating phases through one exact-candidate JEV helper across portable harnesses and Atomic, keep economy policy for implementation and unknown phases, enforce native Herdr model arguments when available, and preserve fail-closed Atomic behavior.
-- change description quality: The task, revised plan, PR description, runtime guidance, model-routing contract, and passed verification artifact describe the same portable helper, profile precedence, candidate boundaries, fallback distinction, and Atomic delegation.
-- implementation model and review model: Implementation is in the shared Node helper, with Atomic as an adapter and shell/skill runtime handoffs as consumers; review was performed inline with focused tests and full-suite checks.
-- changed-line size and logical cohesion: 35 files are in scope, with the product changes centered on one helper, its Atomic adapter, runtime handoffs, documentation, and focused tests. Task artifacts are excluded from product size assessment.
+- intent and expected behavior: Provide one model-invoked configure-model-routing skill for Claude Code, Codex, Oh My Pi, Pi, and portable installs; ask one question at a time; support project and user profiles; restrict discovery; validate through route-model; preserve economy and exact-candidate routing policy; integrate deliver and onboarding; and keep Atomic and Herdr behavior on shared policy.
+- change description quality: The task, plan, verification artifact, runtime adapters, model-routing contract, deliver skill, onboarding docs, and current implementation describe the same profile precedence, discovery limits, helper verification, transactional replacement, Codex invocation, and project-only lookup behavior.
+- implementation model and review model: The shared Node helper owns lookup and routing policy. The configure skill owns the interactive setup procedure. Atomic, runtime adapters, deliver, Herdr, generated trees, and docs consume or point to those owners rather than adding a second selector.
+- changed-line size and logical cohesion: 39 product and test files are in scope, centered on route-model, configure-model-routing, Atomic adaptation, runtime generation, Herdr handoff, documentation, and focused tests. Task artifacts are excluded from product size assessment.
 - resulting large-file concerns: None.
 - dependency or lockfile changes: None.
 
 ## Tests Reviewed First
 
-- behavior claimed by tests: Candidate validation, expected-loss selection, profile precedence, standalone fallback, Atomic `requireJev` fail-closed behavior, installed Atomic loading, Herdr argument contracts, selective installation, runtime validation, and the complete repository suite.
-- missing or misleading coverage: No current gap was found. The Stop-hook shell path is covered by syntax validation and static contract assertions; native Herdr/provider execution and account availability remain documented caller-owned limits.
+- behavior claimed by tests: Exact candidate validation and expected-loss selection; economy policy; standalone fallback and Atomic fail-closed behavior; profile precedence and project-only lookup; configure-model-routing contract; Herdr arguments and cleanup; selective installation; isolated Atomic loading; generated runtime trees; and the complete repository suite.
+- missing or misleading coverage: No current actionable gap was found. The transactional write and discovery behavior are specified in the skill contract and checked by focused contract assertions; native provider account availability and a live Atomic session remain caller-owned limits recorded by verification.
 
 ## Five-Axis Assessment
 
-- helper axis-coverage: model `jev-1.13.0`, 2747 tokens in / 73 out
+- helper axis-coverage: model `jev-1.13.0`, 3052 tokens in / 73 out
+- helper provenance: `judge: model jev-1.13.0, tokens 3052 in / 73 out`
 
 ### Correctness
 
-- assessment and evidence: `route-model.mjs` validates exact candidates, preserves economy for mutation and unknown phases, falls back only for standalone JEV unavailability, and rejects the same failures with `requireJev`. Atomic always passes `requireJev: true`; the Stop hook routes before pane creation and appends `-- --model` only after successful configured routing. Focused tests and the passed verification items A1-A9 cover these paths.
-- helper coverage: covered, level 3, confidence 0.97
+- assessment and evidence: The configure skill requires one-question sequencing, explicit project or user scope, pre-write candidate validation, temporary-file helper validation, same-directory atomic replacement, backup restoration or removal on final verification failure, cleanup reporting, and prior-profile retention on pre-rename failure. Codex now uses `$configure-model-routing`; project verification passes `--project-only`, which bypasses the environment profile while normal user lookup retains environment precedence. The passed verification items A2-A5, A7-A10 and current route-model tests support the assessment.
+- helper coverage: covered, level 3, confidence 0.90
 
 ### Readability and Simplicity
 
-- assessment and evidence: Policy ownership is consolidated in `skills/delivery/route-model/route-model.mjs`; `atomic/lib/models.mjs` adapts inputs instead of duplicating selection logic. The Stop hook has explicit routing, cleanup, and native-argument branches.
-- helper coverage: covered, level 3, confidence 0.55
+- assessment and evidence: Profile setup, lookup precedence, and routing remain separated: `configure-model-routing/SKILL.md` describes orchestration, `route-model.mjs` owns lookup and validation, and `atomic/lib/models.mjs` remains an adapter. The project-only flag is narrow and directly documents the exceptional verification path.
+- helper coverage: covered, level 3, confidence 0.57
 
 ### Architecture
 
-- assessment and evidence: Installed Atomic resolves the helper from the installed skills directory, selective portable installs remain independent, and runtime documentation keeps catalog discovery caller-owned. The passed verification items A2, A3, A5, and A10 match the changed ownership boundaries.
-- helper coverage: covered, level 3, confidence 0.89
+- assessment and evidence: All four generated runtime trees contain both routing skills, Codex receives the correct invocation form, and deliver/onboarding point users to setup. Atomic continues to delegate selection to route-model, while project-only lookup is implemented in the shared helper rather than duplicated in the setup skill. Passed verification items C3-C6, A1, A7, and A8 cover these boundaries.
+- helper coverage: covered, level 3, confidence 0.97
 
 ### Security
 
-- assessment and evidence: Candidate identifiers and descriptions are caller-supplied, credentials remain in the typed-judgment environment/key path, task routing records do not include credentials, and provider-private catalog scraping or proxy interception is absent. The passed verification item A11 and direct inspection support this assessment.
-- helper coverage: covered, level 3, confidence 0.70
+- assessment and evidence: Profiles contain only caller-supplied model metadata; the skill explicitly excludes credentials, API keys, access tokens, cookies, headers, and provider configuration. Temporary and backup files remain in the target directory, and failures are reported instead of claiming successful setup. No private catalog scraping or proxy was added. Verification item A6 and direct inspection support this assessment.
+- helper coverage: covered, level 3, confidence 0.73
 
 ### Performance
 
-- assessment and evidence: JEV is skipped for mutation, implementation, tool-oriented, unknown, fixed, and single-candidate phases. The Stop hook routes before creating panes, so failed profile or required-JEV checks do not allocate Herdr resources.
-- helper coverage: covered, level 3, confidence 0.73
+- assessment and evidence: Unknown, mutation, implementation, fixed, and single-candidate paths avoid JEV. Configure verification uses an unknown phase, so setup validation does not invoke JEV. The transactional sequence adds only bounded local filesystem operations and one helper verification.
+- helper coverage: covered, level 3, confidence 0.51
 
 ## Verification Story
 
-- command or inspection: `npm test`; `node --test tests/route-model.test.mjs tests/atomic-model-routing.test.mjs tests/atomic-controller.test.mjs tests/install.test.mjs`; `bash -n skills/delivery/herd-next/references/stop_hook.sh`; `git diff --check origin/main...HEAD`; `npm run check-commits -- origin/main..HEAD`; direct inspection of the complete diff, revised plan, passed verification artifact, runtime paths, and installed Atomic path.
-- result: Full suite passed with 165 tests; focused routing, Atomic, and installer tests passed; shell syntax and diff whitespace checks passed; 30 commit subjects passed. The passed verification artifact records all 11 acceptance items as passed, including four generated runtime trees.
-- manual, screenshot, or before-and-after evidence: No native provider-account or live Atomic session was run; caller-supplied availability remains the documented limit.
+- command or inspection: `npm test`; `node scripts/validate.mjs`; `npm run check-commits -- origin/main..HEAD`; `git diff --check 005d810^ HEAD`; passed verification artifact `08-verification-one-thing-i-m.md`; direct inspection of the complete `origin/main...HEAD` diff, configure-model-routing, route-model, runtime adapters, deliver, Atomic integration, and generated-runtime requirements.
+- result: Current `npm test` passed with 166 tests; validation passed; commit validation passed with 36 subjects; diff whitespace checks passed. The passed verification artifact records all 10 acceptance items as passed, including four generated runtime trees, project-only verification while an environment profile is set, transactional profile requirements, credential exclusion, deliver reachability, and Atomic delegation.
+- manual, screenshot, or before-and-after evidence: No provider-account availability or native Atomic run was exercised. Candidate availability remains caller-supplied as documented.
 
 ## Critical and Required Findings
 
@@ -101,8 +105,8 @@ None.
 ## Verdict
 
 - decision: approve
-- overall code-health change: The diff establishes one portable routing policy, keeps Atomic and standalone failure behavior distinct, and documents the harness boundaries without adding a proxy or provider registry dependency.
-- rationale: The complete pinned diff satisfies the task and revised plan; prior findings are fixed with focused coverage, and no current concrete actionable issue remains.
+- overall code-health change: The diff establishes a single portable routing policy and a reachable setup path with explicit scope, discovery, validation, rollback, and credential boundaries. The follow-up fixes close the Codex invocation, transactional replacement, and environment-shadowing risks without weakening existing routing behavior.
+- rationale: The complete pinned diff satisfies the task and plan, the passed verification artifact covers the requested acceptance items, and current checks pass with no concrete actionable finding.
 
 ## Review Limits
 
