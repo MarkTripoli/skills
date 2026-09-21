@@ -84,7 +84,10 @@ test('portable helper treats array order as capability order and sends descripti
 
 test('portable helper validates exact candidates and fails closed on JEV errors', async () => {
   const dir = fixture('throw new Error("offline");');
-  await assert.rejects(routeModel(dir, { phase: 'create-plan', economy: 'cheap', candidates }), /JEV is unavailable.*offline/);
+  const fallback = await routeModel(dir, { phase: 'create-plan', economy: 'cheap', candidates });
+  assert.equal(fallback.model, 'cheap');
+  assert.equal(fallback.source, 'fallback');
+  await assert.rejects(routeModel(dir, { phase: 'create-plan', economy: 'cheap', candidates, requireJev: true }), /JEV is unavailable.*offline/);
   await assert.rejects(routeModel(dir, { phase: 'create-plan', economy: 'missing', candidates }), /economy model/);
   await assert.rejects(routeModel(dir, { phase: 'create-plan', economy: 'cheap', candidates: [] }), /at least one/);
   await assert.rejects(routeModel(dir, { phase: 'create-plan', economy: 'cheap', candidates: [{ model: 'cheap', cost: -1, description: 'bad' }] }), /non-negative/);
@@ -95,6 +98,11 @@ test('Herdr documents native model arguments after its command separator', () =>
   assert.ok(herd.includes('model_args=(-- --model "$selected_model");'));
   assert.ok(herd.includes('herdr agent start "$name" --kind "$kind" --pane "$pane" "${model_args[@]}"'));
   assert.match(herd, /herdr agent start \.\.\. -- --model <model>/);
+  const hook = fs.readFileSync('skills/delivery/herd-next/references/stop_hook.sh', 'utf8');
+  assert.match(hook, /SKILLS_MODEL_CANDIDATES_FILE/);
+  assert.match(hook, /model-candidates\.json/);
+  assert.match(hook, /node \"\$route_helper\" --require-jev/);
+  assert.match(hook, /agent_args=\(-- --model \"\$selected_model\"\)/);
 });
 
 test('portable helper exposes a machine-readable stdin contract', async () => {

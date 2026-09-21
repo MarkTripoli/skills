@@ -31,6 +31,7 @@ export async function selectStageModel(skillsDir, options = {}) {
     candidates,
     routing: options.modelRouting ?? 'auto',
     choiceAliases: { economy: model, reasoning },
+    requireJev: true,
   });
   const { expectedLosses, requestedModel, availableCandidates, profileSource, ...selection } = result;
   const aliases = { [model]: 'economy', [reasoning]: 'reasoning' };

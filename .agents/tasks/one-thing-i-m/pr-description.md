@@ -10,7 +10,8 @@ Route portable skill phases through one shared JEV helper across Claude Code, Co
 - Validated exact `{model,cost,description}` candidates and rejected duplicates, invalid costs, empty lists, and missing economy candidates.
 - Made Atomic adapt its existing inputs to the shared helper instead of owning separate routing policy.
 - Limited native catalog discovery to documented stable Pi and Oh My Pi commands. Claude Code and Codex use explicit caller/configured candidates.
-- Added one candidate-profile convention: explicit candidates, `SKILLS_MODEL_CANDIDATES_FILE`, then project `.agents/model-candidates.json`; manual delivery and Herdr next-phase handoffs use it automatically.
+- Added one candidate-profile convention: explicit candidates, `SKILLS_MODEL_CANDIDATES_FILE`, then project `.agents/model-candidates.json`; manual delivery, Herdr next-phase, and Stop-hook handoffs use it automatically.
+- Standalone route-model installs fall back to economy when JEV is unavailable; Atomic explicitly remains fail-closed.
 - Integrated Herdr instructions for native `-- --model` enforcement and recommendation-only manual handoffs.
 - Added focused portable and Atomic coverage, docs, runtime guidance, and a patch changeset.
 
@@ -21,5 +22,6 @@ The repository does not copy an external router, add proxy interception, scrape 
 ## Verification
 
 - `npm test`
+- `git diff --check`
 - `npm run check-commits -- origin/main..HEAD`
 - `node --test tests/route-model.test.mjs tests/atomic-model-routing.test.mjs tests/atomic-controller.test.mjs`

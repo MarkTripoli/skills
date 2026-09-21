@@ -76,18 +76,25 @@ export async function routeModel(skillsDir, options = {}) {
   const candidates = normalizeCandidates(profile.candidates, economy);
   const models = candidates.map(candidate => candidate.model);
   const record = { candidates: models, availableCandidates: models, confidence: null, probabilities: null, profileSource: profile.source };
+  const fallback = (reason) => ({ ...record, model: economy, source: 'fallback', reason });
   if (routing === 'fixed' || !ELIGIBLE_PHASES.has(phase) || MUTATION_PHASES.has(phase) || candidates.length === 1) {
     return { ...record, model: economy, source: routing === 'fixed' ? 'fixed' : 'policy' };
   }
   const helperPath = path.resolve(skillsDir, 'typed-judgment', 'judge.mjs');
   let helper;
-  try { helper = await import(pathToFileURL(helperPath).href); } catch (error) { throw new Error(`JEV is unavailable: cannot load ${helperPath}: ${error.message}`); }
+  try { helper = await import(pathToFileURL(helperPath).href); } catch (error) {
+    if (!options.requireJev) return fallback('typed-judgment helper unavailable');
+    throw new Error(`JEV is unavailable: cannot load ${helperPath}: ${error.message}`);
+  }
   if (typeof helper.systemOne !== 'function') throw new Error(`JEV is unavailable: ${helperPath} has no systemOne export`);
   const criteria = Object.fromEntries(candidates.map((candidate, index) => [candidate.model, `Candidate ${index + 1}, ordered weakest to strongest, can complete the request with this capability: ${candidate.description}. Choose the cheapest adequate candidate.`]));
   let answers;
   try {
     answers = await helper.systemOne({ phase, request: options.request ?? '', artifacts: options.artifacts ?? [], candidates }, { model: { type: 'choice', instructions: 'Choose the cheapest supplied model that can fully complete this phase in one pass. Never choose a model not listed as a criterion.', criteria } });
-  } catch (error) { throw new Error(`JEV is unavailable: ${error.message}`); }
+  } catch (error) {
+    if (!options.requireJev) return fallback(`JEV unavailable: ${error.message}`);
+    throw new Error(`JEV is unavailable: ${error.message}`);
+  }
   const answer = answerFrom(answers);
   const aliases = options.choiceAliases || {};
   const choice = answer?.choice && aliases[answer.choice] ? aliases[answer.choice] : answer?.choice;
@@ -106,6 +113,7 @@ export async function routeModel(skillsDir, options = {}) {
 async function main() {
   const input = JSON.parse(fs.readFileSync(0, 'utf8'));
   const args = process.argv.slice(2);
+  if (args.includes('--require-jev')) input.requireJev = true;
   const candidateIndex = args.indexOf('--candidates');
   if (candidateIndex >= 0) {
     const file = args[candidateIndex + 1];

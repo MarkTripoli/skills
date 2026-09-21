@@ -232,6 +232,18 @@ test("project Atomic install and uninstall never mutate home or overridden globa
   assert.equal(fs.existsSync(path.join(cwd, ".atomic", "workflows", "skills-delivery.mjs")), false);
 });
 
+test("route-model installs independently and falls back economically without typed-judgment", async () => {
+  const home = tmpdir();
+  const planned = install({ targets: ["portable"], skillNames: ["route-model"], cwd: home, home, env });
+  const skillDir = path.join(home, ".agents", "skills");
+  const route = await import(`${pathToFileURL(path.join(skillDir, "route-model", "route-model.mjs")).href}?standalone=${Date.now()}`);
+  const result = await route.routeModel(skillDir, { phase: "create-plan", economy: "cheap", candidates: [{ model: "cheap", cost: 1, description: "ordinary" }, { model: "strong", cost: 2, description: "reasoning" }] });
+  assert.equal(result.model, "cheap");
+  assert.equal(result.source, "fallback");
+  assert.match(result.reason, /helper unavailable/);
+  uninstall(planned, home);
+});
+
 test("selected jev-ui installs as a portable consumer outside the repository", async () => {
   const home = tmpdir("jev-ui-install-test-");
   const outside = tmpdir("jev-ui-consumer-");

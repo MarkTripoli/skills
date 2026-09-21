@@ -32,13 +32,13 @@ Candidate configuration precedence is explicit `--candidates <json-file>` and `-
 {"economy":"provider/economy","candidates":[{"model":"provider/economy","cost":1,"description":"ordinary work"}],"routing":"auto"}
 ```
 
-Candidates are ordered weakest to strongest; costs are independent and may vary in either direction. Without a profile, routing preserves the economy behavior and reports that no profile was used, so a manual handoff enforces no model.
+Candidates are ordered weakest to strongest; costs are independent and may vary in either direction. Without a profile, routing preserves the economy behavior and reports that no profile was used, so a manual handoff enforces no model. The Herdr Stop hook uses the same precedence, requires successful routing when a profile exists, and launches no pane on malformed profiles or routing errors.
 
 `candidates` must be a non-empty array of unique objects with an exact native `model` string, a finite non-negative caller-supplied `cost`, and a non-empty capability `description`. `economy` must identify one candidate. The response includes `model`, `source`, `candidates`, `availableCandidates`, `confidence`, and `probabilities`; JEV responses also include expected losses and helper usage. Credentials are read only by the typed-judgment helper and are never placed in request or response artifacts.
 
 ## Policy
 
-Implementation, mutation, tool-oriented, and unknown phases always use `economy` without JEV. Eligible non-mutating phases use JEV only when more than one candidate is supplied. The helper combines JEV adequacy probabilities with normalized candidate cost and an under-provision penalty, selecting the candidate with the lowest expected loss. A JEV failure is visible and fails closed when a choice is required.
+Implementation, mutation, tool-oriented, and unknown phases always use `economy` without JEV. Eligible non-mutating phases use JEV only when more than one candidate is supplied. The helper combines JEV adequacy probabilities with normalized candidate cost and an under-provision penalty, selecting the candidate with the lowest expected loss. A standalone portable call falls back to `economy` with `source: "fallback"` and a `reason` when the sibling typed-judgment helper or JEV service is unavailable. Atomic passes `requireJev` and fails closed instead of falling back.
 
 Atomic adapts its existing `model`, `reasoning_model`, and `available_models` inputs into this contract. Omitted availability preserves the Luna-fast economy and Sol escalation compatibility path. Explicit candidate objects are preferred for portable callers because they carry the cost and capability data required for multi-model routing.
 
