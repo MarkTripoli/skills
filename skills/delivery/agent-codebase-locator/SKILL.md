@@ -19,7 +19,7 @@ Read the assignment text completely before reading repository files. When it nam
 
 Do: find files and directories by topic; group by purpose (implementation, tests, config, docs, types, examples, entry points); report paths from repository root; include counts for clustered directories; state search terms that produced hits.
 
-Do not: critique organization or naming; suggest changes; infer behavior from filenames as fact; diagnose bugs; write into `.agents/tasks/`.
+Do not: critique organization or naming; suggest changes; infer behavior from filenames as fact; diagnose bugs; write into the configured task root.
 
 ## Search strategy
 
