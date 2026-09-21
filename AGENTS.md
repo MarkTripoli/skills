@@ -10,7 +10,7 @@ Map for changing this repository. For using the installed skills, read [docs/che
 - `atomic/workflows/delivery.ts` is the optional dynamic controller registered as `delivery`; `atomic/lib/` holds cohesive helpers. Native skill stages use `context: "fresh"`; artifacts, not conversations, carry cross-stage memory. Keep graph branches, gates, and stop conditions visible in the workflow entry.
 - `scripts/install.mjs` installs selected skills independently by default. `--atomic` requires the full collection and adds the workflow tree plus a top-level `skills-delivery.mjs` discovery entry. Atomic scans workflow files non-recursively. Project installations use local `.agents/skills/`; user resources respect `ATOMIC_CODING_AGENT_DIR`.
 - `shared/WRITING.md`, `shared/CONVENTIONS.md`, and `shared/SLICING.md` own prose, task/artifact/commit, and task-sizing rules. Every `SKILL.md` links the first two on line 6.
-- `.agents/tasks/` contains historical task artifacts. Preserve them and owner-managed worktrees, including cancelled-run worktrees; they are not install or migration cleanup targets.
+- The configured task root (default `.agents/tasks/`) contains historical task artifacts. Preserve them and owner-managed worktrees, including cancelled-run worktrees; they are not install or migration cleanup targets.
 - `evals/` exercises skills against live OMP sessions in throwaway repositories; `evals/results/` retains evidence. It is separate from offline tests and optional Atomic runtime proof.
 
 ## Change boundaries
