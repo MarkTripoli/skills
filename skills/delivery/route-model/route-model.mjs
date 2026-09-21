@@ -83,10 +83,10 @@ export async function routeModel(skillsDir, options = {}) {
     probabilities = Object.fromEntries(Object.entries(probabilities).map(([key, value]) => [aliases[key] || key, value]));
   }
   validateProbabilities(probabilities, models);
-  if (!Number.isFinite(answer.confidence ?? 0) || (answer.confidence ?? 0) < 0 || (answer.confidence ?? 0) > 1) throw new Error('Invalid JEV model-routing response: confidence must be finite in [0,1]');
+  if (!Number.isFinite(answer.confidence) || answer.confidence < 0 || answer.confidence > 1) throw new Error('Invalid JEV model-routing response: confidence must be finite in [0,1]');
   const losses = expectedLosses(candidates, probabilities);
   const selectedIndex = losses.indexOf(Math.min(...losses));
-  return { ...record, model: candidates[selectedIndex].model, source: 'jev', confidence: answer.confidence ?? null, probabilities, requestedModel: choice, expectedLosses: Object.fromEntries(models.map((model, index) => [model, losses[index]])), ...(helper.lastCall?.usage ? { usage: helper.lastCall.usage } : {}) };
+  return { ...record, model: candidates[selectedIndex].model, source: 'jev', confidence: answer.confidence, probabilities, requestedModel: choice, expectedLosses: Object.fromEntries(models.map((model, index) => [model, losses[index]])), ...(helper.lastCall?.usage ? { usage: helper.lastCall.usage } : {}) };
 }
 
 async function main() {
