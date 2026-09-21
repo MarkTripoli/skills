@@ -22,37 +22,47 @@ func readConfinedEvidence(raw, worktreeRoot, evidenceRoot string) ([]byte, os.Fi
 		if strings.TrimSpace(root) == "" {
 			continue
 		}
-		candidate := filepath.Join(root, raw)
-		f, openErr := os.Open(candidate)
-		if openErr != nil {
-			continue
-		}
-		defer f.Close()
-		info, statErr := f.Stat()
-		if statErr != nil {
-			return nil, nil, statErr
-		}
-		opened, openedErr := finalHandlePath(windows.Handle(f.Fd()))
 		rootHandle, rootOpenErr := os.Open(root)
-		if openedErr != nil || rootOpenErr != nil {
-			if rootOpenErr == nil {
-				rootHandle.Close()
-			}
+		if rootOpenErr != nil {
 			continue
 		}
 		rootOpened, rootPathErr := finalHandlePath(windows.Handle(rootHandle.Fd()))
-		rootHandle.Close()
 		if rootPathErr != nil {
+			rootHandle.Close()
+			continue
+		}
+		candidate := filepath.Join(root, raw)
+		f, openErr := os.Open(candidate)
+		if openErr != nil {
+			rootHandle.Close()
+			continue
+		}
+		info, statErr := f.Stat()
+		if statErr != nil {
+			f.Close()
+			rootHandle.Close()
+			return nil, nil, statErr
+		}
+		opened, openedErr := finalHandlePath(windows.Handle(f.Fd()))
+		if openedErr != nil {
+			f.Close()
+			rootHandle.Close()
 			continue
 		}
 		rel, relErr := filepath.Rel(rootOpened, opened)
 		if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			f.Close()
+			rootHandle.Close()
 			continue
 		}
 		if !info.Mode().IsRegular() {
+			f.Close()
+			rootHandle.Close()
 			return nil, info, fmt.Errorf("evidence file is not a regular file")
 		}
 		data, readErr := io.ReadAll(io.LimitReader(f, maxEvidenceBytes+1))
+		f.Close()
+		rootHandle.Close()
 		if readErr != nil {
 			return nil, info, readErr
 		}

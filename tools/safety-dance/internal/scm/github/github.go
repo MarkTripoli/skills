@@ -366,6 +366,21 @@ func (h *Host) UpdatePR(ctx context.Context, pr *scm.PR, content scm.PRContent) 
 	return pr, nil
 }
 
+// AddPRComment appends evidence without modifying the authored pull-request body.
+func (h *Host) AddPRComment(ctx context.Context, pr *scm.PR, body string) error {
+	selector, err := prSelector(pr)
+	if err != nil {
+		return err
+	}
+	args := append([]string{"pr", "comment", selector, "--body-file", "-"}, h.repoArgs()...)
+	cmd := h.cmd(ctx, "gh", args...)
+	cmd.Stdin = strings.NewReader(body)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("gh pr comment: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
 // UpdatePRIfUnchanged refuses GitHub REST writes because the endpoint does not
 // provide a documented atomic compare-and-swap precondition.
 func (h *Host) UpdatePRIfUnchanged(ctx context.Context, pr *scm.PR, expected, content scm.PRContent) (*scm.PR, error) {
@@ -394,14 +409,6 @@ func (h *Host) UpdatePRIfUnchanged(ctx context.Context, pr *scm.PR, expected, co
 	// precondition. Refuse the write rather than risk overwriting an authored
 	// edit between the read and update.
 	return nil, fmt.Errorf("github pull-request update cannot guarantee atomic conditional write")
-	/*args := []string{"api", "--method", "PATCH", endpoint, "--header", "If-Match: " + etag, "-f", "body=" + content.Body}
-	if strings.TrimSpace(content.Title) != "" {
-		args = append(args, "-f", "title="+content.Title)
-	}
-	if _, err := h.cmd(ctx, "gh", args...).Output(); err != nil {
-		return nil, fmt.Errorf("gh api pull-request conditional update: %w", err)
-	}
-	return pr, nil */
 }
 
 func parseIncludedPR(raw []byte) (etag, body string, err error) {

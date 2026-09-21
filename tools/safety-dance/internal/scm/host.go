@@ -348,6 +348,11 @@ type PRContentConditionalUpdater interface {
 	UpdatePRIfUnchanged(ctx context.Context, pr *PR, expected, content PRContent) (*PR, error)
 }
 
+// PRCommenter publishes an additive comment without replacing authored PR content.
+type PRCommenter interface {
+	AddPRComment(ctx context.Context, pr *PR, body string) error
+}
+
 // MergedProof is provider evidence that a specific PR head was merged.
 type MergedProof struct {
 	Merged         bool

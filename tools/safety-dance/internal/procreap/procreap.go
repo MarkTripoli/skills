@@ -160,7 +160,20 @@ func Sweep(opts Options) ([]Victim, error) {
 	if len(procs) == 0 {
 		return nil, nil
 	}
+	candidates := make([]int, 0, len(procs))
+	for _, p := range procs {
+		if p.PID > 1 && p.PID != os.Getpid() {
+			candidates = append(candidates, p.PID)
+		}
+	}
+	cwds := processCWDsFunc(candidates)
+	return sweepSnapshot(opts, procs, cwds)
+}
 
+func sweepSnapshot(opts Options, procs []Process, cwds map[int]string) ([]Victim, error) {
+	if len(procs) == 0 {
+		return nil, nil
+	}
 	byPID := make(map[int]Process, len(procs))
 	for _, p := range procs {
 		byPID[p.PID] = p
@@ -180,8 +193,6 @@ func Sweep(opts Options) ([]Victim, error) {
 	if len(candidates) == 0 {
 		return nil, nil
 	}
-
-	cwds := processCWDsFunc(candidates)
 	matchers := worktreeMatchers(opts)
 	var scopes []string
 	for _, scope := range opts.Scopes {
@@ -248,16 +259,16 @@ func SweepRunWorktreeStrict(worktreesRoot, repoID, runID, dir, reason string) er
 			candidates = append(candidates, p.PID)
 		}
 	}
-	if _, cwdErr := processCWDsStrictFunc(candidates); cwdErr != nil {
-		return fmt.Errorf("%s: %w", reason, cwdErr)
+	cwds, err := processCWDsStrictFunc(candidates)
+	if err != nil {
+		return fmt.Errorf("%s: %w", reason, err)
 	}
-	_, err = Sweep(Options{
+	if _, err := sweepSnapshot(Options{
 		WorktreesRoot: worktreesRoot,
 		Worktrees:     []Worktree{{Dir: dir, RepoID: repoID, RunID: runID}},
 		Scopes:        []string{dir},
 		Grace:         DefaultGrace,
-	})
-	if err != nil {
+	}, procs, cwds); err != nil {
 		return fmt.Errorf("%s: %w", reason, err)
 	}
 	return nil

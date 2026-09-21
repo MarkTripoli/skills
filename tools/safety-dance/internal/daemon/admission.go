@@ -254,11 +254,18 @@ func managedHookPeer(pid int, gate string) bool {
 		if strings.Contains(command, "SD_PARENT_RUN_ID=") {
 			return false
 		}
-		if env, envErr := processEnvironmentFunc(pid); envErr == nil && environmentHas(env, "SD_PARENT_RUN_ID=") {
+		env, envErr := processEnvironmentFunc(pid)
+		if envErr == nil && environmentHas(env, "SD_PARENT_RUN_ID=") {
 			return false
 		}
 		if commandHasExecutable(command, expected) {
 			managedHook = true
+		}
+		if envErr == nil {
+			hook := managedHookEnvironment(env)
+			if hook != "" && strings.HasPrefix(cleanPath(hook), cleanPath(filepath.Join(gate, "hooks"))+string(filepath.Separator)) {
+				managedHook = true
+			}
 		}
 		if isGitReceiveCommand(command) {
 			gitReceive = true
@@ -340,14 +347,14 @@ func cleanPath(value string) string {
 	return cleaned
 }
 
-// AuthorizeMutationPeer permits a directly invoked Safety Dance CLI. A
-// validation descendant cannot inherit authority merely by keeping a Safety
-// Dance executable somewhere in its ancestry or by clearing its own marker.
+// AuthorizeMutationPeer permits a directly invoked Safety Dance CLI only when
+// its complete ancestry contains no validation marker and a verified shell.
 func AuthorizeMutationPeer(pid int) error {
 	if pid <= 0 {
 		return errors.New("unsupported or unauthenticated IPC peer")
 	}
 	current := pid
+	sawShell := false
 	for hops := 0; current > 1 && hops < 256; hops++ {
 		parent, command, err := processInfoFunc(current)
 		if err != nil {
@@ -370,6 +377,9 @@ func AuthorizeMutationPeer(pid int) error {
 				return errors.New("mutation requires a directly invoked Safety Dance CLI peer")
 			}
 		}
+		if isInteractiveShell(command) {
+			sawShell = true
+		}
 		if parent <= 1 || parent == current {
 			current = parent
 			break
@@ -379,7 +389,23 @@ func AuthorizeMutationPeer(pid int) error {
 	if current > 1 {
 		return errors.New("could not verify complete IPC peer ancestry")
 	}
+	if !sawShell {
+		return errors.New("mutation requires a verified interactive parent")
+	}
 	return nil
+}
+
+func isInteractiveShell(command string) bool {
+	fields := commandLineFields(command)
+	if len(fields) == 0 {
+		return false
+	}
+	switch filepath.Base(fields[0]) {
+	case "sh", "bash", "zsh", "fish", "ksh", "dash", "cmd.exe", "powershell.exe":
+		return true
+	default:
+		return false
+	}
 }
 func (a *Admission) issue(ctx context.Context, raw json.RawMessage) (interface{}, error) {
 	peer := ipc.PeerPID(ctx)

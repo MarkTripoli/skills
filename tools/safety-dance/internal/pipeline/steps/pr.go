@@ -79,25 +79,31 @@ func PR(ctx context.Context) error {
 		return bodyErr
 	}
 	if strings.TrimSpace(body) != "" {
-		merged := body
 		if !created {
-			reader, ok := host.(scm.PRContentReader)
-			if !ok {
-				return fmt.Errorf("pull-request provider cannot read existing body")
+			if commenter, ok := host.(scm.PRCommenter); ok {
+				if err := commenter.AddPRComment(ctx, pr, body); err != nil {
+					return err
+				}
+			} else {
+				merged := body
+				reader, ok := host.(scm.PRContentReader)
+				if !ok {
+					return fmt.Errorf("pull-request provider cannot read existing body")
+				}
+				existing, readErr := reader.GetPRContent(ctx, pr)
+				if readErr != nil {
+					return fmt.Errorf("read pull-request content: %w", readErr)
+				}
+				merged = mergeEvidenceBody(existing.Body, body)
+				conditional, ok := host.(scm.PRContentConditionalUpdater)
+				if !ok {
+					return fmt.Errorf("pull-request provider cannot conditionally update existing body")
+				}
+				if _, err := conditional.UpdatePRIfUnchanged(ctx, pr, existing, scm.PRContent{Body: merged}); err != nil {
+					return err
+				}
 			}
-			existing, readErr := reader.GetPRContent(ctx, pr)
-			if readErr != nil {
-				return fmt.Errorf("read pull-request content: %w", readErr)
-			}
-			merged = mergeEvidenceBody(existing.Body, body)
-			conditional, ok := host.(scm.PRContentConditionalUpdater)
-			if !ok {
-				return fmt.Errorf("pull-request provider cannot conditionally update existing body")
-			}
-			if _, err := conditional.UpdatePRIfUnchanged(ctx, pr, existing, scm.PRContent{Body: merged}); err != nil {
-				return err
-			}
-		} else if _, err := host.UpdatePR(ctx, pr, scm.PRContent{Body: merged}); err != nil {
+		} else if _, err := host.UpdatePR(ctx, pr, scm.PRContent{Body: body}); err != nil {
 			return err
 		}
 	}
