@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -287,21 +286,27 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 				}
 			}
 			findings := ""
+			activity := "status: completed"
 			if sink != nil && sink.Value != nil {
 				findings = sink.Value.FindingsJSON
+				if len(sink.Value.Evidence) > 0 {
+					rawActivity, marshalErr := json.Marshal(struct {
+						Kind  string   `json:"kind"`
+						Items []string `json:"items"`
+					}{Kind: "typed-evidence", Items: sink.Value.Evidence})
+					if marshalErr != nil {
+						return r.Results, fmt.Errorf("encode step evidence: %w", marshalErr)
+					}
+					activity = string(rawActivity)
+				}
 			}
 			if err == nil && !responseCompleted {
-				if persistErr := r.Database.CompleteStepWithRunHead(persisted.ID, r.RunID, checkpoint, findings, n == StepReview); persistErr != nil {
+				if persistErr := r.Database.CompleteStepWithRunHeadAndActivity(persisted.ID, r.RunID, checkpoint, findings, activity, n == StepReview); persistErr != nil {
 					return r.Results, fmt.Errorf("persist step %s: %w", n, persistErr)
 				}
 			} else if err != nil {
 				if persistErr := r.Database.FailStep(persisted.ID, err.Error(), 0); persistErr != nil {
 					return r.Results, fmt.Errorf("persist step %s: %w", n, persistErr)
-				}
-			}
-			if sink != nil && sink.Value != nil && len(sink.Value.Evidence) > 0 {
-				if persistErr := r.Database.TouchStepActivity(persisted.ID, "evidence: "+strings.Join(sink.Value.Evidence, "; ")); persistErr != nil {
-					return r.Results, persistErr
 				}
 			}
 		}

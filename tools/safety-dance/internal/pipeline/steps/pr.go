@@ -2,7 +2,9 @@ package steps
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,12 +114,20 @@ func renderEvidence(ctx context.Context, repo *db.Repo, run *db.Run, prURL strin
 	}
 	var items []string
 	for _, step := range steps {
-		if step.LastActivity == nil || !strings.HasPrefix(*step.LastActivity, "evidence:") {
+		if step.LastActivity == nil {
 			continue
 		}
-		for _, item := range strings.Split(strings.TrimSpace(strings.TrimPrefix(*step.LastActivity, "evidence:")), ";") {
-			if strings.TrimSpace(item) != "" {
-				items = append(items, strings.TrimSpace(item))
+		var record struct {
+			Kind  string   `json:"kind"`
+			Items []string `json:"items"`
+		}
+		if json.Unmarshal([]byte(*step.LastActivity), &record) == nil && record.Kind == "typed-evidence" {
+			items = append(items, record.Items...)
+		} else if strings.HasPrefix(*step.LastActivity, "evidence:") {
+			for _, item := range strings.Split(strings.TrimSpace(strings.TrimPrefix(*step.LastActivity, "evidence:")), ";") {
+				if strings.TrimSpace(item) != "" {
+					items = append(items, strings.TrimSpace(item))
+				}
 			}
 		}
 	}
@@ -128,13 +138,23 @@ func renderEvidence(ctx context.Context, repo *db.Repo, run *db.Run, prURL strin
 	for i, item := range items {
 		extension := ".txt"
 		content := []byte(item + "\n")
-		if info, statErr := os.Stat(item); statErr == nil && info.Mode().IsRegular() {
-			if ext := strings.ToLower(filepath.Ext(item)); ext != "" && len(ext) <= 10 {
+		if strings.HasPrefix(item, "file://") {
+			path, pathErr := confinedEvidencePath(strings.TrimPrefix(item, "file://"), worktree(ctx), dir)
+			if pathErr != nil {
+				return "", pathErr
+			}
+			info, statErr := os.Stat(path)
+			if statErr != nil || !info.Mode().IsRegular() {
+				return "", fmt.Errorf("evidence file is not a regular file: %s", path)
+			}
+			if ext := strings.ToLower(filepath.Ext(path)); ext != "" && len(ext) <= 10 {
 				extension = ext
 			}
-			if raw, readErr := os.ReadFile(item); readErr == nil {
-				content = raw
+			raw, readErr := os.ReadFile(path)
+			if readErr != nil {
+				return "", fmt.Errorf("read evidence file: %w", readErr)
 			}
+			content = raw
 		}
 		target := filepath.Join(dir, fmt.Sprintf("evidence-%03d%s", i+1, extension))
 		if err := os.WriteFile(target, content, 0o600); err != nil {
@@ -149,8 +169,9 @@ func renderEvidence(ctx context.Context, repo *db.Repo, run *db.Run, prURL strin
 			return "", err
 		}
 		if published != nil {
+			base := repositoryWebURL(repo.PushURL())
 			for _, file := range published.Files {
-				links = append(links, fmt.Sprintf("- [%s](%s)", file, strings.TrimRight(prURL, "/")+"/blob/"+published.CommitSHA+"/"+published.Dir+"/"+file))
+				links = append(links, fmt.Sprintf("- [%s](%s/blob/%s/%s/%s)", file, strings.TrimRight(base, "/"), published.CommitSHA, published.Dir, file))
 			}
 		}
 	}
@@ -175,4 +196,60 @@ func renderEvidence(ctx context.Context, repo *db.Repo, run *db.Run, prURL strin
 		return "- Evidence: `" + dir + "`", nil
 	}
 	return "## Safety Dance evidence\n\n" + strings.Join(links, "\n"), nil
+}
+
+func confinedEvidencePath(raw, worktreeDir, evidenceRoot string) (string, error) {
+	if strings.TrimSpace(raw) == "" || filepath.IsAbs(raw) {
+		return "", fmt.Errorf("evidence file path must be relative to a managed root")
+	}
+	for _, root := range []string{worktreeDir, evidenceRoot} {
+		if strings.TrimSpace(root) == "" {
+			continue
+		}
+		rootAbs, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		candidate, err := filepath.Abs(filepath.Join(rootAbs, raw))
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(rootAbs, candidate)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		resolved, err := filepath.EvalSymlinks(candidate)
+		if err != nil {
+			continue
+		}
+		resolvedRel, err := filepath.Rel(rootAbs, resolved)
+		if err == nil && resolvedRel != ".." && !strings.HasPrefix(resolvedRel, ".."+string(filepath.Separator)) {
+			return resolved, nil
+		}
+	}
+	return "", fmt.Errorf("evidence file path is outside managed roots")
+}
+
+func repositoryWebURL(remote string) string {
+	host := scm.ExtractHost(remote)
+	path := scm.RepoPath(remote)
+	if host == "" || path == "" {
+		return ""
+	}
+	return (&url.URL{Scheme: "https", Host: host, Path: "/" + strings.TrimPrefix(path, "/")}).String()
+}
+
+func mergeEvidenceBody(existing, generated string) string {
+	const start, end = "<!-- safety-dance:evidence -->", "<!-- /safety-dance:evidence -->"
+	section := start + "\n" + generated + "\n" + end
+	if begin := strings.Index(existing, start); begin >= 0 {
+		if finish := strings.Index(existing[begin+len(start):], end); finish >= 0 {
+			finish += begin + len(start)
+			return existing[:begin] + section + existing[finish+len(end):]
+		}
+	}
+	if strings.TrimSpace(existing) == "" {
+		return section
+	}
+	return strings.TrimRight(existing, "\n") + "\n\n" + section
 }

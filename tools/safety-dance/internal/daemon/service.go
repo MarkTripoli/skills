@@ -177,7 +177,7 @@ func (s Service) taskOwned() (bool, error) {
 	}
 	out, err := executor.Output("schtasks", "/Query", "/TN", s.Label(), "/XML")
 	if err != nil {
-		if isTaskNotFound(err) {
+		if isTaskNotFound(out, err) {
 			return false, nil
 		}
 		return false, fmt.Errorf("query scheduled task %s: %w", s.Label(), err)
@@ -186,9 +186,16 @@ func (s Service) taskOwned() (bool, error) {
 	return strings.Contains(raw, serviceMarker) && strings.Contains(raw, s.Home.Root()) && strings.Contains(raw, s.Binary), nil
 }
 
-func isTaskNotFound(err error) bool {
-	text := strings.ToLower(err.Error())
-	return strings.Contains(text, "cannot find") || strings.Contains(text, "not found") || strings.Contains(text, "does not exist")
+func isTaskNotFound(out []byte, err error) bool {
+	text := strings.ToLower(string(out) + "\n" + errString(err))
+	return strings.Contains(text, "cannot find") || strings.Contains(text, "not found") || strings.Contains(text, "does not exist") || strings.Contains(text, "0x80070002")
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func (s Service) Install() error {
@@ -228,7 +235,7 @@ func (s Service) Install() error {
 			if !strings.Contains(raw, serviceMarker) || !strings.Contains(raw, s.Home.Root()) || !strings.Contains(raw, s.Binary) {
 				return fmt.Errorf("foreign scheduled task collision: %s", s.Label())
 			}
-		} else if !isTaskNotFound(queryErr) {
+		} else if !isTaskNotFound(out, queryErr) {
 			return fmt.Errorf("query scheduled task %s: %w", s.Label(), queryErr)
 		}
 	}

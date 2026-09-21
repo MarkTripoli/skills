@@ -406,17 +406,27 @@ func (d *DB) CompleteReviewStep(id, runID, approvedHeadSHA string, exitCode int,
 	return nil
 }
 
-// CompleteStepWithRunHead commits a successful step and the resulting worktree
-// checkpoint in one transaction. A review also records its exact approved head
-// in the same transaction, so recovery cannot observe only one side.
+// CompleteStepWithRunHead commits a successful step, its typed evidence, and
+// the resulting worktree checkpoint in one transaction.
 func (d *DB) CompleteStepWithRunHead(id, runID, headSHA, findingsJSON string, review bool) error {
+	return d.completeStepWithRunHead(id, runID, headSHA, findingsJSON, "status: completed", review)
+}
+
+// CompleteStepWithRunHeadAndActivity is the atomic completion path for steps
+// that produced typed evidence. The evidence is stored as JSON rather than a
+// delimiter protocol so paths and text remain unambiguous across restarts.
+func (d *DB) CompleteStepWithRunHeadAndActivity(id, runID, headSHA, findingsJSON, activity string, review bool) error {
+	return d.completeStepWithRunHead(id, runID, headSHA, findingsJSON, activity, review)
+}
+
+func (d *DB) completeStepWithRunHead(id, runID, headSHA, findingsJSON, activity string, review bool) error {
 	tx, err := d.sql.Begin()
 	if err != nil {
 		return fmt.Errorf("begin complete step checkpoint: %w", err)
 	}
 	defer tx.Rollback()
 	ts := now()
-	result, err := tx.Exec(`UPDATE step_results SET status = ?, exit_code = ?, findings_json = NULLIF(?, ''), completed_at = ?, last_activity_at = ?, last_activity = ?, agent_pid = NULL WHERE id = ?`, types.StepStatusCompleted, 0, findingsJSON, ts, ts, "status: completed", id)
+	result, err := tx.Exec(`UPDATE step_results SET status = ?, exit_code = ?, findings_json = NULLIF(?, ''), completed_at = ?, last_activity_at = ?, last_activity = ?, agent_pid = NULL WHERE id = ?`, types.StepStatusCompleted, 0, findingsJSON, ts, ts, activity, id)
 	if err != nil {
 		return fmt.Errorf("complete step checkpoint: %w", err)
 	}
