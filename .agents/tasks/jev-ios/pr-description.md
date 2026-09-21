@@ -1,6 +1,6 @@
 Task: `jev-ios`
 
-Title: `feat(jev-ui): complete iOS acceptance` (`node scripts/check-commits.mjs --title` → ok). Base: `origin/main` at `4458fbf21e199dad45376b8164f78c2165ac1d20` (released `v3.1.0`). Head: `feat/jev-ios`. Publishing was intentionally not performed in this session; no PR URL exists. Push and `gh pr create --base main --body-file .agents/tasks/jev-ios/pr-description.md` are the user's explicit next action.
+Title: `feat(jev-ui): complete iOS acceptance` (`node scripts/check-commits.mjs --title` → ok). Base: `main` at `4458fbf21e199dad45376b8164f78c2165ac1d20` (released `v3.1.0`). Head: `feat/jev-ios`. Only committed prose, code, tests, and receipts are pushed; native recordings, screenshots, and helper configuration stay local and ignored.
 
 ## Purpose
 
@@ -18,7 +18,7 @@ The released `jev-ui` controller drives browser and Android surfaces only; this 
 
 - Preservation is a user-accepted exception, not a pass: see the third criterion. All other failed, blocked, and passing receipts remain preserved; recordings stay local and ignored; nothing was uploaded.
 - The chooser narrowing in `typesafe.mjs` also touches Android: `DONE` is withheld after an attempted text action while a `TAP` target exists and the expected status is not yet visible (a state in which `DONE` could only fail). Only the WAIT-after-text rule is iOS-scoped (`18-code-review-jev-ios.md` ADV-002).
-- Active docs (`skills/delivery/jev-ui/SKILL.md`, `references/result-schema.md`, `docs/getting-started.md`, `.changeset/jev-ui-ios.md`) still say iOS acceptance "remains pending"; that wording was required during branch preparation and is now superseded. Relax it at publish time or keep it with the exception stated (ADV-001).
+- Active docs (`skills/delivery/jev-ui/SKILL.md`, `references/result-schema.md`, `docs/getting-started.md`, `.changeset/jev-ui-ios.md`) no longer say iOS acceptance "remains pending"; `baeb980` dropped that branch-preparation wording after review approval (`18-code-review-jev-ios.md` ADV-001).
 
 ## Change outline
 
@@ -73,9 +73,8 @@ Before reading the diff: `IDB_COMPANION` is mandatory and there is no default so
 ### Verify
 
 - [ ] `npm test` exits 0 with 152 passing tests on the head commit.
-- [ ] `node scripts/check-commits.mjs origin/main..HEAD` exits 0 (`ok: 41 subjects` before the reconciliation artifact commits).
-- [ ] Hosted `Commits` check passes on the pull request title above.
-- [ ] Decide ADV-001: keep or relax the "pending independent native verification" wording before merge.
+- [ ] Hosted `Commits` check passes on this title and every subject in `main..HEAD` (`node scripts/check-commits.mjs origin/main..HEAD` → `ok: 45 subjects` locally).
+- [ ] `.changeset/jev-ui-ios.md` is a `minor` bump for the new iOS surface.
 
 ### Known limits
 

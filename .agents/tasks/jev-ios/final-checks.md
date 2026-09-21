@@ -1,7 +1,7 @@
 ---
 task: jev-ios
 type: final-checks
-status: ready-unpublished
+status: ready-published
 ---
 
 # Final checks
@@ -15,7 +15,7 @@ status: ready-unpublished
   - `node scripts/build-runtimes.mjs --runtime pi --dest /tmp/jev-ios-safety-repair-1789908004533259000-pi` — 43 skills, 0 workers.
 - Accepted current native receipts are preserved in copied task evidence at `evidence/native-safety-current-20260920T084236-2488/replacement-corrected-1789908188-8659/jev-receipt.json` (Casey → Jordan, same PID 9661) and `evidence/native-safety-current-20260920T084236-2488/standalone-1789908337-26043/jev-receipt.json` (Name, PID 29301). Their source receipts were `/tmp/jev-ios-native-safety-current-20260920T084236-2488/replacement-corrected-1789908188-8659/jev-receipt.json` and `/tmp/jev-ios-native-safety-current-20260920T084236-2488/standalone-1789908337-26043/jev-receipt.json`; hashes and copied evidence are retained.
 - Preservation: **USER-ACCEPTED EXCEPTION**. Earlier avoidable destructive commands deleted the failed replacement and PID 98075 standalone original recordings; PID 98075 video is irrecoverable, and reconstructed JSON/transcript is not video recovery. The user explicitly accepted this loss and authorized continuation (`user-acceptance-preservation.md`). All other history and non-green blocked/failed evidence remain preserved; no claim of complete preservation is made.
-- Overall objective: **READY, UNPUBLISHED**; `stop_review_loop=true` on the user amendment. Publishing (push, PR) was not performed and is the user's explicit next action; see `pr-description.md`.
+- Overall objective: **READY**; `stop_review_loop=true` on the user amendment. ADV-001 wording was dropped in `baeb980` (`npm test` 152/152 after the edit). The branch is pushed and the pull request opened from `pr-description.md`; its URL is recorded there. Native media, screenshots, and helper configuration remain local and ignored.
 - The prior `final-checks.md` was archived byte-for-byte before each rewrite: `evidence/final-checks-correction-20260920/original-final-checks.md` (earlier correction) and `evidence/user-acceptance-20260920T013301/archive-edited-artifacts/final-checks.md` (this reconciliation).
 
 ## Reproducibility commands
