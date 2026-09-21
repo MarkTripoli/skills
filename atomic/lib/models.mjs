@@ -51,12 +51,24 @@ const unavailable = (message, error) => {
   return new Error(`JEV is unavailable: ${message}: ${detail}. Select model_routing=fixed to run without JEV.`);
 };
 
-function fixedRecord(model) {
-  return { model, source: 'fixed', confidence: null, probabilities: null };
+function normalizeAvailableModels(value, model, reasoning) {
+  if (value === undefined) return [...new Set([model, reasoning])];
+  if (!Array.isArray(value) || value.length === 0) throw new Error('availableModels must contain at least one model');
+  const available = [...new Set(value.map((candidate) => modelName(candidate)))];
+  if (available.length === 0) throw new Error('availableModels must contain at least one model');
+  return available;
 }
 
-function policyRecord(model) {
-  return { model, source: 'policy', confidence: null, probabilities: null };
+function requireAvailableModel(model, available) {
+  if (!available.includes(model)) throw new Error(`Configured economy model ${JSON.stringify(model)} is not available`);
+}
+
+function fixedRecord(model, availableModels) {
+  return { model, source: 'fixed', confidence: null, probabilities: null, availableModels, candidates: [model] };
+}
+
+function policyRecord(model, availableModels) {
+  return { model, source: 'policy', confidence: null, probabilities: null, availableModels, candidates: [model] };
 }
 
 function answerFrom(answers) {
@@ -103,13 +115,15 @@ export async function selectStageModel(skillsDir, options = {}) {
 
   const skill = typeof options.skill === 'string' ? options.skill.trim() : '';
   const model = modelName(options.model, DEFAULT_MODEL);
+  const reasoning = modelName(options.reasoningModel, DEFAULT_REASONING_MODEL);
+  const availableModels = normalizeAvailableModels(options.availableModels, model, reasoning);
+  requireAvailableModel(model, availableModels);
   const routing = options.modelRouting === undefined || options.modelRouting === null || options.modelRouting === ''
     ? 'auto' : options.modelRouting;
   if (routing !== 'auto' && routing !== 'fixed') throw new Error(`Unknown model_routing ${JSON.stringify(routing)}; expected auto or fixed`);
 
-  if (routing === 'fixed') return fixedRecord(model);
-  if (CODE_WRITING_SKILLS.has(skill) || !JEV_ELIGIBLE_SKILLS.has(skill)) return policyRecord(model);
-  const reasoning = modelName(options.reasoningModel, DEFAULT_REASONING_MODEL);
+  if (routing === 'fixed') return fixedRecord(model, availableModels);
+  if (CODE_WRITING_SKILLS.has(skill) || !JEV_ELIGIBLE_SKILLS.has(skill) || !availableModels.includes(reasoning)) return policyRecord(model, availableModels);
 
   const helperPath = path.resolve(skillsDir, 'typed-judgment', 'judge.mjs');
   let helper;
@@ -150,6 +164,8 @@ export async function selectStageModel(skillsDir, options = {}) {
     source: 'jev',
     confidence: answer.confidence,
     probabilities: answer.probabilities ?? null,
+    availableModels,
+    candidates: [model, reasoning],
   };
   if (helper.lastCall?.usage !== undefined && helper.lastCall?.usage !== null) record.usage = helper.lastCall.usage;
   return record;
