@@ -1,7 +1,7 @@
 ---
 type: design-prd
 task: i-want-new-skill
-summary: "This PRD defines one optional Slack thread per agent work run. The thread carries fixed start, status, and completion updates and accepts questions or steering from the person controlling the agent. Ticketing, non-owner participation, and other chat systems are deferred."
+summary: "This PRD defines one optional Slack thread per agent work run. The thread carries fixed start, status, and completion updates and accepts questions or steering from the person controlling the agent. Slack-enabled work pauses during integration outages unless the local operator explicitly disables Slack for that run; recovery records the interruption in the original thread. Ticketing, non-owner participation, and other chat systems are deferred."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 472270dd717873b0f4fb002487ca0fa1abe92607
@@ -26,6 +26,7 @@ Initial success is a deterministic acceptance trial.
 - Every Slack-enabled trial run produces one thread with a start update, required status updates, and a completion update.
 - An owner reply is acknowledged and reflected in the work before the agent starts its next work action.
 - Equivalent runs with Slack disabled proceed without Slack setup or changed workflow behavior.
+- A Slack-enabled run pauses state-changing work during an integration outage; an explicit local break-glass resumes it without Slack and the original thread later records the interruption.
 
 ### Proposed Solution
 
@@ -35,6 +36,7 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - The agent posts status when work changes and after one quiet hour.
 - The owner can ask questions or redirect active work from the thread.
 - Every fixed field appears in every message of its type; empty fields read `None`.
+- Slack-enabled work pauses when owner steering or required message delivery is unavailable.
 
 ### Alternative Solutions Considered
 
@@ -64,6 +66,14 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - WHEN the owner gives a work-related instruction, the agent shall acknowledge and apply it before beginning its next work action.
 - IF the agent cannot apply an owner instruction, THEN it shall report the reason without claiming the change occurred.
 
+#### Slack outages pause work unless the local operator disables Slack
+
+- WHEN the coordinator, Slack event connection, or required message delivery is unavailable, the system shall pause the Slack-enabled run before its next state-changing action.
+- WHEN service recovers before an override, the system shall process pending owner input and resume the run.
+- IF the local operator invokes the explicit break-glass command, THEN the system shall disable Slack for that run and resume its existing non-Slack workflow.
+- WHEN break-glass resumes a run, the system shall retain the original thread mapping and a durable interruption record.
+- WHEN Slack delivery later recovers, the system shall post a status update to the original thread that records the interruption and local resumption.
+
 #### Completion closes the work thread
 
 - WHEN a run completes, fails, or is cancelled, the system shall post one completion update.
@@ -90,9 +100,10 @@ Add an optional Slack thread to an individual work run. The person controlling t
 
 - [ ] Confirm that start, status, and completion are the required message types.
 - [ ] Confirm that owner instructions take effect before the agent begins its next work action.
+- [ ] Confirm Slack outages pause state-changing work and only explicit local break-glass resumes the run without Slack.
 
 ### Known limits
 
 - Non-owner comments are deferred.
 - Ticket integrations and other chat systems are deferred.
-- Slack setup, authorization, delivery guarantees, and runtime wiring remain technical-design decisions.
+- Slack setup, authorization, retry schedule, reconciliation guarantees, and runtime wiring remain technical-design decisions.

@@ -1,7 +1,7 @@
 ---
 type: design-tdd
 task: i-want-new-skill
-summary: "A repo-owned per-user daemon is authoritative for Slack thread mapping, one-hour status timers, and owner steering across all local repositories and agent sessions. The Slack app receives events through Socket Mode only and remains the primary transport; optional Slack MCP access cannot mutate or bypass daemon authority. Every write, edit, command, subagent dispatch, external request, and final response must pass the coordinator gate, while pure reads and local reasoning continue without a permit. Persistence, local IPC, authorization, recovery, and failure policy remain open."
+summary: "A repo-owned per-user daemon is authoritative for Slack thread mapping, one-hour status timers, and owner steering across all local repositories and agent sessions. The Slack app uses Socket Mode as the primary transport; MCP access remains non-authoritative. Every state-changing boundary fails closed when the coordinator, Socket Mode, or required Slack delivery is unavailable. Only an explicit local break-glass command may disable Slack for that run, resume work, and require a recorded reconciliation. Persistence, local IPC, authorization, recovery details, and permit fencing remain open."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 36d73c2fdbd605df9a6f55904f80fcdda7f418fc
@@ -68,7 +68,27 @@ sequenceDiagram
     R->>R: Execute state-changing boundary
 ```
 
-`beforeAction` is the only authority for this gate. The runtime calls it immediately before every write, edit, command, subagent dispatch, external request, and final response. Pure local reads and local reasoning do not require a permit. Preparing a write or response may proceed locally, but execution waits for `allowed`. Permit fencing and failure behavior when the coordinator or Slack is unavailable remain open decisions.
+`beforeAction` is the only authority for this gate. The runtime calls it immediately before every write, edit, command, subagent dispatch, external request, and final response. Pure local reads and local reasoning do not require a permit. Preparing a write or response may proceed locally, but execution waits for `allowed`.
+
+#### Slack-enabled runs fail closed until recovery or local break-glass
+
+A Slack-enabled run pauses state-changing actions when the coordinator is unreachable, Socket Mode is disconnected, or a required Slack message has not been delivered. Recovery restores the gate only after the coordinator can receive owner input and required outbound delivery succeeds.
+
+```mermaid
+flowchart TD
+    B[State-changing boundary] --> H{Coordinator and Slack healthy?}
+    H -->|yes| G[Evaluate pending owner input]
+    H -->|no| P[Pause state-changing actions]
+    P --> R{Service recovered?}
+    R -->|yes| G
+    R -->|no| L[Wait for explicit local break-glass command]
+    L --> D[Durably disable Slack for this run]
+    D --> I[Record interruption and override]
+    I --> C[Resume without Slack gating]
+    I -. Slack later recovers .-> N[Post reconciliation status to original thread]
+```
+
+The break-glass command is a local operator control, not an agent, Slack app, or MCP capability. It must durably record the run, outage cause and start time, override time, and resumed-without-Slack state before work continues. If that record cannot be committed, the run remains paused. The original thread mapping remains available so a later reconciliation status can record the interruption using the existing status message schema. Before break-glass, required delivery includes start, status, completion, owner-response, and reconciliation messages when each becomes due.
 
 #### One per-user daemon outlives agent sessions and worktrees
 
@@ -103,7 +123,8 @@ agent runtime integration
 ├── recordWorkEvent(event) ────────────────────▶ coordinator.recordWorkEvent
 ├── executeStateChangingBoundary(runId, action)
 │   ├── beforeAction(runId, action.boundary) ──▶ coordinator.beforeAction
-│   └── allowed ───────────────────────────────▶ action.execute
+│   ├── allowed ───────────────────────────────▶ action.execute
+│   └── blocked or unavailable ────────────────▶ pause
 ├── submitOwnerInputResolution(result) ────────▶ coordinator.resolveOwnerInput
 └── finishSlackRun(outcome) ───────────────────▶ coordinator.finishRun
 
@@ -131,6 +152,16 @@ interface SlackWorkCoordinator {
   finishRun(input: FinishRunInput): Promise<void>;
 }
 
+interface LocalOperatorControl {
+  disableSlackWithBreakGlass(runId: RunId): Promise<BreakGlassReceipt>;
+}
+
+interface BreakGlassReceipt {
+  runId: RunId;
+  interruptionId: string;
+  disabledAt: string;
+}
+
 type ActionBoundaryKind =
   | "write"
   | "edit"
@@ -141,10 +172,11 @@ type ActionBoundaryKind =
 
 type ActionPermit =
   | { kind: "allowed" }
-  | { kind: "blocked"; pending: OwnerInput[] };
+  | { kind: "blocked"; pending: OwnerInput[] }
+  | { kind: "unavailable"; cause: SlackUnavailableCause };
 ```
 
-All runtime adapters must route the six `ActionBoundaryKind` operations through one boundary hook. Local file reads and in-process reasoning bypass that hook. The state store, user-local IPC transport, and permit fencing remain undecided.
+All runtime adapters must route the six `ActionBoundaryKind` operations through one boundary hook. Local file reads and in-process reasoning bypass that hook. A coordinator IPC failure is treated as `unavailable` even though no permit response can arrive. `LocalOperatorControl` is intentionally absent from the agent runtime interface. The state store, user-local IPC transport, and permit fencing remain undecided.
 
 ### Type Definitions
 
@@ -164,9 +196,25 @@ interface SlackRunState {
   channelId: string;
   threadTs: string;
   lifecycle: "active" | "completed" | "failed" | "cancelled";
+  slackMode: "enabled" | "paused_unavailable" | "disabled_break_glass";
   nextQuietStatusDueAt: string;
   pendingOwnerInputIds: string[];
+  interruptions: SlackInterruption[];
 }
+
+interface SlackInterruption {
+  interruptionId: string;
+  startedAt: string;
+  cause: SlackUnavailableCause;
+  breakGlassAt: string | null;
+  resumedWithoutSlackAt: string | null;
+  reconciledMessageTs: string | null;
+}
+
+type SlackUnavailableCause =
+  | "coordinator_unreachable"
+  | "socket_mode_disconnected"
+  | "required_delivery_unconfirmed";
 ```
 
 The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input idempotency key. Delivery through both the Slack app and MCP must converge on one owner-input record rather than producing two steering actions.
@@ -200,10 +248,11 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 - [ ] Confirm the design preserves the PRD's fixed message fields and timing rules.
 - [ ] Confirm inbound Slack events use Socket Mode only and no HTTP event endpoint is introduced.
 - [ ] Confirm owner steering takes effect before every write, edit, command, subagent dispatch, external request, and final response.
+- [ ] Confirm an unavailable coordinator, Socket Mode connection, or required Slack delivery pauses state-changing actions until recovery or durable local break-glass.
 - [ ] Confirm Slack-disabled runs retain existing workflow behavior.
 
 ### Known limits
 - Per-user daemon supervision, startup/update mechanism, state location and persistence across restarts.
 - Slack app installation, authorization, and Socket Mode reconnect, acknowledgement, and replay behavior.
-- Permit fencing and fail-open versus fail-closed behavior when the coordinator or Slack is unavailable.
-- Slack delivery retry and reconciliation guarantees.
+- The exact permit-fencing mechanism and local break-glass command/control channel.
+- Slack retry schedule, replay ordering, and reconciliation delivery guarantees.
