@@ -2,26 +2,68 @@ Task: `one-thing-i-m`
 
 ## Purpose
 
-Route portable skill phases through one shared JEV helper across Claude Code, Codex, Oh My Pi, Pi, portable installs, and Atomic. Economy remains the default for implementation and unknown phases; eligible phases choose the cheapest adequate exact candidate.
+Route delivery phases through one portable JEV model selector so Claude Code, Codex, Oh My Pi, Pi, Herdr, and Atomic default to economical models and escalate only when the phase requires it.
 
-## What changed
+## Special things to note
 
-- Added `skills/delivery/route-model/route-model.mjs` and the `route-model` skill with a Node import and JSON-stdin contract.
-- Validated exact `{model,cost,description}` candidates and rejected duplicates, invalid costs, empty lists, and missing economy candidates.
-- Made Atomic adapt its existing inputs to the shared helper instead of owning separate routing policy.
-- Limited native catalog discovery to documented stable Pi and Oh My Pi commands. Claude Code and Codex use explicit caller/configured candidates.
-- Added one candidate-profile convention: explicit candidates, `SKILLS_MODEL_CANDIDATES_FILE`, then project `.agents/model-candidates.json`; manual delivery, Herdr next-phase, and Stop-hook handoffs use it automatically.
-- Standalone route-model installs fall back to economy when JEV is unavailable; Atomic explicitly remains fail-closed.
-- Integrated Herdr instructions for native `-- --model` enforcement and recommendation-only manual handoffs.
-- Added focused portable and Atomic coverage, docs, runtime guidance, and a patch changeset.
+- Candidate profiles are caller-owned: explicit input wins over `SKILLS_MODEL_CANDIDATES_FILE`, which wins over `.agents/model-candidates.json`.
+- Standalone skills fall back to the economy model when JEV is unavailable; Atomic remains fail-closed through `requireJev`.
+- The implementation does not copy either referenced router, proxy harness traffic, scrape private catalogs, or retry native provider failures.
 
-## Boundaries
+## Change outline
 
-The repository does not copy an external router, add proxy interception, scrape provider-private registries, probe account access, or fall back after native provider rejection. Candidate order defines capability from weakest to strongest; costs and availability are caller-owned, and credentials remain outside artifacts.
+One helper now owns candidate validation, JEV classification, and cost-aware selection.
 
-## Verification
+```diff
+ delivery phase
++  load exact candidate profile
++  keep economy for mutation and unknown phases
++  ask JEV for eligible non-writing phases
++  combine adequacy probabilities with caller-supplied cost
++  return one exact model identifier
+```
 
-- `npm test`
-- `git diff --check`
-- `npm run check-commits -- origin/main..HEAD`
-- `node --test tests/route-model.test.mjs tests/atomic-model-routing.test.mjs tests/atomic-controller.test.mjs`
+Harnesses consume that shared result at their available enforcement boundary.
+
+```text
+skills/delivery/route-model/   portable policy and JSON/Node interface
+atomic/lib/models.mjs          Atomic input adapter with required JEV
+skills/delivery/deliver/       first manual-handoff recommendation
+skills/delivery/herd-next/     enforced Herdr launch and Stop-hook routing
+runtimes/                      harness-specific discovery boundaries
+tests/                         policy, install, Atomic, profile, and handoff coverage
+```
+
+Runtime flow:
+
+```text
+candidate profile
+  -> route-model
+     -> economy policy                  implementation / unknown / fixed
+     -> JEV + expected-loss selection  eligible non-writing phase
+  -> Atomic stage model
+  -> Herdr native --model launch
+  -> manual recommendation when enforcement is unavailable
+```
+
+Review `skills/delivery/route-model/route-model.mjs` first; every harness and the Atomic adapter now share that policy owner.
+
+## Human Review
+
+### Review targets
+
+- Candidate order defines capability from weakest to strongest, while `cost` remains independent and caller-supplied.
+- Selective `route-model` installs work without `typed-judgment`; Atomic explicitly requires JEV and fails closed.
+- Herdr and its optional Stop hook pass selected models after the native command separator and clean up failed launches.
+
+### Verify
+
+- [ ] `npm test` exits 0 with 165 passing tests.
+- [ ] `bash -n skills/delivery/herd-next/references/stop_hook.sh && git diff --check origin/main...HEAD` exits 0.
+- [ ] `npm run check-commits -- origin/main..HEAD` accepts every commit subject.
+- [ ] Compare [the revised plan](.agents/tasks/one-thing-i-m/05-plan-one-thing-i-m.md), [verification](.agents/tasks/one-thing-i-m/08-verification-one-thing-i-m.md), and [clean review](.agents/tasks/one-thing-i-m/13-code-review-one-thing-i-m.md).
+
+### Known limits
+
+- Provider/account availability and model costs are not independently verified; callers must provide an accurate candidate profile.
+- Claude Code and Codex require explicit profiles because this repository does not inspect their private model catalogs.
