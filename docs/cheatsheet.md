@@ -26,6 +26,14 @@ npx github:MarkTripoli/skills portable --atomic --project --yes
 
 Uninstall does not delete task documents or worktrees.
 
+### Configure model routing
+
+```text
+/configure-model-routing
+```
+
+Use this model-invoked skill when no valid candidate profile exists. It writes the project profile or the user file named by `SKILLS_MODEL_CANDIDATES_FILE`, then verifies it through `route-model`.
+
 ### File locations
 
 | Agent | User skills | User workers |

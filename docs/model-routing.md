@@ -1,5 +1,7 @@
 # Model routing
 
+Run `/configure-model-routing` when a project or user-level candidate profile is missing or needs replacement. It asks one setup question at a time, writes the shared profile, and verifies it through the helper.
+
 `skills/delivery/route-model/route-model.mjs` is the shared model-selection owner for Claude Code, Codex, Oh My Pi, Pi, portable skill installs, and Atomic. It accepts exact caller-supplied candidates and returns one native model identifier; it does not proxy requests, scrape provider-private registries, probe accounts, or fall back after native execution failure.
 
 ## Machine-readable contract
@@ -26,7 +28,7 @@ The equivalent JSON-over-stdin command is:
 printf '%s\n' '<request JSON>' | node <skills-dir>/route-model/route-model.mjs
 ```
 
-Candidate configuration precedence is explicit `--candidates <json-file>` and `--economy <model>`, then `SKILLS_MODEL_CANDIDATES_FILE`, then `<project>/.agents/model-candidates.json`. The profile shape is:
+Candidate configuration precedence is explicit `--candidates <json-file>` and `--economy <model>`, then `SKILLS_MODEL_CANDIDATES_FILE`, then `<project>/.agents/model-candidates.json`. Use `/configure-model-routing` to create either supported file. The profile shape is:
 
 ```json
 {"economy":"provider/economy","candidates":[{"model":"provider/economy","cost":1,"description":"ordinary work"}],"routing":"auto"}
@@ -44,7 +46,7 @@ Atomic adapts its existing `model`, `reasoning_model`, and `available_models` in
 
 ## Candidate discovery
 
-Pi and Oh My Pi may use a stable public model-catalog command when their installed runtime documents one. Claude Code and Codex accept explicit caller or configuration candidates; this repository does not scrape provider-private catalogs or import provider SDK internals. A candidate list is caller-owned capability information, not proof that the current account will accept the model.
+Pi may discover exact candidates with `pi --list-models`, and Oh My Pi may discover them with `omp models --json`, only when those documented public commands are available. Missing or failed discovery falls back to explicit input. Claude Code and Codex require explicit caller or configuration candidates; this repository does not scrape provider-private catalogs or import provider SDK internals. A candidate list is caller-owned capability information, not proof that the current account will accept the model.
 
 Herdr handoffs pass a selected model after the native argument separator, as `herdr agent start ... -- --model <model>`, when candidates are configured and the native command supports enforcement. Manual handoffs print `Recommendation only: <model>` because a standalone skill cannot force the next session's model.
 

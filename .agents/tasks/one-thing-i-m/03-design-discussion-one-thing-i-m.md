@@ -11,6 +11,8 @@ sha: 130b0b1
 
 ## Decision
 
+Add model-invoked `skills/delivery/configure-model-routing/SKILL.md` as the setup owner for missing or invalid profiles. It asks one question at a time, writes project or `SKILLS_MODEL_CANDIDATES_FILE` profiles, and verifies the saved file through `route-model`.
+
 Create `skills/delivery/route-model/route-model.mjs` as the single policy owner. The helper accepts a request, phase, exact candidate list, and economy candidate; it validates the list, asks JEV to choose among the supplied candidates for eligible non-mutating phases, and returns a machine-readable selection record. A CLI reads one JSON request from stdin and writes one JSON response to stdout, so Claude Code, Codex, Oh My Pi, Pi, portable installs, and Atomic can call the same code without proxy interception.
 
 Candidates are `{model, cost, description}` objects. `model` is the exact native identifier, `cost` is a caller-supplied comparable non-negative number, and `description` states capability. The helper never invents candidates, fetches provider registries, probes accounts, or treats cost as provider billing truth. It ranks by lowest expected loss: JEV supplies adequacy probabilities and the helper combines them with normalized cost and an under-provision penalty. A single candidate is selected without JEV.
@@ -25,6 +27,8 @@ Candidates are `{model, cost, description}` objects. `model` is the exact native
 - Credentials stay in the environment or configured key file and never enter artifacts, CLI JSON, or selection records.
 
 ## Harness boundary
+
+`configure-model-routing` uses `pi --list-models` and `omp models --json` only when those stable public commands are available; failed discovery falls back to explicit IDs. Claude Code and Codex use explicit candidates without private catalog scraping.
 
 `Atomic` calls the portable helper and passes exact candidate objects derived from its existing model inputs. Its defaults remain Luna-fast as economy and Sol as the optional reasoning candidate, with mutation and unknown phases on economy.
 
@@ -58,5 +62,5 @@ Pi and Oh My Pi may discover exact candidates only through a stable public catal
 ### Known limits
 
 - Candidate truth and cost are caller-owned; the helper does not verify account access or provider pricing.
-- Native catalog discovery is adapter-specific and only documented where Pi or Oh My Pi exposes a stable public command.
+- Native catalog discovery is adapter-specific and only documented where Pi or Oh My Pi exposes `pi --list-models` or `omp models --json`; failed discovery uses explicit input.
 - Herdr's native command must support `--model`; manual sessions cannot be forced by this repository.

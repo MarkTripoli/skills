@@ -15,7 +15,7 @@ Child workers: Pi has no worker tool of its own. Perform the role inline after r
 
 ## Model routing
 
-Standalone Pi skills may call the shared `route-model` helper through Node. Use Pi's stable public model catalog command only when the installed Pi version documents it; otherwise pass exact `{model,cost,description}` candidates explicitly. Do not scrape provider-private registries.
+Run `/configure-model-routing` when no valid profile exists. Standalone Pi skills may call the shared `route-model` helper through Node; discovery may use the documented public `pi --list-models` command, and failed or unavailable discovery falls back to explicit exact candidates. Do not scrape provider-private registries or store credentials.
 
 ## Optional Atomic orchestration
 

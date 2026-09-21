@@ -20,6 +20,7 @@
   ],
   "skills": [
     "./skills/delivery/ci-commit",
+    "./skills/delivery/configure-model-routing",
     "./skills/delivery/create-design-discussion",
     "./skills/delivery/create-epic-plan",
     "./skills/delivery/create-plan",

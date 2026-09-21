@@ -44,6 +44,10 @@ A new task normally gets a **worktree**: a separate checkout on its own branch. 
 
 The listed workflow must be `delivery`. Listing it proves installation, not successful execution. This example fixes the step sequence and model choice, so routing needs no JEV service.
 
+## Configure model routing
+
+Run `/configure-model-routing` when delivery reports no valid model profile. The skill asks one question at a time, writes project `.agents/model-candidates.json` or a user-level file named by `SKILLS_MODEL_CANDIDATES_FILE`, and verifies the saved profile through `route-model`. Pi discovery uses `pi --list-models` and Oh My Pi discovery uses `omp models --json` only when available; Claude Code and Codex use explicit model IDs.
+
 ## Automatic phase selection
 
 JEV is a service that chooses steps or models. `workflow=auto` lets it choose the next step. Separately, `model_routing=auto` lets it choose a model for allowed steps. Both default to `auto`.

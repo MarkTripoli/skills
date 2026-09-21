@@ -16,7 +16,7 @@ Child workers: call the `Task` tool with `subagent_type: "agent-<role>"` and the
 
 ## Model routing
 
-Claude Code skills use the shared `route-model` helper through Node with explicit caller or configured candidates. This collection does not scrape Claude Code or provider-private catalogs and does not proxy Claude Code requests.
+Run `/configure-model-routing` when no valid profile exists. Claude Code skills use the shared `route-model` helper through Node with explicit caller or configured exact candidates. Claude Code has no private-catalog discovery path here; this collection does not scrape catalogs, proxy requests, or store credentials.
 
 ## Optional Atomic orchestration
 

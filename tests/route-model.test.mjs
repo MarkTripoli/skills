@@ -29,6 +29,19 @@ const candidates = [
   { model: 'strong', cost: 4, description: 'difficult reasoning' },
 ];
 
+test('configure-model-routing is model-invoked and documents one-question profile setup', () => {
+  const skill = fs.readFileSync('skills/delivery/configure-model-routing/SKILL.md', 'utf8');
+  assert.match(skill, /name: configure-model-routing/);
+  assert.match(skill, /description: .*missing.*profile/);
+  assert.match(skill, /exactly one question/);
+  assert.match(skill, /SKILLS_MODEL_CANDIDATES_FILE/);
+  assert.match(skill, /pi --list-models/);
+  assert.match(skill, /omp models --json/);
+  assert.match(skill, /route-model.*helper/s);
+  assert.match(skill, /credentials.*not.*stored/i);
+  assert.match(fs.readFileSync('skills/delivery/deliver/SKILL.md', 'utf8'), /configure-model-routing/);
+});
+
 test('candidate profiles use explicit, environment, then project precedence', async () => {
   const dir = fixture('throw new Error("must not call");');
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'route-project-'));

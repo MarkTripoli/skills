@@ -16,7 +16,7 @@ Child workers: call the `task` tool with one item `{ "agent": "agent-<role>", "t
 
 ## Model routing
 
-Standalone Oh My Pi skills may call the shared `route-model` helper through Node. Use OMP's stable public model catalog command only when the installed OMP version documents it; otherwise pass exact `{model,cost,description}` candidates explicitly. Do not scrape provider-private registries.
+Run `/configure-model-routing` when no valid profile exists. Standalone Oh My Pi skills may call the shared `route-model` helper through Node; discovery may use the documented public `omp models --json` command, and failed or unavailable discovery falls back to explicit exact candidates. Do not scrape provider-private registries or store credentials.
 
 ## Optional Atomic orchestration
 

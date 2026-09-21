@@ -7,7 +7,7 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 # Route model
 
-Use `/route-model` when a harness needs a model recommendation for the next phase. It returns a recommendation; it does not start an agent, proxy requests, discover private catalogs, or force a model in a harness that lacks a model flag.
+Use `/configure-model-routing` when no valid candidate profile exists. Use `/route-model` when a harness needs a model recommendation for the next phase. It returns a recommendation; it does not start an agent, proxy requests, discover private catalogs, or force a model in a harness that lacks a model flag.
 
 ## Accepted input
 
@@ -45,4 +45,4 @@ The JSON result always contains `model`, `source` (`policy`, `fixed`, or `jev`),
 
 Mutation, implementation, tool-oriented, and unknown phases select `economy` without JEV. Eligible phases ask JEV to distinguish the described candidates, combine adequacy probabilities with cost and under-provision loss, and select the lowest expected loss. If the sibling helper or JEV service is unavailable, standalone use returns economy with `source: "fallback"` and a reason; Atomic opts into fail-closed behavior. A harness that cannot enforce a model reports `Recommendation only: <model>; start the next session with that model if desired.` rather than claiming enforcement. Herdr can enforce a configured recommendation by passing it after the native command separator: `herdr agent start ... -- --model <model>`.
 
-Without a profile, the helper preserves economy behavior and reports `profileSource: "none"`; no model is enforced for a manual next session. Pi and Oh My Pi may use a stable public catalog command documented by their runtime; Claude Code and Codex require caller or configuration candidates. Never scrape provider-private registries or add a proxy.
+Without a profile, the helper preserves economy behavior and reports `profileSource: "none"`; no model is enforced for a manual next session. `/configure-model-routing` creates and verifies project or `SKILLS_MODEL_CANDIDATES_FILE` profiles. Pi and Oh My Pi may use `pi --list-models` or `omp models --json` when available; failed discovery falls back to explicit input. Claude Code and Codex require caller or configuration candidates. Never scrape provider-private registries or add a proxy.

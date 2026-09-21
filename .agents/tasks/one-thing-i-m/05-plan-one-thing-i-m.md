@@ -11,9 +11,11 @@ sha: 130b0b1
 
 ## Goal
 
-Make model routing useful in standalone Claude Code, Codex, Oh My Pi, and Pi skills while keeping one policy owner. Atomic must call that owner rather than retain its current two-choice implementation.
+Make model routing useful. Add the model-invoked `/configure-model-routing` setup path so every harness can create and verify the shared profile without storing credentials. in standalone Claude Code, Codex, Oh My Pi, and Pi skills while keeping one policy owner. Atomic must call that owner rather than retain its current two-choice implementation.
 
 ## Phase 1: Portable helper and contract
+
+0. Add `skills/delivery/configure-model-routing/SKILL.md`. Ask one setup question at a time; support project `.agents/model-candidates.json` and user files named by `SKILLS_MODEL_CANDIDATES_FILE`; use only `pi --list-models` and `omp models --json` where available; fall back to explicit IDs; write no credentials; verify the saved profile through `route-model`.
 
 1. Add `skills/delivery/route-model/route-model.mjs`.
    - Export `routeModel(skillsDir, options)` and constants for economy/unknown policy.
@@ -47,6 +49,7 @@ Make model routing useful in standalone Claude Code, Codex, Oh My Pi, and Pi ski
 - Atomic does not own a separate candidate-selection policy.
 - Economy remains the default for implementation and unknown phases.
 - Eligible phases choose only exact supplied candidates and prefer the cheapest adequate candidate.
-- Pi/OMP discovery is limited to stable public commands; Claude/Codex require explicit candidates.
+- `/configure-model-routing` is model-invoked, asks one question at a time, and supports project and `SKILLS_MODEL_CANDIDATES_FILE` profiles.
+- Pi/OMP discovery is limited to `pi --list-models` and `omp models --json` when available; Claude/Codex require explicit candidates.
 - Herdr passes selected models only when it can enforce them and otherwise reports recommendations.
 - Credentials never appear in artifacts or records.

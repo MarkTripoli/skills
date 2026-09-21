@@ -12,7 +12,7 @@ Route delivery phases through one portable JEV model selector so Claude Code, Co
 
 ## Change outline
 
-One helper now owns candidate validation, JEV classification, and cost-aware selection.
+One helper now owns candidate validation, JEV classification, and cost-aware selection. The model-invoked `/configure-model-routing` skill creates project or user-level profiles one question at a time and verifies them through that helper.
 
 ```diff
  delivery phase
@@ -26,6 +26,7 @@ One helper now owns candidate validation, JEV classification, and cost-aware sel
 Harnesses consume that shared result at their available enforcement boundary.
 
 ```text
+skills/delivery/configure-model-routing/  one-question profile setup and verification
 skills/delivery/route-model/   portable policy and JSON/Node interface
 atomic/lib/models.mjs          Atomic input adapter with required JEV
 skills/delivery/deliver/       first manual-handoff recommendation
@@ -66,4 +67,5 @@ Review `skills/delivery/route-model/route-model.mjs` first; every harness and th
 ### Known limits
 
 - Provider/account availability and model costs are not independently verified; callers must provide an accurate candidate profile.
+- Catalog discovery is limited to available public `pi --list-models` and `omp models --json`; explicit input remains the fallback.
 - Claude Code and Codex require explicit profiles because this repository does not inspect their private model catalogs.
