@@ -21,7 +21,7 @@ Say `--skill` again for more skill. Add `--project` for install only in this rep
 3. Read saved task doc, called **artifact**, and reported check and limit.
 4. Open new session in checkout and branch named in reply. Run next command.
 
-New task usually get **worktree**: own checkout, own branch. Saved doc carry fact between session. To change one, use its `iterate-*` skill with your feedback. Use [common sequences](../workflows/delivery.md#workflow-choices-and-manual-chains) as guide, not rule to install every skill.
+New task usually get **worktree**: own checkout, own branch. Its `index.json` pick immutable artifact iteration under `artifacts/<kind>/<variant>/`. To change one, use its `iterate-*` skill with your feedback; revision record next iteration, no overwrite history. Use [common sequences](../workflows/delivery.md#workflow-choices-and-manual-chains) as guide, not rule to install every skill.
 
 ## Inspect and repair recorded behavior
 
@@ -95,6 +95,6 @@ IDB_COMPANION=/path/to/idb-companion.sock node skills/delivery/jev-ui/scripts/je
 
 ## Continue existing work
 
-Use `task_dir=.agents/tasks/<slug>` from that task checkout and branch. No make new task just because chat end. Use `workflow=resolve-reviews` for pull request feedback or `workflow=epic-wave` after prerequisite branch merge. Workflow no merge pull request.
+Use `task_dir=<task-root>/<slug>` from that task checkout and branch. `<task-root>` default `.agents/tasks`; repo exact `<!-- skills:task-root=relative/path -->` directive may change it. No make new task just because chat end. Use `workflow=resolve-reviews` for pull request feedback or `workflow=epic-wave` after prerequisite branch merge. Workflow no merge pull request.
 
 Old workflow checkpoint cannot become Atomic checkpoint. Keep their doc and worktree, then start new run with those doc. See [ownership rules](../workflows/delivery.md#task-artifact-and-worktree-ownership).

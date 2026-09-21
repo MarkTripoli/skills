@@ -47,40 +47,25 @@ cwd=$(jq -r '.cwd // empty' <<<"$payload" 2>/dev/null)
 test -n "$cwd" || cwd=$PWD
 test -d "$cwd" || exit 0
 
-# The task-directory lookup below walks up from $cwd to the nearest ancestor
-# holding .agents/tasks/, so a session started in a repo subdirectory still
-# finds it; panes and tabs are still opened at $cwd itself, unchanged.
-root=$cwd
-while ! test -d "$root/.agents/tasks" && test "$root" != "/"; do
-  root=${root%/*}
-  test -n "$root" || root=/
-done
-test -d "$root/.agents/tasks" || exit 0
+# Resolve repository root without assuming the configured task-root path.
+root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || root=$cwd
 
-# Step 3, the slug and the phase. The artifact in the fence names the task
-# directory; a fence without one falls back to the most recently touched task.
+# Step 3, the slug and phase. Indexed handoffs carry a task-root-relative
+# canonical artifact path; walk upward from that file to its task.md.
 phase=${cmd#/}
 phase=${phase%% *}
 artifact=${cmd#* @}
 test "$artifact" != "$cmd" || artifact=""
-task=""
-if test -n "$artifact"; then
-  case "$artifact" in
-    */*)
-      test -f "$root/${artifact%/*}/task.md" && task="$root/${artifact%/*}/task.md"
-      ;;
-    *)
-      for hit in "$root"/.agents/tasks/*/"$artifact"; do
-        test -f "$hit" || continue
-        test -z "$task" || exit 0 # two task directories hold this artifact
-        task="${hit%/*}/task.md"
-      done
-      ;;
-  esac
-else
-  # shellcheck disable=SC2012 # mtime order, and every path here is .agents/tasks/<slug>/task.md
-  task=$(ls -t "$root"/.agents/tasks/*/task.md 2>/dev/null | head -1)
-fi
+test -n "$artifact" || exit 0
+case "$artifact" in /* | *../* | ../*) exit 0 ;; esac
+candidate="$root/$artifact"
+test -f "$candidate" || exit 0
+task_dir=${candidate%/*}
+while ! test -f "$task_dir/task.md" && test "$task_dir" != "$root" && test "$task_dir" != "/"; do
+  task_dir=${task_dir%/*}
+  test -n "$task_dir" || task_dir=/
+done
+task="$task_dir/task.md"
 test -f "$task" || exit 0
 
 # Route only when an explicit profile is configured. The helper receives the task

@@ -17,6 +17,23 @@ export const RUNTIMES = ["claude-code", "codex", "oh-my-pi", "pi"];
 // Worker definition format per runtime; pi has no worker mechanism, so its tree carries none.
 export const WORKER_FORMAT = { "claude-code": "md", "oh-my-pi": "md", codex: "toml" };
 
+const manualIndexMutation = Object.freeze({
+  schema: 'skills.task-index/v1', validate: 'full-existing-index-and-relative-nonsymlink-artifact-path',
+  allocation: 'reserve-generation-and-next-contiguous-four-digit', staging: '.artifact-staging/<uuid>.md',
+  reservation: '.artifact-reservations/<uuid>.json-exclusive-create', digest: 'sha256-exact-utf8',
+  recordFields: Object.freeze(['id', 'iteration', 'path', 'sha256', 'type', 'status', 'summary']),
+  supersedes: 'prior-current-or-omit-first', current: 'new-record-id', generationIncrement: 1,
+  publish: 'exclusive-hard-link-staging-to-semantic-path', write: 'exclusive-sibling-temp-atomic-rename',
+  rollback: 'remove-published-artifact-if-index-write-fails', cleanup: 'remove-staging-and-reservation-after-success', onConflict: 'abort',
+});
+export const TASK_ARTIFACT_DISTRIBUTION = Object.freeze({
+  canonical: Object.freeze({ mode: 'manual-index-mutation', contract: manualIndexMutation }),
+  plugin: Object.freeze({ mode: 'manual-index-mutation', contract: manualIndexMutation }),
+  runtime: Object.freeze({ mode: 'adjacent-helper', required: false }),
+  portable: Object.freeze({ mode: 'adjacent-helper', required: false }),
+  atomic: Object.freeze({ mode: 'adjacent-helper', required: true }),
+});
+
 export function parseAdapter(content, file) {
   const title = /^# (.+)$/m.exec(content)?.[1]?.trim();
   const sections = [];
@@ -67,6 +84,12 @@ function tomlMultiline(value) {
 
 const noDsStore = (src) => path.basename(src) !== ".DS_Store";
 
+export function copyTaskArtifactHelper(skillTarget) {
+  const references = path.join(skillTarget, "references");
+  fs.mkdirSync(references, { recursive: true });
+  for (const name of ["task-artifacts.mjs", "task-root.mjs"]) fs.copyFileSync(path.join(repoRoot, "shared", name), path.join(references, name));
+}
+
 // Returns { skills: [names], workers }. `skillNames` narrows an installer build; omitted builds the collection.
 export function buildRuntime(runtime, dest, { skillNames } = {}) {
   if (!RUNTIMES.includes(runtime)) throw new Error(`unknown runtime "${runtime}"; choose one of ${RUNTIMES.join(", ")}`);
@@ -91,6 +114,7 @@ export function buildRuntime(runtime, dest, { skillNames } = {}) {
   for (const { name, dir: source } of selected) {
     const target = path.join(dest, "skills", name);
     fs.cpSync(source, target, { recursive: true, filter: noDsStore });
+    copyTaskArtifactHelper(target);
 
     const skill = parseSkill(path.join(source, "SKILL.md"));
     const lines = skill.content.split("\n");

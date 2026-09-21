@@ -15,15 +15,15 @@ Locate the task directory and read `task.md` per the conventions (create one fro
 
 ## Pin scope
 
-Determine merge target: the base of the existing pull request (`gh pr view --json baseRefName` on GitHub, `glab mr view` on GitLab), else `base:` from `task.md` when present, else the repository default branch. Record base branch, merge-base SHA, HEAD SHA, staged/unstaged changes, untracked task files, commits after merge base: `git status --short --branch`, `git diff --name-status <base>...HEAD`, `git diff <base>...HEAD`. Review committed/working-tree changes against merge base. Task artifacts under `.agents/tasks/` and unrelated changes are not review subjects. Stop if base unresolved. Empty or incomplete scope is not clean.
+Determine merge target: existing pull request base, else `base:` from `task.md`, else repository default branch. Record base branch, merge-base SHA, HEAD SHA, working changes, and commits after merge base. Review committed/working-tree changes against merge base. Files under the configured task root and unrelated changes are not review subjects. Stop if base unresolved. Empty or incomplete scope is not clean.
 
 ## Requirements and tests
 
-Read `task.md`/`ticket.md`, the newest artifact of the implementation source type (prefer `plan`, then `structure-outline`, `tdd`, `prd`). Use artifact summaries to avoid opening unrelated documents. Read repo instructions, standards for changed files. Read changed/existing tests before judging. Check claims, boundaries, catches regression/requirement. Inspect commit/PR description; title stands alone, body explains behavior/motivation/decisions/evidence/limits. Record models when known.
+Read `task.md`/`ticket.md` and current indexed implementation source (prefer `planning.plan`, `planning.structure`, `design.tdd`, `design.prd`). Use current artifact summaries to avoid unrelated documents. Read repo instructions, changed tests, commits, and PR description before judging.
 
-When `task.md` lists acceptance criteria, decide each one against the diff and its tests. A criterion nothing in the change proves is a major-severity finding that names the missing check; a criterion the change contradicts is critical. When the task directory holds a `verification` artifact (newest `NN-verification-*.md`), read its items table first: a criterion it records as `pass` with a command and quoted output is proven and is not re-run here; its `fail` and `untested` items are findings to confirm against the diff, and its `## Findings` name the checks to read.
+When `task.md` lists acceptance criteria, decide each one against the diff and tests. When `review.verification` has a current iteration, read its items table first: a criterion recorded as `pass` with a command and quoted output is proven; `fail` and `untested` items are findings to confirm.
 
-When the task directory holds an earlier `NN-code-review-*.md`, read only the `### CR-...` heading lines under its `## Critical and Required Findings`, and no finding body. Record each one in `## Previous Round` as `fixed`, `still open`, or `declined`, decided from the current diff and the fix round's recorded reason, never from the previous reviewer's reasoning. A `still open` entry is raised again under `## Critical and Required Findings` with a new identifier so the gate counts it; a finding the previous round did not raise is judged on its own.
+Before allocating a new review, when `review.code` has a current iteration, read only that iteration's `### CR-...` heading lines. Record each in `## Previous Round` as `fixed`, `still open`, or `declined`, decided from the current diff and current `review.fixes` evidence, never from the prior reviewer's reasoning. Raise still-open entries again with new identifiers.
 
 ## Review
 
@@ -65,11 +65,13 @@ Verify tests/build/manual/screenshots. Green checks alone are not sufficient.
 
 ## Save
 
-Take the next artifact number. Write `NN-code-review-<summary>.md` using template. Set `findings` when actionable remain, `clean` when none, `blocked` when gate failed. Blocked is not clean. Save the file.
+Allocate the next `review.code` iteration through the conventions' Recording an artifact flow and write the template to its staging path. Set `findings` when actionable remain, `clean` when none, `blocked` when the gate failed. Blocked is not clean. Do not record it yet.
 
-Then run `node <skills dir>/typed-judgment/judge.mjs axis-coverage <the saved file> --json`, where `<skills dir>` is the directory that holds this skill (in a checkout, `skills/delivery`). Record each row's verdict, level, and confidence on that axis's `helper coverage` line, and the stderr provenance line under the heading. An axis that comes back `skipped` or `asserted` was not examined against the pinned scope: examine it, rewrite that section with evidence from the changed code or the reason the axis does not apply, save again, and run the command once more. Run it at most twice and record what the second run says. A finding the second pass turns up is a finding like any other and can change the status. Exit 3, no `node`, no `TYPESAFE_API_KEY`, or an `unclear` row: write `unavailable` on the lines it would have filled, decide those axes yourself, and say under `## Review Limits` that judgments were skipped.
+Then run `node <skills dir>/typed-judgment/judge.mjs axis-coverage <the staged file> --json`, where `<skills dir>` is the directory that holds this skill (in a checkout, `skills/delivery`). Record each row's verdict, level, and confidence on that axis's `helper coverage` line, and the stderr provenance line under the heading. An axis that comes back `skipped` or `asserted` was not examined against the pinned scope: examine it, rewrite that section with evidence from the changed code or the reason the axis does not apply, save again, and run the command once more. Run it at most twice and record what the second run says. A finding the second pass turns up is a finding like any other and can change the status. Exit 3, no `node`, no `TYPESAFE_API_KEY`, or an `unclear` row: write `unavailable` on the lines it would have filled, decide those axes yourself, and say under `## Review Limits` that judgments were skipped.
 
-Commit it with `git add <path>` as `docs(task): code-review artifact`.
+Record the staged document once as the next immutable `review.code` iteration.
+
+Commit its canonical path and `index.json` explicitly as `docs(task): code-review artifact`.
 
 ## Next
 
@@ -77,4 +79,4 @@ Commit it with `git add <path>` as `docs(task): code-review artifact`.
 - Clean: use `code_review_clean_answer.md`, next `/describe-pr`.
 - Blocked: use `code_review_blocked_answer.md`, stop until gate runs.
 
-Use template only. Fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-code-review-slug.md](.agents/tasks/<slug>/NN-code-review-slug.md)`. End with one fenced `text` command.
+Use template only. Fill `{artifact_link}` with the saved canonical task-root-relative path. End with one fenced `text` command. A legacy task without `index.json` follows the conventions' legacy rules.

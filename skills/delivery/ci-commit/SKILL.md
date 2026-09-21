@@ -13,7 +13,7 @@ Create commits for completed work. Every message is a Conventional Commit per th
 
 ### 1. Locate the task
 
-Locate the task directory and read `task.md` per the conventions, including the create-when-missing rule. Use its slug and the task directory listing to name the receipt. Read only files needed for the work.
+Locate the task and read `task.md`; use its slug and current `index.json` to allocate any receipt. Read only files needed for the work.
 
 ### 2. Review changes
 
@@ -24,7 +24,7 @@ git diff
 
 Inspect staged. Read changed files. Decide one or multiple commits.
 
-Do not stage scratch files, dummy scripts, one-off tests, or unrelated output. Keep `.agents/tasks/` out of code commits; when the task directory has uncommitted changes, commit them separately as `docs(task): <artifact type> artifact` per the conventions' Commits section.
+Do not stage scratch files, dummy scripts, one-off tests, or unrelated output. Keep the configured task root out of code commits; commit task changes separately per the conventions.
 
 ### 3. Plan commits
 
@@ -61,9 +61,9 @@ Never `git add -A`, `git add .`, broad staging. Verify with `git log -1 --format
 
 ### 6. Save receipt
 
-Useful: take the next artifact number, write `NN-commit-<slug>.md` from `references/commit_template.md`, save the file in the task directory. Commit it with `git add <path>` as `docs(task): commit artifact`.
+Useful: record the next immutable `delivery.commit` iteration through the conventions' Recording an artifact flow using `references/commit_template.md`. Commit its canonical path and `index.json` explicitly as `docs(task): commit artifact`.
 
-Read and use `references/commit_final_answer.md` exactly. Fill `{artifact_link}` with a relative Markdown link to the saved receipt, `[NN-commit-slug.md](.agents/tasks/<slug>/NN-commit-slug.md)`; when no receipt was saved, write `none` in its place. End with single fenced `text` command.
+Read and use `references/commit_final_answer.md` exactly. Fill `{artifact_link}` with the saved canonical task-root-relative path; when no receipt was saved, write `none`. End with a single fenced `text` command. A legacy task without `index.json` follows the conventions' legacy rules.
 
 ## Rules
 

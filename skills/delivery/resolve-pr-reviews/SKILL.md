@@ -31,15 +31,15 @@ Verify `fix` items against code. Research conventions/sources before `decline`/`
 
 ## Apply
 
-After confirmation: smallest root-cause fixes, add regressions, run checks/gates, commit/push when authorized (stage explicit code paths; keep `.agents/tasks/` files out of the code commit), reply with evidence/SHA, resolve after reply+action complete. Never resolve declined/discussed/clarified without confirmed disposition.
+After confirmation: smallest root-cause fixes, add regressions, run checks/gates, commit/push when authorized (stage explicit code paths; keep task artifacts out of the code commit), reply with evidence/SHA, resolve after reply+action complete. Never resolve declined/discussed/clarified without confirmed disposition.
 
 ## Save
 
-Fetch state after push/replies. Take the next artifact number. Write `NN-pr-review-<summary>.md` using template. Record ids, dispositions, replies, SHA, tests, review threads, checks, approval. Save the file. Commit it with `git add <path>` as `docs(task): pr-review artifact`.
+Fetch state after push/replies. Record the next immutable `pull-request.review` iteration through the conventions' Recording an artifact flow using the template. Record ids, dispositions, replies, SHA, tests, review threads, checks, and approval. Commit its canonical path and `index.json` explicitly as `docs(task): pr-review artifact`.
 
 ## Next
 
 - Head approved + no open review threads: use `references/pr_review_approved_answer.md`.
 - Else: use `pr_review_pending_answer.md`. Repeated command is human gate; no poll/auto-run.
 
-Use template only. Fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-pr-review-slug.md](.agents/tasks/<slug>/NN-pr-review-slug.md)`. End with one fenced `text` command.
+Use template only. Fill `{artifact_link}` with the saved canonical task-root-relative path. End with one fenced `text` command. A legacy task without `index.json` follows the conventions' legacy rules.

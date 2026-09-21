@@ -61,16 +61,16 @@ Atomic install `workflows/skills-delivery/` and brother `skills-delivery.mjs` un
 - Claude Code plugin: `/plugin marketplace add MarkTripoli/skills`, then `/plugin install marktripoli-skills@marktripoli`.
 - [skills.sh](https://skills.sh/MarkTripoli/skills): `npx skills@latest add MarkTripoli/skills` install skill only.
 - Pinned release: `npx github:MarkTripoli/skills#v<version>`.
-- Checkout: `node scripts/install.mjs`. Build file under `dist/` with `npm run build -- --runtime <claude-code|codex|oh-my-pi|pi|portable>`.
+- Checkout: `node scripts/install.mjs`. Build runtime file under `dist/` with `npm run build -- --runtime <claude-code|codex|oh-my-pi|pi>`; installer own portable output.
 
 ## Manual phases
 
 ```text
 /create-research-questions
-/create-research @01-research-questions-example.md
-/create-design-discussion @02-research-example.md
-/create-plan @03-design-discussion-example.md
-/implement-plan @04-plan-example.md
+/create-research @<task-root>/<slug>/artifacts/research/questions/0001.md
+/create-design-discussion @<task-root>/<slug>/artifacts/research/primary/0001.md
+/create-plan @<task-root>/<slug>/artifacts/design/discussion/0001.md
+/implement-plan @<task-root>/<slug>/artifacts/planning/plan/0001.md
 /verify-implementation
 /review-code
 /describe-pr
@@ -112,12 +112,12 @@ Use `key=value`, not `--input`. Clear `workflow` **and** `model_routing=fixed` d
 /workflow delivery request="Start ready children" workflow=epic-wave task_dir=.agents/tasks/example-epic gates=none
 ```
 
-These reuse saved task doc. Child task wait for prereq branch to merge. Pull request text no prove merge.
+These use default task root. Repo may set another with `<!-- skills:task-root=relative/path -->`; explicit existing `task_dir` stay boss. Child task wait for prereq branch to merge. Pull request text no prove merge.
 
 ## Where things live
 
 - Skills: `skills/delivery/<name>/SKILL.md` and `skills/show-me/`.
 - Workflow: `atomic/workflows/delivery.ts`; helper: `atomic/lib/`.
-- Task doc: `.agents/tasks/<slug>/task.md` + numbered file on task branch.
+- Task doc: `<task-root>/<slug>/task.md`, `index.json`, and immutable `artifacts/<kind>/<variant>/<NNNN>.md` file on task branch. Existing task without `index.json` keep legacy numbered file and never silently migrate.
 
 Worktree belong to owner. No kill old or dead-run worktree as install cleanup.

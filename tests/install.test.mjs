@@ -7,6 +7,7 @@ import { plan, apply, buildTrees, destinations, atomicDestination, detectTargets
 import { scanSkills } from "../scripts/lib/layout.mjs";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
+import { resolveSkillsDir } from "../atomic/lib/skill-storage.mjs";
 
 const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const env = { PATH: "" };
@@ -188,17 +189,6 @@ test("Atomic installs canonical full skills and workflow sources beside unrelate
   uninstall(planned, home);
   assert.equal(fs.existsSync(path.join(home, ".codex", "config.toml")), false);
 });
-test("isolated Atomic install loads the portable route-model from the installed skills directory", async () => {
-  const home = tmpdir();
-  const options = { targets: ["portable"], atomic: true, cwd: home, home, env };
-  install(options);
-  const workflowRoot = atomicDestination(options);
-  const installedModels = await import(`${pathToFileURL(path.join(workflowRoot, "lib", "models.mjs")).href}?isolated-model=${Date.now()}`);
-  const selected = await installedModels.selectStageModel(path.join(home, ".agents", "skills"), { skill: "implement-plan", model: "cheap", reasoningModel: "strong", modelRouting: "fixed", availableModels: ["cheap", "strong"] });
-  assert.equal(selected.model, "cheap");
-  assert.equal(selected.source, "fixed");
-});
-
 test("isolated Atomic install parses frontmatter through its copied YAML dependency", async () => {
   const home = tmpdir();
   const options = { targets: ["portable"], atomic: true, cwd: home, home, env };
@@ -244,6 +234,20 @@ test("route-model installs independently and falls back economically without typ
   uninstall(planned, home);
 });
 
+test("Atomic skill directory precedence is explicit then project then user", () => {
+  const root = tmpdir();
+  const home = path.join(root, "home");
+  const project = path.join(root, "project");
+  const projectSkills = path.join(project, ".agents", "skills");
+  fs.mkdirSync(home);
+  fs.mkdirSync(projectSkills, { recursive: true });
+
+  assert.equal(resolveSkillsDir("custom/skills", project, home), path.join(project, "custom", "skills"));
+  assert.equal(resolveSkillsDir(undefined, project, home), projectSkills);
+  fs.rmSync(projectSkills, { recursive: true });
+  assert.equal(resolveSkillsDir(undefined, project, home), path.join(home, ".agents", "skills"));
+});
+
 test("selected jev-ui installs as a portable consumer outside the repository", async () => {
   const home = tmpdir("jev-ui-install-test-");
   const outside = tmpdir("jev-ui-consumer-");
@@ -282,83 +286,3 @@ test("selected jev-ui installs as a portable consumer outside the repository", a
   assert.ok(fs.existsSync(path.join(skillDir, "record-evidence", "SKILL.md")));
   assert.equal(fs.existsSync(installed), false);
 });
-test("Safety Dance installs as a non-worker skill across targets and runtime builds", () => {
-  const sourceSkill = path.join(REPO, "skills", "delivery", "safety-dance");
-  const sourceSkillText = fs.readFileSync(path.join(sourceSkill, "SKILL.md"), "utf8");
-  for (const target of ["claude-code", "codex", "oh-my-pi", "pi", "portable"]) {
-    const home = tmpdir(`safety-dance-${target}-`);
-    const skillDir = destinations(target, { home, env }).skills;
-    const foreign = path.join(skillDir, "mine", "SKILL.md");
-    put(foreign, "keep me\n");
-    const planned = install({ targets: [target], skillNames: ["safety-dance"], cwd: home, home, env });
-    const installed = path.join(skillDir, "safety-dance");
-    if (target === "portable") assert.equal(fs.readFileSync(path.join(installed, "SKILL.md"), "utf8"), sourceSkillText);
-    else assert.match(fs.readFileSync(path.join(installed, "SKILL.md"), "utf8"), /Runtime: /);
-    assert.ok(fs.existsSync(path.join(installed, "references", "commands.md")));
-    assert.ok(fs.existsSync(path.join(installed, "references", "safety.md")));
-    assert.ok(fs.existsSync(foreign));
-    assert.equal(fs.existsSync(path.join(home, ".claude", "agents", "safety-dance.md")), false);
-    assert.equal(fs.existsSync(path.join(home, ".codex", "agents", "safety-dance.toml")), false);
-    assert.doesNotMatch(fs.existsSync(path.join(home, ".codex", "config.toml")) ? fs.readFileSync(path.join(home, ".codex", "config.toml"), "utf8") : "", /safety-dance/);
-    uninstall(planned, home);
-    assert.equal(fs.existsSync(installed), false);
-    assert.equal(fs.existsSync(foreign), true);
-  }
-
-  for (const runtime of ["claude-code", "codex", "oh-my-pi", "pi"]) {
-    const dest = tmpdir(`safety-dance-runtime-${runtime}-`);
-    const result = spawnSync(process.execPath, [path.join(REPO, "scripts", "build-runtimes.mjs"), "--runtime", runtime, "--dest", dest], { cwd: REPO, encoding: "utf8" });
-    assert.equal(result.status, 0, result.stderr);
-    const built = path.join(dest, "skills", "safety-dance");
-    assert.ok(fs.existsSync(path.join(built, "SKILL.md")));
-    assert.ok(fs.existsSync(path.join(built, "references", "commands.md")));
-    assert.ok(fs.existsSync(path.join(built, "references", "safety.md")));
-    assert.match(fs.readFileSync(path.join(built, "SKILL.md"), "utf8"), new RegExp(`Runtime: ${runtime === "oh-my-pi" ? "Oh My Pi" : runtime === "claude-code" ? "Claude Code" : runtime === "codex" ? "Codex" : "Pi"}\\.`));
-    assert.equal(fs.existsSync(path.join(dest, "agents", "safety-dance.md")), false);
-    assert.equal(fs.existsSync(path.join(dest, "agents", "safety-dance.toml")), false);
-  }
-  assert.equal(fs.readFileSync(path.join(sourceSkill, "SKILL.md"), "utf8"), sourceSkillText);
-});
-
-for (const project of [false, true]) {
-  test(`selected iterate-evidence preserves dependency ownership in ${project ? "project" : "home"} installs`, () => {
-    const home = tmpdir("iterate-evidence-home-");
-    const cwd = tmpdir("iterate-evidence-project-");
-    const options = { targets: ["oh-my-pi"], skillNames: ["iterate-evidence"], project, cwd, home, env };
-    const skillDir = destinations("oh-my-pi", options).skills;
-    const foreign = path.join(skillDir, "foreign", "sentinel");
-    const task = path.join(cwd, ".agents", "tasks", "existing", "task.md");
-    put(foreign, "unrelated resource\n");
-    put(task, "existing task\n");
-
-    const assertInstalled = () => {
-      assert.deepEqual(fs.readdirSync(skillDir).sort(), ["foreign", "iterate-evidence", "record-evidence"]);
-      for (const file of ["SKILL.md", "references/evidence_iteration_template.md", "references/inspection_acceptance.md", "references/evidence_iteration_passed_answer.md", "references/evidence_iteration_stopped_answer.md"]) {
-        assert.ok(fs.readFileSync(path.join(skillDir, "iterate-evidence", file), "utf8").trim(), file);
-      }
-      assert.ok(fs.readFileSync(path.join(skillDir, "record-evidence", "SKILL.md"), "utf8").trim());
-      assert.ok(fs.readFileSync(path.join(skillDir, "record-evidence", "scripts", "evidence.py"), "utf8").trim());
-      assert.equal(fs.existsSync(path.join(home, ".atomic")), false);
-      assert.equal(fs.existsSync(path.join(cwd, ".atomic")), false);
-    };
-    const assertPreserved = () => {
-      assert.equal(fs.readFileSync(foreign, "utf8"), "unrelated resource\n");
-      assert.equal(fs.readFileSync(task, "utf8"), "existing task\n");
-      assert.equal(fs.existsSync(path.join(skillDir, "iterate-evidence")), false);
-      assert.ok(fs.existsSync(path.join(skillDir, "record-evidence", "SKILL.md")));
-    };
-
-    const selected = install(options);
-    assertInstalled();
-    uninstall(selected, home);
-    assertPreserved();
-
-    install({ ...options, skillNames: ["record-evidence"] });
-    const recorder = fs.readFileSync(path.join(skillDir, "record-evidence", "scripts", "evidence.py"));
-    const reinstalled = install(options);
-    assertInstalled();
-    uninstall(reinstalled, home);
-    assertPreserved();
-    assert.deepEqual(fs.readFileSync(path.join(skillDir, "record-evidence", "scripts", "evidence.py")), recorder);
-  });
-}

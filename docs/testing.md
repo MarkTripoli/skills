@@ -10,7 +10,7 @@ Keep evidence kinds apart: offline repo check, live skill eval, maybe-run Atomic
 |---|---|---|
 | Skill validation | `node scripts/validate.mjs` | Layout, frontmatter, shared links, templates, handoff fences, phase-table coverage, and source conventions |
 | Plugin sync | `node scripts/sync-plugin.mjs --check` | Published plugin resources match canonical skills |
-| Unit tests | `node --test tests/` | Installer ownership, runtime adaptation, commit rules, typed helper behavior, and workflow helpers |
+| Unit tests | `node --test tests/` | Installer ownership, runtime adaptation, commit rules, typed helper behavior, task-index and task-root contracts, artifact helper distribution, and workflow helpers |
 
 Offline check no need Atomic install, no need live provider key. Installer test use temp home and temp project, cover:
 
@@ -20,7 +20,15 @@ Offline check no need Atomic install, no need live provider key. Installer test 
 - workflow discovery door; and
 - scoped uninstall no touch real user install.
 
-Old engine fixture no be Atomic run proof. Maybe-run TypeScript workflow plus helper be current controller source.
+Offline contract also cover indexed task-artifact model:
+
+- `index.json` schema and fail-closed read: invalid JSON/schema, dangling path, symlink component, SHA-256 mismatch, metadata mismatch be errors, never scan fallback;
+- semantic series `(kind, variant)`, immutable contiguous iteration, `current`, `generation`, `supersedes`;
+- task-root directive in root `AGENTS.md`/`CLAUDE.md`, matching declarations, conflict, invalid path, symlink rejection, default `.agents/tasks`;
+- helper distribution for canonical, plugin, runtime, portable, Atomic install shape; and
+- legacy task with no `index.json` keep numbered-file scan, never silently migrate.
+
+Passing offline contract no claim runtime ready. Old engine fixture no be Atomic run proof. Maybe-run TypeScript workflow plus helper be current controller source.
 
 ## Safety Dance proof boundaries
 
