@@ -213,7 +213,7 @@ func temporaryRepository(t *testing.T) (work, upstream, candidate string) {
 	runGit(t, work, "add", "README")
 	runGit(t, work, "commit", "-m", "candidate")
 	candidate = runGit(t, work, "rev-parse", "HEAD")
-	runGit(t, root, "init", "--bare", upstream)
+	runGit(t, root, "init", "--bare", "--initial-branch=main", upstream)
 	runGit(t, work, "push", upstream, "HEAD:refs/heads/main")
 	return work, upstream, candidate
 }
