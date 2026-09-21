@@ -19,3 +19,5 @@ Guardrails and known limits:
 
 Saved boundary: {last_completed_step_and_next_step}
 {stop_basis_and_required_next_action}
+
+<!-- Session stop: after emitting this filled template, make no further tool calls or turns. If another turn is forced, re-emit this entire filled template verbatim. Complete todo and commit operations before this turn, not after. -->
