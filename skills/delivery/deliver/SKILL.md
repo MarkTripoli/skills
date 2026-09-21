@@ -63,7 +63,9 @@ The registered inputs are:
 | `gates` | `all` by default; also `none`, `plan`, `pr`. |
 | `model` | `openai-codex/gpt-5.6-luna-fast` by default; ordinary economical baseline and mandatory for every code-writing or unknown phase. Explicit values are honored. |
 | `model_routing` | `auto` by default; `auto` asks JEV whether the ordinary model or `reasoning_model` is adequate for eligible non-writing stages, while `fixed` selects `model` directly with no JEV call. |
-| `reasoning_model` | `openai-codex/gpt-5.6-sol` by default; stronger candidate considered only for eligible stages in `model_routing=auto`. |
+| `reasoning_model` | `openai-codex/gpt-5.6-sol` by default; compatibility escalation candidate for eligible stages. | 
+| `available_models` | Optional legacy exact model identifiers supplied by the caller. Omission preserves the two configured candidates. | 
+| `model_candidates` | Optional exact `{model,cost,description}` objects consumed by the portable `route-model` helper. |
 | `app_test` | `none` by default; also `web`, `ios`, `android`. |
 | `app_target` | Optional URL, bundle id, package, or application path string. |
 | `verify` | Boolean, default `true`. |
