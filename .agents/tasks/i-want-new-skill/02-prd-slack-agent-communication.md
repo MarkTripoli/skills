@@ -1,7 +1,7 @@
 ---
 type: design-prd
 task: i-want-new-skill
-summary: "This PRD defines one optional Slack thread per agent work run with fixed updates and owner steering in invited public or private channels. A repository default is exactly one `Slack default channel: <#name-or-ID>` line in root `AGENTS.md`; a runtime override may also use a name or immutable ID, wins over the default, resolves once before run creation, and persists the validated ID. Each workspace deployment uses one administrator-installed app from a repository-owned manifest, and headless setup validates protected tokens. Jira receives an optional backlink, while browser OAuth, direct messages, Windows services, non-owner participation, non-Jira ticket systems, workspace routing configuration, and shared app connections are deferred."
+summary: "This PRD defines one optional Slack thread per agent work run with fixed updates and owner steering in invited public or private channels. A repository default is exactly one `Slack default channel: <#name-or-ID>` line in root `AGENTS.md`; an unambiguous natural-language request from the controlling person may override it, then resolves once before run creation and persists the validated ID. Each workspace deployment uses one administrator-installed app from a repository-owned manifest, and headless setup validates protected tokens. Jira receives an optional backlink, while browser OAuth, direct messages, Windows services, non-owner participation, non-Jira ticket systems, workspace routing configuration, and shared app connections are deferred."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 472270dd717873b0f4fb002487ca0fa1abe92607
@@ -53,6 +53,7 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - Store the Slack thread URL in a Jira label - rejected because labels are categorization metadata, not a dedicated backlink field.
 - Create or discover the Jira custom field at runtime - rejected because runtime shall not require Jira administration privileges.
 - Add a workspace default, repository mapping table, or routing service - rejected because the two instruction sources already define deterministic precedence.
+- Require a fixed runtime directive or structured option - rejected because the controlling person shall be able to express the override as an unambiguous natural-language instruction.
 
 ### Solution Details
 
@@ -65,7 +66,9 @@ Add an optional Slack thread to an individual work run. The person controlling t
 #### The run instruction overrides the repository channel default
 
 - Each repository shall declare one default Slack channel with exactly one standalone `Slack default channel: <#name-or-ID>` line in its root `AGENTS.md`.
-- WHEN the person controlling a Slack-enabled run explicitly supplies a `#channel-name` or Slack channel ID in the run instruction, the system shall use that reference for the run.
+- WHEN the person controlling a Slack-enabled run unambiguously asks in natural language to route the current run to one `#channel-name` or Slack channel ID, the system shall use that reference for the run.
+- Channel references appearing only in quoted text, ticket content, or task material shall not override the repository default.
+- IF the controlling person's request names multiple channels or is ambiguous, THEN the system shall ask for clarification before creating the Slack thread.
 - IF the run instruction does not supply a Slack channel reference, THEN the system shall use the repository's `AGENTS.md` default.
 - BEFORE creating the root message, the system shall resolve a name once, validate that the app is a member of the public or private channel, and persist the resolved channel ID for the run.
 - IF neither source resolves to an accessible invited public or private channel, THEN the system shall reject Slack run creation before posting the root message.
@@ -164,7 +167,8 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - [ ] Confirm administrators install the repo-owned manifest and setup accepts protected headless token injection while rejecting the wrong app, workspace, scopes, or Socket Mode access.
 - [ ] Confirm setup never reads repository-local `.env` files.
 - [ ] Confirm work threads support invited public and private channels while direct messages, multi-person direct messages, automatic channel joining, and posting without membership remain unsupported.
-- [ ] Confirm each repository default is exactly one standalone `Slack default channel: <#name-or-ID>` line in root `AGENTS.md`, missing or duplicate directives are rejected even with an override, and an explicit runtime instruction overrides the declared value.
+- [ ] Confirm each repository default is exactly one standalone `Slack default channel: <#name-or-ID>` line in root `AGENTS.md`, missing or duplicate directives are rejected, and an unambiguous natural-language instruction from the controlling person overrides the declared value.
+- [ ] Confirm quoted or incidental channel mentions do not override the default, while multiple or ambiguous requested channels require clarification before thread creation.
 - [ ] Confirm the system resolves and validates the channel once before run creation, persists the resolved ID, and introduces no third routing source or channel cache.
 
 ### Known limits

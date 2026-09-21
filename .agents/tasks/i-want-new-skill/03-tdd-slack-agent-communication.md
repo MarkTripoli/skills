@@ -1,7 +1,7 @@
 ---
 type: design-tdd
 task: i-want-new-skill
-summary: "A repo-owned per-user daemon and SQLite database are authoritative for coordinator state, with one Slack app Socket Mode connection bound exclusively to one daemon per workspace deployment. Repository defaults use one `Slack default channel: <#name-or-ID>` line in root `AGENTS.md`; runtime overrides may also use a name or immutable ID, win over the default, resolve once before `startRun`, and persist the validated ID. Administrators install the app from a repository-owned manifest for invited public and private channels, and headless setup validates protected tokens. No workspace default, mapping table, routing subsystem, browser OAuth, direct messages, Windows service, or shared app connection is introduced."
+summary: "A repo-owned per-user daemon and SQLite database are authoritative for coordinator state, with one Slack app Socket Mode connection bound exclusively to one daemon per workspace deployment. Repository defaults use one `Slack default channel: <#name-or-ID>` line in root `AGENTS.md`; an unambiguous natural-language request from the controlling person may override it, then resolves once before `startRun` and persists the validated ID. Administrators install the app from a repository-owned manifest for invited public and private channels, and headless setup validates protected tokens. No workspace default, mapping table, routing subsystem, browser OAuth, direct messages, Windows service, or shared app connection is introduced."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 36d73c2fdbd605df9a6f55904f80fcdda7f418fc
@@ -122,7 +122,7 @@ The supplied bot and app-level tokens cannot introspect the deployed event-subsc
 
 #### A runtime channel instruction overrides the repository default
 
-Each repository declares one default Slack channel through exactly one standalone `Slack default channel: <#name-or-ID>` line in its root `AGENTS.md`. Both that default and an explicit channel in the controlling person's current run instruction may use `#channel-name` or an immutable Slack channel ID. At Slack-enabled run start, the runtime adapter uses the explicit runtime reference when present; otherwise it uses the repository declaration. If neither source resolves to an invited public or private channel, the coordinator rejects Slack run creation before posting a root message. Slack-disabled runs remain unchanged.
+Each repository declares one default Slack channel through exactly one standalone `Slack default channel: <#name-or-ID>` line in its root `AGENTS.md`. The controlling person may override it with an unambiguous natural-language instruction that explicitly routes the current run to one `#channel-name` or immutable Slack channel ID. Mere channel mentions in quoted material, tickets, or task content are not overrides. No explicit request uses the repository default; multiple or ambiguous requested channels require clarification before the coordinator posts a root message. Slack-disabled runs remain unchanged.
 
 ```mermaid
 flowchart TD
@@ -301,16 +301,17 @@ All runtime adapters must route the six `ActionBoundaryKind` operations through 
 
 #### Channel resolution is one adapter-level precedence check
 
-The runtime adapter already has the repository root and the controlling person's run instruction. It requires exactly one standalone line whose case-sensitive prefix is `Slack default channel: ` in the root `AGENTS.md` and parses the remaining trimmed value as `#channel-name` or an immutable Slack channel ID. Zero or multiple matching lines are invalid repository configuration even when the run supplies an override. The adapter then applies the runtime override, resolves and validates the selected reference through Slack, and passes only the ID to `startRun`.
+The runtime adapter already has the repository root and the controlling person's run instruction. It requires exactly one standalone line whose case-sensitive prefix is `Slack default channel: ` in the root `AGENTS.md`; zero or multiple matching lines are invalid repository configuration. The host agent interprets only the controlling person's current instruction and returns `none`, one explicit channel reference, or `ambiguous`; this uses the agent already handling the run rather than a separate extraction service. The adapter rejects `ambiguous`, applies a single override over the repository default, resolves and validates the selected reference through Slack, and passes only the ID to `startRun`.
 
 ```text
 resolveSlackChannel(runtimeInstruction, repositoryAgentsMd)
 ├── require exactly one `Slack default channel: <ref>` line
 │   ├── missing directive ─────────────────────▶ return invalid_repository_config
 │   └── duplicate directives ──────────────────▶ return invalid_repository_config
-├── select channel reference
-│   ├── runtime instruction has explicit channel ─▶ use override
-│   └── otherwise ─────────────────────────────────▶ use repository default
+├── extract explicit override from controlling person's instruction
+│   ├── none ──────────────────────────────────▶ use repository default
+│   ├── one name or ID ────────────────────────▶ use runtime override
+│   └── multiple or ambiguous ─────────────────▶ return ambiguous_channel_override
 ├── selected reference is a name
 │   └── paginate conversations.list(public_channel, private_channel)
 │       └── require one exact non-archived member-channel match
@@ -438,6 +439,11 @@ type SlackChannelRef =
   | { kind: "name"; name: string }
   | { kind: "id"; channelId: string };
 
+type ChannelOverrideExtraction =
+  | { kind: "none" }
+  | { kind: "selected"; channel: SlackChannelRef }
+  | { kind: "ambiguous"; candidates: SlackChannelRef[] };
+
 interface ResolvedSlackChannel {
   channelId: string;
   source: "runtime_instruction" | "repository_agents_md";
@@ -500,7 +506,7 @@ The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input
 - Run ordered, transactional schema migrations before opening Socket Mode or local IPC.
 - Place the Unix-domain socket in the per-user runtime directory with a mode-`0700` parent and mode-`0600` socket; open no TCP listener.
 - Ship the canonical Slack app manifest with Socket Mode enabled, bot scopes `chat:write`, `channels:history`, `channels:read`, `groups:history`, `groups:read`, and `users:read`, and bot events `message.channels` and `message.groups`. Public and private channels are supported only when the app is a member.
-- Resolve a Slack-enabled run's channel from exactly two sources: an explicit channel in the controlling person's current run instruction, then exactly one standalone `Slack default channel: <#name-or-ID>` line in the repository root `AGENTS.md`. Both accept `#channel-name` or a Slack channel ID; the runtime instruction wins.
+- Resolve a Slack-enabled run's channel from exactly two sources: an unambiguous natural-language override in the controlling person's current run instruction, then exactly one standalone `Slack default channel: <#name-or-ID>` line in the repository root `AGENTS.md`. A mere mention is not an override; multiple or ambiguous requested channels require clarification before `startRun`.
 - Require non-secret expected Slack app and workspace IDs in installation configuration.
 - Accept `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` only as a complete setup-time pair, or read both from the protected per-user credentials file. Never load repository-local `.env` files.
 - Keep Slack credentials outside SQLite, repositories, and native service definitions. Require a daemon-user-owned mode-`0600` regular file under a mode-`0700` per-user directory; reject symlinks and broader permissions.
@@ -557,6 +563,7 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 - [ ] Confirm environment-supplied tokens are persisted only to a daemon-user-owned mode-`0600` credentials file and no repository-local `.env`, SQLite row, service definition, or log contains a Slack token.
 - [ ] Confirm the app supports invited public and private channels with `chat:write`, `channels:history`, `channels:read`, `groups:history`, `groups:read`, and `users:read`, subscribes to `message.channels` and `message.groups`, and does not request automatic-join or public-post bypass scopes.
 - [ ] Confirm the repository default is exactly one standalone `Slack default channel: <#name-or-ID>` line in root `AGENTS.md`; missing or duplicate directives fail as invalid configuration even when a runtime override is present.
+- [ ] Confirm only an unambiguous natural-language request from the controlling person overrides the repository default; quoted mentions and task content do not, while multiple or ambiguous requested channels stop before thread creation for clarification.
 - [ ] Confirm the adapter resolves and validates the channel once before `startRun`, persists only the resolved channel ID, and introduces no workspace default, cache, mapping table, or routing subsystem.
 - [ ] Confirm a Jira-linked run projects its Slack thread URL to a dedicated custom field without giving Jira authority over timers, steering, or permits.
 - [ ] Confirm Jira outages leave the backlink pending without pausing Slack coordination and non-Jira runs stay local-only.
