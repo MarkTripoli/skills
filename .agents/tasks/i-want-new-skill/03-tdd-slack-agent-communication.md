@@ -1,7 +1,7 @@
 ---
 type: design-tdd
 task: i-want-new-skill
-summary: "A repo-owned per-user daemon and embedded SQLite database are authoritative for coordinator-only operational state: timers, owner input, deduplication, permits, interruptions, and the local Slack channel/thread identifier needed during Jira outages. Jira-linked runs project the Slack thread URL into a dedicated Jira custom field for discovery; Jira never controls timers or steering, and non-Jira runs remain local-only. Socket Mode is primary, MCP is non-authoritative, state-changing boundaries fail closed on coordination failure, and local break-glass can disable Slack for one run. Local IPC, authorization, recovery details, Jira field setup, and permit fencing remain open."
+summary: "A repo-owned per-user daemon and embedded SQLite database are authoritative for coordinator-only operational state, while Jira-linked runs project the Slack thread URL into an administrator-created custom field configured by stable field ID. Setup validates the Jira field; runtime requires no Jira admin privileges. Agent adapters and the operator CLI use filesystem-protected Unix-domain socket RPC with framed typed requests and responses; Windows named pipes are deferred. Socket Mode is primary, MCP is non-authoritative, state-changing boundaries fail closed on coordination failure, and local break-glass can disable Slack for one run. Credential authorization, recovery details, break-glass caller authorization, and permit fencing remain open."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 36d73c2fdbd605df9a6f55904f80fcdda7f418fc
@@ -107,16 +107,16 @@ flowchart TD
     D --> T[Timer scheduler]
     D --> I[Owner-input inbox]
 
-    R1[Repository A agent] <-->|local IPC| D
-    R2[Repository B agent] <-->|local IPC| D
-    W[Later session or worktree] <-->|reconnect by run identity| D
+    R1[Repository A agent] <-->|Framed typed RPC<br/>Unix-domain socket| D
+    R2[Repository B agent] <-->|Framed typed RPC<br/>Unix-domain socket| D
+    W[Later session or worktree] <-->|Reconnect by run identity| D
 ```
 
-Run IDs must be globally unique within the per-user SQLite database and namespaced with repository and task identity. The supervisor, startup/update mechanism, database location, local IPC transport, and Socket Mode reconnect and replay policy remain open.
+Run IDs must be globally unique within the per-user SQLite database and namespaced with repository and task identity. The supervisor, startup/update mechanism, database location, and Socket Mode reconnect and replay policy remain open.
 
 #### SQLite persists coordinator authority across restarts
 
-One per-user SQLite database is the canonical durable state. The daemon owns normal database access; the local operator control path is the only other authorized writer. Write-ahead logging, foreign-key enforcement, a busy timeout, and explicit transactions protect daemon and break-glass coordination. A schema migration must complete before the daemon accepts IPC or Socket Mode events.
+One per-user SQLite database is the canonical durable state. The daemon is its only writer; agent adapters and the operator CLI mutate state through local RPC. Write-ahead logging, foreign-key enforcement, a busy timeout, and explicit transactions protect concurrent run activity. A schema migration must complete before the daemon accepts IPC or Socket Mode events.
 
 | Table | Key constraints | State owned |
 |---|---|---|
@@ -157,7 +157,7 @@ sequenceDiagram
     end
 ```
 
-Jira failure never changes the quiet-status deadline, owner-input state, permit decision, or Slack health. Retrying the same thread URL is idempotent. Runs without a Jira issue do not create a `jira_backlinks` row or call Jira.
+Jira failure never changes the quiet-status deadline, owner-input state, permit decision, or Slack health. Retrying the same thread URL is idempotent. Runs without a Jira issue do not create a `jira_backlinks` row or call Jira. Each Jira site configuration names an administrator-created field by stable ID. Setup validates that the field exists, is writable for the intended issue scope, and accepts the canonical Slack thread URL; runtime neither creates fields nor requires Jira admin privileges.
 
 ### Program Design
 
@@ -230,7 +230,53 @@ type ActionPermit =
   | { kind: "unavailable"; cause: SlackUnavailableCause };
 ```
 
-All runtime adapters must route the six `ActionBoundaryKind` operations through one boundary hook. Local file reads and in-process reasoning bypass that hook. A coordinator IPC failure is treated as `unavailable` even though no permit response can arrive. `LocalOperatorControl` is intentionally absent from the agent runtime interface. SQLite is injected behind the coordinator's state-store boundary; user-local IPC and permit fencing remain undecided.
+All runtime adapters must route the six `ActionBoundaryKind` operations through one boundary hook. Local file reads and in-process reasoning bypass that hook. A coordinator IPC failure is treated as `unavailable` even though no permit response can arrive. `LocalOperatorControl` is intentionally absent from the agent runtime interface. SQLite is injected behind the coordinator's state-store boundary; permit fencing remains undecided.
+
+#### A filesystem-protected Unix-domain socket carries typed local RPC
+
+The daemon listens on one Unix-domain socket inside a per-user runtime directory. The directory is mode `0700` and the socket is mode `0600`; the daemon exposes no loopback TCP or HTTP listener. The filesystem boundary authenticates the operating-system user, not an individual process.
+
+Each frame is a four-byte big-endian payload length followed by one UTF-8 JSON request or response. The discriminated method union supplies message types; `protocolVersion` supports explicit compatibility checks and `requestId` correlates exactly one response. Malformed frames, unsupported versions, unknown methods, and invalid payloads return typed errors without invoking coordinator logic.
+
+```ts
+interface RpcRequest<M extends string, P> {
+  protocolVersion: 1;
+  requestId: string;
+  method: M;
+  params: P;
+}
+
+interface BeforeActionInput {
+  runId: RunId;
+  boundary: ActionBoundaryKind;
+}
+
+type CoordinatorRpcRequest =
+  | RpcRequest<"start_run", StartRunInput>
+  | RpcRequest<"record_work_event", WorkEvent>
+  | RpcRequest<"before_action", BeforeActionInput>
+  | RpcRequest<"resolve_owner_input", OwnerInputResolution>
+  | RpcRequest<"finish_run", FinishRunInput>
+  | RpcRequest<"disable_slack_with_break_glass", { runId: RunId }>;
+
+type RpcResponse<T> =
+  | { protocolVersion: 1; requestId: string; ok: true; result: T }
+  | { protocolVersion: 1; requestId: string; ok: false; error: RpcError };
+
+interface RpcError {
+  code:
+    | "invalid_frame"
+    | "unsupported_version"
+    | "unknown_method"
+    | "invalid_params"
+    | "not_found"
+    | "conflict"
+    | "unavailable";
+  message: string;
+}
+```
+
+The agent adapter omits `disable_slack_with_break_glass`; only the local operator CLI presents that command. Because both run as the same operating-system user, socket permissions alone cannot prevent a same-user process from constructing the operator request. The CLI first starts or recovers the daemon through its supervisor, then sends the request. If the daemon cannot commit the override to SQLite, the run remains paused.
 
 ### Type Definitions
 
@@ -247,6 +293,12 @@ interface RunLocator {
 interface JiraIssueRef {
   siteId: string;
   issueKey: string;
+}
+
+interface JiraSiteConfig {
+  siteId: string;
+  baseUrl: string;
+  slackThreadFieldId: string;
 }
 
 interface JiraThreadBacklink {
@@ -289,9 +341,10 @@ The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input
 - Store exactly one SQLite database in the operating-system user's application-state directory, never in a repository or worktree. The exact platform path remains open.
 - Enable write-ahead logging, foreign keys, and a bounded busy timeout on every connection.
 - Run ordered, transactional schema migrations before opening Socket Mode or local IPC.
+- Place the Unix-domain socket in the per-user runtime directory with a mode-`0700` parent and mode-`0600` socket; open no TCP listener.
 - Keep Slack credentials outside SQLite; the authorization and secret-storage mechanism remains open.
-- Configure one dedicated Jira custom-field identifier for each supported Jira site; never use a label as fallback.
-- Keep Jira credentials outside SQLite. Jira authorization, field provisioning, and secret storage remain open.
+- Configure each Jira site with the stable field ID of an administrator-created dedicated Slack-thread field. Setup must validate existence, writability for the intended issue scope, and acceptance of the canonical Slack thread URL.
+- Keep Jira credentials outside SQLite. Runtime may edit the configured issue field but must not require Jira administration privileges, create fields, or discover them by name.
 
 ### Local Patterns
 
@@ -304,6 +357,8 @@ The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input
 - Non-owner comments or steering.
 - Jira issue mutations other than writing the Slack thread URL to the dedicated custom field.
 - Jira labels and GitHub, Linear, or other ticket-system backlinks.
+- Windows named-pipe IPC.
+- Runtime Jira custom-field creation or name-based field discovery.
 - Chat transports other than Slack.
 - Automatic Slack enablement for every work run.
 
@@ -327,11 +382,13 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 - [ ] Confirm one per-user SQLite database durably owns coordinator-only timers, owner input, permits, deduplication, interruptions, and the local channel/thread identifier.
 - [ ] Confirm a Jira-linked run projects its Slack thread URL to a dedicated custom field without giving Jira authority over timers, steering, or permits.
 - [ ] Confirm Jira outages leave the backlink pending without pausing Slack coordination and non-Jira runs stay local-only.
+- [ ] Confirm agent adapters and the operator CLI use framed typed request/response RPC over a filesystem-protected Unix-domain socket with no TCP listener.
+- [ ] Confirm Jira setup validates an administrator-created field by stable per-site ID and runtime requires no Jira admin privileges.
 - [ ] Confirm Slack-disabled runs retain existing workflow behavior.
 
 ### Known limits
 - Per-user daemon supervision, startup/update mechanism, SQLite file location, driver packaging, migrations, and backup policy.
 - Slack app installation, authorization, and Socket Mode reconnect, acknowledgement, and replay behavior.
-- The exact permit-fencing mechanism and local break-glass command/control channel.
-- Jira authorization, custom-field provisioning, existing-value conflicts, and retry guarantees.
+- The exact permit-fencing mechanism and authorization beyond same-user filesystem protection for the break-glass RPC.
+- Jira credential authorization, validation scope, existing-value conflicts, and retry guarantees.
 - Slack retry schedule, replay ordering, and reconciliation delivery guarantees.

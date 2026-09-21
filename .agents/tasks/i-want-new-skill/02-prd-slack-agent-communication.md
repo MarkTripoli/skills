@@ -1,7 +1,7 @@
 ---
 type: design-prd
 task: i-want-new-skill
-summary: "This PRD defines one optional Slack thread per agent work run with fixed start, status, and completion updates plus owner steering. A Jira-linked run writes the thread URL to a dedicated Jira custom field for discovery; Jira does not control timers or steering, and runs without Jira remain local-only. Slack-enabled work pauses during integration outages unless the local operator explicitly disables Slack for that run. Non-owner participation, non-Jira ticket systems, and Jira mutations beyond the backlink are deferred."
+summary: "This PRD defines one optional Slack thread per agent work run with fixed updates and owner steering. A Jira-linked run writes the thread URL to an administrator-created dedicated custom field configured by stable field ID; setup validates the field, Jira does not control coordination, and runtime requires no Jira admin privileges. Slack-enabled work pauses during integration outages unless the local operator explicitly disables Slack for that run. Non-owner participation, non-Jira ticket systems, and Jira mutations beyond the backlink are deferred."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 472270dd717873b0f4fb002487ca0fa1abe92607
@@ -47,6 +47,7 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - Post only when work changes - rejected because a quiet run gives the owner no liveness signal.
 - Allow free-form updates - rejected because the requested message shape must be deterministic.
 - Store the Slack thread URL in a Jira label - rejected because labels are categorization metadata, not a dedicated backlink field.
+- Create or discover the Jira custom field at runtime - rejected because runtime shall not require Jira administration privileges.
 
 ### Solution Details
 
@@ -64,6 +65,9 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - Jira shall not control status timers, owner-input handling, action permits, or interruption recovery.
 - IF a run has no Jira issue, THEN it shall remain local-only and perform no Jira operation.
 - The system shall not store the Slack thread URL in a Jira label.
+- An administrator shall create the dedicated Jira custom field and configure its stable field ID for that Jira site.
+- BEFORE Jira-linked runs are enabled for a site, setup shall validate that the configured field exists, is writable for the intended issues, and accepts the canonical Slack thread URL.
+- Runtime shall not require Jira administration privileges, create the field, or discover it by name.
 
 #### Status updates show progress and liveness
 
@@ -118,10 +122,11 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - [ ] Confirm Slack outages pause state-changing work and only explicit local break-glass resumes the run without Slack.
 - [ ] Confirm Jira-linked runs write the Slack thread URL to a dedicated custom field while Jira outages do not pause coordination.
 - [ ] Confirm runs without Jira perform no Jira operation.
+- [ ] Confirm setup validates an administrator-created Jira field by stable per-site ID and runtime requires no Jira admin privileges.
 
 ### Known limits
 
 - Non-owner comments are deferred.
 - GitHub, Linear, and non-owner participation are deferred.
-- Jira authorization, custom-field setup, conflicting existing values, and retry guarantees remain technical-design decisions.
+- Jira credential authorization, validation scope, conflicting existing values, and retry guarantees remain technical-design decisions.
 - Slack setup, authorization, retry schedule, reconciliation guarantees, and runtime wiring remain technical-design decisions.
