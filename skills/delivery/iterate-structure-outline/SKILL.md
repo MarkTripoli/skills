@@ -9,7 +9,7 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 Revise structure outline from feedback or new evidence. Keep phased, vertical, independently verifiable.
 
-If no artifact is named, use the task directory listing to find the newest artifact of type `structure-outline`. If more than one outline could be intended, ask the user to choose. Feedback comes from the user's message or a file the user names; read a named file fully.
+If no artifact is named, use current `planning.structure` from `index.json`. Feedback comes from the user's message or a named file; read named files fully.
 
 ## Initial Check
 
@@ -22,12 +22,12 @@ I can revise the structure outline now. Send the phase, scope, validation, or op
 ## Steps
 
 1. **Locate the task directory and read `task.md`** per the conventions, creating it from the user's message when none exists. Note `workflow` from `task.md`.
-2. **Read inputs**: Read `references/structure_outline_template.md`, `references/structure_outline_final_answer.md`. Read current outline, feedback, user-mentioned files fully. Read the named artifacts and the source files the change depends on fully. Other artifacts by `summary` from the task directory listing; open only when feedback touches them, and then read that section by heading rather than the whole file. Exclude research-question artifacts unless asked.
+2. **Read inputs**: Read the templates, current `planning.structure` iteration (or explicit `@file`), feedback, and user-mentioned files fully. Read summaries of other current indexed artifacts and open only relevant sections.
 3. **Verify user input**: Do not accept corrections blindly. Use direct reads or child research to confirm file paths, patterns, validation commands.
 4. **Start child research when a missing fact would change the artifact**: Start a child worker for role `agent-codebase-locator` (files and tests), `agent-codebase-analyzer` (behavior), `agent-codebase-pattern-finder` (local precedents), or `agent-web-search-researcher` (external docs) with the assignment (see the conventions' Child workers section); wait for it; read its final message. Use only findings you have read from the worker's final message. Do not rely on hidden background work. Wait for each child and read its final message before using it.
 5. **Process feedback**: Reorganize phases when requested or when verification shows split is wrong. Update scope and What we're not doing. Remove answered open questions; incorporate answer into relevant phase. Keep frontmatter and major sections. Each phase should remain vertical slice crossing layers. A phase should include the layers and checks needed for a verifiable increment. Avoid batching by layer. Do not make Phase N depend on Phase N+1.
-6. **Update document**: Edit same path. Rework Implementation Overview. Update phase overviews, change outlines, test changes, validation steps, Open Questions. Keep trees small with proper glyphs. Use diff notation only when it clarifies changes.
-7. **Final answer**: Save the file and respond with `references/structure_outline_final_answer.md` exactly; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-structure-outline-slug.md](.agents/tasks/<slug>/NN-structure-outline-slug.md)`, fill `{artifact_file}` with the saved file's name only (the template carries the `@`; name this artifact and no other file, never a path), and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. Add no prose before or after the template. Commit the saved file with `git add <path>` as `docs(task): structure-outline artifact`.
+6. **Update document**: Copy current outline to the next `planning.structure` iteration and edit that new file; never edit a recorded iteration. A legacy task without `index.json` follows the conventions' in-place rule.
+7. **Final answer**: Record the new iteration through the conventions' Recording an artifact flow and respond with `references/structure_outline_final_answer.md` exactly. Fill `{artifact_link}` and `{artifact_file}` with the canonical task-root-relative path. Commit that path and `index.json` explicitly as `docs(task): structure-outline artifact`.
 
 ## Phase Validation
 
