@@ -251,10 +251,10 @@ func managedHookPeer(pid int, gate string) bool {
 		if err != nil {
 			return false
 		}
-		if strings.Contains(command, "SD_PARENT_RUN_ID=") || strings.Contains(command, "SD_MANAGED_HOOK=") {
+		if strings.Contains(command, "SD_PARENT_RUN_ID=") {
 			return false
 		}
-		if env, envErr := processEnvironmentFunc(pid); envErr == nil && (environmentHas(env, "SD_PARENT_RUN_ID=") || environmentHas(env, "SD_MANAGED_HOOK=")) {
+		if env, envErr := processEnvironmentFunc(pid); envErr == nil && environmentHas(env, "SD_PARENT_RUN_ID=") {
 			return false
 		}
 		if commandHasExecutable(command, expected) {
@@ -277,10 +277,6 @@ func commandHasExecutable(command string, expected map[string]bool) bool {
 	for _, field := range commandLineFields(command) {
 		field = strings.Trim(field, "\"'(),")
 		if expected[field] || expected[cleanPath(field)] {
-			return true
-		}
-		base := filepath.Base(field)
-		if base == "pre-receive" || base == "post-receive" {
 			return true
 		}
 	}
@@ -320,14 +316,12 @@ func commandLineFields(command string) []string {
 }
 
 func isGitReceiveCommand(command string) bool {
-	for _, field := range strings.Fields(command) {
-		field = strings.Trim(field, "\"'(),")
-		name := filepath.Base(field)
-		if name == "git-receive-pack" || name == "git-receive-pack.exe" {
-			return true
-		}
+	fields := commandLineFields(command)
+	if len(fields) == 0 {
+		return false
 	}
-	return false
+	name := filepath.Base(strings.Trim(fields[0], "\"'(),"))
+	return name == "git-receive-pack" || name == "git-receive-pack.exe"
 }
 
 func cleanPath(value string) string {
@@ -377,9 +371,13 @@ func AuthorizeMutationPeer(pid int) error {
 			}
 		}
 		if parent <= 1 || parent == current {
+			current = parent
 			break
 		}
 		current = parent
+	}
+	if current > 1 {
+		return errors.New("could not verify complete IPC peer ancestry")
 	}
 	return nil
 }

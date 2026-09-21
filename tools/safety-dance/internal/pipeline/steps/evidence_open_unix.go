@@ -12,6 +12,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const maxEvidenceBytes = 16 << 20
+
 func readConfinedEvidence(raw, worktreeRoot, evidenceRoot string) ([]byte, os.FileInfo, error) {
 	if strings.TrimSpace(raw) == "" || filepath.IsAbs(raw) {
 		return nil, nil, fmt.Errorf("evidence file path must be relative to a managed root")
@@ -32,8 +34,14 @@ func readConfinedEvidence(raw, worktreeRoot, evidenceRoot string) ([]byte, os.Fi
 			}
 			return nil, info, err
 		}
-		data, err := io.ReadAll(f)
-		return data, info, err
+		data, err := io.ReadAll(io.LimitReader(f, maxEvidenceBytes+1))
+		if err != nil {
+			return nil, info, err
+		}
+		if int64(len(data)) > maxEvidenceBytes {
+			return nil, info, fmt.Errorf("evidence file exceeds %d-byte limit", maxEvidenceBytes)
+		}
+		return data, info, nil
 	}
 	return nil, nil, fmt.Errorf("evidence file is outside managed roots")
 }

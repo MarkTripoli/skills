@@ -137,11 +137,12 @@ type Options struct {
 
 // seams, overridden in tests.
 var (
-	listProcessesFunc = listProcesses
-	processCWDsFunc   = processCWDs
-	signalProcessFunc = signalProcess
-	signalGroupFunc   = signalGroup
-	processAliveFunc  = processAlive
+	listProcessesFunc     = listProcesses
+	processCWDsFunc       = processCWDs
+	processCWDsStrictFunc = processCWDsStrict
+	signalProcessFunc     = signalProcess
+	signalGroupFunc       = signalGroup
+	processAliveFunc      = processAlive
 )
 
 // Sweep terminates every process associated with a worktree that no run owns
@@ -237,7 +238,20 @@ func SweepRunWorktreeStrict(worktreesRoot, repoID, runID, dir, reason string) er
 	if strings.TrimSpace(dir) == "" {
 		return nil
 	}
-	_, err := Sweep(Options{
+	procs, err := listProcessesFunc()
+	if err != nil {
+		return fmt.Errorf("%s: %w", reason, err)
+	}
+	candidates := make([]int, 0, len(procs))
+	for _, p := range procs {
+		if p.PID > 1 && p.PID != os.Getpid() {
+			candidates = append(candidates, p.PID)
+		}
+	}
+	if _, cwdErr := processCWDsStrictFunc(candidates); cwdErr != nil {
+		return fmt.Errorf("%s: %w", reason, cwdErr)
+	}
+	_, err = Sweep(Options{
 		WorktreesRoot: worktreesRoot,
 		Worktrees:     []Worktree{{Dir: dir, RepoID: repoID, RunID: runID}},
 		Scopes:        []string{dir},

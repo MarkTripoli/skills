@@ -70,7 +70,7 @@ func NewRoot() *cobra.Command {
 func home() (*paths.Paths, error) { return paths.New() }
 func nestedMutation() error {
 	if strings.TrimSpace(os.Getenv("SD_PARENT_RUN_ID")) != "" {
-		return errors.New("nested Safety Dance run cannot mutate the parent run")
+		return &ExitCodeError{Code: 6, Err: errors.New("nested Safety Dance run cannot mutate the parent run")}
 	}
 	return nil
 }

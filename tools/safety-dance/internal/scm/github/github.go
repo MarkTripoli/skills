@@ -366,9 +366,8 @@ func (h *Host) UpdatePR(ctx context.Context, pr *scm.PR, content scm.PRContent) 
 	return pr, nil
 }
 
-// UpdatePRIfUnchanged uses GitHub's ETag as an optimistic concurrency token.
-// The PATCH carries If-Match, so an authored edit between GET and PATCH is
-// rejected by GitHub rather than overwritten.
+// UpdatePRIfUnchanged refuses GitHub REST writes because the endpoint does not
+// provide a documented atomic compare-and-swap precondition.
 func (h *Host) UpdatePRIfUnchanged(ctx context.Context, pr *scm.PR, expected, content scm.PRContent) (*scm.PR, error) {
 	number, err := prSelector(pr)
 	if err != nil {
@@ -376,26 +375,33 @@ func (h *Host) UpdatePRIfUnchanged(ctx context.Context, pr *scm.PR, expected, co
 	}
 	repo := strings.TrimPrefix(h.repo, h.host+"/")
 	endpoint := fmt.Sprintf("repos/%s/pulls/%s", repo, number)
-	get := append([]string{"api", "--include", endpoint}, nil...)
+	get := []string{"api", "--include", endpoint}
+	if h.host != "" && !strings.EqualFold(h.host, "github.com") {
+		get = append(get, "--hostname", h.host)
+	}
 	out, err := h.cmd(ctx, "gh", get...).Output()
 	if err != nil {
 		return nil, fmt.Errorf("gh api pull-request read: %w", err)
 	}
-	etag, body, err := parseIncludedPR(out)
+	_, body, err := parseIncludedPR(out)
 	if err != nil {
 		return nil, err
 	}
 	if body != expected.Body {
 		return nil, fmt.Errorf("pull-request body changed concurrently")
 	}
-	args := []string{"api", "--method", "PATCH", endpoint, "--header", "If-Match: " + etag, "-f", "body=" + content.Body}
+	// GitHub's REST PATCH endpoint does not document an atomic If-Match
+	// precondition. Refuse the write rather than risk overwriting an authored
+	// edit between the read and update.
+	return nil, fmt.Errorf("github pull-request update cannot guarantee atomic conditional write")
+	/*args := []string{"api", "--method", "PATCH", endpoint, "--header", "If-Match: " + etag, "-f", "body=" + content.Body}
 	if strings.TrimSpace(content.Title) != "" {
 		args = append(args, "-f", "title="+content.Title)
 	}
 	if _, err := h.cmd(ctx, "gh", args...).Output(); err != nil {
 		return nil, fmt.Errorf("gh api pull-request conditional update: %w", err)
 	}
-	return pr, nil
+	return pr, nil */
 }
 
 func parseIncludedPR(raw []byte) (etag, body string, err error) {

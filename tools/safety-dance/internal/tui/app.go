@@ -6,12 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"reflect"
-	"runtime"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/x/term"
 )
 
 type App struct {
@@ -29,24 +28,11 @@ func terminalWidth(out io.Writer) int {
 	if !ok {
 		return 0
 	}
-	args := []string{"size", "-F", f.Name()}
-	if runtime.GOOS == "darwin" {
-		args = []string{"-f", f.Name(), "size"}
-	}
-	result, err := exec.Command("stty", args...).Output()
-	if err != nil {
-		return 0
-	}
-	parts := strings.Fields(string(result))
-	if len(parts) != 2 {
-		return 0
-	}
-	w, err := strconv.Atoi(parts[1])
+	w, _, err := term.GetSize(f.Fd())
 	if err != nil {
 		return 0
 	}
 	return w
-
 }
 
 // Run is the interactive terminal loop. It polls durable state so daemon

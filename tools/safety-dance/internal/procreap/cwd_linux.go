@@ -3,6 +3,7 @@
 package procreap
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 )
@@ -19,4 +20,16 @@ func processCWDs(pids []int) map[int]string {
 		cwds[pid] = trimDeletedSuffix(target)
 	}
 	return cwds
+}
+
+func processCWDsStrict(pids []int) (map[int]string, error) {
+	cwds := make(map[int]string, len(pids))
+	for _, pid := range pids {
+		target, err := os.Readlink("/proc/" + strconv.Itoa(pid) + "/cwd")
+		if err != nil {
+			return nil, fmt.Errorf("inspect cwd for pid %d: %w", pid, err)
+		}
+		cwds[pid] = trimDeletedSuffix(target)
+	}
+	return cwds, nil
 }
