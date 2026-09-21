@@ -1,7 +1,7 @@
 ---
 type: design-tdd
 task: i-want-new-skill
-summary: "A repo-owned local coordinator is authoritative for Slack thread mapping, one-hour status timers, and the owner-steering gate. A Slack app is the primary transport; optional agent access through a Slack MCP server cannot mutate or bypass coordinator authority. Coordinator lifecycle, persistence, Slack event delivery, authorization, and failure policy remain open."
+summary: "A repo-owned per-user daemon is authoritative for Slack thread mapping, one-hour status timers, and the owner-steering gate across all local repositories and agent sessions. A Slack app is the primary transport; optional agent access through a Slack MCP server cannot mutate or bypass daemon authority. Persistence format, local IPC, Slack event delivery, authorization, and failure policy remain open."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 36d73c2fdbd605df9a6f55904f80fcdda7f418fc
@@ -21,7 +21,7 @@ The repository currently has no Slack transport, scheduled status publisher, run
 flowchart LR
     O[Owner] <--> ST[Slack thread]
     ST <--> SA[Slack app adapter]
-    SA <--> C[Local coordinator]
+    SA <--> C[Per-user coordinator daemon]
     A[Agent runtime] <--> C
     A -. optional supplementary access .-> MCP[Slack MCP server]
     MCP -. read or post .-> ST
@@ -70,11 +70,32 @@ sequenceDiagram
 
 `beforeAction` is the only authority for this gate. The exact boundary of a work action and the failure behavior when the coordinator or Slack is unavailable remain open decisions.
 
+#### One per-user daemon outlives agent sessions and worktrees
+
+One supervised daemon runs for the operating-system user and manages Slack-enabled runs from every local repository. The canonical daemon source and installation logic remain repository-owned; its runtime process and state are user-scoped rather than copied into each task worktree.
+
+The daemon owns the Slack app connection, quiet-hour timers, owner-input inbox, and run-to-thread mapping after an agent process exits or becomes idle. A later agent session reconnects through user-local IPC and resumes the same run state. A repository or worktree path identifies where work belongs but does not define the daemon's lifetime.
+
+```mermaid
+flowchart TD
+    D[Per-user coordinator daemon]
+    D --> S[(User-scoped state)]
+    D --> SA[Single Slack app connection]
+    D --> T[Timer scheduler]
+    D --> I[Owner-input inbox]
+
+    R1[Repository A agent] <-->|local IPC| D
+    R2[Repository B agent] <-->|local IPC| D
+    W[Later session or worktree] <-->|reconnect by run identity| D
+```
+
+Run IDs must be globally unique within the user's daemon state and namespaced with repository and task identity. The supervisor, startup/update mechanism, state location and format, and local IPC transport remain open.
+
 ### Program Design
 
 #### Coordinator capabilities stay transport-independent
 
-The coordinator owns orchestration state and exposes a narrow API to every supported agent runtime. Slack-specific payloads remain behind the Slack app adapter; the optional MCP client is not injected as a coordinator state store or timer.
+The per-user daemon owns orchestration state and exposes a narrow local API to every supported agent runtime. Slack-specific payloads remain behind the Slack app adapter; the optional MCP client is not injected as daemon state, timer, or supervision.
 
 ```text
 agent runtime integration
@@ -84,7 +105,7 @@ agent runtime integration
 ├── submitOwnerInputResolution(result) ─▶ coordinator.resolveOwnerInput
 └── finishSlackRun(outcome) ────────────▶ coordinator.finishRun
 
-local coordinator
+per-user coordinator daemon
 ├── run state and thread mapping
 ├── quiet-status scheduler
 ├── owner-event inbox and deduplication
@@ -113,15 +134,22 @@ type ActionPermit =
   | { kind: "blocked"; pending: OwnerInput[] };
 ```
 
-Storage technology, process topology, and permit fencing remain undecided.
+The state store, user-local IPC transport, and permit fencing remain undecided.
 
 ### Type Definitions
 
 The coordinator must hold this logical state regardless of the selected persistence mechanism:
 
 ```ts
-interface SlackRunState {
+interface RunLocator {
   runId: RunId;
+  repositoryRoot: string;
+  worktreeRoot: string;
+  taskDirectory: string;
+}
+
+interface SlackRunState {
+  run: RunLocator;
   ownerSlackUserId: string;
   channelId: string;
   threadTs: string;
@@ -164,8 +192,7 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 - [ ] Confirm Slack-disabled runs retain existing workflow behavior.
 
 ### Known limits
-
-- Coordinator process lifecycle and persistence across restarts.
+- Per-user daemon supervision, startup/update mechanism, state location and persistence across restarts.
 - Slack app authorization and inbound delivery through HTTP events or Socket Mode.
 - The exact work-action boundary, permit lifetime, and fail-open versus fail-closed behavior.
 - Slack delivery retry and reconciliation guarantees.
