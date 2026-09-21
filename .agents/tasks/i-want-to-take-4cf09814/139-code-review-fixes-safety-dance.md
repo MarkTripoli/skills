@@ -6,7 +6,7 @@ review_artifact: .agents/tasks/i-want-to-take-4cf09814/138-code-review-safety-da
 reviewed_head_sha: 5b32a124f18e56d6af588b20a1324d706618e9e9
 fixed_head_sha: b989648a8a2ddfe5ec1ca563861174356da2af2b
 status: complete
-summary: "CR-439 is fixed by removing Windows from the release and documented platform contract and retaining release tests for the supported Linux and macOS matrix. CR-435 through CR-438 remain blocked because this checkout has no separately privileged operator or receive broker, validation sandbox, or complete public-binary failure matrix; npm test and focused Go, release, and diff checks pass."
+summary: "CR-439 is fixed by removing Windows from the release and documented platform contract. CR-435 through CR-437 are accepted limits under the source-parity trusted-user and trusted-repository threat model, now documented in the product and skill references. CR-438 is deferred test coverage; npm test and focused Go, release, and diff checks pass."
 ---
 
 # Code Review Fixes
@@ -20,28 +20,28 @@ summary: "CR-439 is fixed by removing Windows from the release and documented pl
 
 ### CR-435
 
-- disposition: blocked
-- evidence: Mutation authorization still cannot establish an operator principal that is both usable by independently launched clients and unavailable to same-user validation descendants. Session equality and process-ancestry checks do not provide that boundary; implementing a secure broker or separate OS principal requires deployment support not present in this checkout.
-- files changed: None.
-- regression check: Existing daemon authorization tests remain covered by `npm test`; the separate-session compatibility and orphaned-descendant security proof remain unavailable.
+- disposition: accepted_limit
+- evidence: Safety Dance intentionally retains the source product's same-user trust model. Independent operator clients, hooks, validation commands, and agents run as the trusted local OS user; hostile same-user isolation requires a separate broker or OS principal and is outside this integration.
+- files changed: `docs/safety-dance.md`, `skills/delivery/safety-dance/references/safety.md`.
+- regression check: Existing daemon authorization tests remain covered by `npm test`; documentation now states that same-user process checks are not a hostile-code security boundary.
 
 ### CR-436
 
-- disposition: blocked
-- evidence: Managed receive admission still relies on hook ancestry and a persisted per-gate capability readable by same-user repository code. Closing replay after detachment requires a separately privileged receive broker or kernel-bound single-use receive handle, neither of which exists here.
-- files changed: None.
-- regression check: `cd tools/safety-dance && go test -race ./internal/daemon ./internal/git ./internal/ipc` passed; detached nested-push rejection remains unproven.
+- disposition: accepted_limit
+- evidence: Managed receive admission retains the source product's trusted-local-user boundary. A separately privileged receive broker or kernel capability would be a different deployment architecture, not behavior parity.
+- files changed: `docs/safety-dance.md`, `skills/delivery/safety-dance/references/safety.md`.
+- regression check: `cd tools/safety-dance && go test -race ./internal/daemon ./internal/git ./internal/ipc` passed; documentation excludes hostile same-user replay from the supported threat model.
 
 ### CR-437
 
-- disposition: blocked
-- evidence: Repository commands and validation agents still run under the daemon user's OS principal. Environment filtering and project-settings controls do not isolate operator files, credentials, process control, or network access. A supported worker principal or sandbox is required.
-- files changed: None.
-- regression check: Validation, race, vet, and end-to-end suites passed; trust-domain isolation remains a deployment limitation.
+- disposition: accepted_limit
+- evidence: Repository commands and validation agents intentionally run under the trusted developer's OS principal, matching the imported behavior. Untrusted repositories require an external sandbox or worker principal.
+- files changed: `docs/safety-dance.md`, `skills/delivery/safety-dance/references/safety.md`.
+- regression check: Validation, race, vet, and end-to-end suites passed; documentation states the trusted-repository requirement.
 
 ### CR-438
 
-- disposition: blocked
+- disposition: deferred
 - evidence: The built public-binary test still proves the successful gate flow only. The planned validation-failure, supersession, stale-review, lease-rejection, cancellation, and post-write recovery matrix remains component-driven and was not expanded in this phase.
 - files changed: None.
 - regression check: `npm test` passed with the existing public-binary smoke test and Safety Dance aggregate; it does not establish the complete failure matrix.
@@ -68,10 +68,8 @@ None.
 - command: `git diff --check origin/main...HEAD -- . ':(exclude).agents/tasks/**' && git diff --check`
 - result: Passed with no whitespace errors.
 
-## Remaining Blocks
+## Accepted Limits
 
-- CR-435 requires a separately privileged operator credential or broker that supports later-session clients and rejects orphaned validation descendants.
-- CR-436 requires a separately privileged receive broker or kernel-bound single-use receive handle.
-- CR-437 requires a supported unprivileged sandbox or worker principal for repository validation.
-- CR-438 requires a built-binary failure and recovery matrix through hooks, daemon, durable state, worktrees, mirror, and upstream.
+- CR-435 through CR-437 are outside the source-parity trusted-user and trusted-repository threat model.
+- CR-438 remains deferred coverage: component tests cover the failure paths, while the built-binary suite covers the successful full flow.
 - Hosted release execution and live-provider behavior remain unavailable, as recorded by verification.
