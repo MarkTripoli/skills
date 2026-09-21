@@ -1,7 +1,7 @@
 ---
 type: design-tdd
 task: i-want-new-skill
-summary: "A repo-owned per-user daemon and embedded SQLite database are authoritative for coordinator-only operational state, while Jira-linked runs project the Slack thread URL into an administrator-created custom field configured by stable field ID. Setup installs a launchd user agent on macOS or a systemd user service on Linux; updates preserve SQLite and configuration, atomically replace the executable and native service definition, and immediately restart without automatic rollback after failed health, while Windows service support is deferred. Agent adapters and the operator CLI use filesystem-protected Unix-domain socket RPC, and state-changing actions require one-shot generation-fenced permits. Break-glass uses a trusted same-user boundary with interactive CLI confirmation and a durable audit receipt; credential authorization and recovery details remain open."
+summary: "A repo-owned per-user daemon and embedded SQLite database are authoritative for coordinator-only operational state; each workspace deployment binds one Slack app Socket Mode connection exclusively to one daemon, with multi-user or multi-daemon sharing deferred. Setup installs a launchd user agent on macOS or a systemd user service on Linux; updates preserve SQLite and configuration, atomically replace the executable and native service definition, and immediately restart without automatic rollback after failed health, while Windows service support is deferred. Agent adapters and the operator CLI use filesystem-protected Unix-domain socket RPC, and state-changing actions require one-shot generation-fenced permits. Break-glass uses a trusted same-user boundary with interactive CLI confirmation and a durable audit receipt; credential authorization and recovery details remain open."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 36d73c2fdbd605df9a6f55904f80fcdda7f418fc
@@ -31,7 +31,7 @@ flowchart LR
     J --- DISC["Discoverability only:<br/>never gates work"]
 ```
 
-The Slack app is the primary integration. Its adapter creates the root message, posts canonical status and completion messages through the Slack Web API, and receives owner thread events through one daemon-owned Socket Mode connection. The design has no inbound Slack HTTP event endpoint.
+The Slack app is the primary integration. Its adapter creates the root message, posts canonical status and completion messages through the Slack Web API, and receives owner thread events through one Socket Mode connection owned by the per-user daemon. One workspace deployment binds that Slack app connection exclusively to that daemon. Multiple independent users or daemons must not share the app in this release because Slack may send each payload to any active connection without a predictable distribution pattern ([Slack Socket Mode documentation](https://docs.slack.dev/apis/events-api/using-socket-mode/)). The design adds no per-user app fleet, hosted event router, ingress-daemon mesh, or inbound Slack HTTP event endpoint.
 
 Slack MCP access is supplementary. An MCP read or post cannot create or change the run-to-thread mapping, advance or clear a status deadline, mark owner input handled, or authorize the agent's next work action. An agent that learns about owner input through MCP must still submit that input to the coordinator and receive a coordinator action permit.
 
@@ -43,6 +43,7 @@ Slack MCP access is supplementary. An MCP read or post cannot create or change t
 | Owner identity and unhandled input | Local coordinator | Slack app supplies primary events; MCP observations must carry the same Slack message identity for deduplication |
 | Permission to begin the next work action | Local coordinator | Neither the Slack app nor MCP grants permission |
 | Slack API access | Slack app adapter through Socket Mode for inbound events and the Web API for outbound messages | MCP is optional and non-authoritative |
+| Slack app connection for one workspace deployment | One per-user coordinator daemon | Multiple users or daemons sharing the app are unsupported |
 
 The coordinator gates every state-changing boundary rather than relying on best-effort polling inside the agent:
 
@@ -403,6 +404,7 @@ The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input
 - Run ordered, transactional schema migrations before opening Socket Mode or local IPC.
 - Place the Unix-domain socket in the per-user runtime directory with a mode-`0700` parent and mode-`0600` socket; open no TCP listener.
 - Keep Slack credentials outside SQLite; the authorization and secret-storage mechanism remains open.
+- Bind one Slack app Socket Mode connection for a workspace deployment exclusively to one per-user daemon. Reusing that app in another independent daemon is unsupported.
 - Configure each Jira site with the stable field ID of an administrator-created dedicated Slack-thread field. Setup must validate existence, writability for the intended issue scope, and acceptance of the canonical Slack thread URL.
 - Keep Jira credentials outside SQLite. Runtime may edit the configured issue field but must not require Jira administration privileges, create fields, or discover them by name.
 - Treat the Unix-socket owner as trusted for this release. The CLI confirmation is mandatory in the supported path, but the daemon does not require stronger caller authentication.
@@ -422,6 +424,8 @@ The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input
 - Runtime Jira custom-field creation or name-based field discovery.
 - Chat transports other than Slack.
 - Automatic Slack enablement for every work run.
+- Multiple independent users or daemons sharing one Slack app.
+- Per-user Slack app provisioning, a hosted Socket Mode event router, or an ingress-daemon mesh.
 
 ### Execution DAG
 
@@ -444,6 +448,7 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 - [ ] Confirm setup installs a launchd user agent on macOS or a systemd user service on Linux, and each starts at login and restarts crashes without a system-wide daemon.
 - [ ] Confirm an update preserves SQLite and configuration, atomically replaces the executable and native service definition, restarts immediately, pauses active Slack-enabled runs fail-closed, and resumes them from durable state only after health is restored.
 - [ ] Confirm failed post-update health reports setup failure, retains the new executable and service definition, and leaves Slack-enabled runs fail-closed for operator repair or break-glass without automatic rollback.
+- [ ] Confirm one workspace deployment binds one Slack app Socket Mode connection to one per-user daemon and does not introduce per-user apps, a hosted router, or an ingress mesh.
 - [ ] Confirm a Jira-linked run projects its Slack thread URL to a dedicated custom field without giving Jira authority over timers, steering, or permits.
 - [ ] Confirm Jira outages leave the backlink pending without pausing Slack coordination and non-Jira runs stay local-only.
 - [ ] Confirm agent adapters and the operator CLI use framed typed request/response RPC over a filesystem-protected Unix-domain socket with no TCP listener.
@@ -455,6 +460,7 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 ### Known limits
 - SQLite file location, driver packaging, migrations, and backup policy.
 - Slack app installation, authorization, and Socket Mode reconnect, acknowledgement, and replay behavior.
+- One workspace deployment supports one per-user daemon owning the Slack app connection; multiple independent users or daemons sharing that app are unsupported.
 - Same-user agent processes can construct the break-glass RPC and bypass the CLI confirmation; this is an accepted release limitation.
 - A crash after permit consumption but before an external effect is observed requires action-specific idempotency or reconciliation.
 - Jira credential authorization, validation scope, existing-value conflicts, and retry guarantees.

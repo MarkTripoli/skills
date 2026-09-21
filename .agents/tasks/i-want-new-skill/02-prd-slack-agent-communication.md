@@ -1,7 +1,7 @@
 ---
 type: design-prd
 task: i-want-new-skill
-summary: "This PRD defines one optional Slack thread per agent work run with fixed updates and owner steering. A Jira-linked run writes the thread URL to an administrator-created dedicated custom field configured by stable field ID; Jira does not control coordination. Slack-enabled work pauses during integration outages unless the local operator explicitly disables Slack for that run. Native per-user daemon supervision supports macOS and Linux; Windows service support, non-owner participation, non-Jira ticket systems, and Jira mutations beyond the backlink are deferred."
+summary: "This PRD defines one optional Slack thread per agent work run with fixed updates and owner steering. Each workspace deployment supports one Slack app Socket Mode connection owned by one per-user daemon; multiple independent users or daemons sharing that app are deferred. A Jira-linked run writes the thread URL to an administrator-created dedicated custom field configured by stable field ID, and Slack-enabled work pauses during integration outages unless the local operator explicitly disables Slack for that run. Windows service support, non-owner participation, non-Jira ticket systems, and Jira mutations beyond the backlink are deferred."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 472270dd717873b0f4fb002487ca0fa1abe92607
@@ -40,6 +40,7 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - Every fixed field appears in every message of its type; empty fields read `None`.
 - Slack-enabled work pauses when owner steering or required message delivery is unavailable.
 - Jira-linked runs publish the Slack thread URL to a dedicated Jira custom field; runs without Jira remain local-only.
+- One workspace deployment uses one Slack app Socket Mode connection owned by one per-user daemon.
 
 ### Alternative Solutions Considered
 
@@ -109,6 +110,8 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - Supporting chat systems other than Slack.
 - Enabling Slack automatically for every work run.
 - Windows service support for the per-user coordinator daemon.
+- Multiple independent users or daemons sharing one Slack app, including any hosted event router or ingress-daemon mesh.
+- Per-user Slack app provisioning.
 
 ## Human Review
 
@@ -129,6 +132,7 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - [ ] Confirm runs without Jira perform no Jira operation.
 - [ ] Confirm setup validates an administrator-created Jira field by stable per-site ID and runtime requires no Jira admin privileges.
 - [ ] Confirm Slack-enabled setup supports native per-user daemon supervision on macOS and Linux, with Windows service support deferred.
+- [ ] Confirm one workspace deployment supports one Slack app connection owned by one per-user daemon and defers multi-user or multi-daemon sharing.
 
 ### Known limits
 
@@ -138,3 +142,4 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - Same-user agent processes can construct the break-glass RPC and bypass the supported CLI confirmation.
 - Windows service support for the per-user coordinator daemon is deferred.
 - Slack app installation, authorization, retry schedule, reconciliation guarantees, and agent runtime adapter wiring remain technical-design decisions.
+- One Slack app connection supports one per-user daemon for a workspace deployment; multiple independent users or daemons sharing that app are deferred.
