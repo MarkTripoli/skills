@@ -1,10 +1,10 @@
 # Cheat sheet
 
-First run? Use [getting started](getting-started.md). Full workflow details: [delivery reference](../workflows/delivery.md).
+First time? Use [getting started](getting-started.md). Full workflow: [delivery reference](../workflows/delivery.md).
 
 ## Install
 
-Requires Node 20.12 or newer. Run in your terminal:
+Need Node 20.12+. Type in terminal:
 
 ```sh
 npx github:MarkTripoli/skills
@@ -14,17 +14,17 @@ npx github:MarkTripoli/skills portable --atomic --project --yes
 
 | Option | Effect |
 |---|---|
-| `claude-code`, `codex`, `oh-my-pi`, `pi`, `portable`, `all` | Choose an agent; `portable` means plain skill files, `all` selects all four agents |
-| `--skill <name>`, `-s <name>` | Select skills; repeat for more, or use `'*'` for all |
-| `--atomic` | Add the optional workflow; requires all skills and separately installed Atomic |
-| `--project` | Install in this repository |
-| `--global` | Install for the user; default |
-| `--dry-run` | Show changes without writing |
-| `--yes`, `-y` | Skip menus and confirmation; default to detected agents and all skills |
-| `--uninstall` | Remove selected managed files; add `--atomic` to include the workflow |
-| `--list`, `--help` | List skills or show usage, then stop |
+| `claude-code`, `codex`, `oh-my-pi`, `pi`, `portable`, `all` | Pick agent. `portable` = plain skill file. `all` = pick all four |
+| `--skill <name>`, `-s <name>` | Pick skill. Repeat for more, or `'*'` for all |
+| `--atomic` | Add extra workflow. Need all skill + Atomic installed apart |
+| `--project` | Install in this repo |
+| `--global` | Install for user. Default |
+| `--dry-run` | Show change, no write |
+| `--yes`, `-y` | Skip menu + confirm. Default to found agent + all skill |
+| `--uninstall` | Remove picked managed file. Add `--atomic` for workflow too |
+| `--list`, `--help` | List skill or show usage, then stop |
 
-Uninstall does not delete task documents or worktrees.
+Uninstall no kill task doc or worktree.
 
 ### Configure model routing
 
@@ -32,28 +32,36 @@ Uninstall does not delete task documents or worktrees.
 /configure-model-routing
 ```
 
-Use this model-invoked skill when no valid candidate profile exists. Codex users invoke `$configure-model-routing`; other harnesses invoke `/configure-model-routing`. It writes the project profile or the user file named by `SKILLS_MODEL_CANDIDATES_FILE`, then verifies it through `route-model`.
+Use this model-called skill when no good candidate profile exist. Codex users invoke `$configure-model-routing`; other harness invoke `/configure-model-routing`. It write project profile or user file named by `SKILLS_MODEL_CANDIDATES_FILE`, then check it with `route-model`.
 
+
+For allowed recorded look-and-fix, install companion plus recorder dependency:
+
+```sh
+npx github:MarkTripoli/skills oh-my-pi --skill iterate-evidence --project --yes
+```
+
+Then run `/iterate-evidence @<task-directory-or-iteration-receipt>` with wanted behavior + fix power. Default: three fix round. `0`: look only. Picked uninstall take companion, leave recorder. Use this repo installer for dependency closure. Plain skill copy no guarantee it. See [the independent loop](getting-started.md#inspect-and-repair-recorded-behavior).
 ### File locations
 
 | Agent | User skills | User workers |
 |---|---|---|
 | Claude Code | `~/.claude/skills/` | `~/.claude/agents/` |
-| Codex | `~/.agents/skills/` | `~/.codex/agents/` plus a managed config block |
+| Codex | `~/.agents/skills/` | `~/.codex/agents/` plus managed config block |
 | Oh My Pi | `~/.omp/agent/skills/` | `~/.omp/agent/agents/` |
-| Pi | `~/.pi/agent/skills/` | Worker roles run in the same session |
-| Portable | `~/.agents/skills/` | Worker roles run in the same session |
+| Pi | `~/.pi/agent/skills/` | Worker role run in same session |
+| Portable | `~/.agents/skills/` | Worker role run in same session |
 
-Project skills use `.claude/skills/`, `.agents/skills/`, `.omp/skills/`, or `.pi/skills/`. Claude Code and Oh My Pi also use local `agents/` directories. The Codex project installer skips workers and user config; install without `--project` for those.
+Project skill use `.claude/skills/`, `.agents/skills/`, `.omp/skills/`, or `.pi/skills/`. Claude Code + Oh My Pi also use local `agents/` dir. Codex project installer skip worker + user config. Install without `--project` for those.
 
-Atomic installs `workflows/skills-delivery/` and its sibling `skills-delivery.mjs` under `~/.atomic/agent/`, or `.atomic/` for project installs. `ATOMIC_CODING_AGENT_DIR` changes the user root. The workflow reads all portable skills from `~/.agents/skills`, project `.agents/skills`, or your `skills_dir` input.
+Atomic install `workflows/skills-delivery/` and brother `skills-delivery.mjs` under `~/.atomic/agent/`, or `.atomic/` for project install. `ATOMIC_CODING_AGENT_DIR` change user root. Workflow read all portable skill from `~/.agents/skills`, project `.agents/skills`, or your `skills_dir` input.
 
 ### Other install methods
 
 - Claude Code plugin: `/plugin marketplace add MarkTripoli/skills`, then `/plugin install marktripoli-skills@marktripoli`.
-- [skills.sh](https://skills.sh/MarkTripoli/skills): `npx skills@latest add MarkTripoli/skills` installs skills only.
+- [skills.sh](https://skills.sh/MarkTripoli/skills): `npx skills@latest add MarkTripoli/skills` install skill only.
 - Pinned release: `npx github:MarkTripoli/skills#v<version>`.
-- Checkout: `node scripts/install.mjs`. Build files under `dist/` with `npm run build -- --runtime <claude-code|codex|oh-my-pi|pi|portable>`.
+- Checkout: `node scripts/install.mjs`. Build file under `dist/` with `npm run build -- --runtime <claude-code|codex|oh-my-pi|pi|portable>`.
 
 ## Manual phases
 
@@ -68,7 +76,7 @@ Atomic installs `workflows/skills-delivery/` and its sibling `skills-delivery.mj
 /describe-pr
 ```
 
-Run each in a **new session**, in the checkout and branch named by the previous reply. Use its actual file names, not these examples. Codex uses `$skill-name`. To revise a document, use its `iterate-*` skill with feedback.
+Run each in **new session**, in checkout + branch named by last reply. Use its real file name, not these example. Codex use `$skill-name`. To change doc, use its `iterate-*` skill with feedback.
 
 ## Atomic launch
 
@@ -81,7 +89,7 @@ After [Atomic setup](getting-started.md#add-optional-atomic-orchestration), run 
 /workflow delivery request="Add a --verbose flag" workflow=oneshot model_routing=fixed branch=verbose-flag gates=all
 ```
 
-Use `key=value`, not `--input`. An explicit `workflow` **and** `model_routing=fixed` avoid JEV, the service that chooses steps or models. See [workflow choices](../workflows/delivery.md#workflow-choices-and-manual-chains), [all inputs](../workflows/delivery.md#inputs), and [model selection](model-routing.md).
+Use `key=value`, not `--input`. Clear `workflow` **and** `model_routing=fixed` dodge JEV, the thing that pick step or model. See [workflow choices](../workflows/delivery.md#workflow-choices-and-manual-chains), [all inputs](../workflows/delivery.md#inputs), and [model selection](model-routing.md).
 
 ## Atomic inspect and steer
 
@@ -94,7 +102,7 @@ Use `key=value`, not `--input`. An explicit `workflow` **and** `model_routing=fi
 /workflow resume <run-id>
 ```
 
-`connect` opens approval prompts. `quit` preserves resumable work; it does not delete it. Runs without an interactive screen require `gates=none`. See [control rules](../workflows/delivery.md#gates-and-native-controls).
+`connect` open approval prompt. `quit` keep resumable work. It no kill it. Run without interactive screen need `gates=none`. See [control rules](../workflows/delivery.md#gates-and-native-controls).
 
 ## Existing tasks, PR feedback, and epic waves
 
@@ -104,12 +112,12 @@ Use `key=value`, not `--input`. An explicit `workflow` **and** `model_routing=fi
 /workflow delivery request="Start ready children" workflow=epic-wave task_dir=.agents/tasks/example-epic gates=none
 ```
 
-These reuse saved task documents. Child tasks wait for prerequisite branches to merge; a pull request description does not prove a merge.
+These reuse saved task doc. Child task wait for prereq branch to merge. Pull request text no prove merge.
 
 ## Where things live
 
 - Skills: `skills/delivery/<name>/SKILL.md` and `skills/show-me/`.
-- Workflow: `atomic/workflows/delivery.ts`; helpers: `atomic/lib/`.
-- Task documents: `.agents/tasks/<slug>/task.md` and numbered files on the task branch.
+- Workflow: `atomic/workflows/delivery.ts`; helper: `atomic/lib/`.
+- Task doc: `.agents/tasks/<slug>/task.md` + numbered file on task branch.
 
-Worktrees belong to their owner. Do not delete old or cancelled-run worktrees as installation cleanup.
+Worktree belong to owner. No kill old or dead-run worktree as install cleanup.

@@ -282,3 +282,46 @@ test("selected jev-ui installs as a portable consumer outside the repository", a
   assert.ok(fs.existsSync(path.join(skillDir, "record-evidence", "SKILL.md")));
   assert.equal(fs.existsSync(installed), false);
 });
+
+for (const project of [false, true]) {
+  test(`selected iterate-evidence preserves dependency ownership in ${project ? "project" : "home"} installs`, () => {
+    const home = tmpdir("iterate-evidence-home-");
+    const cwd = tmpdir("iterate-evidence-project-");
+    const options = { targets: ["oh-my-pi"], skillNames: ["iterate-evidence"], project, cwd, home, env };
+    const skillDir = destinations("oh-my-pi", options).skills;
+    const foreign = path.join(skillDir, "foreign", "sentinel");
+    const task = path.join(cwd, ".agents", "tasks", "existing", "task.md");
+    put(foreign, "unrelated resource\n");
+    put(task, "existing task\n");
+
+    const assertInstalled = () => {
+      assert.deepEqual(fs.readdirSync(skillDir).sort(), ["foreign", "iterate-evidence", "record-evidence"]);
+      for (const file of ["SKILL.md", "references/evidence_iteration_template.md", "references/inspection_acceptance.md", "references/evidence_iteration_passed_answer.md", "references/evidence_iteration_stopped_answer.md"]) {
+        assert.ok(fs.readFileSync(path.join(skillDir, "iterate-evidence", file), "utf8").trim(), file);
+      }
+      assert.ok(fs.readFileSync(path.join(skillDir, "record-evidence", "SKILL.md"), "utf8").trim());
+      assert.ok(fs.readFileSync(path.join(skillDir, "record-evidence", "scripts", "evidence.py"), "utf8").trim());
+      assert.equal(fs.existsSync(path.join(home, ".atomic")), false);
+      assert.equal(fs.existsSync(path.join(cwd, ".atomic")), false);
+    };
+    const assertPreserved = () => {
+      assert.equal(fs.readFileSync(foreign, "utf8"), "unrelated resource\n");
+      assert.equal(fs.readFileSync(task, "utf8"), "existing task\n");
+      assert.equal(fs.existsSync(path.join(skillDir, "iterate-evidence")), false);
+      assert.ok(fs.existsSync(path.join(skillDir, "record-evidence", "SKILL.md")));
+    };
+
+    const selected = install(options);
+    assertInstalled();
+    uninstall(selected, home);
+    assertPreserved();
+
+    install({ ...options, skillNames: ["record-evidence"] });
+    const recorder = fs.readFileSync(path.join(skillDir, "record-evidence", "scripts", "evidence.py"));
+    const reinstalled = install(options);
+    assertInstalled();
+    uninstall(reinstalled, home);
+    assertPreserved();
+    assert.deepEqual(fs.readFileSync(path.join(skillDir, "record-evidence", "scripts", "evidence.py")), recorder);
+  });
+}
