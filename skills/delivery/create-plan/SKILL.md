@@ -15,8 +15,8 @@ Expand the structure outline into a detailed implementation plan with concrete e
 
 2. **Read primary inputs fully, others by summary**:
    - Read `references/plan_template.md` and `references/plan_final_answer.md`.
-   - Read completely: `task.md` or `ticket.md`, plus the design artifact this plan expands: the file the user named with `@...` when one is given, otherwise the newest design artifact (the highest-numbered file whose frontmatter `type` is a TDD, PRD, structure outline, or design discussion, in that order of preference).
-   - Other artifacts in the task directory listing: use the `summary` field. Open only when the design leaves a gap.
+   - Read completely: `task.md` or `ticket.md`, plus the design artifact this plan expands: the file the user named with `@...` when one is given, otherwise the current indexed TDD, PRD, structure outline, or design discussion, in that order of preference.
+   - Use summaries from other current indexed artifacts. Open only when the design leaves a gap.
 
 3. **Read relevant source files**:
    - Open source files named in research, design, or outline.
@@ -24,8 +24,7 @@ Expand the structure outline into a detailed implementation plan with concrete e
    - Use existing test patterns when planning tests.
 
 4. **Write the implementation plan**:
-   - Take the next artifact number.
-   - Write `NN-plan-<slug>.md` in the task directory.
+   - Record the next immutable `planning.plan` iteration through the conventions' Recording an artifact flow.
    - Convert each structure-outline phase into implementation steps.
    - Include concrete code examples where they clarify the change.
    - Include automated verification commands and real manual checks when needed.
@@ -43,4 +42,4 @@ Expand the structure outline into a detailed implementation plan with concrete e
 
 ## Output
 
-1. Save the plan and follow `references/plan_final_answer.md` exactly; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-plan-slug.md](.agents/tasks/<slug>/NN-plan-slug.md)`, fill `{artifact_file}` with the saved file's name only (the template carries the `@`; name this artifact and no other file, never a path), and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. Add no prose before or after the template. Commit the saved file with `git add <path>` as `docs(task): plan artifact`.
+1. Save the plan and follow `references/plan_final_answer.md` exactly; fill `{artifact_link}` and `{artifact_file}` with the saved canonical task-root-relative path (the template carries the `@`), and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. Add no prose before or after the template. Commit the canonical path and `index.json` explicitly as `docs(task): plan artifact`. A legacy task without `index.json` follows the conventions' legacy rules.
