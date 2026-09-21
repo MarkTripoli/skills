@@ -29,13 +29,13 @@ Read from this skill directory: `references/prd_template.md`, `references/prd_fi
 
 ## Step 1: Understand the context
 
-First, locate the task directory and read `task.md` per the conventions, creating it from the user's message when none exists. Then read primary inputs fully: task or ticket, design discussion if present (otherwise the newest artifact of type `research`), the newest artifact of type `sources` when one exists, every user-mentioned file. For other artifacts in the task directory listing: use `summary` field, open only when summary shows it bears on PRD, read by heading. Exclude research-question artifacts. Read `references/prd_template.md` before writing.
+Locate the task and read `task.md`. Read task/ticket, current `design.discussion` or `research.primary`, current `research.sources`, and user-mentioned files fully. Use summaries from other current indexed artifacts. Exclude research questions. Read the template before writing.
 
 PRD can start from detailed ticket, research, design discussion, gathered sources, or short request. Ground claims in source. Reference upstream artifacts; do not copy. If context is thin, ask questions instead of inventing. Capture product implications of technical constraints; leave implementation for TDD.
 
 ## Converting an existing product document
 
-When the request asks to convert, import, adopt, or port an existing PRD, product spec, or brief, and the newest artifact of type `sources` (or a file the user names) holds it, the interview does not run. Write the whole PRD in one pass and stop at Step 6:
+When the request converts an existing PRD/spec and current `research.sources` (or a named file) holds it, skip the interview and write the PRD in one pass:
 
 1. Map the source onto the template: its problem statement and user impact become Problem to Solve; its goals, metrics, or success criteria become Success Measures; its chosen approach becomes Proposed Solution; rejected options become Alternative Solutions Considered; each requirement, user story, flow, or acceptance criterion becomes one Solution Details obligation with an observable outcome; its non-goals become Out of Scope. Beside each mapped statement cite the source as the sources artifact records it: location and pointer.
 2. A template section the source does not cover reads `Not stated in <source title>.` followed by the closest fact the source gives, never an invented one. Each such section, and each source statement too vague to be one obligation, becomes one `### Known limits` item and one `### Verify` box naming the decision the reader must make.
@@ -48,7 +48,7 @@ If work touches UI, mockups look like the user's product, not a generic template
 
 ## Step 2: Write the skeleton
 
-Take the next artifact number and write `NN-prd-<slug>.md` in the task directory. Keep first skeleton small: frontmatter with `type: design-prd`, task, repo, branch, sha; title; first draft Problem to Solve; empty headers for success signal, Proposed Solution, Alternative Solutions Considered, Solution Details, Out of Scope. Save, stop, open foundation with one question. Quote Problem to Solve so user reacts to exact wording.
+Allocate the next immutable `design.prd` iteration through the conventions' Recording an artifact flow. Keep first skeleton small: frontmatter with `type: design-prd`, task, repo, branch, sha; title; first draft Problem to Solve; empty headers for success signal, Proposed Solution, Alternative Solutions Considered, Solution Details, Out of Scope. Save the staging document while interviewing; record it only when the iteration is ready for handoff. Quote Problem to Solve so user reacts to exact wording.
 
 ## Step 3: Settle the foundation
 
@@ -66,6 +66,6 @@ When solution seems complete, stop. Ask user to read Solution Details top to bot
 
 ## Step 6: Wrap up
 
-When user approves solution: save the file, read `references/prd_final_answer.md`, follow template exactly; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-prd-slug.md](.agents/tasks/<slug>/NN-prd-slug.md)`, fill `{artifact_file}` with the saved file's name only (the template carries the `@`; name this artifact and no other file, never a path), and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. Add no prose before or after the template. Commit the saved file with `git add <path>` as `docs(task): prd artifact`.
+When user approves solution: record the `design.prd` iteration, read `references/prd_final_answer.md`, and follow the template exactly. Fill `{artifact_link}` and `{artifact_file}` with the saved canonical task-root-relative path (the template carries the `@`), and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. Add no prose before or after the template. Commit the canonical path and `index.json` explicitly as `docs(task): prd artifact`. A legacy task without `index.json` follows the conventions' legacy rules.
 
 Start child workers for role `agent-codebase-locator` (finds files/tests), `agent-codebase-analyzer` (explains behavior), `agent-codebase-pattern-finder` (finds precedents), or `agent-web-search-researcher` (checks external docs) with the assignment (see the conventions' Child workers section) when a missing fact would change the artifact; wait for each; read its final message. Use only findings you have read from the worker's final message. If a child or direct read discovers current-state facts missing or stale in completed research, fold those into the research artifact before finalizing the PRD.
