@@ -4,7 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { evidencePathProblems, inspectEvidenceTrace, isEvidenceScenario, viewerTemporaryProof, reviewProblems } from "../evals/iterate-evidence.mjs";
+import { boundedWorkerLauncher, reservationCheckpoint, reservationGateDecision } from "../evals/worker-gate.mjs";
 import { counterFlowCoverage, normalize } from "../evals/evidence-flows.mjs";
+import { spawnSync } from "node:child_process";
 import { viewerToolDenial } from "../evals/iterate-evidence-hooks.mjs";
 import { createHash } from "node:crypto";
 import primaryScenario from "../evals/scenarios/iterate-evidence.mjs";
@@ -589,4 +591,89 @@ test("counterFlowCoverage resolves parenthetical, quoted, and mixed label forms 
   const r5 = counterFlowCoverage(make(mixedCharter, mixedCoverage), { increment: "failed", reset: "passed" });
   assert.ok(r5.increment, "mixed: parenthetical charter id and annotated result pass");
   assert.ok(r5.reset, "mixed: parenthetical coverage reset passes");
+});
+
+// A saved reservation, in the shape the installed template produces.
+function receiptText(overrides = {}) {
+  const fields = { type: "evidence-iteration", status: "in-progress", stop_reason: "none", consumed_rounds: "1", limit: "1", ...overrides };
+  return `---\n${Object.entries(fields).map(([key, value]) => `${key}: ${value}`).join("\n")}\n---\n\n## Round 1\n\n- Attempted finding IDs: IE-001.\n- Reservation persisted before any edit: yes.\n`;
+}
+
+const delegated = { round: 1, limit: 1, findingId: "IE-001" };
+const delegatedReceipt = "01-evidence-iteration-counter-no-progress.md";
+
+test("a terminal receipt is not a reservation for the delegated worker (F_NP_RESERVATION_V9)", () => {
+  assert.deepEqual(reservationCheckpoint(receiptText(), delegated.round, delegated.limit, delegated.findingId), []);
+  const decision = (text) => reservationGateDecision([{ receipt: delegatedReceipt, text }], delegated);
+  assert.equal(decision(receiptText()).approved.receipt, delegatedReceipt);
+  // The V9 shape: the subject wrote the final failed receipt, consumed_rounds already at 1.
+  assert.ok(decision(receiptText({ status: "failed" })).candidates[0].problems.includes("status is failed, not in-progress"));
+  for (const invalid of [
+    receiptText({ status: "failed" }),
+    receiptText({ status: "passed" }),
+    receiptText({ stop_reason: "no-progress" }),
+    receiptText({ consumed_rounds: "0" }),
+    receiptText({ limit: "3" }),
+    receiptText().replace("## Round 1", "## Round 1 checks completed"),
+    receiptText().replace("- Attempted finding IDs: IE-001.", "- Attempted finding IDs: IE-002."),
+    receiptText().replace("## Round 1\n\n", ""),
+    receiptText().replace("Reservation persisted before any edit: yes.", "Pre-round unresolved set: IE-001."),
+  ]) assert.equal(decision(invalid).approved, null, invalid);
+});
+
+test("the disclosed worker command starts the real worker only after a saved checkpoint", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "evidence-delegation-"));
+  try {
+    const taskDir = path.join(dir, ".agents", "tasks", "counter-no-progress");
+    const out = path.join(dir, "worker");
+    fs.mkdirSync(taskDir, { recursive: true });
+    fs.mkdirSync(out, { recursive: true });
+    const receipt = path.join(taskDir, delegatedReceipt);
+    const proof = path.join(dir, "worker-ran.txt");
+    const launcher = path.join(dir, "bounded-worker.mjs");
+    fs.writeFileSync(launcher, boundedWorkerLauncher({
+      module: new URL("../evals/worker-gate.mjs", import.meta.url).href,
+      taskDir,
+      out,
+      worker: [process.execPath, "-e", `require("node:fs").writeFileSync(${JSON.stringify(proof)}, "edited")`],
+      repo: dir,
+      ...delegated,
+    }));
+    const run = () => spawnSync(process.execPath, [launcher], { cwd: dir, encoding: "utf8" });
+    const attempts = () => fs.readFileSync(path.join(out, "delegation.jsonl"), "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
+
+    // Nothing saved yet: refused, no worker, and no reservation invented on the subject's behalf.
+    let result = run();
+    assert.equal(result.status, 3);
+    assert.ok(!fs.existsSync(proof));
+    assert.match(result.stderr, /no NN-evidence-iteration-\*\.md receipt saved/);
+    assert.equal(attempts().at(-1).allowed, false);
+
+    // V9's one-write terminal receipt: consumed_rounds is right, the checkpoint still is not.
+    fs.writeFileSync(receipt, receiptText({ status: "failed", stop_reason: "no-progress" }));
+    result = run();
+    assert.equal(result.status, 3);
+    assert.ok(!fs.existsSync(proof), "no worker runs against a terminal receipt");
+    assert.match(result.stderr, /status is failed, not in-progress/);
+    assert.equal(attempts().at(-1).receipt, null);
+
+    // The saved in-progress reservation admits the real worker and binds the approved bytes.
+    const reservation = receiptText();
+    fs.writeFileSync(receipt, reservation);
+    result = run();
+    assert.equal(result.status, 0);
+    assert.equal(fs.readFileSync(proof, "utf8"), "edited");
+    const approved = attempts().at(-1);
+    assert.equal(approved.allowed, true);
+    assert.equal(approved.receipt, delegatedReceipt);
+    assert.equal(approved.reservationSha256, createHash("sha256").update(Buffer.from(reservation)).digest("hex"));
+    assert.equal(JSON.parse(fs.readFileSync(path.join(out, "execution.json"), "utf8")).code, 0);
+
+    // One worker action only: the existing guard survives the gate.
+    result = run();
+    assert.notEqual(result.status, 3);
+    assert.match(result.stderr, /One worker action only/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

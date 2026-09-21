@@ -6,8 +6,10 @@ import readline from "node:readline";
 import { createHash } from "node:crypto";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { finished } from "node:stream/promises";
+import { pathToFileURL } from "node:url";
 import { artifacts, newest, placeholders, frontmatter, section } from "./lib.mjs";
 import { normalize } from "./evidence-flows.mjs";
+import { boundedWorkerLauncher, reservationCheckpoint } from "./worker-gate.mjs";
 
 const repairable = new Set(["app.js", "check.mjs"]);
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -49,7 +51,7 @@ mcp:
 
 export function snapshotEvidenceSources(root, dist) {
   const pinned = path.join(dist, "evidence-source");
-  for (const name of ["scripts/install.mjs", "scripts/lib", "skills", "runtimes", "shared", "package.json", "package-lock.json", "evals/iterate-evidence.mjs", "evals/iterate-evidence-hooks.mjs", "evals/lib.mjs", "evals/evidence-flows.mjs", "evals/fixtures/iterate-evidence", "evals/fixtures/iterate-evidence-three-rounds"]) {
+  for (const name of ["scripts/install.mjs", "scripts/lib", "skills", "runtimes", "shared", "package.json", "package-lock.json", "evals/iterate-evidence.mjs", "evals/iterate-evidence-hooks.mjs", "evals/lib.mjs", "evals/evidence-flows.mjs", "evals/worker-gate.mjs", "evals/fixtures/iterate-evidence", "evals/fixtures/iterate-evidence-three-rounds"]) {
     const target = path.join(pinned, name);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.cpSync(path.join(root, name), target, { recursive: true });
@@ -450,22 +452,17 @@ function retainedFile(out, relative) {
 // its step state. Identify the active round by its heading number, not global position;
 // historical completed-round headings in other sections must not shadow it.
 function activeReservation(text, round, limit, findingId, pendingRepair = false) {
-  const fm = frontmatter(text);
-  if (fm?.status !== "in-progress" || fm.stop_reason !== "none"
-    || fm.consumed_rounds !== String(round) || fm.limit !== String(limit)) return false;
+  // The saved checkpoint is the same structure the delegated-worker gate admits: active frontmatter,
+  // an unencumbered round record, and no terminal-marker heading for that round.
+  if (reservationCheckpoint(text, round, limit, findingId).length) return false;
+  if (!pendingRepair) return true;
   const headings = [...text.matchAll(/^#{2,6}\s+Round\s+(\d+)([^\n]*)$/gmi)];
-  // Select by round number. A terminal-marker suffix (e.g. "checks completed") on any
-  // heading for this round means the round is no longer active. Other round numbers
-  // (historical sections) do not affect selection of the target round.
+  // Select by round number. Other round numbers (historical sections) do not affect selection.
   const roundHeadings = headings.filter((h) => Number(h[1]) === round);
-  const reservationHead = roundHeadings.find((h) => ["", "reservation"].includes(h[2].trim().toLowerCase()));
-  if (!reservationHead || roundHeadings.some((h) => !["", "reservation"].includes(h[2].trim().toLowerCase()))) return false;
-  const current = reservationHead;
+  const current = roundHeadings.find((h) => ["", "reservation"].includes(h[2].trim().toLowerCase()));
   const body = section(text, current[0], { last: true }) ?? "";
-  if (!(body.match(/\bIE-\d+\b/g) ?? []).includes(findingId) || !/\breserv(?:ation|ed)\b/i.test(`${current[2]} ${body}`)) return false;
   let stepDeclared = false;
   const declarations = [];
-  if (!pendingRepair) return true;
   // Use the shared normalize helper for all value comparisons: strips parenthetical/bracketed
   // annotations, surrounding quotes/backticks, trailing punctuation, and collapses whitespace.
   const clean = normalize;
@@ -801,22 +798,38 @@ async function boundedEvidenceProblems(out, setup, trace, snapshots, base, final
   if (zeroLimit(name) || noProgress(name)) require(states.every((state) => state.files["check.mjs"]?.sha256 === base.files["check.mjs"].sha256), "check changed without authorized improvement");
   require(json(retainedFile(out, "initial-check.json")).code === 0, "initial browser setup failed");
   if (noProgress(name)) {
+    // The delegation boundary decides before the worker starts; grade its retained decision, so a
+    // missing checkpoint is reported as a refused delegation instead of an inferred snapshot gap.
+    const attempts = fs.existsSync(path.join(out, "worker", "delegation.jsonl"))
+      ? split(fs.readFileSync(path.join(out, "worker", "delegation.jsonl"), "utf8")).map((line) => JSON.parse(line))
+      : [];
+    const approval = attempts.at(-1);
+    const reasons = approval?.candidates?.length
+      ? approval.candidates.map((candidate) => `${candidate.receipt}: ${candidate.problems.join("; ")}`).join(" | ")
+      : "no receipt saved in the task directory";
+    require(Boolean(approval?.allowed), `bounded worker delegated without a persisted in-progress reservation (${approval ? reasons : "no delegation attempt recorded"})`);
     const original = fs.readFileSync(retainedFile(out, `blobs/${base.files["app.js"].sha256}`), "utf8");
     const final = fs.readFileSync(retainedFile(out, `blobs/${finalState.files["app.js"].sha256}`), "utf8");
     require(final === original.replace("const unusedIncrement = 2;", "const unusedIncrement = 1;"), "fault action must change only the unused setting");
-    require(json(retainedFile(out, "worker/execution.json")).code === 0, "real bounded worker did not complete");
-    const worker = await inspectEvidenceTrace(retainedFile(out, "worker/trace.jsonl"));
-    problems.push(...worker.problems.map((item) => `worker: ${item}`));
-    require(worker.tools.some((call) => call.name === "edit"), "worker trace lacks real edit");
-    const workerSnapshots = loadSnapshots(path.join(out, "worker"));
-    require(workerSnapshots[0]?.state.files["app.js"].sha256 === base.files["app.js"].sha256 && workerSnapshots.at(-1)?.state.files["app.js"].sha256 === finalState.files["app.js"].sha256, "worker snapshots do not bind actual source transition");
-    const workerStart = workerSnapshots[0]?.state;
-    for (const snapshot of workerSnapshots) {
-      for (const file of new Set([...Object.keys(workerStart?.files ?? {}), ...Object.keys(snapshot.state.files)])) {
-        if (file !== "app.js") require(JSON.stringify(snapshot.state.files[file]) === JSON.stringify(workerStart.files[file]), `bounded worker changed ${file}`);
+    if (approval?.allowed) {
+      const mutatedAt = allSnapshots.find((item) => item.state.files["app.js"]?.sha256 === finalState.files["app.js"].sha256);
+      require(allSnapshots.some((item) => item.sequence < (mutatedAt?.sequence ?? -1)
+        && Object.entries(item.state.files).some(([file, value]) => /\/\d{2}-evidence-iteration-/.test(file) && value.sha256 === approval.reservationSha256)),
+        "delegated worker started before its approved in-progress reservation was on disk");
+      require(json(retainedFile(out, "worker/execution.json")).code === 0, "real bounded worker did not complete");
+      const worker = await inspectEvidenceTrace(retainedFile(out, "worker/trace.jsonl"));
+      problems.push(...worker.problems.map((item) => `worker: ${item}`));
+      require(worker.tools.some((call) => call.name === "edit"), "worker trace lacks real edit");
+      const workerSnapshots = loadSnapshots(path.join(out, "worker"));
+      require(workerSnapshots[0]?.state.files["app.js"].sha256 === base.files["app.js"].sha256 && workerSnapshots.at(-1)?.state.files["app.js"].sha256 === finalState.files["app.js"].sha256, "worker snapshots do not bind actual source transition");
+      const workerStart = workerSnapshots[0]?.state;
+      for (const snapshot of workerSnapshots) {
+        for (const file of new Set([...Object.keys(workerStart?.files ?? {}), ...Object.keys(snapshot.state.files)])) {
+          if (file !== "app.js") require(JSON.stringify(snapshot.state.files[file]) === JSON.stringify(workerStart.files[file]), `bounded worker changed ${file}`);
+        }
       }
+      problems.push(...evidencePathProblems(base, workerSnapshots.map((item) => item.state), [], setup.taskRel));
     }
-    problems.push(...evidencePathProblems(base, workerSnapshots.map((item) => item.state), [], setup.taskRel));
   }
   if (resumed) {
     const interruption = json(retainedFile(out, "interrupted/interruption.json"));
@@ -1157,12 +1170,23 @@ export async function runEvidenceScenario(scenario, runDir, pinned, options) {
       const workerPrompt = "Bounded fault action only: in app.js change the unused setting `const unusedIncrement = 2;` to `const unusedIncrement = 1;`. Edit no other line or file. Do not run checks, repair the handler, change expectations, create findings/receipts or commit. Report the exact edit.";
       const workerArgs = ["-p", "--auto-approve", "--mode", "json", "--session-dir", path.join(workerOut, "sessions"), "--no-extensions", "--no-skills", "--no-rules", "--no-lsp", "--no-title", "--tools", "read,edit", "--extension", path.join(pinned, "evals", "iterate-evidence-hooks.mjs"), "--max-time=5m", ...(options.model ? ["--model", options.model] : []), workerPrompt];
       const workerScript = path.join(browserDir, "bounded-worker.mjs");
-      fs.writeFileSync(workerScript, `import fs from "node:fs";\nimport {spawnSync} from "node:child_process";\nconst out=${JSON.stringify(workerOut)};\nif(fs.existsSync(out+"/execution.json")) throw new Error("One worker action only");\nconst result=spawnSync("omp",${JSON.stringify(workerArgs)},{cwd:${JSON.stringify(repo)},env:{...process.env,ITERATE_EVIDENCE_OBSERVER:out+"/observer-config.json"},stdio:["ignore",fs.openSync(out+"/trace.jsonl","wx"),fs.openSync(out+"/stderr.log","wx")],timeout:360000});\nfs.writeFileSync(out+"/execution.json",JSON.stringify({code:result.status,signal:result.signal,error:result.error?.message??null}));\nconsole.log("Bounded worker exit",result.status);process.exitCode=result.status??1;\n`);
+      // The disclosed command is the delegation boundary: it verifies the saved receipt before it
+      // starts the worker, so an unreserved delegation fails closed instead of being graded later.
+      fs.writeFileSync(workerScript, boundedWorkerLauncher({
+        module: pathToFileURL(path.join(pinned, "evals", "worker-gate.mjs")).href,
+        taskDir,
+        out: workerOut,
+        worker: ["omp", ...workerArgs],
+        repo,
+        round: 1,
+        limit: 1,
+        findingId: "IE-001",
+      }));
       config.protectedEvidence = [`${taskRel}/evidence/browser/bounded-worker.mjs`];
       // Include the immutable worker command in the initial authority snapshot.
       const workerBase = evidenceSnapshot(config, { sequence: 0, boundary: "base" });
       fs.copyFileSync(path.join(out, workerBase.path), path.join(out, "base-state.json"));
-      prompt += `\n\nDisclosed bounded worker fault: after you inspect baseline pixels and persist IE-001 plus round 1 reservation, delegate by executing node ${workerScript}. This launches a real isolated OMP worker whose only action changes the unused increment setting from 2 to 1, leaving the handler untouched. Do not make any other app/check edit, do not invoke another worker, and do not substitute a fabricated worker result. Then serve/capture/inspect the changed source normally, reconcile actual progress, and apply stop precedence. Keep check.mjs unchanged.`;
+      prompt += `\n\nDisclosed bounded worker fault: after you inspect baseline pixels and persist IE-001 plus round 1 reservation, delegate by executing node ${workerScript}. That command verifies the saved receipt before it starts anything and writes no reservation for you: unless the receipt on disk is already an in-progress round 1 reservation, it refuses, starts no worker, and names the exact missing checkpoint — save that reservation and run the same command again. When it runs, it launches a real isolated OMP worker whose only action changes the unused increment setting from 2 to 1, leaving the handler untouched. Do not make any other app/check edit, do not invoke another worker, and do not substitute a fabricated worker result. Then serve/capture/inspect the changed source normally, reconcile actual progress, and apply stop precedence. Keep check.mjs unchanged.`;
     }
     if (baselineInput) prompt += `\n\nNamed external evidence baseline: ${path.relative(repo, baselineInput)}. Compare its source hashes, environment and coverage before reuse, then inspect its recorded pixels. Limit 0: do not edit source/checks. Preserve the baseline receipt, raw/rendered recording, manifest, report and labels unchanged. Put any additional extracted samples beside the recording.`;
     if (config.blocked) {
