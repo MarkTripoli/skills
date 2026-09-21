@@ -7,7 +7,7 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 # Plan Implementation Orchestrator
 
-Coordinate an approved plan artifact in `.agents/tasks/<slug>/`. Start focused child workers, verify them, advance on green automated checks, and hand off after implementation is complete. Do not do bulk implementation inline.
+Coordinate the current approved `planning.plan` artifact in the configured task directory. Start focused child workers, verify them, advance on green automated checks, and hand off after implementation is complete. Do not do bulk implementation inline.
 
 ## Workflow
 
@@ -15,7 +15,7 @@ Coordinate an approved plan artifact in `.agents/tasks/<slug>/`. Start focused c
 
 - Locate the task directory and read `task.md` per the conventions, including the create-when-missing rule.
 - If the user supplied a specific plan path or `@file`, use that file.
-- Otherwise use the newest artifact of type `plan`; list the task directory and resolve ambiguity before reading one.
+- Otherwise use current `planning.plan` from `index.json`.
 - Read the selected plan completely. Work from the implementation overview, shared constraints, the first incomplete phase, and that phase's acceptance checks. Completed or later phase bodies matter only when the current phase depends on them. Read `task.md` or `ticket.md` again only when needed for ticket identity, deferred evidence pointers, or acceptance language.
 - The current phase is the first phase whose checkboxes are not all checked. The receipt you write at the end of the phase is the review artifact for that phase.
 - If no plan is found, ask for the plan path and stop.
@@ -38,7 +38,7 @@ Inspect the implementer report and confirm:
 
 If the child says the plan cannot be followed, present that mismatch to the user instead of improvising a new direction.
 
-The child never writes into `.agents/tasks/`. Its final message ends with a `## Plan Checkboxes Earned` section listing each checkbox earned by an automated check that ran and passed, with the passing command. Apply those updates to the plan file yourself: edit it in place, tick only the checkboxes backed by a recorded passing command, and leave every other checkbox open. Continue phase resolution from the updated file.
+The child never writes task artifacts. Its final message ends with a `## Plan Checkboxes Earned` section listing each checkbox earned by an automated check that ran and passed, with the passing command. For an indexed task, copy the current plan to the next `planning.plan` iteration, tick only checkboxes backed by recorded passing commands, and record that iteration; never edit the current record. A legacy task without `index.json` follows the conventions' in-place rule. Continue phase resolution from the updated current plan.
 
 ### 4. Run missed automated checks
 
@@ -46,9 +46,9 @@ Run checks the child missed and checks the plan makes mandatory: build, test, li
 
 ### 5. Report the phase to the human
 
-After each verified numeric phase, take the next artifact number, write one receipt `NN-implementation-<slug>.md` from `references/implementation_template.md`, and save the file in the task directory, even when later phases remain. Set `completed_phase` to the highest proven plan phase. Fill `Human Review` with exact targets, checks, and known limits.
+After each verified numeric phase, record the updated plan iteration first, then record the next immutable `implementation.receipt` from `references/implementation_template.md`, even when later phases remain. Set `completed_phase` to the highest proven plan phase. Fill `Human Review` with exact targets, checks, and known limits.
 
-Use `references/implementation_phase_final_answer.md` between numeric phases and `references/implementation_final_answer.md` only after the terminal phase. Fill `{artifact_link}` with a relative Markdown link to the receipt, `[NN-implementation-slug.md](.agents/tasks/<slug>/NN-implementation-slug.md)`, copy its checks, invoke this skill with the same plan between phases, and keep the command fence last.
+Use `references/implementation_phase_final_answer.md` between numeric phases and `references/implementation_final_answer.md` only after the terminal phase. Fill `{artifact_link}` with the receipt's canonical task-root-relative path, copy its checks, invoke this skill with the current plan path between phases, and keep the command fence last.
 
 Then summarize:
 
@@ -69,7 +69,7 @@ Automated checks are green, so implementation continues to the next phase.
 
 ### 6. Commit and continue
 
-When every Automated Verification checkbox in the phase is checked with a recorded passing result, create a focused commit with a Conventional Commits subject (conventions, Commits section) and start the next phase without waiting. Stage explicit code paths with `git add`; never stage the whole repository, and never mix `.agents/tasks/` files into the code commit. Commit the ticked plan and the receipt separately with `git add <path>` as `docs(task): implementation artifact`. `/ci-commit` stays the manual fallback for work outside this flow.
+When every Automated Verification checkbox in the phase is checked with a recorded passing result, create a focused commit with a Conventional Commits subject and start the next phase without waiting. Stage explicit code paths with `git add`; never stage the whole repository or mix task artifacts into the code commit. Commit the plan iteration, receipt, and `index.json` separately with explicit paths as `docs(task): implementation artifact`. `/ci-commit` stays the manual fallback outside this flow.
 
 ### 7. Repeat for the next phase
 
@@ -109,7 +109,7 @@ Every phase advances on green automated checks. Start a fresh implementer worker
 
 Read `references/implementation_template.md`, `references/implementation_phase_final_answer.md`, and `references/implementation_final_answer.md`.
 
-If you write an implementation receipt or update the plan artifact, take the next artifact number for a new `NN-implementation-*.md` file.
+If you update the indexed plan or write a receipt, record the next immutable iteration in `planning.plan` and `implementation.receipt` respectively through the conventions' Recording an artifact flow.
 
 ## After Final Phase Completion
 
