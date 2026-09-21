@@ -37,7 +37,7 @@ atomic/lib/models.mjs       candidate validation and economy/JEV policy
 atomic/lib/controller.mjs   checkpoint and selector transport
 atomic/workflows/delivery.ts  available_models workflow input
 docs/model-routing.md       public contract
-.changeset/...               minor release note
+.changeset/...               patch release note
 tests/atomic-model-routing.test.mjs  availability and escalation coverage
 ```
 
