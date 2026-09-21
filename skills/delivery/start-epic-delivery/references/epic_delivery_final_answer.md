@@ -7,7 +7,7 @@ Check:
 - Known limits: {known_limits}
 
 Wave 1 children and their first manual skill commands:
-- `{child_slug}` ({child_issue}), task directory `.agents/tasks/{child_slug}/`: `{child_start_command}`
+- `{child_slug}` ({child_issue}), task directory `<task-root>/{child_slug}/`: `{child_start_command}`
 
 Each child starts in a fresh session in its own worktree cut from the epic branch recorded as `base` in its `task.md`. <Name the epic branch and the worktree creation command for each child; identify existing child worktrees from observed state. For oneshot children, say to choose manual delivery, implement, verify, and commit before review.> The child's pull request targets that epic branch and closes its recorded issue when present.
 
