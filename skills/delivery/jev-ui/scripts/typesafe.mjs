@@ -2,16 +2,20 @@ import {independentPostconditions, normalizedExpected} from './outcome.mjs';
 import {systemOne as canonicalSystemOne, apiKey as canonicalApiKey, lastCall} from '../../typed-judgment/judge.mjs';
 
 export function choices(snapshot, goal = '', expected = [], recentActions = []) {
-  const operations = [...new Set([...snapshot.elements.flatMap(e=>e.operations.map(x=>String(x).toUpperCase())), 'DONE'])];
+  const allOperations = [...new Set([...snapshot.elements.flatMap(e=>e.operations.map(x=>String(x).toUpperCase())), 'DONE'])];
   const requestedText = `${goal} ${Array.isArray(expected) ? expected.join(' ') : ''}`.toLowerCase();
   const ambiguous = snapshot.elements.filter(e => e.valueAmbiguous === true && e.editable === true).map(e => e.id);
   const editableRole = /(?:input|edittext|textfield|textbox|textarea|combobox)/i;
   const requirements = normalizedExpected(expected);
   const expectedVisible = requirements.length > 0 && independentPostconditions(requirements, snapshot).length === requirements.length;
+  const attemptedTextTargets = new Set((Array.isArray(recentActions) ? recentActions : []).filter(action => ['FILL', 'TYPE_TEXT'].includes(String(action.operation || '').toUpperCase()) && action.target != null).map(action => String(action.target)));
   const changedTextTargets = new Set((Array.isArray(recentActions) ? recentActions : []).filter(action => action?.changed === true && ['FILL', 'TYPE_TEXT'].includes(String(action.operation || '').toUpperCase()) && action.target != null).map(action => String(action.target)));
-  const relevantAmbiguity = snapshot.elements.filter(e => e.valueAmbiguous === true && e.editable === true && !changedTextTargets.has(String(e.id)) && requestedText.includes(String(e.value ?? e.name ?? '').toLowerCase())).map(e => e.id);
+  const relevantAmbiguity = snapshot.elements.filter(e => e.valueAmbiguous === true && e.editable === true && !attemptedTextTargets.has(String(e.id)) && requestedText.includes(String(e.value ?? e.name ?? '').toLowerCase())).map(e => e.id);
+  const iosNeedsConfirmation = snapshot.surface === 'ios' && attemptedTextTargets.size > 0 && allOperations.includes('TAP') && !expectedVisible;
+  const operations = allOperations.filter(op => !((op === 'WAIT' && (relevantAmbiguity.length > 0 || iosNeedsConfirmation)) || (op === 'DONE' && attemptedTextTargets.size > 0 && allOperations.includes('TAP') && !expectedVisible)));
+  const attemptedText = attemptedTextTargets.size ? ` A recent text action was attempted on target(s) ${[...attemptedTextTargets].join(', ')}; do not repeat text entry solely because a label/value remains observationally ambiguous.` : '';
   const recentlyChanged = changedTextTargets.size ? ` A recent text action changed the observed UI for target(s) ${[...changedTextTargets].join(', ')}; do not repeat text entry solely because a label/value remains observationally ambiguous.` : '';
-  const stateFacts = `${ambiguous.length ? ` Current observation has ambiguous editable values (${ambiguous.join(', ')}); label/value equality does not establish requested text.` : ''}${recentlyChanged} Expected postcondition independently visible now: ${expectedVisible ? 'yes' : 'no'}.`;
+  const stateFacts = `${ambiguous.length ? ` Current observation has ambiguous editable values (${ambiguous.join(', ')}); label/value equality does not establish requested text.` : ''}${attemptedText}${recentlyChanged} Expected postcondition independently visible now: ${expectedVisible ? 'yes' : 'no'}.`;
   const operationCriteria = op => {
     if (op === 'DONE') return `Finish only when the expected postcondition is independently visible. Current facts:${stateFacts}`;
     if (relevantAmbiguity.length && op === 'TYPE_TEXT') return `Perform TYPE_TEXT on a compatible indexed target. Current facts:${stateFacts} The ambiguous editable target(s) ${relevantAmbiguity.join(', ')} are relevant to the requested text; TYPE_TEXT is the operation that can establish their value.`;
@@ -19,7 +23,7 @@ export function choices(snapshot, goal = '', expected = [], recentActions = []) 
     return `Perform ${op} on a compatible indexed target. Current facts:${stateFacts}`;
   };
   const targets = Object.fromEntries(operations.filter(op => op !== 'DONE').map(op => [`${op.toLowerCase()}_target`, {type:'choice', instructions:`Choose the indexed target for ${op}.`, criteria:Object.fromEntries(snapshot.elements.filter(e => e.operations.map(x=>String(x).toUpperCase()).includes(op)).map(e => {
-    const isAmbiguous = e.valueAmbiguous === true && e.editable === true && !changedTextTargets.has(String(e.id)) && requestedText.includes(String(e.value ?? '').toLowerCase());
+    const isAmbiguous = e.valueAmbiguous === true && e.editable === true && !attemptedTextTargets.has(String(e.id)) && requestedText.includes(String(e.value ?? '').toLowerCase());
     const suffix = isAmbiguous ? ' Observed value is ambiguous and must not be treated as established for the requested text; choose an operation that establishes it if needed.' : '';
     return [e.id, `${op} target ${e.id}: ${e.name}${suffix}`];
   })), choices:snapshot.elements.filter(e => e.operations.map(x=>String(x).toUpperCase()).includes(op)).map(e => e.id)}]));

@@ -1,0 +1,24 @@
+// !$*UTF8*$!
+{
+ archiveVersion = 1; objectVersion = 56; objects = {
+  111111111111111111111111 /* Project object */ = {isa = PBXProject; attributes = {LastUpgradeCheck = 2650;}; buildConfigurationList = 222222222222222222222222; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; knownRegions = (en,); mainGroup = 333333333333333333333333; productRefGroup = 444444444444444444444444; projectDirPath = ""; projectRoot = ""; targets = (555555555555555555555555,);};
+  333333333333333333333333 = {isa = PBXGroup; children = (666666666666666666666666,777777777777777777777777,888888888888888888888888); sourceTree = "<group>";};
+  444444444444444444444444 = {isa = PBXGroup; children = (999999999999999999999999,); name = Products; sourceTree = "<group>";};
+  666666666666666666666666 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>";};
+  777777777777777777777777 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>";};
+  888888888888888888888888 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>";};
+  999999999999999999999999 = {isa = PBXFileReference; explicitFileType = wrapper.application; path = JEVFixture.app; sourceTree = BUILT_PRODUCTS_DIR;};
+  A111111111111111111111111 = {isa = PBXBuildFile; fileRef = 666666666666666666666666;};
+  A222222222222222222222222 = {isa = PBXBuildFile; fileRef = 777777777777777777777777;};
+  B111111111111111111111111 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A111111111111111111111111,A222222222222222222222222,); runOnlyForDeploymentPostprocessing = 0;};
+  C111111111111111111111111 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
+  D111111111111111111111111 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
+  555555555555555555555555 = {isa = PBXNativeTarget; buildConfigurationList = E222222222222222222222222; buildPhases = (B111111111111111111111111,C111111111111111111111111,D111111111111111111111111,); buildRules = (); dependencies = (); name = JEVFixture; productName = JEVFixture; productReference = 999999999999999999999999; productType = "com.apple.product-type.application";};
+  222222222222222222222222 = {isa = XCConfigurationList; buildConfigurations = (E111111111111111111111111,E333333333333333333333333); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;};
+  E222222222222222222222222 = {isa = XCConfigurationList; buildConfigurations = (E444444444444444444444444,E555555555555555555555555); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;};
+  E111111111111111111111111 = {isa = XCBuildConfiguration; buildSettings = {SDKROOT = iphoneos;}; name = Debug;};
+  E333333333333333333333333 = {isa = XCBuildConfiguration; buildSettings = {SDKROOT = iphoneos;}; name = Release;};
+  E444444444444444444444444 = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = ""; CODE_SIGNING_ALLOWED = NO; CODE_SIGNING_REQUIRED = NO; INFOPLIST_FILE = Info.plist; PRODUCT_BUNDLE_IDENTIFIER = ai.typesafe.jevfixture; PRODUCT_NAME = JEVFixture; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1;}; name = Debug;};
+  E555555555555555555555555 = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = ""; CODE_SIGNING_ALLOWED = NO; CODE_SIGNING_REQUIRED = NO; INFOPLIST_FILE = Info.plist; PRODUCT_BUNDLE_IDENTIFIER = ai.typesafe.jevfixture; PRODUCT_NAME = JEVFixture; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1;}; name = Release;};
+ }; rootObject = 111111111111111111111111;
+}

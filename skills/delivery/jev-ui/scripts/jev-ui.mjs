@@ -6,7 +6,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {generateText} from './text-helper.mjs';
 import {sanitizeNativeSnapshot} from './native-safe.mjs';
-function safeSnapshot(snapshot) { if (snapshot?.surface === 'android') { const safe = sanitizeNativeSnapshot(snapshot); delete safe.raw; return safe; } const safe = {...(snapshot || {})}; delete safe.raw; return safe; }
+function safeSnapshot(snapshot) { if (snapshot?.surface === 'android' || snapshot?.surface === 'ios') { const safe = sanitizeNativeSnapshot(snapshot); delete safe.raw; return safe; } const safe = {...(snapshot || {})}; delete safe.raw; return safe; }
 // Fresh observations retain ordinary values; safeSnapshot removes only raw driver payloads and sensitive fields.
 async function defaultTypesafe(request) {
   const {systemOne}=await import('./typesafe.mjs');
@@ -25,7 +25,7 @@ export async function run({goal,expectedPostconditions=[],limits={},session,adap
     if (!session) throw Object.assign(new Error('browser session is required'),{code:'driver'});
     let snapshot=safeSnapshot(await adapter.observe(session)); receipt.observations.push(snapshot);
     while(actions < maxActions && models < maxModels) {
-      const picked=await chooser({goal,snapshot,expected:expectedPostconditions,recentActions:recentActions.slice(-3).map(({operation,target,changed})=>({operation,target,changed})),systemOne:typesafe}); models++; const d=validateDecision(picked.decision,snapshot);
+      const chooserHistory=recentActions.slice(-3); const lastTextAction=[...recentActions].reverse().find(action=>['FILL','TYPE_TEXT'].includes(String(action.operation||'').toUpperCase())); if(lastTextAction&&!chooserHistory.includes(lastTextAction)) chooserHistory.unshift(lastTextAction); const picked=await chooser({goal,snapshot,expected:expectedPostconditions,recentActions:chooserHistory.map(({operation,target,changed})=>({operation,target,changed})),systemOne:typesafe}); models++; const d=validateDecision(picked.decision,snapshot);
       receipt.decisions.push({operation:d.operation,target:d.target,model:picked.model,usage:picked.usage});
       const state={consumed:false}; consumeDecision(state,d);
       if (d.operation==='DONE') { const observed=safeSnapshot(await adapter.observe(session)); receipt.observations.push(observed); receipt.observedPostconditions=independentPostconditions(expectedPostconditions,observed); receipt.status=verifyObservedPostconditions(expectedPostconditions,observed)?'passed':'failed'; receipt.reason=receipt.status==='passed'?'expected postconditions independently observed':'expected postconditions not observed independently'; return receipt; }
@@ -38,19 +38,19 @@ export async function run({goal,expectedPostconditions=[],limits={},session,adap
 }
 export function configuredHelper(){ const value=process.env.JEV_UI_TEXT_HELPER; if(!value) return undefined; try { const parsed=JSON.parse(value); if(Array.isArray(parsed)) return parsed; if(parsed&&typeof parsed==='object'&&typeof parsed.program==='string'&&Array.isArray(parsed.args)) return [parsed.program,...parsed.args]; return value; } catch { return value; } }
 export async function closeOwnedBrowser(session, platform='browser') { if (platform !== 'browser' || !session?.close) return null; try { await session.close(); return null; } catch (error) { return error; } }
-function help(platform){ const target=platform==='android'?'Android via an explicitly selected adb serial and optional app package':'Browser via an owned agent-browser session'; console.log(`Usage: node skills/delivery/jev-ui/scripts/jev-ui.mjs --platform ${platform||'browser'} --url URL --goal TEXT [--expected TEXT] [--target ID] [--app PACKAGE] [--max-actions N] [--max-models N]\n${target}. Native runs require the selected target and installed driver; set JEV_UI_TEXT_HELPER to a JSON command when text entry is needed; record-evidence is optional for this generic controller.`); }
+function help(platform){ const target=platform==='android'?'Android via an explicitly selected adb serial and optional app package':platform==='ios'?'iOS simulator via an explicitly selected idb companion':'Browser via an owned agent-browser session'; console.log(`Usage: node skills/delivery/jev-ui/scripts/jev-ui.mjs --platform ${platform||'browser'} --url URL --goal TEXT [--expected TEXT] [--target ID] [--app PACKAGE] [--max-actions N] [--max-models N]\n${target}. Native runs require the selected target and installed driver; set JEV_UI_TEXT_HELPER to a JSON command when text entry is needed; record-evidence is optional for this generic controller.`); }
 const invokedPath=process.argv[1];
 if (invokedPath && invokedPath !== '-' && fs.existsSync(invokedPath) && fs.realpathSync(fileURLToPath(import.meta.url))===fs.realpathSync(path.resolve(invokedPath))) {
   const arg=n=>{const i=process.argv.indexOf(n);return i>=0?process.argv[i+1]:undefined};
   const platform=arg('--platform')||'browser';
-  if(!['browser','android'].includes(platform)) { console.error('--platform must be browser or android'); process.exit(2); }
+  if(!['browser','android','ios'].includes(platform)) { console.error('--platform must be browser, android, or ios'); process.exit(2); }
   if(process.argv.includes('--help')||process.argv.length<3){help(platform);process.exit(0);}
   const target=arg('--target'); const app=arg('--app'); if(platform!=='browser'&&(!target||!app)){ console.error(`--target and --app are required for ${platform}`); process.exit(2); }
   const numberArg=(name,fallback)=>{const value=arg(name); if(value===undefined)return fallback; const parsed=Number(value); return Number.isSafeInteger(parsed)&&parsed>=0?parsed:fallback;};
   let session,adapter,result;
   try {
     if(platform==='browser') { session=await browserOpen({url:arg('--url')}); }
-    else { const {selectTarget}=await import('./drivers.mjs'); const selected=await selectTarget('android',{id:target}); if(selected.blocked) throw Object.assign(new Error(selected.reason),{code:'driver'}); session={id:selected.id,surface:'android',target:{id:selected.id,name:selected.name,app,simulator:selected.simulator},close:async()=>{}}; const native=await import('./android.mjs'); const identity={id:selected.id,name:selected.name,app,driver:selected.driver,simulator:selected.simulator}; adapter={observe:()=>native.observe(identity),act:(_s,s,a)=>native.act(identity,s,a)}; }
+    else { const {selectTarget}=await import('./drivers.mjs'); const selected=await selectTarget(platform,{id:target}); if(selected.blocked) throw Object.assign(new Error(selected.reason),{code:'driver'}); session={id:selected.id,surface:platform,target:{id:selected.id,name:selected.name,app,simulator:selected.simulator},close:async()=>{}}; if(platform==='android'){ const native=await import('./android.mjs'); const identity={id:selected.id,name:selected.name,app,driver:selected.driver,simulator:selected.simulator}; adapter={observe:()=>native.observe(identity),act:(_s,s,a)=>native.act(identity,s,a)}; } else { const native=await import('./ios.mjs'); const identity={id:selected.id,name:selected.name,app,driver:selected.driver,simulator:true,verifyDevice:true}; const observeNative=async()=>native.observe(identity); adapter={observe:observeNative,act:(_s,s,a)=>native.act(identity,s,a,{observe:observeNative})}; } }
     result=await run({goal:arg('--goal'),expectedPostconditions:arg('--expected')?[arg('--expected')]:[],limits:{maxActions:numberArg('--max-actions',10),maxModels:numberArg('--max-models',10)},session,adapter,helperCommand:configuredHelper()});
   } catch (error) { result={status:error.code==='driver'||error.code==='credentials'?'blocked':'failed',reason:error.message}; }
   const cleanupError=await closeOwnedBrowser(session,platform);
