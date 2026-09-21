@@ -13,7 +13,7 @@ Read the assignment text completely before reading files. Assignment may include
 
 ## Process
 
-Locate: If assignment has file, read it completely. If only a directory, list the task directory and choose the newest artifact (highest `NN`) whose frontmatter `type` is `plan`, `structure-outline`, `design-tdd`, or `design-prd`, in that order of preference. If none, report no comparison.
+Locate: If assignment has a file, read it completely. If only a task directory, select current indexed `planning.plan`, `planning.structure`, `design.tdd`, or `design.prd`, in that preference order. If none, report no comparison. Legacy no-index tasks use the conventions' scan rule.
 
 Extract: Capture files expected created/modified/deleted, patterns, boundaries, criteria, APIs/shapes/UI/commands/tests, manual checks. Concise notes. No long quotes.
 
@@ -23,7 +23,7 @@ Categorize: **As planned** (items in diff with expected behavior), **Deviations*
 
 ## Rules
 
-Factual, neutral. File/line references helping verify. Short, specific. `None` under empty. Focus on reviewer differences. Do not decide acceptable; report only. Do not mutate: never create, edit, delete, stage, or commit files, and never write into `.agents/tasks/`.
+Factual, neutral. File/line references helping verify. Short, specific. `None` under empty. Focus on reviewer differences. Do not decide acceptable; report only. Do not mutate: never create, edit, delete, stage, or commit files, and never write into the configured task root.
 
 ## Final Output
 
