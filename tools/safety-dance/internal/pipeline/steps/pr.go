@@ -126,8 +126,18 @@ func renderEvidence(ctx context.Context, repo *db.Repo, run *db.Run, prURL strin
 	}
 	files := make([]string, 0, len(items))
 	for i, item := range items {
-		target := filepath.Join(dir, fmt.Sprintf("evidence-%03d.txt", i+1))
-		if err := os.WriteFile(target, []byte(item+"\n"), 0o600); err != nil {
+		extension := ".txt"
+		content := []byte(item + "\n")
+		if info, statErr := os.Stat(item); statErr == nil && info.Mode().IsRegular() {
+			if ext := strings.ToLower(filepath.Ext(item)); ext != "" && len(ext) <= 10 {
+				extension = ext
+			}
+			if raw, readErr := os.ReadFile(item); readErr == nil {
+				content = raw
+			}
+		}
+		target := filepath.Join(dir, fmt.Sprintf("evidence-%03d%s", i+1, extension))
+		if err := os.WriteFile(target, content, 0o600); err != nil {
 			return "", err
 		}
 		files = append(files, target)
