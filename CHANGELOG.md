@@ -1,5 +1,139 @@
 # @marktripoli/skills
 
+## 3.3.0
+
+### Minor Changes
+
+- [#33](https://github.com/MarkTripoli/skills/pull/33) [`797751f`](https://github.com/MarkTripoli/skills/commit/797751f70460f6fbb3842425e36631907745a093) Thanks [@Triippz](https://github.com/Triippz)! - Add `iterate-evidence`, an independently installed companion to `record-evidence` for authorized, bounded recorded-pixel inspection and repair. Preserve findings, source and media identities, round history, checks, and current-revision coverage in one receipt. Selected installation includes the recorder without Atomic.
+
+- [#34](https://github.com/MarkTripoli/skills/pull/34) [`81db0c2`](https://github.com/MarkTripoli/skills/commit/81db0c25365d4f2493d06f47de9b775495fc43ee) Thanks [@Triippz](https://github.com/Triippz)! - Add the Safety Dance local Git gate tool and canonical operating skill.
+
+### Patch Changes
+
+- [#33](https://github.com/MarkTripoli/skills/pull/33) [`22f08b2`](https://github.com/MarkTripoli/skills/commit/22f08b21ca3b275f108bb4aa977ee13094337143) Thanks [@Triippz](https://github.com/Triippz)! - Compress iterate-evidence guidance and related documentation without changing behavior.
+
+- [#33](https://github.com/MarkTripoli/skills/pull/33) [`bb6fb3c`](https://github.com/MarkTripoli/skills/commit/bb6fb3c78d6dee555c190737de58a648a20c42af) Thanks [@Triippz](https://github.com/Triippz)! - fix(iterate-evidence): require bare image payload reads
+
+  Clarify iterate-evidence inspection instructions and eval guidance so required frame evidence binds to returned image bytes through bare retained image-path reads or bare video timestamp reads. `?q=` image questions are text-only interpretation and must be paired with a bare binding read of the same retained sample.
+
+- [#33](https://github.com/MarkTripoli/skills/pull/33) [`7768147`](https://github.com/MarkTripoli/skills/commit/7768147382f2ff6ad8ba3a1920736098dd8a6633) Thanks [@Triippz](https://github.com/Triippz)! - Prove bounded recorded-evidence repair with real OMP no-progress, zero-limit, three-productive-round, and fresh-receipt continuation scenarios. Retain worker and interrupted-session traces, source histories, recordings, and independently inspected image identities for saved grading.
+
+- [#33](https://github.com/MarkTripoli/skills/pull/33) [`4751d7f`](https://github.com/MarkTripoli/skills/commit/4751d7f5a8de59e36c9415188e3ed1a51868c7e5) Thanks [@Triippz](https://github.com/Triippz)! - Add live `iterate-evidence` evaluations for unavailable viewing and recorded pixels that contradict passed labels. Retain isolated capability restrictions, real denied reads, unchanged source histories, external baseline media, and independent pixel review before accepting either stopped outcome.
+
+- [#33](https://github.com/MarkTripoli/skills/pull/33) [`5f83811`](https://github.com/MarkTripoli/skills/commit/5f838119b2db570338686b0379cc49db846d5ed2) Thanks [@Triippz](https://github.com/Triippz)! - Wait for real initial video frames before counter interactions. Strengthen evidence grading for image bytes, consumed reservations, default limits, and flow identity; attribute transient viewer output through observed process provenance rather than filename exceptions.
+
+- [#33](https://github.com/MarkTripoli/skills/pull/33) [`4fb0816`](https://github.com/MarkTripoli/skills/commit/4fb0816bac30c9ad46316ab09b931dec982049fe) Thanks [@Triippz](https://github.com/Triippz)! - fix(iterate-evidence): structural reserved, reservation gate, frame self-check
+
+  F_NEW_PRIM: replace last-completed-step positive list in reserved() with structural rule —
+  accept any wording unless it explicitly declares the repair completed/done/resolved/finalized.
+  Parenthetical and prose forms (e.g., "reservation (consumed_rounds set to 1...)") accepted;
+  "repair completed" and "repair done" rejected.
+
+  F_CONT_V7: add reservation write checkpoint hard gate to SKILL.md step 4.1 — after writing
+  all reservation fields, save the receipt, read it back, confirm consumed_rounds before any
+  source/check edit or worker delegation; add "Reservation persisted before any edit: yes"
+  field to round record template; repeat gate in step 5 for continuation.
+
+  F_3R_BRESET: add frame completion self-check to SKILL.md steps 3 and 4.4 — before writing
+  any coverage or inspection row, enumerate every required frame (1 initial-zero + 1 per flow),
+  count them, and confirm the count matches; add self-check table to round history template.
+
+- [#33](https://github.com/MarkTripoli/skills/pull/33) [`53be916`](https://github.com/MarkTripoli/skills/commit/53be916adf6506cfd4aea78daaebbff429791160) Thanks [@Triippz](https://github.com/Triippz)! - fix(iterate-evidence): structural pending, concurrent lifetime, :Ts
+
+  pending(): remove includes()/exact-equality positive list; strip
+  parenthetical/bracketed annotations before evaluating step wording; a
+  step qualifies if it mentions repair or diagnos\*; rejected only when
+  it explicitly declares repair completion. Table row handler updated to
+  structural repair mention and non-terminal state checks.
+
+  viewerTemporaryProof: bind temp-file lifetime to the owning read;
+  appearances in concurrent in-flight reads (reads whose start snapshot
+  precedes the owning read's end) are authorized regardless of boundary
+  type; non-concurrent appearances past owner's end still rejected; make
+  the seconds suffix optional in the timestamp regex so both
+  'video:3.297s' and 'video:3.297' are recognized as timestamp selectors.
+
+  tests: 185/185. Add concurrent overlapping-reads regression. Add R11
+  regressions for parenthetical next-incomplete-step accepted, non-repair
+  next-incomplete rejected, finalized table state rejected.
+
+- [#33](https://github.com/MarkTripoli/skills/pull/33) [`d9fd7ca`](https://github.com/MarkTripoli/skills/commit/d9fd7ca2ecdb0b4e7c92bbd3bc4a38f945495e9f) Thanks [@Triippz](https://github.com/Triippz)! - fix(iterate-evidence): serialize media evidence reads
+
+  Clarify iterate-evidence inspection guidance so every required bare image-path or video-timestamp read is a standalone sequential viewer call, and recognize action-labelled counter flow IDs such as `F-INC Add one once from zero` without weakening conflict-closed coverage parsing.
+
+- [#33](https://github.com/MarkTripoli/skills/pull/33) [`1fde8be`](https://github.com/MarkTripoli/skills/commit/1fde8bed742c4fabd1b179ac5a72e40c8b1b5902) Thanks [@Triippz](https://github.com/Triippz)! - fix(iterate-evidence): F1 frontmatter append-only + initial-zero frame; F2 quoted action labels; F3 structural continuation pause
+
+  F1: SKILL.md and receipt template now explicitly require frontmatter to be updated in place (never collapse existing fields including `type` and `limit`); both baseline and repair passes now require an initial-zero state frame opened as a separate named viewer call before any action.
+
+  F2: `actionFlow()` in `evals/evidence-flows.mjs` strips matching surrounding quotes (single, double, backtick) from charter action labels so `Click "Add one" once`, `Click 'Reset'`, and backtick forms resolve to the same flows as unquoted forms. Regression tests added for quoted, mixed, and unknown-quoted forms.
+
+  F3: Continuation pause predicate in `evals/iterate-evidence.mjs` now locates the receipt by filename pattern (`NN-evidence-iteration-*.md`) rather than `newest(..., "evidence-iteration")`, which required `type: evidence-iteration` in frontmatter. Validation uses `activeReservation` — the same structural predicate the grader uses — so a missing or misspelled `type` field no longer causes the pause to report `valid: false`. Retained control scripts `primary-controls-final.mjs` and `retained-controls-final.mjs` now accept an optional output directory argument to avoid EEXIST on re-run.
+
+- [#33](https://github.com/MarkTripoli/skills/pull/33) [`19b4b39`](https://github.com/MarkTripoli/skills/commit/19b4b39d86cf34b43e5431a11d6ff916be2220a1) Thanks [@Triippz](https://github.com/Triippz)! - fix(iterate-evidence): R6 structural fixes for reservation step fields, grader scoping, answer link form, and worker commit guidance
+
+  **activeReservation (evals/iterate-evidence.mjs)**: The combined "current step / last completed step / next incomplete step" handler no longer pushes false when parts.length===1. In that case the semicolon-split pattern already extracts labeled sub-lines ("last completed:", "next incomplete:") which are handled by the individual key handlers. Regressions added for the semicolon/colon form and the canonical three-labeled-lines form.
+
+  **Continuation grader (evals/scenarios/iterate-evidence-continuation.mjs)**: IE-001 resolution is now read only from the `## Findings` section. Guardrail table rows that mention IE-001 no longer shadow a resolved Findings row. Regression added covering a guardrail-only IE-001 mention after a resolved Findings row.
+
+  **Answer templates**: Both passed and stopped templates now show `[{artifact_file}]({artifact_link})` as the first line, making the markdown link form explicit and forbidding bare/backtick paths.
+
+  **SKILL.md**: Step 4.2 now requires committing delegated source changes as a separate source commit before the receipt commit, even when the round yields no progress. Terminal delivery section now specifies the markdown link requirement for the artifact link. Delegation step is clear that tracked source files must not remain uncommitted.
+
+  **Template (evidence_iteration_template.md)**: "Delivery and known limits" section replaces the combined "Current step / last completed step / next incomplete step" line with three explicit labeled lines as the canonical form.
+
+- [#33](https://github.com/MarkTripoli/skills/pull/33) [`8e5bb60`](https://github.com/MarkTripoli/skills/commit/8e5bb6095e0d2b00823752eb09898d3c7eb40cfc) Thanks [@Triippz](https://github.com/Triippz)! - fix(iterate-evidence): R7 enumerate allowed frontmatter values, forbid preamble, add continuation terminal rules
+
+  SKILL.md section 5 (continuation): states that a resumed session applies the same terminal rules — allowed `status` and `stop_reason` values are enumerated explicitly; any other value (e.g. `completed`, prose) is invalid; the final answer must be the selected template filled verbatim with nothing before its first line.
+
+  SKILL.md finalization section: adds a bolded "Allowed frontmatter values" block directly before the finalization steps, listing the only valid strings for `status` and `stop_reason` and explicitly calling out that any other value is invalid.
+
+  SKILL.md terminal delivery sentence: clarifies "nothing appears before its first line" and "the markdown receipt link is the first character of the reply."
+
+  Receipt template preamble: `status` and `stop_reason` descriptions now use pipe-separated exhaustive lists with an explicit "ONLY valid values; any other string is invalid" statement.
+
+- [#33](https://github.com/MarkTripoli/skills/pull/33) [`99e9cb0`](https://github.com/MarkTripoli/skills/commit/99e9cb0f97c9e7626a6beecda7dfde77109ff6f4) Thanks [@Triippz](https://github.com/Triippz)! - fix(iterate-evidence): R8 initial-frame structural binding (F4), reservation step recognition (F5), three-rounds min budget
+
+  **F4 — initial frames now structurally bound to pre-click time:**
+
+  - Both capture fixtures (`iterate-evidence` and `iterate-evidence-three-rounds`) add a 1-second dwell after `mark("initial")` so the video encodes at least one clean counter-zero frame before the first click.
+  - `SKILL.md` steps 3 and 4 now require extracting the initial-zero frame at the manifest's `initial` action `videoTime` (from `capture.json`'s `actions` array) using an explicit timestamp selector (e.g., `read video.webm:Ts`); the recorder-generated `test_start` frame is explicitly forbidden as the initial-zero frame.
+  - `inspection_acceptance.md` adds a dedicated bullet under timing rules: the initial-zero frame must be extracted strictly before the first click action's `videoTime`; name the file to include `initial` and cite the timestamp.
+  - Grader (`reviewProblems`) now requires: (a) `baseline-initial` and `repaired-initial` frame filenames must contain `initial`; (b) when `capture.actions` is present, `rawTimestamp` must be strictly before the first non-initial action's `videoTime`.
+
+  **F5 — `reservation` recognized as valid pending-repair current step:**
+
+  - `activeReservation` individual `current step` handler now accepts `clean(value) === "reservation"` in addition to `pending(value)`.
+  - Combined three-way key handler accepts `clean(parts[0]) === "reservation"` when `pending(parts[2])` (next incomplete step is repair).
+  - Rejected when next step is not repair (individual `next incomplete step` handler pushes false).
+  - Regressions added: two accepted forms (three-labeled-line and combined slash form with `reservation` current step + `repair` next step); two rejected forms (`reservation` with `checks` or other non-repair next step).
+
+  **Three-rounds — per-scenario minimum budget:**
+
+  - `iterate-evidence-three-rounds.mjs` declares `minMinutes: 45`.
+  - `evals/run.mjs` computes `max(--max-time, scenario.minMinutes ?? 0)` before passing to `runEvidenceScenario`; the 25-minute CLI default no longer undercuts the proven three-rounds minimum.
+  - `docs/testing.md` documents the `minMinutes` field and the three-rounds 45-minute requirement.
+
+- [#33](https://github.com/MarkTripoli/skills/pull/33) [`721afd6`](https://github.com/MarkTripoli/skills/commit/721afd6c6e8c4d5649d5e8ea310646df9bc7fc0a) Thanks [@Triippz](https://github.com/Triippz)! - fix(iterate-evidence): F_PRIM structural reservation rule, F_CONT uniform frame identity
+
+  F_PRIM: replace activeReservation exact-match list with structural rule — pending repair holds
+  when (a) next incomplete step names repair and (b) no declaration says repair is
+  completed/done/resolved/finalized/terminal. Current step may be any reservation/reserved/pending/
+  repair-pending wording. The combined slash line no longer pushes false when three labeled lines
+  are present and consistent; when only the combined line exists, parse by position.
+
+  F_CONT: make frame identity uniform across all consumers (reviewProblems, boundedEvidenceProblems,
+  stoppedEvidenceProblems). An observation binds either a retained PNG/JPEG frame path or a video
+  path with an explicit timestamp selector; both are verified through the returned image hash.
+  Non-initial video timestamps must fall within the flow's action window.
+
+  Receipt 16: add missing type:implementation frontmatter field.
+
+  Regressions: 'reservation persisted', 'reserved', arbitrary current-step prose with next=repair
+  accepted; 'repair completed' in any field rejected; video+timestamp form accepted; mismatched
+  hash/timestamp rejected.
+
+- [#33](https://github.com/MarkTripoli/skills/pull/33) [`45a4af9`](https://github.com/MarkTripoli/skills/commit/45a4af9e03308bf650033e21eef4a4bc9aa8c89c) Thanks [@Triippz](https://github.com/Triippz)! - Finalize evidence-iteration receipts with complete coverage, observed timestamps, and reconciled terminal state while retaining historical reservations. Resolve pending reservations and mapped counter actions consistently, and attribute native video-preview thumbnails through their returned contact sheet's process and read provenance.
+
 ## 3.2.1
 
 ### Patch Changes
