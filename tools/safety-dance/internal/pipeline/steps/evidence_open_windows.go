@@ -14,6 +14,12 @@ import (
 
 const maxEvidenceBytes = 16 << 20
 
+// beforeEvidenceCandidateOpen is a native-test seam. It runs after the
+// managed root handle is pinned and immediately before resolving the candidate
+// path, allowing tests to replace a root or intermediate component at the
+// exact reparse-point race boundary.
+var beforeEvidenceCandidateOpen func(root, candidate string) error
+
 func readConfinedEvidence(raw, worktreeRoot, evidenceRoot string) ([]byte, os.FileInfo, error) {
 	if strings.TrimSpace(raw) == "" || filepath.IsAbs(raw) {
 		return nil, nil, fmt.Errorf("evidence file path must be relative to a managed root")
@@ -32,6 +38,12 @@ func readConfinedEvidence(raw, worktreeRoot, evidenceRoot string) ([]byte, os.Fi
 			continue
 		}
 		candidate := filepath.Join(root, raw)
+		if beforeEvidenceCandidateOpen != nil {
+			if err := beforeEvidenceCandidateOpen(rootOpened, candidate); err != nil {
+				rootHandle.Close()
+				continue
+			}
+		}
 		f, openErr := os.Open(candidate)
 		if openErr != nil {
 			rootHandle.Close()

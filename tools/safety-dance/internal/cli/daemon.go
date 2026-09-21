@@ -217,6 +217,9 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := daemon.CaptureTrustedOperatorSession(os.Getpid()); err != nil {
+		return fmt.Errorf("capture daemon operator session: %w", err)
+	}
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, terminationSignal(), os.Interrupt)
 	defer own.Close()

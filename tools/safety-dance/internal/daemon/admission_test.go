@@ -291,8 +291,13 @@ func TestManagedHookPeerRequiresExecutableAncestry(t *testing.T) {
 }
 
 func TestAuthorizeMutationPeerRejectsMarkerOnDetachedAncestor(t *testing.T) {
-	oldInfo, oldEnv := processInfoFunc, processEnvironmentFunc
-	t.Cleanup(func() { processInfoFunc, processEnvironmentFunc = oldInfo, oldEnv })
+	oldInfo, oldEnv, oldSession := processInfoFunc, processEnvironmentFunc, processSessionIDFunc
+	t.Cleanup(func() {
+		processInfoFunc, processEnvironmentFunc, processSessionIDFunc = oldInfo, oldEnv, oldSession
+		SetTrustedOperatorSession(0)
+	})
+	processSessionIDFunc = func(int) (int64, bool) { return 1, true }
+	SetTrustedOperatorSession(1)
 	processInfoFunc = func(pid int) (int, string, error) {
 		switch pid {
 		case 101:

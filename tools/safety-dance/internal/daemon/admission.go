@@ -341,16 +341,24 @@ func cleanPath(value string) string {
 }
 
 // AuthorizeMutationPeer permits a directly invoked Safety Dance CLI only when
-// its complete ancestry contains no validation marker and a verified shell.
+// its complete ancestry contains no validation marker and remains in the
+// daemon's kernel-authenticated operator session. The daemon session is
+// captured before validation agents are started; comparing the peer only with
+// an ancestry shell is not an authority proof.
 func AuthorizeMutationPeer(pid int) error {
 	if pid <= 0 {
 		return errors.New("unsupported or unauthenticated IPC peer")
 	}
-	peerPID := pid
-	peerSession, peerSessionOK := processSessionID(peerPID)
+	trusted, trustedOK := operatorSession()
+	if !trustedOK {
+		return errors.New("mutation requires a trusted operator process session")
+	}
+	peerSession, peerSessionOK := processSessionIDFunc(pid)
+	if !peerSessionOK || peerSession != trusted {
+		return errors.New("mutation requires the operator's process session")
+	}
 	current := pid
 	sawShell := false
-	shellPID := 0
 	for hops := 0; current > 1 && hops < 256; hops++ {
 		parent, command, err := processInfoFunc(current)
 		if err != nil {
@@ -363,7 +371,7 @@ func AuthorizeMutationPeer(pid int) error {
 		if environmentHas(env, "SD_PARENT_RUN_ID=") || strings.Contains(command, "SD_PARENT_RUN_ID=") {
 			return errors.New("nested validation process cannot mutate daemon state")
 		}
-		if current == peerPID {
+		if current == pid {
 			fields := commandLineFields(command)
 			if len(fields) == 0 {
 				return errors.New("mutation requires a directly invoked Safety Dance CLI peer")
@@ -375,7 +383,6 @@ func AuthorizeMutationPeer(pid int) error {
 		}
 		if isInteractiveShell(command) {
 			sawShell = true
-			shellPID = current
 		}
 		if parent <= 1 || parent == current {
 			current = parent
@@ -388,12 +395,6 @@ func AuthorizeMutationPeer(pid int) error {
 	}
 	if !sawShell {
 		return errors.New("mutation requires a verified interactive parent")
-	}
-	if peerSessionOK {
-		shellSession, shellSessionOK := processSessionID(shellPID)
-		if !shellSessionOK || shellSession != peerSession {
-			return errors.New("mutation requires the operator's process session")
-		}
 	}
 	return nil
 }
