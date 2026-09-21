@@ -32,7 +32,7 @@ export async function selectStageModel(skillsDir, options = {}) {
     routing: options.modelRouting ?? 'auto',
     choiceAliases: { economy: model, reasoning },
   });
-  const { expectedLosses, requestedModel, availableCandidates, ...selection } = result;
+  const { expectedLosses, requestedModel, availableCandidates, profileSource, ...selection } = result;
   const aliases = { [model]: 'economy', [reasoning]: 'reasoning' };
   const probabilities = selection.probabilities && Object.fromEntries(Object.entries(selection.probabilities).map(([key, value]) => [aliases[key] || key, value]));
   return {

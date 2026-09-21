@@ -16,6 +16,19 @@ const number = (value, label) => {
   return value;
 };
 
+export function loadCandidateProfile(options = {}) {
+  if (options.candidates !== undefined) return { candidates: options.candidates, economy: options.economy, routing: options.routing ?? options.modelRouting, source: 'explicit' };
+  const configuredFile = process.env.SKILLS_MODEL_CANDIDATES_FILE;
+  const projectFile = path.resolve(options.projectDir ?? options.cwd ?? process.cwd(), '.agents', 'model-candidates.json');
+  const file = configuredFile || (fs.existsSync(projectFile) ? projectFile : null);
+  if (!file) return { candidates: undefined, economy: options.economy, routing: options.routing ?? options.modelRouting, source: 'none' };
+  let profile;
+  try { profile = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (error) { throw new Error(`Invalid model candidate profile ${file}: ${error.message}`); }
+  if (!profile || typeof profile !== 'object' || Array.isArray(profile)) throw new Error(`Invalid model candidate profile ${file}: expected an object`);
+  if (!Array.isArray(profile.candidates) || typeof profile.economy !== 'string' || !profile.economy.trim()) throw new Error(`Invalid model candidate profile ${file}: expected economy and candidates`);
+  return { candidates: profile.candidates, economy: options.economy ?? profile.economy, routing: options.routing ?? options.modelRouting ?? profile.routing, source: configuredFile ? 'env' : 'project', file };
+}
+
 export function normalizeCandidates(value, economy) {
   if (value === undefined) value = [{ model: economy, cost: 0, description: 'configured economical model' }];
   if (!Array.isArray(value) || value.length === 0) throw new Error('candidates must contain at least one candidate');
@@ -24,7 +37,6 @@ export function normalizeCandidates(value, economy) {
     return { model: text(candidate.model, `candidates[${index}].model`), cost: number(candidate.cost, `candidates[${index}].cost`), description: text(candidate.description, `candidates[${index}].description`) };
   });
   if (new Set(candidates.map(({ model }) => model)).size !== candidates.length) throw new Error('candidates must not contain duplicate model identifiers');
-  if (candidates.some((candidate, index) => index > 0 && candidate.cost < candidates[index - 1].cost)) throw new Error('candidates must be ordered from weakest to strongest with non-decreasing cost');
   if (!candidates.some(({ model }) => model === economy)) throw new Error(`Configured economy model ${JSON.stringify(economy)} is not available`);
   return candidates;
 }
@@ -57,12 +69,13 @@ function expectedLosses(candidates, probabilities) {
 export async function routeModel(skillsDir, options = {}) {
   if (typeof skillsDir !== 'string' || !skillsDir.trim()) throw new Error('skillsDir is required for model routing');
   const phase = text(options.phase ?? options.skill ?? 'unknown-phase', 'phase');
-  const economy = text(options.economy ?? DEFAULT_ECONOMY, 'economy');
-  const routing = options.routing ?? options.modelRouting ?? 'auto';
+  const profile = loadCandidateProfile(options);
+  const economy = text(profile.economy ?? DEFAULT_ECONOMY, 'economy');
+  const routing = profile.routing ?? 'auto';
   if (routing !== 'auto' && routing !== 'fixed') throw new Error(`Unknown routing ${JSON.stringify(routing)}; expected auto or fixed`);
-  const candidates = normalizeCandidates(options.candidates, economy);
+  const candidates = normalizeCandidates(profile.candidates, economy);
   const models = candidates.map(candidate => candidate.model);
-  const record = { candidates: models, availableCandidates: models, confidence: null, probabilities: null };
+  const record = { candidates: models, availableCandidates: models, confidence: null, probabilities: null, profileSource: profile.source };
   if (routing === 'fixed' || !ELIGIBLE_PHASES.has(phase) || MUTATION_PHASES.has(phase) || candidates.length === 1) {
     return { ...record, model: economy, source: routing === 'fixed' ? 'fixed' : 'policy' };
   }
@@ -70,7 +83,7 @@ export async function routeModel(skillsDir, options = {}) {
   let helper;
   try { helper = await import(pathToFileURL(helperPath).href); } catch (error) { throw new Error(`JEV is unavailable: cannot load ${helperPath}: ${error.message}`); }
   if (typeof helper.systemOne !== 'function') throw new Error(`JEV is unavailable: ${helperPath} has no systemOne export`);
-  const criteria = Object.fromEntries(candidates.map(candidate => [candidate.model, `The request can be completed adequately by ${candidate.model}. Capability: ${candidate.description}. Choose the cheapest adequate candidate.`]));
+  const criteria = Object.fromEntries(candidates.map((candidate, index) => [candidate.model, `Candidate ${index + 1}, ordered weakest to strongest, can complete the request with this capability: ${candidate.description}. Choose the cheapest adequate candidate.`]));
   let answers;
   try {
     answers = await helper.systemOne({ phase, request: options.request ?? '', artifacts: options.artifacts ?? [], candidates }, { model: { type: 'choice', instructions: 'Choose the cheapest supplied model that can fully complete this phase in one pass. Never choose a model not listed as a criterion.', criteria } });
@@ -92,6 +105,17 @@ export async function routeModel(skillsDir, options = {}) {
 
 async function main() {
   const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+  const args = process.argv.slice(2);
+  const candidateIndex = args.indexOf('--candidates');
+  if (candidateIndex >= 0) {
+    const file = args[candidateIndex + 1];
+    if (!file) throw new Error('--candidates requires a JSON file');
+    const supplied = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (Array.isArray(supplied)) input.candidates = supplied;
+    else { input.candidates = supplied.candidates; input.economy ??= supplied.economy; input.routing ??= supplied.routing; }
+  }
+  const economyIndex = args.indexOf('--economy');
+  if (economyIndex >= 0) input.economy = args[economyIndex + 1];
   const skillsDir = input.skillsDir || path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
   const result = await routeModel(skillsDir, input);
   process.stdout.write(`${JSON.stringify(result)}\n`);

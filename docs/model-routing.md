@@ -26,6 +26,14 @@ The equivalent JSON-over-stdin command is:
 printf '%s\n' '<request JSON>' | node <skills-dir>/route-model/route-model.mjs
 ```
 
+Candidate configuration precedence is explicit `--candidates <json-file>` and `--economy <model>`, then `SKILLS_MODEL_CANDIDATES_FILE`, then `<project>/.agents/model-candidates.json`. The profile shape is:
+
+```json
+{"economy":"provider/economy","candidates":[{"model":"provider/economy","cost":1,"description":"ordinary work"}],"routing":"auto"}
+```
+
+Candidates are ordered weakest to strongest; costs are independent and may vary in either direction. Without a profile, routing preserves the economy behavior and reports that no profile was used, so a manual handoff enforces no model.
+
 `candidates` must be a non-empty array of unique objects with an exact native `model` string, a finite non-negative caller-supplied `cost`, and a non-empty capability `description`. `economy` must identify one candidate. The response includes `model`, `source`, `candidates`, `availableCandidates`, `confidence`, and `probabilities`; JEV responses also include expected losses and helper usage. Credentials are read only by the typed-judgment helper and are never placed in request or response artifacts.
 
 ## Policy
@@ -38,7 +46,7 @@ Atomic adapts its existing `model`, `reasoning_model`, and `available_models` in
 
 Pi and Oh My Pi may use a stable public model-catalog command when their installed runtime documents one. Claude Code and Codex accept explicit caller or configuration candidates; this repository does not scrape provider-private catalogs or import provider SDK internals. A candidate list is caller-owned capability information, not proof that the current account will accept the model.
 
-Herdr handoffs can pass a selected model through each supported agent's `--model` flag when candidates are configured and the native command supports enforcement. Manual handoffs print the recommendation because a standalone skill cannot force the next session's model.
+Herdr handoffs pass a selected model after the native argument separator, as `herdr agent start ... -- --model <model>`, when candidates are configured and the native command supports enforcement. Manual handoffs print `Recommendation only: <model>` because a standalone skill cannot force the next session's model.
 
 ## Defaults
 

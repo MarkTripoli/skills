@@ -18,7 +18,8 @@ Provide a JSON request through the Node helper or stdin with:
 - `artifacts`: optional summaries safe to send to JEV.
 - `economy`: exact native model identifier that must be among the candidates.
 - `routing`: `auto` or `fixed`; `fixed` returns economy without JEV.
-- `candidates`: non-empty exact array ordered from weakest to strongest. Each item is `{model, cost, description}`. Model identifiers are unique, `cost` is finite and non-negative, costs are non-decreasing, and `description` explains the candidate's capability.
+- `candidates`: non-empty exact array ordered from weakest to strongest. Each item is `{model, cost, description}`. Model identifiers are unique, `cost` is finite and non-negative, and `description` explains the candidate's capability. Costs may vary independently of capability order.
+- Candidate configuration precedence is explicit `--candidates` or `candidates` input, then `SKILLS_MODEL_CANDIDATES_FILE`, then `<project>/.agents/model-candidates.json`. A profile contains `{ "economy": "exact/model", "candidates": [{"model":"exact/model","cost":1,"description":"capability"}], "routing":"auto" }`; `routing` is optional. No provider catalog is scraped.
 
 ```js
 import { routeModel } from '<skills-dir>/route-model/route-model.mjs';
@@ -40,8 +41,8 @@ printf '%s\n' '<request JSON>' | node <skills-dir>/route-model/route-model.mjs
 
 ## Exact output and reporting
 
-The JSON result always contains `model`, `source` (`policy`, `fixed`, or `jev`), `candidates`, `availableCandidates`, `confidence`, and `probabilities`. A JEV result also contains `expectedLosses`, `requestedModel`, and helper `usage` when available. The selected `model` is one exact supplied identifier. Errors are written to stderr and return a nonzero exit code. Credentials are read only by `typed-judgment/judge.mjs` from its environment or key file.
+The JSON result always contains `model`, `source` (`policy`, `fixed`, or `jev`), `profileSource` (`explicit`, `env`, `project`, or `none`), `candidates`, `availableCandidates`, `confidence`, and `probabilities`. A JEV result also contains `expectedLosses`, `requestedModel`, and helper `usage` when available. The selected `model` is one exact supplied identifier. Errors are written to stderr and return a nonzero exit code. Credentials are read only by `typed-judgment/judge.mjs` from its environment or key file.
 
 Mutation, implementation, tool-oriented, and unknown phases select `economy` without JEV. Eligible phases ask JEV to distinguish the described candidates, combine adequacy probabilities with cost and under-provision loss, and select the lowest expected loss. A harness that cannot enforce a model reports `Recommendation only: <model>; start the next session with that model if desired.` rather than claiming enforcement. Herdr can enforce a configured recommendation by passing it after the native command separator: `herdr agent start ... -- --model <model>`.
 
-Pi and Oh My Pi may use a stable public catalog command documented by their runtime; Claude Code and Codex require caller or configuration candidates. Never scrape provider-private registries or add a proxy.
+Without a profile, the helper preserves economy behavior and reports `profileSource: "none"`; no model is enforced for a manual next session. Pi and Oh My Pi may use a stable public catalog command documented by their runtime; Claude Code and Codex require caller or configuration candidates. Never scrape provider-private registries or add a proxy.
