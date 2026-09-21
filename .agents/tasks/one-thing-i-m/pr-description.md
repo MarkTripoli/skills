@@ -59,7 +59,7 @@ Review `skills/delivery/route-model/route-model.mjs` first; every harness and th
 
 ### Verify
 
-- [ ] `npm test` exits 0 with 165 passing tests.
+- [ ] `npm test` exits 0 with 166 passing tests.
 - [ ] `bash -n skills/delivery/herd-next/references/stop_hook.sh && git diff --check origin/main...HEAD` exits 0.
 - [ ] `npm run check-commits -- origin/main..HEAD` accepts every commit subject.
 - [ ] Compare [the revised plan](.agents/tasks/one-thing-i-m/05-plan-one-thing-i-m.md), [verification](.agents/tasks/one-thing-i-m/08-verification-one-thing-i-m.md), and [clean review](.agents/tasks/one-thing-i-m/13-code-review-one-thing-i-m.md).
