@@ -17,5 +17,5 @@ A run prints one JSON object:
 }
 ```
 
-Native receipts retain the selected Android serial or iOS simulator UDID in `target.id`; iOS observations retain app PID identity, editable/focused metadata, and observed frames. Missing or inconsistent identity, app scope, bounds, or supported text is non-green and does not invoke the driver. iOS acceptance remains pending independent native verification.
+Native receipts retain the selected Android serial or iOS simulator UDID in `target.id`; iOS observations retain app PID identity, editable/focused metadata, and observed frames. Missing or inconsistent identity, app scope, bounds, or supported text is non-green and does not invoke the driver.
 `status` is exactly `passed`, `failed`, or `blocked`. A `DONE` choice never passes without an independent post-action observation and postcondition verification. Receipts contain model and usage metadata, not model choice keys or credentials.

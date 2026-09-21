@@ -2,4 +2,4 @@
 "@marktripoli/skills": minor
 ---
 
-Restore the standalone `jev-ui` iOS simulator adapter, fixture, and documented integration. Independent iOS native acceptance remains pending on the continuation branch.
+Add the explicitly selected iOS simulator surface to the standalone `jev-ui` skill: idb-backed adapter, disposable fixture, identity and cleanup checks, and documented integration, accepted through independent native UI observations.
