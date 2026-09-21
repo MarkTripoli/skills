@@ -1,6 +1,6 @@
 # Model routing
 
-Run `/configure-model-routing` when a project or user-level candidate profile is missing or needs replacement. It asks one setup question at a time, writes the shared profile, and verifies it through the helper.
+Run `/configure-model-routing` when a project or user-level candidate profile is missing or needs replacement. Codex users invoke `$configure-model-routing`; other harnesses use `/configure-model-routing`. It asks one setup question at a time, writes the shared profile, and verifies it through the helper.
 
 `skills/delivery/route-model/route-model.mjs` is the shared model-selection owner for Claude Code, Codex, Oh My Pi, Pi, portable skill installs, and Atomic. It accepts exact caller-supplied candidates and returns one native model identifier; it does not proxy requests, scrape provider-private registries, probe accounts, or fall back after native execution failure.
 

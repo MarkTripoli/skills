@@ -46,7 +46,7 @@ The listed workflow must be `delivery`. Listing it proves installation, not succ
 
 ## Configure model routing
 
-Run `/configure-model-routing` when delivery reports no valid model profile. The skill asks one question at a time, writes project `.agents/model-candidates.json` or a user-level file named by `SKILLS_MODEL_CANDIDATES_FILE`, and verifies the saved profile through `route-model`. Pi discovery uses `pi --list-models` and Oh My Pi discovery uses `omp models --json` only when available; Claude Code and Codex use explicit model IDs.
+Run `/configure-model-routing` when delivery reports no valid model profile. Codex users run `$configure-model-routing`; other harnesses use `/configure-model-routing`. The skill asks one question at a time, writes project `.agents/model-candidates.json` or a user-level file named by `SKILLS_MODEL_CANDIDATES_FILE`, and verifies the saved profile through `route-model`. Pi discovery uses `pi --list-models` and Oh My Pi discovery uses `omp models --json` only when available; Claude Code and Codex use explicit model IDs.
 
 ## Automatic phase selection
 

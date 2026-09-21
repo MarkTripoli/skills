@@ -32,7 +32,7 @@ Uninstall does not delete task documents or worktrees.
 /configure-model-routing
 ```
 
-Use this model-invoked skill when no valid candidate profile exists. It writes the project profile or the user file named by `SKILLS_MODEL_CANDIDATES_FILE`, then verifies it through `route-model`.
+Use this model-invoked skill when no valid candidate profile exists. Codex users invoke `$configure-model-routing`; other harnesses invoke `/configure-model-routing`. It writes the project profile or the user file named by `SKILLS_MODEL_CANDIDATES_FILE`, then verifies it through `route-model`.
 
 ### File locations
 

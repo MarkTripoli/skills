@@ -7,7 +7,7 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 # Configure model routing
 
-Configure one shared profile for Claude Code, Codex, Oh My Pi, Pi, and portable installs. This skill changes configuration, not provider credentials.
+Invoke this skill as `/configure-model-routing`; Codex users invoke `$configure-model-routing`. Configure one shared profile for Claude Code, Codex, Oh My Pi, Pi, and portable installs. This skill changes configuration, not provider credentials.
 
 ## Interaction contract
 
@@ -45,20 +45,24 @@ Use this profile shape:
 
 `routing` may be `fixed` when the caller wants the economy model without JEV. Never put credentials or secret-bearing descriptions in this JSON.
 
-## 3. Write and validate
+## 3. Write and validate transactionally
 
-Validate before writing: the array is non-empty, IDs are unique non-empty strings, costs are finite and non-negative, descriptions are non-empty, and `economy` exactly matches one candidate. Write only the selected project or user-level file.
+Validate before writing: the array is non-empty, IDs are unique non-empty strings, costs are finite and non-negative, descriptions are non-empty, and `economy` exactly matches one candidate. Create a uniquely named temporary profile in the target file's same directory. Write the complete profile there and clean that temporary file on every pre-rename failure.
 
-Verify the saved file through the existing `route-model` helper, not a second validator. For a project file, run the helper with `cwd` set to the project and no explicit candidate override. For a user-level file, run it with `SKILLS_MODEL_CANDIDATES_FILE` set to that file. Use an unknown phase so verification does not call JEV, and require that the JSON result reports the configured economy model, every candidate in the saved order, and the expected `profileSource` (`project` or `env`). A malformed or contradictory result is a failed setup; repair the file and rerun verification.
+Validate the temporary profile through the existing `route-model` helper with explicit candidate-file input: pass `--candidates <temporary-file>` and use an unknown phase so this validation does not call JEV. Do not validate the temporary file through project or environment lookup. A failed validation leaves the prior target unchanged.
 
-Example verification shape:
+After temporary validation succeeds, atomically rename the temporary file over the target. Before replacing an existing target, make a same-directory backup while the target remains in place. Then verify the final target through normal lookup: use project `cwd` lookup for `.agents/model-candidates.json`, or `SKILLS_MODEL_CANDIDATES_FILE` for a user-level file. Require the JSON result to report the configured economy model, every candidate in saved order, and the expected `profileSource` (`project` or `env`).
+
+Temporary-validation shape (use explicit candidate-file input):
 
 ```sh
 printf '%s\n' '{"skillsDir":"<skills-dir>","phase":"unknown-phase","cwd":"<project>"}' \
-  | node <skills-dir>/route-model/route-model.mjs
+  | node <skills-dir>/route-model/route-model.mjs --candidates <temporary-file>
 ```
 
-For a user-level file, pass the same input through `env SKILLS_MODEL_CANDIDATES_FILE=<file> node <skills-dir>/route-model/route-model.mjs`.
+If final lookup verification fails, restore the prior file with an atomic rename from the same-directory backup. When no prior file existed, remove the new target atomically. Clean the backup, temporary, and failed-new files after either outcome. If any pre-rename action fails, clean temporary files and retain the prior profile. Report a restore or cleanup failure as a failed setup rather than claiming success.
+
+Final project verification uses the same input without `--candidates`. Final user-level verification uses `env SKILLS_MODEL_CANDIDATES_FILE=<file> node <skills-dir>/route-model/route-model.mjs` with the same input. Use same-directory Node filesystem operations for the temporary file, backup, atomic renames, and cleanup.
 
 ## Completion
 

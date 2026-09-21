@@ -16,7 +16,7 @@ Child workers: use the multi-agent spawn tool with the custom agent `agent-<role
 
 ## Model routing
 
-Run `/configure-model-routing` when no valid profile exists. Codex skills use the shared `route-model` helper through Node with explicit caller or configured exact candidates. Codex has no private-catalog discovery path here; this collection does not scrape catalogs, proxy requests, or store credentials.
+Run `$configure-model-routing` when no valid profile exists. Codex uses the `$` invocation form. Codex skills use the shared `route-model` helper through Node with explicit caller or configured exact candidates. Codex has no private-catalog discovery path here; this collection does not scrape catalogs, proxy requests, or store credentials.
 
 ## Optional Atomic orchestration
 

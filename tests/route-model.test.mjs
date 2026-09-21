@@ -39,6 +39,15 @@ test('configure-model-routing is model-invoked and documents one-question profil
   assert.match(skill, /omp models --json/);
   assert.match(skill, /route-model.*helper/s);
   assert.match(skill, /credentials.*not.*stored/i);
+  assert.match(skill, /temporary profile.*same directory/i);
+  assert.match(skill, /--candidates <temporary-file>/);
+  assert.match(skill, /atomically rename the temporary file over the target/);
+  assert.match(skill, /restore the prior file with an atomic rename/);
+  assert.match(skill, /remove the new target atomically/);
+  assert.match(skill, /pre-rename failure[\s\S]*retain the prior profile/i);
+  assert.match(fs.readFileSync('docs/getting-started.md', 'utf8'), /Codex users run `\$configure-model-routing`/);
+  assert.match(fs.readFileSync('docs/cheatsheet.md', 'utf8'), /Codex users invoke `\$configure-model-routing`/);
+  assert.match(fs.readFileSync('runtimes/codex.md', 'utf8'), /`\$configure-model-routing`/);
   assert.match(fs.readFileSync('skills/delivery/deliver/SKILL.md', 'utf8'), /configure-model-routing/);
 });
 

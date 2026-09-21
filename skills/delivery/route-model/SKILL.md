@@ -7,7 +7,7 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 # Route model
 
-Use `/configure-model-routing` when no valid candidate profile exists. Use `/route-model` when a harness needs a model recommendation for the next phase. It returns a recommendation; it does not start an agent, proxy requests, discover private catalogs, or force a model in a harness that lacks a model flag.
+Use `/configure-model-routing` when no valid candidate profile exists; Codex users invoke `$configure-model-routing`. Use `/route-model` when a harness needs a model recommendation for the next phase. It returns a recommendation; it does not start an agent, proxy requests, discover private catalogs, or force a model in a harness that lacks a model flag.
 
 ## Accepted input
 
