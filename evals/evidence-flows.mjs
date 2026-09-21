@@ -27,7 +27,11 @@ function rows(text) {
 // follows a comma, semicolon, or a spaced slash in the retained receipts.
 function flowName(label) {
   const n = normalize(label);
-  if (/^(?:increment(?: from (?:0|zero))?|(?:one )?add one(?: activation)?(?: from (?:fresh )?(?:0|zero))?)$/i.test(n)) return "increment";
+  const addOnePatterns = [
+    /^(?:one )?add one(?: activation)?(?: (?:exactly )?once)?(?: from (?:fresh )?(?:0|zero))?$/i,
+    /^(?:one )?add one from (?:fresh )?(?:0|zero)(?: (?:exactly )?once)?$/i,
+  ];
+  if (n === "increment" || addOnePatterns.some((pattern) => pattern.test(n))) return "increment";
   if (/^reset(?: from (?:(?:actual|the current) )?nonzero(?: count| \d+)?)?$/i.test(n)) return "reset";
   return null;
 }

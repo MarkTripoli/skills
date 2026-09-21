@@ -603,6 +603,33 @@ test("counterFlowCoverage resolves parenthetical, quoted, and mixed label forms 
   assert.ok(r5.reset, "mixed: parenthetical coverage reset passes");
 });
 
+test("counterFlowCoverage recognizes action-labelled flow IDs without weakening conflicts (F_COVERAGE_PARSE_R16)", () => {
+  const make = (charter, coverage) => `\n### Targets and regression charter\n\n${charter}\n\n## Final coverage\n\n${coverage}\n`;
+  const charRow = (id, action) => `| ${id} | target | zero | ${action} | expected | spec.md | yes |`;
+  const covRow = (id, result) => `| ${id} | target | rev | evidence | checks | ${result} | reason |`;
+
+  const observed = counterFlowCoverage(make(
+    `${charRow("F-INC Add one once from zero", "Add one once from zero")}\n${charRow("F-RESET Reset from nonzero", "Reset from nonzero")}`,
+    `${covRow("F-INC Add one once from zero", "failed")}\n${covRow("F-RESET Reset from nonzero", "passed")}`,
+  ), { increment: "failed", reset: "passed" });
+  assert.ok(observed.increment, "F-INC Add one once from zero maps to increment");
+  assert.ok(observed.reset, "F-RESET Reset from nonzero maps to reset");
+
+  const equivalent = counterFlowCoverage(make(
+    `${charRow("F-INC add one from zero once", "Click Add one from zero once")}\n${charRow("F-RESET reset from nonzero", "Click Reset from nonzero")}`,
+    `${covRow("F-INC add one from zero once", "failed")}\n${covRow("F-RESET reset from nonzero", "passed")}`,
+  ), { increment: "failed", reset: "passed" });
+  assert.ok(equivalent.increment, "equivalent Add one from zero once phrasing maps to increment");
+  assert.ok(equivalent.reset, "equivalent Reset from nonzero phrasing maps to reset");
+
+  const conflict = counterFlowCoverage(make(
+    charRow("F-INC Add one once from zero; Reset from nonzero", "Add one once from zero"),
+    covRow("F-INC Add one once from zero", "failed"),
+  ), { increment: "failed", reset: "passed" });
+  assert.equal(conflict.increment, false, "mixed increment/reset semantics still fail closed");
+  assert.equal(conflict.reset, false, "conflict prevents reset coverage too");
+});
+
 // A saved reservation, in the shape the installed template produces.
 function receiptText(overrides = {}) {
   const fields = { type: "evidence-iteration", status: "in-progress", stop_reason: "none", consumed_rounds: "1", limit: "1", ...overrides };
