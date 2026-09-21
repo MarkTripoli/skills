@@ -1,7 +1,7 @@
 ---
 type: design-tdd
 task: i-want-new-skill
-summary: "A repo-owned per-user daemon and embedded SQLite database are authoritative for coordinator-only operational state, while Jira-linked runs project the Slack thread URL into an administrator-created custom field configured by stable field ID. Agent adapters and the operator CLI use filesystem-protected Unix-domain socket RPC; Windows named pipes are deferred. Break-glass uses a trusted same-user boundary: the CLI requires interactive confirmation and returns a durable audit receipt, but same-user agent processes can construct the RPC. Socket Mode is primary, MCP is non-authoritative, and state-changing boundaries fail closed on coordination failure. Credential authorization, recovery details, and permit fencing remain open."
+summary: "A repo-owned per-user daemon and embedded SQLite database are authoritative for coordinator-only operational state, while Jira-linked runs project the Slack thread URL into an administrator-created custom field configured by stable field ID. Agent adapters and the operator CLI use filesystem-protected Unix-domain socket RPC; Windows named pipes are deferred. State-changing actions use one-shot generation-fenced permits: `beforeAction` issues a permit at the current steering generation and `beginAction` consumes it only if that generation is unchanged. Break-glass uses a trusted same-user boundary with interactive CLI confirmation and a durable audit receipt. Credential authorization and recovery details remain open."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 36d73c2fdbd605df9a6f55904f80fcdda7f418fc
@@ -57,6 +57,7 @@ sequenceDiagram
     O->>S: Reply in work thread
     S->>A: Socket Mode event envelope
     A->>C: ingestOwnerEvent(run_id, event)
+    C->>C: Deduplicate event and increment steering generation
     R->>C: beforeAction(run_id, boundary)
     alt Owner input is unhandled
         C-->>R: blocked(input)
@@ -67,11 +68,18 @@ sequenceDiagram
         C->>C: Mark owner input handled
         R->>C: beforeAction(run_id, boundary)
     end
-    C-->>R: allowed
-    R->>R: Execute state-changing boundary
+    C-->>R: allowed(permit_id, generation)
+    R->>C: beginAction(permit_id)
+    alt Steering generation is unchanged
+        C-->>R: begun
+        R->>R: Execute state-changing boundary
+    else Later owner input advanced generation
+        C-->>R: stale
+        R->>C: beforeAction(run_id, boundary)
+    end
 ```
 
-`beforeAction` is the only authority for this gate. The runtime calls it immediately before every write, edit, command, subagent dispatch, external request, and final response. Pure local reads and local reasoning do not require a permit. Preparing a write or response may proceed locally, but execution waits for `allowed`.
+`beforeAction` and `beginAction` jointly define the gate. `beforeAction` checks Slack health and pending owner input, then creates a one-shot permit bound to the run, boundary type, and current steering generation. Immediately before execution, `beginAction` atomically rechecks Slack health and required delivery state, then consumes the permit only when it is still issued and the run generation is unchanged. An unavailable dependency leaves the permit unconsumed. A newly deduplicated owner event increments the generation and invalidates every older unconsumed permit. Owner input committed after consumption applies before the following action. Pure local reads and local reasoning require no permit.
 
 #### Slack-enabled runs fail closed until recovery or local break-glass
 
@@ -120,16 +128,16 @@ One per-user SQLite database is the canonical durable state. The daemon is its o
 
 | Table | Key constraints | State owned |
 |---|---|---|
-| `runs` | `run_id` primary key; unique `(channel_id, thread_ts)` | Run locator, owner, lifecycle, Slack mode, and next quiet-status deadline |
+| `runs` | `run_id` primary key; unique `(channel_id, thread_ts)` | Run locator, owner, lifecycle, Slack mode, steering generation, and next quiet-status deadline |
 | `owner_inputs` | `input_id` primary key; unique `(channel_id, thread_ts, message_ts)` | Owner message payload, handling state, and resolution |
 | `message_deliveries` | `delivery_id` primary key; unique idempotency key per run | Required outbound message, attempts, confirmation, and Slack message identity |
-| `action_permits` | `permit_id` primary key | Boundary kind, permit state, fencing data, issue time, and consumption time |
+| `action_permits` | `permit_id` primary key | Run, boundary kind, issued generation, one-shot state, issue time, and consumption time |
 | `interruptions` | `interruption_id` primary key | Availability cause, break-glass transition, local resumption, and reconciliation |
 | `break_glass_receipts` | `receipt_id` primary key; unique `interruption_id` | Run, interruption, OS user, confirmation time, and Slack-disable time |
 | `schema_migrations` | Migration version primary key | Applied schema version and checksum |
 | `jira_backlinks` | `run_id` primary key | Optional Jira issue locator, derived thread URL, custom-field delivery state, attempts, and last error |
 
-The coordinator commits related facts atomically: Slack thread identity with a pending Jira backlink for Jira-linked runs, owner-event deduplication with pending-input state, permit creation with the gate decision, timer advancement with a queued status delivery, and break-glass mode with its interruption and audit receipt. Process exit between those writes cannot expose a partially applied transition.
+The coordinator commits related facts atomically: Slack thread identity with a pending Jira backlink, owner-event deduplication with a steering-generation increment and pending-input state, permit issuance with the gate decision, permit consumption with generation validation, timer advancement with a queued status delivery, and break-glass mode with its interruption and audit receipt. Process exit between those writes cannot expose a partially applied transition.
 
 #### Jira stores a discoverable backlink, not coordinator authority
 
@@ -171,9 +179,10 @@ agent runtime integration
 ├── startSlackRun(input) ──────────────────────▶ coordinator.startRun
 ├── recordWorkEvent(event) ────────────────────▶ coordinator.recordWorkEvent
 ├── executeStateChangingBoundary(runId, action)
-│   ├── beforeAction(runId, action.boundary) ──▶ coordinator.beforeAction
-│   ├── allowed ───────────────────────────────▶ action.execute
-│   └── blocked or unavailable ────────────────▶ pause
+│   ├── beforeAction(runId, action.boundary) ──▶ issue one-shot permit
+│   ├── beginAction(permitId) ─────────────────▶ consume if generation matches
+│   ├── begun ─────────────────────────────────▶ action.execute
+│   └── blocked, stale, or unavailable ────────▶ pause or recheck
 ├── submitOwnerInputResolution(result) ────────▶ coordinator.resolveOwnerInput
 └── finishSlackRun(outcome) ───────────────────▶ coordinator.finishRun
 
@@ -199,6 +208,7 @@ interface SlackWorkCoordinator {
   recordWorkEvent(event: WorkEvent): Promise<void>;
   ingestOwnerEvent(event: OwnerThreadEvent): Promise<IngestResult>;
   beforeAction(runId: RunId, boundary: ActionBoundaryKind): Promise<ActionPermit>;
+  beginAction(permitId: PermitId): Promise<BeginActionResult>;
   resolveOwnerInput(result: OwnerInputResolution): Promise<void>;
   finishRun(input: FinishRunInput): Promise<void>;
 }
@@ -229,12 +239,17 @@ type ActionBoundaryKind =
   | "final_response";
 
 type ActionPermit =
-  | { kind: "allowed" }
+  | { kind: "allowed"; permitId: PermitId; generation: number; boundary: ActionBoundaryKind }
   | { kind: "blocked"; pending: OwnerInput[] }
+  | { kind: "unavailable"; cause: SlackUnavailableCause };
+
+type BeginActionResult =
+  | { kind: "begun"; permitId: PermitId }
+  | { kind: "stale"; permitId: PermitId; currentGeneration: number }
   | { kind: "unavailable"; cause: SlackUnavailableCause };
 ```
 
-All runtime adapters must route the six `ActionBoundaryKind` operations through one boundary hook. Local file reads and in-process reasoning bypass that hook. A coordinator IPC failure is treated as `unavailable` even though no permit response can arrive. `LocalOperatorControl` is intentionally absent from the agent runtime interface. SQLite is injected behind the coordinator's state-store boundary; permit fencing remains undecided.
+All runtime adapters must route the six `ActionBoundaryKind` operations through one boundary hook and must not execute when `beginAction` returns `stale` or `unavailable`. Local file reads and in-process reasoning bypass that hook. A coordinator IPC failure is treated as `unavailable` even though no response can arrive. `LocalOperatorControl` is intentionally absent from the agent runtime interface. SQLite is injected behind the coordinator's state-store boundary.
 
 #### A filesystem-protected Unix-domain socket carries typed local RPC
 
@@ -255,10 +270,15 @@ interface BeforeActionInput {
   boundary: ActionBoundaryKind;
 }
 
+interface BeginActionInput {
+  permitId: PermitId;
+}
+
 type CoordinatorRpcRequest =
   | RpcRequest<"start_run", StartRunInput>
   | RpcRequest<"record_work_event", WorkEvent>
   | RpcRequest<"before_action", BeforeActionInput>
+  | RpcRequest<"begin_action", BeginActionInput>
   | RpcRequest<"resolve_owner_input", OwnerInputResolution>
   | RpcRequest<"finish_run", FinishRunInput>
   | RpcRequest<"disable_slack_with_break_glass", { runId: RunId }>;
@@ -316,6 +336,7 @@ interface SlackRunState {
   channelId: string;
   threadTs: string;
   lifecycle: "active" | "completed" | "failed" | "cancelled";
+  steeringGeneration: number;
   slackMode: "enabled" | "paused_unavailable" | "disabled_break_glass";
   nextQuietStatusDueAt: string;
   pendingOwnerInputIds: string[];
@@ -390,11 +411,13 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 - [ ] Confirm agent adapters and the operator CLI use framed typed request/response RPC over a filesystem-protected Unix-domain socket with no TCP listener.
 - [ ] Confirm Jira setup validates an administrator-created field by stable per-site ID and runtime requires no Jira admin privileges.
 - [ ] Confirm break-glass requires interactive CLI confirmation and a durable audit receipt while explicitly treating same-user RPC callers as trusted.
+- [ ] Confirm `beforeAction` issues a one-shot permit and `beginAction` consumes it only when the steering generation is unchanged.
 - [ ] Confirm Slack-disabled runs retain existing workflow behavior.
 
 ### Known limits
 - Per-user daemon supervision, startup/update mechanism, SQLite file location, driver packaging, migrations, and backup policy.
 - Slack app installation, authorization, and Socket Mode reconnect, acknowledgement, and replay behavior.
 - Same-user agent processes can construct the break-glass RPC and bypass the CLI confirmation; this is an accepted release limitation.
+- A crash after permit consumption but before an external effect is observed requires action-specific idempotency or reconciliation.
 - Jira credential authorization, validation scope, existing-value conflicts, and retry guarantees.
 - Slack retry schedule, replay ordering, and reconciliation delivery guarantees.
