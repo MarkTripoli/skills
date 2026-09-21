@@ -93,8 +93,8 @@ The model selector returns only available configured candidates, keeps economy a
 
 #### Automated Verification:
 
-- [ ] `node --test tests/atomic-model-routing.test.mjs`
-- [ ] `node --test tests/atomic-controller.test.mjs`
+- [x] `node --test tests/atomic-model-routing.test.mjs` -> 12 passed
+- [x] `node --test tests/atomic-controller.test.mjs` -> 13 passed
 
 human-gated: false
 
