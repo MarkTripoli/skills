@@ -1,7 +1,7 @@
 ---
 type: design-tdd
 task: i-want-new-skill
-summary: "A repo-owned per-user daemon and SQLite database are authoritative for coordinator state, with one Slack app Socket Mode connection bound exclusively to one daemon per workspace deployment. Administrators install the app from a repository-owned manifest for invited public and private channels; headless setup validates protected bot and app-level tokens. Each repository declares its default Slack channel in its root `AGENTS.md`, and an explicit channel in the controlling person's run instruction overrides that default without a workspace default, mapping table, or routing subsystem. Native per-user supervision, filesystem-protected RPC, generation-fenced action permits, and durable break-glass coordinate work across sessions and failures; browser OAuth, direct messages, Windows services, and shared app connections are deferred."
+summary: "A repo-owned per-user daemon and SQLite database are authoritative for coordinator state, with one Slack app Socket Mode connection bound exclusively to one daemon per workspace deployment. Administrators install the app from a repository-owned manifest for invited public and private channels; headless setup validates protected bot and app-level tokens. Repository defaults and runtime overrides may use `#channel-name` or an immutable Slack channel ID; the adapter resolves once before `startRun` and persists the validated ID. The repository root `AGENTS.md` default yields to an explicit runtime override without a workspace default, mapping table, or routing subsystem; browser OAuth, direct messages, Windows services, and shared app connections are deferred."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 36d73c2fdbd605df9a6f55904f80fcdda7f418fc
@@ -116,13 +116,13 @@ Setup accepts one complete credential pair from `SLACK_BOT_TOKEN` and `SLACK_APP
 | Slack app identity | Call [`bots.info`](https://docs.slack.dev/reference/methods/bots.info/) for the returned `bot_id` and compare `bot.app_id` with the configured app ID | App mismatch stops setup |
 | Socket Mode token and app match | Call [`apps.connections.open`](https://docs.slack.dev/reference/methods/apps.connections.open/), connect to the returned URL, and compare `hello.connection_info.app_id` with both the bot app ID and configured app ID before closing the validation socket | Invalid app token, missing `connections:write`, disabled or unreachable Socket Mode, or app mismatch stops setup |
 
-The first release supports work threads in public and private channels where the app is already a member. The manifest requires bot scopes `chat:write`, `channels:history`, `groups:history`, and `users:read`; it subscribes to `message.channels` and `message.groups`. `users:read` supports the `bots.info` app-identity check. The administrator must invite the app to every eligible channel because neither `chat:write.public` nor automated channel joining is included.
+The first release supports work threads in public and private channels where the app is already a member. The manifest requires bot scopes `chat:write`, `channels:history`, `channels:read`, `groups:history`, `groups:read`, and `users:read`; it subscribes to `message.channels` and `message.groups`. `channels:read` and `groups:read` support channel-name resolution and membership validation, while `users:read` supports the `bots.info` app-identity check. The administrator must invite the app to every eligible channel because neither `chat:write.public` nor automated channel joining is included.
 
 The supplied bot and app-level tokens cannot introspect the deployed event-subscription list. Setup validates the repository manifest statically; the live acceptance trial must prove that an owner thread reply reaches the daemon before the installation is declared operational.
 
 #### A runtime channel instruction overrides the repository default
 
-Each repository declares one default Slack channel in its root `AGENTS.md`. At Slack-enabled run start, the runtime adapter uses an explicit channel from the controlling person's current run instruction when present; otherwise it uses that repository declaration. The selected channel must be an invited public or private channel. If neither source provides a channel, or the app cannot access the selected channel, the coordinator rejects Slack run creation before posting a root message. Slack-disabled runs remain unchanged.
+Each repository declares one default Slack channel in its root `AGENTS.md`. Both that default and an explicit channel in the controlling person's current run instruction may use `#channel-name` or an immutable Slack channel ID. At Slack-enabled run start, the runtime adapter uses the explicit runtime reference when present; otherwise it uses the repository declaration. If neither source resolves to an invited public or private channel, the coordinator rejects Slack run creation before posting a root message. Slack-disabled runs remain unchanged.
 
 ```mermaid
 flowchart TD
@@ -301,20 +301,24 @@ All runtime adapters must route the six `ActionBoundaryKind` operations through 
 
 #### Channel resolution is one adapter-level precedence check
 
-The runtime adapter already has the repository root and the controlling person's run instruction. It reads the repository's root `AGENTS.md` declaration, applies the runtime override directly, validates the selected channel through the Slack adapter, and passes the resolved channel ID to `startRun`. The coordinator never discovers a channel from global configuration.
+The runtime adapter already has the repository root and the controlling person's run instruction. It reads the repository's root `AGENTS.md` declaration, applies the runtime override directly, parses either source as `#channel-name` or an immutable Slack channel ID, resolves and validates it through the Slack adapter, and passes only the resolved ID to `startRun`. The coordinator never discovers a channel from global configuration.
 
 ```text
 resolveSlackChannel(runtimeInstruction, repositoryAgentsMd)
-├── runtime instruction has explicit channel ──▶ select override
-├── otherwise AGENTS.md has default channel ──▶ select repository default
-└── otherwise ─────────────────────────────────▶ return missing_channel
-    select
-    ├── resolve and validate Slack channel
-    ├── require public or private type and app membership
+├── runtime instruction has explicit channel ──▶ parse name or ID
+├── otherwise AGENTS.md has default channel ──▶ parse name or ID
+└── otherwise ────────────────────────────────▶ return missing_channel
+    parse name
+    └── paginate conversations.list(public_channel, private_channel)
+        └── require one exact non-archived member-channel match
+    parse ID
+    └── conversations.info(channelId)
+        └── require non-archived public/private channel membership
+    resolved
     └── startRun(resolvedChannelId)
 ```
 
-This resolver is a branch in the runtime adapter, not a registry, mapping store, or daemon subsystem. Once `startRun` persists the resolved channel ID, later status, steering, completion, restart, and reconciliation paths use that immutable run-to-thread mapping.
+Name lookup consumes every cursor page from `conversations.list`, collects exact `name` or `name_normalized` matches, and requires exactly one non-archived member channel. ID lookup validates the referenced conversation directly with `conversations.info`. Resolution runs once before `startRun`; it creates no channel cache or mapping table. Once `startRun` persists the ID, later status, steering, completion, restart, and reconciliation paths use that immutable run-to-thread mapping even if Slack later renames the channel.
 
 #### Setup validates headless credentials before installing the native user service
 
@@ -428,6 +432,15 @@ interface SlackCredentialsFileV1 {
   appToken: string;
 }
 
+type SlackChannelRef =
+  | { kind: "name"; name: string }
+  | { kind: "id"; channelId: string };
+
+interface ResolvedSlackChannel {
+  channelId: string;
+  source: "runtime_instruction" | "repository_agents_md";
+}
+
 interface JiraIssueRef {
   siteId: string;
   issueKey: string;
@@ -484,8 +497,8 @@ The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input
 - Enable write-ahead logging, foreign keys, and a bounded busy timeout on every connection.
 - Run ordered, transactional schema migrations before opening Socket Mode or local IPC.
 - Place the Unix-domain socket in the per-user runtime directory with a mode-`0700` parent and mode-`0600` socket; open no TCP listener.
-- Ship the canonical Slack app manifest with Socket Mode enabled, bot scopes `chat:write`, `channels:history`, `groups:history`, and `users:read`, and bot events `message.channels` and `message.groups`. Public and private channels are supported only when the app is a member.
-- Resolve a Slack-enabled run's channel from exactly two sources: an explicit channel in the controlling person's current run instruction, then the repository root `AGENTS.md` default. The runtime instruction wins.
+- Ship the canonical Slack app manifest with Socket Mode enabled, bot scopes `chat:write`, `channels:history`, `channels:read`, `groups:history`, `groups:read`, and `users:read`, and bot events `message.channels` and `message.groups`. Public and private channels are supported only when the app is a member.
+- Resolve a Slack-enabled run's channel from exactly two sources: an explicit channel in the controlling person's current run instruction, then the repository root `AGENTS.md` default. Both accept `#channel-name` or a Slack channel ID; the runtime instruction wins.
 - Require non-secret expected Slack app and workspace IDs in installation configuration.
 - Accept `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` only as a complete setup-time pair, or read both from the protected per-user credentials file. Never load repository-local `.env` files.
 - Keep Slack credentials outside SQLite, repositories, and native service definitions. Require a daemon-user-owned mode-`0600` regular file under a mode-`0700` per-user directory; reject symlinks and broader permissions.
@@ -540,8 +553,9 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 - [ ] Confirm one workspace deployment binds one Slack app Socket Mode connection to one per-user daemon and does not introduce per-user apps, a hosted router, or an ingress mesh.
 - [ ] Confirm administrators install the repo-owned manifest and headless setup validates the expected app, workspace, bot scopes, and Socket Mode access from a complete injected token pair.
 - [ ] Confirm environment-supplied tokens are persisted only to a daemon-user-owned mode-`0600` credentials file and no repository-local `.env`, SQLite row, service definition, or log contains a Slack token.
-- [ ] Confirm the app supports invited public and private channels with `chat:write`, `channels:history`, `groups:history`, and `users:read`, subscribes to `message.channels` and `message.groups`, and does not request automatic-join or public-post bypass scopes.
-- [ ] Confirm channel selection uses only an explicit runtime instruction followed by the repository root `AGENTS.md` default, persists the resolved channel with the run, and introduces no workspace default, mapping table, or routing subsystem.
+- [ ] Confirm the app supports invited public and private channels with `chat:write`, `channels:history`, `channels:read`, `groups:history`, `groups:read`, and `users:read`, subscribes to `message.channels` and `message.groups`, and does not request automatic-join or public-post bypass scopes.
+- [ ] Confirm channel selection uses only an explicit runtime instruction followed by the repository root `AGENTS.md` default, and both accept `#channel-name` or a Slack channel ID.
+- [ ] Confirm the adapter resolves and validates the channel once before `startRun`, persists only the resolved channel ID, and introduces no workspace default, cache, mapping table, or routing subsystem.
 - [ ] Confirm a Jira-linked run projects its Slack thread URL to a dedicated custom field without giving Jira authority over timers, steering, or permits.
 - [ ] Confirm Jira outages leave the backlink pending without pausing Slack coordination and non-Jira runs stay local-only.
 - [ ] Confirm agent adapters and the operator CLI use framed typed request/response RPC over a filesystem-protected Unix-domain socket with no TCP listener.
@@ -554,7 +568,7 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 - SQLite file location, driver packaging, migrations, and backup policy.
 - Socket Mode reconnect, acknowledgement, and replay behavior.
 - Bot and app-level tokens cannot introspect deployed event subscriptions; the live acceptance trial must detect manifest drift.
-- The machine-readable `AGENTS.md` channel declaration and runtime channel-reference syntax remain open.
+- The machine-readable `AGENTS.md` default-channel declaration remains open.
 - One workspace deployment supports one per-user daemon owning the Slack app connection; multiple independent users or daemons sharing that app are unsupported.
 - Same-user agent processes can construct the break-glass RPC and bypass the CLI confirmation; this is an accepted release limitation.
 - A crash after permit consumption but before an external effect is observed requires action-specific idempotency or reconciliation.

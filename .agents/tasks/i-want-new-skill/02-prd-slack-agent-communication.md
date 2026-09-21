@@ -1,7 +1,7 @@
 ---
 type: design-prd
 task: i-want-new-skill
-summary: "This PRD defines one optional Slack thread per agent work run with fixed updates and owner steering in invited public or private channels. Each repository declares its default Slack channel in its root `AGENTS.md`; an explicit channel in the controlling person's run instruction overrides that default, with no workspace default, mapping table, or routing subsystem. Each workspace deployment uses one administrator-installed app from a repository-owned manifest, and headless setup validates protected bot and Socket Mode tokens before use. Jira receives an optional discoverability backlink, while browser OAuth, direct messages, Windows services, non-owner participation, non-Jira ticket systems, and shared app connections are deferred."
+summary: "This PRD defines one optional Slack thread per agent work run with fixed updates and owner steering in invited public or private channels. Repository defaults and runtime overrides may use `#channel-name` or an immutable Slack channel ID; the runtime override wins, the adapter resolves once before run creation, and the run persists the validated ID. Each workspace deployment uses one administrator-installed app from a repository-owned manifest, and headless setup validates protected bot and Socket Mode tokens before use. Jira receives an optional discoverability backlink, while browser OAuth, direct messages, Windows services, non-owner participation, non-Jira ticket systems, workspace routing configuration, and shared app connections are deferred."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 472270dd717873b0f4fb002487ca0fa1abe92607
@@ -43,7 +43,7 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - One workspace deployment uses one Slack app Socket Mode connection owned by one per-user daemon.
 - An administrator installs the repo-owned Slack app manifest; headless setup accepts injected bot and Socket Mode tokens and rejects an installation that does not match the expected app, workspace, scopes, and Socket Mode access.
 - Work threads may use public or private channels after an administrator invites the app; direct messages and multi-person direct messages are not supported.
-- Channel selection uses the repository root `AGENTS.md` default unless the person controlling the run explicitly names a different channel for that run.
+- Channel selection uses the repository root `AGENTS.md` default unless the person controlling the run explicitly names a different channel; both sources accept `#channel-name` or an immutable Slack channel ID.
 
 ### Alternative Solutions Considered
 
@@ -64,11 +64,13 @@ Add an optional Slack thread to an individual work run. The person controlling t
 
 #### The run instruction overrides the repository channel default
 
-- Each repository shall declare one default Slack channel in its root `AGENTS.md`.
-- WHEN the person controlling a Slack-enabled run explicitly names a different Slack channel in the run instruction, the system shall use that channel for the run.
-- IF the run instruction does not name a Slack channel, THEN the system shall use the repository's `AGENTS.md` default.
-- IF neither source yields an accessible invited public or private channel, THEN the system shall reject Slack run creation before posting the root message.
-- The system shall not use a workspace default, repository-to-channel mapping table, or separate routing subsystem.
+- Each repository shall declare one default Slack channel in its root `AGENTS.md` as `#channel-name` or an immutable Slack channel ID.
+- WHEN the person controlling a Slack-enabled run explicitly supplies a `#channel-name` or Slack channel ID in the run instruction, the system shall use that reference for the run.
+- IF the run instruction does not supply a Slack channel reference, THEN the system shall use the repository's `AGENTS.md` default.
+- BEFORE creating the root message, the system shall resolve a name once, validate that the app is a member of the public or private channel, and persist the resolved channel ID for the run.
+- IF neither source resolves to an accessible invited public or private channel, THEN the system shall reject Slack run creation before posting the root message.
+- A later channel rename shall not change an active run's persisted channel ID.
+- The system shall not use a workspace default, repository-to-channel mapping table, channel cache, or separate routing subsystem.
 
 #### Administrators provision Slack before headless setup
 
@@ -161,7 +163,8 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - [ ] Confirm administrators install the repo-owned manifest and setup accepts protected headless token injection while rejecting the wrong app, workspace, scopes, or Socket Mode access.
 - [ ] Confirm setup never reads repository-local `.env` files.
 - [ ] Confirm work threads support invited public and private channels while direct messages, multi-person direct messages, automatic channel joining, and posting without membership remain unsupported.
-- [ ] Confirm each repository's root `AGENTS.md` supplies the default channel, an explicit runtime instruction overrides it, and no third routing source exists.
+- [ ] Confirm each repository's root `AGENTS.md` supplies the default channel, an explicit runtime instruction overrides it, and both accept `#channel-name` or a Slack channel ID.
+- [ ] Confirm the system resolves and validates the channel once before run creation, persists the resolved ID, and introduces no third routing source or channel cache.
 
 ### Known limits
 
@@ -171,5 +174,5 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - Same-user agent processes can construct the break-glass RPC and bypass the supported CLI confirmation.
 - Windows service support for the per-user coordinator daemon is deferred.
 - Slack retry schedule, reconciliation guarantees, deployed event-subscription drift, and agent runtime adapter wiring remain technical-design decisions.
-- The exact machine-readable `AGENTS.md` declaration and runtime channel-reference syntax remain technical-design decisions.
+- The exact machine-readable `AGENTS.md` default-channel declaration remains a technical-design decision.
 - One Slack app connection supports one per-user daemon for a workspace deployment; multiple independent users or daemons sharing that app are deferred.
