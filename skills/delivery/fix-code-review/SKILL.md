@@ -11,7 +11,7 @@ Repair the reviewed change, verify, and send through another code review before 
 
 ## Setup
 
-Locate the task directory and read `task.md` per the conventions (create one from the request when none exists). Resolve the `@file` review artifact in the task directory; read the file completely. No file: use the newest artifact of type `code-review` whose `status` is `findings` or `blocked`. If ambiguous, ask. Read `references/code_review_fixes_template.md`, `code_review_fixes_answer.md`.
+Locate the task directory and read `task.md`. Resolve explicit `@file`; otherwise use current `review.code` when its status is `findings` or `blocked`. Read it completely, then read the fix templates.
 
 ## Validate
 
@@ -31,8 +31,8 @@ Run focused tests, then required gates. Record commands/outcomes. Missing gate r
 
 ## Save receipt
 
-Take the next artifact number. Write `NN-code-review-fixes-<summary>.md` using template. Map Critical/Required ids to disposition/evidence. Record advisories separately. Save the file. Commit it with `git add <path>` as `docs(task): code-review-fixes artifact`; fixes to code go in their own commit with explicit code paths.
+Record the next immutable `review.fixes` iteration through the conventions' Recording an artifact flow using the template. Map Critical/Required ids to disposition/evidence and record advisories separately. Commit its canonical path and `index.json` explicitly as `docs(task): code-review-fixes artifact`; fixes to code go in their own commit with explicit code paths.
 
 ## Review again
 
-Read, use `references/code_review_fixes_answer.md` exactly. Fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-code-review-fixes-slug.md](.agents/tasks/<slug>/NN-code-review-fixes-slug.md)`. Final command: `/review-code`, even when all findings fixed. Only fresh clean review proceeds to PR.
+Use `references/code_review_fixes_answer.md` exactly. Fill `{artifact_link}` with the saved canonical task-root-relative path. Final command: `/review-code`, even when all findings are fixed. Only a fresh clean review proceeds to PR. A legacy task without `index.json` follows the conventions' legacy rules.
