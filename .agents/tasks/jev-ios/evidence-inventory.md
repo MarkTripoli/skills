@@ -1,7 +1,7 @@
 ---
 task: jev-ios
 type: evidence-inventory
-status: not-ready
+status: complete-with-accepted-exception
 ---
 
 # Evidence inventory
@@ -126,3 +126,9 @@ No credential-bearing files or video binaries are included in this committed inv
 - Replacement receipt: `evidence/native-safety-current-20260920T084236-2488/replacement-corrected-1789908188-8659/jev-receipt.json`, status `passed`, same-launch PID `9661`; SHA-256 `1e6dc76a99f5decbe74e019e45608199ef3870e4e9bba65b695f4522a17f4049`.
 - Standalone receipt: `evidence/native-safety-current-20260920T084236-2488/standalone-1789908337-26043/jev-receipt.json`, status `passed`, PID `29301`; SHA-256 `ecf7c247a4c3d4492b9f06e938e953fdd8f2cd75c32c2fe50606d8a1520abe40`.
 - These current receipts prove product safety only; they do not restore deleted original recordings.
+
+## User-accepted preservation exception (2026-09-21)
+
+- The user explicitly accepted the loss of the failed replacement recording and the PID 98075 standalone recording and authorized continuation on the remaining evidence; the durable record is `user-acceptance-preservation.md`. The originals remain unrecovered and are not claimed recovered; every other receipt, recording, blocked run, and failed run in this inventory remains preserved.
+- Pre-edit byte archives of the artifacts reconciled on that amendment are under the unique ignored `evidence/user-acceptance-20260920T013301/archive-edited-artifacts/` with `SHA256SUMS`. No evidence file was deleted, moved, relabeled, or uploaded; no native run was repeated.
+- Both current native receipts above were re-read at incorporation and still hash to the SHA-256 values recorded; the authorized simulator was `Shutdown`, both historical companion sockets were absent, and no `idb_companion` process was running.

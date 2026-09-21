@@ -1,8 +1,8 @@
 ---
 task: jev-ios
 type: verification
-summary: "Safety repairs pass offline; native proof is retained, but preservation is violated and independent review is complete; preservation remains unmet."
-status: not-ready
+summary: "Safety repairs pass offline and native proof is retained on the current revision; independent review is approved; the historical recording loss is a user-accepted exception recorded in user-acceptance-preservation.md, not recovered evidence."
+status: ready-with-accepted-exception
 revision: 69c9c0c
 target: main
 ---
@@ -43,7 +43,7 @@ target: main
 | A6 | Truthful blocked outcome and owned app/recording cleanup across outcomes (`task.md:35`; claimed: yes). | Run zero-action acceptance with `--max-actions 0`, inspect its receipt, query `idb list-apps`, inspect verifier-owned recording processes, then stop owned services. | Zero-action remains blocked, evidence is retained, and owned app, recording, companion, and simulator resources stop. | Current continuation zero-action exited 1 as expected with `blocked` / `action budget exhausted`; verified media was retained. The prior and current owned cleanup checks leave no verifier recorder, stop the companion, remove its socket, and return the simulator to `Shutdown`. | pass | 1.00 | 0 |
 | A7 | Installed standalone iOS execution uses external dependencies (`task.md:36`; claimed: yes). | Rebuilt `/tmp/jev-ios-cr001-codex/skills/jev-ui/scripts/acceptance.mjs` with external companion, plain `omp -p`, absolute record-evidence command. | Exit 0; independent `Confirmed Name`, stable PID `29301`, verified recording. | Actual passed standalone evidence is `evidence/native-safety-current-20260920T084236-2488/standalone-1789908337-26043/` (PID 29301); the old `final-sync-20260920/current-standalone` blocked copy remains untouched and is not relabeled. | pass | hand | 0 |
 | A8 | Aggregate regression and packaging preserve browser and Android boundaries (`task.md:37`; claimed: yes). | C1-C5 and controller/cleanup probes. | C1 passed 152 tests; all four runtime packages passed; `jev-controller-probe` returned `TYPE_TEXT,WAIT,DONE`; no Android device was touched. | Fresh current-product builds recorded in `final-checks.md` passed; no Android device was touched. | pass | hand | 0 |
-| A9 | Independent review follows verification (`task.md:37`; claimed: yes). | `15-code-review-jev-ios.md` reviewed current safety repair; CR-001 is the sole finding. | Independent review decision approve; no critical or major findings. | `15-code-review-jev-ios.md` records product safety clean and preserves CR-001 unchanged. | pass | hand | 0 |
+| A9 | Independent review follows verification (`task.md:37`; claimed: yes). | `15-code-review-jev-ios.md` reviewed the current safety repair with CR-001 as the sole finding; `18-code-review-jev-ios.md` re-reviewed the full scope against `origin/main` after the user amendment. | Independent review decision approve; no critical or major findings. | `18-code-review-jev-ios.md`: decision `approve`, CR-001 `declined` on the user amendment, two non-blocking advisories (stale "pending" wording in docs; chooser narrowing also touches Android DONE/WAIT availability). | pass | hand | 0 |
 
 Verdicts: `pass`, `fail`, or `untested` (nothing in this environment could decide it). Confidence is the helper's probability for the verdict, or `hand` when decided without it; deterministic verdicts record `1.00`. Severity: 0 none, 1 cosmetic, 2 functional, 3 blocking.
 
@@ -53,9 +53,7 @@ The latest native reruns diagnosed repeated iOS WAIT decisions after successful 
 
 ## Missing
 
-- **NOT READY:** Preservation requirement is unmet. Earlier avoidable `rm -rf` commands deleted the failed replacement attempt and PID 98075 standalone original media; no original PID 98075 video was recovered. Reconstructed terminal JSON is not video recovery.
-- Independent review is complete; CR-001 preservation loss remains the sole unresolved requirement.
-- Native safety proof passed on current revision; original failed recordings remain missing. Transcript reconstruction is historical evidence, not restoration.
+- **Accepted exception, not a pass:** the preservation requirement is unmet for two historical runs. Earlier avoidable `rm -rf` commands deleted the failed replacement attempt and PID 98075 standalone original media; no original PID 98075 video was recovered, and reconstructed terminal JSON is not video recovery. The user explicitly accepted this loss and authorized continuation (`user-acceptance-preservation.md`). Nothing else is missing.
 
 ## Human Review
 
@@ -70,11 +68,11 @@ The latest native reruns diagnosed repeated iOS WAIT decisions after successful 
 - [x] `node scripts/check-commits.mjs origin/main..HEAD` exits 0 with valid subjects.
 - [x] Historical `8a45b9b` receipts preserve Name, Casey-to-Jordan, standalone, and blocked flows; current repair probes and receipts preserve prior generic/failed outcomes.
 - [x] Affected generic, exact-Name, Casey-to-Jordan, blocked, and installed standalone native reruns after the chooser/parser repair.
-- [x] Independent review: `15-code-review-jev-ios.md` confirms product safety clean; CR-001 preservation loss remains the sole unresolved requirement.
+- [x] Independent review: `15-code-review-jev-ios.md` confirms product safety clean; `18-code-review-jev-ios.md` approves the full scope with CR-001 declined on the user amendment.
 - [x] Authorized simulator is Shutdown, the owned IDB socket is absent, and no verifier-owned acceptance process remains.
 
 ### Known limits
 
 - Browser and Android live acceptance were not repeated; aggregate tests and all runtime packages pass, and no Android device or ADB server was touched.
 - Qlty was installed in `/tmp/jev-qlty-bin` for one bounded check. Its generated temporary configuration was removed afterward; the check found one pre-existing shellcheck advisory in `install-authorized.sh`, and no unrelated product edit was made.
-- Native recordings and screenshots remain local ignored evidence; no video binaries or credentials are committed or linked. The preservation violation and irrecoverable PID 98075 media prevent an overall pass.
+- Native recordings and screenshots remain local ignored evidence; no video binaries or credentials are committed or linked. The two deleted historical recordings are a user-accepted exception; every other recording, failed receipt, and blocked receipt remains preserved.

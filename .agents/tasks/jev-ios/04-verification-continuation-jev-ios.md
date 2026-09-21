@@ -1,8 +1,8 @@
 ---
 task: jev-ios
 type: verification-continuation
-summary: "Continuation matrix records product safety pass; preservation loss remains the sole unresolved requirement."
-status: not-ready
+summary: "Continuation matrix records product safety pass and approved independent review; the historical recording loss is a user-accepted exception, not a recovered artifact."
+status: ready-with-accepted-exception
 revision: 69c9c0c
 ---
 
@@ -23,8 +23,8 @@ The implementation and test changes after `a108538` are limited to the historica
 | ID | Contract clause | Evidence and result | Verdict |
 |---|---|---|---|
 | P1 | Continue on existing `feat/jev-ios` checkout/worktree and preserve task metadata. | `git branch --show-current` is `feat/jev-ios`; task metadata and `task.md` are unchanged. | pass |
-| P2 | Preserve original artifacts, failed evidence, recordings, and worktrees. | Earlier avoidable worker `rm -rf` commands deleted failed replacement and PID98075 standalone original media; PID98075 video is irrecoverable. Recovery transcript/reconstructed JSON is not video recovery; retained evidence and new byte archives are identified in receipt 14. | **blocked** |
-| P3 | Reconcile verification status and item verdicts truthfully. | `02-verification-jev-ios.md` and receipt 14 distinguish retained passing proof, blocked historical standalone evidence, safety fixes, and the preservation loss. | pass (not ready) |
+| P2 | Preserve original artifacts, failed evidence, recordings, and worktrees. | Earlier avoidable worker `rm -rf` commands deleted failed replacement and PID98075 standalone original media; PID98075 video is irrecoverable. Recovery transcript/reconstructed JSON is not video recovery; retained evidence and new byte archives are identified in receipt 14. The user explicitly accepted this loss and authorized continuation (`user-acceptance-preservation.md`). Every other artifact, failed receipt, recording, and worktree remains preserved. | **accepted exception** |
+| P3 | Reconcile verification status and item verdicts truthfully. | `02-verification-jev-ios.md` and receipt 14 distinguish retained passing proof, blocked historical standalone evidence, safety fixes, and the preservation loss; after the user amendment, both record the loss as an accepted exception rather than a recovered artifact. | pass |
 | P4 | Exact implementation and test authorship remains Luna-fast; no product changes in this phase. | No implementation/test/diagnostic files changed. This phase changed only verification prose and the archival note. | pass |
 | P5 | Fresh iOS-only proof uses real adapter and real JEV, without resuming old all-platform run. | Retained receipts identify `idb`, model `jev-1.13.0`, authorized simulator `7A023F51-F0DA-4179-868B-19207E433651`, and bundle `ai.typesafe.jevfixture`. No old run was resumed. | pass |
 | P6 | Prove generic confirmation from independent UI status. | `evidence/continuation-20260920/generic/` receipt/report: passed, independent status `Confirmed`, stable PID, one assertion. Historical receipt remains preserved. | pass |
@@ -39,8 +39,8 @@ The implementation and test changes after `a108538` are limited to the historica
 | P15 | Run commit validation. | `node scripts/check-commits.mjs origin/main..HEAD`: exit 0 after the continuation artifacts (subject count recorded by final integration owner). | pass |
 | P16 | Preserve browser/Android behavior and packaging. | Aggregate tests include browser/Android regressions; all four runtime builds pass. The new chooser regression explicitly preserves ordinary Android WAIT behavior; no Android device or emulator was touched. | pass (offline boundary) |
 | P17 | Inspect CI/setup/docs and do not claim missing setup. | `package.json`, `docs/testing.md`, `.github/workflows/commits.yml`, `.github/workflows/release.yml`, `task.md`, and fixture docs were inspected. Node 26.8.1 and `node_modules` are present; no setup gap found. | pass |
-| P18 | Complete independent code review only after verification. | Independent review is complete in `15-code-review-jev-ios.md`; product safety is clean, but overall acceptance remains NOT READY solely because original failed recordings were deleted. | pass |
-| P19 | Commit final task artifacts using repository conventions and prepare normal PR handoff, without submitting it here. | Final synchronization artifacts are committed locally; no PR/push/upload was performed. | pass |
+| P18 | Complete independent code review only after verification. | `15-code-review-jev-ios.md` found product safety clean with CR-001 as the sole finding; `18-code-review-jev-ios.md` re-reviewed the full scope against `origin/main`, declined CR-001 on the user amendment, and approved with two non-blocking advisories. | pass |
+| P19 | Commit final task artifacts using repository conventions and prepare normal PR handoff, without submitting it here. | Final artifacts are committed locally; `pr-description.md` is the local handoff. No PR, push, or upload was performed; publishing is the user's explicit next action. | pass |
 
 ## Stateful transitions and invariants
 
@@ -52,9 +52,9 @@ The implementation and test changes after `a108538` are limited to the historica
 
 ## Completion notes
 
-- Safety implementation repair and offline proof are complete; independent review is complete; preservation is not met.
-- Retained native proof includes current native standalone PID29301, Casey-to-Jordan, blocked, and genuine failed scenarios. Deleted PID98075 original media is not preserved.
-- Final local PR handoff remains provisional until independent review.
+- Safety implementation repair and offline proof are complete; independent review is approved; preservation is a user-accepted exception for two deleted historical recordings.
+- Retained native proof includes current native standalone PID29301, Casey-to-Jordan PID9661, blocked, and genuine failed scenarios. Deleted PID98075 original media is not preserved and is not claimed preserved.
+- Final local PR handoff is ready and unpublished.
 
 ## Commands and outcomes
 
@@ -70,4 +70,4 @@ The implementation and test changes after `a108538` are limited to the historica
 - Root cause 2: `stopNativeFixture` previously treated empty or malformed IDB output as stopped. `node /tmp/jev-stop-probe.mjs` reproduced false verification before repair; after repair empty/malformed output and interrupted termination followed by empty output remain unusable errors, while valid empty arrays and Unknown/null-PID observations remain verified stopped.
 - Durable regression evidence: `tests/jev-ui-controller.test.mjs` adds ordinary WAIT preservation plus unreadable, valid-empty, Unknown, and interrupted-cleanup cases. `npm test` passes 152/152.
 - Historical affected reruns using a goal-rewriting wrapper remain rejected and preserved. Current plain-helper exact Name, Casey seed, and standalone runs are accepted; the unchanged helper long-goal attempt remains preserved as rejected empty output. Generic/blocked evidence remains valid.
-- Independent review of this repair is complete; overall status is NOT READY solely for CR-001 preservation loss; product safety and independent review are complete.
+- Independent review of this repair is complete and approved (`18-code-review-jev-ios.md`); product safety holds; CR-001 preservation loss is declined as a user-accepted exception.
