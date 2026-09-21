@@ -86,7 +86,10 @@ export async function routeModel(skillsDir, options = {}) {
     if (!options.requireJev) return fallback('typed-judgment helper unavailable');
     throw new Error(`JEV is unavailable: cannot load ${helperPath}: ${error.message}`);
   }
-  if (typeof helper.systemOne !== 'function') throw new Error(`JEV is unavailable: ${helperPath} has no systemOne export`);
+  if (typeof helper.systemOne !== 'function') {
+    if (!options.requireJev) return fallback('typed-judgment helper has no systemOne export');
+    throw new Error(`JEV is unavailable: ${helperPath} has no systemOne export`);
+  }
   const criteria = Object.fromEntries(candidates.map((candidate, index) => [candidate.model, `Candidate ${index + 1}, ordered weakest to strongest, can complete the request with this capability: ${candidate.description}. Choose the cheapest adequate candidate.`]));
   let answers;
   try {

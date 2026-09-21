@@ -82,6 +82,15 @@ test('portable helper treats array order as capability order and sends descripti
   assert.deepEqual(varied.candidates, ['weak', 'stronger']);
 });
 
+test('portable helper falls back when judge module has no systemOne, while Atomic mode fails', async () => {
+  const dir = fixture('throw new Error("must not call");');
+  fs.writeFileSync(path.join(dir, 'typed-judgment', 'judge.mjs'), 'export const lastCall = null;');
+  const fallback = await routeModel(dir, { phase: 'create-plan', economy: 'cheap', candidates });
+  assert.equal(fallback.source, 'fallback');
+  assert.match(fallback.reason, /no systemOne/);
+  await assert.rejects(routeModel(dir, { phase: 'create-plan', economy: 'cheap', candidates, requireJev: true }), /no systemOne/);
+});
+
 test('portable helper validates exact candidates and fails closed on JEV errors', async () => {
   const dir = fixture('throw new Error("offline");');
   const fallback = await routeModel(dir, { phase: 'create-plan', economy: 'cheap', candidates });
@@ -103,6 +112,8 @@ test('Herdr documents native model arguments after its command separator', () =>
   assert.match(hook, /model-candidates\.json/);
   assert.match(hook, /node \"\$route_helper\" --require-jev/);
   assert.match(hook, /agent_args=\(-- --model \"\$selected_model\"\)/);
+  assert.match(hook, /\.result\.tab\.tab_id \/\/ \.result\.tab\.id \/\/ \.result\.tab_id/);
+  assert.match(hook, /herdr pane close \"\$pane\"/);
 });
 
 test('portable helper exposes a machine-readable stdin contract', async () => {

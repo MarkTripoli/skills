@@ -134,10 +134,14 @@ if test -z "$busy"; then
 else
   created=$(herdr tab create --workspace "${HERDR_WORKSPACE_ID:-}" --cwd "$cwd" --label "$slug" --no-focus 2>/dev/null)
   pane=$(jq -r '.result.root_pane.pane_id // empty' <<<"$created" 2>/dev/null)
-  created_tab=$(jq -r '.result.tab.tab_id // empty' <<<"$created" 2>/dev/null)
-  # Fall back to closing the pane alone if the tab id field name above ever stops matching a real
-  # response, so cleanup still closes something instead of leaking the tab.
-  test -z "$created_tab" && created_pane=$pane
+  created_tab=$(jq -r '.result.tab.tab_id // .result.tab.id // .result.tab_id // empty' <<<"$created" 2>/dev/null)
+  # Without a tab identity the root pane may belong to an unowned tab. Close it
+  # immediately and stop rather than proceeding with an ambiguous cleanup handle.
+  if test -z "$created_tab"; then
+    created_pane=$pane
+    herdr pane close "$pane" >/dev/null 2>&1
+    exit 0
+  fi
 fi
 test -n "$pane" || exit 0
 
