@@ -1,9 +1,9 @@
 ---
 task: one-thing-i-m
 type: verification
-summary: "Re-ran the full suite, focused routing and installer tests, generated runtime trees, shell syntax, diff checks, and commit validation against the revised implementation. The routing, installation, Atomic loading, profile precedence, fallback, fail-closed, Herdr, and catalog-boundary checks passed, but the package `build` script exits with usage because it omits its required runtime argument. The implementation remains unreviewed until the build check is addressed."
-status: failed
-revision: 2f83f59
+summary: "Re-ran the full suite, focused routing and installer tests, four parameterized runtime builds, shell syntax, diff checks, and commit validation against the revised implementation. All repository checks and acceptance items passed, including generated runtime trees for Claude Code, Codex, Oh My Pi, and Pi. The artifact is ready for code review with caller-supplied provider availability retained as a known limit."
+status: passed
+revision: be53d8e
 target: origin/main
 ---
 
@@ -11,7 +11,7 @@ target: origin/main
 
 ## Run
 
-- Revision: [`2f83f59` on `one-thing-i-m`]; clean tree before this artifact.
+- Revision: [`be53d8e` on `one-thing-i-m`]; clean tree before this artifact revision.
 - Target: [`origin/main`]; 35 files changed, 4 of them tests.
 - Checks from: [`package.json` scripts, `.github/workflows/commits.yml`, and the revised plan].
 - Coverage: [11 acceptance items; 0 claimed by a receipt, 11 claimed by none].
@@ -24,8 +24,11 @@ target: origin/main
 | C1 | Repository test suite | [`npm test`] | Exits 0 with no failing test. | Exit 0; validation reports 44 skills and Atomic entry checked, plugin is in sync, and Node reports 165 passed, 0 failed, 0 skipped. | pass | 0.92 | 0 |
 | C2 | Focused routing, Atomic, and installer tests | [`node --test tests/route-model.test.mjs tests/atomic-model-routing.test.mjs tests/atomic-controller.test.mjs tests/install.test.mjs`] | Exits 0 with no failing test. | Exit 0; Node reports 48 passed, 0 failed, 0 skipped. | pass | 0.89 | 0 |
 | C3 | Shell syntax and whitespace checks | [`bash -n skills/delivery/herd-next/references/stop_hook.sh && git diff --check origin/main...HEAD`] | Both checks exit 0. | `stop_hook.sh: syntax ok`; `git diff --check: ok`; exit 0. | pass | 0.93 | 0 |
-| C4 | Commit subjects | [`npm run check-commits -- origin/main..HEAD`] | Exits 0 with all subjects valid. | Exit 0; `ok: 28 subjects`. | pass | 0.92 | 0 |
-| C5 | Package build script | [`npm run build`] | Exits 0 with a generated runtime build. | Exit 1; prints `usage: node scripts/build-runtimes.mjs --runtime <claude-code\|codex\|oh-my-pi\|pi> [--dest <dir>]`. | fail | 1.00 | 2 |
+| C4 | Commit subjects | [`npm run check-commits -- origin/main..HEAD`] | Exits 0 with all subjects valid. | Exit 0; `ok: 29 subjects`. | pass | 0.92 | 0 |
+| C5 | Claude Code generated runtime tree | [`npm run build -- --runtime claude-code --dest <temporary directory>`] | Exits 0 and generates the route-model skill. | Exit 0; build reports `44 skills, 7 workers`; generated tree contains `skills/route-model/SKILL.md`. | pass | 1.00 | 0 |
+| C6 | Codex generated runtime tree | [`npm run build -- --runtime codex --dest <temporary directory>`] | Exits 0 and generates the route-model skill. | Exit 0; build reports `44 skills, 7 workers`; generated tree contains `skills/route-model/SKILL.md`. | pass | 1.00 | 0 |
+| C7 | Oh My Pi generated runtime tree | [`npm run build -- --runtime oh-my-pi --dest <temporary directory>`] | Exits 0 and generates the route-model skill. | Exit 0; build reports `44 skills, 7 workers`; generated tree contains `skills/route-model/SKILL.md`. | pass | 1.00 | 0 |
+| C8 | Pi generated runtime tree | [`npm run build -- --runtime pi --dest <temporary directory>`] | Exits 0 and generates the route-model skill. | Exit 0; build reports `44 skills, 0 workers`; generated tree contains `skills/route-model/SKILL.md`. | pass | 1.00 | 0 |
 | T1 | `tests/route-model.test.mjs` | [`git diff origin/main...HEAD -- tests/route-model.test.mjs`, read in this session] | The change keeps this check's strength. | New coverage tests profile precedence, policy phases, expected-loss selection, exact IDs, malformed and unavailable JEV, Herdr contract, and CLI round-trip; no skipped or removed checks. | pass | 0.88 | 0 |
 | T2 | `tests/atomic-model-routing.test.mjs` | [`git diff origin/main...HEAD -- tests/atomic-model-routing.test.mjs`, read in this session] | The change keeps this check's strength. | Existing malformed-response, unavailable-JEV, policy, and choice assertions remain; availability, unavailable economy, empty availability, and fixed-mode rejection were added; no skips or deletions. | pass | 0.91 | 0 |
 | T3 | `tests/atomic-controller.test.mjs` | [`git diff origin/main...HEAD -- tests/atomic-controller.test.mjs`, read in this session] | The change keeps this check's strength. | Temporary controller fixtures now copy the portable route-model module; existing recovery and progress assertions remain. | pass | 0.89 | 0 |
@@ -44,7 +47,7 @@ target: origin/main
 
 ## Findings
 
-- C5: `npm run build`; expected exit 0 with a generated runtime build (package.json `build` script); observed exit 1 with `usage: node scripts/build-runtimes.mjs --runtime <claude-code|codex|oh-my-pi|pi> [--dest <dir>]`; severity 2.
+None.
 
 ## Missing
 
@@ -54,15 +57,19 @@ None.
 
 ### Review targets
 
-- The items table, especially C5 and the hand-decided acceptance items A6, A7, A9, A10, and A11.
-- The C5 finding and the revised plan's portable route-model, Atomic delegation, installation, Herdr, and runtime-boundary requirements.
+- The items table and the hand-decided acceptance items A6, A7, A9, A10, and A11.
+- The revised plan's portable route-model, Atomic delegation, installation, Herdr, and runtime-boundary requirements.
 
 ### Verify
 
 - [ ] Run `npm test`; it exits 0 with 165 passing tests.
 - [ ] Run `node --test tests/route-model.test.mjs tests/atomic-model-routing.test.mjs tests/atomic-controller.test.mjs tests/install.test.mjs`; it exits 0 with 48 passing tests.
 - [ ] Run `bash -n skills/delivery/herd-next/references/stop_hook.sh && git diff --check origin/main...HEAD`; both checks exit 0.
-- [ ] Run `npm run check-commits -- origin/main..HEAD`; it exits 0 with 28 valid subjects.
+- [ ] Run `npm run check-commits -- origin/main..HEAD`; it exits 0 with 29 valid subjects.
+- [ ] Run `npm run build -- --runtime claude-code --dest <temporary directory>`; it generates the Claude Code tree and exits 0.
+- [ ] Run `npm run build -- --runtime codex --dest <temporary directory>`; it generates the Codex tree and exits 0.
+- [ ] Run `npm run build -- --runtime oh-my-pi --dest <temporary directory>`; it generates the Oh My Pi tree and exits 0.
+- [ ] Run `npm run build -- --runtime pi --dest <temporary directory>`; it generates the Pi tree and exits 0.
 - [ ] Re-decide A6: run `node --test tests/install.test.mjs`; it shows standalone `source: fallback` economy behavior.
 - [ ] Re-decide A7: run `node --test tests/route-model.test.mjs tests/atomic-model-routing.test.mjs`; it shows unavailable or malformed JEV fails closed in Atomic mode.
 - [ ] Re-decide A9: run `node --test tests/route-model.test.mjs`; it shows exact-candidate and expected-loss behavior.
@@ -71,6 +78,5 @@ None.
 
 ### Known limits
 
-- `npm run build` is a failed repository check because the package script invokes `build-runtimes.mjs` without its required `--runtime` argument. Direct per-runtime builds for Claude Code, Codex, Oh My Pi, and Pi passed in temporary directories.
 - A6, A7, A9, A10, and A11 were unclear to JEV and were decided by direct evidence with `hand` confidence.
 - No provider account availability or native Atomic runtime session was tested; availability is caller-supplied as documented.
