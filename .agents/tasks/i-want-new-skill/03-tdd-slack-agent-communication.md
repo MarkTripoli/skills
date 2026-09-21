@@ -1,7 +1,7 @@
 ---
 type: design-tdd
 task: i-want-new-skill
-summary: "A repo-owned per-user daemon and embedded SQLite database are authoritative for coordinator-only operational state; each workspace deployment binds one Slack app Socket Mode connection exclusively to one daemon, with multi-user or multi-daemon sharing deferred. Setup installs a launchd user agent on macOS or a systemd user service on Linux; updates preserve SQLite and configuration, atomically replace the executable and native service definition, and immediately restart without automatic rollback after failed health, while Windows service support is deferred. Agent adapters and the operator CLI use filesystem-protected Unix-domain socket RPC, and state-changing actions require one-shot generation-fenced permits. Break-glass uses a trusted same-user boundary with interactive CLI confirmation and a durable audit receipt; credential authorization and recovery details remain open."
+summary: "A repo-owned per-user daemon and SQLite database are authoritative for coordinator state, with one Slack app Socket Mode connection bound exclusively to one daemon per workspace deployment. Administrators install the app from a repository-owned manifest; headless setup accepts a bot token and app-level token through environment variables or a protected per-user credentials file, then validates the expected app, workspace, bot scopes, and Socket Mode access. Native per-user supervision, filesystem-protected RPC, one-shot generation-fenced action permits, and durable break-glass keep active runs coordinated across agent sessions and integration failures. Browser OAuth, Windows service support, and multi-user or multi-daemon app sharing are deferred."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 36d73c2fdbd605df9a6f55904f80fcdda7f418fc
@@ -101,6 +101,22 @@ flowchart TD
 ```
 
 The supported break-glass path is the local operator CLI. It requires explicit interactive confirmation, then asks the daemon to atomically disable Slack, record the interruption, and persist an audit receipt before work resumes. The receipt identifies the run, interruption, OS user, confirmation time, and disable time. If the transaction fails, the run remains paused. This release trusts the operating-system user: the agent adapter omits break-glass, but a same-user agent process can construct the RPC and bypass the CLI prompt. The prompt is a safety rail, not a security boundary. The original thread mapping remains available for later reconciliation through the existing status schema.
+
+#### Administrators install the repo-owned Slack app before headless setup
+
+The repository owns a reusable Slack app manifest declaring Socket Mode, bot scopes, and bot event subscriptions. A workspace administrator creates or updates the Slack app from that manifest, installs it to the intended workspace, generates an app-level token with `connections:write`, and records the assigned Slack app ID and workspace ID as non-secret installation expectations. The first release does not host a browser OAuth callback or provision Slack apps per user.
+
+Setup accepts one complete credential pair from `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`, or reads the pair from a per-user credentials file. It rejects a partial environment pair instead of combining environment and file values. Environment injection is setup-time input: after validation, setup atomically writes the pair to the credentials file so launchd and systemd restarts do not depend on a shell environment. The credentials file must be a regular, non-symlink file owned by the daemon user with mode `0600`; its parent directory must be owned by that user with mode `0700`. Tokens never enter SQLite, a native service definition, logs, or a repository-local `.env` file.
+
+| Validation | Setup proof | Failure |
+|---|---|---|
+| Repository declaration | Parse the checked-in manifest and derive its required bot scopes and event subscriptions | Invalid or incomplete manifest stops setup |
+| Bot and workspace identity | Call [`auth.test`](https://docs.slack.dev/reference/methods/auth.test/) with the `xoxb-` token and compare `team_id` with the configured workspace ID | Invalid token, non-bot identity, or workspace mismatch stops setup |
+| Installed bot scopes | Compare the response's [`x-oauth-scopes`](https://docs.slack.dev/authentication/installing-with-oauth/#appending_scopes) set with every required bot scope in the manifest; extra additive scopes are allowed | Any missing required scope stops setup |
+| Slack app identity | Call [`bots.info`](https://docs.slack.dev/reference/methods/bots.info/) for the returned `bot_id` and compare `bot.app_id` with the configured app ID | App mismatch stops setup |
+| Socket Mode token and app match | Call [`apps.connections.open`](https://docs.slack.dev/reference/methods/apps.connections.open/), connect to the returned URL, and compare `hello.connection_info.app_id` with both the bot app ID and configured app ID before closing the validation socket | Invalid app token, missing `connections:write`, disabled or unreachable Socket Mode, or app mismatch stops setup |
+
+The supplied bot and app-level tokens cannot introspect the deployed event-subscription list. Setup validates the repository manifest statically; the live acceptance trial must prove that an owner thread reply reaches the daemon before the installation is declared operational.
 
 #### Native per-user supervisors keep the daemon alive across sessions
 
@@ -261,12 +277,24 @@ type BeginActionResult =
 
 All runtime adapters must route the six `ActionBoundaryKind` operations through one boundary hook and must not execute when `beginAction` returns `stale` or `unavailable`. Local file reads and in-process reasoning bypass that hook. A coordinator IPC failure is treated as `unavailable` even though no response can arrive. `LocalOperatorControl` is intentionally absent from the agent runtime interface. SQLite is injected behind the coordinator's state-store boundary.
 
-#### Setup dispatches to native user-service install and update adapters
+#### Setup validates headless credentials before installing the native user service
 
-The setup entrypoint detects the host platform and delegates service-manager operations to one platform adapter. The macOS adapter installs and loads a launchd user-agent definition with restart-on-crash behavior. The Linux adapter installs a systemd user unit, reloads the user manager, and enables the unit so it starts at login and restarts after a crash. An unsupported Windows host returns an explicit setup error without installing a partial service.
+The setup entrypoint validates one administrator-installed Slack app before activating its per-user daemon, then delegates service-manager operations to a platform adapter. The macOS adapter installs and loads a launchd user-agent definition with restart-on-crash behavior. The Linux adapter installs a systemd user unit, reloads the user manager, and enables the unit so it starts at login and restarts after a crash. An unsupported Windows host returns an explicit setup error without writing credentials or installing a partial service.
 
 ```text
 setupCoordinatorService(input)
+├── load repository Slack app manifest
+├── load expected app ID and workspace ID
+├── resolve complete credential pair
+│   ├── SLACK_BOT_TOKEN + SLACK_APP_TOKEN
+│   ├── protected per-user credentials file
+│   └── partial or absent pair ──▶ return invalid_credentials
+├── validate Slack installation
+│   ├── auth.test ──▶ bot identity + expected workspace
+│   ├── x-oauth-scopes ──▶ every manifest-required bot scope
+│   ├── bots.info ──▶ expected app identity
+│   └── apps.connections.open + hello ──▶ Socket Mode + same app identity
+├── atomically persist validated credentials as mode 0600
 ├── detect host platform
 ├── fresh install
 │   ├── darwin ──▶ install and load launchd user agent
@@ -282,7 +310,9 @@ setupCoordinatorService(input)
         └── unhealthy ──▶ report failure, retain new version, keep runs paused
 ```
 
-The adapters own service-manager commands and definitions. The coordinator process receives the same executable path, user-local configuration, database path, and socket path on both supported platforms; it contains no launchd or systemd branches. Setup reports update success only after the restarted daemon accepts IPC with its durable state loaded and Slack health restored. A failed health check leaves the new executable and service definition in place; setup does not automatically roll back potentially incompatible code after migrations may have run. Agent adapters remain fail-closed until an operator repairs the installation or uses the existing durable break-glass path.
+Credential validation errors identify the failed check without printing either token. Environment values become the new credentials file only after every validation succeeds; a failed candidate leaves an existing credentials file unchanged. The platform adapters own service-manager commands and definitions. The coordinator process receives the same executable path, user-local configuration, credentials path, database path, and socket path on both supported platforms; it contains no launchd or systemd branches.
+
+Setup reports update success only after the restarted daemon accepts IPC with durable state loaded and Slack health restored. A failed post-update health check leaves the new executable and service definition in place; setup does not automatically roll back potentially incompatible code after migrations may have run. Agent adapters remain fail-closed until an operator repairs the installation or uses durable break-glass.
 
 #### A filesystem-protected Unix-domain socket carries typed local RPC
 
@@ -347,6 +377,18 @@ interface RunLocator {
   taskDirectory: string;
 }
 
+interface SlackInstallationConfig {
+  expectedAppId: string;
+  expectedTeamId: string;
+  credentialsFilePath: string;
+}
+
+interface SlackCredentialsFileV1 {
+  version: 1;
+  botToken: string;
+  appToken: string;
+}
+
 interface JiraIssueRef {
   siteId: string;
   issueKey: string;
@@ -403,7 +445,11 @@ The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input
 - Enable write-ahead logging, foreign keys, and a bounded busy timeout on every connection.
 - Run ordered, transactional schema migrations before opening Socket Mode or local IPC.
 - Place the Unix-domain socket in the per-user runtime directory with a mode-`0700` parent and mode-`0600` socket; open no TCP listener.
-- Keep Slack credentials outside SQLite; the authorization and secret-storage mechanism remains open.
+- Ship the canonical Slack app manifest with the implementation. The manifest declares Socket Mode, bot event subscriptions, and the least-privilege bot scope set selected for the supported channel types.
+- Require non-secret expected Slack app and workspace IDs in installation configuration.
+- Accept `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` only as a complete setup-time pair, or read both from the protected per-user credentials file. Never load repository-local `.env` files.
+- Keep Slack credentials outside SQLite, repositories, and native service definitions. Require a daemon-user-owned mode-`0600` regular file under a mode-`0700` per-user directory; reject symlinks and broader permissions.
+- Validate bot identity, expected workspace and app IDs, every manifest-required bot scope, `connections:write` behavior, and the Socket Mode `hello` app ID before activating the service. Never print token values.
 - Bind one Slack app Socket Mode connection for a workspace deployment exclusively to one per-user daemon. Reusing that app in another independent daemon is unsupported.
 - Configure each Jira site with the stable field ID of an administrator-created dedicated Slack-thread field. Setup must validate existence, writability for the intended issue scope, and acceptance of the canonical Slack thread URL.
 - Keep Jira credentials outside SQLite. Runtime may edit the configured issue field but must not require Jira administration privileges, create fields, or discover them by name.
@@ -426,6 +472,7 @@ The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input
 - Automatic Slack enablement for every work run.
 - Multiple independent users or daemons sharing one Slack app.
 - Per-user Slack app provisioning, a hosted Socket Mode event router, or an ingress-daemon mesh.
+- Browser-based Slack OAuth installation or token refresh.
 
 ### Execution DAG
 
@@ -449,6 +496,8 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 - [ ] Confirm an update preserves SQLite and configuration, atomically replaces the executable and native service definition, restarts immediately, pauses active Slack-enabled runs fail-closed, and resumes them from durable state only after health is restored.
 - [ ] Confirm failed post-update health reports setup failure, retains the new executable and service definition, and leaves Slack-enabled runs fail-closed for operator repair or break-glass without automatic rollback.
 - [ ] Confirm one workspace deployment binds one Slack app Socket Mode connection to one per-user daemon and does not introduce per-user apps, a hosted router, or an ingress mesh.
+- [ ] Confirm administrators install the repo-owned manifest and headless setup validates the expected app, workspace, bot scopes, and Socket Mode access from a complete injected token pair.
+- [ ] Confirm environment-supplied tokens are persisted only to a daemon-user-owned mode-`0600` credentials file and no repository-local `.env`, SQLite row, service definition, or log contains a Slack token.
 - [ ] Confirm a Jira-linked run projects its Slack thread URL to a dedicated custom field without giving Jira authority over timers, steering, or permits.
 - [ ] Confirm Jira outages leave the backlink pending without pausing Slack coordination and non-Jira runs stay local-only.
 - [ ] Confirm agent adapters and the operator CLI use framed typed request/response RPC over a filesystem-protected Unix-domain socket with no TCP listener.
@@ -459,7 +508,9 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 
 ### Known limits
 - SQLite file location, driver packaging, migrations, and backup policy.
-- Slack app installation, authorization, and Socket Mode reconnect, acknowledgement, and replay behavior.
+- Socket Mode reconnect, acknowledgement, and replay behavior.
+- The exact bot scope and event-subscription set remains dependent on the unresolved public-versus-private channel policy.
+- Bot and app-level tokens cannot introspect deployed event subscriptions; the live acceptance trial must detect manifest drift.
 - One workspace deployment supports one per-user daemon owning the Slack app connection; multiple independent users or daemons sharing that app are unsupported.
 - Same-user agent processes can construct the break-glass RPC and bypass the CLI confirmation; this is an accepted release limitation.
 - A crash after permit consumption but before an external effect is observed requires action-specific idempotency or reconciliation.
