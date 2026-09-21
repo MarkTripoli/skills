@@ -2,6 +2,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { parseDocument } from 'yaml';
+import { indexFileExists, validateArtifactIndex, validateArtifactSemantics } from './artifact-index.mjs';
+
+export {
+  TASK_INDEX_SCHEMA,
+  TASK_INDEX_VERSION,
+  allocateArtifactIteration,
+  initTaskArtifacts,
+  indexFileExists,
+  semanticSeries,
+  serializeArtifactIndex,
+  validateArtifactIndex,
+  validateArtifactSemantics,
+  writeArtifactIndex,
+} from './artifact-index.mjs';
 
 export const digest = value => crypto.createHash('sha256').update(value).digest('hex');
 export function frontmatter(text, file = 'artifact') {
@@ -15,11 +29,6 @@ export function frontmatter(text, file = 'artifact') {
   return { metadata, body: lines.slice(end + 1).join('\n').trim() };
 }
 
-const statuses = {
-  reproduction: ['reproduced', 'not-reproduced'], verification: ['passed', 'failed', 'blocked'],
-  'code-review': ['clean', 'findings', 'blocked'], 'app-test': ['passed', 'failed', 'blocked'],
-  'pr-review': ['approved', 'pending', 'blocked'],
-};
 export function section(text, title) {
   const lines = text.split('\n');
   const start = lines.findIndex(line => line.trim().toLowerCase() === `## ${title}`.toLowerCase());
@@ -28,35 +37,22 @@ export function section(text, title) {
   return lines.slice(start + 1, end < 0 ? undefined : end).join('\n').trim();
 }
 
-export function readArtifact(file) {
+function readPrDescription(file, text) {
+  if (!section(text, 'Purpose') || !section(text, 'Change outline')) throw new Error(`${file}: incomplete PR description`);
+  return { file, type: 'pr-description', summary: section(text, 'Purpose'), status: null, text, hash: digest(text), metadata: {} };
+}
+
+export function readArtifact(file, options = {}) {
   if (fs.lstatSync(file).isSymbolicLink()) throw new Error(`${file}: artifact symlinks are not accepted`);
   const text = fs.readFileSync(file, 'utf8');
-  if (path.basename(file) === 'pr-description.md') {
-    if (!section(text, 'Purpose') || !section(text, 'Change outline')) throw new Error(`${file}: incomplete PR description`);
-    return { file, type: 'pr-description', summary: section(text, 'Purpose'), status: null, text, hash: digest(text), metadata: {} };
-  }
+  if (path.basename(file) === 'pr-description.md' || options.type === 'pr-description') return readPrDescription(file, text);
   const { metadata, body } = frontmatter(text, file);
   if (typeof metadata.type !== 'string' || typeof metadata.summary !== 'string' || !metadata.summary.trim() || !body) throw new Error(`${file}: type, summary and artifact body are required`);
-  if (statuses[metadata.type] && !statuses[metadata.type].includes(metadata.status)) throw new Error(`${file}: invalid ${metadata.type} status ${metadata.status}`);
-  if (metadata.type === 'reproduction' && metadata.status === 'reproduced' && (!section(body, 'Reproduction') || !section(body, 'Cause') || !section(body, 'Fix'))) throw new Error(`${file}: reproduced requires reproduction evidence, cause and fix`);
-  if (metadata.type === 'code-review' && metadata.status === 'clean') {
-    const findings = section(body, 'Critical and Required Findings');
-    if (!findings || /^###\s+CR-/m.test(findings)) throw new Error(`${file}: clean review still contains required findings or lacks their section`);
-  }
-  if (['verification', 'app-test'].includes(metadata.type) && metadata.status === 'passed') {
-    const heading = metadata.type === 'verification' ? 'Items' : 'Steps';
-    const allowed = metadata.type === 'verification' ? new Set(['pass', 'fail', 'untested']) : new Set(['pass', 'fail', 'unreachable']);
-    const rows = section(body, heading).split('\n').filter(line => line.trim().startsWith('|')).map(line => line.split('|').slice(1, -1).map(cell => cell.trim().toLowerCase()));
-    const header = rows.shift();
-    if (!header || !header.includes('verdict')) throw new Error(`${file}: passed evidence requires a ${heading} verdict table`);
-    const index = header.indexOf('verdict');
-    const actual = rows.filter(row => row.length && !row.every(cell => /^-+$/.test(cell)));
-    if (!actual.length || actual.some(row => !row[index] || !allowed.has(row[index])) || actual.some(row => row[index] !== 'pass')) throw new Error(`${file}: passed status contradicts evidence verdicts`);
-  }
+  validateArtifactSemantics(metadata.type, metadata.status ?? null, body, file);
   return { file, type: metadata.type, summary: metadata.summary, status: metadata.status ?? null, text, hash: digest(text), metadata };
 }
 
-export function observeArtifacts(taskDir) {
+function legacyArtifacts(taskDir) {
   const latest = {};
   const hashes = {};
   const files = fs.readdirSync(taskDir).filter(name => /^\d{2,}-[a-z0-9-]+\.md$/.test(name) || name === 'pr-description.md').sort((a, b) => Number.parseInt(a) - Number.parseInt(b) || a.localeCompare(b));
@@ -66,6 +62,52 @@ export function observeArtifacts(taskDir) {
     latest[artifact.type] = artifact;
   }
   return { latest, hashes };
+}
+
+function indexedFile(taskDir, relativePath) {
+  let current = taskDir;
+  for (const part of relativePath.split('/')) {
+    current = path.join(current, part);
+    if (!fs.existsSync(current)) throw new Error(`${relativePath}: indexed artifact does not exist (dangling index)`);
+    if (fs.lstatSync(current).isSymbolicLink()) throw new Error(`${relativePath}: indexed artifact symlink paths are not accepted`);
+  }
+  return current;
+}
+
+function indexedArtifacts(taskDir, index) {
+  const latest = {};
+  const hashes = {};
+  const artifactSeries = {};
+  for (const [identity, series] of Object.entries(index.artifactSeries)) {
+    const iterations = series.iterations.map(record => {
+      const file = indexedFile(taskDir, record.path);
+      const artifact = readArtifact(file, { type: record.type });
+      if (artifact.hash !== record.sha256) throw new Error(`${record.id}: SHA-256 hash does not match indexed artifact`);
+      if (artifact.type !== record.type || artifact.status !== record.status || artifact.summary !== record.summary) {
+        throw new Error(`${record.id}: indexed type, status, or summary metadata does not match artifact`);
+      }
+      hashes[artifact.file] = artifact.hash;
+      return { ...artifact, id: record.id, iteration: record.iteration, path: record.path, supersedes: record.supersedes ?? null };
+    });
+    const current = iterations.find(artifact => artifact.id === series.current);
+    artifactSeries[identity] = { current, iterations };
+    if (Object.hasOwn(latest, current.type)) throw new Error(`Artifact index has duplicate current artifact type ${current.type}`);
+    latest[current.type] = current;
+  }
+  return { latest, hashes, index, artifactSeries };
+}
+
+export function observeArtifacts(taskDir) {
+  const indexFile = path.join(taskDir, 'index.json');
+  if (!indexFileExists(indexFile)) return legacyArtifacts(taskDir);
+  let value;
+  try {
+    value = JSON.parse(fs.readFileSync(indexFile, 'utf8'));
+  } catch (error) {
+    throw new Error(`${indexFile}: invalid JSON`, { cause: error });
+  }
+  const index = validateArtifactIndex(value, path.basename(path.resolve(taskDir)));
+  return indexedArtifacts(taskDir, index);
 }
 
 // Only implementation checklists count. Human-review boxes and fenced examples never do.
@@ -99,9 +141,12 @@ export function planProgress(text) {
   return { phases, complete: phases.every(phase => !phase.remaining) && summary.every(Boolean), remaining: phases.reduce((n, phase) => n + phase.remaining, 0) + summary.filter(done => !done).length };
 }
 
-export function requireFresh(before, after, type) {
+export function requireFresh(before, after, type, expected = null) {
   const artifact = after.latest[type];
   if (!artifact || before.hashes[artifact.file] === artifact.hash) throw new Error(`Stage did not create or revise its ${type} artifact; agent success is not evidence`);
+  if (expected && (artifact.id !== expected.id || artifact.path !== expected.path || after.index?.generation <= before.index.generation)) {
+    throw new Error(`Stage did not register ${expected.id} as the current ${type} artifact`);
+  }
   return artifact;
 }
 
