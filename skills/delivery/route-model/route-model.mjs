@@ -24,6 +24,7 @@ export function normalizeCandidates(value, economy) {
     return { model: text(candidate.model, `candidates[${index}].model`), cost: number(candidate.cost, `candidates[${index}].cost`), description: text(candidate.description, `candidates[${index}].description`) };
   });
   if (new Set(candidates.map(({ model }) => model)).size !== candidates.length) throw new Error('candidates must not contain duplicate model identifiers');
+  if (candidates.some((candidate, index) => index > 0 && candidate.cost < candidates[index - 1].cost)) throw new Error('candidates must be ordered from weakest to strongest with non-decreasing cost');
   if (!candidates.some(({ model }) => model === economy)) throw new Error(`Configured economy model ${JSON.stringify(economy)} is not available`);
   return candidates;
 }
@@ -69,7 +70,7 @@ export async function routeModel(skillsDir, options = {}) {
   let helper;
   try { helper = await import(pathToFileURL(helperPath).href); } catch (error) { throw new Error(`JEV is unavailable: cannot load ${helperPath}: ${error.message}`); }
   if (typeof helper.systemOne !== 'function') throw new Error(`JEV is unavailable: ${helperPath} has no systemOne export`);
-  const criteria = Object.fromEntries(candidates.map(candidate => [candidate.model, `The request can be completed adequately by ${candidate.model}; choose the cheapest adequate candidate.`]));
+  const criteria = Object.fromEntries(candidates.map(candidate => [candidate.model, `The request can be completed adequately by ${candidate.model}. Capability: ${candidate.description}. Choose the cheapest adequate candidate.`]));
   let answers;
   try {
     answers = await helper.systemOne({ phase, request: options.request ?? '', artifacts: options.artifacts ?? [], candidates }, { model: { type: 'choice', instructions: 'Choose the cheapest supplied model that can fully complete this phase in one pass. Never choose a model not listed as a criterion.', criteria } });

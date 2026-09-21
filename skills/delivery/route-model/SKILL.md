@@ -7,31 +7,41 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 # Route model
 
-Use the portable helper when a harness needs a model recommendation. It is policy, not a proxy, provider registry, account probe, or native execution fallback.
+Use `/route-model` when a harness needs a model recommendation for the next phase. It returns a recommendation; it does not start an agent, proxy requests, discover private catalogs, or force a model in a harness that lacks a model flag.
 
-## Node contract
+## Accepted input
+
+Provide a JSON request through the Node helper or stdin with:
+
+- `phase`: next skill or phase name. Unknown names keep the economy candidate.
+- `request`: the bounded user/task request string.
+- `artifacts`: optional summaries safe to send to JEV.
+- `economy`: exact native model identifier that must be among the candidates.
+- `routing`: `auto` or `fixed`; `fixed` returns economy without JEV.
+- `candidates`: non-empty exact array ordered from weakest to strongest. Each item is `{model, cost, description}`. Model identifiers are unique, `cost` is finite and non-negative, costs are non-decreasing, and `description` explains the candidate's capability.
 
 ```js
 import { routeModel } from '<skills-dir>/route-model/route-model.mjs';
 const result = await routeModel('<skills-dir>', {
-  phase: 'create-plan', request, artifacts,
-  economy: 'provider/economy', routing: 'auto',
+  phase: 'create-plan', request, artifacts: [], economy: 'provider/economy', routing: 'auto',
   candidates: [
-    { model: 'provider/economy', cost: 1, description: 'ordinary work' },
-    { model: 'provider/reasoning', cost: 4, description: 'difficult reasoning' }
+    { model: 'provider/economy', cost: 1, description: 'ordinary planning' },
+    { model: 'provider/reasoning', cost: 4, description: 'complex architectural reasoning' }
   ]
 });
+console.log(result.model);
 ```
 
-`candidates` is an exact non-empty array. Each object has a unique native `model` identifier, a finite non-negative caller-supplied `cost`, and a capability `description`. The `economy` identifier must be present. The result contains `model`, `source`, `candidates`, `availableCandidates`, `confidence`, and `probabilities`; JEV results also contain expected losses and usage when supplied. Credentials are read only by `typed-judgment/judge.mjs` from its environment or key file.
-
-The same contract is available without importing JavaScript:
+The same request can be sent as one JSON object on stdin:
 
 ```sh
-printf '%s\n' '{"skillsDir":"/path/to/skills","phase":"create-plan","economy":"provider/economy","candidates":[{"model":"provider/economy","cost":1,"description":"ordinary"}]}' \
-  | node /path/to/skills/route-model/route-model.mjs
+printf '%s\n' '<request JSON>' | node <skills-dir>/route-model/route-model.mjs
 ```
 
-Mutation, implementation, tool-oriented, and unknown phases select `economy` without JEV. Eligible phases use JEV only when more than one exact candidate is supplied; the helper combines adequacy probabilities with normalized cost and an under-provision penalty, then chooses the lowest expected loss. JEV errors are visible and fail closed when a judgment is required.
+## Exact output and reporting
 
-Harnesses may pass candidates explicitly. Pi and Oh My Pi may use a stable public catalog command documented by their runtime; Claude Code and Codex must use caller or configuration candidates. Never scrape provider-private registries or add a proxy.
+The JSON result always contains `model`, `source` (`policy`, `fixed`, or `jev`), `candidates`, `availableCandidates`, `confidence`, and `probabilities`. A JEV result also contains `expectedLosses`, `requestedModel`, and helper `usage` when available. The selected `model` is one exact supplied identifier. Errors are written to stderr and return a nonzero exit code. Credentials are read only by `typed-judgment/judge.mjs` from its environment or key file.
+
+Mutation, implementation, tool-oriented, and unknown phases select `economy` without JEV. Eligible phases ask JEV to distinguish the described candidates, combine adequacy probabilities with cost and under-provision loss, and select the lowest expected loss. A harness that cannot enforce a model reports `Recommendation only: <model>; start the next session with that model if desired.` rather than claiming enforcement. Herdr can enforce a configured recommendation by passing it after the native command separator: `herdr agent start ... -- --model <model>`.
+
+Pi and Oh My Pi may use a stable public catalog command documented by their runtime; Claude Code and Codex require caller or configuration candidates. Never scrape provider-private registries or add a proxy.

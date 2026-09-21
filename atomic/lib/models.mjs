@@ -1,6 +1,7 @@
-import { routeModel, DEFAULT_ECONOMY } from '../../skills/delivery/route-model/route-model.mjs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-export const DEFAULT_MODEL = DEFAULT_ECONOMY;
+export const DEFAULT_MODEL = 'openai-codex/gpt-5.6-luna-fast';
 export const DEFAULT_REASONING_MODEL = 'openai-codex/gpt-5.6-sol';
 
 // Atomic is an adapter: portable route-model owns validation, JEV, and expected-loss policy.
@@ -16,6 +17,12 @@ export async function selectStageModel(skillsDir, options = {}) {
     typeof candidate === 'string' ? candidate : candidate?.model,
     typeof candidate === 'string' ? { model: candidate, cost: candidate === model ? 0 : index + 1, description: candidate === model ? 'configured economical model' : 'configured escalation candidate' } : candidate,
   ])).values()];
+  let routeModel;
+  try {
+    ({ routeModel } = await import(pathToFileURL(path.join(skillsDir, 'route-model', 'route-model.mjs')).href));
+  } catch (error) {
+    throw new Error(`Portable route-model is unavailable from ${skillsDir}: ${error.message}`);
+  }
   const result = await routeModel(skillsDir, {
     phase: options.skill,
     request: options.request,

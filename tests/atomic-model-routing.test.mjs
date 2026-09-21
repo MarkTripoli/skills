@@ -9,6 +9,8 @@ function helper(response, body = '') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atomic-model-routing-'));
   const skillDir = path.join(dir, 'typed-judgment');
   fs.mkdirSync(skillDir);
+  fs.mkdirSync(path.join(dir, 'route-model'));
+  fs.copyFileSync(path.resolve('skills/delivery/route-model/route-model.mjs'), path.join(dir, 'route-model', 'route-model.mjs'));
   fs.writeFileSync(path.join(skillDir, 'judge.mjs'), `
 export let received;
 export let lastCall = { model: 'jev-test', usage: { input_tokens: 3, output_tokens: 2 } };

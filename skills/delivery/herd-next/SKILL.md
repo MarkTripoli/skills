@@ -57,11 +57,11 @@ pane=$(herdr tab create --workspace "$HERDR_WORKSPACE_ID" --cwd "$PWD" --label "
 
 Step 6, the agent name. Cut the slug to `32 - (length of the phase + 1)` characters first, so the phase always survives, then build `<cut slug>-<phase>`, lower-case, every character outside `a-z0-9-` replaced by `-`, collapsed runs of `-` reduced to one, truncated to 32 characters, any trailing `-` stripped. A phase longer than 31 characters leaves no room for a stem; cut the joined `<slug>-<phase>` to 32 characters in that case. When `herdr agent list` already holds the result, append `-2`, then `-3`, cutting the stem further so the name stays within 32 characters. The built name must start with a lowercase letter, exactly as `stop_hook.sh` checks after building it; when it does not (a slug beginning with a digit, most often), ask the user for a name and stop rather than guessing one.
 
-Step 7, start, label, stage. When a selected model came from configured candidates, pass it to the native agent start command. This is enforceable for supported Herdr agents; if the installed Herdr command rejects `--model`, close the pane and use the manual recommendation path rather than retrying another model.
+Step 7, start, label, stage. When a selected model came from configured candidates, pass it to the native agent command after Herdr's option separator, for example `herdr agent start ... -- --model <model>`. This is enforceable for supported Herdr agents; if the installed Herdr command rejects the native `--model`, close the pane and use the manual recommendation path rather than retrying another model.
 
 ```bash
 model_args=()
-if [ -n "${selected_model:-}" ]; then model_args=(--model "$selected_model"); fi
+if [ -n "${selected_model:-}" ]; then model_args=(-- --model "$selected_model"); fi
 herdr agent start "$name" --kind "$kind" --pane "$pane" "${model_args[@]}"
 herdr pane rename "$pane" "$slug/$phase"
 case "$kind" in codex) command="\$${command#/}" ;; esac

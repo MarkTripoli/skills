@@ -188,6 +188,17 @@ test("Atomic installs canonical full skills and workflow sources beside unrelate
   uninstall(planned, home);
   assert.equal(fs.existsSync(path.join(home, ".codex", "config.toml")), false);
 });
+test("isolated Atomic install loads the portable route-model from the installed skills directory", async () => {
+  const home = tmpdir();
+  const options = { targets: ["portable"], atomic: true, cwd: home, home, env };
+  install(options);
+  const workflowRoot = atomicDestination(options);
+  const installedModels = await import(`${pathToFileURL(path.join(workflowRoot, "lib", "models.mjs")).href}?isolated-model=${Date.now()}`);
+  const selected = await installedModels.selectStageModel(path.join(home, ".agents", "skills"), { skill: "implement-plan", model: "cheap", reasoningModel: "strong", modelRouting: "fixed", availableModels: ["cheap", "strong"] });
+  assert.equal(selected.model, "cheap");
+  assert.equal(selected.source, "fixed");
+});
+
 test("isolated Atomic install parses frontmatter through its copied YAML dependency", async () => {
   const home = tmpdir();
   const options = { targets: ["portable"], atomic: true, cwd: home, home, env };
