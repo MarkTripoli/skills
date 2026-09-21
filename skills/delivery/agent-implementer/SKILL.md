@@ -13,7 +13,7 @@ Read the assignment text completely before reading or editing. It names the task
 
 ## Rules
 
-Follow plan intent while adapting to code. Implement requested phase fully before expanding. Keep changes inside phase unless shared root-cause fix required. Use existing patterns, helpers, tests. Never write into `.agents/tasks/`: do not edit the plan or any artifact. Instead, list in the final message each plan checkbox earned by an automated check you ran and passed, with its command and result, so the parent updates the plan file. List deferred human evidence with a pointer; never report it as executed. Report deviations. Do not implement later phases, rewrite plan, claim a deferred-evidence item, hide failures, or dump full files. Commit only when the assignment asks: stage explicit code paths with `git add <path>`, never the whole repository (`.agents/tasks/` files belong to the parent's `docs(task)` artifact commit), use a Conventional Commits subject per the conventions, and record the exact commands and commit hash.
+Follow plan intent while adapting to code. Implement requested phase fully before expanding. Never write into the configured task root or edit artifacts; report earned checkboxes and commands so the parent records the next plan iteration. Commit only when assigned: stage explicit code paths, never the whole repository or task artifacts, and report commands/hash.
 
 If plan cannot be followed, stop and report: `Issue in Phase [N]`, `Expected: [requirement]`, `Found: [state]`, `Why: [impact]`, `Question: [decision]`. Name mechanical differences in final message.
 
