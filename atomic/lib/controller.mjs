@@ -220,7 +220,7 @@ export async function runSkill(ctx, task, state, inputs, skill, step, feedback =
   const taskRequest = fs.readFileSync(path.join(task.taskDir, 'task.md'), 'utf8');
   const artifactSummaries = Object.values(state.latest).map(({ file, type, summary, status }) => ({ file, type, summary, status }));
   const selection = await ctx.tool(`${name}-select-model`, { skill, request: taskRequest, artifacts: artifactSummaries, model: inputs.model, model_routing: inputs.model_routing, reasoning_model: inputs.reasoning_model }, async () => {
-    const choice = await selectStageModel(task.skillsDir, { skill, request: taskRequest, artifacts: artifactSummaries, model: inputs.model, modelRouting: inputs.model_routing, reasoningModel: inputs.reasoning_model });
+    const choice = await selectStageModel(task.skillsDir, { skill, request: taskRequest, artifacts: artifactSummaries, model: inputs.model, modelRouting: inputs.model_routing, reasoningModel: inputs.reasoning_model, availableModels: inputs.available_models });
     saveRecord(task, `${name}-model`, choice);
     return choice;
   }, { timeoutMs: 90_000 });

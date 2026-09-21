@@ -20,6 +20,7 @@ const delivery = workflow({
     model: Type.String({ minLength: 1, default: 'openai-codex/gpt-5.6-luna-fast', description: 'Ordinary economical stage model; mandatory for every code-writing and unknown phase.' }),
     model_routing: choices(['auto', 'fixed'], 'auto'),
     reasoning_model: Type.String({ minLength: 1, default: 'openai-codex/gpt-5.6-sol', description: 'Stronger reasoning model available to JEV for allowed non-code phases.' }),
+    available_models: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: 'Model identifiers available to the active runtime or account.' })),
     app_test: choices(['none', 'web', 'ios', 'android'], 'none'),
     app_target: Type.Optional(Type.String({ description: 'URL, simulator, emulator or application target.' })),
     verify: Type.Boolean({ default: true, description: 'Run independent implementation verification.' }),

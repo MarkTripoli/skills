@@ -31,9 +31,12 @@ The delivery workflow exposes:
 model=openai-codex/gpt-5.6-luna-fast
 model_routing=auto|fixed
 reasoning_model=openai-codex/gpt-5.6-sol
+available_models=[...]
 ```
 
-`model_routing=auto` is the default. It allows stage-model judgment for eligible phases. `model_routing=fixed` selects `model` for every phase and does not load or call JEV for model selection. In `auto`, a missing helper, unavailable service, or malformed judgment fails visibly. Atomic never silently changes provider or uses an unrecorded model.
+`model_routing=auto` is the default. It allows stage-model judgment for eligible phases. `model_routing=fixed` selects `model` for every phase and does not load or call JEV for model selection, but the selected model still must be listed as available. When `available_models` is omitted, the configured `model` and `reasoning_model` are treated as available for backward compatibility. An explicit list is caller-provided capability information for the active runtime or account; it is not discovered or verified by this repository.
+
+The economical `model` must be available for every stage. If it is absent, routing fails before the task starts. Mutation, tool-oriented, and unknown phases always use that economical candidate. Eligible non-code phases call JEV only when the reasoning candidate is also available; otherwise they use the economical candidate by policy. A missing JEV helper, unavailable service, or malformed judgment still fails visibly when an escalation decision is possible. Atomic never silently changes provider, falls back after native execution failure, or uses an unrecorded model.
 
 ## Evidence and authenticated models
 
