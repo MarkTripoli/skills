@@ -777,12 +777,32 @@ func recoverCancelledPublication(database *db.DB, p *paths.Paths, repo *db.Repo,
 	return err
 }
 
+const evidenceRootMarker = ".safety-dance-evidence-root"
+const evidenceRunMarker = ".safety-dance-run"
+
 func prepareEvidenceStorage(p *paths.Paths, runID string, settings config.Evidence) error {
 	root := p.EvidenceRoot(settings.LocalRoot)
 	if err := p.ValidateEvidenceRoot(settings.LocalRoot); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Join(root, runID), 0o700); err != nil {
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return err
+	}
+	marker := filepath.Join(root, evidenceRootMarker)
+	if raw, err := os.ReadFile(marker); err == nil && string(raw) != "safety-dance\n" {
+		return fmt.Errorf("evidence root %q is not owned by Safety Dance", root)
+	} else if os.IsNotExist(err) {
+		if err := os.WriteFile(marker, []byte("safety-dance\n"), 0o600); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	runDir := filepath.Join(root, runID)
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(runDir, evidenceRunMarker), []byte(runID+"\n"), 0o600); err != nil {
 		return err
 	}
 	entries, err := os.ReadDir(root)
@@ -796,15 +816,19 @@ func prepareEvidenceStorage(p *paths.Paths, runID string, settings config.Eviden
 	var dirs []directory
 	now := time.Now()
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		if !entry.IsDir() || entry.Name() == runID {
+			continue
+		}
+		entryDir := filepath.Join(root, entry.Name())
+		if raw, markerErr := os.ReadFile(filepath.Join(entryDir, evidenceRunMarker)); markerErr != nil || strings.TrimSpace(string(raw)) != entry.Name() {
 			continue
 		}
 		info, infoErr := entry.Info()
 		if infoErr != nil {
 			continue
 		}
-		if entry.Name() != runID && settings.Retention > 0 && now.Sub(info.ModTime()) > settings.Retention {
-			_ = os.RemoveAll(filepath.Join(root, entry.Name()))
+		if settings.Retention > 0 && now.Sub(info.ModTime()) > settings.Retention {
+			_ = os.RemoveAll(entryDir)
 			continue
 		}
 		dirs = append(dirs, directory{entry.Name(), info.ModTime()})

@@ -85,9 +85,18 @@ func safeAmbientEnvironment() []string {
 	for _, entry := range os.Environ() {
 		key, _, _ := strings.Cut(entry, "=")
 		upper := strings.ToUpper(key)
-		if key == "PATH" || key == "HOME" || key == "USER" || key == "LOGNAME" || key == "SHELL" || key == "TMPDIR" || key == "LANG" || strings.HasPrefix(upper, "LC_") {
+		if equalAnyFold(key, "PATH", "HOME", "USERPROFILE", "TEMP", "TMP", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)", "PSMODULEPATH", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG") || strings.HasPrefix(upper, "LC_") {
 			safe = append(safe, entry)
 		}
 	}
 	return safe
+}
+
+func equalAnyFold(value string, choices ...string) bool {
+	for _, choice := range choices {
+		if strings.EqualFold(value, choice) {
+			return true
+		}
+	}
+	return false
 }

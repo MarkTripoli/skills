@@ -173,14 +173,22 @@ func (s Service) writeDefinition() error {
 func (s Service) taskOwned() (bool, error) {
 	executor, ok := s.Executor.(serviceOutputExecutor)
 	if !ok {
-		return false, nil
+		return false, fmt.Errorf("scheduled-task ownership query is unavailable")
 	}
 	out, err := executor.Output("schtasks", "/Query", "/TN", s.Label(), "/XML")
 	if err != nil {
-		return false, nil
+		if isTaskNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("query scheduled task %s: %w", s.Label(), err)
 	}
 	raw := string(out)
 	return strings.Contains(raw, serviceMarker) && strings.Contains(raw, s.Home.Root()) && strings.Contains(raw, s.Binary), nil
+}
+
+func isTaskNotFound(err error) bool {
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "cannot find") || strings.Contains(text, "not found") || strings.Contains(text, "does not exist")
 }
 
 func (s Service) Install() error {
@@ -210,10 +218,18 @@ func (s Service) Install() error {
 		return err
 	}
 	if runtime.GOOS == "windows" {
-		if executor, ok := s.Executor.(serviceOutputExecutor); ok {
-			if out, queryErr := executor.Output("schtasks", "/Query", "/TN", s.Label(), "/XML"); queryErr == nil && (!strings.Contains(string(out), serviceMarker) || !strings.Contains(string(out), s.Home.Root()) || !strings.Contains(string(out), s.Binary)) {
+		executor, ok := s.Executor.(serviceOutputExecutor)
+		if !ok {
+			return fmt.Errorf("windows scheduled-task ownership query is unavailable")
+		}
+		out, queryErr := executor.Output("schtasks", "/Query", "/TN", s.Label(), "/XML")
+		if queryErr == nil {
+			raw := string(out)
+			if !strings.Contains(raw, serviceMarker) || !strings.Contains(raw, s.Home.Root()) || !strings.Contains(raw, s.Binary) {
 				return fmt.Errorf("foreign scheduled task collision: %s", s.Label())
 			}
+		} else if !isTaskNotFound(queryErr) {
+			return fmt.Errorf("query scheduled task %s: %w", s.Label(), queryErr)
 		}
 	}
 	previous, readErr := os.ReadFile(path)
