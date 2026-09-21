@@ -1,7 +1,7 @@
 ---
 type: design-tdd
 task: i-want-new-skill
-summary: "A repo-owned per-user daemon is authoritative for Slack thread mapping, one-hour status timers, and the owner-steering gate across all local repositories and agent sessions. A Slack app is the primary transport; optional agent access through a Slack MCP server cannot mutate or bypass daemon authority. Persistence format, local IPC, Slack event delivery, authorization, and failure policy remain open."
+summary: "A repo-owned per-user daemon is authoritative for Slack thread mapping, one-hour status timers, and the owner-steering gate across all local repositories and agent sessions. The Slack app receives events through Socket Mode only and remains the primary transport; optional agent access through a Slack MCP server cannot mutate or bypass daemon authority. Persistence format, local IPC, authorization, Socket Mode recovery, and failure policy remain open."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 36d73c2fdbd605df9a6f55904f80fcdda7f418fc
@@ -20,7 +20,7 @@ The repository currently has no Slack transport, scheduled status publisher, run
 ```mermaid
 flowchart LR
     O[Owner] <--> ST[Slack thread]
-    ST <--> SA[Slack app adapter]
+    ST <-->|Web API posts<br/>Socket Mode events| SA[Slack app adapter]
     SA <--> C[Per-user coordinator daemon]
     A[Agent runtime] <--> C
     A -. optional supplementary access .-> MCP[Slack MCP server]
@@ -29,7 +29,7 @@ flowchart LR
     C --- AUTH["Authority: timers, run-thread mapping,<br/>owner-input state, action permits"]
 ```
 
-The Slack app is the primary integration. Its adapter creates the root message, posts canonical status and completion messages, and delivers owner thread events to the coordinator. Whether inbound events use Slack HTTP events or Socket Mode remains open.
+The Slack app is the primary integration. Its adapter creates the root message, posts canonical status and completion messages through the Slack Web API, and receives owner thread events through one daemon-owned Socket Mode connection. The design has no inbound Slack HTTP event endpoint.
 
 Slack MCP access is supplementary. An MCP read or post cannot create or change the run-to-thread mapping, advance or clear a status deadline, mark owner input handled, or authorize the agent's next work action. An agent that learns about owner input through MCP must still submit that input to the coordinator and receive a coordinator action permit.
 
@@ -39,7 +39,7 @@ Slack MCP access is supplementary. An MCP read or post cannot create or change t
 | One-hour quiet-status deadline | Local coordinator clock and timer state | Agent activity may reset the deadline only through a coordinator work event |
 | Owner identity and unhandled input | Local coordinator | Slack app supplies primary events; MCP observations must carry the same Slack message identity for deduplication |
 | Permission to begin the next work action | Local coordinator | Neither the Slack app nor MCP grants permission |
-| Slack API access | Slack app adapter | MCP is optional and non-authoritative |
+| Slack API access | Slack app adapter through Socket Mode for inbound events and the Web API for outbound messages | MCP is optional and non-authoritative |
 
 The coordinator gates each work action rather than relying on best-effort polling inside the agent:
 
@@ -47,12 +47,12 @@ The coordinator gates each work action rather than relying on best-effort pollin
 sequenceDiagram
     participant O as Owner
     participant S as Slack
-    participant A as Slack app
+    participant A as Slack app Socket Mode adapter
     participant C as Local coordinator
     participant R as Agent runtime
 
     O->>S: Reply in work thread
-    S->>A: Owner thread event
+    S->>A: Socket Mode event envelope
     A->>C: ingestOwnerEvent(run_id, event)
     R->>C: beforeAction(run_id)
     alt Owner input is unhandled
@@ -74,13 +74,13 @@ sequenceDiagram
 
 One supervised daemon runs for the operating-system user and manages Slack-enabled runs from every local repository. The canonical daemon source and installation logic remain repository-owned; its runtime process and state are user-scoped rather than copied into each task worktree.
 
-The daemon owns the Slack app connection, quiet-hour timers, owner-input inbox, and run-to-thread mapping after an agent process exits or becomes idle. A later agent session reconnects through user-local IPC and resumes the same run state. A repository or worktree path identifies where work belongs but does not define the daemon's lifetime.
+The daemon owns the Slack app's Socket Mode connection, quiet-hour timers, owner-input inbox, and run-to-thread mapping after an agent process exits or becomes idle. A later agent session reconnects through user-local IPC and resumes the same run state. A repository or worktree path identifies where work belongs but does not define the daemon's lifetime.
 
 ```mermaid
 flowchart TD
     D[Per-user coordinator daemon]
     D --> S[(User-scoped state)]
-    D --> SA[Single Slack app connection]
+    D --> SA[Single Slack Socket Mode connection]
     D --> T[Timer scheduler]
     D --> I[Owner-input inbox]
 
@@ -89,13 +89,13 @@ flowchart TD
     W[Later session or worktree] <-->|reconnect by run identity| D
 ```
 
-Run IDs must be globally unique within the user's daemon state and namespaced with repository and task identity. The supervisor, startup/update mechanism, state location and format, and local IPC transport remain open.
+Run IDs must be globally unique within the user's daemon state and namespaced with repository and task identity. The supervisor, startup/update mechanism, state location and format, local IPC transport, and Socket Mode reconnect and replay policy remain open.
 
 ### Program Design
 
 #### Coordinator capabilities stay transport-independent
 
-The per-user daemon owns orchestration state and exposes a narrow local API to every supported agent runtime. Slack-specific payloads remain behind the Slack app adapter; the optional MCP client is not injected as daemon state, timer, or supervision.
+The per-user daemon owns orchestration state and exposes a narrow local API to every supported agent runtime. Slack-specific payloads remain behind the Slack app adapter, which owns Socket Mode inbound delivery and Web API outbound delivery; the optional MCP client is not injected as daemon state, timer, or supervision.
 
 ```text
 agent runtime integration
@@ -111,7 +111,7 @@ per-user coordinator daemon
 ├── owner-event inbox and deduplication
 ├── action-permit gate
 └── SlackPort
-    └── SlackAppAdapter ────────────────▶ Slack Web API and inbound events
+    └── SlackAppAdapter ────────────────▶ Socket Mode events and Slack Web API
 
 optional agent capability
 └── SlackMcpClient ─────────────────────▶ supplementary Slack reads or posts
@@ -188,11 +188,12 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 ### Verify
 
 - [ ] Confirm the design preserves the PRD's fixed message fields and timing rules.
+- [ ] Confirm inbound Slack events use Socket Mode only and no HTTP event endpoint is introduced.
 - [ ] Confirm owner steering takes effect before the next work action.
 - [ ] Confirm Slack-disabled runs retain existing workflow behavior.
 
 ### Known limits
 - Per-user daemon supervision, startup/update mechanism, state location and persistence across restarts.
-- Slack app authorization and inbound delivery through HTTP events or Socket Mode.
+- Slack app installation, authorization, and Socket Mode reconnect, acknowledgement, and replay behavior.
 - The exact work-action boundary, permit lifetime, and fail-open versus fail-closed behavior.
 - Slack delivery retry and reconciliation guarantees.
