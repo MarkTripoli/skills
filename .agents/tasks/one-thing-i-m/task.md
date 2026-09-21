@@ -2,7 +2,7 @@
 slug: one-thing-i-m
 title: "One thing I'm noticing is that when we use our skills, we're constantly using the most expensive frontier models for things like"
 workflow: full
-gates: all
+gates: none
 routed_by: deliver
 route_confidence: 0.98
 created: 2026-09-20
