@@ -6,24 +6,59 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"golang.org/x/sys/unix"
 )
 
-func readConfinedEvidence(path string) ([]byte, os.FileInfo, error) {
-	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+func readConfinedEvidence(raw, worktreeRoot, evidenceRoot string) ([]byte, os.FileInfo, error) {
+	if strings.TrimSpace(raw) == "" || filepath.IsAbs(raw) {
+		return nil, nil, fmt.Errorf("evidence file path must be relative to a managed root")
+	}
+	for _, root := range []string{worktreeRoot, evidenceRoot} {
+		if strings.TrimSpace(root) == "" {
+			continue
+		}
+		f, err := openNoFollow(root, raw)
+		if err != nil {
+			continue
+		}
+		defer f.Close()
+		info, err := f.Stat()
+		if err != nil || !info.Mode().IsRegular() {
+			if err == nil {
+				err = fmt.Errorf("evidence file is not a regular file")
+			}
+			return nil, info, err
+		}
+		data, err := io.ReadAll(f)
+		return data, info, err
+	}
+	return nil, nil, fmt.Errorf("evidence file is outside managed roots")
+}
+
+func openNoFollow(root, raw string) (*os.File, error) {
+	parts := strings.Split(filepath.ToSlash(raw), "/")
+	fd, err := unix.Open(root, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_DIRECTORY, 0)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	f := os.NewFile(uintptr(fd), path)
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, nil, err
+	for i, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			unix.Close(fd)
+			return nil, fmt.Errorf("invalid evidence path")
+		}
+		flags := unix.O_RDONLY | unix.O_CLOEXEC | unix.O_NOFOLLOW
+		if i < len(parts)-1 {
+			flags |= unix.O_DIRECTORY
+		}
+		next, openErr := unix.Openat(fd, part, flags, 0)
+		unix.Close(fd)
+		if openErr != nil {
+			return nil, openErr
+		}
+		fd = next
 	}
-	if !info.Mode().IsRegular() {
-		return nil, info, fmt.Errorf("evidence file is not a regular file: %s", path)
-	}
-	raw, err := io.ReadAll(f)
-	return raw, info, err
+	return os.NewFile(uintptr(fd), filepath.Join(root, raw)), nil
 }

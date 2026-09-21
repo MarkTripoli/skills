@@ -41,6 +41,7 @@
 package procreap
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -206,18 +207,18 @@ func Sweep(opts Options) ([]Victim, error) {
 	}
 
 	victims := expandVictims(matched, procs, protected)
-	terminate(victims, opts.Grace)
+	if err := terminate(victims, opts.Grace); err != nil {
+		return victims, err
+	}
 	return victims, nil
 }
 
 // SweepAndLog runs Sweep and reports the outcome on the daemon log. It is the
-// form both call sites want: a sweep is best effort, and a failure to read the
-// process table must never fail a run or block daemon startup.
+// best-effort form used by ordinary cleanup paths.
 func SweepAndLog(opts Options, reason string) {
 	victims, err := Sweep(opts)
 	if err != nil {
 		slog.Warn("orphan process sweep failed", "reason", reason, "error", err)
-		return
 	}
 	for _, v := range victims {
 		slog.Info("reaped orphaned run process",
@@ -227,6 +228,25 @@ func SweepAndLog(opts Options, reason string) {
 			"command", v.Command,
 			"sigkill", v.Killed)
 	}
+}
+
+// SweepRunWorktreeStrict is used before recovery reuses a persisted worktree.
+// It fails closed when process enumeration, signalling, or post-kill liveness
+// checks cannot prove exclusivity.
+func SweepRunWorktreeStrict(worktreesRoot, repoID, runID, dir, reason string) error {
+	if strings.TrimSpace(dir) == "" {
+		return nil
+	}
+	_, err := Sweep(Options{
+		WorktreesRoot: worktreesRoot,
+		Worktrees:     []Worktree{{Dir: dir, RepoID: repoID, RunID: runID}},
+		Scopes:        []string{dir},
+		Grace:         DefaultGrace,
+	})
+	if err != nil {
+		return fmt.Errorf("%s: %w", reason, err)
+	}
+	return nil
 }
 
 // SweepRunWorktree terminates whatever is still standing in one run's worktree,
@@ -442,16 +462,17 @@ func expandVictims(matched map[int]string, procs []Process, protected map[int]bo
 	return victims
 }
 
-// terminate asks every victim to exit, then kills whatever is still alive
-// after grace. SIGTERM first is not politeness: a test runner or a worker
-// script given the chance to exit flushes its output and removes its own
-// temporary state, which SIGKILL denies it.
-func terminate(victims []Victim, grace time.Duration) {
+// terminate asks every victim to exit and returns an error when any signal or
+// final liveness check prevents proof that the worktree is exclusive.
+func terminate(victims []Victim, grace time.Duration) error {
 	if grace <= 0 {
 		grace = DefaultGrace
 	}
+	var firstErr error
 	for _, v := range victims {
-		signalVictim(v, sigTerm)
+		if err := signalVictim(v, sigTerm); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
 	deadline := time.Now().Add(grace)
 	for {
@@ -472,18 +493,28 @@ func terminate(victims []Victim, grace time.Duration) {
 			continue
 		}
 		victims[i].Killed = true
-		signalVictim(victims[i], sigKill)
+		if err := signalVictim(victims[i], sigKill); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
+	for _, v := range victims {
+		if processAliveFunc(v.PID) && firstErr == nil {
+			firstErr = fmt.Errorf("process %d remains alive after termination", v.PID)
+		}
+	}
+	return firstErr
 }
 
-// signalVictim signals the process and, when it leads its own group, the group
-// as well, so a child it spawned between listing and signalling is covered.
-// The group signal is limited to a group the victim leads: a process group id
-// is the pid of its (possibly already dead) leader, so kill(-pid) for a
-// non-leader could land on a leftover group that reused this pid number.
-func signalVictim(v Victim, sig procSignal) {
-	_ = signalProcessFunc(v.PID, sig)
-	if v.PGID == v.PID && v.PGID > 1 {
-		_ = signalGroupFunc(v.PGID, sig)
+// signalVictim signals the process and, when it leads its own group, the group.
+func signalVictim(v Victim, sig procSignal) error {
+	var firstErr error
+	if err := signalProcessFunc(v.PID, sig); err != nil && !os.IsNotExist(err) {
+		firstErr = err
 	}
+	if v.PGID == v.PID && v.PGID > 1 {
+		if err := signalGroupFunc(v.PGID, sig); err != nil && !os.IsNotExist(err) && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }

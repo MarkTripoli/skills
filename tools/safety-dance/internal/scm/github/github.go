@@ -366,6 +366,66 @@ func (h *Host) UpdatePR(ctx context.Context, pr *scm.PR, content scm.PRContent) 
 	return pr, nil
 }
 
+// UpdatePRIfUnchanged uses GitHub's ETag as an optimistic concurrency token.
+// The PATCH carries If-Match, so an authored edit between GET and PATCH is
+// rejected by GitHub rather than overwritten.
+func (h *Host) UpdatePRIfUnchanged(ctx context.Context, pr *scm.PR, expected, content scm.PRContent) (*scm.PR, error) {
+	number, err := prSelector(pr)
+	if err != nil {
+		return nil, err
+	}
+	repo := strings.TrimPrefix(h.repo, h.host+"/")
+	endpoint := fmt.Sprintf("repos/%s/pulls/%s", repo, number)
+	get := append([]string{"api", "--include", endpoint}, nil...)
+	out, err := h.cmd(ctx, "gh", get...).Output()
+	if err != nil {
+		return nil, fmt.Errorf("gh api pull-request read: %w", err)
+	}
+	etag, body, err := parseIncludedPR(out)
+	if err != nil {
+		return nil, err
+	}
+	if body != expected.Body {
+		return nil, fmt.Errorf("pull-request body changed concurrently")
+	}
+	args := []string{"api", "--method", "PATCH", endpoint, "--header", "If-Match: " + etag, "-f", "body=" + content.Body}
+	if strings.TrimSpace(content.Title) != "" {
+		args = append(args, "-f", "title="+content.Title)
+	}
+	if _, err := h.cmd(ctx, "gh", args...).Output(); err != nil {
+		return nil, fmt.Errorf("gh api pull-request conditional update: %w", err)
+	}
+	return pr, nil
+}
+
+func parseIncludedPR(raw []byte) (etag, body string, err error) {
+	parts := strings.SplitN(string(raw), "\r\n\r\n", 2)
+	if len(parts) != 2 {
+		parts = strings.SplitN(string(raw), "\n\n", 2)
+	}
+	if len(parts) != 2 {
+		return "", "", errors.New("parse gh api pull-request read: missing headers")
+	}
+	for _, line := range strings.Split(parts[0], "\n") {
+		if strings.EqualFold(strings.TrimSpace(strings.SplitN(line, ":", 2)[0]), "etag") {
+			fields := strings.SplitN(line, ":", 2)
+			if len(fields) == 2 {
+				etag = strings.TrimSpace(fields[1])
+			}
+		}
+	}
+	if etag == "" {
+		return "", "", errors.New("parse gh api pull-request read: missing ETag")
+	}
+	var parsed struct {
+		Body *string `json:"body"`
+	}
+	if err := json.Unmarshal([]byte(parts[1]), &parsed); err != nil || parsed.Body == nil {
+		return "", "", errors.New("parse gh api pull-request read: missing body")
+	}
+	return etag, *parsed.Body, nil
+}
+
 var _ scm.PRContentReader = (*Host)(nil)
 
 func (h *Host) GetPRContent(ctx context.Context, pr *scm.PR) (scm.PRContent, error) {

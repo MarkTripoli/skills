@@ -341,6 +341,13 @@ type PRContentReader interface {
 	GetPRContent(ctx context.Context, pr *PR) (PRContent, error)
 }
 
+// PRContentConditionalUpdater updates an existing PR only when its body still
+// equals expected. Providers must perform the comparison in the same update
+// operation or return an error when the version changed.
+type PRContentConditionalUpdater interface {
+	UpdatePRIfUnchanged(ctx context.Context, pr *PR, expected, content PRContent) (*PR, error)
+}
+
 // MergedProof is provider evidence that a specific PR head was merged.
 type MergedProof struct {
 	Merged         bool

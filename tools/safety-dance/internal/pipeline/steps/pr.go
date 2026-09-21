@@ -90,8 +90,14 @@ func PR(ctx context.Context) error {
 				return fmt.Errorf("read pull-request content: %w", readErr)
 			}
 			merged = mergeEvidenceBody(existing.Body, body)
-		}
-		if _, err := host.UpdatePR(ctx, pr, scm.PRContent{Body: merged}); err != nil {
+			conditional, ok := host.(scm.PRContentConditionalUpdater)
+			if !ok {
+				return fmt.Errorf("pull-request provider cannot conditionally update existing body")
+			}
+			if _, err := conditional.UpdatePRIfUnchanged(ctx, pr, existing, scm.PRContent{Body: merged}); err != nil {
+				return err
+			}
+		} else if _, err := host.UpdatePR(ctx, pr, scm.PRContent{Body: merged}); err != nil {
 			return err
 		}
 	}
@@ -153,15 +159,11 @@ func renderEvidence(ctx context.Context, repo *db.Repo, run *db.Run, prURL strin
 		extension := ".txt"
 		content := []byte(item + "\n")
 		if strings.HasPrefix(item, "file://") {
-			path, pathErr := confinedEvidencePath(strings.TrimPrefix(item, "file://"), worktree(ctx), dir)
-			if pathErr != nil {
-				return "", pathErr
-			}
-			raw, info, readErr := readConfinedEvidence(path)
+			raw, info, readErr := readConfinedEvidence(strings.TrimPrefix(item, "file://"), worktree(ctx), dir)
 			if readErr != nil || info == nil || !info.Mode().IsRegular() {
 				return "", fmt.Errorf("read evidence file: %w", readErr)
 			}
-			if ext := strings.ToLower(filepath.Ext(path)); ext != "" && len(ext) <= 10 {
+			if ext := strings.ToLower(filepath.Ext(strings.TrimPrefix(item, "file://"))); ext != "" && len(ext) <= 10 {
 				extension = ext
 			}
 			content = raw

@@ -25,6 +25,20 @@ func TestConfinedEvidencePathRejectsHostAndSymlinkEscape(t *testing.T) {
 	}
 }
 
+func TestReadConfinedEvidenceRejectsIntermediateSymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "nested")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readConfinedEvidence("nested/secret.txt", root, filepath.Join(root, "evidence")); err == nil {
+		t.Fatal("intermediate symlink was opened")
+	}
+}
+
 func TestMergeEvidenceBodyPreservesAuthoredText(t *testing.T) {
 	got := mergeEvidenceBody("Authored text", "## Safety Dance evidence\n\n- item")
 	if !strings.HasPrefix(got, "Authored text\n\n") || !strings.Contains(got, "<!-- safety-dance:evidence -->") {

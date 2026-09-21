@@ -301,8 +301,7 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 		if r.WorktreeDir == nil {
 			return nil
 		}
-		procreap.SweepRunWorktree(p.WorktreesDir(), r.RepoID, r.ID, *r.WorktreeDir, "daemon restart recovery")
-		return nil
+		return procreap.SweepRunWorktreeStrict(p.WorktreesDir(), r.RepoID, r.ID, *r.WorktreeDir, "daemon restart recovery")
 	})
 	adm := daemon.NewAdmissionWithStore(server, func(ctx context.Context, n daemon.PushNotification) error {
 		return recordPush(d, p, manager, n)

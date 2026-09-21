@@ -283,6 +283,32 @@ func TestManagedHookPeerRequiresExecutableAncestry(t *testing.T) {
 	}
 }
 
+func TestAuthorizeMutationPeerRejectsMarkerOnDetachedAncestor(t *testing.T) {
+	oldInfo, oldEnv := processInfoFunc, processEnvironmentFunc
+	t.Cleanup(func() { processInfoFunc, processEnvironmentFunc = oldInfo, oldEnv })
+	processInfoFunc = func(pid int) (int, string, error) {
+		switch pid {
+		case 101:
+			return 102, "/tmp/safety-dance", nil
+		case 102:
+			return 103, "/bin/sh -c safety-dance status", nil
+		case 103:
+			return 1, "/agent/validation", nil
+		default:
+			return 1, "init", nil
+		}
+	}
+	processEnvironmentFunc = func(pid int) ([]byte, error) {
+		if pid == 103 {
+			return []byte("SD_PARENT_RUN_ID=run-1\x00"), nil
+		}
+		return nil, nil
+	}
+	if err := AuthorizeMutationPeer(101); err == nil {
+		t.Fatal("mutation peer with a marked validation ancestor was authorized")
+	}
+}
+
 func TestAdmissionReceiptLoadFailureIsVisible(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "receipts.json")
