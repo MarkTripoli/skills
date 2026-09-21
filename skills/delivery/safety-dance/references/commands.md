@@ -27,7 +27,7 @@ safety-dance status
 ## Respond and abort
 
 ```sh
-safety-dance respond <run-id> --step <step> --action <action>
+safety-dance respond <run-id> --step <step> --step-id <prompt-id> --generation <generation> --action <action>
 safety-dance abort <run-id>
 safety-dance logs <run-id>
 ```

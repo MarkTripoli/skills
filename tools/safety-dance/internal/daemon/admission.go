@@ -254,8 +254,9 @@ func (a *Admission) hookAuthorized(pid int, gate, capability string) bool {
 	if !managedHookPeer(pid, gate) {
 		return false
 	}
-	// Persisted daemons require the per-gate capability as a second factor;
-	// test-only admissions without a receipt store retain ancestry-only setup.
+	// The in-memory constructor is a package-test seam. Persisted daemons
+	// require the per-gate capability; hook ancestry binds it to Git's receive
+	// path and prevents a copied capability from authorizing a direct client.
 	return !a.requireHookCapability || hookCapabilityValid(gate, capability)
 }
 

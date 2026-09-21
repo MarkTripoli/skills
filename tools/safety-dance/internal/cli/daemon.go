@@ -244,6 +244,13 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 			return worktrees.JournalRemoval(source, *r.WorktreeDir)
 		}
 		if err != nil {
+			// A remote write may have succeeded while mirror or binding failed.
+			// Keep publication ownership and the worktree recoverable in that
+			// state instead of terminalizing and deleting its evidence.
+			if current, currentErr := d.GetRun(r.ID); currentErr == nil && current != nil && current.PushActive {
+				fmt.Fprintf(os.Stderr, "safety-dance: publication recovery pending for %s: %v\n", r.ID, err)
+				return
+			}
 			status := types.RunFailed
 			if ctx.Err() != nil {
 				status = types.RunCancelled
@@ -661,8 +668,12 @@ func recordPush(d *db.DB, p *paths.Paths, manager *daemon.Manager, n daemon.Push
 			return err
 		}
 		worktree := layout.Dir(r.ID, r.WorkingPath, nonce)
-		if err := worktrees.CreateDetached(context.Background(), r.WorkingPath, worktree, n.New); err != nil {
-			return err
+		source := r.WorkingPath
+		if _, checkoutErr := git.Run(context.Background(), r.WorkingPath, "cat-file", "-e", n.New+"^{commit}"); checkoutErr != nil {
+			source = gatePath
+		}
+		if err := worktrees.CreateDetached(context.Background(), source, worktree, n.New); err != nil {
+			return fmt.Errorf("create accepted-head worktree: %w", err)
 		}
 		var validationGeneration string
 		accepted := db.AcceptedRef{RepoID: r.ID, Branch: branch, GateHead: n.New, PreviousReconciledHead: n.Old, LaunchNonce: nonce, ValidationGeneration: n.ValidationGeneration, RequestedOptions: append([]string(nil), n.Options...)}
@@ -705,15 +716,25 @@ func normalizeSHA(value string) string {
 }
 
 func livePublicationHead(ctx context.Context, remote, ref string) string {
-	out, err := exec.CommandContext(ctx, "git", "ls-remote", remote, ref).Output()
+	head, _, err := queryPublicationHead(ctx, remote, ref)
 	if err != nil {
 		return ""
 	}
+	return head
+}
+
+// queryPublicationHead distinguishes an absent remote ref from a failed
+// lookup. An absent branch is a valid zero-base publication state.
+func queryPublicationHead(ctx context.Context, remote, ref string) (string, bool, error) {
+	out, err := exec.CommandContext(ctx, "git", "ls-remote", remote, ref).Output()
+	if err != nil {
+		return "", false, err
+	}
 	fields := strings.Fields(string(out))
 	if len(fields) == 0 {
-		return ""
+		return "", false, nil
 	}
-	return normalizeSHA(fields[0])
+	return normalizeSHA(fields[0]), true, nil
 }
 
 func mirrorPublication(ctx context.Context, p *paths.Paths, repoID, ref, candidate, submitted string) error {
@@ -970,9 +991,12 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	if !strings.HasPrefix(ref, "refs/") {
 		ref = "refs/heads/" + ref
 	}
-	verifiedHead := livePublicationHead(ctx, repo.PushURL(), ref)
-	if verifiedHead == "" {
-		verifiedHead = normalizeSHA(run.BaseSHA)
+	verifiedHead, verifiedExists, verifiedErr := queryPublicationHead(ctx, repo.PushURL(), ref)
+	if verifiedErr != nil {
+		return fmt.Errorf("resolve upstream publication head: %w", verifiedErr)
+	}
+	if !verifiedExists {
+		verifiedHead = ""
 	}
 	scmHost, err := newSCMHost(ctx, repo.UpstreamURL, repo.ForkURL, worktree)
 	if err != nil {

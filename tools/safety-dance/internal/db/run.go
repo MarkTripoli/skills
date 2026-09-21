@@ -800,9 +800,11 @@ func (d *DB) UpdateRunError(id, errMsg string) error {
 	return d.UpdateRunErrorStatus(id, errMsg, types.RunFailed)
 }
 
-// UpdateRunErrorStatus sets the error message and terminal status on a run.
+// UpdateRunErrorStatus finalizes only a nonterminal run. A cancellation or
+// other terminal transition that wins first is durable truth and cannot be
+// overwritten by a late executor error.
 func (d *DB) UpdateRunErrorStatus(id, errMsg string, status types.RunStatus) error {
-	_, err := d.sql.Exec(`UPDATE runs SET error = ?, status = ?, push_active = 0, terminal_head_verified_at = NULL, updated_at = ? WHERE id = ?`, errMsg, status, now(), id)
+	_, err := d.sql.Exec(`UPDATE runs SET error = ?, status = ?, push_active = 0, terminal_head_verified_at = NULL, updated_at = ? WHERE id = ? AND status IN (?, ?)`, errMsg, status, now(), id, types.RunPending, types.RunRunning)
 	if err != nil {
 		return fmt.Errorf("update run error: %w", err)
 	}
@@ -811,7 +813,7 @@ func (d *DB) UpdateRunErrorStatus(id, errMsg string, status types.RunStatus) err
 
 func (d *DB) UpdateRunErrorStatusWithVerifiedHead(id, errMsg string, status types.RunStatus, headSHA string) error {
 	ts := now()
-	_, err := d.sql.Exec(`UPDATE runs SET error = ?, status = ?, head_sha = ?, push_active = 0, terminal_head_verified_at = ?, updated_at = ? WHERE id = ?`, errMsg, status, headSHA, ts, ts, id)
+	_, err := d.sql.Exec(`UPDATE runs SET error = ?, status = ?, head_sha = ?, push_active = 0, terminal_head_verified_at = ?, updated_at = ? WHERE id = ? AND status IN (?, ?)`, errMsg, status, headSHA, ts, ts, id, types.RunPending, types.RunRunning)
 	if err != nil {
 		return fmt.Errorf("update run error with verified head: %w", err)
 	}

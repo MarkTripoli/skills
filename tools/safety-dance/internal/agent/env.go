@@ -65,7 +65,6 @@ func (c subprocessContext) overlay() runenv.Overlay {
 func gitSafeEnv(dir string, extra ...[]string) []string {
 	return gitSafeEnvWithOverlay(dir, runenv.Overlay{}, extra...)
 }
-
 func gitSafeEnvWithOverlay(dir string, overlay runenv.Overlay, extra ...[]string) []string {
 	base := safeAmbientEnvironment()
 	base = overlay.Apply(base)

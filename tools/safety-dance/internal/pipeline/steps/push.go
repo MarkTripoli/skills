@@ -80,13 +80,20 @@ func Publish(ctx context.Context, database *db.DB, runID string, req PushRequest
 	if database == nil || runID == "" {
 		return PushResult{}, fmt.Errorf("database and run id are required")
 	}
-	// A durable binding is the replay receipt. Do not push again after a
-	// restart has completed the remote write and recorded publication.
+	// A durable binding is replayable only for the exact repository target,
+	// ref, and candidate that created it. The run stores the target digest in
+	// the same transaction as the publication row.
 	if publication, err := database.GetPublication(runID); err != nil {
 		return PushResult{}, err
 	} else if publication != nil {
-		if publication.Ref != req.Ref || publication.Candidate != req.Candidate || publication.VerifiedUpstream != publication.Candidate {
-			return PushResult{}, fmt.Errorf("publication binding does not match candidate")
+		run, runErr := database.GetRun(runID)
+		if runErr != nil {
+			return PushResult{}, runErr
+		}
+		fingerprint := sha256.Sum256([]byte(req.Remote))
+		expectedTarget := hex.EncodeToString(fingerprint[:])
+		if run == nil || run.PushTargetKind == nil || *run.PushTargetKind != "remote" || run.PushTargetFingerprint == nil || *run.PushTargetFingerprint != expectedTarget || run.PushRef == nil || *run.PushRef != req.Ref || publication.Ref != req.Ref || publication.Candidate != req.Candidate || publication.VerifiedUpstream != publication.Candidate {
+			return PushResult{}, fmt.Errorf("publication binding does not match current target")
 		}
 		return PushResult{Candidate: publication.Candidate, Upstream: publication.VerifiedUpstream, GateMirror: publication.GateMirror}, nil
 	}
@@ -97,6 +104,7 @@ func Publish(ctx context.Context, database *db.DB, runID string, req PushRequest
 	if run == nil || ((run.Status == types.RunCancelled || run.Status == types.RunFailed) && !run.PushActive) {
 		return PushResult{}, fmt.Errorf("run %s is not publishable", runID)
 	}
+	remoteConfirmed := false
 	if req.Candidate == "" || req.ReviewedHead == "" || req.Candidate != req.ReviewedHead {
 		return PushResult{}, fmt.Errorf("candidate is not reviewed head")
 	}
@@ -130,7 +138,7 @@ func Publish(ctx context.Context, database *db.DB, runID string, req PushRequest
 		}
 	}
 	defer func() {
-		if !claimed {
+		if !claimed || (remoteConfirmed && err != nil) {
 			return
 		}
 		if clearErr := database.SetRunPushActive(runID, false); clearErr != nil && err == nil {
@@ -156,6 +164,7 @@ func Publish(ctx context.Context, database *db.DB, runID string, req PushRequest
 			}
 		}
 	}
+	remoteConfirmed = true
 	if mirror == nil {
 		return PushResult{}, fmt.Errorf("gate mirror callback is required")
 	}

@@ -46,6 +46,13 @@ export async function scan(scanRoot = root) {
     const relative = path.relative(scanRoot, file).split(path.sep).join('/');
     if (relative === allowLicense || relative.startsWith('.agents/tasks/')) continue;
     if (binaryExtensions.has(path.extname(file).toLowerCase())) continue;
+    for (const pattern of retiredPatterns) {
+      pattern.lastIndex = 0;
+      if (pattern.test(relative)) {
+        findings.push(`${relative}:1: retired Safety Dance identity in path`);
+        break;
+      }
+    }
     let text;
     try { text = await fs.readFile(file, 'utf8'); } catch { continue; }
     if (text.includes('\0')) continue;
