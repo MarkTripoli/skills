@@ -282,6 +282,43 @@ test("selected jev-ui installs as a portable consumer outside the repository", a
   assert.ok(fs.existsSync(path.join(skillDir, "record-evidence", "SKILL.md")));
   assert.equal(fs.existsSync(installed), false);
 });
+test("Safety Dance installs as a non-worker skill across targets and runtime builds", () => {
+  const sourceSkill = path.join(REPO, "skills", "delivery", "safety-dance");
+  const sourceSkillText = fs.readFileSync(path.join(sourceSkill, "SKILL.md"), "utf8");
+  for (const target of ["claude-code", "codex", "oh-my-pi", "pi", "portable"]) {
+    const home = tmpdir(`safety-dance-${target}-`);
+    const skillDir = destinations(target, { home, env }).skills;
+    const foreign = path.join(skillDir, "mine", "SKILL.md");
+    put(foreign, "keep me\n");
+    const planned = install({ targets: [target], skillNames: ["safety-dance"], cwd: home, home, env });
+    const installed = path.join(skillDir, "safety-dance");
+    if (target === "portable") assert.equal(fs.readFileSync(path.join(installed, "SKILL.md"), "utf8"), sourceSkillText);
+    else assert.match(fs.readFileSync(path.join(installed, "SKILL.md"), "utf8"), /Runtime: /);
+    assert.ok(fs.existsSync(path.join(installed, "references", "commands.md")));
+    assert.ok(fs.existsSync(path.join(installed, "references", "safety.md")));
+    assert.ok(fs.existsSync(foreign));
+    assert.equal(fs.existsSync(path.join(home, ".claude", "agents", "safety-dance.md")), false);
+    assert.equal(fs.existsSync(path.join(home, ".codex", "agents", "safety-dance.toml")), false);
+    assert.doesNotMatch(fs.existsSync(path.join(home, ".codex", "config.toml")) ? fs.readFileSync(path.join(home, ".codex", "config.toml"), "utf8") : "", /safety-dance/);
+    uninstall(planned, home);
+    assert.equal(fs.existsSync(installed), false);
+    assert.equal(fs.existsSync(foreign), true);
+  }
+
+  for (const runtime of ["claude-code", "codex", "oh-my-pi", "pi"]) {
+    const dest = tmpdir(`safety-dance-runtime-${runtime}-`);
+    const result = spawnSync(process.execPath, [path.join(REPO, "scripts", "build-runtimes.mjs"), "--runtime", runtime, "--dest", dest], { cwd: REPO, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    const built = path.join(dest, "skills", "safety-dance");
+    assert.ok(fs.existsSync(path.join(built, "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(built, "references", "commands.md")));
+    assert.ok(fs.existsSync(path.join(built, "references", "safety.md")));
+    assert.match(fs.readFileSync(path.join(built, "SKILL.md"), "utf8"), new RegExp(`Runtime: ${runtime === "oh-my-pi" ? "Oh My Pi" : runtime === "claude-code" ? "Claude Code" : runtime === "codex" ? "Codex" : "Pi"}\\.`));
+    assert.equal(fs.existsSync(path.join(dest, "agents", "safety-dance.md")), false);
+    assert.equal(fs.existsSync(path.join(dest, "agents", "safety-dance.toml")), false);
+  }
+  assert.equal(fs.readFileSync(path.join(sourceSkill, "SKILL.md"), "utf8"), sourceSkillText);
+});
 
 for (const project of [false, true]) {
   test(`selected iterate-evidence preserves dependency ownership in ${project ? "project" : "home"} installs`, () => {

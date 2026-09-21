@@ -1,0 +1,164 @@
+package paths
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// Paths provides access to all safety-dance filesystem locations.
+// The root defaults to ~/.safety-dance but can be overridden via SD_HOME
+// or by using WithRoot (for testing).
+type Paths struct {
+	root string
+}
+
+// New returns Paths rooted at SD_HOME or ~/.safety-dance.
+func New() (*Paths, error) {
+	if testing.Testing() && os.Getenv("SAFETY_DANCE_ALLOW_DEFAULT_ROOT_IN_TESTS") != "1" && os.Getenv("SD_HOME") == "" {
+		return nil, fmt.Errorf("SD_HOME must be set under go test to avoid touching the real safety-dance daemon root")
+	}
+	home, err := Home()
+	if err != nil {
+		return nil, err
+	}
+	return &Paths{root: home}, nil
+}
+
+// WithRoot returns Paths rooted at a custom directory (for testing).
+func WithRoot(root string) *Paths {
+	return &Paths{root: root}
+}
+
+func (p *Paths) Root() string       { return p.root }
+func (p *Paths) DB() string         { return filepath.Join(p.root, "state.sqlite") }
+func (p *Paths) Socket() string     { return filepath.Join(p.root, "socket") }
+func (p *Paths) PIDFile() string    { return filepath.Join(p.root, "daemon.pid") }
+func (p *Paths) ConfigFile() string { return filepath.Join(p.root, "config.yaml") }
+
+// BootstrapConfigFile stores the operator-approved initial policy created by the wizard.
+func (p *Paths) BootstrapConfigFile(repository string) string {
+	return filepath.Join(p.root, "bootstrap", repository+".yaml")
+}
+
+// BootstrapRetiredFile records permanent retirement after committed policy observation.
+func (p *Paths) BootstrapRetiredFile(repository string) string {
+	return filepath.Join(p.root, "bootstrap", repository+".retired")
+}
+
+// LockFile is the OS-level advisory lock used to enforce a single live daemon
+// per SD_HOME (see the singleton lock in internal/daemon). Distinct from
+// PIDFile, which is an informational record a live daemon writes for
+// CLI/status consumers: LockFile is what actually prevents two daemons from
+// ever running startup recovery or binding the socket concurrently for the
+// same root.
+func (p *Paths) LockFile() string { return filepath.Join(p.root, "daemon.lock") }
+func (p *Paths) UpdateCheckFile() string {
+	return filepath.Join(p.root, "update-check.json")
+}
+
+// EvalDir holds automatically collected local evaluation cases, shared object
+// pools, and their separate registry. EnsureDirs leaves creation to collection
+// and eval commands so disabling provenance and auto-capture creates no state.
+func (p *Paths) EvalDir() string { return filepath.Join(p.root, "eval") }
+
+// EvidenceDir is the default root for test-evidence artifacts, keyed by run ID
+// underneath it.
+//
+// Evidence lives under the app root rather than the system temp directory on
+// purpose. The daemon runs from a service unit that exports only HOME, PATH,
+// and proxy variables, so TMPDIR is unset and os.TempDir() resolves to the
+// shared /tmp - which current Ubuntu mounts as a systemd tmpfs, putting every
+// screenshot and rendered-HTML artifact in RAM. The app root is disk backed on
+// macOS, Linux, and Windows alike, so this needs no per-OS branch, and it is
+// the directory safety-dance already reaps for itself (see the daemon's
+// evidence reaper) instead of waiting on an OS timer that may never run.
+//
+// EnsureDirs deliberately leaves creation to the test step, so a machine that
+// never gathers evidence never grows the directory.
+func (p *Paths) EvidenceDir() string { return filepath.Join(p.root, "evidence") }
+
+// EvidenceRoot resolves where run evidence is written, honoring a configured
+// test.evidence.local_root. A relative override is ignored rather than
+// resolved: the daemon's working directory is a bare gate repository, so a
+// relative path would land somewhere the operator never named. Config parsing
+// rejects a relative value outright (see config.validateTestRaw); this check
+// is the second layer that keeps a bad value from escaping into the filesystem.
+func (p *Paths) EvidenceRoot(configured string) string {
+	if c := strings.TrimSpace(configured); c != "" && filepath.IsAbs(c) {
+		return filepath.Clean(c)
+	}
+	return p.EvidenceDir()
+}
+
+// ValidateEvidenceRoot rejects configured evidence roots inside managed worktrees.
+func (p *Paths) ValidateEvidenceRoot(configured string) error {
+	root := p.EvidenceRoot(configured)
+	worktrees := filepath.Clean(p.WorktreesDir())
+	rel, err := filepath.Rel(worktrees, root)
+	if err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))) {
+		return fmt.Errorf("test.evidence.local_root %q must not be inside managed worktrees %q", root, worktrees)
+	}
+	return nil
+}
+
+// RunEvidenceDir is the evidence directory for a single run.
+func (p *Paths) RunEvidenceDir(configured, runID string) string {
+	return filepath.Join(p.EvidenceRoot(configured), runID)
+}
+
+func (p *Paths) ReposDir() string { return filepath.Join(p.root, "repos") }
+func (p *Paths) RepoDir(repoID string) string {
+	return filepath.Join(p.root, "repos", repoID+".git")
+}
+
+func (p *Paths) WorktreesDir() string { return filepath.Join(p.root, "worktrees") }
+func (p *Paths) WorktreeDir(repoID, runID string) string {
+	return filepath.Join(p.root, "worktrees", repoID, runID)
+}
+
+func (p *Paths) LogsDir() string { return filepath.Join(p.root, "logs") }
+func (p *Paths) RunLogDir(runID string) string {
+	return filepath.Join(p.root, "logs", runID)
+}
+func (p *Paths) DaemonLog() string { return filepath.Join(p.root, "logs", "daemon.log") }
+
+// DaemonBootstrapLog captures service-manager output before the daemon logger
+// is ready, plus crash diagnostics written directly to stdout or stderr.
+func (p *Paths) DaemonBootstrapLog() string {
+	return filepath.Join(p.root, "logs", "daemon-bootstrap.log")
+}
+
+// ManagedServerLog holds raw output from daemon-managed agent servers.
+func (p *Paths) ManagedServerLog() string {
+	return filepath.Join(p.root, "logs", "managed-server.log")
+}
+func (p *Paths) CLILog() string { return filepath.Join(p.root, "logs", "cli.log") }
+
+// ServerPIDsDir holds PID-tracking files for managed agent servers
+// (opencode, rovodev) so a freshly started daemon can reap orphans left
+// behind by a crashed predecessor.
+func (p *Paths) ServerPIDsDir() string { return filepath.Join(p.root, "servers") }
+
+// EnsureDirs creates all required directories under root.
+func (p *Paths) EnsureDirs() error {
+	dirs := []string{
+		p.root,
+		p.ReposDir(),
+		p.WorktreesDir(),
+		p.LogsDir(),
+		p.ServerPIDsDir(),
+		filepath.Join(p.root, "bootstrap"),
+	}
+	for _, d := range dirs {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			return err
+		}
+		if err := os.Chmod(d, 0o700); err != nil {
+			return err
+		}
+	}
+	return nil
+}

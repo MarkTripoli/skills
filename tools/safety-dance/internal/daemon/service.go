@@ -1,0 +1,394 @@
+package daemon
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"html"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/paths"
+)
+
+type serviceOutputExecutor interface {
+	Output(name string, args ...string) ([]byte, error)
+}
+type ServiceExecutor interface {
+	Run(name string, args ...string) error
+}
+type Service struct {
+	Home     *paths.Paths
+	Binary   string
+	Executor ServiceExecutor
+}
+
+func systemdQuote(value string) string {
+	return strconv.Quote(value)
+}
+
+type serviceRecovery struct {
+	Existed  bool   `json:"existed"`
+	Previous []byte `json:"previous"`
+}
+
+const serviceMarker = "SAFETY_DANCE_MANAGED"
+
+func serviceIdentity(root string) string {
+	canonical, err := filepath.Abs(filepath.Clean(root))
+	if err != nil {
+		canonical = filepath.Clean(root)
+	}
+	digest := sha256.Sum256([]byte(canonical))
+	readable := strings.NewReplacer("/", "-", "\\", "-", ".", "-", ":", "-").Replace(canonical)
+	readable = strings.Trim(readable, "-")
+	if len(readable) > 48 {
+		readable = readable[:48]
+	}
+	return readable + "-" + hex.EncodeToString(digest[:])[:16]
+}
+
+func (s Service) Label() string {
+	return "com-safety-dance-daemon-" + serviceIdentity(s.Home.Root())
+}
+
+func windowsCmdValue(value string) string {
+	value = strings.ReplaceAll(value, "^", "^^")
+	value = strings.ReplaceAll(value, "&", "^&")
+	value = strings.ReplaceAll(value, "|", "^|")
+	value = strings.ReplaceAll(value, "<", "^<")
+	value = strings.ReplaceAll(value, ">", "^>")
+	value = strings.ReplaceAll(value, "(", "^(")
+	value = strings.ReplaceAll(value, ")", "^)")
+	value = strings.ReplaceAll(value, "!", "^!")
+	value = strings.ReplaceAll(value, "%", "%%")
+	value = strings.ReplaceAll(value, `"`, `^"`)
+	return value
+}
+func (s Service) Definition() (string, error) {
+	if s.Home == nil {
+		return "", fmt.Errorf("runtime home is required")
+	}
+	if s.Binary == "" {
+		return "", fmt.Errorf("daemon binary is required")
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		root := html.EscapeString(s.Home.Root())
+		binary := html.EscapeString(s.Binary)
+		label := html.EscapeString(s.Label())
+		return fmt.Sprintf("<!-- %s home=%s --><plist><dict><key>Label</key><string>%s</string><key>ProgramArguments</key><array><string>%s</string><string>daemon</string><string>serve</string></array><key>EnvironmentVariables</key><dict><key>SD_HOME</key><string>%s</string></dict><key>StandardOutPath</key><string>%s</string><key>StandardErrorPath</key><string>%s</string><key>KeepAlive</key><true/></dict></plist>", serviceMarker, root, label, binary, root, html.EscapeString(s.Home.DaemonLog()), html.EscapeString(s.Home.DaemonBootstrapLog())), nil
+	case "linux":
+		return fmt.Sprintf("# %s home=%s\n[Unit]\nDescription=Safety Dance daemon\n[Service]\nExecStart=%s daemon serve\nEnvironment=SD_HOME=%s\nStandardOutput=append:%s\nStandardError=append:%s\nRestart=on-failure\n[Install]\nWantedBy=default.target\n", serviceMarker, systemdQuote(s.Home.Root()), systemdQuote(s.Binary), systemdQuote(s.Home.Root()), systemdQuote(s.Home.DaemonLog()), systemdQuote(s.Home.DaemonBootstrapLog())), nil
+	default:
+		return fmt.Sprintf("%s home=%s\nSafety Dance Task\nName=%s\nBinary=%s daemon serve\nSD_HOME=%s\n", serviceMarker, s.Home.Root(), s.Label(), filepath.Clean(s.Binary), s.Home.Root()), nil
+	}
+}
+func (s Service) Validate() error {
+	d, e := s.Definition()
+	if e != nil {
+		return e
+	}
+	if strings.TrimSpace(d) == "" {
+		return fmt.Errorf("empty service definition")
+	}
+	return nil
+}
+func (s Service) definitionPath() (string, error) {
+	if s.Home == nil {
+		return "", fmt.Errorf("runtime home is required")
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(s.Home.Root(), "safety-dance.plist"), nil
+	case "linux":
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, ".config", "systemd", "user", "safety-dance-"+serviceIdentity(s.Home.Root())+".service"), nil
+	default:
+		return filepath.Join(s.Home.Root(), "safety-dance-task.definition"), nil
+	}
+}
+func (s Service) ownedDefinition() (bool, error) {
+	path, err := s.definitionPath()
+	if err != nil || path == "" {
+		return false, err
+	}
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	text := string(raw)
+	return strings.Contains(text, serviceMarker) && (strings.Contains(text, "home="+s.Home.Root()) || strings.Contains(text, "home=\""+s.Home.Root()+"\"") || strings.Contains(text, html.EscapeString(s.Home.Root()))), nil
+}
+
+func (s Service) DefinitionExists() bool {
+	owned, err := s.ownedDefinition()
+	return err == nil && owned
+}
+
+func (s Service) writeDefinition() error {
+	path, err := s.definitionPath()
+	if err != nil || path == "" {
+		return err
+	}
+	definition, err := s.Definition()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".safety-dance-service-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o600); err != nil {
+
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.WriteString(definition); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+func (s Service) taskOwned() (bool, error) {
+	executor, ok := s.Executor.(serviceOutputExecutor)
+	if !ok {
+		return false, fmt.Errorf("scheduled-task ownership query is unavailable")
+	}
+	out, err := executor.Output("schtasks", "/Query", "/TN", s.Label(), "/XML")
+	if err != nil {
+		if isTaskNotFound(out, err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("query scheduled task %s: %w", s.Label(), err)
+	}
+	raw := string(out)
+	return strings.Contains(raw, serviceMarker) && strings.Contains(raw, s.Home.Root()) && strings.Contains(raw, s.Binary), nil
+}
+
+func isTaskNotFound(out []byte, err error) bool {
+	if err == nil || errString(err) != "exit status 1" {
+		return false
+	}
+	text := strings.ToLower(strings.TrimSpace(string(out)))
+	return text == "error: the system cannot find the file specified." || text == "error: the system cannot find the file specified"
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func (s Service) Install() error {
+	if s.Executor == nil {
+		return fmt.Errorf("service executor is required")
+	}
+	if err := s.Validate(); err != nil {
+		return err
+	}
+	path, err := s.definitionPath()
+	if path != "" {
+		exists, readErr := os.Stat(path)
+		if readErr == nil {
+			owned, ownerErr := s.ownedDefinition()
+			if ownerErr != nil {
+				return ownerErr
+			}
+			if !owned {
+				return fmt.Errorf("service definition collision at %s", path)
+			}
+		} else if !os.IsNotExist(readErr) {
+			return readErr
+		}
+		_ = exists
+	}
+	if err != nil {
+		return err
+	}
+	if runtime.GOOS == "windows" {
+		executor, ok := s.Executor.(serviceOutputExecutor)
+		if !ok {
+			return fmt.Errorf("windows scheduled-task ownership query is unavailable")
+		}
+		out, queryErr := executor.Output("schtasks", "/Query", "/TN", s.Label(), "/XML")
+		if queryErr == nil {
+			raw := string(out)
+			if !strings.Contains(raw, serviceMarker) || !strings.Contains(raw, s.Home.Root()) || !strings.Contains(raw, s.Binary) {
+				return fmt.Errorf("foreign scheduled task collision: %s", s.Label())
+			}
+		} else if !isTaskNotFound(out, queryErr) {
+			return fmt.Errorf("query scheduled task %s: %w", s.Label(), queryErr)
+		}
+	}
+	previous, readErr := os.ReadFile(path)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return readErr
+	}
+	recovery := serviceRecovery{Existed: readErr == nil, Previous: previous}
+	if err := s.writeDefinition(); err != nil {
+		return fmt.Errorf("write service definition: %w", err)
+	}
+	var activationErr error
+	switch runtime.GOOS {
+	case "darwin":
+		activationErr = s.Executor.Run("launchctl", "load", "-w", path)
+	case "linux":
+		activationErr = s.Executor.Run("systemctl", "--user", "enable", "--now", filepath.Base(path))
+	default:
+		action := fmt.Sprintf(`cmd /D /S /C "set "SD_HOME=%s"&&set %s=1&&"%s" daemon serve"`, windowsCmdValue(s.Home.Root()), serviceMarker, s.Binary)
+		activationErr = s.Executor.Run("schtasks", "/Create", "/TN", s.Label(), "/TR", action, "/SC", "ONLOGON", "/RL", "LIMITED", "/F")
+	}
+	if activationErr == nil {
+		return nil
+	}
+	data, marshalErr := json.Marshal(recovery)
+	if marshalErr != nil {
+		return errors.Join(activationErr, fmt.Errorf("record service recovery: %w", marshalErr))
+	}
+	if err := os.WriteFile(path+".recovery", data, 0600); err != nil {
+		return errors.Join(activationErr, fmt.Errorf("record service recovery: %w", err))
+	}
+	var cleanupErr error
+	switch runtime.GOOS {
+	case "darwin":
+		cleanupErr = s.Executor.Run("launchctl", "unload", "-w", path)
+	case "linux":
+		cleanupErr = s.Executor.Run("systemctl", "--user", "disable", "--now", filepath.Base(path))
+	default:
+		cleanupErr = s.Executor.Run("schtasks", "/Delete", "/TN", s.Label(), "/F")
+	}
+	if restoreErr := restoreServiceAfterStop(path); restoreErr != nil {
+		cleanupErr = errors.Join(cleanupErr, restoreErr)
+	}
+	return errors.Join(activationErr, cleanupErr)
+}
+
+func restoreServiceAfterStop(path string) error {
+	raw, err := os.ReadFile(path + ".recovery")
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var recovery serviceRecovery
+	if err := json.Unmarshal(raw, &recovery); err != nil {
+		return err
+	}
+	if recovery.Existed {
+		if err := os.WriteFile(path, recovery.Previous, 0600); err != nil {
+			return err
+		}
+	} else {
+		_ = os.Remove(path)
+	}
+	return os.Remove(path + ".recovery")
+}
+func (s Service) Stop() error {
+	if s.Executor == nil {
+		return fmt.Errorf("service executor is required")
+	}
+	if path, pathErr := s.definitionPath(); pathErr == nil && path != "" {
+		owned, ownerErr := s.ownedDefinition()
+		if ownerErr != nil {
+			return ownerErr
+		}
+		if !owned {
+			return fmt.Errorf("refusing to stop foreign service definition %s", path)
+		}
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		path, _ := s.definitionPath()
+		err := s.Executor.Run("launchctl", "unload", "-w", path)
+		if err == nil {
+			_ = os.Remove(path)
+			if restoreErr := restoreServiceAfterStop(path); restoreErr != nil {
+				return restoreErr
+			}
+		}
+		return err
+	case "linux":
+		path, _ := s.definitionPath()
+		err := s.Executor.Run("systemctl", "--user", "disable", "--now", filepath.Base(path))
+		if err == nil {
+			_ = os.Remove(path)
+			if restoreErr := restoreServiceAfterStop(path); restoreErr != nil {
+				return restoreErr
+			}
+		}
+		return err
+	default:
+		owned, err := s.taskOwned()
+		if err != nil || !owned {
+			return fmt.Errorf("refusing to stop foreign scheduled task %s", s.Label())
+		}
+		if err := s.Executor.Run("schtasks", "/Delete", "/TN", s.Label(), "/F"); err != nil {
+			return err
+		}
+		path, _ := s.definitionPath()
+		return restoreServiceAfterStop(path)
+	}
+}
+
+func restartCommands(platform, label, path string, uid int) [][]string {
+	switch platform {
+	case "darwin":
+		return [][]string{{"launchctl", "kickstart", "-k", "gui/" + strconv.Itoa(uid) + "/" + label}}
+	case "linux":
+		return [][]string{{"systemctl", "--user", "restart", filepath.Base(path)}}
+	default:
+		return [][]string{{"schtasks", "/End", "/TN", label}, {"schtasks", "/Run", "/TN", label}}
+	}
+}
+
+// Restart restarts an owned service without removing its persistent definition.
+func (s Service) Restart() error {
+	if s.Executor == nil {
+		return fmt.Errorf("service executor is required")
+	}
+	if runtime.GOOS == "windows" {
+		owned, err := s.taskOwned()
+		if err != nil || !owned {
+			return fmt.Errorf("refusing to restart foreign scheduled task %s", s.Label())
+		}
+	}
+	if !s.DefinitionExists() {
+		return fmt.Errorf("service definition is not installed")
+	}
+	path, err := s.definitionPath()
+	if err != nil {
+		return err
+	}
+	for _, command := range restartCommands(runtime.GOOS, s.Label(), path, os.Getuid()) {
+		if err := s.Executor.Run(command[0], command[1:]...); err != nil {
+			if runtime.GOOS == "windows" && command[1] == "/End" {
+				continue
+			}
+			return err
+		}
+	}
+	return nil
+}

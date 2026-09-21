@@ -1,0 +1,294 @@
+package daemon
+
+import (
+	"context"
+	"fmt"
+	"sync"
+
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/custody"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/types"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/worktrees"
+)
+
+type BranchKey struct{ RepositoryID, Ref string }
+type RunHandle struct {
+	Run     *db.Run
+	cancel  context.CancelFunc
+	done    chan struct{}
+	started chan struct{}
+}
+
+func (h *RunHandle) Cancel() {
+	if h != nil && h.cancel != nil {
+		h.cancel()
+	}
+}
+func (h *RunHandle) Wait() {
+	if h != nil {
+		<-h.done
+	}
+}
+
+type Manager struct {
+	db       *db.DB
+	store    *custody.Store
+	mu       sync.Mutex
+	keys     map[BranchKey]*RunHandle
+	keyMu    map[BranchKey]*sync.Mutex
+	run      func(context.Context, *db.Run)
+	reap     func(*db.Run) error
+	stopping bool
+}
+
+func NewManager(database *db.DB, runner func(context.Context, *db.Run)) *Manager {
+	store, _ := custody.New(database)
+	return &Manager{db: database, store: store, keys: make(map[BranchKey]*RunHandle), keyMu: make(map[BranchKey]*sync.Mutex), run: runner}
+}
+
+// SetRecoveryReaper installs restart-only cleanup before recovered worktrees
+// are reset or reused.
+func (m *Manager) SetRecoveryReaper(reaper func(*db.Run) error) { m.reap = reaper }
+
+func (m *Manager) branchLock(key BranchKey) *sync.Mutex {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if lock := m.keyMu[key]; lock != nil {
+		return lock
+	}
+	lock := &sync.Mutex{}
+	m.keyMu[key] = lock
+	return lock
+}
+
+// Replace preserves the historical API for callers that already validated
+// their accepted head.
+func (m *Manager) Replace(ctx context.Context, key BranchKey, accepted db.AcceptedRef, worktree string) (*db.Run, error) {
+	return m.replaceValidated(ctx, key, accepted, worktree, nil)
+}
+
+// ReplaceValidated rechecks the accepted gate state while holding the branch
+// lock, before cancelling or persisting a replacement run.
+func (m *Manager) ReplaceValidated(ctx context.Context, key BranchKey, accepted db.AcceptedRef, worktree string, validate func() error) (*db.Run, error) {
+	return m.replaceValidated(ctx, key, accepted, worktree, validate)
+}
+
+func (m *Manager) replaceValidated(ctx context.Context, key BranchKey, accepted db.AcceptedRef, worktree string, validate func() error) (*db.Run, error) {
+	if key.RepositoryID == "" || key.Ref == "" {
+		return nil, fmt.Errorf("branch key is required")
+	}
+	branchLock := m.branchLock(key)
+	branchLock.Lock()
+	defer branchLock.Unlock()
+	if validate != nil {
+		if err := validate(); err != nil {
+			return nil, err
+		}
+	}
+	m.mu.Lock()
+	if m.stopping {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("daemon manager is shutting down")
+	}
+	if accepted.LaunchNonce != "" {
+		existing, err := m.db.GetRunByLaunchNonce(key.RepositoryID, key.Ref, accepted.LaunchNonce)
+		if err != nil {
+			m.mu.Unlock()
+			return nil, err
+		}
+		if existing != nil {
+			m.mu.Unlock()
+			return existing, nil
+		}
+	}
+	prior := m.keys[key]
+	if prior != nil {
+		prior.Cancel()
+		m.mu.Unlock()
+		prior.Wait()
+		m.mu.Lock()
+		if m.stopping {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("daemon manager is shutting down")
+		}
+		latest, loadErr := m.db.GetRun(prior.Run.ID)
+		if loadErr != nil {
+			m.mu.Unlock()
+			return nil, loadErr
+		}
+		if latest != nil && !latest.Status.Terminal() {
+			if err := m.store.SupersedeRun(prior.Run.ID, types.RunCancelReasonSuperseded); err != nil {
+				m.mu.Unlock()
+				return nil, err
+			}
+		}
+		delete(m.keys, key)
+		if validate != nil {
+			if err := validate(); err != nil {
+				m.mu.Unlock()
+				return nil, err
+			}
+		}
+	}
+	r, err := m.store.CreateRun(db.RunInput{Accepted: accepted, WorktreeDir: worktree})
+	if err != nil {
+		m.mu.Unlock()
+		return nil, err
+	}
+	if err = worktrees.CommitOwnership(worktree); err != nil {
+		_ = m.db.UpdateRunErrorStatus(r.ID, err.Error(), types.RunFailed)
+		m.mu.Unlock()
+		return nil, err
+	}
+	if err = m.store.TransitionRunStatus(r.ID, types.RunPending, types.RunRunning); err != nil {
+		_ = m.db.UpdateRunErrorStatus(r.ID, err.Error(), types.RunFailed)
+		m.mu.Unlock()
+		return nil, err
+	}
+	r.Status = types.RunRunning
+	runctx, cancel := context.WithCancel(context.Background())
+	h := &RunHandle{Run: r, cancel: cancel, done: make(chan struct{}), started: make(chan struct{})}
+	m.keys[key] = h
+	m.mu.Unlock()
+	go func() {
+		close(h.started)
+		defer close(h.done)
+		if m.run != nil {
+			m.run(runctx, r)
+		}
+		m.mu.Lock()
+		if m.keys[key] == h {
+			delete(m.keys, key)
+		}
+		m.mu.Unlock()
+	}()
+	<-h.started
+	return r, nil
+}
+func (m *Manager) Active(key BranchKey) *RunHandle {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.keys[key]
+}
+
+// Cancel stops only the currently registered handle for runID. It never
+// follows a branch key to a replacement run.
+func (m *Manager) Cancel(key BranchKey, runID string) bool {
+	m.mu.Lock()
+	h := m.keys[key]
+	if h == nil || h.Run == nil || h.Run.ID != runID {
+		m.mu.Unlock()
+		return false
+	}
+	h.Cancel()
+	m.mu.Unlock()
+	return true
+}
+
+// Shutdown rejects new replacements, cancels every live run, and waits for
+// their cleanup before daemon ownership is released.
+func (m *Manager) Shutdown() {
+	m.mu.Lock()
+	m.stopping = true
+	handles := make([]*RunHandle, 0, len(m.keys))
+	for _, h := range m.keys {
+		handles = append(handles, h)
+		h.Cancel()
+	}
+	m.mu.Unlock()
+	for _, h := range handles {
+		h.Wait()
+	}
+}
+
+// Resume registers a durable pending/running run that has no live handle.
+func (m *Manager) Resume(ctx context.Context, r *db.Run) error {
+	if r == nil {
+		return fmt.Errorf("run is required")
+	}
+	if r.Status.Terminal() {
+		return fmt.Errorf("run %s is already terminal", r.ID)
+	}
+	key := BranchKey{RepositoryID: r.RepoID, Ref: r.Branch}
+	m.mu.Lock()
+	if m.stopping {
+		m.mu.Unlock()
+		return fmt.Errorf("daemon manager is shutting down")
+	}
+	if existing := m.keys[key]; existing != nil {
+		m.mu.Unlock()
+		return nil
+	}
+	if r.Status == types.RunPending {
+		if err := m.db.TransitionRunStatus(r.ID, types.RunPending, types.RunRunning); err != nil {
+			m.mu.Unlock()
+			return err
+		}
+		r.Status = types.RunRunning
+	}
+	runctx, cancel := context.WithCancel(ctx)
+	h := &RunHandle{Run: r, cancel: cancel, done: make(chan struct{}), started: make(chan struct{})}
+	m.keys[key] = h
+	m.mu.Unlock()
+	go func() {
+		close(h.started)
+		defer close(h.done)
+		if m.run != nil {
+			m.run(runctx, r)
+		}
+		m.mu.Lock()
+		if m.keys[key] == h {
+			delete(m.keys, key)
+		}
+		m.mu.Unlock()
+	}()
+	return nil
+}
+
+// Recover re-registers durable active runs after a daemon restart and resumes
+// only runs whose persisted status permits execution.
+func (m *Manager) Recover(ctx context.Context) error {
+	runs, err := m.db.RecoverableRuns()
+	if err != nil {
+		return err
+	}
+	for _, r := range runs {
+		if r.Status != types.RunPending && r.Status != types.RunRunning && !(r.Status == types.RunCancelled && r.PushActive) {
+			continue
+		}
+		if m.reap != nil {
+			if err := m.reap(r); err != nil {
+				return fmt.Errorf("reap recovered run %s: %w", r.ID, err)
+			}
+		}
+		if r.Status == types.RunPending {
+			if err := m.db.TransitionRunStatus(r.ID, types.RunPending, types.RunRunning); err != nil {
+				return err
+			}
+			r.Status = types.RunRunning
+		}
+		runctx, cancel := context.WithCancel(ctx)
+		h := &RunHandle{Run: r, cancel: cancel, done: make(chan struct{})}
+		key := BranchKey{RepositoryID: r.RepoID, Ref: r.Branch}
+		m.mu.Lock()
+		if _, exists := m.keys[key]; exists {
+			m.mu.Unlock()
+			cancel()
+			continue
+		}
+		m.keys[key] = h
+		m.mu.Unlock()
+		go func(key BranchKey, handle *RunHandle) {
+			defer close(handle.done)
+			if m.run != nil {
+				m.run(runctx, handle.Run)
+			}
+			m.mu.Lock()
+			if m.keys[key] == handle {
+				delete(m.keys, key)
+			}
+			m.mu.Unlock()
+		}(key, h)
+	}
+	return nil
+}

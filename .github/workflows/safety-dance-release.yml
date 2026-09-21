@@ -1,0 +1,78 @@
+name: Safety Dance release
+on:
+  push:
+    tags: ['safety-dance-v*']
+permissions:
+  contents: write
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/safety-dance/go.mod
+      - run: npm ci
+      - run: npm test
+      - name: Scan Go dependencies
+        run: |
+          GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          (cd tools/safety-dance && "$RUNNER_TEMP/bin/govulncheck" ./...)
+  release:
+    needs: preflight
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { os: linux, goos: linux, arch: amd64 }
+          - { os: linux, goos: linux, arch: arm64 }
+          - { os: macos, goos: darwin, arch: amd64 }
+          - { os: macos, goos: darwin, arch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/safety-dance/go.mod
+      - name: Validate tag
+        id: version
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#safety-dance-v}"
+          semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+          [[ "$version" =~ $semver_re ]] || { echo invalid version >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Build and package
+        working-directory: tools/safety-dance
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          mkdir -p dist
+          suffix=""; [ "$GOOS" = windows ] && suffix=.exe
+          commit="${GITHUB_SHA:0:12}"
+          date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          ldflags="-X github.com/MarkTripoli/skills/tools/safety-dance/internal/buildinfo.Version=${{ steps.version.outputs.version }} -X github.com/MarkTripoli/skills/tools/safety-dance/internal/buildinfo.Commit=$commit -X github.com/MarkTripoli/skills/tools/safety-dance/internal/buildinfo.Date=$date"
+          go build -ldflags "$ldflags" -o "dist/safety-dance$suffix" ./cmd/safety-dance
+          ./scripts/package-release.sh --version "${{ steps.version.outputs.version }}" --os "${{ matrix.os }}" --arch "${{ matrix.arch }}" --binary "dist/safety-dance$suffix" --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.os }}-${{ matrix.arch }}
+          path: tools/safety-dance/dist/*
+  publish:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: release-*
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          find dist -type f -not -name checksums.txt -exec cp {} . \;
+          sha256sum safety-dance_* > checksums.txt
+          gh release create "$GITHUB_REF_NAME" safety-dance_* checksums.txt --title "$GITHUB_REF_NAME" --verify-tag --repo "$GITHUB_REPOSITORY"

@@ -179,6 +179,7 @@ Artifact type be template frontmatter `type`. Human gates count only when turned
 | ci-commit | commit | no | By hand; explicit-path commit conventions |
 | review-artifact-comments | comment-review | no | By hand; artifact feedback |
 | show-me | show-me | no | By hand; visual explanation |
+| safety-dance | none | no | By hand |
 
 ## Running skills by hand
 

@@ -22,6 +22,11 @@ Offline check no need Atomic install, no need live provider key. Installer test 
 
 Old engine fixture no be Atomic run proof. Maybe-run TypeScript workflow plus helper be current controller source.
 
+## Safety Dance proof boundaries
+
+`npm run test:safety-dance` is the offline Safety Dance gate. It runs the identity scan, Go race tests, `go vet`, a temporary binary build, and release-contract tests without provider credentials.
+
+`cd tools/safety-dance && make e2e` exercises temporary local repositories and remotes. It does not prove live pull-request or CI provider behavior or a hosted `safety-dance-v*` release; those remain deferred evidence requiring credentials or GitHub Actions. Windows is not a supported release target until its native gate and service path have CI coverage.
 ## Atomic runtime proof
 
 Use scratch repo and scratch Atomic agent dir. Keep task stuff and other user state out of cleanup reach. Follow native [authoring](https://docs.bastani.ai/workflows/authoring) and [operations](https://docs.bastani.ai/workflows/operations) contract.

@@ -1,0 +1,182 @@
+package e2e
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/paths"
+)
+
+// TestPublicBinarySmoke drives a built Safety Dance command through gate
+// admission, durable run creation, and guarded publication in an isolated home.
+func TestPublicBinarySmoke(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("generated git hooks use /bin/sh")
+	}
+	binary := strings.TrimSpace(os.Getenv("SD_E2E_BINARY"))
+	if binary == "" {
+		t.Skip("SD_E2E_BINARY is not set")
+	}
+	home := t.TempDir()
+	root := t.TempDir()
+	work := filepath.Join(root, "work")
+	upstream := filepath.Join(root, "upstream.git")
+	gh := filepath.Join(root, "gh")
+	if err := os.WriteFile(gh, []byte("#!/bin/sh\ncase \"$1 $2\" in\n  'auth status') exit 0 ;;\n  'pr list') printf '%s\\n' '[]' ;;\n  'pr create') printf '%s\\n' 'https://github.com/example/project/pull/1' ;;\n  'pr view') printf '%s\\n' 'main' ;;\n  *) printf '%s\\n' '{}' ;;\nesac\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitBinary, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitWrapper := filepath.Join(root, "git")
+	wrapper := fmt.Sprintf("#!/bin/bash\nargs=()\nfor arg in \"$@\"; do\n  if [ \"$arg\" = \"https://github.com/example/project.git\" ]; then arg=%q; fi\n  args+=(\"$arg\")\ndone\nexec %q \"${args[@]}\"\n", upstream, gitBinary)
+	if err := os.WriteFile(gitWrapper, []byte(wrapper), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, root, "init", "--bare", upstream)
+	gitRun(t, root, "init", "-b", "main", work)
+	gitRun(t, work, "config", "user.email", "e2e@example.com")
+	gitRun(t, work, "config", "user.name", "Safety Dance E2E")
+	if err := os.WriteFile(filepath.Join(work, "README"), []byte("initial\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(work, ".safety-dance.yaml"), []byte("allow_repo_commands: true\nagent: claude\ncommands:\n  test: 'true'\n  lint: 'true'\n  format: 'true'\nno_ci: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fixtureAgent := filepath.Join(root, "fixture-agent")
+	fixtureOutput := `{"type":"result","subtype":"success","session_id":"fixture","structured_output":{"verdict":"pass","findings":[],"evidence":["fixture"]}}`
+	if err := os.WriteFile(fixtureAgent, []byte("#!/bin/sh\nprintf '%s\\n' '"+fixtureOutput+"'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "config.yaml"), []byte("agent: claude\nagent_path_override:\n  claude: "+fixtureAgent+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, work, "add", "README", ".safety-dance.yaml")
+	gitRun(t, work, "commit", "-m", "initial")
+	gitRun(t, work, "remote", "add", "origin", upstream)
+	gitRun(t, work, "push", "origin", "HEAD:refs/heads/main")
+	gitRun(t, work, "remote", "set-url", "origin", "https://github.com/example/project.git")
+
+	run := func(dir string, args ...string) string {
+		cmd := exec.Command(binary, args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "SD_HOME="+home, "PATH="+root+string(os.PathListSeparator)+os.Getenv("PATH"))
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s %v: %v\n%s", binary, args, err, out)
+		}
+		return string(out)
+	}
+	run(work, "init")
+	// Create the candidate only after the upstream base and gate are initialized.
+	if err := os.WriteFile(filepath.Join(work, "README"), []byte("candidate\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, work, "add", "README")
+	gitRun(t, work, "commit", "-m", "candidate")
+	candidate := gitRun(t, work, "rev-parse", "HEAD")
+	run(work, "daemon", "start")
+	t.Cleanup(func() {
+		cmd := exec.Command(binary, "daemon", "stop")
+		cmd.Dir = work
+		cmd.Env = append(os.Environ(), "SD_HOME="+home)
+		_ = cmd.Run()
+	})
+	if status := run(work, "status"); !strings.Contains(status, "runs: none") {
+		t.Fatalf("initial status = %q", status)
+	}
+	gate := gitRun(t, work, "remote", "get-url", "safety-dance")
+	for _, hook := range []string{"pre-receive", "post-receive"} {
+		content, err := os.ReadFile(filepath.Join(gate, "hooks", hook))
+		if err != nil {
+			t.Fatalf("read generated %s hook: %v", hook, err)
+		}
+		if !strings.Contains(string(content), "safety-dance") {
+			t.Fatalf("generated %s hook does not invoke Safety Dance", hook)
+		}
+	}
+	run(work, "daemon", "restart")
+	if status := run(work, "daemon", "status"); !strings.Contains(status, "ok") {
+		t.Fatalf("restarted daemon status = %q", status)
+	}
+	push := exec.Command("git", "push", "safety-dance", "HEAD:refs/heads/main")
+	push.Dir = work
+	push.Env = append(os.Environ(), "SD_HOME="+home, "PATH="+root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	pushOutput, err := push.CombinedOutput()
+	if err != nil {
+		if strings.Contains(string(pushOutput), "could not obtain admission token") {
+			t.Fatalf("built-binary hook ancestry unavailable: %s", pushOutput)
+		}
+		t.Fatalf("gate push: %v\n%s", err, pushOutput)
+	}
+	p := paths.WithRoot(home)
+	database, err := db.Open(p.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	deadline := time.Now().Add(30 * time.Second)
+	completed := false
+	var runs []*db.Run
+	for time.Now().Before(deadline) {
+		repos, queryErr := database.GetRepos()
+		if queryErr == nil && len(repos) == 1 {
+			runs, queryErr = database.GetRunsByRepo(repos[0].ID)
+			if queryErr == nil && len(runs) == 1 {
+				if runs[0].Status == "completed" {
+					completed = true
+					break
+				}
+				if runs[0].Status == "failed" || runs[0].Status == "blocked" {
+					errorText := ""
+					if runs[0].Error != nil {
+						errorText = *runs[0].Error
+					}
+					t.Fatalf("gate run failed: status=%s error=%s", runs[0].Status, errorText)
+				}
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !completed {
+		t.Fatalf("timed out waiting for completed run: %+v; daemon log: %s", runs, run(work, "logs"))
+	}
+	repos, err := database.GetRepos()
+	if err != nil || len(repos) != 1 {
+		t.Fatalf("repositories = %d, err=%v", len(repos), err)
+	}
+	runs, err = database.GetRunsByRepo(repos[0].ID)
+	if err != nil || len(runs) != 1 || runs[0].HeadSHA != candidate {
+		t.Fatalf("runs = %#v, err=%v", runs, err)
+	}
+	publication, err := database.GetPublication(runs[0].ID)
+	if err != nil || publication == nil || publication.Candidate != candidate {
+		t.Fatalf("publication = %#v, err=%v", publication, err)
+	}
+	if got := gitRun(t, root, "--git-dir", upstream, "rev-parse", "refs/heads/main"); got != candidate {
+		t.Fatalf("upstream head = %s, want candidate %s", got, candidate)
+	}
+	if got := gitRun(t, root, "--git-dir", gate, "rev-parse", "refs/heads/main"); got != candidate {
+		t.Fatalf("gate head = %s, want candidate %s", got, candidate)
+	}
+	run(work, "daemon", "stop")
+}
+
+func gitRun(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
