@@ -37,6 +37,7 @@ type Manager struct {
 	keys     map[BranchKey]*RunHandle
 	keyMu    map[BranchKey]*sync.Mutex
 	run      func(context.Context, *db.Run)
+	reap     func(*db.Run) error
 	stopping bool
 }
 
@@ -44,6 +45,10 @@ func NewManager(database *db.DB, runner func(context.Context, *db.Run)) *Manager
 	store, _ := custody.New(database)
 	return &Manager{db: database, store: store, keys: make(map[BranchKey]*RunHandle), keyMu: make(map[BranchKey]*sync.Mutex), run: runner}
 }
+
+// SetRecoveryReaper installs restart-only cleanup before recovered worktrees
+// are reset or reused.
+func (m *Manager) SetRecoveryReaper(reaper func(*db.Run) error) { m.reap = reaper }
 
 func (m *Manager) branchLock(key BranchKey) *sync.Mutex {
 	m.mu.Lock()
@@ -250,6 +255,11 @@ func (m *Manager) Recover(ctx context.Context) error {
 	for _, r := range runs {
 		if r.Status != types.RunPending && r.Status != types.RunRunning && !(r.Status == types.RunCancelled && r.PushActive) {
 			continue
+		}
+		if m.reap != nil {
+			if err := m.reap(r); err != nil {
+				return fmt.Errorf("reap recovered run %s: %w", r.ID, err)
+			}
 		}
 		if r.Status == types.RunPending {
 			if err := m.db.TransitionRunStatus(r.ID, types.RunPending, types.RunRunning); err != nil {

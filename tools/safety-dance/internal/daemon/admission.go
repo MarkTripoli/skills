@@ -346,38 +346,45 @@ func cleanPath(value string) string {
 	return cleaned
 }
 
-// AuthorizeMutationPeer permits only the Safety Dance CLI and rejects any
-// validation descendant carrying the parent-run marker.
+// AuthorizeMutationPeer permits a directly invoked Safety Dance CLI. A
+// validation descendant cannot inherit authority merely by keeping a
+// Safety Dance executable somewhere in its ancestry.
 func AuthorizeMutationPeer(pid int) error {
 	if pid <= 0 {
 		return errors.New("unsupported or unauthenticated IPC peer")
 	}
-	var cliPeer bool
-	for depth := 0; pid > 1 && depth < 64; depth++ {
-		parent, command, err := processInfoFunc(pid)
-		if err != nil {
-			return err
-		}
-		env, envErr := processEnvironment(pid)
-		if envErr != nil {
-			return fmt.Errorf("cannot verify IPC peer environment: %w", envErr)
-		}
-		if environmentHas(env, "SD_PARENT_RUN_ID=") {
-			return errors.New("nested validation process cannot mutate daemon state")
-		}
-		fields := strings.Fields(command)
-		if len(fields) > 0 {
-			name := filepath.Base(fields[0])
-			if name == "safety-dance" || name == "safety-dance.exe" {
-				cliPeer = true
+	parent, command, err := processInfoFunc(pid)
+	if err != nil {
+		return err
+	}
+	env, envErr := processEnvironmentFunc(pid)
+	if envErr != nil {
+		return fmt.Errorf("cannot verify IPC peer environment: %w", envErr)
+	}
+	if environmentHas(env, "SD_PARENT_RUN_ID=") || strings.Contains(command, "SD_PARENT_RUN_ID=") {
+		return errors.New("nested validation process cannot mutate daemon state")
+	}
+	fields := commandLineFields(command)
+	if len(fields) == 0 {
+		return errors.New("mutation requires a directly invoked Safety Dance CLI peer")
+	}
+	name := filepath.Base(fields[0])
+	if name != "safety-dance" && name != "safety-dance.exe" {
+		return errors.New("mutation requires a directly invoked Safety Dance CLI peer")
+	}
+	if parent > 1 {
+		_, parentCommand, parentErr := processInfoFunc(parent)
+		if parentErr == nil {
+			parentFields := commandLineFields(parentCommand)
+			if len(parentFields) > 0 {
+				parentName := strings.ToLower(filepath.Base(parentFields[0]))
+				if strings.Contains(parentName, "agent") || strings.Contains(parentName, "validation") {
+					return errors.New("nested validation process cannot mutate daemon state")
+				}
 			}
 		}
-		pid = parent
 	}
-	if cliPeer {
-		return nil
-	}
-	return errors.New("mutation requires a Safety Dance CLI peer")
+	return nil
 }
 func (a *Admission) issue(ctx context.Context, raw json.RawMessage) (interface{}, error) {
 	peer := ipc.PeerPID(ctx)

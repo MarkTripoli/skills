@@ -221,6 +221,32 @@ func (d *DB) ParkStepForApproval(runID, stepID string, status types.StepStatus, 
 	return nil
 }
 
+// ParkStepForApprovalWithActivity preserves typed evidence while waiting for
+// an operator decision.
+func (d *DB) ParkStepForApprovalWithActivity(runID, stepID string, status types.StepStatus, exitCode int, durationMS int64, findingsJSON *string, activity string) error {
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return fmt.Errorf("begin approval park: %w", err)
+	}
+	defer tx.Rollback()
+	ts := now()
+	result, err := tx.Exec(`UPDATE step_results SET status = ?, exit_code = ?, duration_ms = ?, findings_json = ?, prompt_generation = prompt_generation + 1, last_activity_at = ?, last_activity = ? WHERE id = ?`, status, exitCode, durationMS, findingsJSON, ts, activity, stepID)
+	if err != nil {
+		return fmt.Errorf("park step for approval: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed != 1 {
+		return fmt.Errorf("park step for approval: updated %d rows", changed)
+	}
+	if _, err = tx.Exec(`UPDATE runs SET awaiting_agent_since = ?, updated_at = ? WHERE id = ?`, ts, ts, runID); err != nil {
+		return fmt.Errorf("mark run awaiting approval: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit approval park: %w", err)
+	}
+	return nil
+}
+
 // StartStep marks a step as running with a started_at timestamp.
 func (d *DB) StartStep(id string) error {
 	return d.StartStepWithAutoFixLimit(id, 0)
@@ -454,6 +480,15 @@ func (d *DB) FailStep(id string, errMsg string, durationMS int64) error {
 		`UPDATE step_results SET status = ?, error = ?, duration_ms = ?, completed_at = ?, last_activity_at = ?, last_activity = ?, agent_pid = NULL WHERE id = ?`,
 		types.StepStatusFailed, errMsg, durationMS, now(), now(), "step failed: "+errMsg, id,
 	)
+	if err != nil {
+		return fmt.Errorf("fail step: %w", err)
+	}
+	return nil
+}
+
+// FailStepWithActivity retains typed evidence produced before a step failed.
+func (d *DB) FailStepWithActivity(id, errMsg string, durationMS int64, activity string) error {
+	_, err := d.sql.Exec(`UPDATE step_results SET status = ?, error = ?, duration_ms = ?, completed_at = ?, last_activity_at = ?, last_activity = ?, agent_pid = NULL WHERE id = ?`, types.StepStatusFailed, errMsg, durationMS, now(), now(), activity, id)
 	if err != nil {
 		return fmt.Errorf("fail step: %w", err)
 	}

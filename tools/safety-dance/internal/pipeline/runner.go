@@ -220,10 +220,21 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 				break
 			}
 			findings := ""
+			activity := "step failed: " + err.Error()
 			if sink.Value != nil {
 				findings = sink.Value.FindingsJSON
+				if len(sink.Value.Evidence) > 0 {
+					rawActivity, marshalErr := json.Marshal(struct {
+						Kind  string   `json:"kind"`
+						Items []string `json:"items"`
+					}{Kind: "typed-evidence", Items: sink.Value.Evidence})
+					if marshalErr != nil {
+						return r.Results, fmt.Errorf("encode step evidence: %w", marshalErr)
+					}
+					activity = string(rawActivity)
+				}
 			}
-			if parkErr := r.Database.ParkStepForApproval(r.RunID, persisted.ID, types.StepStatusAwaitingApproval, 1, 0, &findings); parkErr != nil {
+			if parkErr := r.Database.ParkStepForApprovalWithActivity(r.RunID, persisted.ID, types.StepStatusAwaitingApproval, 1, 0, &findings, activity); parkErr != nil {
 				return r.Results, parkErr
 			}
 			if awaitErr := r.Database.SetRunAwaitingAgent(r.RunID); awaitErr != nil {
@@ -282,7 +293,7 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 			if err == nil && checkpointFunc != nil && !responseCompleted {
 				checkpoint, err = checkpointFunc()
 				if err != nil {
-					return r.Results, fmt.Errorf("checkpoint step %s: %w", n, err)
+					err = fmt.Errorf("checkpoint step %s: %w", n, err)
 				}
 			}
 			findings := ""
@@ -305,7 +316,7 @@ func (r *Runner) Run(ctx context.Context) ([]StepResult, error) {
 					return r.Results, fmt.Errorf("persist step %s: %w", n, persistErr)
 				}
 			} else if err != nil {
-				if persistErr := r.Database.FailStep(persisted.ID, err.Error(), 0); persistErr != nil {
+				if persistErr := r.Database.FailStepWithActivity(persisted.ID, err.Error(), 0, activity); persistErr != nil {
 					return r.Results, fmt.Errorf("persist step %s: %w", n, persistErr)
 				}
 			}

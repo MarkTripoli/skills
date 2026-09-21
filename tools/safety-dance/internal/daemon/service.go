@@ -187,8 +187,11 @@ func (s Service) taskOwned() (bool, error) {
 }
 
 func isTaskNotFound(out []byte, err error) bool {
-	text := strings.ToLower(string(out) + "\n" + errString(err))
-	return strings.Contains(text, "cannot find") || strings.Contains(text, "not found") || strings.Contains(text, "does not exist") || strings.Contains(text, "0x80070002")
+	if err == nil || errString(err) != "exit status 1" {
+		return false
+	}
+	text := strings.ToLower(strings.TrimSpace(string(out)))
+	return text == "error: the system cannot find the file specified." || text == "error: the system cannot find the file specified"
 }
 
 func errString(err error) string {

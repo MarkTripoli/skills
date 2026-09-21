@@ -115,7 +115,7 @@ func (d *DB) ApplyResponse(runID, step, stepID, headSHA string, review bool) (*R
 			skipReason = "operator skip"
 		}
 		ts := now()
-		if _, err = tx.Exec(`UPDATE step_results SET status=?, completed_at=?, last_activity_at=?, last_activity=?, agent_pid=NULL, skip_reason=NULLIF(?, '') WHERE id=? AND run_id=?`, status, ts, ts, fmt.Sprintf("status: %s", status), skipReason, stepID, runID); err != nil {
+		if _, err = tx.Exec(`UPDATE step_results SET status=?, completed_at=?, agent_pid=NULL, skip_reason=NULLIF(?, '') WHERE id=? AND run_id=?`, status, ts, skipReason, stepID, runID); err != nil {
 			return nil, fmt.Errorf("complete response step: %w", err)
 		}
 		if headSHA != "" {
