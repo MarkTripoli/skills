@@ -14,6 +14,16 @@ import primaryScenario from "../evals/scenarios/iterate-evidence.mjs";
 const task = ".agents/tasks/counter-evidence";
 const base = { files: { "app.js": { sha256: "faulty" }, "spec.md": { sha256: "expectation" }, [`${task}/task.md`]: { sha256: "request" } } };
 
+test("iterate-evidence instructions require image-payload binding reads", () => {
+  const skill = fs.readFileSync(new URL("../skills/delivery/iterate-evidence/SKILL.md", import.meta.url), "utf8");
+  const inspection = fs.readFileSync(new URL("../skills/delivery/iterate-evidence/references/inspection_acceptance.md", import.meta.url), "utf8");
+  for (const text of [skill, inspection]) {
+    assert.match(text, /bare (?:image|retained PNG\/JPEG|retained video timestamp|timestamp selector)/i);
+    assert.match(text, /\?q=.*text/i);
+    assert.match(text, /pair(?:ed)?(?: it)? with (?:a )?separate bare/i);
+  }
+});
+
 test("only the evidence companion opts out of document runner defaults", () => {
   assert.equal(isEvidenceScenario({ phases: [{ skill: "iterate-evidence" }] }), true);
   assert.equal(isEvidenceScenario({ name: "iterate-evidence", phases: [{ skill: "verify-implementation" }] }), false);
