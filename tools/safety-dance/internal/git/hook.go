@@ -188,7 +188,7 @@ if ! cat > "$INPUT"; then
   exit 0
 fi
 while read oldrev newrev refname; do
-  set -- --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev"
+  set -- --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --hook-capability "$HOOK_CAPABILITY"
   i=0
   token=""
   while [ "$i" -lt "${GIT_PUSH_OPTION_COUNT:-0}" ]; do opt=$(printenv "GIT_PUSH_OPTION_$i" 2>/dev/null || :); case "$opt" in safety-dance-token=*) token=${opt#*=};; esac; set -- "$@" --push-option "$opt"; i=$((i + 1)); done

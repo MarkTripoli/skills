@@ -251,15 +251,12 @@ func hookCapabilityValid(gate, capability string) bool {
 }
 
 func (a *Admission) hookAuthorized(pid int, gate, capability string) bool {
-	if a.requireHookCapability {
-		if hookCapabilityValid(gate, capability) {
-			return true
-		}
-		// A pre-capability gate is upgraded on its next repair; until then use the
-		// existing authenticated ancestry guard rather than admitting blindly.
-		return strings.TrimSpace(capability) == "" && managedHookPeer(pid, gate)
+	if !managedHookPeer(pid, gate) {
+		return false
 	}
-	return managedHookPeer(pid, gate)
+	// Persisted daemons require the per-gate capability as a second factor;
+	// test-only admissions without a receipt store retain ancestry-only setup.
+	return !a.requireHookCapability || hookCapabilityValid(gate, capability)
 }
 
 func managedHookPeer(pid int, gate string) bool {
@@ -362,10 +359,9 @@ func cleanPath(value string) string {
 }
 
 // AuthorizeMutationPeer permits a directly invoked Safety Dance CLI only when
-// its complete ancestry contains no validation marker and remains in the
-// daemon's kernel-authenticated operator session. The daemon session is
-// captured before validation agents are started; comparing the peer only with
-// an ancestry shell is not an authority proof.
+// its complete ancestry contains no validation marker and includes a verified
+// interactive shell. Operator authorization is process ancestry, not a
+// same-user bearer file or caller-controlled request field.
 func AuthorizeMutationPeer(pid int) error {
 	if pid <= 0 {
 		return errors.New("unsupported or unauthenticated IPC peer")

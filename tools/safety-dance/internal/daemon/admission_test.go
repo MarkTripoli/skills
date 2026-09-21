@@ -289,6 +289,23 @@ func TestManagedHookPeerRequiresExecutableAncestry(t *testing.T) {
 		t.Fatal("actual managed hook and git receive ancestry was rejected")
 	}
 }
+func TestHookCapabilityNeverBypassesManagedAncestry(t *testing.T) {
+	gate := filepath.Join(t.TempDir(), "gate.git")
+	if err := os.MkdirAll(gate, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gate, ".safety-dance-hook-capability"), []byte("cap\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldInfo, oldEnv := processInfoFunc, processEnvironmentFunc
+	t.Cleanup(func() { processInfoFunc, processEnvironmentFunc = oldInfo, oldEnv })
+	processInfoFunc = func(int) (int, string, error) { return 1, "sh -c safety-dance", nil }
+	processEnvironmentFunc = func(int) ([]byte, error) { return nil, nil }
+	a := &Admission{requireHookCapability: true}
+	if a.hookAuthorized(101, gate, "cap") {
+		t.Fatal("copied hook capability bypassed managed-hook ancestry")
+	}
+}
 
 func TestAuthorizeMutationPeerRejectsMarkerOnDetachedAncestor(t *testing.T) {
 	oldInfo, oldEnv, oldSession := processInfoFunc, processEnvironmentFunc, processSessionIDFunc

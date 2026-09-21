@@ -223,13 +223,6 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 	defer own.Close()
 	defer os.Remove(p.PIDFile())
 	server := ipc.NewServer()
-	capability := make([]byte, 32)
-	if _, err := rand.Read(capability); err != nil {
-		return err
-	}
-	if err := os.WriteFile(p.Socket()+".operator-capability", []byte(hex.EncodeToString(capability)), 0600); err != nil {
-		return fmt.Errorf("write operator capability: %w", err)
-	}
 	manager := daemon.NewManager(d, func(ctx context.Context, r *db.Run) {
 		err := executeRun(ctx, d, p, r)
 		cleanup := false
