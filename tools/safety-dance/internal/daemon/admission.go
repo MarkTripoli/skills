@@ -238,7 +238,9 @@ func (a *Admission) Issue(gate, ref string) (string, error) {
 	return a.auth.Issue(gate, ref)
 }
 
-// managedHookPeer proves that a token request came through a managed receive hook.
+// managedHookPeer proves that a token request came through the managed receive
+// hook itself. The hook path must be present in the OS-reported command line;
+// caller-controlled environment markers are deliberately not accepted.
 func managedHookPeer(pid int, gate string) bool {
 	if pid <= 0 {
 		return false
@@ -251,21 +253,12 @@ func managedHookPeer(pid int, gate string) bool {
 		if err != nil {
 			return false
 		}
-		if strings.Contains(command, "SD_PARENT_RUN_ID=") {
-			return false
-		}
 		env, envErr := processEnvironmentFunc(pid)
 		if envErr == nil && environmentHas(env, "SD_PARENT_RUN_ID=") {
 			return false
 		}
 		if commandHasExecutable(command, expected) {
 			managedHook = true
-		}
-		if envErr == nil {
-			hook := managedHookEnvironment(env)
-			if hook != "" && strings.HasPrefix(cleanPath(hook), cleanPath(filepath.Join(gate, "hooks"))+string(filepath.Separator)) {
-				managedHook = true
-			}
 		}
 		if isGitReceiveCommand(command) {
 			gitReceive = true
@@ -353,8 +346,11 @@ func AuthorizeMutationPeer(pid int) error {
 	if pid <= 0 {
 		return errors.New("unsupported or unauthenticated IPC peer")
 	}
+	peerPID := pid
+	peerSession, peerSessionOK := processSessionID(peerPID)
 	current := pid
 	sawShell := false
+	shellPID := 0
 	for hops := 0; current > 1 && hops < 256; hops++ {
 		parent, command, err := processInfoFunc(current)
 		if err != nil {
@@ -367,7 +363,7 @@ func AuthorizeMutationPeer(pid int) error {
 		if environmentHas(env, "SD_PARENT_RUN_ID=") || strings.Contains(command, "SD_PARENT_RUN_ID=") {
 			return errors.New("nested validation process cannot mutate daemon state")
 		}
-		if current == pid {
+		if current == peerPID {
 			fields := commandLineFields(command)
 			if len(fields) == 0 {
 				return errors.New("mutation requires a directly invoked Safety Dance CLI peer")
@@ -379,6 +375,7 @@ func AuthorizeMutationPeer(pid int) error {
 		}
 		if isInteractiveShell(command) {
 			sawShell = true
+			shellPID = current
 		}
 		if parent <= 1 || parent == current {
 			current = parent
@@ -392,9 +389,14 @@ func AuthorizeMutationPeer(pid int) error {
 	if !sawShell {
 		return errors.New("mutation requires a verified interactive parent")
 	}
+	if peerSessionOK {
+		shellSession, shellSessionOK := processSessionID(shellPID)
+		if !shellSessionOK || shellSession != peerSession {
+			return errors.New("mutation requires the operator's process session")
+		}
+	}
 	return nil
 }
-
 func isInteractiveShell(command string) bool {
 	fields := commandLineFields(command)
 	if len(fields) == 0 {

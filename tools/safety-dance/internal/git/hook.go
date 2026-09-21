@@ -76,7 +76,7 @@ remove_receipt() {
 }
 revoke_one() {
   old=$1; new=$2; ref=$3; token=$4
-  SD_MANAGED_HOOK="$0" "$SD_BIN" daemon revoke-push-receipt --gate "$GATE_DIR" --ref "$ref" --old "$old" --new "$new" --token "$token" >/dev/null 2>&1
+  "$SD_BIN" daemon revoke-push-receipt --gate "$GATE_DIR" --ref "$ref" --old "$old" --new "$new" --token "$token" >/dev/null 2>&1
 }
 revoke_accepted() {
   failed=0
@@ -102,9 +102,9 @@ while read line; do
   fi
   if [ "$token_option_present" -eq 1 ] && [ -z "$token" ]; then revoke_accepted; printf 'safety-dance: empty admission token\n' >&2; exit 1; fi
   if [ -z "$token" ]; then
-    token=$(SD_MANAGED_HOOK="$0" "$SD_BIN" daemon issue-push-token --gate "$GATE_DIR" --ref "$refname" 2>/dev/null) || { revoke_accepted; printf 'safety-dance: could not obtain admission token\n' >&2; exit 1; }
+    token=$("$SD_BIN" daemon issue-push-token --gate "$GATE_DIR" --ref "$refname" 2>/dev/null) || { revoke_accepted; printf 'safety-dance: could not obtain admission token\n' >&2; exit 1; }
   fi
-  out=$(printf '%s\n' "$line" | SD_MANAGED_HOOK="$0" "$SD_BIN" daemon admit-push --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --token "$token" 2>&1)
+  out=$(printf '%s\n' "$line" | "$SD_BIN" daemon admit-push --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --token "$token" 2>&1)
   status=$?
   if [ $status -ne 0 ]; then revoke_accepted; printf 'safety-dance: gate push refused before ref mutation:\n%s\n' "$out" >&2; exit $status; fi
 	if ! printf '%s\t%s\t%s\t%s\n' "$oldrev" "$newrev" "$refname" "$token" >> "$ACCEPTED"; then revoke_one "$oldrev" "$newrev" "$refname" "$token"; revoke_accepted; exit 1; fi
@@ -177,7 +177,7 @@ if ! cat > "$INPUT"; then
   printf '[%s] post-receive input capture failed after opening file; retrying from receipts\n' "$(date '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo unknown)" >> "$LOG"
   while read oldrev newrev refname; do
     token=""; [ -f "$RECEIPTS" ] && token=$(awk -v o="$oldrev" -v n="$newrev" -v r="$refname" '$1==o && $2==n && $3==r {last=$4} END {print last}' "$RECEIPTS")
-    [ -n "$token" ] && SD_MANAGED_HOOK="$0" "$SD_BIN" daemon notify-push --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --push-option "safety-dance-token=$token" >> "$LOG" 2>&1 || :
+    [ -n "$token" ] && "$SD_BIN" daemon notify-push --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --push-option "safety-dance-token=$token" >> "$LOG" 2>&1 || :
   done
   exit 0
 fi
@@ -195,7 +195,7 @@ while read oldrev newrev refname; do
     unlock_receipts
     if [ -n "${token:-}" ]; then set -- "$@" --push-option "safety-dance-token=$token"; fi
   fi
-  out=$(SD_MANAGED_HOOK="$0" "$SD_BIN" daemon notify-push "$@" 2>&1); status=$?
+  out=$("$SD_BIN" daemon notify-push "$@" 2>&1); status=$?
   if [ $status -eq 0 ] && [ -n "${token:-}" ]; then
     lock_receipts || status=1
     if [ $status -eq 0 ]; then
