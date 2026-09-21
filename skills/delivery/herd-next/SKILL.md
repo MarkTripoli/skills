@@ -78,7 +78,7 @@ Never close a pane, tab, or workspace this skill did not create. Never target a 
 
 ## Optional Stop hook
 
-`references/stop_hook.sh` is a Claude Code `Stop` hook that opens the pane without being asked. It parses the fence out of the payload's `last_assistant_message` and then runs steps 3 to 7 itself: the task directory from the artifact in the fence, the kind from `herdr pane current`, the split-or-tab choice, `agent start`, `pane rename`, `pane send-text`. It takes its working directory from the payload's `cwd`, walking up from `cwd` to the nearest ancestor holding `.agents/tasks/` before it looks for the task directory, stages with `send-text` and never submits, and writes no file anywhere.
+`references/stop_hook.sh` is a Claude Code `Stop` hook that opens the pane without being asked. It parses the task-root-relative artifact path from the handoff fence, resolves its task directory directly, then stages the next command with `send-text` without submitting or writing files.
 
 The hook cannot ask a question, so every branch where the skill would ask - an unreadable agent kind, two task directories holding the same artifact, an agent name already in use - exits 0 and changes nothing. Run `/herd-next` by hand for those. Install the hook by hand in `~/.claude/settings.json`; this collection ships no `hooks` block and the installer never writes that file. Codex takes the same shape in its own `hooks.json`. Oh My Pi and Pi expose in-process extension callbacks rather than shell hooks, so they use the skill invocation only.
 
