@@ -28,6 +28,8 @@ The equivalent JSON-over-stdin command is:
 printf '%s\n' '<request JSON>' | node <skills-dir>/route-model/route-model.mjs
 ```
 
+The CLI flag `--project-only` sets the `projectOnly` helper option. It preserves explicit `--candidates` precedence, otherwise ignores `SKILLS_MODEL_CANDIDATES_FILE` and reads only the project's `.agents/model-candidates.json`. Configure-model-routing uses this only for final project verification; user-level verification keeps environment lookup.
+
 Candidate configuration precedence is explicit `--candidates <json-file>` and `--economy <model>`, then `SKILLS_MODEL_CANDIDATES_FILE`, then `<project>/.agents/model-candidates.json`. Use `/configure-model-routing` to create either supported file. The profile shape is:
 
 ```json

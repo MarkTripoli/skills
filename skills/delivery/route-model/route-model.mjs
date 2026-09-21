@@ -18,7 +18,7 @@ const number = (value, label) => {
 
 export function loadCandidateProfile(options = {}) {
   if (options.candidates !== undefined) return { candidates: options.candidates, economy: options.economy, routing: options.routing ?? options.modelRouting, source: 'explicit' };
-  const configuredFile = process.env.SKILLS_MODEL_CANDIDATES_FILE;
+  const configuredFile = options.projectOnly ? undefined : process.env.SKILLS_MODEL_CANDIDATES_FILE;
   const projectFile = path.resolve(options.projectDir ?? options.cwd ?? process.cwd(), '.agents', 'model-candidates.json');
   const file = configuredFile || (fs.existsSync(projectFile) ? projectFile : null);
   if (!file) return { candidates: undefined, economy: options.economy, routing: options.routing ?? options.modelRouting, source: 'none' };
@@ -118,6 +118,7 @@ async function main() {
   const args = process.argv.slice(2);
   if (args.includes('--require-jev')) input.requireJev = true;
   const candidateIndex = args.indexOf('--candidates');
+  if (args.includes('--project-only')) input.projectOnly = true;
   if (candidateIndex >= 0) {
     const file = args[candidateIndex + 1];
     if (!file) throw new Error('--candidates requires a JSON file');

@@ -41,6 +41,8 @@ test('configure-model-routing is model-invoked and documents one-question profil
   assert.match(skill, /credentials.*not.*stored/i);
   assert.match(skill, /temporary profile.*same directory/i);
   assert.match(skill, /--candidates <temporary-file>/);
+  assert.match(skill, /--project-only/);
+  assert.match(skill, /ignores any `SKILLS_MODEL_CANDIDATES_FILE`/);
   assert.match(skill, /atomically rename the temporary file over the target/);
   assert.match(skill, /restore the prior file with an atomic rename/);
   assert.match(skill, /remove the new target atomically/);
@@ -48,6 +50,7 @@ test('configure-model-routing is model-invoked and documents one-question profil
   assert.match(fs.readFileSync('docs/getting-started.md', 'utf8'), /Codex users run `\$configure-model-routing`/);
   assert.match(fs.readFileSync('docs/cheatsheet.md', 'utf8'), /Codex users invoke `\$configure-model-routing`/);
   assert.match(fs.readFileSync('runtimes/codex.md', 'utf8'), /`\$configure-model-routing`/);
+  assert.match(fs.readFileSync('docs/model-routing.md', 'utf8'), /--project-only/);
   assert.match(fs.readFileSync('skills/delivery/deliver/SKILL.md', 'utf8'), /configure-model-routing/);
 });
 
@@ -65,6 +68,12 @@ test('candidate profiles use explicit, environment, then project precedence', as
     fs.writeFileSync(envFile, JSON.stringify({ economy: 'env-cheap', candidates: [{ model: 'env-cheap', cost: 1, description: 'environment' }] }));
     process.env.SKILLS_MODEL_CANDIDATES_FILE = envFile;
     assert.equal((await routeModel(dir, { phase: 'unknown', cwd: project })).profileSource, 'env');
+    const projectOnly = await routeModel(dir, { phase: 'unknown', cwd: project, projectOnly: true });
+    assert.equal(projectOnly.profileSource, 'project');
+    assert.deepEqual(projectOnly.candidates, ['project-cheap']);
+    assert.equal(projectOnly.model, 'project-cheap');
+    const explicitProjectOnly = await routeModel(dir, { phase: 'unknown', cwd: project, projectOnly: true, economy: 'explicit-cheap', candidates: [{ model: 'explicit-cheap', cost: 1, description: 'explicit' }] });
+    assert.equal(explicitProjectOnly.profileSource, 'explicit');
     assert.equal((await routeModel(dir, { phase: 'unknown', cwd: project, economy: 'explicit-cheap', candidates: [{ model: 'explicit-cheap', cost: 1, description: 'explicit' }] })).profileSource, 'explicit');
     fs.writeFileSync(envFile, '{bad');
     await assert.rejects(routeModel(dir, { phase: 'unknown', cwd: project }), /Invalid model candidate profile/);

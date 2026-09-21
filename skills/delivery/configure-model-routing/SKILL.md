@@ -62,7 +62,7 @@ printf '%s\n' '{"skillsDir":"<skills-dir>","phase":"unknown-phase","cwd":"<proje
 
 If final lookup verification fails, restore the prior file with an atomic rename from the same-directory backup. When no prior file existed, remove the new target atomically. Clean the backup, temporary, and failed-new files after either outcome. If any pre-rename action fails, clean temporary files and retain the prior profile. Report a restore or cleanup failure as a failed setup rather than claiming success.
 
-Final project verification uses the same input without `--candidates`. Final user-level verification uses `env SKILLS_MODEL_CANDIDATES_FILE=<file> node <skills-dir>/route-model/route-model.mjs` with the same input. Use same-directory Node filesystem operations for the temporary file, backup, atomic renames, and cleanup.
+Final project verification uses the same input with `--project-only` and without `--candidates`, so it ignores any `SKILLS_MODEL_CANDIDATES_FILE` value and reads the project profile. Final user-level verification uses `env SKILLS_MODEL_CANDIDATES_FILE=<file> node <skills-dir>/route-model/route-model.mjs` with the same input and keeps environment lookup. Use same-directory Node filesystem operations for the temporary file, backup, atomic renames, and cleanup.
 
 ## Completion
 
