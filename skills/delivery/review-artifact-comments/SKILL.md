@@ -7,11 +7,11 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 # Review Artifact Comments
 
-Address feedback on a task artifact. Move one item at a time. Read, summarize, ask how to proceed, apply edits in place. Edits require direct user instruction.
+Address feedback on a task artifact one item at a time. Read, summarize, ask how to proceed, and record an immutable revised iteration after direct user instruction.
 
 ## Setup
 
-Locate the task directory and read `task.md` per the conventions, including the create-when-missing rule. Use the task directory listing and the task slug to resolve artifact names.
+Locate the task directory and read `task.md` per the conventions. Resolve current artifacts through `index.json`; explicit canonical paths may select historical input.
 
 ## Input
 
@@ -24,19 +24,19 @@ A `<feedback>` block or feedback file holds the artifact name and one entry per 
 
 ## Workflow
 
-1. **Read artifact.** Read the target artifact from the task directory completely before deciding. The target is the artifact the feedback names; when the feedback names none, the newest artifact of the type the feedback describes; when that is unclear, ask.
+1. **Read artifact.** Read the named artifact completely; otherwise select the current record of the described type through `index.json`. Ask only when the type is unclear.
 
 2. **List items.** Number every feedback item with the artifact text it targets and the requested change. Skip items the user marked as already handled.
 
 3. **Ask unless instructed.** No action given for an item: stop after reading, ask. Keep the choices concise and grounded in the items you saw.
 
 4. **Follow action.** One item at a time.
-   - Edit: same artifact unless user wants new, preserve frontmatter/structure unless correction needed, save the file in place without a new number.
+   - Edit: copy current artifact to the next iteration in its canonical series, preserve frontmatter/structure, and record it through the conventions. Never overwrite indexed history.
    - Not applied: say why, in the reply.
 
-5. **Note when useful.** Most need no artifact. If user asks or complex: read `references/comments_template.md`, take the next artifact number, write `NN-comment-review-<slug>.md`, save the file in the task directory. Commit the saved file with `git add <path>` as `docs(task): comment-review artifact`.
+5. **Note when useful.** Most need no artifact. If user asks or the review is complex, record the next immutable `review.comments` iteration through the conventions' Recording an artifact flow using `references/comments_template.md`. Commit its canonical path and `index.json` explicitly as `docs(task): comment-review artifact`.
 
-6. **Final.** Read `references/comments_final_answer.md`. Use template. Fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-type-slug.md](.agents/tasks/<slug>/NN-type-slug.md)`; when no receipt was saved, link the edited artifact. End with one fenced `text` block: `/iterate-implementation`.
+6. **Final.** Read `references/comments_final_answer.md`. Fill `{artifact_link}` with the saved canonical task-root-relative path; when no receipt was saved, link the edited artifact. End with one fenced `text` block: `/iterate-implementation`. A legacy task without `index.json` follows the conventions' legacy rules.
 
 ## Rules
 
