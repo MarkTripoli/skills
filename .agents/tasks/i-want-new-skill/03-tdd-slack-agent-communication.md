@@ -1,7 +1,7 @@
 ---
 type: design-tdd
 task: i-want-new-skill
-summary: "A repo-owned per-user daemon is authoritative for Slack thread mapping, one-hour status timers, and owner steering across all local repositories and agent sessions. The Slack app uses Socket Mode as the primary transport; MCP access remains non-authoritative. Every state-changing boundary fails closed when the coordinator, Socket Mode, or required Slack delivery is unavailable. Only an explicit local break-glass command may disable Slack for that run, resume work, and require a recorded reconciliation. Persistence, local IPC, authorization, recovery details, and permit fencing remain open."
+summary: "A repo-owned per-user daemon and SQLite database are authoritative for Slack thread mappings, one-hour status timers, owner input, permits, message deduplication, and interruption records across repositories and restarts. The Slack app uses Socket Mode as the primary transport; MCP access remains non-authoritative. Every state-changing boundary fails closed when the coordinator, Socket Mode, or required Slack delivery is unavailable. Only an explicit local break-glass command may disable Slack for that run, resume work, and require reconciliation. Local IPC, authorization, recovery details, SQLite packaging, and permit fencing remain open."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 36d73c2fdbd605df9a6f55904f80fcdda7f418fc
@@ -99,7 +99,7 @@ The daemon owns the Slack app's Socket Mode connection, quiet-hour timers, owner
 ```mermaid
 flowchart TD
     D[Per-user coordinator daemon]
-    D --> S[(User-scoped state)]
+    D --> S[(Per-user SQLite database)]
     D --> SA[Single Slack Socket Mode connection]
     D --> T[Timer scheduler]
     D --> I[Owner-input inbox]
@@ -109,7 +109,22 @@ flowchart TD
     W[Later session or worktree] <-->|reconnect by run identity| D
 ```
 
-Run IDs must be globally unique within the user's daemon state and namespaced with repository and task identity. The supervisor, startup/update mechanism, state location and format, local IPC transport, and Socket Mode reconnect and replay policy remain open.
+Run IDs must be globally unique within the per-user SQLite database and namespaced with repository and task identity. The supervisor, startup/update mechanism, database location, local IPC transport, and Socket Mode reconnect and replay policy remain open.
+
+#### SQLite persists coordinator authority across restarts
+
+One per-user SQLite database is the canonical durable state. The daemon owns normal database access; the local operator control path is the only other authorized writer. Write-ahead logging, foreign-key enforcement, a busy timeout, and explicit transactions protect daemon and break-glass coordination. A schema migration must complete before the daemon accepts IPC or Socket Mode events.
+
+| Table | Key constraints | State owned |
+|---|---|---|
+| `runs` | `run_id` primary key; unique `(channel_id, thread_ts)` | Run locator, owner, lifecycle, Slack mode, and next quiet-status deadline |
+| `owner_inputs` | `input_id` primary key; unique `(channel_id, thread_ts, message_ts)` | Owner message payload, handling state, and resolution |
+| `message_deliveries` | `delivery_id` primary key; unique idempotency key per run | Required outbound message, attempts, confirmation, and Slack message identity |
+| `action_permits` | `permit_id` primary key | Boundary kind, permit state, fencing data, issue time, and consumption time |
+| `interruptions` | `interruption_id` primary key | Availability cause, break-glass transition, local resumption, and reconciliation |
+| `schema_migrations` | Migration version primary key | Applied schema version and checksum |
+
+The coordinator commits related facts atomically: owner-event deduplication with pending-input state, permit creation with the gate decision, timer advancement with a queued status delivery, and break-glass mode with its interruption record. Process exit between those writes cannot expose a partially applied transition.
 
 ### Program Design
 
@@ -176,11 +191,11 @@ type ActionPermit =
   | { kind: "unavailable"; cause: SlackUnavailableCause };
 ```
 
-All runtime adapters must route the six `ActionBoundaryKind` operations through one boundary hook. Local file reads and in-process reasoning bypass that hook. A coordinator IPC failure is treated as `unavailable` even though no permit response can arrive. `LocalOperatorControl` is intentionally absent from the agent runtime interface. The state store, user-local IPC transport, and permit fencing remain undecided.
+All runtime adapters must route the six `ActionBoundaryKind` operations through one boundary hook. Local file reads and in-process reasoning bypass that hook. A coordinator IPC failure is treated as `unavailable` even though no permit response can arrive. `LocalOperatorControl` is intentionally absent from the agent runtime interface. SQLite is injected behind the coordinator's state-store boundary; user-local IPC and permit fencing remain undecided.
 
 ### Type Definitions
 
-The coordinator must hold this logical state regardless of the selected persistence mechanism:
+The SQLite schema exposes this logical state to the coordinator:
 
 ```ts
 interface RunLocator {
@@ -219,6 +234,13 @@ type SlackUnavailableCause =
 
 The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input idempotency key. Delivery through both the Slack app and MCP must converge on one owner-input record rather than producing two steering actions.
 
+### Configuration
+
+- Store exactly one SQLite database in the operating-system user's application-state directory, never in a repository or worktree. The exact platform path remains open.
+- Enable write-ahead logging, foreign keys, and a bounded busy timeout on every connection.
+- Run ordered, transactional schema migrations before opening Socket Mode or local IPC.
+- Keep Slack credentials outside SQLite; the authorization and secret-storage mechanism remains open.
+
 ### Local Patterns
 
 - Preserve independent skill use across Claude Code, Codex, Oh My Pi, Pi, and portable installations; optional Atomic integration consumes the same canonical resources (`shared/CONVENTIONS.md:5-9`; `scripts/install.mjs:24-40,146-216`).
@@ -249,10 +271,11 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 - [ ] Confirm inbound Slack events use Socket Mode only and no HTTP event endpoint is introduced.
 - [ ] Confirm owner steering takes effect before every write, edit, command, subagent dispatch, external request, and final response.
 - [ ] Confirm an unavailable coordinator, Socket Mode connection, or required Slack delivery pauses state-changing actions until recovery or durable local break-glass.
+- [ ] Confirm one per-user SQLite database durably owns thread mappings, timers, owner input, permits, deduplication, and interruption records.
 - [ ] Confirm Slack-disabled runs retain existing workflow behavior.
 
 ### Known limits
-- Per-user daemon supervision, startup/update mechanism, state location and persistence across restarts.
+- Per-user daemon supervision, startup/update mechanism, SQLite file location, driver packaging, migrations, and backup policy.
 - Slack app installation, authorization, and Socket Mode reconnect, acknowledgement, and replay behavior.
 - The exact permit-fencing mechanism and local break-glass command/control channel.
 - Slack retry schedule, replay ordering, and reconciliation delivery guarantees.
