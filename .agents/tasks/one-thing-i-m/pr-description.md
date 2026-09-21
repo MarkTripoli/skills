@@ -2,60 +2,59 @@ Task: `one-thing-i-m`
 
 ## Purpose
 
-Delivery now keeps the economical model as the default, lets JEV escalate eligible non-code phases only when the stronger model is available, and rejects configured models outside the caller-provided availability set.
+Keep economical models on ordinary delivery stages while allowing JEV to escalate eligible non-code stages only to a caller-declared available reasoning model.
 
 ## Special things to note
 
-- `available_models` is caller-provided capability information; this repository does not probe provider accounts or import private registries.
-- Omitting `available_models` preserves the existing two-model behavior; an explicit list missing the economy model fails closed.
-- `npm test` passed with 155 tests; no remote pull request was opened or pushed.
+- `available_models` is caller-provided capability information; this repository does not probe provider accounts or import provider registries.
+- Omitting `available_models` preserves compatibility by treating the configured economy and reasoning models as available.
+- An explicit list without the economy model fails before stage execution; native provider rejection after selection remains outside this change.
 
 ## Change outline
 
-The delivery boundary now carries an optional available-model list into the existing stage selector.
+The workflow now carries model availability into the existing selection boundary.
 
 ```diff
-workflow inputs
-  + available_models: string[]
-        |
-        v
-controller.runSkill
-  + checkpoint args include available_models
-  + selectStageModel({ availableModels })
-        |
-        v
-selector
-  + normalize and deduplicate candidates
-  + require economy model
-  + JEV escalation only when reasoning is available
+ delivery inputs
++  available_models: string[]
+       |
+       v
+ controller.runSkill
++  records and forwards available_models
+       |
+       v
+ selectStageModel
++  normalizes available candidates
++  requires the economy model
++  permits JEV escalation only when reasoning is available
 ```
 
-The selector owns policy and records the available candidates with each decision.
+Ownership remains concentrated in the existing routing modules.
 
 ```text
-atomic/lib/models.mjs       candidate validation and economy/JEV policy
-atomic/lib/controller.mjs   checkpoint and selector transport
-atomic/workflows/delivery.ts  available_models workflow input
-docs/model-routing.md       public contract
-.changeset/...               patch release note
-tests/atomic-model-routing.test.mjs  availability and escalation coverage
+atomic/lib/models.mjs                 validates candidates and selects the stage model
+atomic/lib/controller.mjs             forwards and records availability
+atomic/workflows/delivery.ts          defines the public workflow input
+tests/atomic-model-routing.test.mjs   covers filtering and fail-closed behavior
+docs/model-routing.md                 documents the caller contract
 ```
 
-A missing reasoning candidate selects economy without JEV. Mutation, tool-oriented, and unknown stages never call JEV. A missing economy candidate or explicit empty availability list fails before task execution.
+Review `atomic/lib/models.mjs` first: code-writing and unknown stages still select the economy model without calling JEV.
 
 ## Human Review
 
 ### Review targets
 
-- `atomic/lib/models.mjs` candidate filtering, fail-closed behavior, and JEV eligibility.
-- `atomic/lib/controller.mjs` checkpoint arguments and selector forwarding.
-- `docs/model-routing.md`, the changeset, and focused routing tests.
+- Candidate normalization and fail-closed economy validation in `atomic/lib/models.mjs`.
+- JEV is called only for eligible non-code stages when the reasoning candidate is available.
+- Workflow input transport and the caller-owned availability limitation match the documented contract.
 
 ### Verify
 
 - [ ] `npm test` exits 0 with 155 passing tests.
-- [ ] `npm run check-commits -- origin/main..HEAD` exits 0 with valid subjects.
+- [ ] `npm run check-commits -- origin/main..HEAD` accepts every commit subject.
+- [ ] Compare the implementation with [the plan](.agents/tasks/one-thing-i-m/05-plan-one-thing-i-m.md) and [verification receipt](.agents/tasks/one-thing-i-m/08-verification-one-thing-i-m.md).
 
 ### Known limits
 
-- Provider/account availability is not independently verified; callers must provide a truthful list.
+- Provider/account availability is not discovered or independently verified; callers must supply an accurate list.
