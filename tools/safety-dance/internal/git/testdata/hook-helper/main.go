@@ -40,12 +40,12 @@ func main() {
 
 func issue(c *ipc.Client, args []string) {
 	fs := flag.NewFlagSet("issue-push-token", flag.ContinueOnError)
-	gate, ref := fs.String("gate", "", ""), fs.String("ref", "", "")
+	gate, ref, capability := fs.String("gate", "", ""), fs.String("ref", "", ""), fs.String("hook-capability", "", "")
 	if err := fs.Parse(args); err != nil {
 		fail(err)
 	}
 	var result ipc.IssuePushTokenResult
-	if err := c.CallWithTimeout(ipc.MethodIssuePushToken, ipc.IssuePushTokenParams{Gate: *gate, Ref: *ref}, &result, 5*time.Second); err != nil {
+	if err := c.CallWithTimeout(ipc.MethodIssuePushToken, ipc.IssuePushTokenParams{Gate: *gate, Ref: *ref, HookCapability: *capability}, &result, 5*time.Second); err != nil {
 		fail(err)
 	}
 	fmt.Fprintln(os.Stdout, result.Token)
@@ -60,24 +60,24 @@ func endpoint(p *paths.Paths) string {
 
 func admit(c *ipc.Client, args []string) {
 	fs := flag.NewFlagSet("admit-push", flag.ContinueOnError)
-	gate, ref, old, newRev, token := fs.String("gate", "", ""), fs.String("ref", "", ""), fs.String("old", "", ""), fs.String("new", "", ""), fs.String("token", "", "")
+	gate, ref, old, newRev, token, capability := fs.String("gate", "", ""), fs.String("ref", "", ""), fs.String("old", "", ""), fs.String("new", "", ""), fs.String("token", "", ""), fs.String("hook-capability", "", "")
 	if err := fs.Parse(args); err != nil {
 		fail(err)
 	}
-	if err := c.CallWithTimeout(ipc.MethodAdmitPush, ipc.AdmitPushParams{Gate: *gate, Ref: *ref, Old: *old, New: *newRev, Token: *token}, &ipc.AdmitPushResult{}, 5*time.Second); err != nil {
+	if err := c.CallWithTimeout(ipc.MethodAdmitPush, ipc.AdmitPushParams{Gate: *gate, Ref: *ref, Old: *old, New: *newRev, Token: *token, HookCapability: *capability}, &ipc.AdmitPushResult{}, 5*time.Second); err != nil {
 		fail(err)
 	}
 }
 func notify(c *ipc.Client, args []string) {
 	fs := flag.NewFlagSet("notify-push", flag.ContinueOnError)
-	gate, ref, old, newRev := fs.String("gate", "", ""), fs.String("ref", "", ""), fs.String("old", "", ""), fs.String("new", "", "")
+	gate, ref, old, newRev, capability := fs.String("gate", "", ""), fs.String("ref", "", ""), fs.String("old", "", ""), fs.String("new", "", ""), fs.String("hook-capability", "", "")
 	var options multiFlag
 	fs.Var(&options, "push-option", "")
 	if err := fs.Parse(args); err != nil {
 		fail(err)
 	}
 	var result map[string]bool
-	if err := c.CallWithTimeout(ipc.MethodNotifyPush, ipc.NotifyPushParams{Gate: *gate, Ref: *ref, Old: *old, New: *newRev, PushOptions: options}, &result, 5*time.Second); err != nil {
+	if err := c.CallWithTimeout(ipc.MethodNotifyPush, ipc.NotifyPushParams{Gate: *gate, Ref: *ref, Old: *old, New: *newRev, HookCapability: *capability, PushOptions: options}, &result, 5*time.Second); err != nil {
 		fail(err)
 	}
 }

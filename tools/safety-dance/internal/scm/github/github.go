@@ -126,6 +126,19 @@ func prSelector(pr *scm.PR) (string, error) {
 	return "", errors.New("no PR number or URL known; refusing to run gh with a cwd-inferred branch")
 }
 
+func branchName(ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	const prefix = "refs/heads/"
+	if !strings.HasPrefix(ref, prefix) || len(ref) == len(prefix) {
+		return "", fmt.Errorf("GitHub pull-request head must be a branch ref, got %q", ref)
+	}
+	name := strings.TrimPrefix(ref, prefix)
+	if strings.ContainsAny(name, "\x00\r\n") {
+		return "", fmt.Errorf("invalid GitHub branch ref %q", ref)
+	}
+	return name, nil
+}
+
 func (h *Host) headRef(branch string) string {
 	if h.forkOwner == "" {
 		return branch
@@ -237,7 +250,11 @@ func parsePullRequestURL(raw, expectedHost, expectedRepo string) (int, error) {
 }
 
 func (h *Host) FindPR(ctx context.Context, branch, base string) (*scm.PR, error) {
-	args := []string{"pr", "list", "--head", branch}
+	name, err := branchName(branch)
+	if err != nil {
+		return nil, err
+	}
+	args := []string{"pr", "list", "--head", name}
 	if strings.TrimSpace(base) != "" {
 		args = append(args, "--base", base)
 	}
@@ -297,7 +314,7 @@ func (h *Host) FindPR(ctx context.Context, branch, base string) (*scm.PR, error)
 		}
 	}
 	for i, candidate := range prs {
-		if !h.matchesHead(candidate.HeadRefName, candidate.HeadRepositoryOwner, branch) {
+		if !h.matchesHead(candidate.HeadRefName, candidate.HeadRepositoryOwner, name) {
 			continue
 		}
 		pr := &scm.PR{
@@ -326,8 +343,12 @@ func (h *Host) matchesHead(headRefName string, owner *struct {
 }
 
 func (h *Host) CreatePR(ctx context.Context, branch, base string, content scm.PRContent) (*scm.PR, error) {
+	name, err := branchName(branch)
+	if err != nil {
+		return nil, err
+	}
 	args := append([]string{"pr", "create",
-		"--head", h.headRef(branch),
+		"--head", h.headRef(name),
 		"--base", base,
 	}, h.repoArgs()...)
 	if h.draft {

@@ -2,7 +2,9 @@ package git
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -41,6 +43,8 @@ SD_BIN=` + shellSingleQuote(command) + `
 if [ ! -f "$SD_BIN" ]; then SD_BIN="$(command -v safety-dance 2>/dev/null || echo safety-dance)"; fi
 GATE_DIR=$(git rev-parse --absolute-git-dir 2>/dev/null || :)
 case "$GATE_DIR" in /*) ;; *) HOOK_DIR=${0%/*}; GATE_DIR=$(cd "$HOOK_DIR/.." 2>/dev/null && pwd -P || :);; esac
+HOOK_CAPABILITY_FILE="$GATE_DIR/.safety-dance-hook-capability"
+HOOK_CAPABILITY=$(cat "$HOOK_CAPABILITY_FILE" 2>/dev/null || :)
 INPUT=$(mktemp "$GATE_DIR/.safety-dance-receive.XXXXXX") || exit 1
 ACCEPTED=$(mktemp "$GATE_DIR/.safety-dance-accepted.XXXXXX") || { rm -f "$INPUT"; exit 1; }
 RECEIPTS="$GATE_DIR/.safety-dance-receipts"
@@ -76,7 +80,7 @@ remove_receipt() {
 }
 revoke_one() {
   old=$1; new=$2; ref=$3; token=$4
-  "$SD_BIN" daemon revoke-push-receipt --gate "$GATE_DIR" --ref "$ref" --old "$old" --new "$new" --token "$token" >/dev/null 2>&1
+  "$SD_BIN" daemon revoke-push-receipt --gate "$GATE_DIR" --ref "$ref" --old "$old" --new "$new" --token "$token" --hook-capability "$HOOK_CAPABILITY" >/dev/null 2>&1
 }
 revoke_accepted() {
   failed=0
@@ -102,9 +106,9 @@ while read line; do
   fi
   if [ "$token_option_present" -eq 1 ] && [ -z "$token" ]; then revoke_accepted; printf 'safety-dance: empty admission token\n' >&2; exit 1; fi
   if [ -z "$token" ]; then
-    token=$("$SD_BIN" daemon issue-push-token --gate "$GATE_DIR" --ref "$refname" 2>/dev/null) || { revoke_accepted; printf 'safety-dance: could not obtain admission token\n' >&2; exit 1; }
+    token=$("$SD_BIN" daemon issue-push-token --gate "$GATE_DIR" --ref "$refname" --hook-capability "$HOOK_CAPABILITY" 2>/dev/null) || { revoke_accepted; printf 'safety-dance: could not obtain admission token\n' >&2; exit 1; }
   fi
-  out=$(printf '%s\n' "$line" | "$SD_BIN" daemon admit-push --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --token "$token" 2>&1)
+  out=$(printf '%s\n' "$line" | "$SD_BIN" daemon admit-push --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --token "$token" --hook-capability "$HOOK_CAPABILITY" 2>&1)
   status=$?
   if [ $status -ne 0 ]; then revoke_accepted; printf 'safety-dance: gate push refused before ref mutation:\n%s\n' "$out" >&2; exit $status; fi
 	if ! printf '%s\t%s\t%s\t%s\n' "$oldrev" "$newrev" "$refname" "$token" >> "$ACCEPTED"; then revoke_one "$oldrev" "$newrev" "$refname" "$token"; revoke_accepted; exit 1; fi
@@ -129,6 +133,8 @@ SD_BIN=` + shellSingleQuote(command) + `
 if [ ! -f "$SD_BIN" ]; then SD_BIN="$(command -v safety-dance 2>/dev/null || echo safety-dance)"; fi
 GATE_DIR=$(git rev-parse --absolute-git-dir 2>/dev/null || :)
 case "$GATE_DIR" in /*) ;; *) HOOK_DIR=${0%/*}; GATE_DIR=$(cd "$HOOK_DIR/.." 2>/dev/null && pwd -P || :);; esac
+HOOK_CAPABILITY_FILE="$GATE_DIR/.safety-dance-hook-capability"
+HOOK_CAPABILITY=$(cat "$HOOK_CAPABILITY_FILE" 2>/dev/null || :)
 LOG="$GATE_DIR/notify-push.log"
 cat >&2 <<'BANNER'
  _____         __      ____ance
@@ -146,7 +152,7 @@ INPUT=$(mktemp "$GATE_DIR/.safety-dance-post.XXXXXX") || {
   while read oldrev newrev refname; do
     [ -n "$refname" ] || continue
     if [ -f "$GATE_DIR/.safety-dance-receipts" ]; then token=$(awk -v o="$oldrev" -v n="$newrev" -v r="$refname" '$1==o && $2==n && $3==r {last=$4} END {print last}' "$GATE_DIR/.safety-dance-receipts"); fi
-    set -- daemon notify-push --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev"
+    set -- daemon notify-push --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --hook-capability "$HOOK_CAPABILITY"
     [ -n "$token" ] && set -- "$@" --push-option "safety-dance-token=$token"
     i=0
     while [ "$i" -lt "${GIT_PUSH_OPTION_COUNT:-0}" ]; do opt=$(printenv "GIT_PUSH_OPTION_$i" 2>/dev/null || :); set -- "$@" --push-option "$opt"; i=$((i + 1)); done
@@ -177,7 +183,7 @@ if ! cat > "$INPUT"; then
   printf '[%s] post-receive input capture failed after opening file; retrying from receipts\n' "$(date '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo unknown)" >> "$LOG"
   while read oldrev newrev refname; do
     token=""; [ -f "$RECEIPTS" ] && token=$(awk -v o="$oldrev" -v n="$newrev" -v r="$refname" '$1==o && $2==n && $3==r {last=$4} END {print last}' "$RECEIPTS")
-    [ -n "$token" ] && "$SD_BIN" daemon notify-push --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --push-option "safety-dance-token=$token" >> "$LOG" 2>&1 || :
+    [ -n "$token" ] && "$SD_BIN" daemon notify-push --gate "$GATE_DIR" --ref "$refname" --old "$oldrev" --new "$newrev" --hook-capability "$HOOK_CAPABILITY" --push-option "safety-dance-token=$token" >> "$LOG" 2>&1 || :
   done
   exit 0
 fi
@@ -259,6 +265,9 @@ func RefreshManagedPreReceiveHook(bareDir string) (bool, error) {
 
 // RefreshManagedGateHooks owns the complete receive boundary.
 func RefreshManagedGateHooks(bareDir string) error {
+	if err := ensureHookCapability(bareDir); err != nil {
+		return err
+	}
 	if _, err := RefreshManagedPreReceiveHook(bareDir); err != nil {
 		return err
 	}
@@ -488,4 +497,18 @@ func isWorktreeConfigUnsupported(err error) bool {
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "unknown option") && strings.Contains(msg, "worktree")
+}
+
+func ensureHookCapability(bareDir string) error {
+	path := filepath.Join(bareDir, ".safety-dance-hook-capability")
+	if raw, err := os.ReadFile(path); err == nil && len(raw) >= 32 {
+		return nil
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(hex.EncodeToString(b)+"\n"), 0600)
 }

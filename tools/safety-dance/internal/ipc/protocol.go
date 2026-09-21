@@ -43,18 +43,20 @@ const (
 
 // Request is a JSON-RPC 2.0 request.
 type Request struct {
-	JSONRPC string          `json:"jsonrpc"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	ID      int64           `json:"id"`
+	JSONRPC    string          `json:"jsonrpc"`
+	Method     string          `json:"method"`
+	Params     json.RawMessage `json:"params,omitempty"`
+	ID         int64           `json:"id"`
+	Capability string          `json:"capability,omitempty"`
 }
 
 // Response is a JSON-RPC 2.0 response.
 type Response struct {
-	JSONRPC string          `json:"jsonrpc"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *RPCError       `json:"error,omitempty"`
-	ID      int64           `json:"id"`
+	JSONRPC    string          `json:"jsonrpc"`
+	Result     json.RawMessage `json:"result,omitempty"`
+	Error      *RPCError       `json:"error,omitempty"`
+	ID         int64           `json:"id"`
+	Capability string          `json:"capability,omitempty"`
 }
 
 // RPCError represents a JSON-RPC 2.0 error object.
@@ -222,21 +224,23 @@ type GateContextParams struct {
 }
 
 // AdmitPushParams asks whether a local receive hook's authenticated process
-// ancestry is allowed to mutate one managed gate ref.
+// can mutate one managed gate ref.
 type AdmitPushParams struct {
 	Gate                 string   `json:"gate"`
 	Ref                  string   `json:"ref"`
 	Old                  string   `json:"old"`
 	New                  string   `json:"new"`
 	Token                string   `json:"token"`
+	HookCapability       string   `json:"hook_capability"`
 	PushOptions          []string `json:"push_options,omitempty"`
 	ValidationGeneration string   `json:"validation_generation,omitempty"`
 	Accepted             bool     `json:"accepted,omitempty"`
 }
 
 type IssuePushTokenParams struct {
-	Gate string `json:"gate"`
-	Ref  string `json:"ref"`
+	Gate           string `json:"gate"`
+	Ref            string `json:"ref"`
+	HookCapability string `json:"hook_capability"`
 }
 type IssuePushTokenResult struct {
 	Token string `json:"token"`
@@ -245,6 +249,7 @@ type IssuePushTokenResult struct {
 // RevokePushReceipt invalidates an admitted update rejected by a preserved hook.
 type RevokePushReceiptParams struct {
 	Gate, Ref, Old, New, Token string
+	HookCapability             string `json:"hook_capability"`
 }
 
 // NotifyPushParams describes an update after Git accepted the ref.
@@ -253,6 +258,7 @@ type NotifyPushParams struct {
 	Ref                  string   `json:"ref"`
 	Old                  string   `json:"old"`
 	New                  string   `json:"new"`
+	HookCapability       string   `json:"hook_capability"`
 	PushOptions          []string `json:"push_options,omitempty"`
 	ValidationGeneration string   `json:"validation_generation,omitempty"`
 }

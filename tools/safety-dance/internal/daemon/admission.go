@@ -120,14 +120,15 @@ type PushNotification struct {
 // Admission owns the receive-hook trust boundary. Tokens are issued by the
 // managed hook and receipts survive daemon restarts.
 type Admission struct {
-	auth        *ipc.Authenticator
-	notify      func(context.Context, PushNotification) error
-	deferred    bool
-	mu          sync.Mutex
-	receipts    map[string]ipc.AdmitPushParams
-	claimed     map[string]bool
-	receiptFile string
-	loadErr     error
+	auth                  *ipc.Authenticator
+	notify                func(context.Context, PushNotification) error
+	deferred              bool
+	mu                    sync.Mutex
+	receipts              map[string]ipc.AdmitPushParams
+	claimed               map[string]bool
+	receiptFile           string
+	requireHookCapability bool
+	loadErr               error
 }
 
 // DeferNotifications keeps an accepted receipt durably queued so the
@@ -145,7 +146,7 @@ func NewAdmissionWithStore(server *ipc.Server, notify func(context.Context, Push
 }
 
 func newAdmission(server *ipc.Server, notify func(context.Context, PushNotification) error, file string) *Admission {
-	a := &Admission{auth: ipc.NewAuthenticator(), notify: notify, receipts: make(map[string]ipc.AdmitPushParams), claimed: make(map[string]bool), receiptFile: file}
+	a := &Admission{auth: ipc.NewAuthenticator(), notify: notify, receipts: make(map[string]ipc.AdmitPushParams), claimed: make(map[string]bool), receiptFile: file, requireHookCapability: file != ""}
 	if file != "" {
 		a.loadErr = a.loadReceipts()
 	}
@@ -241,6 +242,26 @@ func (a *Admission) Issue(gate, ref string) (string, error) {
 // managedHookPeer proves that a token request came through the managed receive
 // hook itself. The hook path must be present in the OS-reported command line;
 // caller-controlled environment markers are deliberately not accepted.
+func hookCapabilityValid(gate, capability string) bool {
+	if strings.TrimSpace(gate) == "" || strings.TrimSpace(capability) == "" {
+		return false
+	}
+	raw, err := os.ReadFile(filepath.Join(gate, ".safety-dance-hook-capability"))
+	return err == nil && strings.TrimSpace(string(raw)) == strings.TrimSpace(capability)
+}
+
+func (a *Admission) hookAuthorized(pid int, gate, capability string) bool {
+	if a.requireHookCapability {
+		if hookCapabilityValid(gate, capability) {
+			return true
+		}
+		// A pre-capability gate is upgraded on its next repair; until then use the
+		// existing authenticated ancestry guard rather than admitting blindly.
+		return strings.TrimSpace(capability) == "" && managedHookPeer(pid, gate)
+	}
+	return managedHookPeer(pid, gate)
+}
+
 func managedHookPeer(pid int, gate string) bool {
 	if pid <= 0 {
 		return false
@@ -349,14 +370,6 @@ func AuthorizeMutationPeer(pid int) error {
 	if pid <= 0 {
 		return errors.New("unsupported or unauthenticated IPC peer")
 	}
-	trusted, trustedOK := operatorSession()
-	if !trustedOK {
-		return errors.New("mutation requires a trusted operator process session")
-	}
-	peerSession, peerSessionOK := processSessionIDFunc(pid)
-	if !peerSessionOK || peerSession != trusted {
-		return errors.New("mutation requires the operator's process session")
-	}
 	current := pid
 	sawShell := false
 	for hops := 0; current > 1 && hops < 256; hops++ {
@@ -373,11 +386,7 @@ func AuthorizeMutationPeer(pid int) error {
 		}
 		if current == pid {
 			fields := commandLineFields(command)
-			if len(fields) == 0 {
-				return errors.New("mutation requires a directly invoked Safety Dance CLI peer")
-			}
-			name := filepath.Base(fields[0])
-			if name != "safety-dance" && name != "safety-dance.exe" {
+			if len(fields) == 0 || filepath.Base(fields[0]) != "safety-dance" && filepath.Base(fields[0]) != "safety-dance.exe" {
 				return errors.New("mutation requires a directly invoked Safety Dance CLI peer")
 			}
 		}
@@ -398,6 +407,7 @@ func AuthorizeMutationPeer(pid int) error {
 	}
 	return nil
 }
+
 func isInteractiveShell(command string) bool {
 	fields := commandLineFields(command)
 	if len(fields) == 0 {
@@ -419,8 +429,8 @@ func (a *Admission) issue(ctx context.Context, raw json.RawMessage) (interface{}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
-	if !managedHookPeer(peer, p.Gate) {
-		return nil, errors.New("push-token issuance requires a managed git hook")
+	if !a.hookAuthorized(peer, p.Gate, p.HookCapability) {
+		return nil, errors.New("push-token issuance requires a valid managed-hook capability")
 	}
 	token, err := a.Issue(p.Gate, p.Ref)
 	if err != nil {
@@ -434,8 +444,8 @@ func (a *Admission) admit(ctx context.Context, raw json.RawMessage) (interface{}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, fmt.Errorf("decode admission: %w", err)
 	}
-	if !managedHookPeer(ipc.PeerPID(ctx), p.Gate) {
-		return nil, errors.New("push admission requires a managed git hook")
+	if !a.hookAuthorized(ipc.PeerPID(ctx), p.Gate, p.HookCapability) {
+		return nil, errors.New("push admission requires a valid managed-hook capability")
 	}
 	if strings.TrimSpace(p.Old) == "" || strings.TrimSpace(p.New) == "" {
 		return nil, errors.New("old and new revisions are required")
@@ -464,8 +474,8 @@ func (a *Admission) revoke(ctx context.Context, raw json.RawMessage) (interface{
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, fmt.Errorf("decode receipt revocation: %w", err)
 	}
-	if !managedHookPeer(ipc.PeerPID(ctx), p.Gate) {
-		return nil, errors.New("receipt revocation requires a managed git hook")
+	if !a.hookAuthorized(ipc.PeerPID(ctx), p.Gate, p.HookCapability) {
+		return nil, errors.New("receipt revocation requires a valid managed-hook capability")
 	}
 	if p.Gate == "" || p.Ref == "" || p.Token == "" {
 		return nil, errors.New("gate, ref, and token are required")
@@ -496,8 +506,8 @@ func (a *Admission) notifyPush(ctx context.Context, raw json.RawMessage) (interf
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, fmt.Errorf("decode notification: %w", err)
 	}
-	if !managedHookPeer(ipc.PeerPID(ctx), p.Gate) {
-		return nil, errors.New("notification requires a managed git hook")
+	if !a.hookAuthorized(ipc.PeerPID(ctx), p.Gate, p.HookCapability) {
+		return nil, errors.New("notification requires a valid managed-hook capability")
 	}
 	if strings.TrimSpace(p.Gate) == "" || strings.TrimSpace(p.Ref) == "" || strings.TrimSpace(p.New) == "" {
 		return nil, errors.New("gate, ref, and new revision are required")

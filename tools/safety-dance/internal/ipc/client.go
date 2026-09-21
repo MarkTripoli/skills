@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -99,10 +100,11 @@ func connectTimeout() time.Duration {
 
 // Client connects to the IPC server over the platform transport.
 type Client struct {
-	conn    net.Conn
-	encoder *json.Encoder
-	scanner *bufio.Scanner
-	mu      sync.Mutex // serializes calls on a single connection
+	conn       net.Conn
+	capability string
+	encoder    *json.Encoder
+	scanner    *bufio.Scanner
+	mu         sync.Mutex // serializes calls on a single connection
 }
 
 const (
@@ -120,10 +122,15 @@ func Dial(socketPath string) (*Client, error) {
 	}
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
+	capability := ""
+	if raw, readErr := os.ReadFile(socketPath + ".operator-capability"); readErr == nil {
+		capability = string(raw)
+	}
 	return &Client{
-		conn:    conn,
-		encoder: json.NewEncoder(conn),
-		scanner: scanner,
+		conn:       conn,
+		capability: strings.TrimSpace(capability),
+		encoder:    json.NewEncoder(conn),
+		scanner:    scanner,
 	}, nil
 }
 
@@ -165,6 +172,9 @@ func (c *Client) CallWithContext(ctx context.Context, method string, params inte
 	}
 
 	req, err := NewRequest(method, params)
+	if err == nil {
+		req.Capability = c.capability
+	}
 	if err != nil {
 		return fmt.Errorf("marshal request: %w", err)
 	}
@@ -252,6 +262,9 @@ func SubscribeContext(ctx context.Context, socketPath string, params *SubscribeP
 
 	// Send subscribe request.
 	req, err := NewRequest(MethodSubscribe, params)
+	if raw, readErr := os.ReadFile(socketPath + ".operator-capability"); readErr == nil {
+		req.Capability = strings.TrimSpace(string(raw))
+	}
 	if err != nil {
 		conn.Close()
 		return nil, nil, fmt.Errorf("marshal request: %w", err)

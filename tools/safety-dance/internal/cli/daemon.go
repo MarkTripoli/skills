@@ -83,7 +83,7 @@ func newIssuePushToken() *cobra.Command {
 	a := &pushArgs{}
 	c := &cobra.Command{Use: "issue-push-token", Hidden: true, RunE: func(cmd *cobra.Command, args []string) error {
 		var out ipc.IssuePushTokenResult
-		if err := callDaemon(ipc.MethodIssuePushToken, ipc.IssuePushTokenParams{Gate: a.gate, Ref: a.ref}, &out); err != nil {
+		if err := callDaemon(ipc.MethodIssuePushToken, ipc.IssuePushTokenParams{Gate: a.gate, Ref: a.ref, HookCapability: a.hookCapability}, &out); err != nil {
 			return err
 		}
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), out.Token)
@@ -91,6 +91,7 @@ func newIssuePushToken() *cobra.Command {
 	}}
 	c.Flags().StringVar(&a.gate, "gate", "", "gate")
 	c.Flags().StringVar(&a.ref, "ref", "", "ref")
+	c.Flags().StringVar(&a.hookCapability, "hook-capability", "", "hook capability")
 	return c
 }
 
@@ -217,14 +218,18 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := daemon.CaptureTrustedOperatorSession(os.Getpid()); err != nil {
-		return fmt.Errorf("capture daemon operator session: %w", err)
-	}
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, terminationSignal(), os.Interrupt)
 	defer own.Close()
 	defer os.Remove(p.PIDFile())
 	server := ipc.NewServer()
+	capability := make([]byte, 32)
+	if _, err := rand.Read(capability); err != nil {
+		return err
+	}
+	if err := os.WriteFile(p.Socket()+".operator-capability", []byte(hex.EncodeToString(capability)), 0600); err != nil {
+		return fmt.Errorf("write operator capability: %w", err)
+	}
 	manager := daemon.NewManager(d, func(ctx context.Context, r *db.Run) {
 		err := executeRun(ctx, d, p, r)
 		cleanup := false
@@ -1104,14 +1109,14 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 }
 
 type pushArgs struct {
-	gate, ref, old, new, token string
-	options                    []string
+	gate, ref, old, new, token, hookCapability string
+	options                                    []string
 }
 
 func newAdmitPush() *cobra.Command {
 	a := &pushArgs{}
 	c := &cobra.Command{Use: "admit-push", Hidden: true, RunE: func(cmd *cobra.Command, args []string) error {
-		return callDaemon(ipc.MethodAdmitPush, ipc.AdmitPushParams{Gate: a.gate, Ref: a.ref, Old: a.old, New: a.new, Token: a.token}, &ipc.AdmitPushResult{})
+		return callDaemon(ipc.MethodAdmitPush, ipc.AdmitPushParams{Gate: a.gate, Ref: a.ref, Old: a.old, New: a.new, Token: a.token, HookCapability: a.hookCapability}, &ipc.AdmitPushResult{})
 	}}
 	flags(c, a)
 	return c
@@ -1119,7 +1124,7 @@ func newAdmitPush() *cobra.Command {
 func newRevokePushReceipt() *cobra.Command {
 	a := &pushArgs{}
 	c := &cobra.Command{Use: "revoke-push-receipt", Hidden: true, RunE: func(cmd *cobra.Command, args []string) error {
-		return callDaemon(ipc.MethodRevokePushReceipt, ipc.RevokePushReceiptParams{Gate: a.gate, Ref: a.ref, Old: a.old, New: a.new, Token: a.token}, &map[string]bool{})
+		return callDaemon(ipc.MethodRevokePushReceipt, ipc.RevokePushReceiptParams{Gate: a.gate, Ref: a.ref, Old: a.old, New: a.new, Token: a.token, HookCapability: a.hookCapability}, &map[string]bool{})
 	}}
 	flags(c, a)
 	return c
@@ -1127,7 +1132,7 @@ func newRevokePushReceipt() *cobra.Command {
 func newNotifyPush() *cobra.Command {
 	a := &pushArgs{}
 	c := &cobra.Command{Use: "notify-push", Hidden: true, RunE: func(cmd *cobra.Command, args []string) error {
-		return callDaemon(ipc.MethodNotifyPush, ipc.NotifyPushParams{Gate: a.gate, Ref: a.ref, Old: a.old, New: a.new, PushOptions: a.options}, &map[string]bool{})
+		return callDaemon(ipc.MethodNotifyPush, ipc.NotifyPushParams{Gate: a.gate, Ref: a.ref, Old: a.old, New: a.new, HookCapability: a.hookCapability, PushOptions: a.options}, &map[string]bool{})
 	}}
 	flags(c, a)
 	return c
@@ -1138,6 +1143,7 @@ func flags(c *cobra.Command, a *pushArgs) {
 	c.Flags().StringVar(&a.old, "old", "", "old")
 	c.Flags().StringVar(&a.new, "new", "", "new")
 	c.Flags().StringVar(&a.token, "token", "", "token")
+	c.Flags().StringVar(&a.hookCapability, "hook-capability", "", "hook capability")
 	c.Flags().StringSliceVar(&a.options, "push-option", nil, "push option")
 }
 

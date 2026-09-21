@@ -7,6 +7,8 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"os"
+	"strings"
 	"sync"
 )
 
@@ -35,6 +37,7 @@ type Server struct {
 	wg             sync.WaitGroup
 	done           chan struct{}
 	closeOnce      sync.Once
+	capability     string
 }
 
 // NewServer creates a new IPC server.
@@ -78,6 +81,9 @@ func (s *Server) Listen(socketPath string) error {
 		return errors.New("IPC server already listening")
 	}
 	s.listener = ln
+	if raw, readErr := os.ReadFile(socketPath + ".operator-capability"); readErr == nil {
+		s.capability = strings.TrimSpace(string(raw))
+	}
 	s.mu.Unlock()
 
 	go func() {
@@ -181,6 +187,12 @@ func (s *Server) handleConn(conn net.Conn) {
 			slog.Warn("ipc request failed", "method", "<parse>", "error", "invalid json")
 			resp := NewErrorResponse(0, ErrParseError, "invalid json")
 			encoder.Encode(resp)
+			continue
+		}
+
+		if s.capability != "" && req.Method != MethodHealth && req.Capability != s.capability {
+			resp := NewErrorResponse(req.ID, ErrInvalidRequest, "operator capability required")
+			_ = encoder.Encode(resp)
 			continue
 		}
 
