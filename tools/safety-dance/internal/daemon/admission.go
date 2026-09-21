@@ -367,6 +367,14 @@ func AuthorizeMutationPeer(pid int) error {
 	if pid <= 0 {
 		return errors.New("unsupported or unauthenticated IPC peer")
 	}
+	trusted, ok := operatorSession()
+	if !ok {
+		return errors.New("operator session authority is unavailable")
+	}
+	peerSession, ok := processSessionIDFunc(pid)
+	if !ok || peerSession != trusted {
+		return errors.New("IPC peer is outside the operator session")
+	}
 	current := pid
 	sawShell := false
 	for hops := 0; current > 1 && hops < 256; hops++ {

@@ -17,6 +17,7 @@ import (
 
 type PushRequest struct {
 	Worktree, Remote, Ref, Candidate, ReviewedHead, VerifiedHead, GateMirror string
+	VerifiedHeadKnown, VerifiedHeadExists                                    bool
 	Rewrite                                                                  bool
 	// BeforePush runs after the live head is verified and before Git arguments
 	// are built, so it may select the lease mode for the final candidate.
@@ -31,6 +32,11 @@ func Push(ctx context.Context, req PushRequest) (PushResult, error) {
 	if req.Candidate == "" || req.ReviewedHead == "" || req.Candidate != req.ReviewedHead {
 		return PushResult{}, fmt.Errorf("candidate is not reviewed head")
 	}
+	if !req.VerifiedHeadKnown && req.VerifiedHead != "" {
+		// Preserve the package API for callers that supplied a non-empty
+		// verified head before the explicit existence bit was added.
+		req.VerifiedHeadKnown, req.VerifiedHeadExists = true, true
+	}
 	if err := ctx.Err(); err != nil {
 		return PushResult{}, err
 	}
@@ -39,7 +45,7 @@ func Push(ctx context.Context, req PushRequest) (PushResult, error) {
 	if err != nil {
 		return PushResult{}, err
 	}
-	if req.VerifiedHead != "" && live != req.VerifiedHead {
+	if req.VerifiedHeadKnown && ((req.VerifiedHeadExists && live != req.VerifiedHead) || (!req.VerifiedHeadExists && live != "")) {
 		return PushResult{}, fmt.Errorf("upstream changed before push: expected %s, got %s", req.VerifiedHead, live)
 	}
 	if req.BeforePush != nil {
@@ -47,7 +53,16 @@ func Push(ctx context.Context, req PushRequest) (PushResult, error) {
 			return PushResult{}, err
 		}
 	}
-	if req.Rewrite && req.VerifiedHead == "" {
+	// Re-read after the callback because another actor may have created or
+	// advanced the target ref while the callback ran.
+	live, err = s.LiveHead(ctx)
+	if err != nil {
+		return PushResult{}, err
+	}
+	if req.VerifiedHeadKnown && ((req.VerifiedHeadExists && live != req.VerifiedHead) || (!req.VerifiedHeadExists && live != "")) {
+		return PushResult{}, fmt.Errorf("upstream changed before push: expected %s, got %s", req.VerifiedHead, live)
+	}
+	if req.Rewrite && (!req.VerifiedHeadKnown || !req.VerifiedHeadExists) {
 		return PushResult{}, fmt.Errorf("rewrite requires verified upstream head")
 	}
 	args := []string{"push", req.Remote, req.Candidate + ":" + req.Ref}

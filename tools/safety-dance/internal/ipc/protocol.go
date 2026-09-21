@@ -43,20 +43,18 @@ const (
 
 // Request is a JSON-RPC 2.0 request.
 type Request struct {
-	JSONRPC    string          `json:"jsonrpc"`
-	Method     string          `json:"method"`
-	Params     json.RawMessage `json:"params,omitempty"`
-	ID         int64           `json:"id"`
-	Capability string          `json:"capability,omitempty"`
+	JSONRPC string          `json:"jsonrpc"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params,omitempty"`
+	ID      int64           `json:"id"`
 }
 
 // Response is a JSON-RPC 2.0 response.
 type Response struct {
-	JSONRPC    string          `json:"jsonrpc"`
-	Result     json.RawMessage `json:"result,omitempty"`
-	Error      *RPCError       `json:"error,omitempty"`
-	ID         int64           `json:"id"`
-	Capability string          `json:"capability,omitempty"`
+	JSONRPC string          `json:"jsonrpc"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *RPCError       `json:"error,omitempty"`
+	ID      int64           `json:"id"`
 }
 
 // RPCError represents a JSON-RPC 2.0 error object.

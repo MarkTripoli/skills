@@ -108,6 +108,33 @@ func TestPushUsesRewriteSelectedByPrePushCallback(t *testing.T) {
 		t.Fatal("pre-push rewrite selection did not use a lease")
 	}
 }
+
+func TestPushRejectsConcurrentCreationOfAbsentRef(t *testing.T) {
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	work := filepath.Join(root, "work")
+	gitTest(t, root, "init", "--bare", remote)
+	gitTest(t, root, "init", work)
+	gitTest(t, work, "config", "user.email", "test@example.com")
+	gitTest(t, work, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(work, "file"), []byte("candidate\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, work, "add", "file")
+	gitTest(t, work, "commit", "-m", "candidate")
+	candidate := strings.TrimSpace(gitTest(t, work, "rev-parse", "HEAD"))
+	_, err := Push(context.Background(), PushRequest{
+		Worktree: work, Remote: remote, Ref: "refs/heads/main", Candidate: candidate,
+		ReviewedHead: candidate, VerifiedHeadKnown: true, VerifiedHeadExists: false,
+		BeforePush: func(*PushRequest) error {
+			gitTest(t, work, "push", remote, "HEAD:refs/heads/main")
+			return nil
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "upstream changed") {
+		t.Fatalf("absent-ref creation was not rejected: %v", err)
+	}
+}
 func TestPublishUpdatesMirrorAndRecordsBinding(t *testing.T) {
 	root := t.TempDir()
 	remote := filepath.Join(root, "remote.git")

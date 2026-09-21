@@ -218,6 +218,11 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if runtime.GOOS != "windows" {
+		if err := daemon.CaptureTrustedOperatorSession(os.Getpid()); err != nil {
+			return fmt.Errorf("capture operator session: %w", err)
+		}
+	}
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, terminationSignal(), os.Interrupt)
 	defer own.Close()
@@ -782,7 +787,13 @@ func recoverCancelledPublication(database *db.DB, p *paths.Paths, repo *db.Repo,
 	if !strings.HasPrefix(ref, "refs/") {
 		ref = "refs/heads/" + ref
 	}
-	verified := livePublicationHead(context.Background(), repo.PushURL(), ref)
+	verified, verifiedExists, verifiedErr := queryPublicationHead(context.Background(), repo.PushURL(), ref)
+	if verifiedErr != nil {
+		return fmt.Errorf("resolve cancelled run publication head: %w", verifiedErr)
+	}
+	if !verifiedExists {
+		verified = ""
+	}
 	if verified != normalizeSHA(*run.ReviewApprovedHeadSHA) {
 		return fmt.Errorf("cancelled run %s was not published; remote remains at %s", run.ID, verified)
 	}
@@ -798,7 +809,7 @@ func recoverCancelledPublication(database *db.DB, p *paths.Paths, repo *db.Repo,
 	_, err := steps.Publish(recoveryCtx, database, run.ID, steps.PushRequest{
 		Worktree: worktree, Remote: repo.PushURL(), Ref: ref,
 		Candidate: *run.ReviewApprovedHeadSHA, ReviewedHead: *run.ReviewApprovedHeadSHA,
-		VerifiedHead: verified, Rewrite: false,
+		VerifiedHead: verified, VerifiedHeadKnown: true, VerifiedHeadExists: verifiedExists, Rewrite: false,
 	}, func(ctx context.Context, candidate string) error {
 		return mirrorPublication(ctx, p, run.RepoID, ref, candidate, submitted)
 	})
@@ -1003,7 +1014,7 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 		return err
 	}
 	var request steps.PushRequest
-	request = steps.PushRequest{Worktree: worktree, Remote: repo.PushURL(), Ref: ref, Candidate: run.HeadSHA, VerifiedHead: verifiedHead, BeforePush: func(req *steps.PushRequest) error {
+	request = steps.PushRequest{Worktree: worktree, Remote: repo.PushURL(), Ref: ref, Candidate: run.HeadSHA, VerifiedHead: verifiedHead, VerifiedHeadKnown: true, VerifiedHeadExists: verifiedExists, BeforePush: func(req *steps.PushRequest) error {
 		current, checkErr := database.GetRun(run.ID)
 		if checkErr != nil {
 			return checkErr
