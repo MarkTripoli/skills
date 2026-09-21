@@ -2,7 +2,7 @@
 
 Atomic can run skills for you through its optional `delivery` workflow. Each step runs one skill in a new session and saves a task document, called an **artifact**. You can also run every skill by hand without Atomic.
 
-Choose a fixed `workflow` for a known sequence, or `workflow=auto` to let JEV choose the next step. JEV is a TypeSafe service that reads the request and saved documents. Source: `atomic/workflows/delivery.ts` and `atomic/lib/`; skills: `skills/delivery/<name>/`.
+Choose a fixed `workflow` for a known sequence, or `workflow=auto` to let JEV choose the next step. JEV is a TypeSafe service that reads the request and saved documents. Source: `atomic/workflows/delivery.ts` and `atomic/lib/`; skills: `skills/delivery/<name>/`. The portable `route-model` skill owns candidate validation and JEV model selection for every harness; Atomic delegates to it.
 
 ## Install and launch
 
@@ -167,6 +167,7 @@ Artifact type is the template's frontmatter `type`. Human gates apply only when 
 | fix-bug | fix | no | Bugfix after reproduction |
 | record-evidence | evidence | no | By hand; narrated video proof |
 | deliver | none | no | Independent entry point; optional Atomic handoff |
+| configure-model-routing | none | no | By hand or model-invoked; creates and verifies the shared candidate profile |
 | herd-next | none | no | By hand inside Herdr; stage the next session |
 | verify-implementation | verification | no | Before review unless `verify=false`; also by hand |
 | test-app | app-test | no | When `app_test` is enabled; also by hand |

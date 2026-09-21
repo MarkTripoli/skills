@@ -82,6 +82,27 @@ else
   task=$(ls -t "$root"/.agents/tasks/*/task.md 2>/dev/null | head -1)
 fi
 test -f "$task" || exit 0
+
+# Route only when an explicit profile is configured. The helper receives the task
+# request and next phase, and require-jev makes malformed or unavailable routing
+# fail before a pane or agent is launched. With no profile, selected_model stays
+# empty and this hook preserves the existing native behavior.
+selected_model=""
+hook_root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+route_helper="$hook_root/route-model/route-model.mjs"
+profile_file=${SKILLS_MODEL_CANDIDATES_FILE:-}
+if test -z "$profile_file" && test -f "$root/.agents/model-candidates.json"; then
+  profile_file="$root/.agents/model-candidates.json"
+fi
+if test -n "$profile_file"; then
+  command -v node >/dev/null 2>&1 || exit 0
+  test -f "$route_helper" || exit 0
+  request=$(cat "$task") || exit 0
+  route_input=$(jq -cn --arg skillsDir "$hook_root" --arg phase "$phase" --arg cwd "$root" --arg request "$request" '{skillsDir:$skillsDir,phase:$phase,cwd:$cwd,request:$request}') || exit 0
+  route=$(printf '%s\n' "$route_input" | node "$route_helper" --require-jev 2>/dev/null) || exit 0
+  selected_model=$(jq -r '.model // empty' <<<"$route" 2>/dev/null) || exit 0
+  test -n "$selected_model" || exit 0
+fi
 slug=$(sed -n 's/^slug: *//p' "$task" | tr -d '"' | head -1)
 if test -z "$slug"; then
   slug=${task%/task.md}
@@ -113,10 +134,14 @@ if test -z "$busy"; then
 else
   created=$(herdr tab create --workspace "${HERDR_WORKSPACE_ID:-}" --cwd "$cwd" --label "$slug" --no-focus 2>/dev/null)
   pane=$(jq -r '.result.root_pane.pane_id // empty' <<<"$created" 2>/dev/null)
-  created_tab=$(jq -r '.result.tab.tab_id // empty' <<<"$created" 2>/dev/null)
-  # Fall back to closing the pane alone if the tab id field name above ever stops matching a real
-  # response, so cleanup still closes something instead of leaking the tab.
-  test -z "$created_tab" && created_pane=$pane
+  created_tab=$(jq -r '.result.tab.tab_id // .result.tab.id // .result.tab_id // empty' <<<"$created" 2>/dev/null)
+  # Without a tab identity the root pane may belong to an unowned tab. Close it
+  # immediately and stop rather than proceeding with an ambiguous cleanup handle.
+  if test -z "$created_tab"; then
+    created_pane=$pane
+    herdr pane close "$pane" >/dev/null 2>&1
+    exit 0
+  fi
 fi
 test -n "$pane" || exit 0
 
@@ -140,7 +165,9 @@ case "$name" in [a-z]*) ;; *) exit 0 ;; esac
 # CLI errors are JSON on stderr with exit status 1, so both streams are kept
 # together and the branch reads the code, not the exit status: agent_not_ready
 # can appear on a non-zero exit, and every other non-zero exit still stops.
-start=$(herdr agent start "$name" --kind "$kind" --pane "$pane" 2>&1)
+agent_args=()
+if test -n "$selected_model"; then agent_args=(-- --model "$selected_model"); fi
+start=$(herdr agent start "$name" --kind "$kind" --pane "$pane" "${agent_args[@]}" 2>&1)
 rc=$?
 case "$start" in
   *agent_not_ready*) herdr agent wait "$name" --until idle --until "done" --timeout 30000 >/dev/null 2>&1 || exit 0 ;;

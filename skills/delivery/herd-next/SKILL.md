@@ -17,7 +17,7 @@ test "${HERDR_ENV:-}" = 1
 
 A failed guard prints `references/herd_next_skipped_answer.md` with the reason `not inside Herdr` and stops. This is not an error: the phase reply that came before already carries the command fence, and pasting it by hand is the documented flow (`workflows/delivery.md`, "Running skills by hand").
 
-Step 2, the command to stage. Take the last line matching `^/[a-z0-9-]+( @[^ ]+)?$` from the caller's argument, or, when the skill was given none, from the finishing reply in this session. When no such line exists, print the skipped reply with the reason `no handoff command found` and stop. Never invent the next skill.
+Step 2, the command and model. Take the last line matching `^/[a-z0-9-]+( @[^ ]+)?$` from the caller's argument, or, when the skill was given none, from the finishing reply in this session. When no such line exists, print the skipped reply with the reason `no handoff command found` and stop. Never invent the next skill. Route the next phase with the portable helper using this precedence: explicit `--candidates <json-file>` and `--economy <model>`, then `SKILLS_MODEL_CANDIDATES_FILE`, then `$PWD/.agents/model-candidates.json`. The profile JSON is `{economy,candidates,routing?}`, with candidates ordered weakest to strongest. Preserve the returned model recommendation in this phase's reply. A caller may instead pass `--model <model>` as an explicit recommendation. If no profile exists, state that no model was enforced. Never discover candidates by scraping a provider-private catalog.
 
 Step 3, the slug and the phase. The slug is the task directory's `slug` from `task.md`; the phase is the skill name in the parsed command with any leading `create-`, `iterate-`, or `implement-` kept as written, so `/create-plan` labels the pane `<slug>/create-plan`.
 
@@ -57,10 +57,12 @@ pane=$(herdr tab create --workspace "$HERDR_WORKSPACE_ID" --cwd "$PWD" --label "
 
 Step 6, the agent name. Cut the slug to `32 - (length of the phase + 1)` characters first, so the phase always survives, then build `<cut slug>-<phase>`, lower-case, every character outside `a-z0-9-` replaced by `-`, collapsed runs of `-` reduced to one, truncated to 32 characters, any trailing `-` stripped. A phase longer than 31 characters leaves no room for a stem; cut the joined `<slug>-<phase>` to 32 characters in that case. When `herdr agent list` already holds the result, append `-2`, then `-3`, cutting the stem further so the name stays within 32 characters. The built name must start with a lowercase letter, exactly as `stop_hook.sh` checks after building it; when it does not (a slug beginning with a digit, most often), ask the user for a name and stop rather than guessing one.
 
-Step 7, start, label, stage:
+Step 7, start, label, stage. When a selected model came from configured candidates, pass it to the native agent command after Herdr's option separator, for example `herdr agent start ... -- --model <model>`. This is enforceable for supported Herdr agents; if the installed Herdr command rejects the native `--model`, close the pane and use the manual recommendation path rather than retrying another model. A manual copy-paste handoff can only report `Recommendation only: <model>` and must not claim enforcement.
 
 ```bash
-herdr agent start "$name" --kind "$kind" --pane "$pane"
+model_args=()
+if [ -n "${selected_model:-}" ]; then model_args=(-- --model "$selected_model"); fi
+herdr agent start "$name" --kind "$kind" --pane "$pane" "${model_args[@]}"
 herdr pane rename "$pane" "$slug/$phase"
 case "$kind" in codex) command="\$${command#/}" ;; esac
 herdr pane send-text "$pane" "$command"
@@ -70,7 +72,7 @@ herdr pane send-text "$pane" "$command"
 
 Step 8, stage or submit. `send-text` stages without Enter. A command that records approval stays staged even when the caller passes `--submit`; the user submits it. For a command that records no approval, submit with `herdr agent prompt "$name" "$command" --wait --timeout 120000` only when the caller passed `--submit`. Step 7 converts `/` to `$` for a Codex pane before either operation; the printed handoff fence keeps `/`.
 
-Step 9, the reply: `references/herd_next_answer.md`, every `<...>` slot filled.
+Step 9, the reply: `references/herd_next_answer.md`, every `<...>` slot filled. Include `Selected model: <model>` when routing ran. If this is a manual handoff without enforceable Herdr model selection, include `Recommendation only: <model>; start the next session with that model if desired.` and do not claim that the handoff enforced it.
 
 Never close a pane, tab, or workspace this skill did not create. Never target a pane by focus; only by `--current`, an id read from JSON, or a live agent name. Never run `herdr server stop`. No emojis, no em dashes.
 

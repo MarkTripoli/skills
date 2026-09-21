@@ -14,6 +14,10 @@ Child workers: call the `task` tool with one item `{ "agent": "agent-<role>", "t
 3. Workers: `cp dist/oh-my-pi/agents/*.md ~/.omp/agent/agents/` for every project, or `cp dist/oh-my-pi/agents/*.md <repo>/.omp/agents/` for one project. Project agents win over user agents with the same name.
 4. Start a new session; `/agents` lists the workers and `/` lists the skills.
 
+## Model routing
+
+Run `/configure-model-routing` when no valid profile exists. Standalone Oh My Pi skills may call the shared `route-model` helper through Node; discovery may use the documented public `omp models --json` command, and failed or unavailable discovery falls back to explicit exact candidates. Do not scrape provider-private registries or store credentials.
+
 ## Optional Atomic orchestration
 
 Skills and workers do not need Atomic. Add `--atomic` to install all portable skills and its optional `delivery` workflow. It does not launch `omp` subprocess stages.
