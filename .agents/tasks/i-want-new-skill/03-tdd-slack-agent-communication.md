@@ -1,7 +1,7 @@
 ---
 type: design-tdd
 task: i-want-new-skill
-summary: "A repo-owned per-user daemon is authoritative for Slack thread mapping, one-hour status timers, and the owner-steering gate across all local repositories and agent sessions. The Slack app receives events through Socket Mode only and remains the primary transport; optional agent access through a Slack MCP server cannot mutate or bypass daemon authority. Persistence format, local IPC, authorization, Socket Mode recovery, and failure policy remain open."
+summary: "A repo-owned per-user daemon is authoritative for Slack thread mapping, one-hour status timers, and owner steering across all local repositories and agent sessions. The Slack app receives events through Socket Mode only and remains the primary transport; optional Slack MCP access cannot mutate or bypass daemon authority. Every write, edit, command, subagent dispatch, external request, and final response must pass the coordinator gate, while pure reads and local reasoning continue without a permit. Persistence, local IPC, authorization, recovery, and failure policy remain open."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 36d73c2fdbd605df9a6f55904f80fcdda7f418fc
@@ -41,7 +41,7 @@ Slack MCP access is supplementary. An MCP read or post cannot create or change t
 | Permission to begin the next work action | Local coordinator | Neither the Slack app nor MCP grants permission |
 | Slack API access | Slack app adapter through Socket Mode for inbound events and the Web API for outbound messages | MCP is optional and non-authoritative |
 
-The coordinator gates each work action rather than relying on best-effort polling inside the agent:
+The coordinator gates every state-changing boundary rather than relying on best-effort polling inside the agent:
 
 ```mermaid
 sequenceDiagram
@@ -54,7 +54,7 @@ sequenceDiagram
     O->>S: Reply in work thread
     S->>A: Socket Mode event envelope
     A->>C: ingestOwnerEvent(run_id, event)
-    R->>C: beforeAction(run_id)
+    R->>C: beforeAction(run_id, boundary)
     alt Owner input is unhandled
         C-->>R: blocked(input)
         R->>C: submitOwnerInputResolution(run_id, input_id, response)
@@ -62,13 +62,13 @@ sequenceDiagram
         A->>S: Thread reply
         A-->>C: Delivery confirmed
         C->>C: Mark owner input handled
-        R->>C: beforeAction(run_id)
+        R->>C: beforeAction(run_id, boundary)
     end
     C-->>R: allowed
-    R->>R: Begin next work action
+    R->>R: Execute state-changing boundary
 ```
 
-`beforeAction` is the only authority for this gate. The exact boundary of a work action and the failure behavior when the coordinator or Slack is unavailable remain open decisions.
+`beforeAction` is the only authority for this gate. The runtime calls it immediately before every write, edit, command, subagent dispatch, external request, and final response. Pure local reads and local reasoning do not require a permit. Preparing a write or response may proceed locally, but execution waits for `allowed`. Permit fencing and failure behavior when the coordinator or Slack is unavailable remain open decisions.
 
 #### One per-user daemon outlives agent sessions and worktrees
 
@@ -99,11 +99,13 @@ The per-user daemon owns orchestration state and exposes a narrow local API to e
 
 ```text
 agent runtime integration
-├── startSlackRun(input) ───────────────▶ coordinator.startRun
-├── recordWorkEvent(event) ─────────────▶ coordinator.recordWorkEvent
-├── beforeAction(runId) ────────────────▶ coordinator.beforeAction
-├── submitOwnerInputResolution(result) ─▶ coordinator.resolveOwnerInput
-└── finishSlackRun(outcome) ────────────▶ coordinator.finishRun
+├── startSlackRun(input) ──────────────────────▶ coordinator.startRun
+├── recordWorkEvent(event) ────────────────────▶ coordinator.recordWorkEvent
+├── executeStateChangingBoundary(runId, action)
+│   ├── beforeAction(runId, action.boundary) ──▶ coordinator.beforeAction
+│   └── allowed ───────────────────────────────▶ action.execute
+├── submitOwnerInputResolution(result) ────────▶ coordinator.resolveOwnerInput
+└── finishSlackRun(outcome) ───────────────────▶ coordinator.finishRun
 
 per-user coordinator daemon
 ├── run state and thread mapping
@@ -124,17 +126,25 @@ interface SlackWorkCoordinator {
   startRun(input: StartRunInput): Promise<SlackRunRef>;
   recordWorkEvent(event: WorkEvent): Promise<void>;
   ingestOwnerEvent(event: OwnerThreadEvent): Promise<IngestResult>;
-  beforeAction(runId: RunId): Promise<ActionPermit>;
+  beforeAction(runId: RunId, boundary: ActionBoundaryKind): Promise<ActionPermit>;
   resolveOwnerInput(result: OwnerInputResolution): Promise<void>;
   finishRun(input: FinishRunInput): Promise<void>;
 }
+
+type ActionBoundaryKind =
+  | "write"
+  | "edit"
+  | "command"
+  | "subagent_dispatch"
+  | "external_request"
+  | "final_response";
 
 type ActionPermit =
   | { kind: "allowed" }
   | { kind: "blocked"; pending: OwnerInput[] };
 ```
 
-The state store, user-local IPC transport, and permit fencing remain undecided.
+All runtime adapters must route the six `ActionBoundaryKind` operations through one boundary hook. Local file reads and in-process reasoning bypass that hook. The state store, user-local IPC transport, and permit fencing remain undecided.
 
 ### Type Definitions
 
@@ -189,11 +199,11 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 
 - [ ] Confirm the design preserves the PRD's fixed message fields and timing rules.
 - [ ] Confirm inbound Slack events use Socket Mode only and no HTTP event endpoint is introduced.
-- [ ] Confirm owner steering takes effect before the next work action.
+- [ ] Confirm owner steering takes effect before every write, edit, command, subagent dispatch, external request, and final response.
 - [ ] Confirm Slack-disabled runs retain existing workflow behavior.
 
 ### Known limits
 - Per-user daemon supervision, startup/update mechanism, state location and persistence across restarts.
 - Slack app installation, authorization, and Socket Mode reconnect, acknowledgement, and replay behavior.
-- The exact work-action boundary, permit lifetime, and fail-open versus fail-closed behavior.
+- Permit fencing and fail-open versus fail-closed behavior when the coordinator or Slack is unavailable.
 - Slack delivery retry and reconciliation guarantees.
