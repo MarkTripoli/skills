@@ -64,6 +64,8 @@ test('native no-progress receipt becomes persisted recovery and only revised sou
   initGit(repo);
   const taskDir = path.join(repo, '.agents', 'tasks', 'recovery');
   const skillsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'atomic-recovery-skills-'));
+  fs.mkdirSync(path.join(skillsDir, 'route-model'), { recursive: true });
+  fs.copyFileSync(path.resolve('skills/delivery/route-model/route-model.mjs'), path.join(skillsDir, 'route-model', 'route-model.mjs'));
   fs.mkdirSync(path.join(skillsDir, 'implement-plan'), { recursive: true });
   fs.writeFileSync(path.join(skillsDir, 'implement-plan', 'SKILL.md'), '# implement-plan\n');
   fs.mkdirSync(taskDir, { recursive: true });
@@ -113,6 +115,8 @@ test('observed checklist progress ignores blocked prose and fresh initial state 
   initGit(repo);
   const taskDir = path.join(repo, '.agents', 'tasks', 'progress');
   const skillsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'atomic-progress-skills-'));
+  fs.mkdirSync(path.join(skillsDir, 'route-model'), { recursive: true });
+  fs.copyFileSync(path.resolve('skills/delivery/route-model/route-model.mjs'), path.join(skillsDir, 'route-model', 'route-model.mjs'));
   fs.mkdirSync(path.join(skillsDir, 'implement-plan'), { recursive: true });
   fs.writeFileSync(path.join(skillsDir, 'implement-plan', 'SKILL.md'), '# implement-plan\n');
   fs.mkdirSync(taskDir, { recursive: true });

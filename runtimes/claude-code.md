@@ -14,6 +14,10 @@ Child workers: call the `Task` tool with `subagent_type: "agent-<role>"` and the
 3. Workers: `cp dist/claude-code/agents/*.md ~/.claude/agents/` (or `<repo>/.claude/agents/`). Claude Code lists them under `/agents`.
 4. Start a new session; type `/` to see the skills.
 
+## Model routing
+
+Run `/configure-model-routing` when no valid profile exists. Claude Code skills use the shared `route-model` helper through Node with explicit caller or configured exact candidates. Claude Code has no private-catalog discovery path here; this collection does not scrape catalogs, proxy requests, or store credentials.
+
 ## Optional Atomic orchestration
 
 Skills and workers do not need Atomic. Add `--atomic` to install all portable skills and its optional `delivery` workflow. This does not make Claude Code an Atomic stage provider.

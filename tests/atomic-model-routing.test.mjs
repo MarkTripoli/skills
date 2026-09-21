@@ -9,6 +9,8 @@ function helper(response, body = '') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atomic-model-routing-'));
   const skillDir = path.join(dir, 'typed-judgment');
   fs.mkdirSync(skillDir);
+  fs.mkdirSync(path.join(dir, 'route-model'));
+  fs.copyFileSync(path.resolve('skills/delivery/route-model/route-model.mjs'), path.join(dir, 'route-model', 'route-model.mjs'));
   fs.writeFileSync(path.join(skillDir, 'judge.mjs'), `
 export let received;
 export let lastCall = { model: 'jev-test', usage: { input_tokens: 3, output_tokens: 2 } };
@@ -75,7 +77,7 @@ test('auto routing reports an unavailable JEV service and fixed routing does not
   );
   assert.deepEqual(
     await selectStageModel(fixture.dir, { skill: 'review-code', model: 'caller/fixed-model', modelRouting: 'fixed' }),
-    { model: 'caller/fixed-model', source: 'fixed', confidence: null, probabilities: null },
+    { model: 'caller/fixed-model', source: 'fixed', confidence: null, probabilities: null, availableModels: ['caller/fixed-model', 'openai-codex/gpt-5.6-sol'], candidates: ['caller/fixed-model'] },
   );
 });
 test('writing and unknown stages always use the ordinary model without calling JEV', async () => {
@@ -105,6 +107,8 @@ test('a competent economy choice retains the full judgment record and usage', as
     source: 'jev',
     confidence: 0.41,
     probabilities: { economy: 0.6, reasoning: 0.4 },
+    availableModels: ['caller/model', 'configured/reasoning-model'],
+    candidates: ['caller/model', 'configured/reasoning-model'],
     usage: { input_tokens: 3, output_tokens: 2 },
   });
 });
@@ -120,4 +124,39 @@ test('a reasoning choice uses the explicit stronger model', async () => {
   assert.equal(result.source, 'jev');
   assert.equal(result.confidence, 0.52);
   assert.deepEqual(result.probabilities, { economy: 0.2, reasoning: 0.8 });
+  assert.deepEqual(result.availableModels, ['caller/luna-fast', 'caller/sol']);
+  assert.deepEqual(result.candidates, ['caller/luna-fast', 'caller/sol']);
+});
+
+test('available models constrain escalation and skip JEV when reasoning is unavailable', async () => {
+  const fixture = helper(null, 'throw new Error("JEV must not be called without reasoning");');
+  const result = await selectStageModel(fixture.dir, {
+    skill: 'create-plan',
+    model: 'caller/luna-fast',
+    reasoningModel: 'caller/sol',
+    availableModels: ['caller/luna-fast', 'caller/other', 'caller/luna-fast'],
+  });
+  assert.equal(result.model, 'caller/luna-fast');
+  assert.equal(result.source, 'policy');
+  assert.deepEqual(result.availableModels, ['caller/luna-fast', 'caller/other']);
+});
+
+test('unavailable economy and explicit empty availability fail closed', async () => {
+  const fixture = helper(null, 'throw new Error("JEV must not be called");');
+  await assert.rejects(
+    selectStageModel(fixture.dir, { skill: 'implement-plan', model: 'caller/luna-fast', availableModels: ['caller/sol'] }),
+    /Configured economy model.*not available/,
+  );
+  await assert.rejects(
+    selectStageModel(fixture.dir, { skill: 'implement-plan', availableModels: [] }),
+    /availableModels must contain at least one model/,
+  );
+});
+
+test('fixed routing also refuses an unavailable configured model', async () => {
+  const fixture = helper(null, 'throw new Error("JEV must not be called");');
+  await assert.rejects(
+    selectStageModel(fixture.dir, { skill: 'review-code', model: 'caller/luna-fast', modelRouting: 'fixed', availableModels: ['caller/sol'] }),
+    /Configured economy model.*not available/,
+  );
 });

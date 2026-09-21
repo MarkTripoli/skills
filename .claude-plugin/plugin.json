@@ -1,6 +1,6 @@
 {
   "name": "marktripoli-skills",
-  "version": "3.1.0",
+  "version": "3.2.1",
   "description": "A delivery workflow for coding agents: research, design, plan, implement, and pull request in fresh-context phases with human gates, plus the worker roles the phases delegate to.",
   "author": {
     "name": "Mark Tripoli",
@@ -20,6 +20,7 @@
   ],
   "skills": [
     "./skills/delivery/ci-commit",
+    "./skills/delivery/configure-model-routing",
     "./skills/delivery/create-design-discussion",
     "./skills/delivery/create-epic-plan",
     "./skills/delivery/create-plan",
@@ -50,6 +51,7 @@
     "./skills/delivery/resolve-pr-reviews",
     "./skills/delivery/review-artifact-comments",
     "./skills/delivery/review-code",
+    "./skills/delivery/route-model",
     "./skills/delivery/safety-dance",
     "./skills/show-me",
     "./skills/delivery/start-epic-delivery",

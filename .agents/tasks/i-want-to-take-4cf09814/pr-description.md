@@ -44,7 +44,7 @@ Repository installation ships Safety Dance as an independent skill; binary insta
 
 ### Verify
 
-- [ ] Run `npm test`; expect repository validation, 137 Node tests, identity checks, Go race tests, vet, public-binary E2E, and release-contract tests to pass.
+- [ ] Run `npm test`; expect repository validation, 173 Node tests, identity checks, Go race tests, vet, public-binary E2E, and release-contract tests to pass.
 - [ ] Run `npm run build -- --runtime claude-code --dest <temp>`; expect Safety Dance to install as a skill without a generated worker.
 - [ ] Confirm hosted pull-request checks pass and a tagged release remains untested until intentionally exercised.
 

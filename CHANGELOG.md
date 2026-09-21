@@ -1,5 +1,17 @@
 # @marktripoli/skills
 
+## 3.2.1
+
+### Patch Changes
+
+- [#31](https://github.com/MarkTripoli/skills/pull/31) [`e0468a4`](https://github.com/MarkTripoli/skills/commit/e0468a4d76a7d0035991e5fdc1f15a351515cd9f) Thanks [@Triippz](https://github.com/Triippz)! - Add a portable Node route-model helper that chooses the cheapest adequate caller-supplied candidate through JEV, and make Atomic consume the shared policy. Document exact candidate contracts and Herdr model handoffs across supported harnesses. Add the model-invoked `/configure-model-routing` setup skill for one-question profile creation and helper verification.
+
+## 3.2.0
+
+### Minor Changes
+
+- [#29](https://github.com/MarkTripoli/skills/pull/29) [`0396eb0`](https://github.com/MarkTripoli/skills/commit/0396eb0a2a523f761a4286a720ba40b3c4bad2d9) Thanks [@Triippz](https://github.com/Triippz)! - Add the explicitly selected iOS simulator surface to the standalone `jev-ui` skill: idb-backed adapter, disposable fixture, identity and cleanup checks, and documented integration, accepted through independent native UI observations.
+
 ## 3.1.0
 
 ### Minor Changes

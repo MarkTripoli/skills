@@ -16,7 +16,7 @@ const rootIndex = args.indexOf("--root");
 const root = rootIndex === -1 ? repoRoot : path.resolve(args[rootIndex + 1] ?? "");
 const generated = root !== repoRoot;
 
-const EXPECTED_SKILL_COUNT = 44;
+const EXPECTED_SKILL_COUNT = 46;
 const SHARED_LINKS = {
   "shared/WRITING.md": "https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md",
   "shared/CONVENTIONS.md": "https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md",
@@ -575,4 +575,3 @@ function report() {
     `ok: ${skillNames.length} skills, ${answerFiles.length} answer templates, ${HUMAN_REVIEW_TEMPLATES.length} human-review templates, ${EXECUTION_DAG_TEMPLATES.length} execution-DAG templates, ${WORK_BREAKDOWN_TEMPLATES.length} work-breakdown templates, ${bannedHits} banned tokens${generated ? ` (generated tree ${root})` : ", Atomic entry checked"}`,
   );
 }
-

@@ -13,6 +13,10 @@ Child workers: Pi has no worker tool of its own. Perform the role inline after r
 2. Workers: none are generated; the notes above tell each phase to perform worker roles inline.
 3. Restart Pi or `/reload`; `/` lists the skills.
 
+## Model routing
+
+Run `/configure-model-routing` when no valid profile exists. Standalone Pi skills may call the shared `route-model` helper through Node; discovery may use the documented public `pi --list-models` command, and failed or unavailable discovery falls back to explicit exact candidates. Do not scrape provider-private registries or store credentials.
+
 ## Optional Atomic orchestration
 
 Skills do not need Atomic. Add `--atomic` to install all portable skills and its optional `delivery` workflow. Ordinary Pi sessions still use the handoffs above.

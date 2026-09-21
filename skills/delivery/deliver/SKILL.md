@@ -63,7 +63,9 @@ The registered inputs are:
 | `gates` | `all` by default; also `none`, `plan`, `pr`. |
 | `model` | `openai-codex/gpt-5.6-luna-fast` by default; ordinary economical baseline and mandatory for every code-writing or unknown phase. Explicit values are honored. |
 | `model_routing` | `auto` by default; `auto` asks JEV whether the ordinary model or `reasoning_model` is adequate for eligible non-writing stages, while `fixed` selects `model` directly with no JEV call. |
-| `reasoning_model` | `openai-codex/gpt-5.6-sol` by default; stronger candidate considered only for eligible stages in `model_routing=auto`. |
+| `reasoning_model` | `openai-codex/gpt-5.6-sol` by default; compatibility escalation candidate for eligible stages. |
+| `available_models` | Optional legacy exact model identifiers supplied by the caller. Omission preserves the two configured candidates. |
+| `model_candidates` | Optional exact `{model,cost,description}` objects consumed by the portable `route-model` helper. |
 | `app_test` | `none` by default; also `web`, `ios`, `android`. |
 | `app_target` | Optional URL, bundle id, package, or application path string. |
 | `verify` | Boolean, default `true`. |
@@ -86,6 +88,8 @@ For a new task, derive its slug from the title: lowercase, replace punctuation w
 Open the task worktree per the conventions before writing `.agents/tasks/<slug>/task.md`. Respect the documented worktree exceptions and an explicitly supplied task directory. Set `slug`, `title`, `workflow`, `gates`, `routed_by: deliver`, `created`, and `route_confidence` when known; preserve the request as the body. Commit `task.md` with its explicit path as `docs(task): open <slug>`, applying the conventions' ignore-file rule. Outside git, save it in place and state that it is uncommitted.
 
 An existing task reuses its directory, branch, and artifacts. For `epic-wave`, read the epic-delivery receipt and dependency merge state; follow `start-epic-delivery`'s manual child handoffs without recreating child directories. Optional automated child launching belongs to the Atomic workflow, not this skill.
+
+Before the first manual handoff, route the first phase with the portable helper, for example `printf '%s\n' '{"skillsDir":"<skills-dir>","phase":"<next-skill>","cwd":"<project>"}' | node <skills-dir>/route-model/route-model.mjs --candidates <json-file> --economy <model>`. It uses explicit candidates when supplied, then `SKILLS_MODEL_CANDIDATES_FILE`, then `<project>/.agents/model-candidates.json`. The profile shape is `{economy,candidates,routing?}` and candidates are ordered weakest to strongest. Report `Recommendation only: <model>` because manual copy-paste cannot enforce a model. If no valid profile exists, direct Claude Code, Oh My Pi, Pi, or portable users to `/configure-model-routing`; direct Codex users to `$configure-model-routing`. Then state that no model was enforced.
 
 Reply with `references/deliver_hand_answer.md`. Fill the chain from [workflows/delivery.md](https://github.com/MarkTripoli/skills/blob/main/workflows/delivery.md), the task location from observed state, and `{next_command}` from the table. For `oneshot`, explain that implementation precedes `/review-code`; never claim it has happened. For an epic wave, name the ready children and select one child's first skill for the final fence, with its task directory stated above it. Keep the final manual command fence and fresh-session handoff intact.
 

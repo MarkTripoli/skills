@@ -44,6 +44,10 @@ A new task normally gets a **worktree**: a separate checkout on its own branch. 
 
 The listed workflow must be `delivery`. Listing it proves installation, not successful execution. This example fixes the step sequence and model choice, so routing needs no JEV service.
 
+## Configure model routing
+
+Run `/configure-model-routing` when delivery reports no valid model profile. Codex users run `$configure-model-routing`; other harnesses use `/configure-model-routing`. The skill asks one question at a time, writes project `.agents/model-candidates.json` or a user-level file named by `SKILLS_MODEL_CANDIDATES_FILE`, and verifies the saved profile through `route-model`. Pi discovery uses `pi --list-models` and Oh My Pi discovery uses `omp models --json` only when available; Claude Code and Codex use explicit model IDs.
+
 ## Automatic phase selection
 
 JEV is a service that chooses steps or models. `workflow=auto` lets it choose the next step. Separately, `model_routing=auto` lets it choose a model for allowed steps. Both default to `auto`.
@@ -72,10 +76,11 @@ See [verification](verification.md) and [app testing](app-testing.md) for comman
 
 ## Run JEV UI by hand
 
-Install the standalone `jev-ui` skill with its `typed-judgment` and `record-evidence` dependencies. Use an explicitly selected browser or Android target; the skill does not provide iOS control.
+Install the standalone `jev-ui` skill with its `typed-judgment` and `record-evidence` dependencies. Use an explicitly selected browser, Android target, or iOS simulator. Browser control requires Node 22+; iOS control requires `idb` and a caller-owned simulator companion.
 
 ```sh
 node skills/delivery/jev-ui/scripts/jev-ui.mjs --platform android --target "$ANDROID_SERIAL" --app "$ANDROID_APP" --goal 'Complete the selected app task' --expected 'Expected status'
+IDB_COMPANION=/path/to/idb-companion.sock node skills/delivery/jev-ui/scripts/jev-ui.mjs --platform ios --target "$IOS_UDID" --app "$IOS_BUNDLE_ID" --goal 'Complete the selected app task' --expected 'Expected status'
 ```
 
 ## Continue existing work

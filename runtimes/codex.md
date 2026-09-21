@@ -14,6 +14,10 @@ Child workers: use the multi-agent spawn tool with the custom agent `agent-<role
 3. Workers: `cp dist/codex/agents/*.toml ~/.codex/agents/` (or `<repo>/.codex/agents/`). Current Codex releases load every TOML file in that directory. If `~/.codex/config.toml` registers agents with `[agents.<name>] config_file = ...` tables, append `dist/codex/config.snippet.toml` to it.
 4. Confirm `[features] multi_agent = true` (the default) in `~/.codex/config.toml`, then start a new session and type `$` to see the skills.
 
+## Model routing
+
+Run `$configure-model-routing` when no valid profile exists. Codex uses the `$` invocation form. Codex skills use the shared `route-model` helper through Node with explicit caller or configured exact candidates. Codex has no private-catalog discovery path here; this collection does not scrape catalogs, proxy requests, or store credentials.
+
 ## Optional Atomic orchestration
 
 Skills and workers do not need Atomic. Add `--atomic` to install all portable skills and its optional `delivery` workflow. Atomic reads the portable `.agents/skills` tree; standalone Codex installs keep their Codex notes.

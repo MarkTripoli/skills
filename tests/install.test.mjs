@@ -188,6 +188,17 @@ test("Atomic installs canonical full skills and workflow sources beside unrelate
   uninstall(planned, home);
   assert.equal(fs.existsSync(path.join(home, ".codex", "config.toml")), false);
 });
+test("isolated Atomic install loads the portable route-model from the installed skills directory", async () => {
+  const home = tmpdir();
+  const options = { targets: ["portable"], atomic: true, cwd: home, home, env };
+  install(options);
+  const workflowRoot = atomicDestination(options);
+  const installedModels = await import(`${pathToFileURL(path.join(workflowRoot, "lib", "models.mjs")).href}?isolated-model=${Date.now()}`);
+  const selected = await installedModels.selectStageModel(path.join(home, ".agents", "skills"), { skill: "implement-plan", model: "cheap", reasoningModel: "strong", modelRouting: "fixed", availableModels: ["cheap", "strong"] });
+  assert.equal(selected.model, "cheap");
+  assert.equal(selected.source, "fixed");
+});
+
 test("isolated Atomic install parses frontmatter through its copied YAML dependency", async () => {
   const home = tmpdir();
   const options = { targets: ["portable"], atomic: true, cwd: home, home, env };
@@ -219,6 +230,18 @@ test("project Atomic install and uninstall never mutate home or overridden globa
   assert.equal(fs.readFileSync(untouched, "utf8"), "unchanged\n");
   assert.equal(fs.existsSync(path.join(cwd, ".atomic", "workflows", "skills-delivery")), false);
   assert.equal(fs.existsSync(path.join(cwd, ".atomic", "workflows", "skills-delivery.mjs")), false);
+});
+
+test("route-model installs independently and falls back economically without typed-judgment", async () => {
+  const home = tmpdir();
+  const planned = install({ targets: ["portable"], skillNames: ["route-model"], cwd: home, home, env });
+  const skillDir = path.join(home, ".agents", "skills");
+  const route = await import(`${pathToFileURL(path.join(skillDir, "route-model", "route-model.mjs")).href}?standalone=${Date.now()}`);
+  const result = await route.routeModel(skillDir, { phase: "create-plan", economy: "cheap", candidates: [{ model: "cheap", cost: 1, description: "ordinary" }, { model: "strong", cost: 2, description: "reasoning" }] });
+  assert.equal(result.model, "cheap");
+  assert.equal(result.source, "fallback");
+  assert.match(result.reason, /helper unavailable/);
+  uninstall(planned, home);
 });
 
 test("selected jev-ui installs as a portable consumer outside the repository", async () => {
