@@ -67,7 +67,7 @@ Recommendation: [recommended option and why the research or product pattern supp
 
 ### Execution DAG
 
-[How this work will be executed: the phases ahead, which pause for approval, what runs unattended, and what verification and review follow. When the task directory holds an execution-plan artifact (`NN-execution-plan-<slug>.md`), embed its Mermaid flowchart here and name the phases it dropped with their probabilities. When it does not, describe the fixed chain of `task.md`'s `workflow` value from the phases and gate set in workflows/delivery.md, with no flowchart and no probabilities.]
+[How this work will be executed: the phases ahead, which pause for approval, what runs unattended, and what verification and review follow. When `index.json` has a current `orchestration.execution` artifact, embed its Mermaid flowchart here and name the phases it dropped with their probabilities. Otherwise describe the fixed chain from `task.md` and workflows/delivery.md, with no flowchart or probabilities.]
 
 ```mermaid
 flowchart TD
