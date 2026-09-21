@@ -1,7 +1,7 @@
 ---
 type: design-tdd
 task: i-want-new-skill
-summary: "A repo-owned per-user daemon and SQLite database are authoritative for coordinator state, with one Slack app Socket Mode connection bound exclusively to one daemon per workspace deployment. Administrators install the app from a repository-owned manifest; headless setup accepts a bot token and app-level token through environment variables or a protected per-user credentials file, then validates the expected app, workspace, bot scopes, and Socket Mode access. Native per-user supervision, filesystem-protected RPC, one-shot generation-fenced action permits, and durable break-glass keep active runs coordinated across agent sessions and integration failures. Browser OAuth, Windows service support, and multi-user or multi-daemon app sharing are deferred."
+summary: "A repo-owned per-user daemon and SQLite database are authoritative for coordinator state, with one Slack app Socket Mode connection bound exclusively to one daemon per workspace deployment. Administrators install the app from a repository-owned manifest for invited public and private channels; headless setup accepts a bot token and app-level token through environment variables or a protected per-user credentials file, then validates the expected app, workspace, bot scopes, and Socket Mode access. Native per-user supervision, filesystem-protected RPC, one-shot generation-fenced action permits, and durable break-glass keep active runs coordinated across agent sessions and integration failures. Browser OAuth, direct-message channels, Windows service support, and multi-user or multi-daemon app sharing are deferred."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 36d73c2fdbd605df9a6f55904f80fcdda7f418fc
@@ -115,6 +115,8 @@ Setup accepts one complete credential pair from `SLACK_BOT_TOKEN` and `SLACK_APP
 | Installed bot scopes | Compare the response's [`x-oauth-scopes`](https://docs.slack.dev/authentication/installing-with-oauth/#appending_scopes) set with every required bot scope in the manifest; extra additive scopes are allowed | Any missing required scope stops setup |
 | Slack app identity | Call [`bots.info`](https://docs.slack.dev/reference/methods/bots.info/) for the returned `bot_id` and compare `bot.app_id` with the configured app ID | App mismatch stops setup |
 | Socket Mode token and app match | Call [`apps.connections.open`](https://docs.slack.dev/reference/methods/apps.connections.open/), connect to the returned URL, and compare `hello.connection_info.app_id` with both the bot app ID and configured app ID before closing the validation socket | Invalid app token, missing `connections:write`, disabled or unreachable Socket Mode, or app mismatch stops setup |
+
+The first release supports work threads in public and private channels where the app is already a member. The manifest requires bot scopes `chat:write`, `channels:history`, `groups:history`, and `users:read`; it subscribes to `message.channels` and `message.groups`. `users:read` supports the `bots.info` app-identity check. The administrator must invite the app to every eligible channel because neither `chat:write.public` nor automated channel joining is included.
 
 The supplied bot and app-level tokens cannot introspect the deployed event-subscription list. Setup validates the repository manifest statically; the live acceptance trial must prove that an owner thread reply reaches the daemon before the installation is declared operational.
 
@@ -445,7 +447,7 @@ The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input
 - Enable write-ahead logging, foreign keys, and a bounded busy timeout on every connection.
 - Run ordered, transactional schema migrations before opening Socket Mode or local IPC.
 - Place the Unix-domain socket in the per-user runtime directory with a mode-`0700` parent and mode-`0600` socket; open no TCP listener.
-- Ship the canonical Slack app manifest with the implementation. The manifest declares Socket Mode, bot event subscriptions, and the least-privilege bot scope set selected for the supported channel types.
+- Ship the canonical Slack app manifest with Socket Mode enabled, bot scopes `chat:write`, `channels:history`, `groups:history`, and `users:read`, and bot events `message.channels` and `message.groups`. Public and private channels are supported only when the app is a member.
 - Require non-secret expected Slack app and workspace IDs in installation configuration.
 - Accept `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` only as a complete setup-time pair, or read both from the protected per-user credentials file. Never load repository-local `.env` files.
 - Keep Slack credentials outside SQLite, repositories, and native service definitions. Require a daemon-user-owned mode-`0600` regular file under a mode-`0700` per-user directory; reject symlinks and broader permissions.
@@ -473,6 +475,7 @@ The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input
 - Multiple independent users or daemons sharing one Slack app.
 - Per-user Slack app provisioning, a hosted Socket Mode event router, or an ingress-daemon mesh.
 - Browser-based Slack OAuth installation or token refresh.
+- Direct messages and multi-person direct messages.
 
 ### Execution DAG
 
@@ -498,6 +501,7 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 - [ ] Confirm one workspace deployment binds one Slack app Socket Mode connection to one per-user daemon and does not introduce per-user apps, a hosted router, or an ingress mesh.
 - [ ] Confirm administrators install the repo-owned manifest and headless setup validates the expected app, workspace, bot scopes, and Socket Mode access from a complete injected token pair.
 - [ ] Confirm environment-supplied tokens are persisted only to a daemon-user-owned mode-`0600` credentials file and no repository-local `.env`, SQLite row, service definition, or log contains a Slack token.
+- [ ] Confirm the app supports invited public and private channels with `chat:write`, `channels:history`, `groups:history`, and `users:read`, subscribes to `message.channels` and `message.groups`, and does not request automatic-join or public-post bypass scopes.
 - [ ] Confirm a Jira-linked run projects its Slack thread URL to a dedicated custom field without giving Jira authority over timers, steering, or permits.
 - [ ] Confirm Jira outages leave the backlink pending without pausing Slack coordination and non-Jira runs stay local-only.
 - [ ] Confirm agent adapters and the operator CLI use framed typed request/response RPC over a filesystem-protected Unix-domain socket with no TCP listener.
@@ -509,7 +513,6 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 ### Known limits
 - SQLite file location, driver packaging, migrations, and backup policy.
 - Socket Mode reconnect, acknowledgement, and replay behavior.
-- The exact bot scope and event-subscription set remains dependent on the unresolved public-versus-private channel policy.
 - Bot and app-level tokens cannot introspect deployed event subscriptions; the live acceptance trial must detect manifest drift.
 - One workspace deployment supports one per-user daemon owning the Slack app connection; multiple independent users or daemons sharing that app are unsupported.
 - Same-user agent processes can construct the break-glass RPC and bypass the CLI confirmation; this is an accepted release limitation.

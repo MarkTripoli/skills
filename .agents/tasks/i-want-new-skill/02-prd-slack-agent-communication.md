@@ -1,7 +1,7 @@
 ---
 type: design-prd
 task: i-want-new-skill
-summary: "This PRD defines one optional Slack thread per agent work run with fixed updates and owner steering. Each workspace deployment uses one administrator-installed Slack app from a repository-owned manifest, with headless setup accepting protected bot and Socket Mode tokens and validating the intended app, workspace, scopes, and connection before use. A Jira-linked run writes the thread URL to an administrator-created dedicated custom field, and Slack-enabled work pauses during integration outages unless the local operator explicitly disables Slack for that run. Browser OAuth, Windows service support, non-owner participation, non-Jira ticket systems, and multiple independent daemons sharing one app are deferred."
+summary: "This PRD defines one optional Slack thread per agent work run with fixed updates and owner steering in administrator-approved public or private channels. Each workspace deployment uses one administrator-installed Slack app from a repository-owned manifest, with headless setup accepting protected bot and Socket Mode tokens and validating the intended app, workspace, scopes, and connection before use. A Jira-linked run writes the thread URL to an administrator-created dedicated custom field, and Slack-enabled work pauses during integration outages unless the local operator explicitly disables Slack for that run. Browser OAuth, direct-message channels, Windows service support, non-owner participation, non-Jira ticket systems, and multiple independent daemons sharing one app are deferred."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 472270dd717873b0f4fb002487ca0fa1abe92607
@@ -42,6 +42,7 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - Jira-linked runs publish the Slack thread URL to a dedicated Jira custom field; runs without Jira remain local-only.
 - One workspace deployment uses one Slack app Socket Mode connection owned by one per-user daemon.
 - An administrator installs the repo-owned Slack app manifest; headless setup accepts injected bot and Socket Mode tokens and rejects an installation that does not match the expected app, workspace, scopes, and Socket Mode access.
+- Work threads may use public or private channels after an administrator invites the app; direct messages and multi-person direct messages are not supported.
 
 ### Alternative Solutions Considered
 
@@ -63,6 +64,7 @@ Add an optional Slack thread to an individual work run. The person controlling t
 
 - The repository shall provide the canonical Slack app manifest.
 - A workspace administrator shall create or update the app from that manifest, install it, and generate the bot token and Socket Mode app token.
+- The administrator shall invite the app to each public or private channel eligible for work threads.
 - Setup shall accept the complete token pair from environment variables or a daemon-user-owned mode-`0600` per-user credentials file.
 - Setup shall reject tokens for the wrong app or workspace, missing required bot scopes, or unavailable Socket Mode access before enabling Slack-backed work.
 - Setup shall not read repository-local `.env` files.
@@ -123,6 +125,7 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - Multiple independent users or daemons sharing one Slack app, including any hosted event router or ingress-daemon mesh.
 - Per-user Slack app provisioning.
 - Browser-based Slack OAuth installation and token refresh.
+- Direct messages and multi-person direct messages.
 
 ## Human Review
 
@@ -146,6 +149,7 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - [ ] Confirm one workspace deployment supports one Slack app connection owned by one per-user daemon and defers multi-user or multi-daemon sharing.
 - [ ] Confirm administrators install the repo-owned manifest and setup accepts protected headless token injection while rejecting the wrong app, workspace, scopes, or Socket Mode access.
 - [ ] Confirm setup never reads repository-local `.env` files.
+- [ ] Confirm work threads support invited public and private channels while direct messages, multi-person direct messages, automatic channel joining, and posting without membership remain unsupported.
 
 ### Known limits
 
@@ -154,5 +158,5 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - Jira credential authorization, validation scope, conflicting existing values, and retry guarantees remain technical-design decisions.
 - Same-user agent processes can construct the break-glass RPC and bypass the supported CLI confirmation.
 - Windows service support for the per-user coordinator daemon is deferred.
-- Slack channel visibility, retry schedule, reconciliation guarantees, deployed event-subscription drift, and agent runtime adapter wiring remain technical-design decisions.
+- Slack retry schedule, reconciliation guarantees, deployed event-subscription drift, and agent runtime adapter wiring remain technical-design decisions.
 - One Slack app connection supports one per-user daemon for a workspace deployment; multiple independent users or daemons sharing that app are deferred.
