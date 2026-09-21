@@ -2,59 +2,23 @@ Task: `one-thing-i-m`
 
 ## Purpose
 
-Keep economical models on ordinary delivery stages while allowing JEV to escalate eligible non-code stages only to a caller-declared available reasoning model.
+Route portable skill phases through one shared JEV helper across Claude Code, Codex, Oh My Pi, Pi, portable installs, and Atomic. Economy remains the default for implementation and unknown phases; eligible phases choose the cheapest adequate exact candidate.
 
-## Special things to note
+## What changed
 
-- `available_models` is caller-provided capability information; this repository does not probe provider accounts or import provider registries.
-- Omitting `available_models` preserves compatibility by treating the configured economy and reasoning models as available.
-- An explicit list without the economy model fails before stage execution; native provider rejection after selection remains outside this change.
+- Added `skills/delivery/route-model/route-model.mjs` and the `route-model` skill with a Node import and JSON-stdin contract.
+- Validated exact `{model,cost,description}` candidates and rejected duplicates, invalid costs, empty lists, and missing economy candidates.
+- Made Atomic adapt its existing inputs to the shared helper instead of owning separate routing policy.
+- Limited native catalog discovery to documented stable Pi and Oh My Pi commands. Claude Code and Codex use explicit caller/configured candidates.
+- Integrated Herdr instructions for native `--model` enforcement and recommendation-only manual handoffs.
+- Added focused portable and Atomic coverage, docs, runtime guidance, and a patch changeset.
 
-## Change outline
+## Boundaries
 
-The workflow now carries model availability into the existing selection boundary.
+The repository does not copy an external router, add proxy interception, scrape provider-private registries, probe account access, or fall back after native provider rejection. Candidate costs and availability are caller-owned; credentials remain outside artifacts.
 
-```diff
- delivery inputs
-+  available_models: string[]
-       |
-       v
- controller.runSkill
-+  records and forwards available_models
-       |
-       v
- selectStageModel
-+  normalizes available candidates
-+  requires the economy model
-+  permits JEV escalation only when reasoning is available
-```
+## Verification
 
-Ownership remains concentrated in the existing routing modules.
-
-```text
-atomic/lib/models.mjs                 validates candidates and selects the stage model
-atomic/lib/controller.mjs             forwards and records availability
-atomic/workflows/delivery.ts          defines the public workflow input
-tests/atomic-model-routing.test.mjs   covers filtering and fail-closed behavior
-docs/model-routing.md                 documents the caller contract
-```
-
-Review `atomic/lib/models.mjs` first: code-writing and unknown stages still select the economy model without calling JEV.
-
-## Human Review
-
-### Review targets
-
-- Candidate normalization and fail-closed economy validation in `atomic/lib/models.mjs`.
-- JEV is called only for eligible non-code stages when the reasoning candidate is available.
-- Workflow input transport and the caller-owned availability limitation match the documented contract.
-
-### Verify
-
-- [ ] `npm test` exits 0 with 155 passing tests.
-- [ ] `npm run check-commits -- origin/main..HEAD` accepts every commit subject.
-- [ ] Compare the implementation with [the plan](.agents/tasks/one-thing-i-m/05-plan-one-thing-i-m.md) and [verification receipt](.agents/tasks/one-thing-i-m/08-verification-one-thing-i-m.md).
-
-### Known limits
-
-- Provider/account availability is not discovered or independently verified; callers must supply an accurate list.
+- `npm test`
+- `npm run check-commits -- origin/main..HEAD`
+- `node --test tests/route-model.test.mjs tests/atomic-model-routing.test.mjs tests/atomic-controller.test.mjs`
