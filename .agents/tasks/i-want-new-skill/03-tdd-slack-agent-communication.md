@@ -1,7 +1,7 @@
 ---
 type: design-tdd
 task: i-want-new-skill
-summary: "A repo-owned per-user daemon and embedded SQLite database are authoritative for coordinator-only operational state, while Jira-linked runs project the Slack thread URL into an administrator-created custom field configured by stable field ID. Setup installs a launchd user agent on macOS or a systemd user service on Linux; updates preserve SQLite and configuration, atomically replace the executable and native service definition, and immediately restart the daemon, while Windows service support is deferred. Agent adapters and the operator CLI use filesystem-protected Unix-domain socket RPC, and state-changing actions require one-shot generation-fenced permits. Break-glass uses a trusted same-user boundary with interactive CLI confirmation and a durable audit receipt; credential authorization and recovery details remain open."
+summary: "A repo-owned per-user daemon and embedded SQLite database are authoritative for coordinator-only operational state, while Jira-linked runs project the Slack thread URL into an administrator-created custom field configured by stable field ID. Setup installs a launchd user agent on macOS or a systemd user service on Linux; updates preserve SQLite and configuration, atomically replace the executable and native service definition, and immediately restart without automatic rollback after failed health, while Windows service support is deferred. Agent adapters and the operator CLI use filesystem-protected Unix-domain socket RPC, and state-changing actions require one-shot generation-fenced permits. Break-glass uses a trusted same-user boundary with interactive CLI confirmation and a durable audit receipt; credential authorization and recovery details remain open."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 36d73c2fdbd605df9a6f55904f80fcdda7f418fc
@@ -107,7 +107,7 @@ Setup installs one operating-system-native per-user service for the coordinator.
 
 The canonical daemon source, service definitions, and installation logic remain repository-owned. Runtime state stays user-scoped. The daemon owns the Slack app's Socket Mode connection, quiet-hour timers, owner-input inbox, and run-to-thread mapping after an agent process exits or becomes idle. A later agent session reconnects through user-local IPC and resumes the same run state.
 
-Rerunning setup stages and validates the replacement executable and native service definition without modifying SQLite or user configuration. It atomically replaces each staged file, then immediately asks the native supervisor to restart the daemon. During the restart, coordinator IPC is unavailable, so active Slack-enabled runs pause every state-changing boundary under the existing fail-closed gate. The new daemon completes migrations, restores durable run state, re-establishes Socket Mode and required delivery health, then accepts IPC; agents resume only after those health conditions pass.
+Rerunning setup stages and validates the replacement executable and native service definition without modifying SQLite or user configuration. It atomically replaces each staged file, then immediately asks the native supervisor to restart the daemon. During the restart, coordinator IPC is unavailable, so active Slack-enabled runs pause every state-changing boundary under the existing fail-closed gate. The new daemon completes migrations, restores durable run state, re-establishes Socket Mode and required delivery health, then accepts IPC; agents resume only after those health conditions pass. If health does not recover, setup reports failure, leaves the new executable and service definition installed, and keeps runs paused for operator repair or durable break-glass. It never starts old code against potentially migrated state.
 
 ```mermaid
 flowchart TD
@@ -276,10 +276,12 @@ setupCoordinatorService(input)
     ├── atomically replace executable and service definition
     ├── preserve SQLite database and user configuration
     ├── restart native user service immediately
-    └── wait for coordinator health before reporting success
+    └── await coordinator health
+        ├── healthy ──▶ report success and release fail-closed pause
+        └── unhealthy ──▶ report failure, retain new version, keep runs paused
 ```
 
-The adapters own service-manager commands and definitions. The coordinator process receives the same executable path, user-local configuration, database path, and socket path on both supported platforms; it contains no launchd or systemd branches. Setup reports update success only after the restarted daemon accepts IPC with its durable state loaded and Slack health restored. Until then, agent adapters treat coordinator unavailability as fail-closed and do not begin state-changing actions.
+The adapters own service-manager commands and definitions. The coordinator process receives the same executable path, user-local configuration, database path, and socket path on both supported platforms; it contains no launchd or systemd branches. Setup reports update success only after the restarted daemon accepts IPC with its durable state loaded and Slack health restored. A failed health check leaves the new executable and service definition in place; setup does not automatically roll back potentially incompatible code after migrations may have run. Agent adapters remain fail-closed until an operator repairs the installation or uses the existing durable break-glass path.
 
 #### A filesystem-protected Unix-domain socket carries typed local RPC
 
@@ -395,7 +397,7 @@ The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input
 
 - Install a launchd user agent on macOS and a systemd user service on Linux. Configure each to start the coordinator at user login and restart it after an unexpected exit.
 - Keep the service per-user. Setup must not require or install a system-wide daemon.
-- On update, preserve the SQLite database and user configuration, atomically replace the executable and native service definition, restart the daemon immediately, and wait for coordinator and Slack health before reporting success.
+- On update, preserve the SQLite database and user configuration, atomically replace the executable and native service definition, restart the daemon immediately, and wait for coordinator and Slack health before reporting success. Failed health leaves the new version installed and Slack-enabled runs paused; setup must not roll back automatically.
 - Store exactly one SQLite database in the operating-system user's application-state directory, never in a repository or worktree. The exact platform path remains open.
 - Enable write-ahead logging, foreign keys, and a bounded busy timeout on every connection.
 - Run ordered, transactional schema migrations before opening Socket Mode or local IPC.
@@ -441,6 +443,7 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 - [ ] Confirm one per-user SQLite database durably owns coordinator-only timers, owner input, permits, deduplication, interruptions, and the local channel/thread identifier.
 - [ ] Confirm setup installs a launchd user agent on macOS or a systemd user service on Linux, and each starts at login and restarts crashes without a system-wide daemon.
 - [ ] Confirm an update preserves SQLite and configuration, atomically replaces the executable and native service definition, restarts immediately, pauses active Slack-enabled runs fail-closed, and resumes them from durable state only after health is restored.
+- [ ] Confirm failed post-update health reports setup failure, retains the new executable and service definition, and leaves Slack-enabled runs fail-closed for operator repair or break-glass without automatic rollback.
 - [ ] Confirm a Jira-linked run projects its Slack thread URL to a dedicated custom field without giving Jira authority over timers, steering, or permits.
 - [ ] Confirm Jira outages leave the backlink pending without pausing Slack coordination and non-Jira runs stay local-only.
 - [ ] Confirm agent adapters and the operator CLI use framed typed request/response RPC over a filesystem-protected Unix-domain socket with no TCP listener.
