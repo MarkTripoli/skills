@@ -5,6 +5,7 @@ import { ensureTask, revision, saveRecord, childrenFor, childWave, prepareChild,
 import { MODES, SKILLS, judgment, eligible, initialState, runSkill, artifactGate, boundaryState, recoveryDiagnostic, reconcileRecovery } from '../lib/controller.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
+import { resolveSkillsDir } from '../lib/skill-storage.mjs';
 
 const choices = (values: string[], fallback: string) => Type.Union(values.map(value => Type.Literal(value)), { default: fallback });
 const delivery = workflow({
@@ -45,7 +46,7 @@ const delivery = workflow({
     const routeRequest = existing?.body || inputs.request;
     const routeWorkflow = existing?.metadata?.workflow || inputs.workflow;
     const adaptive = routeWorkflow === 'auto';
-    const skillsDir = path.resolve(cwd, expandPath(inputs.skills_dir || '~/.agents/skills'));
+    const skillsDir = resolveSkillsDir(inputs.skills_dir, cwd);
     const route = await ctx.tool('select-delivery-mode', { request: routeRequest, workflow: routeWorkflow, skills_dir: skillsDir }, async () => {
       if (!adaptive) return { choice: routeWorkflow, source: 'explicit', confidence: null };
       const decision = await judgment(skillsDir, { request: routeRequest }, {
@@ -68,7 +69,7 @@ const delivery = workflow({
       return opened;
     }, { timeoutMs: 90_000 });
     const taskInputs = { ...persistedInputs, request: task.request, workflow: task.mode };
-    let state = await ctx.tool('observe-initial-artifacts', { task_dir: task.taskDir }, async () => initialState(observeArtifacts(task.taskDir), revision(task.cwd)));
+    let state = await ctx.tool('observe-initial-artifacts', { task_dir: task.taskDir }, async () => initialState(observeArtifacts(task.taskDir), revision(task.cwd, task.taskRootRelative)));
     state = { ...state, recovery: recoveryDiagnostic(state) };
     let steps = 0;
     let forced: { skill: string; feedback: string } | null = null;
@@ -91,7 +92,7 @@ const delivery = workflow({
       // arguments; native replay can then reach the same frontier after a process restart.
       const boundary = await ctx.tool(`${steps}-refresh-boundary`, { task_dir: task.taskDir }, async () => {
         const boundaryObservation = observeArtifacts(task.taskDir);
-        return { ...boundaryObservation, revision: revision(task.cwd) };
+        return { ...boundaryObservation, revision: revision(task.cwd, task.taskRootRelative) };
       });
       const hashes = state.hashes || {};
       const observedHashes = boundary.hashes || {};
