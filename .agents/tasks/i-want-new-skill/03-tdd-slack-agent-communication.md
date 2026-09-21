@@ -1,7 +1,7 @@
 ---
 type: design-tdd
 task: i-want-new-skill
-summary: "A repo-owned per-user daemon and embedded SQLite database are authoritative for coordinator-only operational state, while Jira-linked runs project the Slack thread URL into an administrator-created custom field configured by stable field ID. Agent adapters and the operator CLI use filesystem-protected Unix-domain socket RPC; Windows named pipes are deferred. State-changing actions use one-shot generation-fenced permits: `beforeAction` issues a permit at the current steering generation and `beginAction` consumes it only if that generation is unchanged. Break-glass uses a trusted same-user boundary with interactive CLI confirmation and a durable audit receipt. Credential authorization and recovery details remain open."
+summary: "A repo-owned per-user daemon and embedded SQLite database are authoritative for coordinator-only operational state, while Jira-linked runs project the Slack thread URL into an administrator-created custom field configured by stable field ID. Setup installs a native per-user supervisor: a launchd user agent on macOS or a systemd user service on Linux; login starts the daemon and the OS restarts crashes, while Windows service support is deferred. Agent adapters and the operator CLI use filesystem-protected Unix-domain socket RPC, and state-changing actions require one-shot generation-fenced permits. Break-glass uses a trusted same-user boundary with interactive CLI confirmation and a durable audit receipt; credential authorization and recovery details remain open."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 36d73c2fdbd605df9a6f55904f80fcdda7f418fc
@@ -101,16 +101,23 @@ flowchart TD
 
 The supported break-glass path is the local operator CLI. It requires explicit interactive confirmation, then asks the daemon to atomically disable Slack, record the interruption, and persist an audit receipt before work resumes. The receipt identifies the run, interruption, OS user, confirmation time, and disable time. If the transaction fails, the run remains paused. This release trusts the operating-system user: the agent adapter omits break-glass, but a same-user agent process can construct the RPC and bypass the CLI prompt. The prompt is a safety rail, not a security boundary. The original thread mapping remains available for later reconciliation through the existing status schema.
 
-#### One per-user daemon outlives agent sessions and worktrees
+#### Native per-user supervisors keep the daemon alive across sessions
 
-One supervised daemon runs for the operating-system user and manages Slack-enabled runs from every local repository. The canonical daemon source and installation logic remain repository-owned; its runtime process and state are user-scoped rather than copied into each task worktree.
+Setup installs one operating-system-native per-user service for the coordinator. macOS uses a launchd user agent; Linux uses a systemd user service. The supervisor starts the daemon when the user logs in and restarts it after an unexpected process exit. The service is neither system-wide nor tied to a repository, worktree, terminal, or agent session.
 
-The daemon owns the Slack app's Socket Mode connection, quiet-hour timers, owner-input inbox, and run-to-thread mapping after an agent process exits or becomes idle. A later agent session reconnects through user-local IPC and resumes the same run state. A repository or worktree path identifies where work belongs but does not define the daemon's lifetime.
+The canonical daemon source, service definitions, and installation logic remain repository-owned. Runtime state stays user-scoped. The daemon owns the Slack app's Socket Mode connection, quiet-hour timers, owner-input inbox, and run-to-thread mapping after an agent process exits or becomes idle. A later agent session reconnects through user-local IPC and resumes the same run state.
 
 ```mermaid
 flowchart TD
-    D[Per-user coordinator daemon]
-    D --> S[(Per-user SQLite database)]
+    S[Setup] --> P{Host platform}
+    P -->|macOS| L[Install launchd user agent]
+    P -->|Linux| U[Install systemd user service]
+    P -->|Windows| X[Unsupported in this release]
+    L --> O[OS starts daemon at user login]
+    U --> O
+    O --> D[Per-user coordinator daemon]
+    D -->|Unexpected exit| O
+    D --> DB[(Per-user SQLite database)]
     D --> SA[Single Slack Socket Mode connection]
     D --> T[Timer scheduler]
     D --> I[Owner-input inbox]
@@ -120,7 +127,7 @@ flowchart TD
     W[Later session or worktree] <-->|Reconnect by run identity| D
 ```
 
-Run IDs must be globally unique within the per-user SQLite database and namespaced with repository and task identity. The supervisor, startup/update mechanism, database location, and Socket Mode reconnect and replay policy remain open.
+Run IDs must be globally unique within the per-user SQLite database and namespaced with repository and task identity. Service update behavior, database location, and Socket Mode reconnect and replay policy remain open.
 
 #### SQLite persists coordinator authority across restarts
 
@@ -251,6 +258,25 @@ type BeginActionResult =
 
 All runtime adapters must route the six `ActionBoundaryKind` operations through one boundary hook and must not execute when `beginAction` returns `stale` or `unavailable`. Local file reads and in-process reasoning bypass that hook. A coordinator IPC failure is treated as `unavailable` even though no response can arrive. `LocalOperatorControl` is intentionally absent from the agent runtime interface. SQLite is injected behind the coordinator's state-store boundary.
 
+#### Setup dispatches to one native user-service installer
+
+The setup entrypoint detects the host platform and delegates to one platform adapter. The macOS adapter installs and loads a launchd user-agent definition with restart-on-crash behavior. The Linux adapter installs a systemd user unit, reloads the user manager, and enables the unit so it starts at login and restarts after a crash. An unsupported Windows host returns an explicit setup error without installing a partial service.
+
+```text
+setupCoordinatorService(input)
+├── darwin
+│   ├── installLaunchdUserAgent(input)
+│   └── load user agent
+├── linux
+│   ├── installSystemdUserService(input)
+│   ├── reload user manager
+│   └── enable user service
+└── win32
+    └── return unsupported_platform
+```
+
+The adapters own service-manager commands and definitions. The coordinator process receives the same executable path, user-local configuration, database path, and socket path on both supported platforms; it contains no launchd or systemd branches.
+
 #### A filesystem-protected Unix-domain socket carries typed local RPC
 
 The daemon listens on one Unix-domain socket inside a per-user runtime directory. The directory is mode `0700` and the socket is mode `0600`; the daemon exposes no loopback TCP or HTTP listener. The filesystem boundary authenticates the operating-system user, not an individual process.
@@ -363,6 +389,8 @@ The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input
 
 ### Configuration
 
+- Install a launchd user agent on macOS and a systemd user service on Linux. Configure each to start the coordinator at user login and restart it after an unexpected exit.
+- Keep the service per-user. Setup must not require or install a system-wide daemon.
 - Store exactly one SQLite database in the operating-system user's application-state directory, never in a repository or worktree. The exact platform path remains open.
 - Enable write-ahead logging, foreign keys, and a bounded busy timeout on every connection.
 - Run ordered, transactional schema migrations before opening Socket Mode or local IPC.
@@ -383,7 +411,7 @@ The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input
 - Non-owner comments or steering.
 - Jira issue mutations other than writing the Slack thread URL to the dedicated custom field.
 - Jira labels and GitHub, Linear, or other ticket-system backlinks.
-- Windows named-pipe IPC.
+- Windows daemon supervision and named-pipe IPC.
 - Runtime Jira custom-field creation or name-based field discovery.
 - Chat transports other than Slack.
 - Automatic Slack enablement for every work run.
@@ -406,6 +434,7 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 - [ ] Confirm owner steering takes effect before every write, edit, command, subagent dispatch, external request, and final response.
 - [ ] Confirm an unavailable coordinator, Socket Mode connection, or required Slack delivery pauses state-changing actions until recovery or durable local break-glass.
 - [ ] Confirm one per-user SQLite database durably owns coordinator-only timers, owner input, permits, deduplication, interruptions, and the local channel/thread identifier.
+- [ ] Confirm setup installs a launchd user agent on macOS or a systemd user service on Linux, and each starts at login and restarts crashes without a system-wide daemon.
 - [ ] Confirm a Jira-linked run projects its Slack thread URL to a dedicated custom field without giving Jira authority over timers, steering, or permits.
 - [ ] Confirm Jira outages leave the backlink pending without pausing Slack coordination and non-Jira runs stay local-only.
 - [ ] Confirm agent adapters and the operator CLI use framed typed request/response RPC over a filesystem-protected Unix-domain socket with no TCP listener.
@@ -415,7 +444,7 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 - [ ] Confirm Slack-disabled runs retain existing workflow behavior.
 
 ### Known limits
-- Per-user daemon supervision, startup/update mechanism, SQLite file location, driver packaging, migrations, and backup policy.
+- Service update behavior, SQLite file location, driver packaging, migrations, and backup policy.
 - Slack app installation, authorization, and Socket Mode reconnect, acknowledgement, and replay behavior.
 - Same-user agent processes can construct the break-glass RPC and bypass the CLI confirmation; this is an accepted release limitation.
 - A crash after permit consumption but before an external effect is observed requires action-specific idempotency or reconciliation.

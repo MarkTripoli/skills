@@ -1,7 +1,7 @@
 ---
 type: design-prd
 task: i-want-new-skill
-summary: "This PRD defines one optional Slack thread per agent work run with fixed updates and owner steering. A Jira-linked run writes the thread URL to an administrator-created dedicated custom field configured by stable field ID; setup validates the field, Jira does not control coordination, and runtime requires no Jira admin privileges. Slack-enabled work pauses during integration outages unless the local operator explicitly disables Slack for that run. Non-owner participation, non-Jira ticket systems, and Jira mutations beyond the backlink are deferred."
+summary: "This PRD defines one optional Slack thread per agent work run with fixed updates and owner steering. A Jira-linked run writes the thread URL to an administrator-created dedicated custom field configured by stable field ID; Jira does not control coordination. Slack-enabled work pauses during integration outages unless the local operator explicitly disables Slack for that run. Native per-user daemon supervision supports macOS and Linux; Windows service support, non-owner participation, non-Jira ticket systems, and Jira mutations beyond the backlink are deferred."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 472270dd717873b0f4fb002487ca0fa1abe92607
@@ -108,6 +108,7 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - Jira labels for Slack thread URLs.
 - Supporting chat systems other than Slack.
 - Enabling Slack automatically for every work run.
+- Windows service support for the per-user coordinator daemon.
 
 ## Human Review
 
@@ -127,6 +128,7 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - [ ] Confirm Jira-linked runs write the Slack thread URL to a dedicated custom field while Jira outages do not pause coordination.
 - [ ] Confirm runs without Jira perform no Jira operation.
 - [ ] Confirm setup validates an administrator-created Jira field by stable per-site ID and runtime requires no Jira admin privileges.
+- [ ] Confirm Slack-enabled setup supports native per-user daemon supervision on macOS and Linux, with Windows service support deferred.
 
 ### Known limits
 
@@ -134,4 +136,5 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - GitHub, Linear, and non-owner participation are deferred.
 - Jira credential authorization, validation scope, conflicting existing values, and retry guarantees remain technical-design decisions.
 - Same-user agent processes can construct the break-glass RPC and bypass the supported CLI confirmation.
-- Slack setup, authorization, retry schedule, reconciliation guarantees, and runtime wiring remain technical-design decisions.
+- Windows service support for the per-user coordinator daemon is deferred.
+- Slack app installation, authorization, retry schedule, reconciliation guarantees, and agent runtime adapter wiring remain technical-design decisions.
