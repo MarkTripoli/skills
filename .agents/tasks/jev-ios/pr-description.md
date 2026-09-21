@@ -1,6 +1,6 @@
 Task: `jev-ios`
 
-Title: `feat(jev-ui): complete iOS acceptance` (`node scripts/check-commits.mjs --title` → ok). Base: `main` at `4458fbf21e199dad45376b8164f78c2165ac1d20` (released `v3.1.0`). Head: `feat/jev-ios`. Only committed prose, code, tests, and receipts are pushed; native recordings, screenshots, and helper configuration stay local and ignored.
+Pull request: https://github.com/MarkTripoli/skills/pull/29 (#29). Title: `feat(jev-ui): complete iOS acceptance` (`node scripts/check-commits.mjs --title` → ok). Base: `main` at `4458fbf21e199dad45376b8164f78c2165ac1d20` (released `v3.1.0`). Head: `feat/jev-ios`. Only committed prose, code, tests, and receipts are pushed; native recordings, screenshots, and helper configuration stay local and ignored.
 
 ## Purpose
 
