@@ -1,7 +1,7 @@
 ---
 type: design-prd
 task: i-want-new-skill
-summary: "This PRD defines one optional Slack thread per agent work run. The thread carries fixed start, status, and completion updates and accepts questions or steering from the person controlling the agent. Slack-enabled work pauses during integration outages unless the local operator explicitly disables Slack for that run; recovery records the interruption in the original thread. Ticketing, non-owner participation, and other chat systems are deferred."
+summary: "This PRD defines one optional Slack thread per agent work run with fixed start, status, and completion updates plus owner steering. A Jira-linked run writes the thread URL to a dedicated Jira custom field for discovery; Jira does not control timers or steering, and runs without Jira remain local-only. Slack-enabled work pauses during integration outages unless the local operator explicitly disables Slack for that run. Non-owner participation, non-Jira ticket systems, and Jira mutations beyond the backlink are deferred."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 472270dd717873b0f4fb002487ca0fa1abe92607
@@ -18,6 +18,7 @@ Agents can perform long-running work without giving the person controlling them 
 - Start, status, and completion updates do not appear in one owner-visible thread.
 - The owner must inspect separate runtime tools and artifacts to understand or redirect active work.
 - Teams that do not configure Slack must keep their existing workflow unchanged.
+- A Jira-linked run needs a discoverable Slack-thread backlink without making Jira part of live coordination.
 
 ### Success Measures
 
@@ -27,6 +28,7 @@ Initial success is a deterministic acceptance trial.
 - An owner reply is acknowledged and reflected in the work before the agent starts its next work action.
 - Equivalent runs with Slack disabled proceed without Slack setup or changed workflow behavior.
 - A Slack-enabled run pauses state-changing work during an integration outage; an explicit local break-glass resumes it without Slack and the original thread later records the interruption.
+- Every Jira-linked trial writes its Slack thread URL to the dedicated Jira custom field; Jira outages delay that backlink without stopping Slack coordination.
 
 ### Proposed Solution
 
@@ -37,12 +39,14 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - The owner can ask questions or redirect active work from the thread.
 - Every fixed field appears in every message of its type; empty fields read `None`.
 - Slack-enabled work pauses when owner steering or required message delivery is unavailable.
+- Jira-linked runs publish the Slack thread URL to a dedicated Jira custom field; runs without Jira remain local-only.
 
 ### Alternative Solutions Considered
 
 - Enable Slack for every work run - rejected because Slack must remain optional.
 - Post only when work changes - rejected because a quiet run gives the owner no liveness signal.
 - Allow free-form updates - rejected because the requested message shape must be deterministic.
+- Store the Slack thread URL in a Jira label - rejected because labels are categorization metadata, not a dedicated backlink field.
 
 ### Solution Details
 
@@ -51,6 +55,15 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - WHEN the person controlling the agent enables Slack for a work run, the system shall record that person as owner and create one thread.
 - WHEN the system creates the thread, the root message shall show `Work`, `Goal`, `Scope`, `Owner`, `Links`, and `Started at` in that order.
 - IF Slack is not enabled for a work run, THEN the system shall proceed without Slack setup or Slack messages.
+
+#### Jira-linked runs publish one discoverable backlink
+
+- WHEN a Slack-enabled run is linked to a Jira issue, the system shall write the canonical Slack thread URL to the configured dedicated Jira custom field.
+- WHEN the Jira field already contains that same URL, the write shall succeed without creating another value.
+- IF Jira is unavailable when the thread is created, THEN the system shall retain the pending backlink locally and retry without pausing Slack coordination.
+- Jira shall not control status timers, owner-input handling, action permits, or interruption recovery.
+- IF a run has no Jira issue, THEN it shall remain local-only and perform no Jira operation.
+- The system shall not store the Slack thread URL in a Jira label.
 
 #### Status updates show progress and liveness
 
@@ -83,8 +96,9 @@ Add an optional Slack thread to an individual work run. The person controlling t
 ### Out of Scope
 
 - Comments or steering from anyone other than the owner.
-- Assigning or updating Jira, GitHub, Linear, or other tickets.
-- Writing the Slack thread link back to a ticket.
+- Jira issue mutations other than the dedicated Slack-thread custom field.
+- GitHub, Linear, and other ticket-system backlinks.
+- Jira labels for Slack thread URLs.
 - Supporting chat systems other than Slack.
 - Enabling Slack automatically for every work run.
 
@@ -95,15 +109,19 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - The three message types and their fixed fields.
 - Status timing during active work.
 - Owner questions and steering.
+- Jira custom-field backlink behavior and Jira-independent coordination.
 
 ### Verify
 
 - [ ] Confirm that start, status, and completion are the required message types.
 - [ ] Confirm that owner instructions take effect before the agent begins its next work action.
 - [ ] Confirm Slack outages pause state-changing work and only explicit local break-glass resumes the run without Slack.
+- [ ] Confirm Jira-linked runs write the Slack thread URL to a dedicated custom field while Jira outages do not pause coordination.
+- [ ] Confirm runs without Jira perform no Jira operation.
 
 ### Known limits
 
 - Non-owner comments are deferred.
-- Ticket integrations and other chat systems are deferred.
+- GitHub, Linear, and non-owner participation are deferred.
+- Jira authorization, custom-field setup, conflicting existing values, and retry guarantees remain technical-design decisions.
 - Slack setup, authorization, retry schedule, reconciliation guarantees, and runtime wiring remain technical-design decisions.

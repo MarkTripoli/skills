@@ -1,7 +1,7 @@
 ---
 type: design-tdd
 task: i-want-new-skill
-summary: "A repo-owned per-user daemon and SQLite database are authoritative for Slack thread mappings, one-hour status timers, owner input, permits, message deduplication, and interruption records across repositories and restarts. The Slack app uses Socket Mode as the primary transport; MCP access remains non-authoritative. Every state-changing boundary fails closed when the coordinator, Socket Mode, or required Slack delivery is unavailable. Only an explicit local break-glass command may disable Slack for that run, resume work, and require reconciliation. Local IPC, authorization, recovery details, SQLite packaging, and permit fencing remain open."
+summary: "A repo-owned per-user daemon and embedded SQLite database are authoritative for coordinator-only operational state: timers, owner input, deduplication, permits, interruptions, and the local Slack channel/thread identifier needed during Jira outages. Jira-linked runs project the Slack thread URL into a dedicated Jira custom field for discovery; Jira never controls timers or steering, and non-Jira runs remain local-only. Socket Mode is primary, MCP is non-authoritative, state-changing boundaries fail closed on coordination failure, and local break-glass can disable Slack for one run. Local IPC, authorization, recovery details, Jira field setup, and permit fencing remain open."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 36d73c2fdbd605df9a6f55904f80fcdda7f418fc
@@ -22,11 +22,13 @@ flowchart LR
     O[Owner] <--> ST[Slack thread]
     ST <-->|Web API posts<br/>Socket Mode events| SA[Slack app adapter]
     SA <--> C[Per-user coordinator daemon]
+    C -->|Thread URL projection| J[Jira dedicated custom field]
     A[Agent runtime] <--> C
     A -. optional supplementary access .-> MCP[Slack MCP server]
     MCP -. read or post .-> ST
 
-    C --- AUTH["Authority: timers, run-thread mapping,<br/>owner-input state, action permits"]
+    C --- AUTH["Authority: timers, local channel/thread id,<br/>owner-input state, action permits"]
+    J --- DISC["Discoverability only:<br/>never gates work"]
 ```
 
 The Slack app is the primary integration. Its adapter creates the root message, posts canonical status and completion messages through the Slack Web API, and receives owner thread events through one daemon-owned Socket Mode connection. The design has no inbound Slack HTTP event endpoint.
@@ -35,7 +37,8 @@ Slack MCP access is supplementary. An MCP read or post cannot create or change t
 
 | Concern | Authority | Other paths |
 |---|---|---|
-| `run_id` to Slack thread mapping | Local coordinator | Slack app and MCP may read the resolved mapping |
+| `run_id` to local Slack channel/thread identifier | Per-user SQLite database | Slack app and MCP may read the resolved identifier |
+| Jira-linked thread discovery | Dedicated Jira custom field containing the Slack thread URL | SQLite retains the local identifier and pending projection while Jira is unavailable; Jira never grants permits |
 | One-hour quiet-status deadline | Local coordinator clock and timer state | Agent activity may reset the deadline only through a coordinator work event |
 | Owner identity and unhandled input | Local coordinator | Slack app supplies primary events; MCP observations must carry the same Slack message identity for deduplication |
 | Permission to begin the next work action | Local coordinator | Neither the Slack app nor MCP grants permission |
@@ -123,14 +126,44 @@ One per-user SQLite database is the canonical durable state. The daemon owns nor
 | `action_permits` | `permit_id` primary key | Boundary kind, permit state, fencing data, issue time, and consumption time |
 | `interruptions` | `interruption_id` primary key | Availability cause, break-glass transition, local resumption, and reconciliation |
 | `schema_migrations` | Migration version primary key | Applied schema version and checksum |
+| `jira_backlinks` | `run_id` primary key | Optional Jira issue locator, derived thread URL, custom-field delivery state, attempts, and last error |
 
-The coordinator commits related facts atomically: owner-event deduplication with pending-input state, permit creation with the gate decision, timer advancement with a queued status delivery, and break-glass mode with its interruption record. Process exit between those writes cannot expose a partially applied transition.
+The coordinator commits related facts atomically: Slack thread identity with a pending Jira backlink for Jira-linked runs, owner-event deduplication with pending-input state, permit creation with the gate decision, timer advancement with a queued status delivery, and break-glass mode with its interruption record. Process exit between those writes cannot expose a partially applied transition.
+
+#### Jira stores a discoverable backlink, not coordinator authority
+
+After Slack creates the root message, the coordinator stores its channel and thread timestamp in SQLite. For a Jira-linked run, it derives the canonical Slack thread URL, records a pending `jira_backlinks` row in the same transaction, and asks the Jira adapter to write that URL to the configured dedicated custom field.
+
+```mermaid
+sequenceDiagram
+    participant C as Coordinator
+    participant DB as SQLite
+    participant S as Slack Web API
+    participant J as Jira adapter
+
+    C->>S: Create root message
+    S-->>C: channel_id, thread_ts
+    C->>DB: Store local identifier and pending backlink
+    alt Run has Jira issue
+        C->>J: Set dedicated custom field to thread URL
+        alt Jira write succeeds
+            J-->>C: Confirmed
+            C->>DB: Mark backlink delivered
+        else Jira unavailable
+            J-->>C: Retryable failure
+            C->>DB: Keep backlink pending
+            C->>C: Continue Slack coordination
+        end
+    end
+```
+
+Jira failure never changes the quiet-status deadline, owner-input state, permit decision, or Slack health. Retrying the same thread URL is idempotent. Runs without a Jira issue do not create a `jira_backlinks` row or call Jira.
 
 ### Program Design
 
 #### Coordinator capabilities stay transport-independent
 
-The per-user daemon owns orchestration state and exposes a narrow local API to every supported agent runtime. Slack-specific payloads remain behind the Slack app adapter, which owns Socket Mode inbound delivery and Web API outbound delivery; the optional MCP client is not injected as daemon state, timer, or supervision.
+The per-user daemon owns orchestration state and exposes a narrow local API to every supported agent runtime. Slack payloads remain behind the Slack app adapter; Jira custom-field updates remain behind a backlink adapter. The optional MCP client is not injected as daemon state, timer, supervision, or Jira authority.
 
 ```text
 agent runtime integration
@@ -144,12 +177,14 @@ agent runtime integration
 └── finishSlackRun(outcome) ───────────────────▶ coordinator.finishRun
 
 per-user coordinator daemon
-├── run state and thread mapping
+├── SQLite operational state
 ├── quiet-status scheduler
 ├── owner-event inbox and deduplication
 ├── action-permit gate
-└── SlackPort
-    └── SlackAppAdapter ────────────────▶ Socket Mode events and Slack Web API
+├── SlackPort
+│   └── SlackAppAdapter ────────────────▶ Socket Mode events and Slack Web API
+└── JiraBacklinkPort
+    └── JiraCustomFieldAdapter ─────────▶ Dedicated Jira custom field
 
 optional agent capability
 └── SlackMcpClient ─────────────────────▶ supplementary Slack reads or posts
@@ -165,6 +200,10 @@ interface SlackWorkCoordinator {
   beforeAction(runId: RunId, boundary: ActionBoundaryKind): Promise<ActionPermit>;
   resolveOwnerInput(result: OwnerInputResolution): Promise<void>;
   finishRun(input: FinishRunInput): Promise<void>;
+}
+
+interface JiraBacklinkPort {
+  writeThreadUrl(backlink: JiraThreadBacklink): Promise<void>;
 }
 
 interface LocalOperatorControl {
@@ -205,6 +244,16 @@ interface RunLocator {
   taskDirectory: string;
 }
 
+interface JiraIssueRef {
+  siteId: string;
+  issueKey: string;
+}
+
+interface JiraThreadBacklink {
+  issue: JiraIssueRef;
+  threadUrl: string;
+}
+
 interface SlackRunState {
   run: RunLocator;
   ownerSlackUserId: string;
@@ -215,6 +264,7 @@ interface SlackRunState {
   nextQuietStatusDueAt: string;
   pendingOwnerInputIds: string[];
   interruptions: SlackInterruption[];
+  jiraIssue: JiraIssueRef | null;
 }
 
 interface SlackInterruption {
@@ -232,7 +282,7 @@ type SlackUnavailableCause =
   | "required_delivery_unconfirmed";
 ```
 
-The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input idempotency key. Delivery through both the Slack app and MCP must converge on one owner-input record rather than producing two steering actions.
+The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input idempotency key. Delivery through both the Slack app and MCP converges on one owner-input record. The Jira custom field stores the canonical thread URL only as a discoverability projection; SQLite retains the channel/thread identifier and pending write state required for live coordination and outage recovery.
 
 ### Configuration
 
@@ -240,6 +290,8 @@ The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input
 - Enable write-ahead logging, foreign keys, and a bounded busy timeout on every connection.
 - Run ordered, transactional schema migrations before opening Socket Mode or local IPC.
 - Keep Slack credentials outside SQLite; the authorization and secret-storage mechanism remains open.
+- Configure one dedicated Jira custom-field identifier for each supported Jira site; never use a label as fallback.
+- Keep Jira credentials outside SQLite. Jira authorization, field provisioning, and secret storage remain open.
 
 ### Local Patterns
 
@@ -250,7 +302,8 @@ The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input
 ### What We're Not Doing
 
 - Non-owner comments or steering.
-- Jira, GitHub, Linear, or other ticket mutation and Slack-thread link backfill.
+- Jira issue mutations other than writing the Slack thread URL to the dedicated custom field.
+- Jira labels and GitHub, Linear, or other ticket-system backlinks.
 - Chat transports other than Slack.
 - Automatic Slack enablement for every work run.
 
@@ -271,11 +324,14 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 - [ ] Confirm inbound Slack events use Socket Mode only and no HTTP event endpoint is introduced.
 - [ ] Confirm owner steering takes effect before every write, edit, command, subagent dispatch, external request, and final response.
 - [ ] Confirm an unavailable coordinator, Socket Mode connection, or required Slack delivery pauses state-changing actions until recovery or durable local break-glass.
-- [ ] Confirm one per-user SQLite database durably owns thread mappings, timers, owner input, permits, deduplication, and interruption records.
+- [ ] Confirm one per-user SQLite database durably owns coordinator-only timers, owner input, permits, deduplication, interruptions, and the local channel/thread identifier.
+- [ ] Confirm a Jira-linked run projects its Slack thread URL to a dedicated custom field without giving Jira authority over timers, steering, or permits.
+- [ ] Confirm Jira outages leave the backlink pending without pausing Slack coordination and non-Jira runs stay local-only.
 - [ ] Confirm Slack-disabled runs retain existing workflow behavior.
 
 ### Known limits
 - Per-user daemon supervision, startup/update mechanism, SQLite file location, driver packaging, migrations, and backup policy.
 - Slack app installation, authorization, and Socket Mode reconnect, acknowledgement, and replay behavior.
 - The exact permit-fencing mechanism and local break-glass command/control channel.
+- Jira authorization, custom-field provisioning, existing-value conflicts, and retry guarantees.
 - Slack retry schedule, replay ordering, and reconciliation delivery guarantees.
