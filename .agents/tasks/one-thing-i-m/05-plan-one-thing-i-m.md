@@ -139,8 +139,8 @@ Atomic callers can provide available model identifiers, and the public contract 
 
 #### Automated Verification:
 
-- [ ] `npm test`
-- [ ] `npm run check-commits`
+- [x] `npm test` -> 155 passed
+- [x] `npm run check-commits -- origin/main..HEAD` -> 10 subjects valid
 
 human-gated: false
 
