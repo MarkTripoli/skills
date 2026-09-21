@@ -1,5 +1,11 @@
 # @marktripoli/skills
 
+## 3.2.0
+
+### Minor Changes
+
+- [#29](https://github.com/MarkTripoli/skills/pull/29) [`0396eb0`](https://github.com/MarkTripoli/skills/commit/0396eb0a2a523f761a4286a720ba40b3c4bad2d9) Thanks [@Triippz](https://github.com/Triippz)! - Add the explicitly selected iOS simulator surface to the standalone `jev-ui` skill: idb-backed adapter, disposable fixture, identity and cleanup checks, and documented integration, accepted through independent native UI observations.
+
 ## 3.1.0
 
 ### Minor Changes
