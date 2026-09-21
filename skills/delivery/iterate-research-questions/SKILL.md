@@ -11,7 +11,7 @@ Revise an existing research-questions document. Preserve its purpose: neutral qu
 
 ## Input
 
-The invocation may provide the research-questions file path, an `@artifact` reference (resolve it against the task directory listing), a feedback file the user names, pasted feedback, or plain-language instructions. If only a task directory or slug is given, list the task directory and select the newest artifact of type `research-questions`.
+The invocation may provide a research-questions path, feedback file, pasted feedback, or instructions. Without an explicit artifact, select current `research.questions` through `index.json`.
 
 - One research-questions artifact: read it.
 - Multiple: use the newest of type `research-questions` unless the user named one; ask when the choice is unclear.
@@ -26,7 +26,7 @@ Beyond `task.md`, do not read `ticket.md`, design artifacts, research artifacts,
 
 3. **Read feedback**. Read the feedback the user supplied (message or named file) fully, including any explicit `@...` input. There are no comment identifiers, no resolve step, and no delete step: apply the change, or say why it was not applied.
 
-4. **Update in place**. Keep YAML frontmatter intact unless feedback specifically asks for a valid metadata correction. Preserve **Key Context Pointers**. Keep existing pointers verbatim, add newly provided links, repos, libraries, dependencies, paths, commands, issue keys.
+4. **Create the revision**. Copy current questions into the next `research.questions` iteration and edit that new file; never edit a recorded iteration. Preserve frontmatter and Key Context Pointers. A legacy task without `index.json` follows the conventions' in-place rule.
 
 5. **Keep questions objective**. Revised questions describe discovery only: what exists, where behavior/data lives, how pieces interact, what contracts/patterns/dependencies/tests/edge cases are present. Remove or rewrite wording that asks how to build the feature, where to put new code, whether to refactor, or what approach is preferable.
 
@@ -35,7 +35,7 @@ Beyond `task.md`, do not read `ticket.md`, design artifacts, research artifacts,
    - End each routed question with the `route-question` role in parentheses: `locate` (`agent-codebase-locator`), `analyze` (`agent-codebase-analyzer`), `pattern` (`agent-codebase-pattern-finder`), `web` (`agent-web-search-researcher`), or `none` (answerable from the task files). Keep the tags of unchanged questions. For `undecided`, choose the role yourself by what the question asks for: where something lives (`locate`), how it works (`analyze`), existing examples (`pattern`), external documentation (`web`). The research phase dispatches each question to the worker its tag names.
    - When the helper is unavailable (exit 3, no `node`, or no `TYPESAFE_API_KEY`), keep your own reading for neutrality, choose every tag yourself, and add a `### Known limits` item saying judgments were skipped so the reply carries it in one line. Replace the previous run's `### Known limits` items with this run's, or `None.`.
 
-7. **Final answer**. If changed, write back to the same path and fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-type-slug.md](.agents/tasks/<slug>/NN-type-slug.md)`. If no edit is needed, do not create a duplicate file. Read references/research_questions_final_answer.md and respond using that template only; fill the `Known limits:` lines from the artifact's `### Known limits` list, and fill `{artifact_file}` with the saved file's name only per the conventions' placeholder rule (the template already carries the `@`). End with exactly one fenced `text` block containing `/create-research @<the saved file>`, naming this phase's own artifact and no other file and no path. Commit the saved file with `git add <path>` as `docs(task): research-questions artifact`.
+7. **Final answer**. If changed, record the next immutable `research.questions` iteration through the conventions' Recording an artifact flow. If no edit is needed, do not create an iteration. Read references/research_questions_final_answer.md and respond using that template only; fill `{artifact_link}` and `{artifact_file}` with the saved canonical task-root-relative path (the template already carries the `@`), and fill the `Known limits:` lines from the artifact's `### Known limits` list. End with exactly one fenced `text` block containing `/create-research @<the saved path>`. Commit the canonical path and `index.json` explicitly as `docs(task): research-questions artifact`. A legacy task without `index.json` follows the conventions' legacy rules.
 
 ## Question guidelines
 
