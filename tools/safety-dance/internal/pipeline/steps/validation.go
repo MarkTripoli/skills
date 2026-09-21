@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
 	"runtime"
 
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/agent"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/config"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/runenv"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/scm"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/shellenv"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/types"
@@ -21,6 +21,7 @@ type repoConfigKey struct{}
 type configKey struct{}
 type databaseKey struct{}
 type scmKey struct{}
+type evidenceDirKey struct{}
 
 func WithSCM(ctx context.Context, host scm.Host) context.Context {
 	return context.WithValue(ctx, scmKey{}, host)
@@ -43,6 +44,9 @@ func WithRepoConfig(ctx context.Context, cfg *config.RepoConfig) context.Context
 func WithConfig(ctx context.Context, cfg *config.Config) context.Context {
 	return context.WithValue(ctx, configKey{}, cfg)
 }
+func WithEvidenceDir(ctx context.Context, dir string) context.Context {
+	return context.WithValue(ctx, evidenceDirKey{}, dir)
+}
 
 func WithRun(ctx context.Context, database *db.DB, runID string) context.Context {
 	ctx = context.WithValue(ctx, databaseKey{}, database)
@@ -63,6 +67,10 @@ func mergedConfig(ctx context.Context) *config.Config {
 	return cfg
 }
 func runID(ctx context.Context) string { id, _ := ctx.Value(runIDKey{}).(string); return id }
+func evidenceDir(ctx context.Context) string {
+	dir, _ := ctx.Value(evidenceDirKey{}).(string)
+	return dir
+}
 
 func requiredCommand(cfg *config.RepoConfig, name string) string {
 	if cfg == nil {
@@ -214,7 +222,7 @@ func Validate(ctx context.Context, name string) error {
 	}
 	cmd := exec.CommandContext(ctx, shell, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "SD_PARENT_RUN_ID="+runID(ctx))
+	cmd.Env = agent.SafeEnvironment(dir, runenv.Overlay{}, []string{"SD_PARENT_RUN_ID=" + runID(ctx)})
 	shellenv.ConfigureShellCommand(cmd)
 	if out, err := shellenv.CombinedOutputShellCommand(cmd); err != nil {
 		return fmt.Errorf("%s: configured command failed: %s: %w", name, out, err)

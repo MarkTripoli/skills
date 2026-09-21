@@ -1,6 +1,9 @@
 package agent
 
 import (
+	"os"
+	"strings"
+
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/git"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/runenv"
 )
@@ -64,10 +67,27 @@ func gitSafeEnv(dir string, extra ...[]string) []string {
 }
 
 func gitSafeEnvWithOverlay(dir string, overlay runenv.Overlay, extra ...[]string) []string {
-	base := overlay.Apply(nil)
+	base := safeAmbientEnvironment()
+	base = overlay.Apply(base)
 	env := git.NonInteractiveEnvFrom(base, dir)
 	if len(extra) > 0 {
 		env = append(env, extra[0]...)
 	}
 	return append(env, GateRoleEnvVar+"=1", CompactAdviserDisableEnvVar+"=1")
+}
+
+// SafeEnvironment returns the environment policy used for configured commands.
+func SafeEnvironment(dir string, overlay runenv.Overlay, extra ...[]string) []string {
+	return gitSafeEnvWithOverlay(dir, overlay, extra...)
+}
+func safeAmbientEnvironment() []string {
+	var safe []string
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		upper := strings.ToUpper(key)
+		if key == "PATH" || key == "HOME" || key == "USER" || key == "LOGNAME" || key == "SHELL" || key == "TMPDIR" || key == "LANG" || strings.HasPrefix(upper, "LC_") {
+			safe = append(safe, entry)
+		}
+	}
+	return safe
 }

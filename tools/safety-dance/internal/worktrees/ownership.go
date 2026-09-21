@@ -284,16 +284,22 @@ func RecoverDetached(ctx context.Context, source, dir, head string) error {
 	} else if err != nil {
 		return err
 	}
+	reset := exec.CommandContext(ctx, "git", "-C", dir, "reset", "--hard", head)
+	if resetOut, resetErr := reset.CombinedOutput(); resetErr != nil {
+		return fmt.Errorf("recover worktree at %s: reset: %s: %w", head, strings.TrimSpace(string(resetOut)), resetErr)
+	}
+	clean := exec.CommandContext(ctx, "git", "-C", dir, "clean", "-fdx")
+	if cleanOut, cleanErr := clean.CombinedOutput(); cleanErr != nil {
+		return fmt.Errorf("clean recovered worktree: %s: %w", strings.TrimSpace(string(cleanOut)), cleanErr)
+	}
 	verify := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "HEAD")
 	out, err := verify.Output()
-	if err != nil {
-		return fmt.Errorf("verify recovered worktree: %w", err)
+	if err != nil || strings.TrimSpace(string(out)) != head {
+		return fmt.Errorf("recovered worktree head is not %s", head)
 	}
-	if got := strings.TrimSpace(string(out)); got != head {
-		reset := exec.CommandContext(ctx, "git", "-C", dir, "reset", "--hard", head)
-		if resetOut, resetErr := reset.CombinedOutput(); resetErr != nil {
-			return fmt.Errorf("recover worktree head mismatch: got %s want %s: reset: %s: %w", got, head, strings.TrimSpace(string(resetOut)), resetErr)
-		}
+	status := exec.CommandContext(ctx, "git", "-C", dir, "status", "--porcelain")
+	if out, err := status.Output(); err != nil || len(strings.TrimSpace(string(out))) != 0 {
+		return fmt.Errorf("recovered worktree is dirty")
 	}
 	return nil
 }

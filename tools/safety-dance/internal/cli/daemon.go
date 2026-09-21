@@ -11,9 +11,11 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/agent"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/config"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/daemon"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
@@ -24,6 +26,7 @@ import (
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/pipeline/steps"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/policy"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/procreap"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/runenv"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/scm"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/scm/github"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/shellenv"
@@ -706,7 +709,23 @@ func livePublicationHead(ctx context.Context, remote, ref string) string {
 	return normalizeSHA(fields[0])
 }
 
-func newSCMHost(upstream, fork, worktree string) (scm.Host, error) {
+func mirrorPublication(ctx context.Context, p *paths.Paths, repoID, ref, candidate, submitted string) error {
+	gate := p.RepoDir(repoID)
+	current, exists, err := git.DirectRefTarget(ctx, gate, ref)
+	if err != nil {
+		return err
+	}
+	if exists && normalizeSHA(current) == normalizeSHA(candidate) {
+		return nil
+	}
+	if !exists {
+		submitted = strings.Repeat("0", len(candidate))
+	}
+	_, err = git.RunBare(ctx, gate, "update-ref", "--no-deref", ref, candidate, submitted)
+	return err
+}
+
+func newSCMHost(ctx context.Context, upstream, fork, worktree string) (scm.Host, error) {
 	provider := scm.DetectProvider(upstream)
 	if provider != scm.ProviderGitHub {
 		return nil, fmt.Errorf("SCM provider %s is not supported by this build; refusing to start a publish pipeline", provider)
@@ -716,8 +735,11 @@ func newSCMHost(upstream, fork, worktree string) (scm.Host, error) {
 		command.Dir = worktree
 		return command
 	}
-	host := scm.ExtractHost(upstream)
-	repoSlug := github.HostPrefixedSlug(upstream)
+	host := scm.ResolveHost(ctx, upstream)
+	if host == "" {
+		return nil, fmt.Errorf("cannot resolve GitHub host from upstream remote")
+	}
+	repoSlug := github.HostPrefixedSlugForHost(upstream, host)
 	if strings.TrimSpace(fork) != "" {
 		return github.NewWithFork(factory, func() bool { _, err := exec.LookPath("gh"); return err == nil }, host, repoSlug, github.RepoSlug(fork), false), nil
 	}
@@ -738,15 +760,64 @@ func recoverCancelledPublication(database *db.DB, p *paths.Paths, repo *db.Repo,
 	}
 	recoveryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	submitted := ""
+	if run.SubmittedHeadSHA != nil {
+		submitted = strings.TrimSpace(*run.SubmittedHeadSHA)
+	}
+	if submitted == "" {
+		return fmt.Errorf("cancelled run %s has no submitted head custody", run.ID)
+	}
 	_, err := steps.Publish(recoveryCtx, database, run.ID, steps.PushRequest{
 		Worktree: worktree, Remote: repo.PushURL(), Ref: ref,
 		Candidate: *run.ReviewApprovedHeadSHA, ReviewedHead: *run.ReviewApprovedHeadSHA,
 		VerifiedHead: verified, Rewrite: false,
 	}, func(ctx context.Context, candidate string) error {
-		_, err := git.RunBare(ctx, p.RepoDir(run.RepoID), "update-ref", "--no-deref", ref, candidate, run.HeadSHA)
-		return err
+		return mirrorPublication(ctx, p, run.RepoID, ref, candidate, submitted)
 	})
 	return err
+}
+
+func prepareEvidenceStorage(p *paths.Paths, runID string, settings config.Evidence) error {
+	root := p.EvidenceRoot(settings.LocalRoot)
+	if err := p.ValidateEvidenceRoot(settings.LocalRoot); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Join(root, runID), 0o700); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+	type directory struct {
+		name     string
+		modified time.Time
+	}
+	var dirs []directory
+	now := time.Now()
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			continue
+		}
+		if entry.Name() != runID && settings.Retention > 0 && now.Sub(info.ModTime()) > settings.Retention {
+			_ = os.RemoveAll(filepath.Join(root, entry.Name()))
+			continue
+		}
+		dirs = append(dirs, directory{entry.Name(), info.ModTime()})
+	}
+	if settings.MaxRuns > 0 && len(dirs) > settings.MaxRuns {
+		sort.Slice(dirs, func(i, j int) bool { return dirs[i].modified.Before(dirs[j].modified) })
+		for _, old := range dirs[:len(dirs)-settings.MaxRuns] {
+			if old.name != runID {
+				_ = os.RemoveAll(filepath.Join(root, old.name))
+			}
+		}
+	}
+	return nil
 }
 func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Run) error {
 	repo, err := database.GetRepo(run.RepoID)
@@ -834,6 +905,10 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 		return fmt.Errorf("load global configuration: %w", globalErr)
 	}
 	mergedConfig := config.Merge(globalConfig, effectiveConfig)
+	if err := prepareEvidenceStorage(p, run.ID, mergedConfig.Test.Evidence); err != nil {
+		return fmt.Errorf("prepare run evidence storage: %w", err)
+	}
+	evidenceDir := p.RunEvidenceDir(mergedConfig.Test.Evidence.LocalRoot, run.ID)
 	if err := mergedConfig.ResolveAgent(ctx, exec.LookPath); err != nil {
 		return fmt.Errorf("resolve validation agent: %w", err)
 	}
@@ -868,7 +943,7 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 	if verifiedHead == "" {
 		verifiedHead = normalizeSHA(run.BaseSHA)
 	}
-	scmHost, err := newSCMHost(repo.UpstreamURL, repo.ForkURL, worktree)
+	scmHost, err := newSCMHost(ctx, repo.UpstreamURL, repo.ForkURL, worktree)
 	if err != nil {
 		return err
 	}
@@ -910,7 +985,7 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 			}
 			command := exec.CommandContext(stepCtx, name, args...)
 			command.Dir = worktree
-			command.Env = append(os.Environ(), "SD_PARENT_RUN_ID="+run.ID)
+			command.Env = agent.SafeEnvironment(worktree, runenv.Overlay{}, []string{"SD_PARENT_RUN_ID=" + run.ID})
 			shellenv.ConfigureShellCommand(command)
 			if output, commandErr := shellenv.CombinedOutputShellCommand(command); commandErr != nil {
 				return fmt.Errorf("custom gate %s: %s: %w", gate.Name, strings.TrimSpace(string(output)), commandErr)
@@ -932,6 +1007,7 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 			stepCtx = steps.WithConfig(stepCtx, mergedConfig)
 			stepCtx = steps.WithRun(stepCtx, database, run.ID)
 			stepCtx = steps.WithSCM(stepCtx, scmHost)
+			stepCtx = steps.WithEvidenceDir(stepCtx, evidenceDir)
 			var stepErr error
 			switch name {
 			case pipeline.StepIntent:
@@ -976,8 +1052,14 @@ func executeRun(ctx context.Context, database *db.DB, p *paths.Paths, run *db.Ru
 			return fmt.Errorf("worktree has uncommitted changes after review")
 		}
 		_, err = steps.Publish(pushCtx, database, run.ID, request, func(mirrorCtx context.Context, candidate string) error {
-			_, err := git.RunBare(mirrorCtx, p.RepoDir(run.RepoID), "update-ref", "--no-deref", request.Ref, candidate, run.HeadSHA)
-			return err
+			submitted := ""
+			if run.SubmittedHeadSHA != nil {
+				submitted = strings.TrimSpace(*run.SubmittedHeadSHA)
+			}
+			if submitted == "" {
+				return fmt.Errorf("run %s has no submitted head custody", run.ID)
+			}
+			return mirrorPublication(mirrorCtx, p, run.RepoID, request.Ref, candidate, submitted)
 		})
 		return err
 	})

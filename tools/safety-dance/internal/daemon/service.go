@@ -209,6 +209,13 @@ func (s Service) Install() error {
 	if err != nil {
 		return err
 	}
+	if runtime.GOOS == "windows" {
+		if executor, ok := s.Executor.(serviceOutputExecutor); ok {
+			if out, queryErr := executor.Output("schtasks", "/Query", "/TN", s.Label(), "/XML"); queryErr == nil && (!strings.Contains(string(out), serviceMarker) || !strings.Contains(string(out), s.Home.Root()) || !strings.Contains(string(out), s.Binary)) {
+				return fmt.Errorf("foreign scheduled task collision: %s", s.Label())
+			}
+		}
+	}
 	previous, readErr := os.ReadFile(path)
 	if readErr != nil && !os.IsNotExist(readErr) {
 		return readErr
@@ -224,11 +231,6 @@ func (s Service) Install() error {
 	case "linux":
 		activationErr = s.Executor.Run("systemctl", "--user", "enable", "--now", filepath.Base(path))
 	default:
-		if executor, ok := s.Executor.(serviceOutputExecutor); ok {
-			if out, queryErr := executor.Output("schtasks", "/Query", "/TN", s.Label(), "/XML"); queryErr == nil && (!strings.Contains(string(out), serviceMarker) || !strings.Contains(string(out), s.Home.Root()) || !strings.Contains(string(out), s.Binary)) {
-				return fmt.Errorf("foreign scheduled task collision: %s", s.Label())
-			}
-		}
 		action := fmt.Sprintf(`cmd /D /S /C "set "SD_HOME=%s"&&set %s=1&&"%s" daemon serve"`, windowsCmdValue(s.Home.Root()), serviceMarker, s.Binary)
 		activationErr = s.Executor.Run("schtasks", "/Create", "/TN", s.Label(), "/TR", action, "/SC", "ONLOGON", "/RL", "LIMITED", "/F")
 	}
@@ -340,6 +342,12 @@ func restartCommands(platform, label, path string, uid int) [][]string {
 func (s Service) Restart() error {
 	if s.Executor == nil {
 		return fmt.Errorf("service executor is required")
+	}
+	if runtime.GOOS == "windows" {
+		owned, err := s.taskOwned()
+		if err != nil || !owned {
+			return fmt.Errorf("refusing to restart foreign scheduled task %s", s.Label())
+		}
 	}
 	if !s.DefinitionExists() {
 		return fmt.Errorf("service definition is not installed")
