@@ -38,7 +38,7 @@ Open code agent in repo you want change. Run:
 
 In Codex, use `$create-research-questions` instead.
 
-Each step save task doc, call **artifact**. New task normally use **worktree**: separate checkout on own branch. Read result, then open new session in named checkout and run next command.
+Each step save task doc, call **artifact**. New task keep immutable artifact iteration under `artifacts/<kind>/<variant>/`, picked by task `index.json`. New task normally use **worktree**: separate checkout on own branch. Read result, then open new session in named checkout and run next command.
 
 Install only skill you need. Suggested next skill not hidden dependency. See [getting started](docs/getting-started.md) or [common skill sequences](workflows/delivery.md#workflow-choices-and-manual-chains).
 
