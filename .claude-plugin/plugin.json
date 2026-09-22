@@ -55,7 +55,7 @@
     "./skills/delivery/route-model",
     "./skills/delivery/safety-dance",
     "./skills/show-me",
-    "./skills/delivery/slack-coordinator",
+    "./skills/slack-coordinator",
     "./skills/delivery/start-epic-delivery",
     "./skills/delivery/test-app",
     "./skills/delivery/typed-judgment",

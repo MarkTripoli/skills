@@ -78,7 +78,7 @@ Keep task doc, published [changelog entries](CHANGELOG.md), existing worktree, i
 - [Workflow inputs and steps](workflows/delivery.md), [model selection](docs/model-routing.md), [agent setup](runtimes/)
 - [Session memory](docs/context-management.md), [verification](docs/verification.md), [app testing](docs/app-testing.md)
 
-Skill source: `skills/delivery/<name>/` and `skills/show-me/`.
+Skill source: `skills/delivery/<name>/`, `skills/show-me/`, and `skills/slack-coordinator/`.
 
 ## License
 

@@ -1,6 +1,6 @@
 # Slack coordinator
 
-Slack coordinator posts one Slack thread per run of agent work and lets the run owner steer that run from the thread. It is distributed as the `slack-coordinator` binary, built from `tools/slack-coordinator/`, and installed separately from agent skills.
+Slack coordinator posts one Slack thread per run of agent work and lets the run owner steer that run from the thread. It is distributed as the `slack-coordinator` binary, built from `tools/slack-coordinator/`, and installed separately from agent skills. The agent skill lives at `skills/slack-coordinator/`, beside the delivery group. Delivery skills may use it, and none of them require it.
 
 ## Install
 
@@ -165,7 +165,7 @@ Exit `1` is a refused confirmation, exit `2` a usage, config, or repository erro
 3. `run event --current [--completed]... [--decision]... [--blocker]... [--next]...` posts a status reply on phase changes and blockers; the daemon reposts the last status after one quiet interval (`daemon start --status-interval`, default one hour) with no newer event.
 4. `run finish --outcome completed|failed|cancelled [--completed]... [--decision]... [--unresolved]... [--evidence]... [--link]...` posts the completion reply and makes the run terminal.
 
-Every message renders its fixed fields in order and shows `None` for an empty one; the field tables are in the skill’s [messages reference](../skills/delivery/slack-coordinator/references/messages.md).
+Every message renders its fixed fields in order and shows `None` for an empty one; the field tables are in the skill’s [messages reference](../skills/slack-coordinator/references/messages.md).
 
 ## Break glass
 
@@ -179,8 +179,8 @@ Live Slack delivery, owner replies over a real WebSocket, launchd or systemd res
 
 ## Documentation map
 
-- [Agent skill](../skills/delivery/slack-coordinator/SKILL.md): when an agent calls each verb and the gate rule.
-- [Command flow](../skills/delivery/slack-coordinator/references/commands.md): verbs, flags, JSON shapes, and exit codes.
-- [Channel selection](../skills/delivery/slack-coordinator/references/channel-selection.md): when `--channel` is set and when `AGENTS.md` decides.
-- [Messages](../skills/delivery/slack-coordinator/references/messages.md): fields of the root, status, and completion messages.
+- [Agent skill](../skills/slack-coordinator/SKILL.md): when an agent calls each verb and the gate rule.
+- [Command flow](../skills/slack-coordinator/references/commands.md): verbs, flags, JSON shapes, and exit codes.
+- [Channel selection](../skills/slack-coordinator/references/channel-selection.md): when `--channel` is set and when `AGENTS.md` decides.
+- [Messages](../skills/slack-coordinator/references/messages.md): fields of the root, status, and completion messages.
 - [Testing](testing.md#slack-coordinator-proof-boundaries): the offline gate and deferred evidence.

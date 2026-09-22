@@ -116,7 +116,7 @@ These use default task root. Repo may set another with `<!-- skills:task-root=re
 
 ## Where things live
 
-- Skills: `skills/delivery/<name>/SKILL.md` and `skills/show-me/`.
+- Skills: `skills/delivery/<name>/SKILL.md`, `skills/show-me/`, and `skills/slack-coordinator/`.
 - Workflow: `atomic/workflows/delivery.ts`; helper: `atomic/lib/`.
 - Task doc: `<task-root>/<slug>/task.md`, `index.json`, and immutable `artifacts/<kind>/<variant>/<NNNN>.md` file on task branch. Existing task without `index.json` keep legacy numbered file and never silently migrate.
 
