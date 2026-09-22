@@ -2,6 +2,8 @@ package assistant
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -169,9 +171,233 @@ func TestVerbsWriteNoRows(t *testing.T) {
 		t.Errorf("verbs reacted %+v, want no reactions", slack.reactions)
 	}
 	wantWake(t, s, false)
-	for i := 3; i < 8; i++ {
-		if slack.posts[i].text != notAvailableReply {
-			t.Errorf("task verb answered %q, want %q", slack.posts[i].text, notAvailableReply)
+	if slack.posts[3].text != noTasksReply {
+		t.Errorf("!tasks answered %q, want %q", slack.posts[3].text, noTasksReply)
+	}
+	for i := 4; i < 8; i++ {
+		if slack.posts[i].text != "unknown id, known: none" {
+			t.Errorf("task verb answered %q, want the unknown-id reply with no known tasks", slack.posts[i].text)
 		}
+	}
+}
+
+// taskRow is the part of a tasks row the task verbs read or change.
+type taskRow struct {
+	state, instruction, trigger string
+	schedule                    string // "" is NULL
+	debounce                    sql.NullInt64
+	dueAt, lastResultAt         string // "" is NULL
+	failures                    int
+}
+
+func nullable(s string) sql.NullString { return sql.NullString{String: s, Valid: s != ""} }
+
+// insertTaskRow stores row and the channels it watches, returning its id.
+func insertTaskRow(t *testing.T, raw *sql.DB, row taskRow, channels ...string) int64 {
+	t.Helper()
+	res, err := raw.Exec(`
+INSERT INTO tasks (state, instruction, trigger, schedule, debounce_seconds, deliver_to, request_root_ts, created_at, due_at, last_result_at, consecutive_failures)
+VALUES (?, ?, ?, ?, ?, '{"dm":true}', '1700000000.000001', '2026-09-20T09:00:00Z', ?, ?, ?)`,
+		row.state, row.instruction, row.trigger, nullable(row.schedule), row.debounce, nullable(row.dueAt), nullable(row.lastResultAt), row.failures)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ch := range channels {
+		if _, err := raw.Exec(`INSERT INTO task_channels (task_id, channel_id) VALUES (?, ?)`, id, ch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return id
+}
+
+// taskState reads back the columns the verbs transition.
+func taskState(t *testing.T, raw *sql.DB, id int64) (state string, dueAt, endedAt sql.NullString, failures int) {
+	t.Helper()
+	if err := raw.QueryRow(`SELECT state, due_at, ended_at, consecutive_failures FROM tasks WHERE task_id = ?`, id).Scan(&state, &dueAt, &endedAt, &failures); err != nil {
+		t.Fatal(err)
+	}
+	return state, dueAt, endedAt, failures
+}
+
+// wantTask fails unless task id is in state with the given due_at and ended_at
+// ("" for NULL).
+func wantTask(t *testing.T, raw *sql.DB, id int64, state, dueAt, endedAt string) {
+	t.Helper()
+	gotState, gotDue, gotEnded, _ := taskState(t, raw, id)
+	if gotState != state || gotDue != nullable(dueAt) || gotEnded != nullable(endedAt) {
+		t.Errorf("task %d = %s due %+v ended %+v; want %s due %q ended %q", id, gotState, gotDue, gotEnded, state, dueAt, endedAt)
+	}
+}
+
+func TestTasksListsActiveAndPausedTasks(t *testing.T) {
+	s, slack, _, raw := newCollectService(t)
+	slack.channels = map[string]string{"C1": "general", "C3": "ops"}
+	if reply := verbReply(t, s, slack, "1700000000.001000", "!tasks"); reply != noTasksReply {
+		t.Fatalf("!tasks with no rows answered %q, want %q", reply, noTasksReply)
+	}
+
+	insertTaskRow(t, raw, taskRow{state: db.TaskActive, instruction: "morning digest", trigger: db.TriggerSchedule, schedule: `{"daily":"09:00","tz":"Europe/Berlin"}`, dueAt: "2026-09-22T07:00:00Z", lastResultAt: "2026-09-21T07:00:00Z"}, "C1", "C2")
+	insertTaskRow(t, raw, taskRow{state: db.TaskPaused, instruction: "watch", trigger: db.TriggerEachMessage, debounce: sql.NullInt64{Int64: 300, Valid: true}}, "C1")
+	insertTaskRow(t, raw, taskRow{state: db.TaskCompleted, instruction: "done", trigger: db.TriggerWindowEnd, schedule: `{"at":"2026-09-01T00:00:00Z"}`}, "C1")
+	insertTaskRow(t, raw, taskRow{state: db.TaskCancelled, instruction: "gone", trigger: db.TriggerSchedule, schedule: `{"every_hours":1}`}, "C1")
+	insertTaskRow(t, raw, taskRow{state: db.TaskActive, instruction: "poll", trigger: db.TriggerSchedule, schedule: `{"every_hours":6}`, dueAt: "2026-09-21T16:00:00Z"})
+	insertTaskRow(t, raw, taskRow{state: db.TaskActive, instruction: "one-off", trigger: db.TriggerWindowEnd, schedule: `{"at":"2026-09-25T12:00:00Z"}`, dueAt: "2026-09-25T12:00:00Z"}, "C3")
+
+	want := strings.Join([]string{
+		"t1 · active · watches #general, C2 · daily 09:00 Europe/Berlin · next 2026-09-22T09:00:00+02:00 · last result 2026-09-21T07:00:00Z",
+		"t2 · paused · watches #general · each message (debounce 300s) · next waiting for messages · last result none",
+		"t5 · active · watches none · every 6 hours · next 2026-09-21T16:00:00Z · last result none",
+		"t6 · active · watches #ops · once at 2026-09-25T12:00:00Z · next 2026-09-25T12:00:00Z · last result none",
+	}, "\n")
+	if reply := verbReply(t, s, slack, "1700000000.002000", "!tasks"); reply != want {
+		t.Fatalf("!tasks answered:\n%s\nwant:\n%s", reply, want)
+	}
+	if reply := verbReply(t, s, slack, "1700000000.003000", "!tasks"); reply != want {
+		t.Fatalf("second !tasks answered:\n%s\nwant:\n%s", reply, want)
+	}
+	// Two listings: C1 and C3 resolve once and are cached; C2 is unknown and
+	// is asked again each time.
+	if slack.infoCalls != 4 {
+		t.Errorf("conversations.info called %d times, want 4 (C1 and C3 once, C2 twice)", slack.infoCalls)
+	}
+}
+
+// insertTaskRun stores one assistant_runs row for task; "" timestamps are NULL,
+// exit < 0 is NULL.
+func insertTaskRun(t *testing.T, raw *sql.DB, runID string, task int64, state, queued, started, finished string, exit int, failure string) {
+	t.Helper()
+	exitCode := sql.NullInt64{Int64: int64(exit), Valid: exit >= 0}
+	if _, err := raw.Exec(`
+INSERT INTO assistant_runs (run_id, kind, task_id, state, queued_at, started_at, finished_at, exit_code, failure)
+VALUES (?, 'task', ?, ?, ?, ?, ?, ?, ?)`, runID, task, state, queued, nullable(started), nullable(finished), exitCode, nullable(failure)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestShowPrintsInstructionAndNewestRunsWithResults(t *testing.T) {
+	s, slack, _, raw := newCollectService(t)
+	task := insertTaskRow(t, raw, taskRow{state: db.TaskCancelled, instruction: "Summarize #general every morning\nand DM me the result.", trigger: db.TriggerSchedule, schedule: `{"daily":"09:00","tz":"Europe/Berlin"}`})
+	other := insertTaskRow(t, raw, taskRow{state: db.TaskActive, instruction: "other", trigger: db.TriggerSchedule, schedule: `{"every_hours":6}`})
+	insertTaskRun(t, raw, "R1", task, db.RunDone, "2026-09-21T09:01:00Z", "2026-09-21T09:01:10Z", "2026-09-21T09:01:50Z", 0, "")
+	insertTaskRun(t, raw, "R2", task, db.RunDone, "2026-09-21T09:02:00Z", "2026-09-21T09:02:10Z", "2026-09-21T09:02:50Z", 1, "")
+	insertTaskRun(t, raw, "R3", task, db.RunQueued, "2026-09-21T09:03:00Z", "", "", -1, "")
+	insertTaskRun(t, raw, "R4", task, db.RunRunning, "2026-09-21T09:04:00Z", "2026-09-21T09:04:10Z", "", -1, "")
+	insertTaskRun(t, raw, "R5", task, db.RunFailed, "2026-09-21T09:05:00Z", "2026-09-21T09:05:10Z", "2026-09-21T09:05:50Z", -1, "timed out after 30m")
+	insertTaskRun(t, raw, "R6", task, db.RunDone, "2026-09-21T09:06:00Z", "2026-09-21T09:06:10Z", "2026-09-21T09:06:50Z", 0, "")
+	insertTaskRun(t, raw, "X1", other, db.RunDone, "2026-09-21T09:07:00Z", "2026-09-21T09:07:10Z", "2026-09-21T09:07:50Z", 0, "")
+	long := strings.Repeat("0123456789", 60)
+	for id, text := range map[string]string{"R6": "All quiet in #general.\n", "R2": long, "R1": "excluded: sixth newest", "X1": "excluded: other task"} {
+		dir := s.Paths.RunDir(id)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "result.md"), []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	want := strings.Join([]string{
+		"t1 · cancelled",
+		"Summarize #general every morning",
+		"and DM me the result.",
+		"2026-09-21T09:06:50Z · done · exit 0",
+		"All quiet in #general.",
+		"2026-09-21T09:05:50Z · failed · timed out after 30m",
+		"2026-09-21T09:04:10Z · running",
+		"2026-09-21T09:03:00Z · queued",
+		"2026-09-21T09:02:50Z · done · exit 1",
+		long[:500],
+	}, "\n")
+	if reply := verbReply(t, s, slack, "1700000000.001000", "!show t1"); reply != want {
+		t.Fatalf("!show answered:\n%s\nwant:\n%s", reply, want)
+	}
+	if reply := verbReply(t, s, slack, "1700000000.002000", "!show 2"); reply != "t2 · active\nother\n2026-09-21T09:07:50Z · done · exit 0\nexcluded: other task" {
+		t.Fatalf("!show 2 answered:\n%s", reply)
+	}
+}
+
+func TestPauseResumeCancelTransitions(t *testing.T) {
+	s, slack, clock, raw := newCollectService(t)
+	daily := insertTaskRow(t, raw, taskRow{state: db.TaskActive, instruction: "d", trigger: db.TriggerSchedule, schedule: `{"daily":"09:00","tz":"Europe/Berlin"}`, dueAt: "2026-09-22T07:00:00Z", failures: 2}, "C1")
+	passed := insertTaskRow(t, raw, taskRow{state: db.TaskPaused, instruction: "w", trigger: db.TriggerWindowEnd, schedule: `{"at":"2026-09-20T00:00:00Z"}`}, "C1")
+	each := insertTaskRow(t, raw, taskRow{state: db.TaskPaused, instruction: "e", trigger: db.TriggerEachMessage, debounce: sql.NullInt64{Int64: 60, Valid: true}, failures: 1}, "C1")
+	hourly := insertTaskRow(t, raw, taskRow{state: db.TaskPaused, instruction: "h", trigger: db.TriggerSchedule, schedule: `{"every_hours":6}`}, "C1")
+	completed := insertTaskRow(t, raw, taskRow{state: db.TaskCompleted, instruction: "c", trigger: db.TriggerSchedule, schedule: `{"every_hours":6}`})
+	ts := 0
+	reply := func(text string) string {
+		ts++
+		return verbReply(t, s, slack, fmt.Sprintf("1700000000.%06d", ts), text)
+	}
+	want := func(text, wantReply string) {
+		t.Helper()
+		if got := reply(text); got != wantReply {
+			t.Errorf("%q answered %q, want %q", text, got, wantReply)
+		}
+	}
+
+	want("!pause t1", "t1 paused")
+	wantTask(t, raw, daily, db.TaskPaused, "", "")
+	want("!pause 1", "t1 is paused")
+
+	want("!resume 1", "t1 resumed · next due 2026-09-22T09:00:00+02:00")
+	wantTask(t, raw, daily, db.TaskActive, "2026-09-22T07:00:00Z", "")
+	if _, _, _, failures := taskState(t, raw, daily); failures != 0 {
+		t.Errorf("resumed task has %d consecutive failures, want 0", failures)
+	}
+	want("!resume T1", "t1 is active")
+
+	want("!resume 2", "t2 resumed · window already passed")
+	wantTask(t, raw, passed, db.TaskActive, "", "")
+
+	want("!resume t3", "t3 resumed · waiting for messages")
+	wantTask(t, raw, each, db.TaskActive, "", "")
+	if _, _, _, failures := taskState(t, raw, each); failures != 0 {
+		t.Errorf("resumed each_message task has %d consecutive failures, want 0", failures)
+	}
+
+	want("!resume 4", "t4 resumed · next due 2026-09-21T16:00:00Z")
+	wantTask(t, raw, hourly, db.TaskActive, "2026-09-21T16:00:00Z", "")
+
+	clock.at = clock.at.Add(time.Minute)
+	want("!cancel t1", "t1 cancelled")
+	wantTask(t, raw, daily, db.TaskCancelled, "", "2026-09-21T10:01:00Z")
+	want("!cancel 1", "t1 is cancelled")
+	want("!resume 1", "t1 is cancelled")
+	want("!pause 1", "t1 is cancelled")
+
+	want("!pause 3", "t3 paused")
+	want("!cancel 3", "t3 cancelled")
+	wantTask(t, raw, each, db.TaskCancelled, "", "2026-09-21T10:01:00Z")
+
+	want("!pause 5", "t5 is completed")
+	want("!resume 5", "t5 is completed")
+	want("!cancel 5", "t5 is completed")
+	wantTask(t, raw, completed, db.TaskCompleted, "", "")
+}
+
+func TestTaskVerbsRejectUnknownAndMalformedIds(t *testing.T) {
+	s, slack, _, raw := newCollectService(t)
+	insertTaskRow(t, raw, taskRow{state: db.TaskCancelled, instruction: "gone", trigger: db.TriggerSchedule, schedule: `{"every_hours":6}`})
+	insertTaskRow(t, raw, taskRow{state: db.TaskActive, instruction: "a", trigger: db.TriggerSchedule, schedule: `{"every_hours":6}`})
+	insertTaskRow(t, raw, taskRow{state: db.TaskCompleted, instruction: "c", trigger: db.TriggerSchedule, schedule: `{"every_hours":6}`})
+	insertTaskRow(t, raw, taskRow{state: db.TaskPaused, instruction: "p", trigger: db.TriggerEachMessage, debounce: sql.NullInt64{Int64: 60, Valid: true}})
+	const unknown = "unknown id, known: t2 t4"
+	for i, text := range []string{"!show", "!show 9", "!show t9", "!show 0", "!show -1", "!show t", "!show x2", "!show 2a", "!pause 9", "!resume t9", "!cancel 9"} {
+		ts := "1700000000.00" + string(rune('a'+i)) + "000"
+		if reply := verbReply(t, s, slack, ts, text); reply != unknown {
+			t.Errorf("%q answered %q, want %q", text, reply, unknown)
+		}
+	}
+	// A cancelled row is known to !show; the verbs that transition it name
+	// its state instead of calling it unknown.
+	if reply := verbReply(t, s, slack, "1700000000.100000", "!show 1"); reply != "t1 · cancelled\ngone" {
+		t.Errorf("!show on a cancelled task answered %q", reply)
+	}
+	if reply := verbReply(t, s, slack, "1700000000.200000", "!cancel 1"); reply != "t1 is cancelled" {
+		t.Errorf("!cancel on a cancelled task answered %q", reply)
 	}
 }

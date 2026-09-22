@@ -9,10 +9,11 @@ import (
 
 // Files the runner and the agent exchange inside one run directory.
 const (
-	resultFile = "result.md"
-	stdoutFile = "stdout.log"
-	stderrFile = "stderr.log"
-	metaFile   = "meta.json"
+	resultFile   = "result.md"
+	proposalFile = "proposal.json"
+	stdoutFile   = "stdout.log"
+	stderrFile   = "stderr.log"
+	metaFile     = "meta.json"
 )
 
 // Create makes dir and its parents and forces mode 0700, so a wider umask or
