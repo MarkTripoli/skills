@@ -16,6 +16,8 @@ function fixture(t, indexed) {
   const skillsDir = path.join(cwd, 'skills');
   fs.mkdirSync(path.join(skillsDir, 'create-research'), { recursive: true });
   fs.writeFileSync(path.join(skillsDir, 'create-research', 'SKILL.md'), '# create-research\n');
+  fs.mkdirSync(path.join(skillsDir, 'route-model'), { recursive: true });
+  fs.copyFileSync(path.resolve('skills/delivery/route-model/route-model.mjs'), path.join(skillsDir, 'route-model', 'route-model.mjs'));
   fs.mkdirSync(taskDir);
   fs.writeFileSync(path.join(taskDir, 'task.md'), 'Research indexed stages.\n');
   if (indexed) initTaskArtifacts(taskDir);
