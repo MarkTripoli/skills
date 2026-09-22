@@ -640,7 +640,7 @@ The command reads `cmd.InOrStdin()` so tests inject the answer. The prompt needs
 
 #### Automated Verification:
 
-- [ ] `cd tools/slack-coordinator && go test -race ./internal/coordinator/... ./internal/cli/...`
+- [x] `cd tools/slack-coordinator && go test -race ./internal/coordinator/... ./internal/cli/...`
 
 human-gated: false
 
