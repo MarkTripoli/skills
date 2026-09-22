@@ -3,8 +3,11 @@ package assistant
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/agent"
@@ -18,17 +21,19 @@ const maxAnswerRunes = 4000
 // doneAck replaces the ack when the answer is too long to be the ack itself.
 const doneAck = "Done"
 
-// deliver records out for the dm run and answers the owner. A clean exit
-// with a result edits the ack into the answer (or, past maxAnswerRunes, sets
-// the ack to doneAck and posts the answer in the thread), records the bot
-// row, and finishes the run done. Any other outcome finishes the run failed
-// with the reason and makes no Slack call. Slack is called first and the
-// database written after; no transaction spans a Slack call.
+// deliver records out for run and routes to the kind-specific handler.
 func (s *Service) deliver(ctx context.Context, run db.AssistantRun, out agent.RunOutcome) {
 	if out.ResultSource == "stdout" {
 		slog.Info(fmt.Sprintf("run %s: result.md missing, answered from stdout", run.RunID))
 	}
-	if err := s.deliverDM(ctx, run, out); err != nil {
+	var err error
+	switch run.Kind {
+	case db.RunKindTask:
+		err = s.deliverTask(ctx, run, out)
+	default:
+		err = s.deliverDM(ctx, run, out)
+	}
+	if err != nil {
 		slog.Error("run not delivered", "run", run.RunID, "error", err)
 	}
 }
@@ -85,6 +90,154 @@ func (s *Service) answer(ctx context.Context, req db.DMRequest, result string) (
 	}
 	return s.Slack.PostMessage(ctx, req.ChannelID, req.RootTS, result)
 }
+
+// deliverTo is the decoded tasks.deliver_to JSON.
+type deliverTo struct {
+	DM        bool   `json:"dm"`
+	ChannelID string `json:"channel_id"`
+	ThreadTS  string `json:"thread_ts"`
+}
+
+// deliverTask handles delivery for kind=task runs. On success it posts the
+// header and result to the task's target and updates the task row. On failure
+// it unbinds the run's messages, increments consecutive_failures, and advances
+// due_at for schedule tasks.
+func (s *Service) deliverTask(ctx context.Context, run db.AssistantRun, out agent.RunOutcome) error {
+	writeCtx := context.WithoutCancel(ctx)
+	now := stamp(s.Now())
+
+	task, err := s.DB.GetTask(writeCtx, run.TaskID.Int64)
+	if err != nil {
+		return s.DB.FinishAssistantRun(writeCtx, run.RunID, db.RunFailed, -1, false, out.ResultSource, "deliver: "+err.Error(), now)
+	}
+
+	if out.ExitCode != 0 || out.TimedOut || out.Result == "" {
+		failure := s.failureText(out)
+		if ctx.Err() != nil && out.TimedOut {
+			failure = "daemon shutdown"
+		}
+		if err := s.DB.FinishAssistantRun(writeCtx, run.RunID, db.RunFailed, out.ExitCode, out.TimedOut, out.ResultSource, failure, now); err != nil {
+			return err
+		}
+		if err := s.DB.UnbindRunMessages(writeCtx, run.RunID); err != nil {
+			return err
+		}
+		return s.DB.RecordTaskFailure(writeCtx, task.TaskID, s.taskNextDue(task, now))
+	}
+
+	// Count bound messages for the header.
+	msgs, err := s.DB.MessagesForRun(writeCtx, run.RunID)
+	if err != nil {
+		return s.DB.FinishAssistantRun(writeCtx, run.RunID, db.RunFailed, 0, false, out.ResultSource, "deliver: "+err.Error(), now)
+	}
+
+	// Build channel name list for the header.
+	channels, _ := s.DB.TaskChannels(writeCtx, task.TaskID)
+	names := make([]string, 0, len(channels))
+	for _, ch := range channels {
+		names = append(names, s.channelName(ctx, ch))
+	}
+	header := fmt.Sprintf("t%d · %s · %d new items", task.TaskID, strings.Join(names, ", "), len(msgs))
+
+	// Resolve the delivery target.
+	var target deliverTo
+	if err := json.Unmarshal([]byte(task.DeliverTo), &target); err != nil {
+		return s.DB.FinishAssistantRun(writeCtx, run.RunID, db.RunFailed, 0, false, out.ResultSource, "deliver: bad deliver_to: "+err.Error(), now)
+	}
+
+	var channelID, threadTS string
+	if target.DM {
+		if s.ownerDM == "" {
+			dm, err := s.Slack.OpenConversation(ctx, s.Owner)
+			if err != nil {
+				return s.DB.FinishAssistantRun(writeCtx, run.RunID, db.RunFailed, 0, false, out.ResultSource, "deliver: open dm: "+err.Error(), now)
+			}
+			s.ownerDM = dm
+		}
+		channelID = s.ownerDM
+		threadTS = ""
+	} else {
+		channelID = target.ChannelID
+		threadTS = target.ThreadTS
+	}
+
+	// Post header + result, chunking at maxAnswerRunes.
+	chunks := chunkResult(header, out.Result)
+	for _, chunk := range chunks {
+		if _, err := s.Slack.PostMessage(ctx, channelID, threadTS, chunk); err != nil {
+			return s.DB.FinishAssistantRun(writeCtx, run.RunID, db.RunFailed, 0, false, out.ResultSource, "deliver: post: "+err.Error(), now)
+		}
+	}
+
+	if err := s.DB.FinishAssistantRun(writeCtx, run.RunID, db.RunDone, 0, false, out.ResultSource, "", now); err != nil {
+		return err
+	}
+	var nextDue, endedAt *string
+	if task.Trigger == db.TriggerSchedule {
+		nd := s.taskNextDueStr(task, now)
+		nextDue = nd
+	} else {
+		endedAt = &now
+	}
+	return s.DB.RecordTaskSuccess(writeCtx, task.TaskID, nextDue, endedAt, now)
+}
+
+// taskNextDue returns the next due time for task as a *string for schedule
+// tasks, or nil for window_end tasks.
+func (s *Service) taskNextDue(task db.Task, now string) *string {
+	if task.Trigger != db.TriggerSchedule || !task.Schedule.Valid {
+		return nil
+	}
+	return s.taskNextDueStr(task, now)
+}
+
+// taskNextDueStr computes NextDue for task and returns a *string pointer.
+// A schedule that fails to parse or produces a zero time returns nil.
+func (s *Service) taskNextDueStr(task db.Task, now string) *string {
+	t, err := time.Parse(time.RFC3339, now)
+	if err != nil {
+		return nil
+	}
+	next, err := NextDue(task.Schedule.String, t)
+	if err != nil || next.IsZero() {
+		return nil
+	}
+	v := stamp(next)
+	return &v
+}
+
+// chunkResult splits header+"\n"+result into consecutive chunks of at most
+// maxAnswerRunes runes; the header appears only in the first chunk.
+func chunkResult(header, result string) []string {
+	full := header + "\n" + result
+	if utf8.RuneCountInString(full) <= maxAnswerRunes {
+		return []string{full}
+	}
+	runes := []rune(result)
+	headerRunes := utf8.RuneCountInString(header) + 1 // +1 for "\n"
+	var chunks []string
+	firstCap := maxAnswerRunes - headerRunes
+	if firstCap > 0 && len(runes) > 0 {
+		end := firstCap
+		if end > len(runes) {
+			end = len(runes)
+		}
+		chunks = append(chunks, header+"\n"+string(runes[:end]))
+		runes = runes[end:]
+	} else {
+		chunks = append(chunks, header)
+	}
+	for len(runes) > 0 {
+		end := maxAnswerRunes
+		if end > len(runes) {
+			end = len(runes)
+		}
+		chunks = append(chunks, string(runes[:end]))
+		runes = runes[end:]
+	}
+	return chunks
+}
+
 
 // failureText names why out is not an answer.
 func (s *Service) failureText(out agent.RunOutcome) string {
