@@ -7,6 +7,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/slack-go/slack"
+
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/coordinator"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
@@ -20,6 +22,9 @@ type SlackSurface interface {
 	UpdateMessage(ctx context.Context, channelID, ts, text string) (string, error)
 	AddReaction(ctx context.Context, channelID, ts, name string) error
 	Permalink(ctx context.Context, channelID, ts string) (string, error)
+	// ConversationInfo is conversations.info for one channel ID; `!tasks`
+	// names watched channels through it.
+	ConversationInfo(ctx context.Context, id string) (*slack.Channel, error)
 }
 
 // Service routes inbound Slack messages for one daemon.
@@ -39,6 +44,8 @@ type Service struct {
 	started time.Time
 	// verbs maps a lowercased `!` command to its handler; see verbs.go.
 	verbs map[string]verb
+	// channelNames caches conversations.info names by channel id for `!tasks`.
+	channelNames map[string]string
 	// wake receives one signal when inbound work is queued for the runner.
 	wake chan struct{}
 }
@@ -47,7 +54,7 @@ type Service struct {
 // coord, whose files live under p, whose DM requests run on agent (nil when
 // none is configured), and whose clock is now.
 func New(database *db.DB, slack SlackSurface, coord *coordinator.Coordinator, p *paths.Paths, owner string, agent *config.Agent, now func() time.Time) *Service {
-	s := &Service{DB: database, Slack: slack, Coord: coord, Paths: p, Owner: owner, Agent: agent, Now: now, started: now(), wake: make(chan struct{}, 1)}
+	s := &Service{DB: database, Slack: slack, Coord: coord, Paths: p, Owner: owner, Agent: agent, Now: now, started: now(), channelNames: map[string]string{}, wake: make(chan struct{}, 1)}
 	s.verbs = s.verbTable()
 	return s
 }
@@ -64,6 +71,22 @@ func (s *Service) signalWake() {
 	case s.wake <- struct{}{}:
 	default:
 	}
+}
+
+// channelName is the `#name` of channel id, looked up once through
+// conversations.info and cached; a lookup that fails answers the bare id and
+// is retried next time.
+func (s *Service) channelName(ctx context.Context, id string) string {
+	if name, ok := s.channelNames[id]; ok {
+		return name
+	}
+	ch, err := s.Slack.ConversationInfo(ctx, id)
+	if err != nil || ch.Name == "" {
+		return id
+	}
+	name := "#" + ch.Name
+	s.channelNames[id] = name
+	return name
 }
 
 // stamp formats t as the RFC 3339 UTC string every timestamp column holds.
