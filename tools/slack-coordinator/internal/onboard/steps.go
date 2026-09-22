@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/manifest"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/slackapi"
 )
@@ -16,8 +18,10 @@ type ManifestAPI interface {
 	ManifestCreate(ctx context.Context, configToken, manifest string) (slackapi.ManifestResult, error)
 }
 
-// Deps are the terminal, browser, and Slack the steps talk to. Tests script
-// them; the CLI binds stdin, stdout, the platform opener, and slackapi.
+// Deps are the terminal, browser, Slack, config file, and daemon the steps
+// talk to. Tests script them; the CLI binds stdin, stdout, the platform
+// opener, slackapi, config.yaml, and the service and daemon commands. The
+// Slack calls take the token they authorize with, so a fake can assert it.
 type Deps struct {
 	// Prompt asks one question and returns the answer without its newline.
 	Prompt func(label string) (string, error)
@@ -27,12 +31,28 @@ type Deps struct {
 	OpenURL func(url string) error
 	Slack   ManifestAPI
 	Out     io.Writer
+	// LookupUserByEmail is users.lookupByEmail with the bot token.
+	LookupUserByEmail func(ctx context.Context, botToken, email string) (slackapi.User, error)
+	// UserInfo is users.info with the bot token.
+	UserInfo func(ctx context.Context, botToken, id string) (slackapi.User, error)
+	// AuthTest is auth.test with the bot token.
+	AuthTest func(ctx context.Context, botToken string) error
+	// ProbeSocketMode is apps.connections.open with the app-level token.
+	ProbeSocketMode func(ctx context.Context, appToken string) error
+	// LoadConfig returns the existing config.yaml unvalidated, nil when absent.
+	LoadConfig func() (*config.Config, error)
+	// SaveConfig writes config.yaml readable by the owner only.
+	SaveConfig func(*config.Config) error
+	// InstallService writes and activates the launchd or systemd user service.
+	InstallService func() error
+	// StartDaemon starts the daemon detached, as daemon start does.
+	StartDaemon func() error
 }
 
-// Flags are the onboard command's flags. Neither changes steps 1 to 4;
-// later steps read them.
+// Flags are the onboard command's flags. Steps 1 to 5 ignore them; step 6
+// reads NoService.
 type Flags struct {
-	// NoService starts the daemon in the foreground instead of installing a service.
+	// NoService starts the daemon detached instead of installing a service.
 	NoService bool
 	// Existing updates an installed app's manifest instead of creating one.
 	Existing bool
@@ -71,6 +91,8 @@ var steps = []step{
 	{name: "create app", run: createApp, needsToken: true},
 	{name: "install app", run: installApp},
 	{name: "app-level token", run: appLevelToken},
+	{name: "owner", run: resolveOwner},
+	{name: "write config and start", run: writeConfigAndStart},
 }
 
 const tokenStep = 1
@@ -190,6 +212,102 @@ func appLevelToken(_ context.Context, st *state) error {
 		return err
 	}
 	st.cp.AppToken = token
+	return nil
+}
+
+// userIDPattern is the shape of a Slack user id: U or W followed by
+// uppercase letters and digits.
+var userIDPattern = regexp.MustCompile(`^[UW][A-Z0-9]+$`)
+
+// errNoSuchUser is an answer that names nobody in the workspace: a malformed
+// id, or Slack's users_not_found (lookupByEmail) or user_not_found (info).
+var errNoSuchUser = errors.New("no such user")
+
+// resolveOwner asks for the owner by email or user id until Slack resolves
+// one and the user confirms it, then records the id and display name.
+func resolveOwner(ctx context.Context, st *state) error {
+	for {
+		answer, err := st.deps.Prompt("Owner email or Slack user id")
+		if err != nil {
+			return err
+		}
+		user, err := lookupUser(ctx, st, strings.TrimSpace(answer))
+		if errors.Is(err, errNoSuchUser) {
+			fmt.Fprintln(st.deps.Out, "No such user in this workspace.")
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		confirm, err := st.deps.Prompt(fmt.Sprintf("Owner: %s (%s). Correct? [Y/n]", user.DisplayName, user.ID))
+		if err != nil {
+			return err
+		}
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(confirm)), "n") {
+			continue
+		}
+		st.cp.OwnerUserID, st.cp.OwnerDisplayName = user.ID, user.DisplayName
+		return nil
+	}
+}
+
+// lookupUser resolves answer with the bot token: an address containing @ goes
+// to users.lookupByEmail, a well-formed id to users.info.
+func lookupUser(ctx context.Context, st *state, answer string) (slackapi.User, error) {
+	var user slackapi.User
+	var err error
+	switch {
+	case strings.Contains(answer, "@"):
+		user, err = st.deps.LookupUserByEmail(ctx, st.cp.BotToken, answer)
+	case userIDPattern.MatchString(answer):
+		user, err = st.deps.UserInfo(ctx, st.cp.BotToken, answer)
+	default:
+		return slackapi.User{}, errNoSuchUser
+	}
+	if err != nil && (strings.HasSuffix(err.Error(), "users_not_found") || strings.HasSuffix(err.Error(), "user_not_found")) {
+		return slackapi.User{}, errNoSuchUser
+	}
+	return user, err
+}
+
+// writeConfigAndStart checks both tokens against Slack, writes config.yaml
+// with the collected slack keys over any existing file (its agent, retention,
+// and jira blocks survive), then installs the user service or, with
+// --no-service, starts the daemon detached.
+func writeConfigAndStart(ctx context.Context, st *state) error {
+	d := st.deps
+	if err := d.AuthTest(ctx, st.cp.BotToken); err != nil {
+		return fmt.Errorf("bot token rejected by auth.test: %w", err)
+	}
+	if err := d.ProbeSocketMode(ctx, st.cp.AppToken); err != nil {
+		return fmt.Errorf("app token cannot open Socket Mode: %w", err)
+	}
+	cfg, err := d.LoadConfig()
+	if err != nil {
+		return err
+	}
+	if cfg == nil {
+		cfg = &config.Config{}
+	}
+	cfg.Slack.BotToken, cfg.Slack.AppToken, cfg.Slack.OwnerUserID = st.cp.BotToken, st.cp.AppToken, st.cp.OwnerUserID
+	cfg.ApplyDefaults()
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	if err := d.SaveConfig(cfg); err != nil {
+		return err
+	}
+	if st.flags.NoService {
+		if err := d.StartDaemon(); err != nil {
+			return err
+		}
+		fmt.Fprintln(d.Out, "The daemon runs until you log out or reboot; run slack-coordinator service install to keep it running.")
+		return nil
+	}
+	if err := d.InstallService(); err != nil {
+		return err
+	}
+	st.cp.ServiceInstalled = true
 	return nil
 }
 

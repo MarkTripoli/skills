@@ -3,6 +3,7 @@ package assistant
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -11,6 +12,10 @@ import (
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/coordinator"
 )
+
+// refusalText answers the first DM from anyone but the owner; %s is the
+// owner's Slack user id.
+const refusalText = "This assistant only takes instructions from its owner, <@%s>."
 
 // ConsumeInbound reads Socket Mode envelopes until events closes or ctx ends.
 // Every envelope carrying a Request is acked first; a nil ack drops the acks
@@ -81,13 +86,14 @@ func userMessage(evt socketmode.Event) *slackevents.MessageEvent {
 	return msg
 }
 
-// routeDM handles a message in a direct-message channel. Only the owner is
-// heard: a top-level DM starting with `!` is answered by its verb, any other
-// top-level DM opens a request, and a reply under a request root is recorded
-// as a follow-up. Every other DM, including a `!` reply in a thread, is dropped.
+// routeDM handles a message in a direct-message channel. A sender other than
+// the owner is refused once (see refuse). From the owner, a top-level DM
+// starting with `!` is answered by its verb, any other top-level DM opens a
+// request, and a reply under a request root is recorded as a follow-up. Every
+// other DM, including a `!` reply in a thread, is dropped.
 func (s *Service) routeDM(ctx context.Context, msg *slackevents.MessageEvent) error {
 	if msg.User != s.Owner {
-		return nil
+		return s.refuse(ctx, msg)
 	}
 	text := strings.TrimSpace(msg.Text)
 	switch {
@@ -101,6 +107,21 @@ func (s *Service) routeDM(ctx context.Context, msg *slackevents.MessageEvent) er
 	default:
 		return s.followUp(ctx, msg)
 	}
+}
+
+// refuse answers a DM from anyone but the owner: the sender's first DM stores
+// a refused_users row and posts the refusal at the top level of that DM; every
+// later DM from a stored sender is dropped without a post. A failed post is
+// logged and keeps the row, so the sender is never told twice.
+func (s *Service) refuse(ctx context.Context, msg *slackevents.MessageEvent) error {
+	inserted, err := s.DB.InsertRefusedUser(ctx, msg.User, stamp(s.Now()))
+	if err != nil || !inserted {
+		return err
+	}
+	if _, err := s.Slack.PostMessage(ctx, msg.Channel, "", fmt.Sprintf(refusalText, s.Owner)); err != nil {
+		slog.Error("refusal not posted", "user", msg.User, "channel", msg.Channel, "error", err)
+	}
+	return nil
 }
 
 // collect records a public or private channel message for the tasks watching

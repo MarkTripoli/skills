@@ -52,6 +52,22 @@ func TestLoadMissingFileNamesSetup(t *testing.T) {
 	}
 }
 
+// Read hands a partial file back as written: no defaults, no validation, so
+// onboard can rewrite only the slack keys of a file Load would reject.
+func TestReadKeepsPartialFilesAndReportsAbsence(t *testing.T) {
+	cfg, err := Read(filepath.Join(t.TempDir(), "config.yaml"))
+	if err != nil || cfg != nil {
+		t.Fatalf("Read(absent) = %+v, %v; want nil, nil", cfg, err)
+	}
+	cfg, err = Read(writeConfig(t, "agent:\n  command: omp\n"))
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if cfg.Agent == nil || cfg.Agent.Command != "omp" || cfg.Agent.Approval != "" || cfg.Retention.Days != 0 || cfg.Slack != (Slack{}) {
+		t.Fatalf("Read = %+v; want the agent block alone, no defaults", cfg)
+	}
+}
+
 func TestValidateRejectsMissingAppToken(t *testing.T) {
 	cfg := &Config{Slack: Slack{BotToken: "xoxb-1", OwnerUserID: "U123"}}
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "app_token") {

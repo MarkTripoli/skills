@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -48,6 +49,17 @@ func health() error {
 }
 
 func startDaemon(cmd *cobra.Command, _ []string) error {
+	interval, err := cmd.Flags().GetDuration(statusIntervalFlag)
+	if err != nil {
+		return err
+	}
+	return startDetachedDaemon(cmd.OutOrStdout(), interval)
+}
+
+// startDetachedDaemon re-execs this binary as `daemon serve` with its output
+// in the daemon log, records the pid, and waits for the health call to
+// answer. daemon start and onboard --no-service share it.
+func startDetachedDaemon(out io.Writer, interval time.Duration) error {
 	p, err := home()
 	if err != nil {
 		return err
@@ -59,7 +71,7 @@ func startDaemon(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if health() == nil {
-		fmt.Fprintln(cmd.OutOrStdout(), "daemon already running")
+		fmt.Fprintln(out, "daemon already running")
 		return nil
 	}
 	exe, err := os.Executable()
@@ -71,10 +83,6 @@ func startDaemon(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	defer logFile.Close()
-	interval, err := cmd.Flags().GetDuration(statusIntervalFlag)
-	if err != nil {
-		return err
-	}
 	child := exec.Command(exe, "daemon", "serve", "--"+statusIntervalFlag, interval.String())
 	child.Stdout = logFile
 	child.Stderr = logFile
@@ -86,7 +94,7 @@ func startDaemon(cmd *cobra.Command, _ []string) error {
 		_ = child.Process.Kill()
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "daemon started (%d)\n", child.Process.Pid)
+	fmt.Fprintf(out, "daemon started (%d)\n", child.Process.Pid)
 	if err := waitForDaemon(5 * time.Second); err != nil {
 		_ = child.Process.Kill()
 		_ = os.Remove(p.PIDFile())
