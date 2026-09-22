@@ -14,6 +14,7 @@ import (
 
 	"github.com/slack-go/slack/socketmode"
 
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/assistant"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/coordinator"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
@@ -161,12 +162,13 @@ func Serve(ctx context.Context, p *paths.Paths, cfg *config.Config, opts Options
 			return err
 		}
 	}
+	svc := assistant.New(rt.DB, rt.Slack, coord, cfg.Slack.OwnerUserID, time.Now)
 	health := func() ipc.HealthResult { return ipc.HealthResult{SocketMode: socketHealth()} }
 	coordinator.Register(rt.Server, coord, health, cancel)
 
 	var background sync.WaitGroup
 	background.Go(func() { (&coordinator.StatusScheduler{C: coord}).Run(ctx, period) })
-	background.Go(func() { coord.ConsumeInbound(ctx, inbound, acker) })
+	background.Go(func() { svc.ConsumeInbound(ctx, inbound, acker) })
 	if socket != nil {
 		background.Go(func() {
 			if err := socket.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
