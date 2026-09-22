@@ -45,8 +45,9 @@ var testChannels = []fakeChannel{
 }
 
 type fakeSlack struct {
-	mu    sync.Mutex
-	posts []url.Values
+	mu      sync.Mutex
+	posts   []url.Values
+	updates []url.Values
 	// failPosts makes chat.postMessage answer 500 until cleared.
 	failPosts atomic.Bool
 	// requests counts every Web API call, whatever the method.
@@ -66,6 +67,19 @@ func (f *fakeSlack) post(i int) url.Values {
 	return f.posts[i]
 }
 
+func (f *fakeSlack) updateCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.updates)
+}
+
+// update returns the i-th recorded chat.update form.
+func (f *fakeSlack) update(i int) url.Values {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.updates[i]
+}
+
 func newFakeSlack(t *testing.T) (*fakeSlack, string) {
 	f := &fakeSlack{}
 	mux := http.NewServeMux()
@@ -79,6 +93,16 @@ func newFakeSlack(t *testing.T) (*fakeSlack, string) {
 		f.posts = append(f.posts, r.PostForm)
 		f.mu.Unlock()
 		_, _ = w.Write([]byte(`{"ok":true,"channel":"` + r.PostForm.Get("channel") + `","ts":"1700000000.000100"}`))
+	})
+	mux.HandleFunc("/chat.update", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		f.mu.Lock()
+		f.updates = append(f.updates, r.PostForm)
+		f.mu.Unlock()
+		_, _ = w.Write([]byte(`{"ok":true,"channel":"` + r.PostForm.Get("channel") + `","ts":"` + r.PostForm.Get("ts") + `","text":"edited"}`))
+	})
+	mux.HandleFunc("/reactions.add", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
 	mux.HandleFunc("/chat.getPermalink", func(w http.ResponseWriter, r *http.Request) {
 		ch := r.URL.Query().Get("channel")

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,19 +19,27 @@ import (
 
 // fakeSlack records every call. PostMessage answers with fixedTS when set (so
 // every run root shares one thread) and otherwise with a fresh ts per post;
-// postErr, when set, is returned after the attempt is recorded.
+// postErr, when set, is returned after the attempt is recorded. The mutex
+// covers calls from delivery goroutines; a test reads the slices after the
+// goroutines it started have finished.
 type fakeSlack struct {
+	mu        sync.Mutex
 	fixedTS   string
 	postErr   error
 	posts     []slackPost
+	updates   []slackUpdate
 	reactions []slackReaction
 }
 
 type slackPost struct{ channel, thread, text string }
 
+type slackUpdate struct{ channel, ts, text string }
+
 type slackReaction struct{ channel, ts, name string }
 
 func (f *fakeSlack) PostMessage(_ context.Context, channelID, threadTS, text string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.posts = append(f.posts, slackPost{channelID, threadTS, text})
 	if f.postErr != nil {
 		return "", f.postErr
@@ -41,9 +50,16 @@ func (f *fakeSlack) PostMessage(_ context.Context, channelID, threadTS, text str
 	return fmt.Sprintf("1700000000.%06d", 900000+len(f.posts)), nil
 }
 
-func (f *fakeSlack) UpdateMessage(_ context.Context, _, ts, _ string) (string, error) { return ts, nil }
+func (f *fakeSlack) UpdateMessage(_ context.Context, channelID, ts, text string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.updates = append(f.updates, slackUpdate{channelID, ts, text})
+	return ts, nil
+}
 
 func (f *fakeSlack) AddReaction(_ context.Context, channelID, ts, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.reactions = append(f.reactions, slackReaction{channelID, ts, name})
 	return nil
 }

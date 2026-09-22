@@ -94,6 +94,20 @@ VALUES (?, ?, ?, ?, ?)`, m.RootTS, m.TS, m.Author, m.Text, m.RunID); err != nil 
 	return nil
 }
 
+// UpsertDMMessage stores one thread message, replacing the author, text, and
+// run_id of a (root_ts, ts) already stored: the row of an ack whose Slack
+// message was edited into the answer.
+func (d *DB) UpsertDMMessage(ctx context.Context, m DMMessage) error {
+	if _, err := d.sql.ExecContext(ctx, `
+INSERT INTO dm_messages (`+dmMessageColumns+`)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT (root_ts, ts) DO UPDATE SET author = excluded.author, text = excluded.text, run_id = excluded.run_id`,
+		m.RootTS, m.TS, m.Author, m.Text, m.RunID); err != nil {
+		return fmt.Errorf("upsert dm message %s/%s: %w", m.RootTS, m.TS, err)
+	}
+	return nil
+}
+
 // ListDMMessages returns the messages under rootTS in ts order.
 func (d *DB) ListDMMessages(ctx context.Context, rootTS string) ([]DMMessage, error) {
 	rows, err := d.sql.QueryContext(ctx, `

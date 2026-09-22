@@ -5,8 +5,10 @@ package assistant
 
 import (
 	"context"
+	"sync"
 	"time"
 
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/agent"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/coordinator"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
@@ -34,13 +36,19 @@ type Service struct {
 	// Agent is the configured coding agent; nil when config.yaml has no agent,
 	// in which case DM requests are refused with a pointer to the setting.
 	Agent *config.Agent
-	Now   func() time.Time
+	// Runner spawns the agent process for each queued run; nil (no agent
+	// configured) leaves queued rows waiting.
+	Runner agent.Runner
+	Now    func() time.Time
 	// started is when the Service was constructed; `!status` reports uptime from it.
 	started time.Time
 	// verbs maps a lowercased `!` command to its handler; see verbs.go.
 	verbs map[string]verb
 	// wake receives one signal when inbound work is queued for the runner.
 	wake chan struct{}
+	// inflight counts the deliveries waiting on a running agent; RunDispatcher
+	// waits for them before returning.
+	inflight sync.WaitGroup
 }
 
 // New returns a Service over database and slack whose run-thread replies go to

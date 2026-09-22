@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -20,8 +21,9 @@ const (
 	RunFailed  = "failed"
 )
 
-// AssistantRun is the queued form of one assistant_runs row: the columns set
-// when a request or task is queued. The runner fills the rest as it executes.
+// AssistantRun is one assistant_runs row. Insert stores the queued columns
+// (RunID through QueuedAt); the dispatcher fills the rest as the run starts
+// and finishes, so they are NULL on a queued row.
 type AssistantRun struct {
 	RunID    string
 	Kind     string
@@ -29,6 +31,26 @@ type AssistantRun struct {
 	TaskID   sql.NullInt64  // task runs: the task
 	State    string
 	QueuedAt string
+
+	StartedAt    sql.NullString
+	FinishedAt   sql.NullString
+	PID          sql.NullInt64
+	PGID         sql.NullInt64
+	DaemonPID    sql.NullInt64
+	ExitCode     sql.NullInt64
+	TimedOut     bool
+	ResultSource sql.NullString
+	Failure      sql.NullString
+}
+
+const assistantRunColumns = `run_id, kind, root_ts, task_id, state, queued_at,
+started_at, finished_at, pid, pgid, daemon_pid, exit_code, timed_out, result_source, failure`
+
+func scanAssistantRun(row interface{ Scan(dest ...any) error }) (AssistantRun, error) {
+	var r AssistantRun
+	err := row.Scan(&r.RunID, &r.Kind, &r.RootTS, &r.TaskID, &r.State, &r.QueuedAt,
+		&r.StartedAt, &r.FinishedAt, &r.PID, &r.PGID, &r.DaemonPID, &r.ExitCode, &r.TimedOut, &r.ResultSource, &r.Failure)
+	return r, err
 }
 
 // InsertAssistantRun queues a new run; a duplicate run_id fails.
@@ -69,3 +91,59 @@ SELECT COUNT(*) FROM assistant_runs WHERE state = 'queued' AND queued_at < ?`, q
 	}
 	return n, nil
 }
+
+// GetAssistantRun returns the run with runID, if any.
+func (d *DB) GetAssistantRun(ctx context.Context, runID string) (AssistantRun, bool, error) {
+	r, err := scanAssistantRun(d.sql.QueryRowContext(ctx, `
+SELECT `+assistantRunColumns+` FROM assistant_runs WHERE run_id = ?`, runID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return AssistantRun{}, false, nil
+	}
+	if err != nil {
+		return AssistantRun{}, false, fmt.Errorf("get assistant run %s: %w", runID, err)
+	}
+	return r, true, nil
+}
+
+// OldestQueued returns the queued run with the earliest queued_at, if any;
+// runs queued at the same instant order by run_id, which ULIDs make the
+// insertion order.
+func (d *DB) OldestQueued(ctx context.Context) (AssistantRun, bool, error) {
+	r, err := scanAssistantRun(d.sql.QueryRowContext(ctx, `
+SELECT `+assistantRunColumns+` FROM assistant_runs
+WHERE state = 'queued' ORDER BY queued_at, run_id LIMIT 1`))
+	if errors.Is(err, sql.ErrNoRows) {
+		return AssistantRun{}, false, nil
+	}
+	if err != nil {
+		return AssistantRun{}, false, fmt.Errorf("oldest queued run: %w", err)
+	}
+	return r, true, nil
+}
+
+// MarkRunning moves runID to running under the agent process pid in group
+// pgid, spawned by the daemon daemonPID at startedAt.
+func (d *DB) MarkRunning(ctx context.Context, runID string, pid, pgid, daemonPID int, startedAt string) error {
+	if _, err := d.sql.ExecContext(ctx, `
+UPDATE assistant_runs SET state = 'running', pid = ?, pgid = ?, daemon_pid = ?, started_at = ?
+WHERE run_id = ?`, pid, pgid, daemonPID, startedAt, runID); err != nil {
+		return fmt.Errorf("mark run %s running: %w", runID, err)
+	}
+	return nil
+}
+
+// FinishAssistantRun moves runID to state (done or failed) at finishedAt with the
+// process outcome: exitCode (-1 when no process exited), timedOut, where the
+// result came from, and the failure text; empty resultSource and failure
+// store NULL.
+func (d *DB) FinishAssistantRun(ctx context.Context, runID, state string, exitCode int, timedOut bool, resultSource, failure, finishedAt string) error {
+	if _, err := d.sql.ExecContext(ctx, `
+UPDATE assistant_runs SET state = ?, exit_code = ?, timed_out = ?, result_source = ?, failure = ?, finished_at = ?
+WHERE run_id = ?`, state, exitCode, timedOut, nullString(resultSource), nullString(failure), finishedAt, runID); err != nil {
+		return fmt.Errorf("finish run %s as %s: %w", runID, state, err)
+	}
+	return nil
+}
+
+// nullString is s as a NULL-when-empty column value.
+func nullString(s string) sql.NullString { return sql.NullString{String: s, Valid: s != ""} }
