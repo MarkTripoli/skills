@@ -249,3 +249,46 @@ WHERE task_id = ?`, nextDue, taskID); err != nil {
 	}
 	return nil
 }
+
+// DueEachMessageTasks returns active each_message tasks whose due_at is at or
+// before now, whose last_run_started_at is at or before floor (or NULL), which
+// have no queued or running run, and which have at least one unconsumed
+// task_messages row.
+func (d *DB) DueEachMessageTasks(ctx context.Context, now, floor string) ([]Task, error) {
+	rows, err := d.sql.QueryContext(ctx, `
+SELECT `+taskColumns+` FROM tasks
+WHERE state = 'active'
+  AND trigger = 'each_message'
+  AND due_at IS NOT NULL AND due_at <= ?
+  AND (last_run_started_at IS NULL OR last_run_started_at <= ?)
+  AND task_id NOT IN (
+    SELECT task_id FROM assistant_runs
+    WHERE state IN ('queued','running') AND task_id IS NOT NULL
+  )
+  AND task_id IN (
+    SELECT task_id FROM task_messages WHERE run_id IS NULL
+  )
+ORDER BY task_id`, now, floor)
+	if err != nil {
+		return nil, fmt.Errorf("due each_message tasks: %w", err)
+	}
+	defer rows.Close()
+	var tasks []Task
+	for rows.Next() {
+		t, err := scanTask(rows)
+		if err != nil {
+			return nil, fmt.Errorf("due each_message tasks: %w", err)
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, rows.Err()
+}
+
+// ClearTaskDue sets taskID's due_at to NULL.
+func (d *DB) ClearTaskDue(ctx context.Context, taskID int64) error {
+	if _, err := d.sql.ExecContext(ctx,
+		`UPDATE tasks SET due_at = NULL WHERE task_id = ?`, taskID); err != nil {
+		return fmt.Errorf("clear task %d due: %w", taskID, err)
+	}
+	return nil
+}

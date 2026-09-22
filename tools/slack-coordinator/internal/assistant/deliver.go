@@ -262,9 +262,10 @@ func (s *Service) deliverTask(ctx context.Context, run db.AssistantRun, out agen
 	if task.Trigger == db.TriggerSchedule {
 		nd := s.taskNextDueStr(task, now)
 		nextDue = nd
-	} else {
+	} else if task.Trigger == db.TriggerWindowEnd {
 		endedAt = &now
 	}
+	// each_message: both remain nil — task stays active, due_at left NULL.
 	return s.DB.RecordTaskSuccess(writeCtx, task.TaskID, nextDue, endedAt, now)
 }
 
