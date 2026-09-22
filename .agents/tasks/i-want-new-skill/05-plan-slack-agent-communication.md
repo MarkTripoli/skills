@@ -510,8 +510,8 @@ slack-coordinator run check --run-id <id>
 
 #### Automated Verification:
 
-- [ ] `cd tools/slack-coordinator && go test -race ./internal/coordinator/... ./internal/cli/...`
-- [ ] `cd tools/slack-coordinator && go build -o /tmp/slack-coordinator ./cmd/slack-coordinator && SLACK_COORDINATOR_HOME=$(mktemp -d) /tmp/slack-coordinator run check --run-id none; test $? -eq 11`
+- [x] `cd tools/slack-coordinator && go test -race ./internal/coordinator/... ./internal/cli/...`
+- [x] `cd tools/slack-coordinator && go build -o /tmp/slack-coordinator ./cmd/slack-coordinator && SLACK_COORDINATOR_HOME=$(mktemp -d) /tmp/slack-coordinator run check --run-id none; test $? -eq 11`
 
 human-gated: false
 
