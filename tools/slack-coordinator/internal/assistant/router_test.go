@@ -19,7 +19,14 @@ import (
 // coordinator sharing all three.
 func newTestService(t *testing.T) (*Service, *fakeSlack, *testClock) {
 	t.Helper()
-	database, err := db.Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	return newTestServiceAt(t, filepath.Join(t.TempDir(), "state.sqlite"))
+}
+
+// newTestServiceAt is newTestService over the SQLite database at path, for
+// tests that also open the file directly.
+func newTestServiceAt(t *testing.T, path string) (*Service, *fakeSlack, *testClock) {
+	t.Helper()
+	database, err := db.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
