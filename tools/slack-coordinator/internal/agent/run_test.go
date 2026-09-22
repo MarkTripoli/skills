@@ -179,6 +179,46 @@ func TestResultFallsBackToTrimmedStdout(t *testing.T) {
 	}
 }
 
+func TestProposalIsValidatedAlongsideResult(t *testing.T) {
+	r, spec := fakeRun(t, "proposal", "the report\n", 5*time.Second)
+	h, err := r.Start(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := h.Wait()
+	if out.ProposalErr != nil {
+		t.Fatalf("ProposalErr = %v", out.ProposalErr)
+	}
+	if out.Proposal == nil {
+		t.Fatal("Proposal = nil for a valid proposal.json")
+	}
+	if out.Proposal.Trigger.Kind != TriggerSchedule || out.Proposal.Trigger.Daily != "09:00" || !out.Proposal.DeliverTo.DM {
+		t.Errorf("Proposal = %+v", *out.Proposal)
+	}
+	if out.Result != "the report\n" || out.ResultSource != "result.md" {
+		t.Errorf("Result = %q, ResultSource = %q; want result.md text beside the proposal", out.Result, out.ResultSource)
+	}
+}
+
+func TestInvalidProposalSetsProposalErr(t *testing.T) {
+	r, spec := fakeRun(t, "result", "the report\n", 5*time.Second)
+	if err := Create(spec.RunDir); err != nil {
+		t.Fatal(err)
+	}
+	writeProposalFile(t, spec.RunDir, `{"watch": ["C123"], "trigger": {"kind": "schedule"}, "instruction": "x", "deliver_to": {"dm": true}}`)
+	h, err := r.Start(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := h.Wait()
+	if out.Proposal != nil || out.ProposalErr == nil || !strings.Contains(out.ProposalErr.Error(), "trigger: schedule needs exactly one of daily or every_hours") {
+		t.Errorf("Proposal = %+v, ProposalErr = %v; want nil and a trigger error", out.Proposal, out.ProposalErr)
+	}
+	if out.Result != "the report\n" {
+		t.Errorf("Result = %q, want result.md text despite the bad proposal", out.Result)
+	}
+}
+
 func TestNoOutputYieldsEmptySource(t *testing.T) {
 	r, spec := fakeRun(t, "empty", "", 5*time.Second)
 	h, err := r.Start(context.Background(), spec)
