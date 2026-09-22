@@ -137,16 +137,51 @@ func stopDaemon(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("daemon shutdown failed: %w", err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	if err := waitForDaemonExit(5 * time.Second); err != nil {
+		return err
+	}
+	_ = os.Remove(p.PIDFile())
+	fmt.Fprintln(cmd.OutOrStdout(), "daemon stopped")
+	return nil
+}
+
+// waitForDaemonExit polls the health call until it fails, meaning the daemon
+// closed its socket, or timeout passes.
+func waitForDaemonExit(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if health() != nil {
-			_ = os.Remove(p.PIDFile())
-			fmt.Fprintln(cmd.OutOrStdout(), "daemon stopped")
 			return nil
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
 	return errors.New("daemon did not stop within timeout")
+}
+
+// restartDaemon asks the running daemon to exit, waits for its socket to go
+// quiet, and brings one back on the current config.yaml: an installed service
+// relaunches it (launchd holds a relaunch for up to its 10 s throttle),
+// otherwise it is started detached. onboard's repair paths use it so a
+// replaced token takes effect before verification.
+func restartDaemon(out io.Writer) error {
+	p, err := home()
+	if err != nil {
+		return err
+	}
+	if err := callDaemon(ipc.MethodDaemonShutdown, ipc.ShutdownParams{}, nil); err == nil {
+		if err := waitForDaemonExit(5 * time.Second); err != nil {
+			return err
+		}
+		_ = os.Remove(p.PIDFile())
+	}
+	if s, serviceErr := serviceFor(p); serviceErr == nil && s.Installed() {
+		if err := waitForDaemon(15 * time.Second); err != nil {
+			return fmt.Errorf("the service did not relaunch the daemon (see %s): %w", p.DaemonLog(), err)
+		}
+		fmt.Fprintln(out, "daemon restarted by the service")
+		return nil
+	}
+	return startDetachedDaemon(out, daemon.DefaultStatusInterval)
 }
 
 func serveDaemon(cmd *cobra.Command, _ []string) error {

@@ -5,12 +5,14 @@ package assistant
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/coordinator"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/paths"
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/slackapi"
 )
 
 // SlackSurface is the Slack client surface the assistant needs. *slackapi.Client
@@ -20,6 +22,8 @@ type SlackSurface interface {
 	UpdateMessage(ctx context.Context, channelID, ts, text string) (string, error)
 	AddReaction(ctx context.Context, channelID, ts, name string) error
 	Permalink(ctx context.Context, channelID, ts string) (string, error)
+	OpenConversation(ctx context.Context, userID string) (string, error)
+	UserInfo(ctx context.Context, userID string) (slackapi.User, error)
 }
 
 // Service routes inbound Slack messages for one daemon.
@@ -41,6 +45,13 @@ type Service struct {
 	verbs map[string]verb
 	// wake receives one signal when inbound work is queued for the runner.
 	wake chan struct{}
+	// verifyMu guards verify, the setup verification waiting for the owner's
+	// reply; nil when none is pending. See verify.go.
+	verifyMu sync.Mutex
+	verify   *pendingVerify
+	// verifyTimeout bounds one verification; zero means defaultVerifyTimeout.
+	// Tests shorten it.
+	verifyTimeout time.Duration
 }
 
 // New returns a Service over database and slack whose run-thread replies go to

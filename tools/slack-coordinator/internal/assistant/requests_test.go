@@ -14,16 +14,20 @@ import (
 	"github.com/slack-go/slack/slackevents"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/slackapi"
 )
 
 // fakeSlack records every call. PostMessage answers with fixedTS when set (so
 // every run root shares one thread) and otherwise with a fresh ts per post;
 // postErr, when set, is returned after the attempt is recorded.
+// OpenConversation answers "D1" for any user; UserInfo names the owner "ada"
+// and fails for everyone else.
 type fakeSlack struct {
 	fixedTS   string
 	postErr   error
 	posts     []slackPost
 	reactions []slackReaction
+	opened    []string
 }
 
 type slackPost struct{ channel, thread, text string }
@@ -50,6 +54,18 @@ func (f *fakeSlack) AddReaction(_ context.Context, channelID, ts, name string) e
 
 func (f *fakeSlack) Permalink(_ context.Context, channelID, ts string) (string, error) {
 	return "https://t.slack.com/archives/" + channelID + "/p" + ts, nil
+}
+
+func (f *fakeSlack) OpenConversation(_ context.Context, userID string) (string, error) {
+	f.opened = append(f.opened, userID)
+	return "D1", nil
+}
+
+func (f *fakeSlack) UserInfo(_ context.Context, userID string) (slackapi.User, error) {
+	if userID != "U1" {
+		return slackapi.User{}, errors.New("users.info: user_not_found")
+	}
+	return slackapi.User{ID: "U1", DisplayName: "ada"}, nil
 }
 
 // dm is an owner message in DM channel D1; threadTS "" makes it top level.
