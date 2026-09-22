@@ -7,7 +7,7 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 # Outline Implementation Orchestrator
 
-Coordinate phased implementation from a structure outline in `.agents/tasks/<slug>/`. Start the outline implementer child worker directly. Do not redirect to `/implement-plan` or `/create-plan`.
+Coordinate phased implementation from the current `planning.structure` artifact in the configured task directory. Start the outline implementer child worker directly. Do not redirect to `/implement-plan` or `/create-plan`.
 
 ## Getting Started
 
@@ -15,7 +15,7 @@ Coordinate phased implementation from a structure outline in `.agents/tasks/<slu
 
 Locate the task directory and read `task.md` per the conventions, including the create-when-missing rule.
 
-If the user supplied a specific outline path or `@file`, use that file. Otherwise use the newest artifact of type `structure-outline`; list the task directory and resolve ambiguity before reading one.
+If the user supplied a specific outline path, use it as input. Otherwise use current `planning.structure` from `index.json`.
 
 Companion documents when present: research, design discussion, PRD, TDD, `task.md` or `ticket.md`.
 
@@ -27,7 +27,7 @@ When artifacts disagree, the structure outline wins; mention the conflict in the
 
 ### Progress tracking
 
-The outline implementer never writes into `.agents/tasks/`. Its final message ends with a `## Progress Markers Earned` section listing each validation checkbox or phase marker earned by an automated check that ran and passed, with the passing command. This skill applies those updates to the outline file itself, editing it in place:
+The outline implementer never writes task artifacts. Its final message ends with a `## Progress Markers Earned` section listing each validation checkbox or phase marker earned by an automated check that ran and passed. For an indexed task, this skill copies the current outline into the next `planning.structure` iteration and applies updates there; it never edits a recorded iteration. A legacy task without `index.json` follows the conventions' in-place rule:
 
 - Validation checkboxes move from open to checked only when a recorded passing command backs them.
 - A phase title is marked complete only after all automated validation passes and the phase commit exists.
@@ -43,9 +43,9 @@ The final message is the deliverable. Compare it to the outline before reporting
 
 ### 2. Report to the human
 
-After a numeric phase passes automated verification, take the next artifact number, write one implementation receipt `NN-implementation-<slug>.md` from `references/implementation_template.md`, and save the file in the task directory. Set `completed_phase` to the highest outline phase the receipt proves complete. Populate `Human Review` with the exact review targets, checks, and known limits for that phase. Save a receipt at every numeric phase boundary, including when later phases remain.
+After a numeric phase passes automated verification, record the updated outline iteration first, then record the next immutable `implementation.receipt` from `references/implementation_template.md`. Set `completed_phase` to the highest outline phase the receipt proves complete. Populate `Human Review` with exact review targets, checks, and known limits. Save a receipt at every numeric phase boundary.
 
-Read `references/implementation_phase_final_answer.md` when another numeric phase remains. Fill `{artifact_link}` with a relative Markdown link to the receipt, `[NN-implementation-slug.md](.agents/tasks/<slug>/NN-implementation-slug.md)`; its final command invokes this skill with the same outline. Read `references/implementation_final_answer.md` only after the terminal phase. In both answers, populate `Check` from the receipt's `Human Review` section and keep the final command fence last.
+Read `references/implementation_phase_final_answer.md` when another numeric phase remains. Fill `{artifact_link}` with the receipt's canonical task-root-relative path; its final command invokes this skill with the current outline path. Read `references/implementation_final_answer.md` only after the terminal phase. In both answers, populate `Check` from the receipt's `Human Review` section and keep the final command fence last.
 
 After the child finishes and automated checks have passed or failed, report the phase:
 
@@ -68,7 +68,7 @@ If automated checks failed, report the failure and either fix it or ask for dire
 
 ### 3. Commit and continue
 
-When every automated validation checkbox in the phase is checked with a recorded passing result, create a focused commit with a Conventional Commits subject (conventions, Commits section) and start the next phase without waiting. Use explicit `git add <path>` commands for code paths; never mix `.agents/tasks/` files into the code commit. Commit the updated outline and the receipt separately with `git add <path>` as `docs(task): implementation artifact`. `/ci-commit` stays the manual fallback for work outside this flow.
+When every automated validation checkbox in the phase is checked with a recorded passing result, create a focused commit with a Conventional Commits subject and start the next phase without waiting. Use explicit `git add <path>` commands for code paths; never mix task artifacts into the code commit. Commit the outline iteration, receipt, and `index.json` separately with explicit paths as `docs(task): implementation artifact`.
 
 ### 4. Repeat for the next phase
 
@@ -109,7 +109,7 @@ Every phase advances on green automated checks. Use a different child worker for
 
 Read `references/implementation_template.md`, `references/implementation_phase_final_answer.md`, and `references/implementation_final_answer.md` before reporting a phase boundary.
 
-Take the next artifact number before creating a new `NN-implementation-*.md` receipt.
+Record the next immutable `implementation.receipt` iteration through the conventions' Recording an artifact flow.
 
 ## After Final Phase Completion
 
@@ -118,4 +118,4 @@ When all outline phases are complete, automated checks pass, and any phase with 
 1. Save any changed task artifacts in the task directory.
 2. Commit all remaining repository work before the PR handoff. Use the `/ci-commit` conventions: inspect the diff, stage explicit code paths, keep task artifacts in their own `docs(task): implementation artifact` commit, and write a validated Conventional Commits message.
 3. Read `references/implementation_final_answer.md`.
-4. Respond using that template only. Fill `{artifact_link}` with a relative Markdown link to the receipt, `[NN-implementation-slug.md](.agents/tasks/<slug>/NN-implementation-slug.md)`, and keep the single fenced `text` command for `/describe-pr` last.
+4. Respond using that template only. Fill `{artifact_link}` with the receipt's canonical task-root-relative path and keep the single fenced `text` command for `/describe-pr` last.

@@ -52,6 +52,10 @@ Pi may discover exact candidates with `pi --list-models`, and Oh My Pi may disco
 
 Herdr handoffs pass a selected model after the native argument separator, as `herdr agent start ... -- --model <model>`, when candidates are configured and the native command supports enforcement. Manual handoffs print `Recommendation only: <model>` because a standalone skill cannot force the next session's model.
 
+## Evidence storage
+
+Atomic record each model pick with stage decision under `<task-root>/<slug>/.atomic-delivery/<run-id>/`. Repo instructions configure `<task-root>`, default `.agents/tasks`. Stage still check provider availability; catalog entry no prove current account accept model.
+
 ## Defaults
 
 The economical default is `openai-codex/gpt-5.6-luna-fast`. Atomic's reasoning compatibility default is `openai-codex/gpt-5.6-sol`. These are policy defaults, not billing or quality claims. Use `routing: fixed` to select the economy candidate without JEV.

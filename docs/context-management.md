@@ -23,7 +23,7 @@ flowchart LR
 ```
 
 - **Phase:** one skill in one fresh session. It reads `task.md` and selected artifacts, does its work, saves one artifact, prints its reply, and stops.
-- **Artifact:** a saved Markdown document in `.agents/tasks/<slug>/`. It carries `type` and `summary` frontmatter. A later phase reads selected artifacts in full and `summary` from the others.
+- **Artifact:** a saved Markdown document under `<task-root>/<slug>/`, where `<task-root>` is configured by repository instructions and defaults to `.agents/tasks`. It carries `type` and `summary` frontmatter. A later phase reads selected artifacts in full and `summary` from the others.
 - **Transition:** Atomic chooses the next skill from the request and saved artifacts. A manual handoff names the next skill in its command fence and asks for a new session.
 - **Gate:** Atomic's native prompt asks a person to review an artifact. Feedback starts the matching revision skill in a fresh stage. Running the next manual command records approval.
 

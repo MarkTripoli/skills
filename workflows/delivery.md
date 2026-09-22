@@ -16,7 +16,7 @@ npx github:MarkTripoli/skills portable --atomic --project --yes
 
 `--atomic` install all skills and workflow. Without it, installer put in skills and runtime worker defs only. Pick single skills — never add Atomic dependency.
 
-Workflow stuff live under `<Atomic agentDir>/workflows/skills-delivery/` (default `~/.atomic/agent/workflows/skills-delivery/`, respect `ATOMIC_CODING_AGENT_DIR`) or project `.atomic/workflows/skills-delivery/`, with discovery entry beside them. Workflow read complete portable skill install: `~/.agents/skills`, `.agents/skills`, or explicit `skills_dir` input.
+Workflow stuff live under `<Atomic agentDir>/workflows/skills-delivery/` (default `~/.atomic/agent/workflows/skills-delivery/`, respect `ATOMIC_CODING_AGENT_DIR`) or project `.atomic/workflows/skills-delivery/`, with discovery entry beside them. Workflow read complete portable skill install: explicit `skills_dir` when given; else task-worktree `.agents/skills` beat user `~/.agents/skills`.
 
 Start Atomic from target repo. These be **Atomic chat commands**, not shell args to tack after `atomic`:
 
@@ -36,7 +36,7 @@ Use bare `key=value` tokens, not shell `--input` flags. Atomic parse JSON, so `v
 | Input | Type/default | Meaning |
 |---|---|---|
 | `request` | required string | Wanted outcome; keep creds out |
-| `task_dir` | optional string | Reuse existing task; keep its `task.md`, `slug`, `workflow`, `base`, branch, artifacts |
+| `task_dir` | optional string | Reuse existing task; keep its `task.md`, `index.json`, `slug`, `workflow`, `base`, branch, artifacts. Parent dir be authoritative task root |
 | `skills_dir` | optional string | Complete portable skill root; see install paths above |
 | `workflow` | string, `auto` | `auto`, `oneshot`, `lean`, `full`, `prd`, `bugfix`, `epic`, `program`, `resolve-reviews`, or `epic-wave` |
 | `gates` | string, `all` | `all`, `none`, `plan`, or `pr`; no comma list |
@@ -97,7 +97,7 @@ Controller use `skills/delivery/typed-judgment/judge.mjs` through its System One
 
 `workflow=auto` need JEV for phase pick. `model_routing=auto` stand apart and be default too, so pick explicit workflow not make run JEV-free. `model_routing=fixed` pick caller `model` straight and skip JEV for stage-model pick; missing creds or service being down cannot touch that fixed model path. Single skills keep their written deterministic fallback when own judgment be optional. Atomic write down picked model, and native stages write down real `modelAttempts`.
 
-`NN-execution-plan-<slug>.md` write down controller phase decisions. Research and design artifacts stay boss; stage talk not cross-stage memory. `max_steps` cap all skill sessions, failing review or revision loops too. Blocked phase report its missing prereq and be not successful completion.
+`execution-plan` artifact (series `orchestration.execution`) write down controller phase decisions. Research and design artifacts stay boss; stage talk not cross-stage memory. `max_steps` cap all skill sessions, failing review or revision loops too. Blocked phase report its missing prereq and be not successful completion.
 
 ## Verification, app testing, and review
 
@@ -117,9 +117,9 @@ Unless `verify=false`, `verify-implementation` run repo checks and promised acce
 
 ## Task, artifact, and worktree ownership
 
-Task be `.agents/tasks/<slug>/task.md` plus numbered artifacts. `.agents/tasks/` be committed project history, not throwaway controller state. Revisions edit their existing artifact; new phases take next number. `pr-description.md` have no number and no frontmatter, because it be PR body. [Collection conventions](../shared/CONVENTIONS.md) set exact formats and commit ownership.
+Task be `<task-root>/<slug>/`: `task.md`, authoritative `index.json`, immutable iteration under `artifacts/<kind>/<variant>/`. Task root default `.agents/tasks`, follow repo `<!-- skills:task-root=... -->`; controller resolve at selected base and fail when checked-out root disagree. Task root be committed project history, not throwaway state. Revision record next series iteration, never edit recorded one. `pr-description` indexed at `pull-request.description`, body-only with no frontmatter. [Collection conventions](../shared/CONVENTIONS.md) set exact formats, manual record contract, legacy no-index exception, commit ownership.
 
-New task get own lasting worktree and branch. Explicit existing `task_dir` reuse its task and artifacts. Keep manual sessions going in checkout and branch printed in handoff. Code commits stage explicit code paths; artifact commits stage only task files. Workflow operation never allow committing unrelated staged work.
+New task get own lasting worktree and branch. Explicit existing `task_dir` reuse task, index, artifacts; parent dir be authoritative task root. Keep manual sessions going in checkout and branch printed in handoff. Code commits stage explicit code paths; artifact commits stage only task files. Workflow operation never allow committing unrelated staged work.
 
 Atomic own run state. User own task branches, artifacts, worktrees. Pausing, quitting, uninstalling skills, or swapping controller not allow deleting task records or cancelled-run worktrees. Old engine checkpoints be not Atomic checkpoints; keep going from kept artifacts in new `delivery` run when need.
 
@@ -134,6 +134,8 @@ Ready children run in separate worktrees. Prereq branches must have merged; pull
 /workflow delivery request="Run the next ready wave" workflow=epic-wave task_dir=.agents/tasks/billing gates=none
 /workflow delivery request="Address the PR feedback" workflow=resolve-reviews task_dir=.agents/tasks/billing-client branch=billing-client
 ```
+
+Examples use default `.agents/tasks`; substitute configured root when `skills:task-root` directive set one.
 
 ## Phase table
 

@@ -21,7 +21,7 @@ The recording is the capture of you testing the app live: start the recorder, th
 
 ## Where evidence lives
 
-Inside a task: `.agents/tasks/<slug>/evidence/<session-name>/` (one directory per recorded surface, plus `composite/` for a side-by-side), and a numbered receipt `NN-evidence-<slug>.md` in the task directory written from `references/evidence_template.md`, which is how later phases see that this phase ran. Before the first session, write `.agents/tasks/<slug>/evidence/.gitignore` containing the single line `*`: task-directory artifact commits keep recordings out of the committed receipt. Outside a task: `.artifacts/evidence/<session-name>/`; append `.artifacts/` to `.gitignore` when the file exists and lacks it. Recordings are uploaded, never committed; the receipt is a task artifact like any other and is committed with `git add <path>` as `docs(task): evidence artifact`.
+Inside a task: `<task-root>/<slug>/evidence/<session-name>/` holds support recordings, while the durable receipt is the next `evidence.recording` iteration from `references/evidence_template.md`. Before the first session, write `<task-root>/<slug>/evidence/.gitignore` containing `*`. Outside a task use `.artifacts/evidence/<session-name>/`. Recordings are uploaded, never committed; the indexed receipt and `index.json` are committed explicitly as `docs(task): evidence artifact`.
 
 Each session directory ends up with `evidence.mp4` (overlay burned in), `report.md`, `manifest.json`, `capture/` (raw footage), `frames/` (review stills), and `events.jsonl`.
 
@@ -63,7 +63,7 @@ Timing: video zero is the recorder's real start (first bytes written, or its own
 
 ### 0. Locate the task
 
-Locate the task directory and read `task.md` per the conventions when the request belongs to a task; a standalone request needs none. In a task, the test targets come from the newest `implementation` artifact's summary and the plan or structure outline it implemented (the newest artifact of type `plan` or `structure-outline`), unless the user named other targets. Note the revision under test: `git rev-parse HEAD`, `git branch --show-current`, or the deployment URL.
+Locate the task and read `task.md` when applicable. Test targets come from current `implementation.receipt` and current `planning.plan` or `planning.structure`, unless user names others. Note the revision under test.
 
 ### 1. Check the toolchain
 
@@ -86,7 +86,7 @@ Follow `references/device_setup.md` for the exact commands. In short:
 
 ```bash
 python3 $EVIDENCE start \
-  --output .agents/tasks/<slug>/evidence/<surface> \
+  --output <task-root>/<slug>/evidence/<surface> \
   --title "<what is being verified>" \
   --source android --target emulator-5554 --label "Android" \
   --commit "$(git rev-parse HEAD)" --branch "$(git branch --show-current)" \
@@ -119,7 +119,7 @@ python3 $EVIDENCE frames "$SESSION"
 ### 6. Compose multi-device recordings
 
 ```bash
-python3 $EVIDENCE compose --output .agents/tasks/<slug>/evidence/composite \
+python3 $EVIDENCE compose --output <task-root>/<slug>/evidence/composite \
   "$ANDROID" "$IOS" --label "Android" --label "iPhone 17" \
   --caveats "<per-pane caveats>"
 ```
@@ -129,7 +129,7 @@ Panes align by wall clock (a pane that started later shows a dark hold first); `
 ### 7. Post the evidence
 
 - `report.md` is the report: result line, revision, environment, capture details, per-test table with timestamps, narration transcript, notes, caveats. Extend it rather than rewriting it.
-- In a task, take the next artifact number and write `NN-evidence-<slug>.md` from `references/evidence_template.md`: set `status` to the worst result across every test (`passed`, `untested`, `failed`), fill `summary`, list every session's `report.md` and video path, copy the per-test table, the caveats, and where the video was posted. Save the file.
+- In a task, record the next immutable `evidence.recording` iteration through the conventions' Recording an artifact flow using `references/evidence_template.md`: set `status` to the worst result, fill `summary`, list sessions and video paths, copy the test table/caveats/posting location, then commit the canonical path and `index.json`.
 - Post the video and the result summary as a PR comment, or in the PR description when it is your PR. `gh pr comment` cannot attach a local video: upload `evidence.mp4` (or `composite.mp4`) through the PR comment box in an authenticated browser, or upload it to a host and link it. Reopen the comment and confirm the video plays before claiming it is posted.
 - Attach the same video to the tracker issue with a one-line result.
 - Send the report and recording to the requester.
@@ -177,4 +177,4 @@ Choose the template by situation and use it only:
 - In a task, any test failed: `references/evidence_failed_answer.md`, which hands off to `/iterate-implementation @{plan_file}`; `{plan_file}` is the name of the plan or structure outline being implemented.
 - No task: `references/evidence_standalone_answer.md`, which ends with the recording's state and attachment action because no delivery step follows.
 
-`{artifact_link}` is a relative Markdown link to the receipt, `[NN-evidence-slug.md](.agents/tasks/<slug>/NN-evidence-slug.md)`. `{report_link}` is a relative Markdown link to `report.md` of the session (or the composite), relative to the repository root, or to the current directory when there is no task directory. `{summary}` is the receipt's `summary`.
+`{artifact_link}` is the receipt's canonical task-root-relative path. `{report_link}` is a relative link to the session/composite `report.md`. `{summary}` is the receipt's `summary`. A legacy task without `index.json` follows the conventions' legacy rules.

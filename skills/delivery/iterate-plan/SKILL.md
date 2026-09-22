@@ -14,12 +14,12 @@ Revise an existing implementation plan. Check feedback before applying it, prese
 1. **Locate the task directory and read `task.md`** per the conventions, creating it from the user's message when none exists.
 
 2. **Resolve target and read references**:
-   - Resolve the target plan from `@file` or, when none is given, the newest artifact of type `plan` in the task directory listing. Ask only if multiple plan artifacts are plausible.
+   - Resolve the target from `@file`; otherwise use current `planning.plan` from `index.json`.
    - Read `references/plan_template.md` and `references/plan_final_answer.md`.
 
 3. **Read primary inputs fully, others by summary**:
    - Read completely: the plan and the supplied feedback (the user's message or a file the user names).
-   - Upstream artifacts (task, ticket, research, design, PRD, TDD, structure outline): use their `summary` fields from the task directory listing. Open only when feedback touches something the summary covers.
+   - Use summaries from current indexed upstream artifacts; open only those feedback touches.
 
 4. **Process feedback**:
    - If a ticket or feedback file is provided, treat it as instruction to evaluate, not as automatically correct.
@@ -29,7 +29,7 @@ Revise an existing implementation plan. Check feedback before applying it, prese
    - If the plan depends on uncertain behavior, inspect the source directly or start a child worker for role `agent-codebase-analyzer` (see the conventions' Child workers section) to verify the narrow fact; wait for it and read its final message.
 
 5. **Update the plan**:
-   - Edit the plan at its existing path.
+   - For an indexed task, copy the current plan into the next `planning.plan` iteration and revise that new file; never edit a recorded iteration. A legacy task without `index.json` follows the conventions' in-place rule.
    - Reorganize phases when requested or when the current sequence is not independently verifiable.
    - Update code examples when file or API facts change.
    - Fix inaccurate paths, descriptions, or validation commands.
@@ -39,7 +39,7 @@ Revise an existing implementation plan. Check feedback before applying it, prese
     - Keep deferred human evidence as plain bullets with pointers, never checkboxes; remove filler.
    - Maintain phase sections with success criteria.
 
-6. Save the file and respond following `references/plan_final_answer.md` exactly; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-plan-slug.md](.agents/tasks/<slug>/NN-plan-slug.md)`, fill `{artifact_file}` with the saved file's name only (the template carries the `@`; name this artifact and no other file, never a path), and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. Add no prose before or after the template. Commit the saved file with `git add <path>` as `docs(task): plan artifact`.
+6. Record the next iteration through the conventions' Recording an artifact flow and respond following `references/plan_final_answer.md` exactly; fill `{artifact_link}` and `{artifact_file}` with the saved canonical task-root-relative path (the template carries the `@`), and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. Add no prose before or after the template. Commit the canonical path and `index.json` explicitly as `docs(task): plan artifact`.
 
 ## Plan Guidelines
 
@@ -49,4 +49,4 @@ Revise an existing implementation plan. Check feedback before applying it, prese
 - Use manual validation only when human judgment is needed.
 - Deferred human evidence is a plain bullet naming the evidence and where it is recorded; it never blocks a phase.
 - A phase's `human-gated: false` line may be edited to `true` when the user asks to gate that phase.
-- Normal iteration edits the existing plan file; do not allocate a new artifact number unless the user asks for a separate plan.
+- Indexed iteration always records the next immutable `planning.plan` iteration. Only a legacy task without `index.json` edits its existing numbered plan.

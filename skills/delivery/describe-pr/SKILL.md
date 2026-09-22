@@ -45,7 +45,7 @@ The title is a Conventional Commits subject under the conventions' rule: `<type>
 
 ### 3. Gather context
 
-Read `task.md` or `ticket.md`, explanatory artifacts: plan, outline, PRD/TDD, design, receipts, @file inputs. When the task directory holds a `verification` artifact (newest `NN-verification-*.md`), read its items table and `## Findings`: each acceptance criterion's verdict, command, and observed output come from there, and an `untested` item is described as untested, never as passing. When the task directory holds an `evidence` artifact (newest `NN-evidence-*.md`), read it: its sessions, results table, caveats, and where the video was posted go into the description.
+Read `task.md` or `ticket.md`, explanatory artifacts selected through current index records, and `@file` inputs. Read current `review.verification` and `evidence.recording` when present. An untested verification item is described as untested, never as passing.
 
 Read full diff plus surrounding code.
 
@@ -64,13 +64,13 @@ Template exactly:
 - `Change outline`: compact structural view from `references/show-me.md`. Views that help: data shape, endpoint contract, pseudocode, file tree, component tree, call/control/data flow. `diff` for changes, full shape for new. Focus on files, calls, fields, components, boundaries.
 - `Closes #{ISSUE_NUMBER}`, the template's last line: keep it only when `task.md` has `issue: <number>` (an epic child whose issue `start-epic-delivery` opened), filled with that number, so the merge closes the issue; otherwise delete the line and the blank line before it, so the body ends with the Known limits bullet.
 
-Task artifacts are committed on the branch, so the body may link them as branch-relative paths (`.agents/tasks/<slug>/NN-plan-<slug>.md`); the hosting site renders them from the head branch. Link only files that `git ls-files .agents/tasks/<slug>` lists.
+Task artifacts are committed on the branch, so the body may link their canonical task-root-relative paths. Link only files that `git ls-files <task-root>/<slug>` lists.
 
 Do not include walkthrough artifacts in the PR body unless asked. When requested, create a separate HTML artifact from `references/pr_walkthrough_example.html`, fill it with real diff nodes, write it under the task directory, and save it.
 
 ### 5. Save and publish
 
-Write `.agents/tasks/<task-slug>/pr-description.md` (no task dir: `.agents/tasks/pr-<number>/description.md`).
+Record the body-only description as the next immutable `pull-request.description` iteration through the conventions' Recording an artifact flow. It has no frontmatter. When no task exists, open one under the resolved task root first.
 
 Save the file. Commit it with `git add <path>` as `docs(task): pr-description artifact` and push before publishing. Publish:
 
@@ -82,13 +82,13 @@ Confirm URL, title, number, base, head. An existing pull request whose title fai
 
 ### 6. Report
 
-Read and use `references/pr_description_final_answer.md` exactly. Include PR URL, file-change summary, deviation summary or `No plan file found`. Fill `{artifact_link}` with a relative Markdown link to the saved file, `[pr-description.md](.agents/tasks/<slug>/pr-description.md)`.
+Read and use `references/pr_description_final_answer.md` exactly. Include PR URL, file-change summary, deviation summary or `No plan file found`. Fill `{artifact_link}` with the saved canonical task-root-relative path. Commit that path and `index.json` explicitly as `docs(task): pr-description artifact`.
 
 The final answer must end with exactly one fenced `text` block. This is a human gate; running the next command records approval.
 
 ## Feedback
 
-When `pr-description.md` already exists and the user (or the invoking prompt) supplies feedback, revise that file in place and publish it again with the step 5 command so the pull request body matches. Never write a second description.
+When `pull-request.description` already has a current iteration and feedback arrives, use it as input, record the revised body as the next iteration, and publish that new path so the pull request body matches. Never rewrite a recorded iteration. A legacy task without `index.json` follows the conventions' legacy rules.
 
 ## Style
 

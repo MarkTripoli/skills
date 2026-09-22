@@ -15,8 +15,8 @@ Split an epic into child tasks that ship as separate pull requests. The epic pla
 
 2. **Read primary inputs fully, others by summary**:
    - Read `references/epic_plan_template.md`, `references/epic_plan_final_answer.md`, and the [slicing guide](https://github.com/MarkTripoli/skills/blob/main/shared/SLICING.md), which a checkout has at `shared/SLICING.md`.
-   - Read completely: `task.md` or `ticket.md`, plus the newest artifact of type `research`.
-   - Other artifacts in the task directory listing: use the `summary` field. Open only when research leaves a gap.
+   - Read completely: `task.md` or `ticket.md`, plus current `research.primary`.
+   - Use summaries from other current indexed artifacts. Open only when research leaves a gap.
 
 3. **Read relevant source files**:
    - Open source files named in research that decide where a child's change lands.
@@ -28,9 +28,8 @@ Split an epic into child tasks that ship as separate pull requests. The epic pla
 
 6. **Write each child's acceptance criteria** as EARS sentences per the slicing guide: one behavior each, observable state, no vague terms, and the failure or boundary paths that child owns.
 
-7. **Write the epic plan**:
-   - Take the next artifact number.
-   - Write `NN-epic-plan-<slug>.md` in the task directory following the template.
+7. **Draft the epic plan**:
+   - Allocate the next `planning.epic` iteration through the conventions' Recording an artifact flow and write the template to its staging path. Do not record it yet.
    - Fill the `## Children` JSON fence with one entry per child.
    - Fill `## Slice Check` with one row per child.
    - Derive `## Ordering` waves from `depends_on`.
@@ -52,8 +51,8 @@ Split an epic into child tasks that ship as separate pull requests. The epic pla
 2. Re-check every child against the Child Rules: `name` is at most 120 characters; `prompt` is at most 10000 characters; `workflow` is one of `full`, `lean`, `prd`, `oneshot`, `bugfix`; `slice` is `vertical` or `enabler`, and every `enabler` has a consumer among its siblings; `acceptance` holds one to five sentences, each a single obligation in an EARS pattern, none of them carrying "and also", "as well as", "fast", "secure", "user-friendly", or "works correctly"; every `depends_on` entry names an existing sibling, with no cycles. Fix each violation in the file and save again before replying.
 3. Check each child's `workflow` with the typed-judgment helper. Write the children as `[{name, prompt}]` to a temporary JSON file outside the repository (`mktemp`), run `node <skills dir>/typed-judgment/judge.mjs route-workflow --children <file> --json` where `<skills dir>` is the directory that contains this skill, then delete the file. For every child whose `workflow` differs from the helper's `workflow`, adopt the helper's when its `confidence` is at least 0.8, unless the epic's request names the workflow for that child; the request wins. Fill the `## Workflow judgments` table with every child's `suggested` workflow and `confidence`, and save again. When the helper is unavailable (exit 3, no `node`, or no `TYPESAFE_API_KEY`), keep your own choices, write `Helper unavailable; workflows chosen by this skill.` in place of the table, and add a `### Known limits` item saying judgments were skipped so the reply carries it in one line.
 4. Size each child with the same helper. Write the children as `[{name, slice, prompt, acceptance}]` to a temporary JSON file outside the repository (`mktemp`), run `node <skills dir>/typed-judgment/judge.mjs size-children --children <file> --json`, then delete the file. Fill the `## Sizing judgments` table from the answer: each child's `verdict`, the `weakest` test with its probability, the `criteria` verdict, and the `split` the helper names. Then act on it: for a child whose `verdict` is `split`, apply the named `split` when the helper gives one, replace that child with the resulting children, and record them in `## Slice Check`; keep the child whole only with a `### Known limits` line saying why. A `verdict` of `unclear` is yours to decide, and the `weakest` test names what to look at. A child whose `criteria` is `weak` gets its acceptance sentences rewritten until they name observable state. Do not call the helper a second time after splitting. When the helper is unavailable, keep your own sizing, write `Helper unavailable; sizing judged by this skill.` in place of the table, and reuse the same `### Known limits` item.
-5. Reply following `references/epic_plan_final_answer.md` exactly; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-epic-plan-slug.md](.agents/tasks/<slug>/NN-epic-plan-slug.md)`, fill `{artifact_file}` with the saved file's name only (the template carries the `@`; name this artifact and no other file, never a path), and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. Add no prose before or after the template. Commit the saved file with `git add <path>` as `docs(task): epic-plan artifact`.
+5. Record the staged document once as the next immutable `planning.epic` iteration. Then reply following `references/epic_plan_final_answer.md` exactly; fill `{artifact_link}` and `{artifact_file}` with the saved canonical task-root-relative path (the template carries the `@`), and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. Add no prose before or after the template. Commit the canonical path and `index.json` explicitly as `docs(task): epic-plan artifact`. A legacy task without `index.json` follows the conventions' legacy rules.
 
 ## Feedback
 
-When an epic plan artifact already exists and the user (or the invoking prompt) supplies feedback, revise that file in place: verify each item against the repository, apply it to the affected children or waves, re-run the Output checks, and reply with the same template. Never write a second epic plan.
+When an epic plan already exists and the user (or invoking prompt) supplies feedback, use its current indexed iteration as input, verify each item, and record the revised plan as the next `planning.epic` iteration. Never rewrite a recorded iteration. A legacy task without `index.json` keeps its existing in-place behavior.

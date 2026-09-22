@@ -8,7 +8,7 @@ Check:
 Known limits:
 - {known_limits}
 
-Reply with the changes you want, or run `/reproduce-bug` again with corrections; either revises the artifact in place. Running the next command records approval: the fix goes ahead from the artifact's `## Fix` steps.
+Reply with changes, or run `/reproduce-bug` again with corrections; either records the next `debugging.reproduction` iteration. Running the next command records approval: the fix goes ahead from the artifact's `## Fix` steps.
 
 The fix phase has not started. It applies the artifact's `## Fix` steps, makes the reproduction pass, commits with explicit paths, and then runs the review.
 

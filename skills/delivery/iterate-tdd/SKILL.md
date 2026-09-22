@@ -36,13 +36,13 @@ If user asks to keep working through questions: read TDD fully, identify unresol
 
 1. **Locate the task directory and read `task.md`** per the conventions, creating it from the user's message when none exists.
 
-2. **Find and read**: Resolve target TDD from `@file` or, when none is given, the newest artifact of type `design-tdd` in the task directory listing. Ask to choose if multiple plausible. Read fully: TDD, feedback (the user's message or a file the user names), mockups, user-mentioned files. For ticket/research/design notes/PRD: use `summary`, open only when feedback touches it, read by heading. Do not read research-question artifacts unless explicitly requested.
+2. **Find and read**: Resolve target TDD from `@file`; otherwise use current `design.tdd` from `index.json`. Read TDD, feedback, mockups, and user-mentioned files fully. Use current indexed summaries for other artifacts.
 
 3. **Validate feedback**: Do not accept corrections blindly. Read named files. Use direct reads or child research to verify uncertain claims.
 
 4. **Start child research when needed**: Start a child worker for role `agent-codebase-locator` (files/tests), `agent-codebase-analyzer` (behavior), `agent-codebase-pattern-finder` (precedents), or `agent-web-search-researcher` (external docs) with the assignment (see the conventions' Child workers section) when a missing fact would change artifact; wait for it; read its final message. Use only findings you have read from the worker's final message. If child/direct read discovers current-state facts missing/stale in completed research, fold into research artifact before finalizing TDD.
 
-5. **Update in place**: Preserve frontmatter/major sections. Rework System/Program Design per feedback. Express current/target behavior inside System Design. Update diagrams, contracts, trees, Patterns to Follow. Keep coherent; no outdated branches/logs. Rewrite `### Execution DAG` from the newest `execution-plan` artifact in the task directory on every revision, because a later decide node may have changed the chain.
+5. **Create the revision**: Copy current TDD to the next `design.tdd` iteration and update that new file; never edit a recorded iteration. Preserve frontmatter/sections and rewrite `### Execution DAG` from current `orchestration.execution`. A legacy task without `index.json` follows the conventions' in-place rule.
 
 6. **Update PRD or mockups if technical findings affect product behavior**: If decision changes UX/scope/availability/states/permissions/workflow, update product artifact when present.
 
@@ -68,4 +68,4 @@ If a PRD exists, use it for product requirements, user flows, and mockups. Do no
 
 If driven by a feedback file the user names: read it fully, work one item or related group at a time, verify factual corrections, treat new choices as open decisions (ask exactly one question). Apply each change, or say why it was not applied. Feedback items are collaboration inputs, not a second source of hidden requirements. Fold accepted content into TDD.
 
-8. **Finish when user is done**: When design is complete and approved, save the file, read `references/tdd_final_answer.md`, follow template; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-tdd-slug.md](.agents/tasks/<slug>/NN-tdd-slug.md)`, fill `{artifact_file}` with the saved file's name only (the template carries the `@`; name this artifact and no other file, never a path), and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. Add no prose before or after the template. Commit the saved file with `git add <path>` as `docs(task): tdd artifact`.
+8. **Finish when user is done**: Record the new iteration through the conventions' Recording an artifact flow, then follow `references/tdd_final_answer.md` exactly. Fill `{artifact_link}` and `{artifact_file}` with the canonical task-root-relative path. Commit that path and `index.json` explicitly as `docs(task): tdd artifact`.

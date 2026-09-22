@@ -14,9 +14,9 @@ Use this when implementation already happened and the user has follow-up feedbac
 ### 1. Read all required inputs fully
 
 - Locate the task directory and read `task.md` per the conventions, including the create-when-missing rule.
-- Resolve any `@file` argument against the task directory listing. Read referenced artifacts completely.
+- Resolve any `@file` inside the task directory. Read referenced artifacts completely.
 - Read the feedback the user supplied (message or named file) completely.
-- Read the plan or outline artifact and any user-provided paths completely. Without an `@file`, the source artifact is the newest artifact of type `plan`, else the newest of type `structure-outline`. If the named set is insufficient, list the task directory.
+- Read the plan or outline and user-provided paths completely. Without `@file`, use current `planning.plan`, else current `planning.structure` from `index.json`.
 - Read the plan file when it exists. If no plan exists, read the ticket or task file plus the structure outline, design discussion, PRD/TDD, and research artifacts needed to understand the implemented work.
 - Do not read unrelated artifacts just because they are present. Prefer the files named by the user, the current implementation source artifact, and the minimum companion artifacts needed to make the change correctly.
 
@@ -29,7 +29,7 @@ Inspect the repository before editing:
 - Read commits or changes made since that point.
 - Determine which phases are already implemented and whether the user is giving feedback mid-phase. A phase is incomplete when its checkboxes are not all checked.
 
-If the user is asking to implement an unstarted phase, do not implement it inline. Start a child worker for role `agent-implementer` for plan phases or `agent-outline-implementer` for structure outline phases with the phase assignment (see the conventions' Child workers section); wait for it; read its final message. The child never writes into `.agents/tasks/`; its final message ends with a `## Plan Checkboxes Earned` or `## Progress Markers Earned` section. Apply those updates to the plan or outline file yourself: edit it in place, tick only the checkboxes backed by a recorded passing command, then continue phase resolution from the updated file.
+If the user is asking to implement an unstarted phase, do not implement it inline. Start the appropriate implementer child worker; wait for it; read its final message. The child never writes task artifacts. For an indexed task, copy the current plan or outline to the next `planning.plan` or `planning.structure` iteration, apply only markers backed by recorded passing commands, and record it; never edit a recorded iteration. A legacy task without `index.json` follows the conventions' in-place rule.
 
 ### 3. Verify user feedback before accepting it
 
@@ -50,13 +50,13 @@ If there are several viable fixes and no clear default, ask before editing.
 
 ### 5. Apply the fix
 
-When the fix is clear, make the smallest correct change in the shared/root-cause location. Run the relevant tests, build, lint, or other checks. If the work changes task artifacts, take the next artifact number before creating a new implementation note; revise an existing artifact in place.
+When the fix is clear, make the smallest correct change in the shared/root-cause location. Run relevant tests, build, lint, or other checks. Every changed indexed task artifact becomes the next immutable iteration in its series; never revise a recorded artifact.
 
 ### 6. Update the user
 
-When the iteration completes a numeric phase, take the next artifact number, write one receipt `NN-implementation-<slug>.md` from `references/implementation_template.md`, and save the file in the task directory. Set `completed_phase` to the highest plan or outline phase the receipt proves complete. Populate `Human Review` with exact review targets, checks, and known limits. Save this receipt even when later numeric phases remain.
+When the iteration completes a numeric phase, record the updated source iteration first, then record the next immutable `implementation.receipt` from `references/implementation_template.md`. Set `completed_phase` to the highest proven phase and populate `Human Review`. Save this receipt even when later phases remain.
 
-Read `references/implementation_phase_final_answer.md` when another numeric phase remains, and set `{implementation_command}` to `/implement-plan` or `/implement-outline` for the source artifact. Read `references/implementation_final_answer.md` only for terminal implementation. Populate `Check` from the receipt's `Human Review` section, fill `{artifact_link}` with a relative Markdown link to the receipt, `[NN-implementation-slug.md](.agents/tasks/<slug>/NN-implementation-slug.md)`, and keep the final command fence last.
+Read `references/implementation_phase_final_answer.md` when another numeric phase remains, and set `{implementation_command}` for the current source artifact. Read `references/implementation_final_answer.md` only for terminal implementation. Populate `Check` from the receipt's `Human Review`, fill `{artifact_link}` with its canonical task-root-relative path, and keep the final command fence last.
 
 ## Guidance
 
@@ -66,7 +66,7 @@ Read only the feedback the user supplied (message or named file). Work one feedb
 
 ## When Iteration Is Complete
 
-When the feedback is addressed, checks have run, and no further implementation edits are known, commit the applied changes with the `/ci-commit` conventions: stage explicit code paths, keep `.agents/tasks/` files out of the code commit, and use a validated Conventional Commits subject. Commit the changed plan or outline and the receipt separately with `git add <path>` as `docs(task): implementation artifact`. Then choose exactly one handoff:
+When feedback is addressed and checks ran, commit code with explicit paths and keep task artifacts out of the code commit. Commit the new source iteration, receipt, and `index.json` separately as `docs(task): implementation artifact`. Then choose exactly one handoff:
 
 1. If another numbered phase remains in the selected plan or outline, save any changed task artifact in the task directory, read `references/implementation_phase_final_answer.md`, and point its command back to the same implementation skill. Do not use the pull-request handoff at this boundary.
-2. Only when the completed phase is the highest numbered phase, save any changed task artifact in the task directory, read `references/implementation_final_answer.md`, and respond with that terminal template. The next step is `/describe-pr`; use `/ci-commit` only when the user asks for an in-loop commit gate.
+2. Only when the completed phase is terminal, record all changed task artifacts, read `references/implementation_final_answer.md`, and respond with that template. The next step is `/describe-pr`.

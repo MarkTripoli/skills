@@ -6,19 +6,29 @@ These conventions apply to every skill in this collection.
 
 Every skill runs independently in Claude Code, Codex, Oh My Pi, Pi, or a portable skill installation. Runtime adapters supply invocation and worker mechanics, not a separate delivery process. Missing worker support means performing the role inline after reading its skill. No phase requires Atomic, a workflow installation, or a sibling helper.
 
-The optional Atomic workflow is registered as `delivery`. Install it explicitly with `--atomic`; ordinary installs copy skills only. It loads the same canonical skills, with portable `~/.agents/skills` as the default `skills_dir` and an explicit project-local path for project installs. Workflow source and helpers live under `atomic/`; there are no runtime-specific workflow forks. See [workflows/delivery.md](../workflows/delivery.md) for inputs and launch instructions.
+The optional Atomic workflow is registered as `delivery`. Install it explicitly with `--atomic`; ordinary installs copy skills only. It loads the same canonical skills: without an explicit `skills_dir`, a project-local `.agents/skills` in the task worktree takes automatic precedence over the portable default `~/.agents/skills`. Workflow source and helpers live under `atomic/`; there are no runtime-specific workflow forks. See [workflows/delivery.md](../workflows/delivery.md) for inputs and launch instructions.
 
 ## Task directory
 
-A task lives in `.agents/tasks/<slug>/` under the project root. `<slug>` is two to four kebab-case words that name the task, for example `verbose-flag-cli` (from "Add a --verbose flag to the CLI"). `.agents/skills/` may sit beside it; skill scanners never read `.agents/tasks/`.
+A task lives in `<task-root>/<slug>/` under the project root. `<slug>` is two to four kebab-case words that name the task, for example `verbose-flag-cli` (from "Add a --verbose flag to the CLI"). `<task-root>` is the repository's configured task root; the default is `.agents/tasks`. Skill scanners never read the task root, and `.agents/skills/` may sit beside the default root.
+
+The task root resolves in this order:
+
+1. An explicit existing `task_dir` is authoritative. Its parent directory is the task root and no directive is consulted.
+2. Otherwise a repository-root `AGENTS.md` or `CLAUDE.md` may declare exactly one override directive: `<!-- skills:task-root=relative/path -->`. Both files may declare it (dual declarations) only when the values match. A conflict between files, more than one directive in one file, an invalid value, or a symlinked instruction file fails closed, as does a symlinked path component under the resolved root.
+3. With no directive, the root is `.agents/tasks`.
+
+A valid override is a relative POSIX path: no absolute or drive-letter form, no `~`, environment syntax, escaped bytes, backslashes, or NUL, and no empty, dot, or parent segments; every segment is lowercase `[a-z0-9._-]`. The reserved roots `.git`, `.agents/skills`, and `.atomic-delivery`, and anything beneath them, are rejected. The optional workflow resolves the root at the selected base commit and fails when the created worktree's checked-out root disagrees with it. Generic paths in this collection write the root as `<task-root>`; fill it from the resolved value, never a guess.
 
 ## task.md
 
-`task.md` is the only required file in a task directory. Frontmatter keys: `slug`, `title`, `workflow`, `created` (ISO date); epic children also carry `parent`, `base`, and `depends_on`. Optional keys: `issue` (the GitHub issue number a child task tracks, written by `start-epic-delivery` and closed by its pull request) and `routed_by` with `route_confidence` (the workflow the `deliver` skill chose and how sure the judgment was). The body is the user's request verbatim.
+`task.md` is the required request record in every task directory; a new task also carries a valid empty `index.json`, initialized at creation (see Artifacts). Frontmatter keys: `slug`, `title`, `workflow`, `created` (ISO date); epic children also carry `parent`, `base`, and `depends_on`. Optional keys: `issue` (the GitHub issue number a child task tracks, written by `start-epic-delivery` and closed by its pull request) and `routed_by` with `route_confidence` (the workflow the `deliver` skill chose and how sure the judgment was). The body is the user's request verbatim.
 
 `workflow` records the delivery chain: `full`, `lean`, `prd`, `oneshot`, `bugfix`, `epic`, or `program`; the default is `full`. `resolve-reviews` and `epic-wave` are continuation routes over existing tasks, not new task kinds. The chains are in [workflows/delivery.md](../workflows/delivery.md).
 
-A skill given no task directory, and finding none whose `task.md` matches the request, opens the task worktree first. Then create the directory: pick a slug, write `task.md` from the user's message, `git add .agents/tasks/<slug>/task.md`, commit as `docs(task): open <slug>`, and report the path. The optional workflow prepares the same file before its first skill stage; stages reuse it. When `git check-ignore -q .agents/tasks/<slug>/task.md` reports the file ignored, remove only the exact `.agents/tasks/` line that earlier versions of this collection added to the project `.gitignore`, stage that edit with the same commit, and stop with a one-line instruction when the path remains ignored. Outside git, save artifacts in place and report that they are uncommitted.
+A skill given no task directory, and finding none whose `task.md` matches the request, opens the task worktree first. Then create the directory: pick a slug, write `task.md` from the user's message, and initialize a valid empty `index.json` (schema `skills.task-index/v1`, version 1, `generation` 0, no series), with the adjacent helper's `init` when the installation carries one and otherwise with the exact manual contract under Recording an artifact. `git add <task-root>/<slug>/task.md <task-root>/<slug>/index.json`, commit as `docs(task): open <slug>`, and report the path. The optional workflow prepares the same files before its first skill stage; stages reuse them. When `git check-ignore -q <task-root>/<slug>/task.md` reports the file ignored, remove only the exact task-root line that earlier versions of this collection added to the project `.gitignore`, stage that edit with the same commit, and stop with a one-line instruction when the path remains ignored. Outside git, save artifacts in place and report that they are uncommitted.
+
+An existing task directory without `index.json` is a legacy task. It is never silently migrated: its numbered files stay as they are, and the legacy rules below apply only while the index is genuinely absent.
 
 Example:
 
@@ -54,17 +64,71 @@ A worktree outlives the task's sessions and is removed by the user with `git wor
 
 ## Artifacts
 
-Artifacts are `NN-<type>-<slug>.md` in the task directory. `NN` is two digits: list the directory, take the highest existing prefix, add one; use `01` when there is none.
+An indexed task stores durable artifacts under `artifacts/<kind>/<variant>/<NNNN>.md` inside the task directory, registered in `index.json`. The index is the sole source of truth for what exists and what is current. When `index.json` is present it is authoritative: invalid JSON, an invalid schema, a dangling path, a symlinked component, a SHA-256 mismatch, or mirrored `type`/`status`/`summary` that disagrees with the file fails closed rather than falling back to a directory scan.
 
-`NN-execution-plan-<slug>.md` (`type: execution-plan`) is optional orchestration evidence: the delivery workflow records the selected chain, skipped phases, judgment probabilities, thresholds, and reasons. A design discussion's or TDD's `### Execution DAG` section embeds it when present. Manual skills do not need this artifact; without one they describe the selected chain from `task.md`.
+Each artifact belongs to exactly one semantic series identified by `(kind, variant)`. Iteration `NNNN` is a four-digit contiguous number starting at `0001`; its id is `<kind>.<variant>.<NNNN>` and its path is `artifacts/<kind>/<variant>/<NNNN>.md`. A series records a `current` pointer and ordered `iterations`. Each iteration record carries `id`, `iteration`, `path`, `sha256` (the lowercase digest of the exact UTF-8 file text), `type`, `status`, and `summary` mirroring the artifact's own metadata, plus `supersedes` naming the immediately preceding iteration (omitted on the first). The index also carries a `generation` that increments by one on every recorded artifact.
+
+The canonical series for each artifact type, exactly as `ARTIFACT_SERIES` in `shared/task-artifacts.mjs`:
+
+| Type | Series (`kind.variant`) |
+|---|---|
+| `sources` | `research.sources` |
+| `research-questions` | `research.questions` |
+| `research` | `research.primary` |
+| `design-discussion` | `design.discussion` |
+| `design-prd` | `design.prd` |
+| `design-tdd` | `design.tdd` |
+| `structure-outline` | `planning.structure` |
+| `plan` | `planning.plan` |
+| `epic-plan` | `planning.epic` |
+| `epic-delivery` | `delivery.epic` |
+| `reproduction` | `debugging.reproduction` |
+| `fix` | `implementation.fix` |
+| `implementation` | `implementation.receipt` |
+| `verification` | `review.verification` |
+| `app-test` | `review.browser` |
+| `code-review` | `review.code` |
+| `code-review-fixes` | `review.fixes` |
+| `comment-review` | `review.comments` |
+| `pr-description` | `pull-request.description` |
+| `pr-review` | `pull-request.review` |
+| `evidence` | `evidence.recording` |
+| `evidence-iteration` | `evidence.iteration` |
+| `execution-plan` | `orchestration.execution` |
+| `commit` | `delivery.commit` |
+
+Distinct series never share iterations. Several general reviews of one type are iterations of one series, while different review kinds (`review.code`, `review.fixes`, `review.verification`, `review.browser`, `review.comments`, `pull-request.review`) remain separate durable series with their own current pointers.
+
+`execution-plan` (`orchestration.execution`) is optional orchestration evidence: the delivery workflow records the selected chain, skipped phases, judgment probabilities, thresholds, and reasons. A design discussion's or TDD's `### Execution DAG` section embeds it when present. Manual skills do not need this artifact; without one they describe the selected chain from `task.md`.
+
+`pr-description` is indexed like any other artifact at `pull-request.description` but stays body-only without frontmatter, because the file is the pull request body; its `summary` mirrors the `## Purpose` section and its `status` is null. An indexed task has no root-level `pr-description.md`.
 
 Keep each template's frontmatter, including `summary`. Later phases read only `summary` from artifacts they did not select as primary inputs.
 
-"The newest artifact of type X" is the file with the highest `NN` whose frontmatter `type` is `X`.
+Selecting the current artifact of a type: read and validate `index.json`, map the type to its canonical series, and take the iteration record the series' `current` pointer names. Never scan the directory for the newest file when an index exists. The legacy behavior, scanning the task directory for `NN-<type>-<slug>.md` files and taking the highest `NN` whose frontmatter `type` matches, applies only to a legacy task where `index.json` is genuinely absent.
 
 ## Iteration
 
-Revise an artifact by editing its file in place. Never allocate a new number for a revision. Re-read the file before writing when another actor may have changed it.
+A recorded iteration is immutable. Every durable revision, whether reviewer feedback, a repair, or a regenerated document, creates the next iteration in the same series: allocate the next contiguous number, write the new file, record it with `supersedes` naming the previous current iteration, and advance the series' `current` pointer and the index `generation`. Nothing edits an earlier iteration's file or rewrites its record. Re-read the index before allocating when another actor may have changed it; a stale allocation aborts on conflict rather than overwriting.
+
+## Recording an artifact
+
+An installed runtime or portable skill may carry the adjacent helper `references/task-artifacts.mjs`. When it is present, the flow is:
+
+1. `node references/task-artifacts.mjs init <task-dir>`: create or validate the task's `index.json`.
+2. `node references/task-artifacts.mjs allocate <task-dir> <kind> <variant>`: returns a reservation with the allocated id, canonical path, and a unique staging `writePath`.
+3. Write the artifact to the returned `writePath` exactly as it will be published.
+4. `node references/task-artifacts.mjs record <task-dir> <kind> <variant> <type> <writePath>`: validates metadata, digests the exact UTF-8 text, publishes the file at its canonical path, registers the iteration, and returns the record. Use the returned canonical path from here on.
+
+The helper also answers `current <task-dir> <type>` (the current record for a type) and `root <repo-root>` (the resolved task root). Distribution depends on the installation shape: canonical skills in this repository and published plugin skills use manual index mutation and cannot assume the helper; runtime and portable builds copy it beside each skill, but no skill requires it; the Atomic workflow requires its adjacent copy. An independently installed skill never treats the helper as mandatory.
+
+Manual index mutation, when no helper is available, follows this exact contract (`TASK_ARTIFACT_DISTRIBUTION.canonical.contract` in `scripts/lib/build.mjs`):
+
+- Validate the full existing index and every artifact path (relative, inside the task directory, no symlinks) before changing anything.
+- Reserve the next contiguous four-digit iteration bound to the current index `generation`. Stage the file at a unique `.artifact-staging/<uuid>.md` and record the reservation with an exclusive create at `.artifact-reservations/<uuid>.json`.
+- Digest the exact UTF-8 staging text with SHA-256. The record fields are `id`, `iteration`, `path`, `sha256`, `type`, `status`, `summary`; `supersedes` names the prior current iteration and is omitted on the first.
+- Publish with an exclusive hard link from staging to the semantic path, set the series `current` to the new record id, and increment `generation` by one.
+- Write the index through an exclusive sibling temporary file renamed atomically over `index.json`. If the index write fails, remove the published artifact; after success, remove the staging file and reservation. On any conflict (stale generation, existing path, concurrent update) abort; never force.
 
 ## Feedback
 
@@ -77,7 +141,7 @@ A phase that ends at a human gate replies in this shape:
 ````markdown
 {summary}
 
-Review artifact: [NN-type-slug.md](.agents/tasks/<slug>/NN-type-slug.md)
+Review artifact: [planning.plan.0001](<task-root>/<slug>/artifacts/planning/plan/0001.md)
 
 Check:
 - <one line per item in the artifact's ### Verify list>
@@ -85,13 +149,13 @@ Check:
 Known limits:
 - <one line per item in the artifact's ### Known limits list>
 
-Reply with the changes you want, or run `/iterate-<phase> @NN-type-slug.md`. Running the next command records approval.
+Reply with the changes you want, or run `/iterate-<phase> @<task-root>/<slug>/artifacts/planning/plan/0001.md`. Running the next command records approval.
 
 Next action:
 Open a new session in {run_location}, then run:
 
 ```text
-/<next-skill> @NN-type-slug.md
+/<next-skill> @<task-root>/<slug>/artifacts/planning/plan/0001.md
 ```
 ````
 
@@ -117,7 +181,7 @@ The command fence is for manual mode: the user pastes it into a new session in t
 
 A native stage reads and follows `<skills_dir>/<skill>/SKILL.md` for the supplied task directory. The stage prompt states its scope and primary artifacts, supplies any accepted reviewer feedback, and asks for the skill's normal artifact and final answer. Skills retain their own artifact and code commit rules; orchestration reads persisted artifacts to route later work.
 
-The workflow may collect structured results from artifact frontmatter, but it must not require a runtime-specific output format inside the ordinary skill. A revision stage applies supplied reviewer text to the newest artifact it owns in place.
+The workflow may collect structured results from artifact frontmatter, but it must not require a runtime-specific output format inside the ordinary skill. A revision stage applies supplied reviewer text by recording the next iteration of the series it owns; the controller verifies the stage registered the expected new current record and advanced the index generation.
 
 ## Typed judgments
 
@@ -128,24 +192,24 @@ The workflow may collect structured results from artifact frontmatter, but it mu
 Answer templates under `references/` use these placeholders; fill every one before printing.
 
 - `{run_location}`: observed task worktree and branch in the fixed handoff sentence `Open a new session in {run_location}, then run:`. Fill `` `<root>` on branch `<branch>` `` from `git rev-parse --show-toplevel` and `git rev-parse --abbrev-ref HEAD`; use `this checkout` outside git. Fill it even when orchestration owns the next stage, so the reply remains usable manually.
-- `{artifact_link}`: relative Markdown link to the file this phase saved, `[NN-type-slug.md](.agents/tasks/<slug>/NN-type-slug.md)`; `none` when nothing was saved.
-- `{artifact_file}`: that file's name only, for example `04-plan-verbose-flag-cli.md`. Templates write `@{artifact_file}` in commands; the `@` is already there, so fill nothing but the name, never a path.
+- `{artifact_link}`: relative Markdown link to the artifact this phase recorded, `[<kind>.<variant>.<NNNN>](<task-root>/<slug>/artifacts/<kind>/<variant>/<NNNN>.md)`; `none` when nothing was saved.
+- `{artifact_file}`: that artifact's path relative to the worktree root, `<task-root>/<slug>/artifacts/<kind>/<variant>/<NNNN>.md`. Templates write `@{artifact_file}` in commands; the `@` is already there, so fill nothing but the path.
 - `{summary}`: the saved artifact's frontmatter `summary`.
 - `{review_check}` and `{known_limits}`: one line per item of the artifact's `### Verify` and `### Known limits` lists.
-- `{plan_file}`: the name of the plan or structure outline being implemented, the newest artifact of type `plan` or `structure-outline`; used by the implementation skills, which hand off to the plan rather than to their own receipt. Same rule: name only, the template carries the `@`.
+- `{plan_file}`: the worktree-relative path of the plan or structure outline being implemented, the current artifact of the `planning.plan` or `planning.structure` series; used by the implementation skills, which hand off to the plan rather than to their own receipt. Same rule: path only, the template carries the `@`.
 - `{next_command}`: only in replies for an artifact whose exact `type` is `research`, `/create-design-discussion` for `full`, `/create-structure-outline` for `lean`, `/create-prd` for `prd`; in `sources` replies, `/create-prd` or `/create-tdd` when the request converts an existing product or technical document the sources hold, otherwise the chain's first skill for the task's `workflow`: `/create-research-questions` for `full`, `lean`, `epic`; `/create-research` for `prd`, `program`, `oneshot`; `/reproduce-bug` for `bugfix`. This placeholder never rewrites a literal command in another answer template: `research-questions` always hands off to `/create-research`, including in `lean`.
 - `{implementation_command}`: `/implement-outline` for `lean`, `/implement-plan` otherwise; used by the plan, outline, and `iterate-implementation` replies.
 - `{completed_phase}` and `{next_phase}`: phase numbers in implementation replies.
-- `{child_slug}`, `{child_issue}`, `{child_start_command}`: epic delivery; see `start-epic-delivery`. `{child_issue}` is `#<number>` or `no issue`. `{child_start_command}` is the child's first manual skill followed by `.agents/tasks/<child slug>/`; for a oneshot child it is `/deliver .agents/tasks/<child slug>/` with an explicit instruction to use manual mode and implement before review. Each child starts in its own worktree cut from the epic branch in `task.md` `base:`.
+- `{child_slug}`, `{child_issue}`, `{child_start_command}`: epic delivery; see `start-epic-delivery`. `{child_issue}` is `#<number>` or `no issue`. `{child_start_command}` is the child's first manual skill followed by `<task-root>/<child slug>/`; for a oneshot child it is `/deliver <task-root>/<child slug>/` with an explicit instruction to use manual mode and implement before review. Each child starts in its own worktree cut from the epic branch in `task.md` `base:`.
 - `{needed}`: one line per item of the artifact's `## Missing` list (the reproduction artifact in `reproduce-bug`, the app-test artifact in `test-app`).
 
 ## Commits
 
 Pull request target resolution is the existing pull request base, then `task.md` `base:`, then the repository default branch.
 
-`.agents/tasks/` is committed history. The task branch carries `task.md` and every artifact with the code to the pull request. Review-resolution sessions use the existing pull-request branch and its committed task directory.
+The task root is committed history. The task branch carries `task.md`, `index.json`, and every artifact with the code to the pull request. Review-resolution sessions use the existing pull-request branch and its committed task directory.
 
-Every skill commits its saved artifacts with explicit `git add <path>` as `docs(task): <artifact type> artifact`, for example `docs(task): plan artifact`. Optional orchestration may commit remaining task-directory changes after a stage, but this never replaces the skill's standalone commit rule. Code commits stage explicit code paths and never mix artifact files in. Never `git add -A` or `git add .` for code.
+Every skill commits its saved artifacts with explicit `git add <path>` as `docs(task): <artifact type> artifact`, for example `docs(task): plan artifact`. One artifact commit stages the new iteration's canonical path and `index.json` together, so the committed index never references an uncommitted file. Optional orchestration may commit remaining task-directory changes after a stage, but this never replaces the skill's standalone commit rule. Code commits stage explicit code paths and never mix artifact files in. Never `git add -A` or `git add .` for code.
 
 Every commit message follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
 
@@ -178,7 +242,7 @@ A phase skill reads only `task.md` and its selected artifacts. It never relies o
 
 The artifact is the memory between phases; the conversation is not. Everything the next phase needs is in the task directory before the reply is printed. A compaction summary is not a substitute: it drops the exact file paths, checks, and limits the artifact keeps.
 
-Read budget for one phase, in this order: `task.md` frontmatter and body; the selected primary artifacts, completely; `summary` only from other artifacts; repository files through child workers where the skill provides them, and directly only the files the phase must edit or cite. Never paste a worker's full message into an artifact or reply; extract facts with `path:line` pointers.
+Read budget for one phase, in this order: `task.md` frontmatter and body; the primary artifacts selected through the index's current records, completely; `summary` only from other index records; repository files through child workers where the skill provides them, and directly only the files the phase must edit or cite. Never paste a worker's full message into an artifact or reply; extract facts with `path:line` pointers.
 
 Signs that the context has degraded: re-reading a file already read this session, contradicting the artifact or `task.md`, dropping a constraint the user stated, repeating a question the user answered, or losing track of which numbered step is running. On the first sign: save the artifact in its current state, print the reply with the handoff fence, and stop. The next session resumes from the file with `/iterate-<phase> @<file>` or the next command.
 

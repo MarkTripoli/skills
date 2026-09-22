@@ -4,8 +4,8 @@ The acceptance helper is repository-owned and is not required by the portable pr
 
 ```bash
 node skills/delivery/jev-ui/scripts/acceptance.mjs --smoke
-node skills/delivery/jev-ui/scripts/acceptance.mjs --surface browser --evidence-dir .agents/tasks/<slug>/evidence/browser
-node skills/delivery/jev-ui/scripts/acceptance.mjs --surface android --target emulator-5560 --evidence-dir .agents/tasks/<slug>/evidence/android
+node skills/delivery/jev-ui/scripts/acceptance.mjs --surface browser --evidence-dir <task-root>/<slug>/evidence/browser
+node skills/delivery/jev-ui/scripts/acceptance.mjs --surface android --target emulator-5560 --evidence-dir <task-root>/<slug>/evidence/android
 ```
 
 The acceptance runner uses the local `record-evidence` companion by default. An installed copy must receive an explicit evidence executable through `JEV_UI_EVIDENCE_COMMAND` and optional working directory `JEV_UI_EVIDENCE_CWD`; when that companion is unavailable, `runAcceptance` returns `blocked` rather than claiming `passed`. The generic `jev-ui.mjs` controller does not import or resolve this companion.

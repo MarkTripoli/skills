@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { scanSkills } from "./lib/layout.mjs";
+import { validateTaskArtifacts } from "./lib/validate-task-artifacts.mjs";
 import { SUBJECT_PATTERN, MAX_SUBJECT_LENGTH } from "./check-commits.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -215,7 +216,7 @@ const BANNED_TOKENS = [
 ];
 
 const STANDALONE_SKILLS = new Set(["jev-ui"]);
-const SKIP_DIRS = new Set([".git", "node_modules", "dist", "results", ".cache"]);
+const SKIP_DIRS = new Set([".git", ".backups", "node_modules", "dist", "results", ".cache"]);
 const SKIP_FILES = new Set(["scripts/validate.mjs", ".skill-lock.json"]);
 const SKIP_BINARY_MEDIA = /\.(mp4|m4v|mov|webm|avi|mkv|wav|mp3)$/i;
 
@@ -291,6 +292,7 @@ if (skillNames.length !== EXPECTED_SKILL_COUNT) {
   fail("skills", 0, `expected ${EXPECTED_SKILL_COUNT} skills, found ${skillNames.length}`);
 }
 const skillSet = new Set(skillNames);
+validateTaskArtifacts({ root, repoRoot, skills: layout.skills, generated, fail });
 
 // 2-4. Frontmatter, shared links, reference files.
 for (const name of skillNames) {

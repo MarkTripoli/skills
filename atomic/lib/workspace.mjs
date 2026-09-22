@@ -3,10 +3,18 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { digest, frontmatter, validateChildren } from './artifacts.mjs';
+import { initTaskArtifacts, readArtifactIndex } from './artifact-index.mjs';
+import { DEFAULT_TASK_ROOT, normalizeTaskRoot, resolveTaskRoot } from './task-storage.mjs';
+import { committedChildCompletion } from './child-evidence.mjs';
+import { taskRootAtBase } from './workspace-base.mjs';
+import { expandPath, resolveSkillsDir } from './skill-storage.mjs';
 
-export const expandPath = value => value === '~' ? os.homedir() : value.startsWith('~/') ? path.join(os.homedir(), value.slice(2)) : value;
-export function git(cwd, args, optional = false) {
-  try { return execFileSync('git', args, { cwd, encoding: 'utf8', timeout: 30_000, maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }).trim(); }
+export { expandPath } from './skill-storage.mjs';
+export function git(cwd, args, optional = false, raw = false) {
+  try {
+    const output = execFileSync('git', args, { cwd, encoding: 'utf8', timeout: 30_000, maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+    return raw ? output : output.trim();
+  }
   catch (error) { if (optional) return null; throw new Error(`git ${args.join(' ')} in ${cwd}: ${String(error.stderr || error.message).trim()}`); }
 }
 export function saveRecord(task, name, value) {
@@ -22,6 +30,7 @@ export function saveRecord(task, name, value) {
 }
 
 const safe = value => String(value).replace(/[^A-Za-z0-9._-]/g, '_');
+const repoRelative = (root, target) => path.relative(root, target).split(path.sep).join('/');
 function writeJson(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temporary = `${file}.tmp`;
@@ -70,7 +79,8 @@ export function ensureTask(inputs, invocation, runId, mode) {
     const branch = git(cwd, ['branch', '--show-current'], true);
     if (inputs.branch && branch !== inputs.branch) throw new Error(`Supplied task_dir belongs to branch ${branch}; refusing to switch it to ${inputs.branch}`);
     const recordedMode = typeof parsed.metadata.workflow === 'string' && parsed.metadata.workflow !== 'auto' ? parsed.metadata.workflow : mode;
-    return { cwd, taskDir, slug, request: parsed.body, runId, mode: recordedMode, skillsDir: path.resolve(invocation, expandPath(inputs.skills_dir || '~/.agents/skills')), branch: branch || null };
+    const taskRoot = path.dirname(taskDir);
+    return { cwd, taskDir, taskRoot, taskRootRelative: repoRelative(cwd, taskRoot), slug, request: parsed.body, runId, mode: recordedMode, skillsDir: resolveSkillsDir(inputs.skills_dir, cwd), branch: branch || null };
   }
   if (mode === 'epic-wave' || mode === 'resolve-reviews') throw new Error(`${mode} requires the existing task_dir; no new task or branch will be inferred`);
   const request = String(inputs.request);
@@ -80,12 +90,15 @@ export function ensureTask(inputs, invocation, runId, mode) {
   let target = cwd;
   let branch = inputs.branch || `${['epic', 'program'].includes(mode) ? 'epic-' : ''}${slug}`;
   let base = inputs.base || null;
+  let taskRootRelative = DEFAULT_TASK_ROOT;
   if (root) {
     const common = worktrees(root).find(item => path.resolve(item.path) === path.resolve(root))?.path || root;
     target = path.join(os.homedir(), '.agents', 'worktrees', path.basename(common), slug);
     base ||= git(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], true) || 'main';
+    taskRootRelative = taskRootAtBase(root, base, git);
   }
-  taskDir = root ? path.join(target, '.agents', 'tasks', slug) : path.join(cwd, '.agents', 'tasks', slug);
+  const taskRoot = path.join(root ? target : cwd, ...taskRootRelative.split('/'));
+  taskDir = path.join(taskRoot, slug);
   const markerFile = path.join(root || cwd, '.atomic-delivery', 'workspace', `${safe(runId)}.json`);
   if (!readJson(markerFile) && root && (fs.existsSync(target) || git(root, ['show-ref', '--verify', `refs/heads/${branch}`], true))) throw new Error(`Task worktree or branch already exists: ${target}, ${branch}; supply its task_dir to reuse it`);
   expectedMarker(markerFile, { runId: String(runId), root: root || cwd, target, branch, base, slug, taskDir, mode });
@@ -97,6 +110,8 @@ export function ensureTask(inputs, invocation, runId, mode) {
     }
     if (!ownedWorktree(root, target, branch)) throw new Error(`Git worktree ${target} was not created for owned branch ${branch}`);
     cwd = fs.realpathSync(target);
+    const checkedOutTaskRoot = resolveTaskRoot(cwd).relativeRoot;
+    if (checkedOutTaskRoot !== taskRootRelative) throw new Error(`Created worktree task root ${checkedOutTaskRoot} disagrees with selected base ${base} (${taskRootRelative})`);
     writeJson(markerFile, { ...readJson(markerFile), phase: 'worktree-added' });
   }
   fs.mkdirSync(taskDir, { recursive: true });
@@ -107,18 +122,23 @@ export function ensureTask(inputs, invocation, runId, mode) {
     const parsed = frontmatter(fs.readFileSync(taskFile, 'utf8'), taskFile);
     if (parsed.metadata.slug !== slug || parsed.metadata.workflow !== mode || parsed.body !== request) throw new Error(`Owned task changed in ${taskDir}; refusing to overwrite it`);
   } else fs.writeFileSync(taskFile, expectedTask, { flag: 'wx' });
+  initTaskArtifacts(taskDir);
   writeJson(markerFile, { ...readJson(markerFile), phase: 'task-written' });
-  return { cwd, taskDir, slug, request, runId, mode, skillsDir: path.resolve(invocation, expandPath(inputs.skills_dir || '~/.agents/skills')), branch: git(cwd, ['branch', '--show-current'], true) || null };
+  return { cwd, taskDir, taskRoot, taskRootRelative, slug, request, runId, mode, skillsDir: resolveSkillsDir(inputs.skills_dir, cwd), branch: git(cwd, ['branch', '--show-current'], true) || null };
 }
 
-export function revision(cwd) {
-  if (!git(cwd, ['rev-parse', '--is-inside-work-tree'], true)) return null;
-  const excluded = ['.', ':(exclude).agents/tasks', ':(exclude).atomic'];
-  const index = git(cwd, ['ls-files', '-s', '--', ...excluded]);
-  const diff = git(cwd, ['diff', '--binary', '--', ...excluded]);
-  const untracked = git(cwd, ['ls-files', '--others', '--exclude-standard', '-z', '--', ...excluded]);
+export function revision(cwd, effectiveTaskRootRelative) {
+  const root = git(cwd, ['rev-parse', '--show-toplevel'], true);
+  if (!root) return null;
+  const relativeRoot = effectiveTaskRootRelative === undefined
+    ? resolveTaskRoot(root).relativeRoot
+    : normalizeTaskRoot(effectiveTaskRootRelative, 'Effective task root');
+  const excluded = ['.', `:(exclude)${relativeRoot}`, ':(exclude).atomic'];
+  const index = git(root, ['ls-files', '-s', '--', ...excluded]);
+  const diff = git(root, ['diff', '--binary', '--', ...excluded]);
+  const untracked = git(root, ['ls-files', '--others', '--exclude-standard', '-z', '--', ...excluded]);
   const hashes = (untracked || '').split('\0').filter(Boolean).map(file => {
-    const full = path.join(cwd, file);
+    const full = path.join(root, file);
     return `${file}:${digest(fs.lstatSync(full).isSymbolicLink() ? fs.readlinkSync(full) : fs.readFileSync(full))}`;
   });
   return digest(JSON.stringify([index, diff, hashes]));
@@ -138,25 +158,6 @@ export function childrenFor(task) {
   }
   return validateChildren(children);
 }
-function childOutcome(task, slug) {
-  const root = path.join(task.taskDir, '.atomic-delivery');
-  if (!fs.existsSync(root)) return { success: false, failure: false };
-  let success = false;
-  let failure = false;
-  for (const run of fs.readdirSync(root, { withFileTypes: true })) {
-    if (!run.isDirectory()) continue;
-    const file = path.join(root, run.name, `child-${slug}.json`);
-    if (!fs.existsSync(file)) continue;
-    try {
-      const record = JSON.parse(fs.readFileSync(file, 'utf8'));
-      const status = record?.result?.status ?? record?.status;
-      if (status === 'completed') success = true;
-      else if (status) failure = true;
-    } catch { failure = true; }
-  }
-  return { success, failure };
-}
-
 export function childWave(task, children) {
   if (!children.length) throw new Error('Epic delivery has no child tasks');
   const done = [];
@@ -164,12 +165,7 @@ export function childWave(task, children) {
   const ready = [];
   const blocked = [];
   for (const child of children) {
-    const description = path.join(child.taskDir, 'pr-description.md');
-    const relative = path.relative(task.cwd, description);
-    const mergedText = git(task.cwd, ['show', `HEAD:${relative}`], true);
-    const outcome = childOutcome(task, child.slug);
-    const mergedEvidence = Boolean(mergedText && /## Purpose\b/i.test(mergedText) && /## Change outline\b/i.test(mergedText) && (!outcome.failure || outcome.success));
-    if (mergedEvidence) { done.push(child.slug); continue; }
+    if (committedChildCompletion(task.cwd, child, git)) { done.push(child.slug); continue; }
     const branch = git(task.cwd, ['rev-parse', '--verify', `refs/heads/${child.slug}`], true);
     if (branch || git(task.cwd, ['show-ref', '--verify', `refs/remotes/origin/${child.slug}`], true)) started.push(child.slug);
   }
@@ -185,21 +181,28 @@ export function prepareChild(task, child) {
   const root = git(task.cwd, ['rev-parse', '--show-toplevel']) || task.cwd;
   const common = worktrees(root).find(item => path.resolve(item.path) === path.resolve(root))?.path || root;
   const target = path.join(os.homedir(), '.agents', 'worktrees', path.basename(common), child.slug);
+  const taskRootRelative = task.taskRootRelative || repoRelative(task.cwd, path.dirname(task.taskDir));
+  if (path.isAbsolute(taskRootRelative) || taskRootRelative === '..' || taskRootRelative.startsWith('../')) throw new Error(`Parent task root is outside its repository: ${path.dirname(task.taskDir)}`);
+  const childTaskDir = path.join(target, ...taskRootRelative.split('/'), child.slug);
   const markerFile = path.join(task.taskDir, '.atomic-delivery', 'workspace', `child-${safe(task.runId)}-${safe(child.slug)}.json`);
   if (!readJson(markerFile) && (fs.existsSync(target) || git(root, ['show-ref', '--verify', `refs/heads/${child.slug}`], true))) throw new Error(`Child workspace or branch exists without this run's ownership: ${target}, ${child.slug}`);
-  expectedMarker(markerFile, { runId: String(task.runId), root, target, branch: child.slug, base: task.branch, slug: child.slug, taskDir: path.join(target, '.agents', 'tasks', child.slug) });
+  expectedMarker(markerFile, { runId: String(task.runId), root, target, branch: child.slug, base: task.branch, slug: child.slug, taskDir: childTaskDir });
   if (!ownedWorktree(root, target, child.slug)) {
     if (fs.existsSync(target) || git(root, ['show-ref', '--verify', `refs/heads/${child.slug}`], true)) throw new Error(`Child workspace or branch exists without this run's ownership: ${target}, ${child.slug}`);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     git(task.cwd, ['worktree', 'add', '-b', child.slug, target, task.branch]);
   }
   if (!ownedWorktree(root, target, child.slug)) throw new Error(`Child worktree ${target} was not created for owned branch ${child.slug}`);
-  const dir = path.join(target, '.agents', 'tasks', child.slug);
+  const dir = childTaskDir;
   fs.mkdirSync(dir, { recursive: true });
   const source = fs.readFileSync(path.join(child.taskDir, 'task.md'));
   const file = path.join(dir, 'task.md');
   if (!fs.existsSync(file)) fs.writeFileSync(file, source, { flag: 'wx' });
   else if (!fs.readFileSync(file).equals(source)) throw new Error(`Child task changed in ${dir}; refusing to overwrite it`);
+  if (fs.existsSync(path.join(child.taskDir, 'index.json'))) {
+    readArtifactIndex(child.taskDir);
+    initTaskArtifacts(dir);
+  }
   writeJson(markerFile, { ...readJson(markerFile), phase: 'task-written' });
   return dir;
 }

@@ -35,16 +35,16 @@ If user wants to keep resolving choices: read PRD fully, identify sparse or unre
 
 1. **Locate the task directory and read `task.md`** per the conventions, creating it from the user's message when none exists.
 
-2. **Find and read**: Resolve target PRD from `@file` or, when none is given, the newest artifact of type `design-prd` in the task directory listing. Ask to choose if multiple plausible. Read fully: PRD, feedback (the user's message or a file the user names), mockups, user-mentioned files. For ticket, research, design discussion: use `summary` fields, open only when feedback touches coverage, read by heading.
+2. **Find and read**: Resolve target PRD from `@file`; otherwise use current `design.prd` from `index.json`. Read the PRD, feedback, mockups, and user-mentioned files fully. Use current indexed summaries for other artifacts.
 
 3. **Validate feedback**: Do not accept corrections blindly. Read named files. Verify uncertain facts with direct reads or child research.
 
 4. **Start child research when needed**: Start a child worker for role `agent-codebase-locator` (finds files/tests), `agent-codebase-analyzer` (explains behavior), `agent-codebase-pattern-finder` (finds precedents), or `agent-web-search-researcher` (checks external docs) with the assignment (see the conventions' Child workers section) when a missing fact would change the artifact; wait for it; read its final message. Use only findings you have read from the worker's final message. If a child or direct read discovers current-state facts missing or stale in completed research, fold those into the research artifact before finalizing the PRD.
 
-5. **Update PRD**: Edit in place. Preserve frontmatter and major sections. Update Problem to Solve, success signal, Proposed Solution, Alternative Solutions Considered, Solution Details, mockups, Out of Scope per feedback. Weave resolved decisions into narrative; do not leave as log entry.
+5. **Update PRD**: Copy current PRD to the next `design.prd` iteration and update that new file; never edit a recorded iteration. Preserve frontmatter/sections and weave resolved decisions into narrative. A legacy task without `index.json` follows the conventions' in-place rule.
 
 6. **Update mockups when feedback changes visuals**: Edit existing `mockup-<description>.html` files in the task directory when they represent same decision. Create new only when feedback introduces distinct UI choice. Link each mockup from the artifact with a relative Markdown link.
 
 7. **Stop and ask next**: After incorporating feedback, stop. State change briefly, ask what to work on next, offer next decision if unresolved parts remain. Never continue to another change without user direction.
 
-8. **Finish when user is done**: When user says PRD is complete or solution fully fleshed out and approved, read `references/prd_final_answer.md`, save the file, follow template; fill `{artifact_link}` with a relative Markdown link to the saved file, `[NN-prd-slug.md](.agents/tasks/<slug>/NN-prd-slug.md)`, fill `{artifact_file}` with the saved file's name only (the template carries the `@`; name this artifact and no other file, never a path), and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. Add no prose before or after the template. Commit the saved file with `git add <path>` as `docs(task): prd artifact`.
+8. **Finish when user is done**: Record the new iteration through the conventions' Recording an artifact flow, then follow `references/prd_final_answer.md` exactly. Fill `{artifact_link}` and `{artifact_file}` with the canonical task-root-relative path. Commit that path and `index.json` explicitly as `docs(task): prd artifact`.

@@ -2,7 +2,7 @@
 task: [epic slug]
 type: epic-delivery
 summary: "[Two to four sentences: how many children were created, which wave starts now, and which children gate the rest.]"
-epic_plan: [NN-epic-plan-<slug>.md]
+epic_plan: [canonical planning.epic artifact path]
 ---
 
 # [Epic name] Delivery
@@ -13,7 +13,7 @@ Epic branch: `[epic branch]`. Child task files are committed here as `docs(task)
 
 | Child | Slug | Workflow | Depends on | Issue |
 |---|---|---|---|---|
-| [Child name] | `.agents/tasks/[child-slug]/` | [full, lean, prd, oneshot, or bugfix] | [dependency slugs, or none] | [#number, or none] |
+| [Child name] | `<task-root>/[child-slug]/` | [full, lean, prd, oneshot, or bugfix] | [dependency slugs, or none] | [#number, or none] |
 
 ## Waves
 
