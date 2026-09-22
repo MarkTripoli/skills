@@ -1,7 +1,9 @@
 package db
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -9,9 +11,18 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// DB wraps the one SQLite database the daemon owns.
+// querier is the statement surface *sql.DB and *sql.Tx share.
+type querier interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// DB wraps the one SQLite database the daemon owns. Inside Transact, sql is
+// the open transaction and every method runs within it.
 type DB struct {
-	sql *sql.DB
+	sql  querier
+	root *sql.DB
 }
 
 // Open opens (or creates) the SQLite database at path and runs migrations.
@@ -39,7 +50,28 @@ func Open(path string) (*DB, error) {
 			return nil, fmt.Errorf("protect db: %w", err)
 		}
 	}
-	return &DB{sql: sqlDB}, nil
+	return &DB{sql: sqlDB, root: sqlDB}, nil
+}
+
+// Transact runs fn inside one transaction over d and commits when fn returns
+// nil; any error rolls back. The database allows one connection, so fn must
+// use only tx, and nesting Transact is an error rather than a deadlock.
+func (d *DB) Transact(ctx context.Context, fn func(tx *DB) error) error {
+	if _, nested := d.sql.(*sql.Tx); nested {
+		return errors.New("nested transaction")
+	}
+	sqlTx, err := d.root.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	if err := fn(&DB{sql: sqlTx, root: d.root}); err != nil {
+		sqlTx.Rollback()
+		return err
+	}
+	if err := sqlTx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+	return nil
 }
 
 // isDuplicateColumnErr reports whether err is SQLite's "duplicate column name"
@@ -54,5 +86,5 @@ func isDuplicateColumnErr(err error) bool {
 
 // Close closes the database connection.
 func (d *DB) Close() error {
-	return d.sql.Close()
+	return d.root.Close()
 }

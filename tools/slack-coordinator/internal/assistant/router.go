@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
@@ -80,9 +81,19 @@ func userMessage(evt socketmode.Event) *slackevents.MessageEvent {
 	return msg
 }
 
-// routeDM handles a message in a direct-message channel. DMs are not yet
-// consumed; every one is dropped.
-func (s *Service) routeDM(context.Context, *slackevents.MessageEvent) error { return nil }
+// routeDM handles a message in a direct-message channel. Only the owner is
+// heard: a top-level DM opens a request, a reply under a request root is
+// recorded as a follow-up, and text starting with `!` is left to the verb
+// handlers. Every other DM is dropped.
+func (s *Service) routeDM(ctx context.Context, msg *slackevents.MessageEvent) error {
+	if msg.User != s.Owner || strings.HasPrefix(strings.TrimSpace(msg.Text), "!") {
+		return nil
+	}
+	if msg.ThreadTimeStamp == "" {
+		return s.newRequest(ctx, msg)
+	}
+	return s.followUp(ctx, msg)
+}
 
 // collect records a public or private channel message for the tasks watching
 // its channel. No task watches channels yet; every message is dropped.
