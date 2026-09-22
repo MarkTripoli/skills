@@ -22,7 +22,7 @@ func newRunStart() *cobra.Command {
 	var in coordinator.StartRunInput
 	var channelFlag, repo string
 	c := &cobra.Command{
-		Use:   "start [--channel <C…|#name>] [--repo <path>] --work <s> --goal <s> --scope <s> [--link <url>]... [--owner <U…>] [--run-id <id>] [--jira-issue <KEY>]",
+		Use:   "start [--channel <C…|#name>] [--repo <path>] --work <s> --goal <s> --scope <s> [--link <url>]... [--run-id <id>] [--jira-issue <KEY>]",
 		Short: "Open the run's Slack thread with one root message",
 		Long: `Open the run's Slack thread with one root message.
 
@@ -64,9 +64,6 @@ background and never blocks the run.`,
 			if in.RunID == "" {
 				in.RunID = ulid.Make().String()
 			}
-			if in.OwnerUserID == "" {
-				in.OwnerUserID = cfg.Slack.OwnerUserID
-			}
 			var runRef coordinator.SlackRunRef
 			if err := callDaemon(ipc.MethodRunStart, in, &runRef); err != nil {
 				return daemonErr(err)
@@ -81,7 +78,6 @@ background and never blocks the run.`,
 	f.StringVar(&in.Goal, "goal", "", "what done looks like")
 	f.StringVar(&in.Scope, "scope", "", "what the run touches and leaves alone")
 	f.StringArrayVar(&in.Links, "link", nil, "related URL (repeatable)")
-	f.StringVar(&in.OwnerUserID, "owner", "", "Slack user ID of the run owner (default: slack.owner_user_id from config)")
 	f.StringVar(&in.RunID, "run-id", "", "run identifier (default: a new ULID)")
 	f.StringVar(&in.JiraIssue, "jira-issue", "", "Jira issue key (PROJ-123) whose configured field receives the thread permalink")
 	return c
