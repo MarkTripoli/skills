@@ -47,7 +47,7 @@ func (s *Service) deliver(ctx context.Context, run db.AssistantRun, out agent.Ru
 func (s *Service) deliverDM(ctx context.Context, run db.AssistantRun, out agent.RunOutcome) error {
 	writeCtx := context.WithoutCancel(ctx)
 	now := stamp(s.Now())
-	if out.ExitCode != 0 || out.TimedOut || out.Result == "" {
+	if out.ExitCode != 0 || out.TimedOut {
 		failure := s.failureText(out)
 		if ctx.Err() != nil && out.TimedOut {
 			failure = "daemon shutdown"
@@ -56,6 +56,10 @@ func (s *Service) deliverDM(ctx context.Context, run db.AssistantRun, out agent.
 		}
 		return s.DB.FinishAssistantRun(writeCtx, run.RunID, db.RunFailed, out.ExitCode, out.TimedOut, out.ResultSource, failure, now)
 	}
+	if out.ProposalErr != nil {
+		s.deliverFailure(ctx, run, out.ProposalErr.Error(), "")
+		return s.DB.FinishAssistantRun(writeCtx, run.RunID, db.RunFailed, out.ExitCode, out.TimedOut, out.ResultSource, out.ProposalErr.Error(), now)
+	}
 	req, ok, err := s.DB.GetDMRequest(writeCtx, run.RootTS.String)
 	if err != nil {
 		return s.DB.FinishAssistantRun(writeCtx, run.RunID, db.RunFailed, 0, false, out.ResultSource, "deliver: "+err.Error(), now)
@@ -63,6 +67,14 @@ func (s *Service) deliverDM(ctx context.Context, run db.AssistantRun, out agent.
 	if !ok {
 		err := fmt.Errorf("dm request %s not found", run.RootTS.String)
 		return s.DB.FinishAssistantRun(writeCtx, run.RunID, db.RunFailed, 0, false, out.ResultSource, "deliver: "+err.Error(), now)
+	}
+	if out.Proposal != nil {
+		return s.renderProposal(ctx, run, req, out)
+	}
+	if out.Result == "" {
+		failure := "agent wrote no result"
+		s.deliverFailure(ctx, run, failure, out.StderrTail)
+		return s.DB.FinishAssistantRun(writeCtx, run.RunID, db.RunFailed, out.ExitCode, out.TimedOut, out.ResultSource, failure, now)
 	}
 	answerTS, err := s.answer(ctx, req, out.Result)
 	if err != nil {

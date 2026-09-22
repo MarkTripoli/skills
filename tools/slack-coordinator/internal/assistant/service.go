@@ -29,6 +29,9 @@ type SlackSurface interface {
 	// ConversationInfo is conversations.info for one channel ID; `!tasks`
 	// names watched channels through it.
 	ConversationInfo(ctx context.Context, id string) (*slack.Channel, error)
+	// ListConversations is conversations.list; channel.Resolve uses it for
+	// name-based lookups.
+	ListConversations(ctx context.Context, cursor string) ([]slack.Channel, string, error)
 }
 
 // Service routes inbound Slack messages for one daemon.

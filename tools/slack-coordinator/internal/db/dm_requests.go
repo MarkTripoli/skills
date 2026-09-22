@@ -129,3 +129,11 @@ SELECT `+dmMessageColumns+` FROM dm_messages WHERE root_ts = ? ORDER BY ts`, roo
 	}
 	return msgs, nil
 }
+
+// SetPendingProposal stores the JSON-encoded pending proposal for rootTS.
+func (d *DB) SetPendingProposal(ctx context.Context, rootTS, proposalJSON string) error {
+	if _, err := d.sql.ExecContext(ctx, `UPDATE dm_requests SET pending_proposal = ? WHERE root_ts = ?`, proposalJSON, rootTS); err != nil {
+		return fmt.Errorf("set pending_proposal %s: %w", rootTS, err)
+	}
+	return nil
+}
