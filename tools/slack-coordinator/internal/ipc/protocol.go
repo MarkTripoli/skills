@@ -67,6 +67,9 @@ type ShutdownResult struct {
 	OK bool `json:"ok"`
 }
 
+// EmptyResult is the reply of a method that succeeds without data.
+type EmptyResult struct{}
+
 var reqID atomic.Int64
 
 // NewRequest creates a JSON-RPC 2.0 request with an auto-incremented ID.

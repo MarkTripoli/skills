@@ -16,10 +16,19 @@ import (
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/ipc"
 )
 
+// statusIntervalFlag is the quiet interval after which an active run reposts
+// its last status; daemon start forwards it to the daemon serve child.
+const statusIntervalFlag = "status-interval"
+
 func newDaemon() *cobra.Command {
 	d := &cobra.Command{Use: "daemon", Short: "Manage the per-user daemon"}
+	start := &cobra.Command{Use: "start", Short: "Start the daemon in the background", Args: cobra.NoArgs, RunE: startDaemon}
+	serve := &cobra.Command{Use: "serve", Hidden: true, Args: cobra.NoArgs, RunE: serveDaemon}
+	for _, c := range []*cobra.Command{start, serve} {
+		c.Flags().Duration(statusIntervalFlag, daemon.DefaultStatusInterval, "quiet interval after which an active run reposts its last status")
+	}
 	d.AddCommand(
-		&cobra.Command{Use: "start", Short: "Start the daemon in the background", Args: cobra.NoArgs, RunE: startDaemon},
+		start,
 		&cobra.Command{Use: "stop", Short: "Ask the daemon to shut down", Args: cobra.NoArgs, RunE: stopDaemon},
 		&cobra.Command{Use: "status", Short: "Print the daemon health JSON", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 			var out ipc.HealthResult
@@ -28,7 +37,7 @@ func newDaemon() *cobra.Command {
 			}
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 		}},
-		&cobra.Command{Use: "serve", Hidden: true, Args: cobra.NoArgs, RunE: serveDaemon},
+		serve,
 	)
 	return d
 }
@@ -62,7 +71,11 @@ func startDaemon(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	defer logFile.Close()
-	child := exec.Command(exe, "daemon", "serve")
+	interval, err := cmd.Flags().GetDuration(statusIntervalFlag)
+	if err != nil {
+		return err
+	}
+	child := exec.Command(exe, "daemon", "serve", "--"+statusIntervalFlag, interval.String())
 	child.Stdout = logFile
 	child.Stderr = logFile
 	child.Env = os.Environ()
@@ -131,9 +144,16 @@ func serveDaemon(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	interval, err := cmd.Flags().GetDuration(statusIntervalFlag)
+	if err != nil {
+		return err
+	}
+	if interval <= 0 {
+		return usageErr("--%s must be a positive duration, got %s", statusIntervalFlag, interval)
+	}
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	fmt.Fprintf(os.Stderr, "daemon starting pid=%d\n", os.Getpid())
+	fmt.Fprintf(os.Stderr, "daemon starting pid=%d status_interval=%s\n", os.Getpid(), interval)
 	defer fmt.Fprintf(os.Stderr, "daemon stopping pid=%d\n", os.Getpid())
-	return daemon.Serve(ctx, p, cfg, daemon.Options{})
+	return daemon.Serve(ctx, p, cfg, daemon.Options{StatusInterval: interval})
 }

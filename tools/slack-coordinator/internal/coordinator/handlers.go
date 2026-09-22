@@ -18,6 +18,26 @@ func Register(s *ipc.Server, c *Coordinator, health func() ipc.HealthResult, shu
 		}
 		return c.StartRun(ctx, in)
 	})
+	s.Handle(ipc.MethodRunEvent, func(ctx context.Context, params json.RawMessage) (interface{}, error) {
+		var e WorkEvent
+		if err := decode(params, &e); err != nil {
+			return nil, err
+		}
+		if err := c.RecordWorkEvent(ctx, e); err != nil {
+			return nil, err
+		}
+		return ipc.EmptyResult{}, nil
+	})
+	s.Handle(ipc.MethodRunFinish, func(ctx context.Context, params json.RawMessage) (interface{}, error) {
+		var in FinishRunInput
+		if err := decode(params, &in); err != nil {
+			return nil, err
+		}
+		if err := c.FinishRun(ctx, in); err != nil {
+			return nil, err
+		}
+		return ipc.EmptyResult{}, nil
+	})
 	s.Handle(ipc.MethodDaemonHealth, func(context.Context, json.RawMessage) (interface{}, error) {
 		return health(), nil
 	})

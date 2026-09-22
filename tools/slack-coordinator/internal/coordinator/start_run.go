@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -20,6 +21,17 @@ type Coordinator struct {
 	DB    *db.DB
 	Slack Poster
 	Now   func() time.Time
+	// Quiet is how long an active run may stay silent before the scheduler
+	// reposts its last status.
+	Quiet time.Duration
+}
+
+// stamp formats t as the RFC 3339 UTC string every timestamp column holds.
+func stamp(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+
+// nextDue is when a run that posted at now is next due for a quiet-interval status.
+func (c *Coordinator) nextDue(now time.Time) sql.NullString {
+	return sql.NullString{String: stamp(now.Add(c.Quiet)), Valid: true}
 }
 
 // StartRun posts the root message and stores the run as active. A duplicate
@@ -39,7 +51,8 @@ func (c *Coordinator) StartRun(ctx context.Context, in StartRunInput) (SlackRunR
 		return SlackRunRef{}, err
 	}
 
-	startedAt := c.Now().UTC().Format(time.RFC3339)
+	now := c.Now()
+	startedAt := stamp(now)
 	text := RenderRoot(RootMessage{
 		Work:        in.Work,
 		Goal:        in.Goal,
@@ -57,14 +70,15 @@ func (c *Coordinator) StartRun(ctx context.Context, in StartRunInput) (SlackRunR
 		return SlackRunRef{}, fmt.Errorf("get permalink: %w", err)
 	}
 	if err := c.DB.InsertRun(ctx, db.Run{
-		RunID:       in.RunID,
-		OwnerUserID: in.OwnerUserID,
-		ChannelID:   in.ChannelID,
-		ThreadTS:    ts,
-		Permalink:   permalink,
-		Lifecycle:   "active",
-		SlackMode:   "enabled",
-		StartedAt:   startedAt,
+		RunID:         in.RunID,
+		OwnerUserID:   in.OwnerUserID,
+		ChannelID:     in.ChannelID,
+		ThreadTS:      ts,
+		Permalink:     permalink,
+		Lifecycle:     "active",
+		SlackMode:     "enabled",
+		StartedAt:     startedAt,
+		NextStatusDue: c.nextDue(now),
 	}); err != nil {
 		return SlackRunRef{}, err
 	}

@@ -32,6 +32,33 @@ func RenderRoot(m RootMessage) string {
 	}, "\n")
 }
 
+// RenderStatus renders a status message. Field order is fixed: Current work,
+// Completed since last update, Decisions, Blockers, Up next.
+func RenderStatus(m WorkEvent) string {
+	return strings.Join([]string{
+		field("Current work", m.Current),
+		list("Completed since last update", m.Completed),
+		list("Decisions", m.Decisions),
+		list("Blockers", m.Blockers),
+		list("Up next", m.Next),
+	}, "\n")
+}
+
+// RenderCompletion renders the completion message. Field order is fixed:
+// Outcome, Completed work, Decisions, Unresolved items, Evidence, Links,
+// Finished at.
+func RenderCompletion(m FinishRunInput, finishedAt string) string {
+	return strings.Join([]string{
+		field("Outcome", m.Outcome),
+		list("Completed work", m.Completed),
+		list("Decisions", m.Decisions),
+		list("Unresolved items", m.Unresolved),
+		list("Evidence", m.Evidence),
+		list("Links", m.Links),
+		field("Finished at", finishedAt),
+	}, "\n")
+}
+
 // field renders "*Label:* value", with None for an empty value.
 func field(label, value string) string {
 	if value == "" {

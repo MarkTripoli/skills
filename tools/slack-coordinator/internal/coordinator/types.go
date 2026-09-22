@@ -22,3 +22,25 @@ type SlackRunRef struct {
 	ThreadTS  string `json:"thread_ts"`
 	Permalink string `json:"permalink"`
 }
+
+// WorkEvent is one status update for an active run. It is posted as a thread
+// reply and stored as the run's last status for quiet-interval reposts.
+type WorkEvent struct {
+	RunID     string   `json:"run_id"`
+	Current   string   `json:"current"`
+	Completed []string `json:"completed"`
+	Decisions []string `json:"decisions"`
+	Blockers  []string `json:"blockers"`
+	Next      []string `json:"next"`
+}
+
+// FinishRunInput closes a run with one completion message.
+type FinishRunInput struct {
+	RunID      string   `json:"run_id"`
+	Outcome    string   `json:"outcome"` // completed | failed | cancelled
+	Completed  []string `json:"completed"`
+	Decisions  []string `json:"decisions"`
+	Unresolved []string `json:"unresolved"`
+	Evidence   []string `json:"evidence"`
+	Links      []string `json:"links"`
+}

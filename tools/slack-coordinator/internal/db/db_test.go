@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -50,5 +51,70 @@ func TestRunsRoundTrip(t *testing.T) {
 		if mode := info.Mode().Perm(); mode != 0o600 {
 			t.Fatalf("%s mode %o, want 600", statePath, mode)
 		}
+	}
+}
+
+func TestStatusLifecycle(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	ctx := context.Background()
+
+	base := Run{OwnerUserID: "U1", ChannelID: "C1", ThreadTS: "1.0", Permalink: "p", Lifecycle: "active", SlackMode: "enabled", StartedAt: "2026-09-21T00:00:00Z"}
+	insert := func(id, due, mode string) {
+		r := base
+		r.RunID, r.SlackMode = id, mode
+		r.NextStatusDue = sql.NullString{String: due, Valid: due != ""}
+		if err := d.InsertRun(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert("due", "2026-09-21T01:00:00Z", "enabled")
+	insert("later", "2026-09-21T02:00:00Z", "enabled")
+	insert("disabled", "2026-09-21T01:00:00Z", "slack_disabled")
+	insert("never", "", "enabled")
+
+	due, err := d.DueStatusRuns(ctx, "2026-09-21T01:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 1 || due[0].RunID != "due" {
+		t.Fatalf("DueStatusRuns = %+v, want only run due", due)
+	}
+
+	if err := d.SetStatus(ctx, "due", `{"current":"x"}`, "2026-09-21T03:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := d.GetRun(ctx, "due")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastStatus.String != `{"current":"x"}` || got.NextStatusDue.String != "2026-09-21T03:00:00Z" {
+		t.Fatalf("after SetStatus: %+v", got)
+	}
+	if due, _ := d.DueStatusRuns(ctx, "2026-09-21T01:00:00Z"); len(due) != 0 {
+		t.Fatalf("run still due after SetStatus: %+v", due)
+	}
+	if err := d.SetStatus(ctx, "missing", "{}", "t"); !errors.Is(err, ErrRunNotFound) {
+		t.Fatalf("SetStatus(missing) = %v, want ErrRunNotFound", err)
+	}
+
+	if err := d.FinishRun(ctx, "later", "completed", "2026-09-21T01:30:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = d.GetRun(ctx, "later")
+	if got.Lifecycle != "completed" || got.FinishedAt.String != "2026-09-21T01:30:00Z" || got.NextStatusDue.Valid {
+		t.Fatalf("after FinishRun: %+v", got)
+	}
+	if err := d.FinishRun(ctx, "later", "failed", "t"); !errors.Is(err, ErrRunNotActive) {
+		t.Fatalf("second FinishRun = %v, want ErrRunNotActive", err)
+	}
+	if err := d.FinishRun(ctx, "missing", "failed", "t"); !errors.Is(err, ErrRunNotFound) {
+		t.Fatalf("FinishRun(missing) = %v, want ErrRunNotFound", err)
+	}
+	if due, _ := d.DueStatusRuns(ctx, "2026-09-21T09:00:00Z"); len(due) != 1 || due[0].RunID != "due" {
+		t.Fatalf("DueStatusRuns after finish = %+v, want only run due", due)
 	}
 }

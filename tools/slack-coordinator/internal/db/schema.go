@@ -15,4 +15,7 @@ CREATE TABLE IF NOT EXISTS runs (
 
 // migrationStatements are idempotent ALTER TABLE statements later schema
 // versions append; Open tolerates "duplicate column name".
-var migrationStatements = []string{}
+var migrationStatements = []string{
+	`ALTER TABLE runs ADD COLUMN next_status_due TEXT`,
+	`ALTER TABLE runs ADD COLUMN last_status TEXT`, // JSON of coordinator.WorkEvent
+}

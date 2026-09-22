@@ -79,9 +79,15 @@ type Runtime struct {
 // Options tunes a daemon.
 type Options struct {
 	// StatusInterval is the quiet interval after which an active run reposts
-	// its last status. Unused until the status scheduler exists.
+	// its last status. Zero means DefaultStatusInterval.
 	StatusInterval time.Duration
 }
+
+// DefaultStatusInterval is the quiet interval when Options leaves it unset.
+const DefaultStatusInterval = time.Hour
+
+// schedulerPeriod is how often the daemon looks for runs due a status repost.
+const schedulerPeriod = 30 * time.Second
 
 // Serve acquires the lock, opens SQLite, registers handlers, binds the socket,
 // and blocks until ctx ends or daemon.shutdown is called. It writes daemon.pid
@@ -114,9 +120,23 @@ func Serve(ctx context.Context, p *paths.Paths, cfg *config.Config, opts Options
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	coord := &coordinator.Coordinator{DB: rt.DB, Slack: rt.Slack, Now: time.Now}
+	quiet := opts.StatusInterval
+	if quiet <= 0 {
+		quiet = DefaultStatusInterval
+	}
+	coord := &coordinator.Coordinator{DB: rt.DB, Slack: rt.Slack, Now: time.Now, Quiet: quiet}
 	health := func() ipc.HealthResult { return ipc.HealthResult{SocketMode: "not_started"} }
 	coordinator.Register(rt.Server, coord, health, cancel)
+	schedulerDone := make(chan struct{})
+	go func() {
+		defer close(schedulerDone)
+		(&coordinator.StatusScheduler{C: coord}).Run(ctx, schedulerPeriod)
+	}()
+	// Stop the scheduler before the deferred database.Close runs.
+	defer func() {
+		cancel()
+		<-schedulerDone
+	}()
 
 	if err := rt.Server.Listen(p.Socket()); err != nil {
 		return err
