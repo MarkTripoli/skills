@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,6 +41,12 @@ type script struct {
 	createCalls  int
 	createTokens []string
 	createBodies []string
+
+	updateErr    error
+	updateCalls  int
+	updateTokens []string
+	updateAppIDs []string
+	updateBodies []string
 
 	lookupTokens []string
 	lookupEmails []string
@@ -85,6 +92,17 @@ func (s *script) ManifestCreate(_ context.Context, token, body string) (slackapi
 		return slackapi.ManifestResult{}, s.createErr
 	}
 	return slackapi.ManifestResult{AppID: "A0EXAMPLE", InstallURL: "https://slack.com/oauth/v2/authorize?client_id=1"}, nil
+}
+
+func (s *script) ManifestUpdate(_ context.Context, token, appID, body string) (slackapi.ManifestResult, error) {
+	s.updateCalls++
+	s.updateTokens = append(s.updateTokens, token)
+	s.updateAppIDs = append(s.updateAppIDs, appID)
+	s.updateBodies = append(s.updateBodies, body)
+	if s.updateErr != nil {
+		return slackapi.ManifestResult{}, s.updateErr
+	}
+	return slackapi.ManifestResult{AppID: appID}, nil
 }
 
 func (s *script) deps() Deps {
@@ -663,5 +681,131 @@ func TestLoadCheckpointAbsentIsZeroValue(t *testing.T) {
 	cp, err := LoadCheckpoint(filepath.Join(t.TempDir(), "missing.json"))
 	if err != nil || *cp != (Checkpoint{}) {
 		t.Fatalf("LoadCheckpoint = %+v, %v; want zero value", cp, err)
+	}
+}
+
+// runExistingScript runs the walkthrough with --existing set.
+func runExistingScript(t *testing.T, s *script, cp *Checkpoint) (string, []byte, error) {
+	t.Helper()
+	s.flags.Existing = true
+	return run(t, s, cp)
+}
+
+func TestExistingUpdatesManifestWithAppIDFromCheckpointAndEmbeddedYAML(t *testing.T) {
+	s := newScript(t,
+		configToken, // config token prompt
+		"xoxb-new",  // reinstall: new bot token
+	)
+	existingSetup(t, s)
+	cp := &Checkpoint{AppID: "A0STORED"}
+
+	_, raw, err := runExistingScript(t, s, cp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.updateCalls != 1 || s.updateTokens[0] != configToken || s.updateAppIDs[0] != "A0STORED" || s.updateBodies[0] != manifest.YAML() {
+		t.Fatalf("ManifestUpdate: calls=%d token=%v appID=%v bodyMatch=%v",
+			s.updateCalls, s.updateTokens, s.updateAppIDs, s.updateBodies[0] == manifest.YAML())
+	}
+	wantVerified(t, s, raw, "Verified: ada replied.")
+}
+
+func TestExistingBotTokenReplacesOnlyBotTokenAndKeepsOtherKeys(t *testing.T) {
+	s := newScript(t,
+		configToken, // config token
+		"xoxb-new",  // new bot token at reinstall prompt
+	)
+	existingSetup(t, s)
+	cp := &Checkpoint{AppID: "A0STORED"}
+
+	_, _, err := runExistingScript(t, s, cp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.saves != 1 {
+		t.Fatalf("SaveConfig called %d times; want 1", s.saves)
+	}
+	cfg := savedConfig(t, s)
+	if cfg.Slack.BotToken != "xoxb-new" {
+		t.Fatalf("bot_token = %q; want xoxb-new", cfg.Slack.BotToken)
+	}
+	if cfg.Slack.AppToken != "xapp-old" {
+		t.Fatalf("app_token = %q; want xapp-old (preserved)", cfg.Slack.AppToken)
+	}
+	if cfg.Agent == nil || cfg.Agent.Command != "omp" {
+		t.Fatalf("agent block not preserved: %+v", cfg.Agent)
+	}
+}
+
+func TestExistingEnterKeepsCurrentBotToken(t *testing.T) {
+	s := newScript(t,
+		configToken, // config token
+		"",          // Enter at reinstall prompt → keep current
+	)
+	existingSetup(t, s)
+	cp := &Checkpoint{AppID: "A0STORED"}
+
+	_, _, err := runExistingScript(t, s, cp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.saves != 0 {
+		t.Fatalf("SaveConfig called %d times; want 0 (token kept)", s.saves)
+	}
+}
+
+func TestExistingInvalidAuthReturnsErrConfigTokenRejected(t *testing.T) {
+	s := newScript(t, configToken)
+	existingSetup(t, s)
+	s.updateErr = fmt.Errorf("apps.manifest.update: invalid_auth")
+	cp := &Checkpoint{AppID: "A0STORED"}
+
+	_, _, err := runExistingScript(t, s, cp)
+	if !errors.Is(err, ErrConfigTokenRejected) {
+		t.Fatalf("error = %v; want ErrConfigTokenRejected", err)
+	}
+}
+
+func TestExistingRunsVerifyStepAfterUpdate(t *testing.T) {
+	s := newScript(t,
+		configToken, // config token
+		"",          // Enter → keep token
+	)
+	existingSetup(t, s)
+	cp := &Checkpoint{AppID: "A0STORED"}
+
+	_, raw, err := runExistingScript(t, s, cp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantVerified(t, s, raw, "Verified: ada replied.")
+}
+
+func TestExistingNoConfigYamlExitsWithError(t *testing.T) {
+	s := newScript(t)
+	// no existingSetup: config.yaml absent
+	cp := &Checkpoint{AppID: "A0STORED"}
+
+	_, _, err := runExistingScript(t, s, cp)
+	if err == nil || !strings.Contains(err.Error(), "no config.yaml") {
+		t.Fatalf("error = %v; want no config.yaml error", err)
+	}
+}
+
+func TestExistingPromptsForAppIDWhenNotInCheckpoint(t *testing.T) {
+	s := newScript(t,
+		"A0PROMPTED", // app ID prompt
+		configToken,  // config token
+		"",           // Enter → keep token
+	)
+	existingSetup(t, s)
+	cp := &Checkpoint{} // no AppID
+
+	_, _, err := runExistingScript(t, s, cp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.updateCalls != 1 || s.updateAppIDs[0] != "A0PROMPTED" {
+		t.Fatalf("ManifestUpdate appID = %v; want A0PROMPTED", s.updateAppIDs)
 	}
 }

@@ -3,8 +3,10 @@ package assistant
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/agent"
@@ -209,5 +211,145 @@ func TestOtherOutcomesFailTheRunWithoutTouchingSlack(t *testing.T) {
 				t.Fatalf("stdout log present = %t, want %t in %q", got, want, logged.String())
 			}
 		})
+	}
+}
+
+// --- task-run delivery tests ---
+
+// deliverOneTask sets up a schedule task with msgCount collected messages,
+// ticks to enqueue+spawn with the scripted outcome, waits for delivery, and
+// returns the task id and the run id.
+func deliverOneTask(t *testing.T, s *Service, slack *fakeSlack, clock *testClock, runner *fakeRunner, raw *sql.DB, out agent.RunOutcome, msgCount int) (taskID int64, runID string) {
+	t.Helper()
+	slack.channels = map[string]string{"C1": "general"}
+	dueAt := clock.at.Add(-time.Minute).UTC().Format(time.RFC3339)
+	taskID = insertScheduleTaskFull(t, raw, dueAt, "watch #general", `{"every_hours":1}`, `{"dm":true}`, "C1")
+	for i := range msgCount {
+		ts := fmt.Sprintf("1700000001.%06d", i+1)
+		bindMsg(t, raw, taskID, "C1", ts, "U2", fmt.Sprintf("item%d", i))
+	}
+	runner.scripted = []agent.RunOutcome{out}
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s.inflight.Wait()
+	if runner.started() == 0 {
+		return taskID, ""
+	}
+	return taskID, runner.runID(0)
+}
+
+func TestTaskRunSuccessPostsDMHeaderAndAdvancesDueAt(t *testing.T) {
+	s, slack, clock, runner, raw := newTaskDispatchService(t)
+	taskID, runID := deliverOneTask(t, s, slack, clock, runner, raw,
+		agent.RunOutcome{ExitCode: 0, Result: "summary here", ResultSource: "result.md"}, 3)
+	if runID == "" {
+		t.Fatal("no run was started")
+	}
+
+	// DM opened for owner, one post with header + result.
+	if len(slack.opened) != 1 || slack.opened[0] != "U1" {
+		t.Fatalf("opened = %v, want owner's DM opened once", slack.opened)
+	}
+	wantText := "t1 · #general · 3 new items\nsummary here"
+	if len(slack.posts) != 1 || slack.posts[0] != (slackPost{"D1", "", wantText}) {
+		t.Fatalf("posts = %+v, want one DM post %q", slack.posts, wantText)
+	}
+
+	// Run is done.
+	run := getRun(t, s, runID)
+	if run.State != db.RunDone || run.ExitCode.Int64 != 0 {
+		t.Fatalf("run = %+v, want done exit 0", run)
+	}
+
+	// due_at advanced, consecutive_failures = 0, last_result_at set.
+	state, dueAt, _, _, failures := readTaskCols(t, raw, taskID)
+	if state != "active" || !dueAt.Valid || failures != 0 {
+		t.Fatalf("task: state=%s due_at=%v failures=%d; want active, due_at set, 0 failures", state, dueAt, failures)
+	}
+}
+
+func TestWindowEndSuccessCompletesTask(t *testing.T) {
+	s, slack, clock, runner, raw := newTaskDispatchService(t)
+	slack.channels = map[string]string{"C1": "general"}
+	dueAt := clock.at.Add(-time.Minute).UTC().Format(time.RFC3339)
+	taskID := insertWindowEndTask(t, raw, dueAt, "summarise window", `{"dm":true}`, "C1")
+
+	runner.scripted = []agent.RunOutcome{{ExitCode: 0, Result: "done", ResultSource: "result.md"}}
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s.inflight.Wait()
+
+	taskState, taskDueAt, taskEndedAt, _, _ := readTaskCols(t, raw, taskID)
+	if taskState != "completed" {
+		t.Fatalf("task state = %q, want completed", taskState)
+	}
+	if taskDueAt.Valid {
+		t.Fatalf("due_at = %v, want NULL after window_end completion", taskDueAt)
+	}
+	if !taskEndedAt.Valid {
+		t.Fatal("ended_at should be set after window_end success")
+	}
+}
+
+func TestTaskRunSuccessChannelThreadDelivery(t *testing.T) {
+	s, slack, clock, runner, raw := newTaskDispatchService(t)
+	slack.channels = map[string]string{"C1": "general"}
+	dueAt := clock.at.Add(-time.Minute).UTC().Format(time.RFC3339)
+	deliverTo := `{"channel_id":"C2","thread_ts":"1700000000.555000"}`
+	taskID := insertScheduleTaskFull(t, raw, dueAt, "watch", `{"every_hours":1}`, deliverTo, "C1")
+	bindMsg(t, raw, taskID, "C1", "1700000001.000001", "U2", "hi")
+
+	runner.scripted = []agent.RunOutcome{{ExitCode: 0, Result: "result", ResultSource: "result.md"}}
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s.inflight.Wait()
+
+	wantPost := slackPost{"C2", "1700000000.555000", "t1 · #general · 1 new items\nresult"}
+	if len(slack.posts) != 1 || slack.posts[0] != wantPost {
+		t.Fatalf("posts = %+v, want channel-thread post %+v", slack.posts, wantPost)
+	}
+	if len(slack.opened) != 0 {
+		t.Fatalf("opened = %v, want no DM opened for channel-thread delivery", slack.opened)
+	}
+}
+
+func TestTaskRunFailureUnbindsMessagesAndIncrementsFailures(t *testing.T) {
+	s, slack, clock, runner, raw := newTaskDispatchService(t)
+	taskID, runID := deliverOneTask(t, s, slack, clock, runner, raw,
+		agent.RunOutcome{ExitCode: 1, ResultSource: "result.md"}, 3)
+	if runID == "" {
+		t.Fatal("no run started")
+	}
+
+	// Run is failed.
+	run := getRun(t, s, runID)
+	if run.State != db.RunFailed {
+		t.Fatalf("run state = %q, want failed", run.State)
+	}
+
+	// task_messages unbound.
+	var bound int
+	if err := raw.QueryRow(`SELECT COUNT(*) FROM task_messages WHERE run_id IS NOT NULL`).Scan(&bound); err != nil {
+		t.Fatal(err)
+	}
+	if bound != 0 {
+		t.Fatalf("bound task_messages = %d, want 0 after failure", bound)
+	}
+
+	// consecutive_failures = 1, due_at advanced.
+	_, dueAt, _, _, failures := readTaskCols(t, raw, taskID)
+	if failures != 1 {
+		t.Fatalf("consecutive_failures = %d, want 1", failures)
+	}
+	if !dueAt.Valid {
+		t.Fatal("due_at should be advanced after schedule failure")
+	}
+
+	// No Slack call was made.
+	if len(slack.posts) != 0 || len(slack.opened) != 0 {
+		t.Fatal("no Slack post should be made after a task run failure")
 	}
 }
