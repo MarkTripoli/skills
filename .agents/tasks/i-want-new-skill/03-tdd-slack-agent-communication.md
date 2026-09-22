@@ -232,7 +232,7 @@ interface OwnerInput {
 
 ### Execution DAG
 
-No execution-plan artifact exists. The task's fixed `prd` workflow continues from the approved TDD through `create-structure-outline`, `create-plan`, `implement-plan`, `verify-implementation`, the review loop, and `describe-pr`.
+No execution-plan artifact exists. Human approval of this TDD gates `create-structure-outline`; approval of the outline and plan gates `implement-plan`. Approved implementation phases run unattended within their recorded scope, followed by independent `verify-implementation`, the review loop, and `describe-pr`.
 
 ## Human Review
 
