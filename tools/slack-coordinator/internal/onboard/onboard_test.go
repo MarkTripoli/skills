@@ -117,6 +117,9 @@ func TestFreshRunCompletesFourStepsAndRecordsBothTokens(t *testing.T) {
 	if !strings.Contains(s.out.String(), "connections:write") {
 		t.Fatalf("output %q does not name the connections:write scope", s.out.String())
 	}
+	if out := s.out.String(); !strings.Contains(out, "Created app A0EXAMPLE") || strings.Contains(out, "Created "+DefaultAppName) {
+		t.Fatalf("output %q must report the app id and not attribute the prompted name to Slack", out)
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
@@ -220,6 +223,38 @@ func TestResumeFromStepOneAsksForTheTokenAgainWithoutRegressing(t *testing.T) {
 	}
 	if got := decode(t, raw); got["step"] != float64(4) {
 		t.Fatalf("step = %v, want 4", got["step"])
+	}
+}
+
+func TestBrowserOpenFailureWarnsAndContinuesToThePrompt(t *testing.T) {
+	s := newScript(t, configToken, "", "xoxb-bot", "xapp-app")
+	deps := s.deps()
+	deps.OpenURL = func(string) error { return errors.New("exec: \"xdg-open\": executable file not found in $PATH") }
+	path := filepath.Join(t.TempDir(), "onboard.json")
+	if err := Run(context.Background(), deps, &Checkpoint{}, path, Flags{}); err != nil {
+		t.Fatalf("Run: %v; an opener failure must not stop the walkthrough", err)
+	}
+	out := s.out.String()
+	if !strings.Contains(out, "Opening https://slack.com/oauth/v2/authorize?client_id=1") || !strings.Contains(out, "open the URL above by hand") {
+		t.Fatalf("output %q must print the URL and say the browser did not open", out)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decode(t, raw); got["step"] != float64(4) || got["bot_token"] != "xoxb-bot" {
+		t.Fatalf("onboard.json = %v, want both tokens recorded", got)
+	}
+}
+
+func TestLoadCheckpointRejectsNegativeStep(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "onboard.json")
+	if err := os.WriteFile(path, []byte(`{"step": -1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := LoadCheckpoint(path)
+	if err == nil || !strings.Contains(err.Error(), "step -1 out of range") {
+		t.Fatalf("LoadCheckpoint = %+v, %v; want an out-of-range error", cp, err)
 	}
 }
 

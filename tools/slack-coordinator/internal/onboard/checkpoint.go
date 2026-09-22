@@ -26,6 +26,7 @@ type Checkpoint struct {
 }
 
 // LoadCheckpoint reads path. An absent file is a fresh run: the zero value.
+// A negative step has no step table entry and is rejected rather than run.
 func LoadCheckpoint(path string) (*Checkpoint, error) {
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -37,6 +38,9 @@ func LoadCheckpoint(path string) (*Checkpoint, error) {
 	var cp Checkpoint
 	if err := json.Unmarshal(raw, &cp); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if cp.Step < 0 {
+		return nil, fmt.Errorf("%s: step %d out of range", path, cp.Step)
 	}
 	return &cp, nil
 }

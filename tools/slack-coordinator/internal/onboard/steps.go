@@ -140,7 +140,10 @@ func promptConfigToken(_ context.Context, st *state) error {
 	return nil
 }
 
-// createApp names the app and creates it from the embedded manifest.
+// createApp records the name the user chose and creates the app from the
+// embedded manifest, sent verbatim. Slack names the app from the manifest's
+// display_information.name, so the output line does not attribute the
+// prompted name to Slack.
 func createApp(ctx context.Context, st *state) error {
 	name, err := st.deps.Prompt(fmt.Sprintf("App name [%s]", DefaultAppName))
 	if err != nil {
@@ -157,7 +160,7 @@ func createApp(ctx context.Context, st *state) error {
 		return err
 	}
 	st.cp.AppID, st.cp.AppName, st.installURL = res.AppID, name, res.InstallURL
-	fmt.Fprintf(st.deps.Out, "Created %s (%s).\n", name, res.AppID)
+	fmt.Fprintf(st.deps.Out, "Created app %s from the embedded manifest; recorded as %q.\n", res.AppID, name)
 	return nil
 }
 
@@ -168,9 +171,7 @@ func installApp(_ context.Context, st *state) error {
 	if url == "" {
 		url = installURL(st.cp.AppID)
 	}
-	if err := open(st, url); err != nil {
-		return err
-	}
+	open(st, url)
 	fmt.Fprintln(st.deps.Out, "Allow the install. The Bot User OAuth Token then appears under OAuth & Permissions.")
 	token, err := promptToken(st, "Bot token (xoxb-…)", "xoxb-")
 	if err != nil {
@@ -182,9 +183,7 @@ func installApp(_ context.Context, st *state) error {
 
 // appLevelToken opens Basic Information and collects the Socket Mode token.
 func appLevelToken(_ context.Context, st *state) error {
-	if err := open(st, generalURL(st.cp.AppID)); err != nil {
-		return err
-	}
+	open(st, generalURL(st.cp.AppID))
 	fmt.Fprintln(st.deps.Out, "Under App-Level Tokens, generate a token with the connections:write scope.")
 	token, err := promptToken(st, "App-level token (xapp-…)", "xapp-")
 	if err != nil {
@@ -200,13 +199,14 @@ func installURL(appID string) string {
 
 func generalURL(appID string) string { return "https://api.slack.com/apps/" + appID + "/general" }
 
-// open prints url, so a headless terminal still has it, then opens it.
-func open(st *state, url string) error {
+// open prints url, so a headless terminal still has it, then opens it. An
+// opener failure is a warning, not a stop: the URL is already on screen and
+// the following prompt is what the step needs.
+func open(st *state, url string) {
 	fmt.Fprintf(st.deps.Out, "Opening %s\n", url)
 	if err := st.deps.OpenURL(url); err != nil {
-		return fmt.Errorf("open %s: %w", url, err)
+		fmt.Fprintf(st.deps.Out, "Could not open a browser (%v); open the URL above by hand.\n", err)
 	}
-	return nil
 }
 
 // promptToken asks for a secret until it carries one of the prefixes,
