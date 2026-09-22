@@ -19,6 +19,7 @@ import (
 // ManifestAPI is the slice of the Slack client the walkthrough calls.
 type ManifestAPI interface {
 	ManifestCreate(ctx context.Context, configToken, manifest string) (slackapi.ManifestResult, error)
+	ManifestUpdate(ctx context.Context, configToken, appID, manifest string) (slackapi.ManifestResult, error)
 }
 
 // Deps are the terminal, browser, Slack, config file, and daemon the steps
@@ -142,8 +143,11 @@ func Run(ctx context.Context, deps Deps, cp *Checkpoint, cpPath string, flags Fl
 	if deps.Out == nil {
 		deps.Out = io.Discard
 	}
+	if flags.Existing {
+		return runExisting(ctx, deps, cp, cpPath, flags)
+	}
 	st := &state{deps: deps, cp: cp, flags: flags}
-	if !flags.Existing && (cp.Step == 0 || cp.Step >= configStep) {
+	if cp.Step == 0 || cp.Step >= configStep {
 		cfg, err := deps.LoadConfig()
 		if err != nil {
 			return err
@@ -173,6 +177,77 @@ func Run(ctx context.Context, deps Deps, cp *Checkpoint, cpPath string, flags Fl
 			return fmt.Errorf("%s: save %s: %w", steps[i].name, cpPath, err)
 		}
 	}
+	if err := runStep(ctx, st, verifyStep); err != nil {
+		return err
+	}
+	return finish(st, cpPath)
+}
+
+// runExisting implements --existing: updates the installed app's manifest,
+// prompts for a reinstall, optionally replaces the bot token, and runs the
+// verify step. config.yaml must already exist; onboard.json may supply the
+// app id, or the user is prompted for it.
+func runExisting(ctx context.Context, deps Deps, cp *Checkpoint, cpPath string, flags Flags) error {
+	cfg, err := deps.LoadConfig()
+	if err != nil {
+		return err
+	}
+	if cfg == nil {
+		return errors.New("no config.yaml; run onboard without --existing to create the app first")
+	}
+	st := &state{deps: deps, cp: cp, flags: flags}
+
+	// get app ID from checkpoint or prompt
+	appID := cp.AppID
+	if appID == "" {
+		for {
+			appID, err = deps.Prompt("App ID (A…)")
+			if err != nil {
+				return err
+			}
+			appID = strings.TrimSpace(appID)
+			if strings.HasPrefix(appID, "A") {
+				break
+			}
+			fmt.Fprintln(deps.Out, "App ID must start with A; paste it again.")
+		}
+		st.cp.AppID = appID
+	}
+
+	// config token
+	configToken, err := promptToken(st, "App configuration token (xoxe.xoxp-…)", "xoxe.xoxp-", "xoxe-")
+	if err != nil {
+		return err
+	}
+	st.configToken = configToken
+
+	// update manifest
+	if _, err = deps.Slack.ManifestUpdate(ctx, configToken, appID, manifest.YAML()); err != nil {
+		if strings.HasSuffix(err.Error(), "invalid_auth") {
+			return ErrConfigTokenRejected
+		}
+		return err
+	}
+
+	// reinstall prompt: Enter keeps current token; xoxb- replaces it
+	label := fmt.Sprintf(
+		"Manifest updated. Reinstall the app at %s to grant the new scopes, then paste the new bot token (Enter to keep the current one)",
+		installURL(appID),
+	)
+	answer, err := deps.Prompt(label)
+	if err != nil {
+		return err
+	}
+	answer = strings.TrimSpace(answer)
+	if strings.HasPrefix(answer, "xoxb-") {
+		cfg.Slack.BotToken = answer
+		if err := deps.SaveConfig(cfg); err != nil {
+			return err
+		}
+	}
+
+	// verify
+	st.cp.OwnerUserID = cfg.Slack.OwnerUserID
 	if err := runStep(ctx, st, verifyStep); err != nil {
 		return err
 	}

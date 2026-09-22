@@ -47,10 +47,12 @@ func runOnboard(t *testing.T, stdin string, args ...string) (out string, urls []
 // token auth.test, apps.connections.open, and users.info carried, and every
 // chat.postMessage form; conversations.open answers D0CLI for any user.
 type onboardSlack struct {
-	url                        string
-	manifestAuth, manifestBody string
-	authTokens, probeTokens    []string
-	infoTokens, infoUsers      []string
+	url                                      string
+	manifestAuth, manifestBody               string
+	manifestUpdateAuth, manifestUpdateAppID  string
+	manifestUpdateBody                       string
+	authTokens, probeTokens                  []string
+	infoTokens, infoUsers                    []string
 
 	mu    sync.Mutex
 	posts []url.Values
@@ -84,6 +86,13 @@ func newOnboardSlack(t *testing.T) *onboardSlack {
 		_ = r.ParseForm()
 		f.manifestAuth, f.manifestBody = r.Header.Get("Authorization"), r.PostForm.Get("manifest")
 		_, _ = w.Write([]byte(`{"ok":true,"app_id":"A0CLI","oauth_authorize_url":"https://slack.com/oauth/v2/authorize?client_id=cli"}`))
+	})
+	mux.HandleFunc("/apps.manifest.update", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		f.manifestUpdateAuth = r.Header.Get("Authorization")
+		f.manifestUpdateAppID = r.PostForm.Get("app_id")
+		f.manifestUpdateBody = r.PostForm.Get("manifest")
+		_, _ = w.Write([]byte(`{"ok":true,"app_id":"` + r.PostForm.Get("app_id") + `"}`))
 	})
 	mux.HandleFunc("/auth.test", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
@@ -258,10 +267,51 @@ func TestOnboardManifestFailureExitsTwoAndKeepsStepOne(t *testing.T) {
 	}
 }
 
-func TestOnboardExistingIsNotImplementedYet(t *testing.T) {
-	t.Setenv(paths.EnvHome, t.TempDir())
-	_, _, err := runOnboard(t, "", "--existing", "--no-service")
-	if code := exitCode(err); code != ExitUsage || err.Error() != "not implemented yet" {
-		t.Fatalf("exit %d, err %v; want exit 2 with not implemented yet", code, err)
+func TestOnboardExistingUpdatesManifestAndVerifies(t *testing.T) {
+	fake := newOnboardSlack(t)
+
+	home := newTestHome(t)
+	inbound := make(chan socketmode.Event, 4)
+	startTestDaemonAt(t, home, &config.Config{Slack: config.Slack{BotToken: "xoxb-cli", AppToken: "xapp-cli", OwnerUserID: "U0CLI", APIURL: fake.url}}, daemon.Options{
+		SocketModeHealth: func() string { return slackapi.SocketConnected },
+		Inbound:          inbound,
+	})
+
+	// write config.yaml so --existing finds it
+	cfgPath := filepath.Join(home, "config.yaml")
+	if err := os.WriteFile(cfgPath, []byte("slack:\n  bot_token: xoxb-cli\n  app_token: xapp-cli\n  owner_user_id: U0CLI\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// write onboard.json with app_id so the prompt is skipped
+	cpPath := filepath.Join(home, "onboard.json")
+	if err := os.WriteFile(cpPath, []byte(`{"step":6,"app_id":"A0CLI"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	replied := make(chan struct{})
+	go func() {
+		defer close(replied)
+		post := fake.waitPost(t, "D0CLI")
+		if post.Get("text") != "Reply to this message to finish setup" {
+			t.Errorf("setup DM = %v; want the fixed text", post)
+		}
+		inbound <- ownerDM("U0CLI", "D0CLI", "1700000000.000300", "done")
+	}()
+
+	// stdin: config token, then Enter (keep bot token)
+	out, _, err := runOnboard(t, "xoxe.xoxp-1-cfg\n\n", "--existing", "--no-service")
+	<-replied
+	if code := exitCode(err); code != ExitOK {
+		t.Fatalf("exit %d (err %v), output %q", code, err, out)
+	}
+	if fake.manifestUpdateAuth != "Bearer xoxe.xoxp-1-cfg" || fake.manifestUpdateAppID != "A0CLI" || fake.manifestUpdateBody != manifest.YAML() {
+		t.Fatalf("apps.manifest.update auth=%q appID=%q bodyMatch=%v",
+			fake.manifestUpdateAuth, fake.manifestUpdateAppID, fake.manifestUpdateBody == manifest.YAML())
+	}
+	if !strings.Contains(out, "Manifest updated.") || !strings.Contains(out, "Verified: ada replied.") {
+		t.Fatalf("output %q lacks manifest updated or verified line", out)
+	}
+	if !strings.Contains(out, "Invite the bot to the channels it should watch, then DM it !help.") {
+		t.Fatalf("output %q lacks next-steps line", out)
 	}
 }
