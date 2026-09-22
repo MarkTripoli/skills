@@ -27,14 +27,17 @@ func (c *Coordinator) activeRun(ctx context.Context, runID string) (db.Run, erro
 
 // RecordWorkEvent posts one status message as a thread reply on an active run
 // and restarts the run's quiet interval. A failed post is a *DeliveryError and
-// leaves the run unavailable to run check until a retry succeeds.
+// leaves the run unavailable to run check until a retry succeeds. A run whose
+// Slack was disabled records the status without posting.
 func (c *Coordinator) RecordWorkEvent(ctx context.Context, e WorkEvent) error {
 	run, err := c.activeRun(ctx, e.RunID)
 	if err != nil {
 		return err
 	}
-	if err := c.post(ctx, run, RenderStatus(e)); err != nil {
-		return fmt.Errorf("post status message: %w", err)
+	if run.SlackMode != db.SlackDisabled {
+		if err := c.post(ctx, run, RenderStatus(e)); err != nil {
+			return fmt.Errorf("post status message: %w", err)
+		}
 	}
 	return c.storeStatus(ctx, e, c.Now())
 }

@@ -79,7 +79,7 @@ func (c *Coordinator) StartRun(ctx context.Context, in StartRunInput) (SlackRunR
 		ThreadTS:      ts,
 		Permalink:     permalink,
 		Lifecycle:     "active",
-		SlackMode:     "enabled",
+		SlackMode:     db.SlackEnabled,
 		StartedAt:     startedAt,
 		NextStatusDue: c.nextDue(now),
 	}); err != nil {

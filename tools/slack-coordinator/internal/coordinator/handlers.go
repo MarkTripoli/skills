@@ -60,6 +60,16 @@ func Register(s *ipc.Server, c *Coordinator, health func() ipc.HealthResult, shu
 		}
 		return ipc.EmptyResult{}, nil
 	})
+	s.Handle(ipc.MethodRunDisableSlack, func(ctx context.Context, params json.RawMessage) (interface{}, error) {
+		var in DisableSlackParams
+		if err := decode(params, &in); err != nil {
+			return nil, err
+		}
+		if err := c.DisableSlackForRun(ctx, in.RunID); err != nil {
+			return nil, rpcError(err)
+		}
+		return ipc.EmptyResult{}, nil
+	})
 	s.Handle(ipc.MethodDaemonHealth, func(context.Context, json.RawMessage) (interface{}, error) {
 		return health(), nil
 	})

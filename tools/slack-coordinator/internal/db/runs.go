@@ -10,6 +10,12 @@ import (
 // ErrRunNotFound reports a run_id with no row.
 var ErrRunNotFound = errors.New("run not found")
 
+// Values of runs.slack_mode.
+const (
+	SlackEnabled  = "enabled"
+	SlackDisabled = "slack_disabled"
+)
+
 // Run is one row of the runs table. Timestamps are RFC 3339 UTC strings.
 type Run struct {
 	RunID         string
@@ -76,6 +82,24 @@ func (d *DB) SetDeliveryError(ctx context.Context, runID, msg string) error {
 		return fmt.Errorf("%w: %s", ErrRunNotFound, runID)
 	}
 	return nil
+}
+
+// DisableSlack marks an active run slack_disabled so its posts stop and run
+// check reports the break-glass. A missing run is ErrRunNotFound; a finished
+// run is ErrRunNotActive. Disabling twice is a no-op.
+func (d *DB) DisableSlack(ctx context.Context, runID string) error {
+	res, err := d.sql.ExecContext(ctx, `UPDATE runs SET slack_mode = ? WHERE run_id = ? AND lifecycle = 'active'`, SlackDisabled, runID)
+	if err != nil {
+		return fmt.Errorf("disable slack %s: %w", runID, err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return nil
+	}
+	r, err := d.GetRun(ctx, runID)
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("%w: %s is %s", ErrRunNotActive, runID, r.Lifecycle)
 }
 
 // RunsWithDeliveryError lists the Slack-enabled active runs whose last post

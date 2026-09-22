@@ -23,6 +23,19 @@ type SlackRunRef struct {
 	Permalink string `json:"permalink"`
 }
 
+// RunSummary identifies the run a gate answer is about; run check returns it
+// with every kind so the CLI can show the operator which thread is affected.
+type RunSummary struct {
+	RunID     string `json:"run_id"`
+	ChannelID string `json:"channel_id"`
+	Permalink string `json:"permalink"`
+}
+
+// DisableSlackParams names the run a run.disable_slack request breaks glass on.
+type DisableSlackParams struct {
+	RunID string `json:"run_id"`
+}
+
 // WorkEvent is one status update for an active run. It is posted as a thread
 // reply and stored as the run's last status for quiet-interval reposts.
 type WorkEvent struct {

@@ -22,10 +22,13 @@ stdout holds one JSON object with "kind" and the exit code follows it:
   {"kind":"ready"}                                              exit 0
   {"kind":"owner_input","input":{"message_ts":"...","text":"..."}} exit 10
   {"kind":"unavailable","reason":"..."}                         exit 11
+  {"kind":"slack_disabled"}                                     exit 12
 
-owner_input means the run owner replied in the thread: read input.text, act
-on it, then run resolve --message-ts <input.message_ts> before checking again.
-A daemon that does not answer is reported as unavailable with the same shape.`,
+Every answer from the daemon also carries "run" with run_id, channel_id, and
+permalink. owner_input means the run owner replied in the thread: read
+input.text, act on it, then run resolve --message-ts <input.message_ts> before
+checking again. slack_disabled means an operator ran run disable-slack on this
+run. A daemon that does not answer is reported as unavailable with the same shape.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			gate, err := checkRun(params)
@@ -75,6 +78,8 @@ func gateExit(gate coordinator.WriteGate) error {
 		return &ExitCodeError{Code: ExitOwnerInput, Err: fmt.Errorf("owner input pending: %s", gate.Input.Text)}
 	case coordinator.GateUnavailable:
 		return &ExitCodeError{Code: ExitUnavailable, Err: errors.New(gate.Reason)}
+	case coordinator.GateSlackDisabled:
+		return &ExitCodeError{Code: ExitSlackDisabled, Err: errors.New("slack disabled for this run")}
 	default:
 		return fmt.Errorf("daemon returned unknown gate kind %q", gate.Kind)
 	}

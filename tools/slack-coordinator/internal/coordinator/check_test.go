@@ -10,6 +10,12 @@ import (
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/slackapi"
 )
 
+// gateIs compares the gate's kind and reason; Run is asserted where the
+// summary itself is under test.
+func gateIs(gate WriteGate, kind, reason string) bool {
+	return gate.Kind == kind && gate.Reason == reason && gate.Input == nil
+}
+
 func TestCheckBeforeWriteOrdersHealthBeforeDelivery(t *testing.T) {
 	c, poster, now := newTestCoordinator(t)
 	ctx := context.Background()
@@ -20,13 +26,13 @@ func TestCheckBeforeWriteOrdersHealthBeforeDelivery(t *testing.T) {
 	}
 
 	// No Health injected reads as not_started: the gate fails closed.
-	if gate, err := c.CheckBeforeWrite(ctx, "RUN1"); err != nil || gate != (WriteGate{Kind: GateUnavailable, Reason: "socket_mode not_started"}) {
+	if gate, err := c.CheckBeforeWrite(ctx, "RUN1"); err != nil || !gateIs(gate, GateUnavailable, "socket_mode not_started") {
 		t.Fatalf("without Health: %+v, %v", gate, err)
 	}
 
 	state := slackapi.SocketConnected
 	c.Health = func() string { return state }
-	if gate, err := c.CheckBeforeWrite(ctx, "RUN1"); err != nil || gate != (WriteGate{Kind: GateReady}) {
+	if gate, err := c.CheckBeforeWrite(ctx, "RUN1"); err != nil || !gateIs(gate, GateReady, "") {
 		t.Fatalf("connected, no failures: %+v, %v", gate, err)
 	}
 
@@ -37,7 +43,7 @@ func TestCheckBeforeWriteOrdersHealthBeforeDelivery(t *testing.T) {
 		t.Fatalf("failed post = %v, want *DeliveryError", err)
 	}
 	gate, err := c.CheckBeforeWrite(ctx, "RUN1")
-	if err != nil || gate != (WriteGate{Kind: GateUnavailable, Reason: "channel_not_found"}) {
+	if err != nil || !gateIs(gate, GateUnavailable, "channel_not_found") {
 		t.Fatalf("after a failed post: %+v, %v", gate, err)
 	}
 
@@ -56,7 +62,7 @@ func TestCheckBeforeWriteOrdersHealthBeforeDelivery(t *testing.T) {
 	if len(poster.posts) != 2 || poster.posts[1].ThreadTS != "1700000000.000100" {
 		t.Fatalf("retry posts = %+v, want the status reposted in the thread", poster.posts)
 	}
-	if gate, err := c.CheckBeforeWrite(ctx, "RUN1"); err != nil || gate != (WriteGate{Kind: GateReady}) {
+	if gate, err := c.CheckBeforeWrite(ctx, "RUN1"); err != nil || !gateIs(gate, GateReady, "") {
 		t.Fatalf("after the retry: %+v, %v", gate, err)
 	}
 	if err := (&StatusScheduler{C: c}).Tick(ctx, now.Add(2*time.Minute)); err != nil || len(poster.posts) != 2 {
@@ -159,7 +165,7 @@ func TestCheckBeforeWriteReportsOwnerInputUntilResolved(t *testing.T) {
 	if err := c.ResolveOwnerInput(ctx, OwnerInputResolution{RunID: "RUN1", MessageTS: "1700000000.000300", Outcome: "answered", Reply: "Yes."}); err != nil {
 		t.Fatal(err)
 	}
-	if gate, err := c.CheckBeforeWrite(ctx, "RUN1"); err != nil || gate != (WriteGate{Kind: GateReady}) {
+	if gate, err := c.CheckBeforeWrite(ctx, "RUN1"); err != nil || !gateIs(gate, GateReady, "") {
 		t.Fatalf("after resolving every input: %+v, %v; want ready", gate, err)
 	}
 }

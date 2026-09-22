@@ -37,15 +37,19 @@ func TestRunCheckFailsClosedUntilDeliveryRecovers(t *testing.T) {
 	if out, code := runCLI(t, "run", "start", "--channel", "C0000000001", "--work", "x", "--run-id", "RUN1"); code != ExitOK {
 		t.Fatalf("run start exit %d, output %q", code, out)
 	}
-	if gate, code := checkGate(t, "RUN1"); code != ExitOK || gate != (coordinator.WriteGate{Kind: "ready"}) {
+	gate, code := checkGate(t, "RUN1")
+	if code != ExitOK || gate.Kind != "ready" || gate.Reason != "" {
 		t.Fatalf("fresh run: exit %d, gate %+v; want 0 and ready", code, gate)
+	}
+	if gate.Run == nil || *gate.Run != (coordinator.RunSummary{RunID: "RUN1", ChannelID: "C0000000001", Permalink: "https://t.slack.com/archives/C0000000001/p1700000000000100"}) {
+		t.Fatalf("ready gate run summary %+v; want the run's id, channel, and permalink", gate.Run)
 	}
 
 	fake.failPosts.Store(true)
 	if _, code := runCLI(t, "run", "event", "--run-id", "RUN1", "--current", "x"); code != ExitUnavailable {
 		t.Fatalf("run event with Slack failing exit %d, want %d", code, ExitUnavailable)
 	}
-	gate, code := checkGate(t, "RUN1")
+	gate, code = checkGate(t, "RUN1")
 	if code != ExitUnavailable || gate.Kind != "unavailable" || !strings.Contains(gate.Reason, "500") {
 		t.Fatalf("after a failed post: exit %d, gate %+v; want 11, unavailable, and the Slack error", code, gate)
 	}
