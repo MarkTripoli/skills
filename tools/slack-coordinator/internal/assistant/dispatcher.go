@@ -99,6 +99,29 @@ func (s *Service) spawnQueued(ctx context.Context) error {
 		if err != nil || !ok {
 			return err
 		}
+		// Hourly run cap: count runs started within the last hour.
+		if s.Agent != nil && s.Agent.MaxRunsPerHour > 0 {
+			since := stamp(s.Now().Add(-time.Hour))
+			started, err := s.DB.CountStartedSince(ctx, since)
+			if err != nil {
+				return err
+			}
+			if started >= s.Agent.MaxRunsPerHour {
+				// Log once per held run per tick.
+				var msg string
+				if run.Kind == db.RunKindTask {
+					n, err := s.DB.CountTaskMessagesForRun(ctx, run.RunID)
+					if err != nil {
+						return err
+					}
+					msg = fmt.Sprintf("cap reached: run %s held (task %d, %d messages)", run.RunID, run.TaskID.Int64, n)
+				} else {
+					msg = fmt.Sprintf("cap reached: run %s held (dm)", run.RunID)
+				}
+				slog.Info(msg)
+				return nil
+			}
+		}
 		if err := s.spawn(ctx, run); err != nil {
 			return fmt.Errorf("run %s: %w", run.RunID, err)
 		}
@@ -132,9 +155,9 @@ func (s *Service) spawn(ctx context.Context, run db.AssistantRun) error {
 // startedRun is a spawned agent with the data it needs for delivery.
 type startedRun struct {
 	handle *agent.Handle
-	req    db.DMRequest    // dm runs: the request being answered
-	thread []db.DMMessage  // dm runs: the request's dm_messages in ts order
-	task   db.Task         // task runs: the task being run
+	req    db.DMRequest     // dm runs: the request being answered
+	thread []db.DMMessage   // dm runs: the request's dm_messages in ts order
+	task   db.Task          // task runs: the task being run
 	msgs   []db.TaskMessage // task runs: the messages bound to this run
 }
 

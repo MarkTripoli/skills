@@ -283,6 +283,69 @@ func TestShutdownRecordsCancelledRunAsFailed(t *testing.T) {
 	}
 }
 
+func TestHourlyRunCapHoldsAndReleasesQueued(t *testing.T) {
+	s, _, clock, runner := newDispatchService(t)
+	s.Agent.MaxRunsPerHour = 2
+	ctx := context.Background()
+
+	// Queue three DM requests.
+	queueRequests(t, s, clock, "first", "second", "third")
+
+	// First tick: two spawn (cap = 2), third is held.
+	logged := captureLog(t)
+	if err := s.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if started := runner.started(); started != 2 {
+		t.Fatalf("after first tick: %d started, want 2", started)
+	}
+	if queued := countState(t, s, db.RunQueued); queued != 1 {
+		t.Fatalf("after first tick: %d queued, want 1", queued)
+	}
+
+	// Get the held run's ID.
+	held, ok, err := s.DB.OldestQueued(ctx)
+	if err != nil || !ok {
+		t.Fatalf("OldestQueued = %+v, %t, %v; want one queued run", held, ok, err)
+	}
+
+	// Log line must contain "cap reached: run <id> held (dm)".
+	wantLog := fmt.Sprintf("cap reached: run %s held (dm)", held.RunID)
+	if !strings.Contains(logged.String(), wantLog) {
+		t.Fatalf("log = %q, want it to contain %q", logged.String(), wantLog)
+	}
+
+	// Another tick while cap still holds: still 2 started, held row unchanged.
+	logged.Reset()
+	if err := s.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if started := runner.started(); started != 2 {
+		t.Fatalf("second tick spawned more runs: %d started, still want 2", started)
+	}
+	if !strings.Contains(logged.String(), wantLog) {
+		t.Fatalf("second tick log = %q, want cap-reached line again", logged.String())
+	}
+	// Queued state and run ID unchanged.
+	stillHeld := held
+	if h, ok2, err2 := s.DB.OldestQueued(ctx); err2 != nil || !ok2 || h.RunID != stillHeld.RunID || h.State != db.RunQueued {
+		t.Fatalf("held run changed or missing: %+v %t %v", h, ok2, err2)
+	}
+
+	// Advance clock 61 minutes: oldest started_at falls out of the rolling hour.
+	clock.at = clock.at.Add(61 * time.Minute)
+	runner.scripted = nil // no scripted outcome; let the third spawn block
+	if err := s.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if started := runner.started(); started != 3 {
+		t.Fatalf("after clock advance: %d started, want 3", started)
+	}
+	if queued := countState(t, s, db.RunQueued); queued != 0 {
+		t.Fatalf("after clock advance: %d queued, want 0", queued)
+	}
+}
+
 // --- helpers for task-run tests ---
 
 // newTaskDispatchService is newDispatchService with a raw SQL connection for
