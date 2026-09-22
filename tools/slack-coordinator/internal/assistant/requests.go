@@ -3,12 +3,16 @@ package assistant
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/oklog/ulid/v2"
 	"github.com/slack-go/slack/slackevents"
 
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/agent"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
 )
 
@@ -105,6 +109,12 @@ func (s *Service) followUp(ctx context.Context, msg *slackevents.MessageEvent) e
 	if err != nil || !ok {
 		return err
 	}
+
+	// Before recording a normal follow-up, check whether this message
+	// confirms (or refuses) a pending proposal.
+	if handled, err := s.confirmProposal(ctx, req, msg); handled || err != nil {
+		return err
+	}
 	now := stamp(s.Now())
 	rootTS := msg.ThreadTimeStamp
 
@@ -147,4 +157,201 @@ func (s *Service) followUp(ctx context.Context, msg *slackevents.MessageEvent) e
 		}
 		return tx.InsertDMMessage(ctx, db.DMMessage{RootTS: rootTS, TS: ackTS, Author: db.AuthorBot, Text: workingAck})
 	})
+}
+
+// confirmWords is the set of normalized texts that confirm a pending proposal.
+var confirmWords = map[string]bool{
+	"yes": true, "y": true, "confirm": true, "confirmed": true,
+	"ok": true, "okay": true, "go": true, "do it": true,
+	"👍": true, ":+1:": true,
+}
+
+// isConfirmText reports whether text, after lowercasing, trimming space, and
+// stripping trailing punctuation, is a confirm word.
+func isConfirmText(text string) bool {
+	t := strings.ToLower(strings.TrimSpace(text))
+	t = strings.TrimRight(t, ".!,")
+	return confirmWords[t]
+}
+
+// confirmProposal checks whether msg is a confirm reply for a pending proposal
+// on req and handles it. Returns handled=true when the message was consumed
+// (either recorded or refused with an invite), so the caller must not enqueue
+// a normal follow-up.
+func (s *Service) confirmProposal(ctx context.Context, req db.DMRequest, msg *slackevents.MessageEvent) (bool, error) {
+	if !req.PendingProposal.Valid || req.PendingProposal.String == "" {
+		return false, nil
+	}
+	if !isConfirmText(msg.Text) {
+		return false, nil
+	}
+
+	var p pendingProposal
+	if err := json.Unmarshal([]byte(req.PendingProposal.String), &p); err != nil {
+		return false, fmt.Errorf("parse pending proposal: %w", err)
+	}
+
+	runID := sql.NullString{String: p.RunID, Valid: p.RunID != ""}
+	rootTS := msg.ThreadTimeStamp
+	now := stamp(s.Now())
+
+	if !p.Confirmable {
+		// Build invite reply listing unresolved channels.
+		var names []string
+		for _, n := range p.Unresolved {
+			names = append(names, "#"+n)
+		}
+		reply := "Invite the bot to " + strings.Join(names, ", ") + ", then ask again."
+
+		replyTS, err := s.Slack.PostMessage(ctx, req.ChannelID, rootTS, reply)
+		if err != nil {
+			return true, err
+		}
+		return true, s.DB.Transact(ctx, func(tx *db.DB) error {
+			if err := tx.InsertDMMessage(ctx, db.DMMessage{
+				RootTS: rootTS, TS: msg.TimeStamp, Author: db.AuthorOwner, Text: msg.Text, RunID: runID,
+			}); err != nil {
+				return err
+			}
+			if err := tx.TouchDMRequest(ctx, rootTS, now); err != nil {
+				return err
+			}
+			return tx.InsertDMMessage(ctx, db.DMMessage{
+				RootTS: rootTS, TS: replyTS, Author: db.AuthorBot, Text: reply, RunID: runID,
+			})
+		})
+	}
+
+	// Build schedule JSON and due_at from the proposal trigger.
+	schedJSON, dueAt, err := proposalSchedule(p.Proposal.Trigger, s.Now())
+	if err != nil {
+		return true, fmt.Errorf("confirm proposal: %w", err)
+	}
+
+	deliverToJSON, err := json.Marshal(p.Proposal.DeliverTo)
+	if err != nil {
+		return true, fmt.Errorf("confirm proposal marshal deliver_to: %w", err)
+	}
+
+	debounce := sql.NullInt64{}
+	if p.Proposal.Trigger.Kind == agent.TriggerEachMessage {
+		d := int64(p.Proposal.Trigger.DebounceSeconds)
+		if d == 0 {
+			d = 300
+		}
+		debounce = sql.NullInt64{Int64: d, Valid: true}
+	}
+
+	var taskID int64
+	err = s.DB.Transact(ctx, func(tx *db.DB) error {
+		var err error
+		taskID, err = tx.InsertTask(ctx, db.InsertTaskInput{
+			State:           db.TaskActive,
+			Instruction:     p.Proposal.Instruction,
+			Trigger:         p.Proposal.Trigger.Kind,
+			Schedule:        schedJSON,
+			DebounceSeconds: debounce,
+			DeliverTo:       string(deliverToJSON),
+			RequestRootTS:   rootTS,
+			CreatedAt:       now,
+			DueAt:           dueAt,
+		})
+		if err != nil {
+			return err
+		}
+		if err := tx.InsertTaskChannels(ctx, taskID, p.Proposal.Watch); err != nil {
+			return err
+		}
+		if err := tx.ClearPendingProposal(ctx, rootTS); err != nil {
+			return err
+		}
+		if err := tx.InsertDMMessage(ctx, db.DMMessage{
+			RootTS: rootTS, TS: msg.TimeStamp, Author: db.AuthorOwner, Text: msg.Text, RunID: runID,
+		}); err != nil {
+			return err
+		}
+		return tx.TouchDMRequest(ctx, rootTS, now)
+	})
+	if err != nil {
+		return true, err
+	}
+
+	reply := proposalRecordedText(taskID, p.Proposal.Trigger, dueAt)
+	replyTS, err := s.Slack.PostMessage(ctx, req.ChannelID, rootTS, reply)
+	if err != nil {
+		return true, err
+	}
+	return true, s.DB.InsertDMMessage(ctx, db.DMMessage{
+		RootTS: rootTS, TS: replyTS, Author: db.AuthorBot, Text: reply, RunID: runID,
+	})
+}
+
+// proposalSchedule builds the schedule JSON (NullString) and due_at
+// (NullString) for a new task from the proposal trigger and the current time.
+func proposalSchedule(t agent.Trigger, now time.Time) (sql.NullString, sql.NullString, error) {
+	switch t.Kind {
+	case agent.TriggerSchedule:
+		var raw []byte
+		var err error
+		if t.Daily != "" {
+			type daily struct {
+				Daily string `json:"daily"`
+				TZ    string `json:"tz,omitempty"`
+			}
+			raw, err = json.Marshal(daily{Daily: t.Daily, TZ: t.TZ})
+		} else if t.EveryHours > 0 {
+			type every struct {
+				EveryHours int `json:"every_hours"`
+			}
+			raw, err = json.Marshal(every{EveryHours: t.EveryHours})
+		} else {
+			return sql.NullString{}, sql.NullString{}, fmt.Errorf("schedule trigger with no daily or every_hours")
+		}
+		if err != nil {
+			return sql.NullString{}, sql.NullString{}, err
+		}
+		schedJSON := sql.NullString{String: string(raw), Valid: true}
+		next, err := NextDue(string(raw), now)
+		if err != nil {
+			return sql.NullString{}, sql.NullString{}, fmt.Errorf("next due: %w", err)
+		}
+		dueAt := sql.NullString{String: next.UTC().Format(time.RFC3339), Valid: true}
+		return schedJSON, dueAt, nil
+
+	case agent.TriggerWindowEnd:
+		type atJ struct {
+			At string `json:"at"`
+		}
+		raw, err := json.Marshal(atJ{At: t.At})
+		if err != nil {
+			return sql.NullString{}, sql.NullString{}, err
+		}
+		schedJSON := sql.NullString{String: string(raw), Valid: true}
+		dueAt := sql.NullString{String: t.At, Valid: t.At != ""}
+		return schedJSON, dueAt, nil
+
+	case agent.TriggerEachMessage:
+		return sql.NullString{}, sql.NullString{}, nil
+
+	default:
+		return sql.NullString{}, sql.NullString{}, fmt.Errorf("unknown trigger kind %q", t.Kind)
+	}
+}
+
+// proposalRecordedText builds the confirmation reply for a recorded task.
+func proposalRecordedText(taskID int64, t agent.Trigger, dueAt sql.NullString) string {
+	if t.Kind == agent.TriggerEachMessage {
+		return fmt.Sprintf("Recorded as t%d · waiting for messages", taskID)
+	}
+	due := dueAt.String
+	if t.TZ != "" && due != "" {
+		loc, err := time.LoadLocation(t.TZ)
+		if err == nil {
+			at, err := time.Parse(time.RFC3339, due)
+			if err == nil {
+				due = at.In(loc).Format(time.RFC3339)
+			}
+		}
+	}
+	return fmt.Sprintf("Recorded as t%d · next due %s", taskID, due)
 }

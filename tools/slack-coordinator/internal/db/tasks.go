@@ -292,3 +292,46 @@ func (d *DB) ClearTaskDue(ctx context.Context, taskID int64) error {
 	}
 	return nil
 }
+
+// InsertTaskInput holds the column values for a new tasks row.
+type InsertTaskInput struct {
+	State           string
+	Instruction     string
+	Trigger         string
+	Schedule        sql.NullString
+	DebounceSeconds sql.NullInt64
+	DeliverTo       string
+	RequestRootTS   string
+	CreatedAt       string
+	DueAt           sql.NullString
+}
+
+// InsertTask inserts a new tasks row and returns its auto-assigned task_id.
+func (d *DB) InsertTask(ctx context.Context, in InsertTaskInput) (int64, error) {
+	res, err := d.sql.ExecContext(ctx, `
+INSERT INTO tasks (state, instruction, trigger, schedule, debounce_seconds, deliver_to, request_root_ts, created_at, due_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		in.State, in.Instruction, in.Trigger, in.Schedule, in.DebounceSeconds,
+		in.DeliverTo, in.RequestRootTS, in.CreatedAt, in.DueAt)
+	if err != nil {
+		return 0, fmt.Errorf("insert task: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("insert task last id: %w", err)
+	}
+	return id, nil
+}
+
+// InsertTaskChannels inserts one task_channels row per channel id, ignoring
+// duplicates.
+func (d *DB) InsertTaskChannels(ctx context.Context, taskID int64, channelIDs []string) error {
+	for _, ch := range channelIDs {
+		if _, err := d.sql.ExecContext(ctx,
+			`INSERT OR IGNORE INTO task_channels (task_id, channel_id) VALUES (?, ?)`,
+			taskID, ch); err != nil {
+			return fmt.Errorf("insert task channel %d/%s: %w", taskID, ch, err)
+		}
+	}
+	return nil
+}
