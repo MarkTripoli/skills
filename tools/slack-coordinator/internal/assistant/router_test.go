@@ -1,12 +1,51 @@
-package coordinator
+package assistant
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
+
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/coordinator"
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
 )
+
+// fakeSlack answers every post with a fixed ts, so every run root shares one thread.
+type fakeSlack struct{}
+
+func (fakeSlack) PostMessage(context.Context, string, string, string) (string, error) {
+	return "1700000000.000100", nil
+}
+
+func (fakeSlack) Permalink(_ context.Context, channelID, ts string) (string, error) {
+	return "https://t.slack.com/archives/" + channelID + "/p" + ts, nil
+}
+
+// newTestService returns a Service over a temp database with a fixed clock and
+// a coordinator sharing both.
+func newTestService(t *testing.T) *Service {
+	t.Helper()
+	database, err := db.Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	now := func() time.Time { return time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC) }
+	slack := fakeSlack{}
+	coord := &coordinator.Coordinator{DB: database, Slack: slack, Now: now, Quiet: time.Hour}
+	return New(database, slack, coord, "U1", now)
+}
+
+// startTestRun opens runID for owner U1 in channel C1; fakeSlack roots it at 1700000000.000100.
+func startTestRun(t *testing.T, c *coordinator.Coordinator, runID string) {
+	t.Helper()
+	if _, err := c.StartRun(context.Background(), coordinator.StartRunInput{RunID: runID, OwnerUserID: "U1", ChannelID: "C1", Work: "w"}); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // recordingAcker collects the envelope IDs ConsumeInbound acks.
 type recordingAcker struct{ acked []string }
@@ -26,13 +65,14 @@ func messageEnvelope(envelopeID string, msg *slackevents.MessageEvent) socketmod
 }
 
 func TestConsumeInboundKeepsOnlyOwnerThreadReplies(t *testing.T) {
-	c, _, _ := newTestCoordinator(t)
+	s := newTestService(t)
+	c := s.Coord
 	ctx := context.Background()
 	startTestRun(t, c, "RUN1") // owner U1, channel C1, thread 1700000000.000100
-	if err := c.FinishRun(ctx, FinishRunInput{RunID: "RUN1", Outcome: "completed"}); err != nil {
+	if err := c.FinishRun(ctx, coordinator.FinishRunInput{RunID: "RUN1", Outcome: "completed"}); err != nil {
 		t.Fatal(err)
 	}
-	// RUN2 is the active run; fakePoster gives every root the same ts, so RUN1
+	// RUN2 is the active run; fakeSlack gives every root the same ts, so RUN1
 	// (completed) and RUN2 (active) share the thread and only RUN2 may match.
 	startTestRun(t, c, "RUN2")
 	const thread = "1700000000.000100"
@@ -63,7 +103,7 @@ func TestConsumeInboundKeepsOnlyOwnerThreadReplies(t *testing.T) {
 	close(events)
 
 	acker := &recordingAcker{}
-	c.ConsumeInbound(ctx, events, acker)
+	s.ConsumeInbound(ctx, events, acker)
 
 	if len(acker.acked) != len(envelopes) {
 		t.Fatalf("acked %d envelopes %v, want every one of %d", len(acker.acked), acker.acked, len(envelopes))
@@ -97,11 +137,11 @@ func TestConsumeInboundKeepsOnlyOwnerThreadReplies(t *testing.T) {
 }
 
 func TestConsumeInboundStopsWhenTheContextEnds(t *testing.T) {
-	c, _, _ := newTestCoordinator(t)
+	s := newTestService(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		c.ConsumeInbound(ctx, make(chan socketmode.Event), nil)
+		s.ConsumeInbound(ctx, make(chan socketmode.Event), nil)
 		close(done)
 	}()
 	cancel()
