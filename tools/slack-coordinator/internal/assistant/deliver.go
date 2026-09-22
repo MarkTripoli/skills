@@ -12,11 +12,14 @@ import (
 )
 
 // maxAnswerRunes is the longest answer that replaces the ack in place; a
-// longer one is posted as its own thread message under a `Done` ack.
-const maxAnswerRunes = 4000
-
-// doneAck replaces the ack when the answer is too long to be the ack itself.
-const doneAck = "Done"
+// longer one is posted as its own thread message under a Done ack.
+const (
+	maxAnswerRunes = 4000
+	// doneAck replaces the ack when the answer is too long to be the ack itself.
+	doneAck = "Done"
+	// failedAck replaces the ack when a run ends without a usable result.
+	failedAck = "Failed"
+)
 
 // deliver records out for the dm run and answers the owner. A clean exit
 // with a result edits the ack into the answer (or, past maxAnswerRunes, sets
@@ -40,6 +43,8 @@ func (s *Service) deliverDM(ctx context.Context, run db.AssistantRun, out agent.
 		failure := s.failureText(out)
 		if ctx.Err() != nil && out.TimedOut {
 			failure = "daemon shutdown"
+		} else {
+			s.deliverFailure(ctx, run, failure, out.StderrTail)
 		}
 		return s.DB.FinishAssistantRun(writeCtx, run.RunID, db.RunFailed, out.ExitCode, out.TimedOut, out.ResultSource, failure, now)
 	}
@@ -84,6 +89,48 @@ func (s *Service) answer(ctx context.Context, req db.DMRequest, result string) (
 		return "", err
 	}
 	return s.Slack.PostMessage(ctx, req.ChannelID, req.RootTS, result)
+}
+
+// deliverFailure edits the ack to failedAck, posts a thread reply whose
+// first line is cause (followed by stderrTail in a code fence when non-empty),
+// and inserts a dm_messages bot row bound to the run. Slack errors are logged
+// and do not prevent the database write. It does not record the run as failed;
+// callers do that.
+func (s *Service) deliverFailure(ctx context.Context, run db.AssistantRun, cause, stderrTail string) {
+	writeCtx := context.WithoutCancel(ctx)
+	req, ok, err := s.DB.GetDMRequest(writeCtx, run.RootTS.String)
+	if err != nil {
+		slog.Error("deliverFailure: get dm request", "run", run.RunID, "error", err)
+		return
+	}
+	if !ok {
+		slog.Error("deliverFailure: dm request not found", "run", run.RunID)
+		return
+	}
+	text := cause
+	if stderrTail != "" {
+		text = cause + "\n\n```\n" + stderrTail + "\n```"
+	}
+	if req.AckTS.Valid {
+		if _, err := s.Slack.UpdateMessage(ctx, req.ChannelID, req.AckTS.String, failedAck); err != nil {
+			slog.Error("deliverFailure: edit ack", "run", run.RunID, "error", err)
+		}
+	}
+	replyTS, err := s.Slack.PostMessage(ctx, req.ChannelID, req.RootTS, text)
+	if err != nil {
+		slog.Error("deliverFailure: post reply", "run", run.RunID, "error", err)
+		return
+	}
+	row := db.DMMessage{
+		RootTS: req.RootTS,
+		TS:     replyTS,
+		Author: db.AuthorBot,
+		Text:   text,
+		RunID:  sql.NullString{String: run.RunID, Valid: true},
+	}
+	if err := s.DB.UpsertDMMessage(writeCtx, row); err != nil {
+		slog.Error("deliverFailure: upsert dm_messages", "run", run.RunID, "error", err)
+	}
 }
 
 // failureText names why out is not an answer.

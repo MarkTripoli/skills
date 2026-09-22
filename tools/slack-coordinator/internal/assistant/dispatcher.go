@@ -76,7 +76,9 @@ func (s *Service) spawn(ctx context.Context, run db.AssistantRun) error {
 	st, err := s.start(ctx, run)
 	if err != nil {
 		slog.Error("run not started", "run", run.RunID, "error", err)
-		return s.DB.FinishAssistantRun(ctx, run.RunID, db.RunFailed, -1, false, "", err.Error(), stamp(s.Now()))
+		cause := err.Error()
+		s.deliverFailure(ctx, run, cause, "")
+		return s.DB.FinishAssistantRun(ctx, run.RunID, db.RunFailed, -1, false, "", cause, stamp(s.Now()))
 	}
 	if err := s.DB.MarkRunning(ctx, run.RunID, st.handle.Pid, st.handle.Pgid, os.Getpid(), stamp(s.Now())); err != nil {
 		st.handle.Kill()

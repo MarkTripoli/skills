@@ -221,8 +221,14 @@ func TestTickRecordsARunThatCannotStartAsFailed(t *testing.T) {
 	if err != nil || ok {
 		t.Fatalf("OldestQueued = %+v, %t, %v; want none", oldest, ok, err)
 	}
-	if len(slack.updates) != 0 {
-		t.Fatalf("updates = %+v, want the acks untouched", slack.updates)
+	// deliverFailure edits each ack to Failed and posts a reply.
+	if len(slack.updates) != 2 {
+		t.Fatalf("updates = %+v, want two acks edited to Failed", slack.updates)
+	}
+	for _, u := range slack.updates {
+		if u.text != "Failed" {
+			t.Fatalf("update text = %q; want Failed", u.text)
+		}
 	}
 	// The run directory holds the inputs even though nothing ran.
 	entries, err := os.ReadDir(filepath.Join(s.Paths.Workspace(), "runs"))
