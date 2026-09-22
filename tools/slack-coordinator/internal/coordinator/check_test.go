@@ -91,3 +91,75 @@ func TestFinishRunLeavesTheRunActiveWhenThePostFails(t *testing.T) {
 		t.Fatalf("run after the retried completion: %+v", run)
 	}
 }
+
+func TestCheckBeforeWriteReportsOwnerInputUntilResolved(t *testing.T) {
+	c, poster, _ := newTestCoordinator(t)
+	ctx := context.Background()
+	startTestRun(t, c, "RUN1")
+	c.Health = func() string { return slackapi.SocketConnected }
+
+	for _, ts := range []string{"1700000000.000300", "1700000000.000200"} {
+		if _, err := c.DB.InsertOwnerInput(ctx, db.OwnerInput{RunID: "RUN1", MessageTS: ts, Text: "reply " + ts, ReceivedAt: "t"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := WriteGate{Kind: GateOwnerInput, Input: &OwnerInput{RunID: "RUN1", ChannelID: "C1", ThreadTS: "1700000000.000100", MessageTS: "1700000000.000200", Text: "reply 1700000000.000200"}}
+	gate, err := c.CheckBeforeWrite(ctx, "RUN1")
+	if err != nil || gate.Kind != want.Kind || gate.Input == nil || *gate.Input != *want.Input {
+		t.Fatalf("with two pending inputs: %+v (input %+v), %v; want the oldest as owner_input", gate, gate.Input, err)
+	}
+
+	// A delivery failure outranks the pending input.
+	if err := c.DB.SetDeliveryError(ctx, "RUN1", "ratelimited"); err != nil {
+		t.Fatal(err)
+	}
+	if gate, _ := c.CheckBeforeWrite(ctx, "RUN1"); gate.Kind != GateUnavailable {
+		t.Fatalf("delivery error with a pending input: %+v", gate)
+	}
+	if err := c.DB.SetDeliveryError(ctx, "RUN1", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	bad := OwnerInputResolution{RunID: "RUN1", MessageTS: "1700000000.000200", Outcome: "done", Reply: "ok"}
+	if err := c.ResolveOwnerInput(ctx, bad); err == nil {
+		t.Fatal("bad outcome accepted")
+	}
+	missing := OwnerInputResolution{RunID: "RUN1", MessageTS: "9.9", Outcome: "applied", Reply: "ok"}
+	if err := c.ResolveOwnerInput(ctx, missing); !errors.Is(err, db.ErrOwnerInputNotPending) {
+		t.Fatalf("resolve of an unknown input = %v, want ErrOwnerInputNotPending", err)
+	}
+	if len(poster.posts) != 1 {
+		t.Fatalf("refused resolutions posted; %d posts", len(poster.posts))
+	}
+
+	poster.fail = errors.New("channel_not_found")
+	res := OwnerInputResolution{RunID: "RUN1", MessageTS: "1700000000.000200", Outcome: "applied", Reply: "Stopping as asked."}
+	var delivery *DeliveryError
+	if err := c.ResolveOwnerInput(ctx, res); !errors.As(err, &delivery) {
+		t.Fatalf("resolve with Slack failing = %v, want *DeliveryError", err)
+	}
+	if gate, _ := c.CheckBeforeWrite(ctx, "RUN1"); gate.Kind != GateUnavailable {
+		t.Fatalf("after a failed acknowledgement: %+v, want unavailable", gate)
+	}
+	poster.fail = nil
+
+	if err := c.ResolveOwnerInput(ctx, res); err != nil {
+		t.Fatal(err)
+	}
+	if len(poster.posts) != 2 || poster.posts[1] != (post{"C1", "1700000000.000100", "Stopping as asked."}) {
+		t.Fatalf("acknowledgement posts = %+v, want one thread reply with the given text", poster.posts)
+	}
+	if err := c.ResolveOwnerInput(ctx, res); !errors.Is(err, db.ErrOwnerInputNotPending) || len(poster.posts) != 2 {
+		t.Fatalf("second resolve = %v with %d posts; want ErrOwnerInputNotPending and no new post", err, len(poster.posts))
+	}
+	gate, _ = c.CheckBeforeWrite(ctx, "RUN1")
+	if gate.Kind != GateOwnerInput || gate.Input.MessageTS != "1700000000.000300" {
+		t.Fatalf("after resolving the oldest: %+v (input %+v); want the next input", gate, gate.Input)
+	}
+	if err := c.ResolveOwnerInput(ctx, OwnerInputResolution{RunID: "RUN1", MessageTS: "1700000000.000300", Outcome: "answered", Reply: "Yes."}); err != nil {
+		t.Fatal(err)
+	}
+	if gate, err := c.CheckBeforeWrite(ctx, "RUN1"); err != nil || gate != (WriteGate{Kind: GateReady}) {
+		t.Fatalf("after resolving every input: %+v, %v; want ready", gate, err)
+	}
+}

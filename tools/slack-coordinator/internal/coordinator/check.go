@@ -11,6 +11,7 @@ import (
 const (
 	GateReady       = "ready"
 	GateUnavailable = "unavailable"
+	GateOwnerInput  = "owner_input"
 )
 
 // CheckParams names the run a run.check request asks about.
@@ -19,10 +20,11 @@ type CheckParams struct {
 }
 
 // WriteGate is the answer to run check: whether the agent may take its next
-// state-changing action.
+// state-changing action. Input is set only for owner_input.
 type WriteGate struct {
-	Kind   string `json:"kind"`
-	Reason string `json:"reason,omitempty"`
+	Kind   string      `json:"kind"`
+	Reason string      `json:"reason,omitempty"`
+	Input  *OwnerInput `json:"input,omitempty"`
 }
 
 // health reports the Socket Mode state, or not_started when the coordinator
@@ -36,7 +38,8 @@ func (c *Coordinator) health() string {
 
 // CheckBeforeWrite decides whether runID may proceed. Order: unknown run is an
 // error; a Socket Mode connection that is not connected is unavailable; a run
-// whose last post failed is unavailable until a retry succeeds; otherwise ready.
+// whose last post failed is unavailable until a retry succeeds; the oldest
+// unanswered owner reply is owner_input; otherwise ready.
 func (c *Coordinator) CheckBeforeWrite(ctx context.Context, runID string) (WriteGate, error) {
 	if runID == "" {
 		return WriteGate{}, errors.New("run_id is required")
@@ -50,6 +53,19 @@ func (c *Coordinator) CheckBeforeWrite(ctx context.Context, runID string) (Write
 	}
 	if run.LastDeliveryError.Valid {
 		return WriteGate{Kind: GateUnavailable, Reason: run.LastDeliveryError.String}, nil
+	}
+	in, pending, err := c.DB.OldestUnhandledInput(ctx, runID)
+	if err != nil {
+		return WriteGate{}, err
+	}
+	if pending {
+		return WriteGate{Kind: GateOwnerInput, Input: &OwnerInput{
+			RunID:     run.RunID,
+			ChannelID: run.ChannelID,
+			ThreadTS:  run.ThreadTS,
+			MessageTS: in.MessageTS,
+			Text:      in.Text,
+		}}, nil
 	}
 	return WriteGate{Kind: GateReady}, nil
 }

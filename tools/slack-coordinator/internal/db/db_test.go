@@ -169,3 +169,83 @@ func TestDeliveryErrorTracking(t *testing.T) {
 		t.Fatalf("SetDeliveryError(missing) = %v, want ErrRunNotFound", err)
 	}
 }
+
+func TestOwnerInputsPendingUntilResolved(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	ctx := context.Background()
+
+	base := Run{OwnerUserID: "U1", ChannelID: "C1", Permalink: "p", SlackMode: "enabled", StartedAt: "2026-09-21T00:00:00Z"}
+	active, done := base, base
+	active.RunID, active.ThreadTS, active.Lifecycle = "active", "1.0", "active"
+	done.RunID, done.ThreadTS, done.Lifecycle = "done", "2.0", "completed"
+	for _, r := range []Run{active, done} {
+		if err := d.InsertRun(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if r, ok, err := d.ActiveRunByThread(ctx, "C1", "1.0"); err != nil || !ok || r.RunID != "active" {
+		t.Fatalf("ActiveRunByThread(C1, 1.0) = %+v, %t, %v", r, ok, err)
+	}
+	if _, ok, err := d.ActiveRunByThread(ctx, "C1", "2.0"); err != nil || ok {
+		t.Fatalf("ActiveRunByThread found the completed run: %t, %v", ok, err)
+	}
+	if _, ok, _ := d.ActiveRunByThread(ctx, "C9", "1.0"); ok {
+		t.Fatal("ActiveRunByThread matched a thread in another channel")
+	}
+
+	if _, ok, err := d.OldestUnhandledInput(ctx, "active"); err != nil || ok {
+		t.Fatalf("OldestUnhandledInput with no rows = %t, %v", ok, err)
+	}
+	second := OwnerInput{RunID: "active", MessageTS: "1.2", Text: "second", ReceivedAt: "2026-09-21T00:02:00Z"}
+	first := OwnerInput{RunID: "active", MessageTS: "1.1", Text: "first", ReceivedAt: "2026-09-21T00:01:00Z"}
+	for _, in := range []OwnerInput{second, first} {
+		if inserted, err := d.InsertOwnerInput(ctx, in); err != nil || !inserted {
+			t.Fatalf("InsertOwnerInput(%s) = %t, %v", in.MessageTS, inserted, err)
+		}
+	}
+	if inserted, err := d.InsertOwnerInput(ctx, first); err != nil || inserted {
+		t.Fatalf("duplicate message_ts inserted = %t, %v; want ignored", inserted, err)
+	}
+	if _, err := d.InsertOwnerInput(ctx, OwnerInput{RunID: "missing", MessageTS: "1.1", Text: "x", ReceivedAt: "t"}); err == nil {
+		t.Fatal("owner input for an unknown run inserted; want the foreign key to refuse it")
+	}
+
+	got, ok, err := d.OldestUnhandledInput(ctx, "active")
+	if err != nil || !ok || got.MessageTS != "1.1" || got.Text != "first" || got.HandledAt.Valid {
+		t.Fatalf("OldestUnhandledInput = %+v, %t, %v; want the 1.1 row", got, ok, err)
+	}
+	if in, err := d.PendingOwnerInput(ctx, "active", "1.2"); err != nil || in.Text != "second" {
+		t.Fatalf("PendingOwnerInput(1.2) = %+v, %v", in, err)
+	}
+
+	if err := d.ResolveOwnerInput(ctx, "active", "1.1", "applied", "2026-09-21T00:05:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.ResolveOwnerInput(ctx, "active", "1.1", "rejected", "t"); !errors.Is(err, ErrOwnerInputNotPending) {
+		t.Fatalf("second resolve = %v, want ErrOwnerInputNotPending", err)
+	}
+	if _, err := d.PendingOwnerInput(ctx, "active", "1.1"); !errors.Is(err, ErrOwnerInputNotPending) {
+		t.Fatalf("PendingOwnerInput after resolve = %v, want ErrOwnerInputNotPending", err)
+	}
+	if err := d.ResolveOwnerInput(ctx, "active", "9.9", "applied", "t"); !errors.Is(err, ErrOwnerInputNotPending) {
+		t.Fatalf("resolve of a missing input = %v, want ErrOwnerInputNotPending", err)
+	}
+	if err := d.ResolveOwnerInput(ctx, "active", "1.2", "bogus", "t"); err == nil || errors.Is(err, ErrOwnerInputNotPending) {
+		t.Fatalf("outcome outside the CHECK constraint = %v, want a constraint error", err)
+	}
+	got, ok, err = d.OldestUnhandledInput(ctx, "active")
+	if err != nil || !ok || got.MessageTS != "1.2" {
+		t.Fatalf("OldestUnhandledInput after resolving 1.1 = %+v, %t, %v; want the 1.2 row", got, ok, err)
+	}
+	if err := d.ResolveOwnerInput(ctx, "active", "1.2", "answered", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := d.OldestUnhandledInput(ctx, "active"); ok {
+		t.Fatal("input still pending after both were resolved")
+	}
+}

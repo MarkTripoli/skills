@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/slack-go/slack/socketmode"
+
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/coordinator"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
@@ -91,6 +93,11 @@ type Options struct {
 	// opens no WebSocket and reports this state to run check and daemon.health.
 	// Tests inject it; production leaves it nil.
 	SocketModeHealth func() string
+	// Inbound replaces the WebSocket's envelope stream when SocketModeHealth is
+	// set; the daemon consumes owner replies from it and acks them through
+	// Acker, which may be nil. Both are ignored when SocketModeHealth is nil.
+	Inbound <-chan socketmode.Event
+	Acker   coordinator.Acker
 }
 
 // DefaultStatusInterval is the quiet interval when Options leaves it unset.
@@ -140,10 +147,12 @@ func Serve(ctx context.Context, p *paths.Paths, cfg *config.Config, opts Options
 		period = DefaultSchedulerPeriod
 	}
 	socketHealth := opts.SocketModeHealth
+	inbound, acker := opts.Inbound, opts.Acker
 	var socket *slackapi.SocketMode
 	if socketHealth == nil {
 		socket = slackapi.NewSocketMode(rt.Slack.API())
 		socketHealth = socket.Health
+		inbound, acker = socket.Inbound(), socket
 	}
 	coord := &coordinator.Coordinator{DB: rt.DB, Slack: rt.Slack, Now: time.Now, Quiet: quiet, Health: socketHealth}
 	health := func() ipc.HealthResult { return ipc.HealthResult{SocketMode: socketHealth()} }
@@ -151,19 +160,11 @@ func Serve(ctx context.Context, p *paths.Paths, cfg *config.Config, opts Options
 
 	var background sync.WaitGroup
 	background.Go(func() { (&coordinator.StatusScheduler{C: coord}).Run(ctx, period) })
+	background.Go(func() { coord.ConsumeInbound(ctx, inbound, acker) })
 	if socket != nil {
 		background.Go(func() {
 			if err := socket.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				slog.Error("socket mode connection ended", "error", err)
-			}
-		})
-		// Phase 4 only acks Slack's envelopes so they are not redelivered;
-		// Phase 5 consumes them.
-		background.Go(func() {
-			for evt := range socket.Inbound() {
-				if evt.Request != nil {
-					socket.Ack(*evt.Request)
-				}
 			}
 		})
 	}

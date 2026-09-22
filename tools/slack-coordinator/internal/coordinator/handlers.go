@@ -50,6 +50,16 @@ func Register(s *ipc.Server, c *Coordinator, health func() ipc.HealthResult, shu
 		}
 		return c.CheckBeforeWrite(ctx, in.RunID)
 	})
+	s.Handle(ipc.MethodRunResolve, func(ctx context.Context, params json.RawMessage) (interface{}, error) {
+		var in OwnerInputResolution
+		if err := decode(params, &in); err != nil {
+			return nil, err
+		}
+		if err := c.ResolveOwnerInput(ctx, in); err != nil {
+			return nil, rpcError(err)
+		}
+		return ipc.EmptyResult{}, nil
+	})
 	s.Handle(ipc.MethodDaemonHealth, func(context.Context, json.RawMessage) (interface{}, error) {
 		return health(), nil
 	})

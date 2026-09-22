@@ -19,9 +19,12 @@ func newRunCheck() *cobra.Command {
 		Long: `Ask whether the run may take its next state-changing action.
 
 stdout holds one JSON object with "kind" and the exit code follows it:
-  {"kind":"ready"}                          exit 0
-  {"kind":"unavailable","reason":"..."}     exit 11
+  {"kind":"ready"}                                              exit 0
+  {"kind":"owner_input","input":{"message_ts":"...","text":"..."}} exit 10
+  {"kind":"unavailable","reason":"..."}                         exit 11
 
+owner_input means the run owner replied in the thread: read input.text, act
+on it, then run resolve --message-ts <input.message_ts> before checking again.
 A daemon that does not answer is reported as unavailable with the same shape.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -65,6 +68,11 @@ func gateExit(gate coordinator.WriteGate) error {
 	switch gate.Kind {
 	case coordinator.GateReady:
 		return nil
+	case coordinator.GateOwnerInput:
+		if gate.Input == nil {
+			return fmt.Errorf("daemon returned owner_input without the input")
+		}
+		return &ExitCodeError{Code: ExitOwnerInput, Err: fmt.Errorf("owner input pending: %s", gate.Input.Text)}
 	case coordinator.GateUnavailable:
 		return &ExitCodeError{Code: ExitUnavailable, Err: errors.New(gate.Reason)}
 	default:

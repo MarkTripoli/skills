@@ -44,3 +44,22 @@ type FinishRunInput struct {
 	Evidence   []string `json:"evidence"`
 	Links      []string `json:"links"`
 }
+
+// OwnerInput is one owner reply in a run's thread that the agent has not yet
+// answered. run check returns the oldest pending one.
+type OwnerInput struct {
+	RunID     string `json:"run_id"`
+	ChannelID string `json:"channel_id"`
+	ThreadTS  string `json:"thread_ts"`
+	MessageTS string `json:"message_ts"`
+	Text      string `json:"text"`
+}
+
+// OwnerInputResolution answers one pending OwnerInput: Reply is posted in the
+// thread and Outcome records what the agent did with the input.
+type OwnerInputResolution struct {
+	RunID     string `json:"run_id"`
+	MessageTS string `json:"message_ts"`
+	Outcome   string `json:"outcome"` // applied | rejected | answered
+	Reply     string `json:"reply"`
+}

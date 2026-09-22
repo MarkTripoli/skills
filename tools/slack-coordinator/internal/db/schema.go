@@ -11,6 +11,15 @@ CREATE TABLE IF NOT EXISTS runs (
   slack_mode    TEXT NOT NULL CHECK (slack_mode IN ('enabled','slack_disabled')) DEFAULT 'enabled',
   started_at    TEXT NOT NULL,
   finished_at   TEXT
+);
+CREATE TABLE IF NOT EXISTS owner_inputs (
+  run_id      TEXT NOT NULL REFERENCES runs(run_id),
+  message_ts  TEXT NOT NULL,
+  text        TEXT NOT NULL,
+  received_at TEXT NOT NULL,
+  handled_at  TEXT,
+  outcome     TEXT CHECK (outcome IN ('applied','rejected','answered')),
+  PRIMARY KEY (run_id, message_ts)
 );`
 
 // migrationStatements are idempotent ALTER TABLE statements later schema
