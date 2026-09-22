@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/daemon"
@@ -93,6 +96,38 @@ func TestDaemonStopUnderSupervisionStillShutsDown(t *testing.T) {
 	}
 	if health() == nil {
 		t.Fatal("daemon still answers after stop")
+	}
+}
+
+func TestRestartDaemonReinstallsAnInstalledLinuxService(t *testing.T) {
+	t.Setenv(paths.EnvHome, t.TempDir())
+	executor := injectService(t, "linux")
+	p, err := home()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := serviceFor(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Install(); err != nil {
+		t.Fatal(err)
+	}
+	executor.commands = nil
+	previousWait := waitForDaemonAfterRestart
+	waitForDaemonAfterRestart = func(time.Duration) error { return nil }
+	t.Cleanup(func() { waitForDaemonAfterRestart = previousWait })
+
+	if err := restartDaemon(io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"systemctl --user disable --now com.marktripoli.slack-coordinator.service",
+		"systemctl --user daemon-reload",
+		"systemctl --user enable --now com.marktripoli.slack-coordinator.service",
+	}
+	if !reflect.DeepEqual(executor.commands, want) {
+		t.Fatalf("restart commands = %q, want %q", executor.commands, want)
 	}
 }
 

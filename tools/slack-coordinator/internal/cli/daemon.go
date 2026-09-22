@@ -115,6 +115,8 @@ func waitForDaemon(timeout time.Duration) error {
 	return last
 }
 
+var waitForDaemonAfterRestart = waitForDaemon
+
 // stopDaemon asks the daemon to shut down. An installed service restarts it:
 // stop says so and still sends daemon.shutdown, because the daemon is the
 // only writer of SQLite and a clean exit is what the operator asked for.
@@ -158,11 +160,6 @@ func waitForDaemonExit(timeout time.Duration) error {
 	return errors.New("daemon did not stop within timeout")
 }
 
-// restartDaemon asks the running daemon to exit, waits for its socket to go
-// quiet, and brings one back on the current config.yaml: an installed service
-// relaunches it (launchd holds a relaunch for up to its 10 s throttle),
-// otherwise it is started detached. onboard's repair paths use it so a
-// replaced token takes effect before verification.
 func restartDaemon(out io.Writer) error {
 	p, err := home()
 	if err != nil {
@@ -175,7 +172,13 @@ func restartDaemon(out io.Writer) error {
 		_ = os.Remove(p.PIDFile())
 	}
 	if s, serviceErr := serviceFor(p); serviceErr == nil && s.Installed() {
-		if err := waitForDaemon(15 * time.Second); err != nil {
+		if err := s.Uninstall(); err != nil {
+			return fmt.Errorf("stop the installed service: %w", err)
+		}
+		if err := s.Install(); err != nil {
+			return fmt.Errorf("start the installed service: %w", err)
+		}
+		if err := waitForDaemonAfterRestart(15 * time.Second); err != nil {
 			return fmt.Errorf("the service did not relaunch the daemon (see %s): %w", p.DaemonLog(), err)
 		}
 		fmt.Fprintln(out, "daemon restarted by the service")
