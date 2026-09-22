@@ -15,6 +15,7 @@ Expand the structure outline into a detailed implementation plan with concrete e
 
 2. **Read primary inputs fully, others by summary**:
    - Read `references/plan_template.md` and `references/plan_final_answer.md`.
+   - Read the [slicing guide](https://github.com/MarkTripoli/skills/blob/main/shared/SLICING.md), which a checkout has at `shared/SLICING.md`.
    - Read completely: `task.md` or `ticket.md`, plus the design artifact this plan expands: the file the user named with `@...` when one is given, otherwise the current indexed TDD, PRD, structure outline, or design discussion, in that order of preference.
    - Use summaries from other current indexed artifacts. Open only when the design leaves a gap.
 
@@ -23,7 +24,9 @@ Expand the structure outline into a detailed implementation plan with concrete e
    - Verify file paths and examples before including them.
    - Use existing test patterns when planning tests.
 
-4. **Write the implementation plan**:
+4. **Re-size each outline phase** against `shared/SLICING.md`'s four tests; split a failing phase by the symptom's named split before writing its implementation steps. This is a per-phase re-check, not a re-derivation of the outline.
+
+5. **Write the implementation plan**:
    - Record the next immutable `planning.plan` iteration through the conventions' Recording an artifact flow.
    - Convert each structure-outline phase into implementation steps.
    - Include concrete code examples where they clarify the change.
