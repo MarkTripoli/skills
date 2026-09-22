@@ -281,6 +281,18 @@ func (s *Service) resume(ctx context.Context, args []string) (string, error) {
 			due = &d
 			next = "next due " + dueText(t, d)
 		}
+	} else {
+		// For each_message tasks, if unconsumed messages are waiting, schedule
+		// the held batch to run after the debounce window.
+		has, err := s.DB.HasUnconsumedMessages(ctx, t.TaskID)
+		if err != nil {
+			return "", fmt.Errorf("resume t%d: %w", t.TaskID, err)
+		}
+		if has && t.DebounceSeconds.Valid {
+			d := stamp(s.Now().Add(time.Duration(t.DebounceSeconds.Int64) * time.Second))
+			due = &d
+			next = "next due " + d
+		}
 	}
 	err = s.DB.Transact(ctx, func(tx *db.DB) error {
 		if err := tx.SetTaskState(ctx, t.TaskID, db.TaskActive, due, nil); err != nil {

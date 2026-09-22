@@ -560,3 +560,83 @@ func TestShowIncludesExitCodeForFailedRun(t *testing.T) {
 		t.Fatalf("!show output %q does not contain exit 2", reply)
 	}
 }
+
+// failTask runs one tick with a scripted failure and waits for delivery.
+func failTask(t *testing.T, s *Service, runner *fakeRunner) {
+	t.Helper()
+	runner.scripted = []agent.RunOutcome{{ExitCode: 1, ResultSource: "result.md"}}
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s.inflight.Wait()
+}
+
+func TestThreeConsecutiveFailuresPausesTaskAndPostsDM(t *testing.T) {
+	s, slack, clock, runner, raw := newTaskDispatchService(t)
+	slack.channels = map[string]string{"C1": "general"}
+
+	dueAt := clock.at.Add(-time.Minute).UTC().Format(time.RFC3339)
+	taskID := insertScheduleTaskFull(t, raw, dueAt, "watch", `{"every_hours":1}`, `{"dm":true}`, "C1")
+
+	// Failure 1: task stays active.
+	failTask(t, s, runner)
+	state, _, _, _, failures := readTaskCols(t, raw, taskID)
+	if state != "active" || failures != 1 {
+		t.Fatalf("after failure 1: state=%s failures=%d; want active, 1", state, failures)
+	}
+
+	// Failure 2: advance clock past advanced due_at, task stays active.
+	clock.at = clock.at.Add(61 * time.Minute)
+	failTask(t, s, runner)
+	state, _, _, _, failures = readTaskCols(t, raw, taskID)
+	if state != "active" || failures != 2 {
+		t.Fatalf("after failure 2: state=%s failures=%d; want active, 2", state, failures)
+	}
+
+	// Failure 3: task must be paused, due_at NULL, pause DM posted.
+	clock.at = clock.at.Add(61 * time.Minute)
+	failTask(t, s, runner)
+
+	state, dueAtCol, _, _, failures := readTaskCols(t, raw, taskID)
+	if state != "paused" {
+		t.Fatalf("after failure 3: state=%s, want paused", state)
+	}
+	if dueAtCol.Valid {
+		t.Fatalf("after failure 3: due_at=%q, want NULL", dueAtCol.String)
+	}
+	if failures != 3 {
+		t.Fatalf("after failure 3: consecutive_failures=%d, want 3", failures)
+	}
+
+	// Posts: 3 failure notices (one per run) + 1 pause DM.
+	if len(slack.posts) != 4 {
+		t.Fatalf("posts count = %d, want 4 (3 failure + 1 pause)", len(slack.posts))
+	}
+	pausePost := slack.posts[3]
+	wantPause := fmt.Sprintf("t%d paused after 3 failed runs: exit 1. Fix the cause, then send !resume t%d.", taskID, taskID)
+	if pausePost.text != wantPause || pausePost.channel != "D1" || pausePost.thread != "" {
+		t.Fatalf("pause DM = %+v, want top-level D1 post %q", pausePost, wantPause)
+	}
+
+	// Fourth tick: paused task must not be enqueued.
+	clock.at = clock.at.Add(61 * time.Minute)
+	prevStarted := runner.started()
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s.inflight.Wait()
+	if runner.started() != prevStarted {
+		t.Fatalf("tick after pause started %d runs, want 0", runner.started()-prevStarted)
+	}
+}
+
+func TestPausedTaskChannelMessageNotCollected(t *testing.T) {
+	s, _, _, raw := newCollectService(t)
+	insertTask(t, raw, db.TaskPaused, db.TriggerEachMessage, sql.NullInt64{Int64: 300, Valid: true}, "C1")
+
+	routeDMEvent(t, s, channelMessage("C1", "U7", "1700000100.000001", "", "message to paused task"))
+
+	if n := count(t, raw, `SELECT COUNT(*) FROM task_messages`); n != 0 {
+		t.Fatalf("task_messages count = %d, want 0 for paused task", n)
+	}
+}

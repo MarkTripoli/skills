@@ -207,6 +207,9 @@ func (s *Service) deliverTask(ctx context.Context, run db.AssistantRun, out agen
 		}
 		if !isDaemonShutdown {
 			s.postTaskFailure(ctx, run, task, failure, out.StderrTail)
+			if task.ConsecutiveFailures+1 >= 3 {
+				s.pauseAfterFailures(ctx, run, task, failure)
+			}
 		}
 		return nil
 	}
@@ -420,5 +423,32 @@ func (s *Service) failureText(out agent.RunOutcome) string {
 		return fmt.Sprintf("exit %d", out.ExitCode)
 	default:
 		return "agent wrote no result"
+	}
+}
+
+// pauseAfterFailures moves task to paused and posts a top-level owner DM
+// naming the cause. It is best-effort: Slack and DB errors are logged and do
+// not propagate.
+func (s *Service) pauseAfterFailures(ctx context.Context, run db.AssistantRun, task db.Task, failure string) {
+	writeCtx := context.WithoutCancel(ctx)
+	if err := s.DB.SetTaskState(writeCtx, task.TaskID, db.TaskPaused, nil, nil); err != nil {
+		slog.Error("pauseAfterFailures: set task state", "task", task.TaskID, "run", run.RunID, "error", err)
+		return
+	}
+	if s.ownerDM == "" {
+		dm, err := s.Slack.OpenConversation(ctx, s.Owner)
+		if err != nil {
+			slog.Error("pauseAfterFailures: open dm", "task", task.TaskID, "run", run.RunID, "error", err)
+			return
+		}
+		s.ownerDM = dm
+	}
+	firstLine := failure
+	if i := strings.IndexByte(failure, '\n'); i >= 0 {
+		firstLine = failure[:i]
+	}
+	text := fmt.Sprintf("t%d paused after 3 failed runs: %s. Fix the cause, then send !resume t%d.", task.TaskID, firstLine, task.TaskID)
+	if _, err := s.Slack.PostMessage(ctx, s.ownerDM, "", text); err != nil {
+		slog.Error("pauseAfterFailures: post dm", "task", task.TaskID, "run", run.RunID, "error", err)
 	}
 }
