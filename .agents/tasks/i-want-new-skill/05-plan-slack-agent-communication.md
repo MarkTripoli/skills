@@ -589,7 +589,7 @@ slack-coordinator run resolve --run-id <id> --message-ts <ts> --outcome applied|
 
 #### Automated Verification:
 
-- [ ] `cd tools/slack-coordinator && go test -race ./internal/coordinator/... ./internal/db/... ./internal/cli/...`
+- [x] `cd tools/slack-coordinator && go test -race ./internal/coordinator/... ./internal/db/... ./internal/cli/...`
 
 human-gated: false
 
