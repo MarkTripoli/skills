@@ -2,7 +2,6 @@ package assistant
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -12,14 +11,16 @@ import (
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/coordinator"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/paths"
 )
 
-// newTestService returns a Service over a temp database with a configured
-// agent, the recording fakeSlack it posts through, the clock it reads, and a
-// coordinator sharing all three.
+// newTestService returns a Service over a temp runtime root holding its
+// database, with a configured agent, the recording fakeSlack it posts through,
+// the clock it reads, and a coordinator sharing all three.
 func newTestService(t *testing.T) (*Service, *fakeSlack, *testClock) {
 	t.Helper()
-	database, err := db.Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	p := paths.WithRoot(t.TempDir())
+	database, err := db.Open(p.DB())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +28,7 @@ func newTestService(t *testing.T) (*Service, *fakeSlack, *testClock) {
 	clock := &testClock{at: time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)}
 	slack := &fakeSlack{}
 	coord := &coordinator.Coordinator{DB: database, Slack: slack, Now: clock.Now, OwnerUserID: "U1", Quiet: time.Hour}
-	return New(database, slack, coord, "U1", &config.Agent{Command: "omp"}, clock.Now), slack, clock
+	return New(database, slack, coord, p, "U1", &config.Agent{Command: "omp", Approval: "edits"}, clock.Now), slack, clock
 }
 
 // testClock is a clock tests advance by hand; Now is stable between advances.

@@ -10,6 +10,7 @@ import (
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/coordinator"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/paths"
 )
 
 // SlackSurface is the Slack client surface the assistant needs. *slackapi.Client
@@ -26,21 +27,29 @@ type Service struct {
 	DB    *db.DB
 	Slack SlackSurface
 	Coord *coordinator.Coordinator
+	// Paths locates the database and workspace whose sizes `!status` reports.
+	Paths *paths.Paths
 	// Owner is the Slack user id whose instructions the assistant follows.
 	Owner string
 	// Agent is the configured coding agent; nil when config.yaml has no agent,
 	// in which case DM requests are refused with a pointer to the setting.
 	Agent *config.Agent
 	Now   func() time.Time
+	// started is when the Service was constructed; `!status` reports uptime from it.
+	started time.Time
+	// verbs maps a lowercased `!` command to its handler; see verbs.go.
+	verbs map[string]verb
 	// wake receives one signal when inbound work is queued for the runner.
 	wake chan struct{}
 }
 
 // New returns a Service over database and slack whose run-thread replies go to
-// coord, whose DM requests run on agent (nil when none is configured), and
-// whose clock is now.
-func New(database *db.DB, slack SlackSurface, coord *coordinator.Coordinator, owner string, agent *config.Agent, now func() time.Time) *Service {
-	return &Service{DB: database, Slack: slack, Coord: coord, Owner: owner, Agent: agent, Now: now, wake: make(chan struct{}, 1)}
+// coord, whose files live under p, whose DM requests run on agent (nil when
+// none is configured), and whose clock is now.
+func New(database *db.DB, slack SlackSurface, coord *coordinator.Coordinator, p *paths.Paths, owner string, agent *config.Agent, now func() time.Time) *Service {
+	s := &Service{DB: database, Slack: slack, Coord: coord, Paths: p, Owner: owner, Agent: agent, Now: now, started: now(), wake: make(chan struct{}, 1)}
+	s.verbs = s.verbTable()
+	return s
 }
 
 // Wake receives one value each time inbound work is queued. The channel has
