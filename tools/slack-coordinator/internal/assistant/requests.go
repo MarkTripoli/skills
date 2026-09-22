@@ -115,6 +115,9 @@ func (s *Service) followUp(ctx context.Context, msg *slackevents.MessageEvent) e
 	if handled, err := s.confirmProposal(ctx, req, msg); handled || err != nil {
 		return err
 	}
+	if handled, err := s.dropProposal(ctx, req, msg); handled || err != nil {
+		return err
+	}
 	now := stamp(s.Now())
 	rootTS := msg.ThreadTimeStamp
 
@@ -166,12 +169,53 @@ var confirmWords = map[string]bool{
 	"👍": true, ":+1:": true,
 }
 
+var cancelWords = map[string]bool{
+	"no": true, "n": true, "cancel": true, "never mind": true,
+	"nevermind": true, "forget it": true, "drop it": true,
+}
+
 // isConfirmText reports whether text, after lowercasing, trimming space, and
 // stripping trailing punctuation, is a confirm word.
 func isConfirmText(text string) bool {
 	t := strings.ToLower(strings.TrimSpace(text))
 	t = strings.TrimRight(t, ".!,")
 	return confirmWords[t]
+}
+
+func isCancelText(text string) bool {
+	t := strings.ToLower(strings.TrimSpace(text))
+	t = strings.TrimRight(t, ".!,")
+	return cancelWords[t]
+}
+
+func (s *Service) dropProposal(ctx context.Context, req db.DMRequest, msg *slackevents.MessageEvent) (bool, error) {
+	if !req.PendingProposal.Valid || req.PendingProposal.String == "" || !isCancelText(msg.Text) {
+		return false, nil
+	}
+	var p pendingProposal
+	if err := json.Unmarshal([]byte(req.PendingProposal.String), &p); err != nil {
+		return true, fmt.Errorf("parse pending proposal: %w", err)
+	}
+	rootTS := msg.ThreadTimeStamp
+	runID := sql.NullString{String: p.RunID, Valid: p.RunID != ""}
+	now := stamp(s.Now())
+	reply := "Dropped the proposal."
+	replyTS, err := s.Slack.PostMessage(ctx, req.ChannelID, rootTS, reply)
+	if err != nil {
+		return true, err
+	}
+	return true, s.DB.Transact(ctx, func(tx *db.DB) error {
+		if err := tx.ClearPendingProposal(ctx, rootTS); err != nil {
+			return err
+		}
+		if err := tx.InsertDMMessage(ctx, db.DMMessage{RootTS: rootTS, TS: msg.TimeStamp, Author: db.AuthorOwner, Text: msg.Text, RunID: runID}); err != nil {
+			return err
+		}
+		if err := tx.InsertDMMessage(ctx, db.DMMessage{RootTS: rootTS, TS: replyTS, Author: db.AuthorBot, Text: reply, RunID: runID}); err != nil {
+			return err
+		}
+		return tx.TouchDMRequest(ctx, rootTS, now)
+	})
 }
 
 // confirmProposal checks whether msg is a confirm reply for a pending proposal

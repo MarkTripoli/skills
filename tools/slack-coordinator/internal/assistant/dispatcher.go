@@ -284,6 +284,7 @@ func (s *Service) startDM(ctx context.Context, run db.AssistantRun) (startedRun,
 		Approval: s.Agent.Approval,
 		Request:  newestOwnerMessage(thread),
 		Thread:   thread,
+		PendingProposal: req.PendingProposal.String,
 	})
 	if err := writeInputs(runDir, prompt); err != nil {
 		return startedRun{}, err
