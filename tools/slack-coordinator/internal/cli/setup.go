@@ -41,6 +41,7 @@ them.`,
 				}
 				cfg.Jira = &jira
 			}
+			cfg.ApplyDefaults()
 			if err := cfg.Validate(); err != nil {
 				return usageErr("%w", err)
 			}
