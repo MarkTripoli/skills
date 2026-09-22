@@ -3,10 +3,12 @@ package assistant
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -27,8 +29,7 @@ const (
 )
 
 // RunDispatcher calls Tick every period and whenever Wake signals, until ctx
-// ends; it then waits for the deliveries of running agents, whose Wait
-// returns once the ended ctx has killed them.
+// ends; it kills every live agent handle and then waits for deliveries.
 func (s *Service) RunDispatcher(ctx context.Context, period time.Duration) {
 	ticker := time.NewTicker(period)
 	defer ticker.Stop()
@@ -36,6 +37,11 @@ func (s *Service) RunDispatcher(ctx context.Context, period time.Duration) {
 	for {
 		select {
 		case <-ctx.Done():
+			s.handlesMu.Lock()
+			for _, h := range s.handles {
+				h.Kill()
+			}
+			s.handlesMu.Unlock()
 			return
 		case <-ticker.C:
 		case <-s.wake:
@@ -46,12 +52,40 @@ func (s *Service) RunDispatcher(ctx context.Context, period time.Duration) {
 	}
 }
 
-// Tick enqueues due tasks and then spawns queued runs into the free slots.
+// Tick reaps orphaned runs, enqueues due tasks, and spawns queued runs.
 func (s *Service) Tick(ctx context.Context) error {
+	if err := s.reapOrphans(ctx); err != nil {
+		return err
+	}
 	if err := s.enqueueDueTasks(ctx); err != nil {
 		return err
 	}
 	return s.spawnQueued(ctx)
+}
+
+// reapOrphans kills and fails every running row whose daemon_pid differs from
+// this process's PID: they were left running by a daemon that restarted. DM
+// runs also have their ack edited to Failed and a reply posted.
+func (s *Service) reapOrphans(ctx context.Context) error {
+	runs, err := s.DB.RunningOrphanedRuns(ctx, os.Getpid())
+	if err != nil {
+		return err
+	}
+	for _, run := range runs {
+		pgid := int(run.PGID.Int64)
+		if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+			slog.Warn("reapOrphans: kill", "run", run.RunID, "pgid", pgid, "error", err)
+		} else if err != nil {
+			slog.Info("reapOrphans: pgid gone", "run", run.RunID, "pgid", pgid)
+		}
+		if err := s.DB.FinishAssistantRun(ctx, run.RunID, db.RunFailed, -1, false, "", "daemon restarted", stamp(s.Now())); err != nil {
+			slog.Error("reapOrphans: finish run", "run", run.RunID, "error", err)
+		}
+		if run.Kind == db.RunKindDM {
+			s.deliverFailure(ctx, run, "daemon restarted", "")
+		}
+	}
+	return nil
 }
 
 // enqueueDueTasks queries for active schedule/window_end tasks whose due_at
@@ -189,7 +223,16 @@ func (s *Service) spawn(ctx context.Context, run db.AssistantRun) error {
 			slog.Warn("queued ack not edited", "run", run.RunID, "error", err)
 		}
 	}
-	s.inflight.Go(func() { s.deliver(ctx, run, st.handle.Wait()) })
+	s.handlesMu.Lock()
+	s.handles[run.RunID] = st.handle
+	s.handlesMu.Unlock()
+	s.inflight.Go(func() {
+		out := st.handle.Wait()
+		s.handlesMu.Lock()
+		delete(s.handles, run.RunID)
+		s.handlesMu.Unlock()
+		s.deliver(ctx, run, out)
+	})
 	return nil
 }
 

@@ -6,10 +6,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -409,7 +412,7 @@ func TestDispatcherSkipsThreadWithRunningRun(t *testing.T) {
 	if rA.RootTS.String != rootA {
 		t.Fatalf("oldest queued = %s, want rootA %s", rA.RootTS.String, rootA)
 	}
-	if err := s.DB.MarkRunning(ctx, rA.RunID, 9001, 9001, 9001, stamp(clock.at)); err != nil {
+	if err := s.DB.MarkRunning(ctx, rA.RunID, 9001, 9001, os.Getpid(), stamp(clock.at)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -925,4 +928,169 @@ func TestEachMessageFailureUnbindsMessagesAndLeavesTaskActive(t *testing.T) {
 	if failures != 1 {
 		t.Fatalf("consecutive_failures = %d, want 1", failures)
 	}
+}
+
+// newOrphanDispatchService is like newTaskDispatchService but without a runner
+// (orphan tests insert rows directly; spawning isn't needed).
+func newOrphanDispatchService(t *testing.T) (*Service, *fakeSlack, *testClock, *sql.DB) {
+	t.Helper()
+	p := paths.WithRoot(t.TempDir())
+	s, slack, clock := newTestServiceAt(t, p)
+	s.Agent.Timeout = time.Minute
+	raw, err := sql.Open("sqlite", p.DB()+"?_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { raw.Close() })
+	return s, slack, clock, raw
+}
+
+// insertRunningRow creates a DM request (via routing), then directly patches its
+// queued assistant_run to running with the given pgid and daemonPID.
+func insertRunningRow(t *testing.T, s *Service, clock *testClock, raw *sql.DB, pgid, daemonPID int) (runID, rootTS string) {
+	t.Helper()
+	roots := queueRequests(t, s, clock, "orphan")
+	rootTS = roots[0]
+
+	var id string
+	if err := raw.QueryRowContext(context.Background(),
+		`SELECT run_id FROM assistant_runs WHERE root_ts = ?`, rootTS).Scan(&id); err != nil {
+		t.Fatalf("get run id: %v", err)
+	}
+	if _, err := raw.ExecContext(context.Background(),
+		`UPDATE assistant_runs SET state = 'running', pid = ?, pgid = ?, daemon_pid = ?, started_at = ?
+		 WHERE run_id = ?`, pgid, pgid, daemonPID, stamp(clock.Now()), id); err != nil {
+		t.Fatalf("patch run to running: %v", err)
+	}
+	return id, rootTS
+}
+
+func TestReapOrphansKillsProcessAndFailsRow(t *testing.T) {
+	s, slack, clock, raw := newOrphanDispatchService(t)
+	ctx := context.Background()
+
+	// Start a real child process in its own process group.
+	cmd := exec.Command("sleep", "60")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pgid := cmd.Process.Pid // pgid == pid when Setpgid is true
+	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+
+	runID, rootTS := insertRunningRow(t, s, clock, raw, pgid, 1 /* daemon_pid != os.Getpid() */)
+	if err := s.DB.SetAckTS(ctx, rootTS, "ack-ts"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Process group must be dead.
+	if err := cmd.Wait(); err == nil {
+		t.Fatal("sleep still running after reapOrphans")
+	}
+
+	// Row must be failed with "daemon restarted".
+	run := getRun(t, s, runID)
+	if run.State != db.RunFailed {
+		t.Fatalf("state = %s, want failed", run.State)
+	}
+	if run.Failure.String != "daemon restarted" {
+		t.Fatalf("failure = %q, want daemon restarted", run.Failure.String)
+	}
+
+	// Slack must have received the ack edit to "Failed" and a thread reply.
+	slack.mu.Lock()
+	updates := slack.updates
+	posts := slack.posts
+	slack.mu.Unlock()
+	var foundFailed bool
+	for _, u := range updates {
+		if u.ts == "ack-ts" && u.text == failedAck {
+			foundFailed = true
+		}
+	}
+	if !foundFailed {
+		t.Fatalf("updates = %+v, want a Failed edit on ack-ts", updates)
+	}
+	var foundReply bool
+	for _, p := range posts {
+		if strings.Contains(p.text, "daemon restarted") {
+			foundReply = true
+		}
+	}
+	if !foundReply {
+		t.Fatalf("posts = %+v, want a daemon restarted reply", posts)
+	}
+}
+
+func TestReapOrphansNonexistentPgidStillFails(t *testing.T) {
+	s, _, clock, raw := newOrphanDispatchService(t)
+	ctx := context.Background()
+
+	// Use the largest valid pgid (very unlikely to be a real group) so Kill
+	// returns ESRCH or EPERM; either way the row must still be marked failed.
+	const impossiblePgid = math.MaxInt32 - 1
+	runID, _ := insertRunningRow(t, s, clock, raw, impossiblePgid, 1)
+
+	if err := s.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	run := getRun(t, s, runID)
+	if run.State != db.RunFailed {
+		t.Fatalf("state = %s, want failed", run.State)
+	}
+	if run.Failure.String != "daemon restarted" {
+		t.Fatalf("failure = %q, want daemon restarted", run.Failure.String)
+	}
+}
+
+func TestShutdownKillsLiveHandles(t *testing.T) {
+	s, _, clock, _ := newDispatchService(t)
+
+	killed := make(chan struct{}, 1)
+	s.Runner = runnerFunc(func(_ context.Context, spec agent.RunSpec) (*agent.Handle, error) {
+		done := make(chan agent.RunOutcome, 1)
+		return &agent.Handle{
+			Pid:  9999,
+			Pgid: 9999,
+			Wait: func() agent.RunOutcome { return <-done },
+			Kill: func() {
+				select {
+				case killed <- struct{}{}:
+				default:
+				}
+			},
+		}, nil
+	})
+
+	queueRequests(t, s, clock, "shutdown-kill")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Spawn the run so it is tracked in handles.
+	if err := s.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Launch the dispatcher and immediately cancel.
+	go s.RunDispatcher(ctx, time.Hour)
+	cancel()
+
+	select {
+	case <-killed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handle Kill was not called after context cancel")
+	}
+}
+
+// runnerFunc adapts a function to the agent.Runner interface.
+type runnerFunc func(context.Context, agent.RunSpec) (*agent.Handle, error)
+
+func (f runnerFunc) Start(ctx context.Context, spec agent.RunSpec) (*agent.Handle, error) {
+	return f(ctx, spec)
 }

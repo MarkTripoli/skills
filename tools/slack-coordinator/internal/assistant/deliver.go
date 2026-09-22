@@ -47,7 +47,7 @@ func (s *Service) deliver(ctx context.Context, run db.AssistantRun, out agent.Ru
 func (s *Service) deliverDM(ctx context.Context, run db.AssistantRun, out agent.RunOutcome) error {
 	writeCtx := context.WithoutCancel(ctx)
 	now := stamp(s.Now())
-	if out.ExitCode != 0 || out.TimedOut || out.Result == "" {
+	if out.ExitCode != 0 || out.TimedOut {
 		failure := s.failureText(out)
 		if ctx.Err() != nil && out.TimedOut {
 			failure = "daemon shutdown"
@@ -56,6 +56,10 @@ func (s *Service) deliverDM(ctx context.Context, run db.AssistantRun, out agent.
 		}
 		return s.DB.FinishAssistantRun(writeCtx, run.RunID, db.RunFailed, out.ExitCode, out.TimedOut, out.ResultSource, failure, now)
 	}
+	if out.ProposalErr != nil {
+		s.deliverFailure(ctx, run, out.ProposalErr.Error(), "")
+		return s.DB.FinishAssistantRun(writeCtx, run.RunID, db.RunFailed, out.ExitCode, out.TimedOut, out.ResultSource, out.ProposalErr.Error(), now)
+	}
 	req, ok, err := s.DB.GetDMRequest(writeCtx, run.RootTS.String)
 	if err != nil {
 		return s.DB.FinishAssistantRun(writeCtx, run.RunID, db.RunFailed, 0, false, out.ResultSource, "deliver: "+err.Error(), now)
@@ -63,6 +67,14 @@ func (s *Service) deliverDM(ctx context.Context, run db.AssistantRun, out agent.
 	if !ok {
 		err := fmt.Errorf("dm request %s not found", run.RootTS.String)
 		return s.DB.FinishAssistantRun(writeCtx, run.RunID, db.RunFailed, 0, false, out.ResultSource, "deliver: "+err.Error(), now)
+	}
+	if out.Proposal != nil {
+		return s.renderProposal(ctx, run, req, out)
+	}
+	if out.Result == "" {
+		failure := "agent wrote no result"
+		s.deliverFailure(ctx, run, failure, out.StderrTail)
+		return s.DB.FinishAssistantRun(writeCtx, run.RunID, db.RunFailed, out.ExitCode, out.TimedOut, out.ResultSource, failure, now)
 	}
 	answerTS, err := s.answer(ctx, req, out.Result)
 	if err != nil {
@@ -180,7 +192,8 @@ func (s *Service) deliverTask(ctx context.Context, run db.AssistantRun, out agen
 
 	if out.ExitCode != 0 || out.TimedOut || out.Result == "" {
 		failure := s.failureText(out)
-		if ctx.Err() != nil && out.TimedOut {
+		isDaemonShutdown := ctx.Err() != nil && out.TimedOut
+		if isDaemonShutdown {
 			failure = "daemon shutdown"
 		}
 		if err := s.DB.FinishAssistantRun(writeCtx, run.RunID, db.RunFailed, out.ExitCode, out.TimedOut, out.ResultSource, failure, now); err != nil {
@@ -189,7 +202,13 @@ func (s *Service) deliverTask(ctx context.Context, run db.AssistantRun, out agen
 		if err := s.DB.UnbindRunMessages(writeCtx, run.RunID); err != nil {
 			return err
 		}
-		return s.DB.RecordTaskFailure(writeCtx, task.TaskID, s.taskNextDue(task, now))
+		if err := s.DB.RecordTaskFailure(writeCtx, task.TaskID, s.taskNextDue(task, now)); err != nil {
+			return err
+		}
+		if !isDaemonShutdown {
+			s.postTaskFailure(ctx, run, task, failure, out.StderrTail)
+		}
+		return nil
 	}
 
 	// Count bound messages for the header.
@@ -304,6 +323,50 @@ func chunkResult(header, result string) []string {
 		runes = runes[end:]
 	}
 	return chunks
+}
+
+// postTaskFailure posts a best-effort failure notification to the task's
+// delivery target. The first line is "Failed: t<id> · <#channels>", the
+// second is cause, and a non-empty stderrTail follows in a code fence.
+// Slack errors are logged and do not affect the run row.
+func (s *Service) postTaskFailure(ctx context.Context, run db.AssistantRun, task db.Task, cause, stderrTail string) {
+	channels, _ := s.DB.TaskChannels(ctx, task.TaskID)
+	names := make([]string, 0, len(channels))
+	for _, ch := range channels {
+		names = append(names, s.channelName(ctx, ch))
+	}
+	header := fmt.Sprintf("Failed: t%d · %s", task.TaskID, strings.Join(names, ", "))
+	text := header + "\n" + cause
+	if stderrTail != "" {
+		text += "\n\n```\n" + stderrTail + "\n```"
+	}
+
+	var target deliverTo
+	if err := json.Unmarshal([]byte(task.DeliverTo), &target); err != nil {
+		slog.Error("postTaskFailure: bad deliver_to", "run", run.RunID, "error", err)
+		return
+	}
+
+	var channelID, threadTS string
+	if target.DM {
+		if s.ownerDM == "" {
+			dm, err := s.Slack.OpenConversation(ctx, s.Owner)
+			if err != nil {
+				slog.Error("postTaskFailure: open dm", "run", run.RunID, "error", err)
+				return
+			}
+			s.ownerDM = dm
+		}
+		channelID = s.ownerDM
+		threadTS = ""
+	} else {
+		channelID = target.ChannelID
+		threadTS = target.ThreadTS
+	}
+
+	if _, err := s.Slack.PostMessage(ctx, channelID, threadTS, text); err != nil {
+		slog.Error("postTaskFailure: post", "run", run.RunID, "error", err)
+	}
 }
 
 // deliverFailure edits the ack to failedAck, posts a thread reply whose

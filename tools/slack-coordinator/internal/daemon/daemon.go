@@ -176,6 +176,7 @@ func Serve(ctx context.Context, p *paths.Paths, cfg *config.Config, opts Options
 		}
 	}
 	svc := assistant.New(rt.DB, rt.Slack, coord, p, cfg.Slack.OwnerUserID, cfg.Agent, time.Now)
+	svc.Retention = cfg.Retention
 	if cfg.AgentEnabled() {
 		adapter, err := agent.Lookup(cfg.Agent.Command)
 		if err != nil {
@@ -191,6 +192,7 @@ func Serve(ctx context.Context, p *paths.Paths, cfg *config.Config, opts Options
 	background.Go(func() { (&coordinator.StatusScheduler{C: coord}).Run(ctx, period) })
 	background.Go(func() { svc.ConsumeInbound(ctx, inbound, acker) })
 	background.Go(func() { svc.RunDispatcher(ctx, dispatcherPeriod) })
+	background.Go(func() { svc.RunPurge(ctx) })
 	if socket != nil {
 		background.Go(func() {
 			if err := socket.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {

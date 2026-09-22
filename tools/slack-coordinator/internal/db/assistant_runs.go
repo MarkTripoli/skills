@@ -248,3 +248,25 @@ UPDATE dm_messages SET run_id = ? WHERE root_ts = ? AND author = 'owner' AND run
 	}
 	return nil
 }
+
+// RunningOrphanedRuns returns every running assistant_runs row whose
+// daemon_pid differs from thisPID: runs started by a previous daemon instance
+// that the current one must reap.
+func (d *DB) RunningOrphanedRuns(ctx context.Context, thisPID int) ([]AssistantRun, error) {
+	rows, err := d.sql.QueryContext(ctx, `
+SELECT `+assistantRunColumns+`
+FROM assistant_runs WHERE state = 'running' AND daemon_pid != ?`, thisPID)
+	if err != nil {
+		return nil, fmt.Errorf("running orphaned runs: %w", err)
+	}
+	defer rows.Close()
+	var runs []AssistantRun
+	for rows.Next() {
+		r, err := scanAssistantRun(rows)
+		if err != nil {
+			return nil, fmt.Errorf("running orphaned runs scan: %w", err)
+		}
+		runs = append(runs, r)
+	}
+	return runs, rows.Err()
+}
