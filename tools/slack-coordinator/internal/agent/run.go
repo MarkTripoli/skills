@@ -148,6 +148,7 @@ func (r runner) wait(ctx context.Context, spec RunSpec, cmd *exec.Cmd, exited <-
 	}
 
 	out.Result, out.ResultSource, _ = ReadOutputs(spec.RunDir, r.adapter.FinalTextPath(spec.RunDir))
+	out.Proposal, out.ProposalErr = ReadProposal(spec.RunDir)
 	out.StderrTail, _ = tailLines(filepath.Join(spec.RunDir, stderrFile), stderrTailLines)
 	_ = writeMeta(spec.RunDir, out)
 	return out

@@ -8,6 +8,13 @@ case "${FAKE_MODE:-}" in
   result)
     printf '%s' "$FAKE_TEXT" > result.md
     ;;
+  proposal)
+    printf '%s' "$FAKE_TEXT" > result.md
+    cat > proposal.json <<'EOF'
+{"watch": ["C123"], "trigger": {"kind": "schedule", "daily": "09:00", "tz": "UTC"},
+ "instruction": "summarize the day", "deliver_to": {"dm": true}, "summary": "daily summary"}
+EOF
+    ;;
   stdout)
     printf '%s\n' "$FAKE_TEXT"
     ;;
