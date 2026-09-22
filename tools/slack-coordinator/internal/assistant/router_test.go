@@ -35,14 +35,14 @@ func newTestService(t *testing.T) *Service {
 	t.Cleanup(func() { database.Close() })
 	now := func() time.Time { return time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC) }
 	slack := fakeSlack{}
-	coord := &coordinator.Coordinator{DB: database, Slack: slack, Now: now, Quiet: time.Hour}
+	coord := &coordinator.Coordinator{DB: database, Slack: slack, Now: now, OwnerUserID: "U1", Quiet: time.Hour}
 	return New(database, slack, coord, "U1", now)
 }
 
 // startTestRun opens runID for owner U1 in channel C1; fakeSlack roots it at 1700000000.000100.
 func startTestRun(t *testing.T, c *coordinator.Coordinator, runID string) {
 	t.Helper()
-	if _, err := c.StartRun(context.Background(), coordinator.StartRunInput{RunID: runID, OwnerUserID: "U1", ChannelID: "C1", Work: "w"}); err != nil {
+	if _, err := c.StartRun(context.Background(), coordinator.StartRunInput{RunID: runID, ChannelID: "C1", Work: "w"}); err != nil {
 		t.Fatal(err)
 	}
 }
