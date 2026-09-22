@@ -1,7 +1,7 @@
 ---
 task: we-need-do-something
 type: design-discussion
-summary: "Fixes the direction for making the delivery skills slice future work into granular, reviewable, testable pull requests that stack and merge quickly. Establishes that SLICING.md stays the single granularity definition and gets extended (not replaced by story points), that create-plan must become a SLICING follower so plan phases are re-sized, that the guide's stated follower list is corrected to match reality, and that stacking stays dependency-waves-off-the-epic-branch. Six design questions stay open for the user: numeric PR-size signal, create-plan sizing gate, follower-list fix, stacking mechanism, sizing vocabulary (points vs one-day), and whether to adopt GitHub native sub-issue linking. A later phase turns the settled answers into edits across shared/SLICING.md, create-plan, create-epic-plan, create-structure-outline, and start-epic-delivery."
+summary: "Fixes the direction for making the delivery skills slice future work into granular, reviewable, testable pull requests that stack and merge quickly. Establishes that SLICING.md stays the single granularity definition and gets extended (not replaced by story points), that create-plan must become a SLICING follower so plan phases are re-sized, that the guide's stated follower list is corrected to match reality, and that stacking stays dependency-waves-off-the-epic-branch. All six design questions are resolved: an advisory 200-400-line size signal in SLICING.md (four tests stay the only gate), a lightweight per-phase four-tests re-check in create-plan, a corrected follower list (create-epic-plan, create-structure-outline, create-plan, create-prd, with start-epic-delivery re-validating without re-sizing), dependency-waves-off-the-epic-branch stacking plus a create-epic-plan instruction to prefer parallel children on a shared contract over depends_on edges, the one-day four-tests vocabulary kept (no story points), and textual issue linking kept (native sub-issues deferred). A later phase turns the settled answers into edits across shared/SLICING.md, create-plan, create-epic-plan, create-structure-outline, and start-epic-delivery."
 repo: skills
 branch: we-need-do-something
 sha: fff611aee299baf4678ec6d33b902955a7f7b65c
@@ -29,9 +29,9 @@ Future work delivered through these skills is not sliced granularly enough, so i
 
 ### What we're not doing
 
-- Not adopting Fibonacci story points, a `points-` label scheme, or team-scale estimation ceremony as the sizing unit (kept as an open question, with a recommendation to reject).
+- Not adopting Fibonacci story points, a `points-` label scheme, or team-scale estimation ceremony as the sizing unit; the one-day / four-tests vocabulary stays.
 - Not building or requiring stacked-diff tooling (e.g. a stacking CLI); stacking stays dependency waves plus per-child branches.
-- Not adding a milestone/initiative tier above epics, and not rewriting issue creation onto the GitHub native sub-issue API by default (native linking kept as an open question).
+- Not adding a milestone/initiative tier above epics, and not rewriting issue creation onto the GitHub native sub-issue API; textual linking stays, with native sub-issues recorded only as a possible later enhancement.
 - Not changing `review-code`'s post-hoc size heuristic away from being a reviewer signal.
 - Not touching the compound-engineering plugin assumptions from the inspiration repo (plan Implementation Units as a separate tracker, AI-review-substitutes-for-approval); those are external inspiration, not adoptable here.
 
@@ -67,74 +67,52 @@ Sizing signal (advisory, added to the four tests as a pre-check, not a fifth gat
 +
 + ## Size signal (advisory)
 + Before running the four tests, estimate the unit's likely changed lines
-+ (excluding generated code). A candidate expected to land well past a
-+ one-sitting review (order of a few hundred changed lines) is a prompt to
-+ look for a split now, using the table below. The four tests remain the
-+ binding decision; this signal only surfaces oversize early, when a split
-+ is cheap, instead of at review time.
++ (generated code and lockfiles excluded). A candidate that would change
++ roughly more than 200-400 lines is a signal to look for a split now,
++ using the table below. The four tests remain the only binding gate; this
++ signal only surfaces oversize early, when a split is cheap, instead of at
++ review time.
 ```
 
-### Design Questions
-
-#### Numeric PR-size signal at slicing time
-
-Should the collection add a line-oriented size signal (inspired by the repo's 200–400 line target) to the point where units are sliced, and if so, how binding?
-
-- Option A — Advisory pre-check in `SLICING.md`: add a "size signal" note (order-of-magnitude changed lines, generated code excluded) that prompts an early split but leaves the four behavioral tests as the only gate. Low risk; keeps decidable-from-text tests binding; gives authors the early signal they lack today.
-- Option B — Hard numeric gate: a candidate over N changed lines must split. Objective, but line counts are hard to predict pre-implementation and punish legitimately cohesive changes; conflicts with the collection's deliberate "reviewer effort, not lines" stance.
-- Option C — No new signal; keep only `review-code`'s post-hoc heuristic. Cheapest, but leaves the exact gap the task reports: oversize is caught after the PR exists.
-
-Recommendation: Option A. It imports the inspiration repo's usefully concrete number as guidance while preserving the collection's behavioral, text-decidable gate; it directly attacks "not granular enough … larger pull requests" at the moment splitting is cheap.
-
-#### Make `create-plan` a SLICING follower
-
-Should `create-plan` re-size each phase against the four tests, or keep inheriting outline phase boundaries unchecked?
-
-- Option A — Add a re-size step: `create-plan` links `SLICING.md` and re-runs the four tests per phase, splitting a failing phase before writing implementation steps. Closes the researched gap where an oversized outline phase reaches implementation unchecked; small, local change.
-- Option B — Keep inheritance: rely on `create-structure-outline` having sized phases already. Less duplication, but the research shows outline phases and plan phases are 1:1 and nothing re-checks them; a wrong outline boundary propagates straight to implementation.
-
-Recommendation: Option A, as a lightweight re-check (not a full re-derivation). It is the single highest-leverage fix for large merge requests, because `create-plan` is the last artifact before code is written.
-
-#### Correct SLICING's stated follower list
-
-`SLICING.md:3` names followers that don't match the skills that actually link it (names `start-epic-delivery`, omits `create-plan`). How to reconcile?
-
-- Option A — Align stated list to reality plus the new follower: list exactly the skills that link and run the guide (`create-epic-plan`, `create-structure-outline`, `create-plan`, `create-prd`), and give `start-epic-delivery` an explicit "re-validates slices materialized here, does not re-size" note rather than listing it as a follower.
-- Option B — Make reality match the current list: also add a real SLICING link to `start-epic-delivery`. But `start-epic-delivery` only materializes an already-sized plan; re-sizing there duplicates `create-epic-plan`'s gate.
-
-Recommendation: Option A. The guide should name only the skills that actually run its tests, and describe materialization-time re-validation separately, so the document stops overstating its own reach.
-
-#### Stacking mechanism for fast autonomous delivery
-
-The task asks that granular MRs "stack up and deliver quickly." Keep today's structural stacking, or add an explicit stacked-diff mechanism?
-
-- Option A — Keep and document dependency-waves-off-epic-branch: `depends_on` → waves, per-child branch off the epic `base`, flag-guarded incomplete paths, later waves merge after prerequisites. Already implemented end-to-end by `create-epic-plan` + `start-epic-delivery`; the change is only to make the stacking model explicit in the guide/skills.
-- Option B — Introduce a stacked-diff tool/workflow (rebasing chains, a stacking CLI). More "stack-like," but adds tooling and per-child rebase burden, and fights the collection's "safe to merge alone" invariant (each unit is additive/flagged, so it needs no ancestor to be reviewable).
-- Option C — Reduce dependencies further: bias `create-epic-plan` toward parallel children sharing a fixed contract (a shared shape is not a dependency), so fewer waves are needed at all.
-
-Recommendation: Option A plus the spirit of C. The existing structural model already delivers stacked, independently mergeable children; the leverage is making it explicit and minimizing `depends_on` edges, not adding stacking tooling.
-
-#### Sizing vocabulary: keep the one-day test or add story points
-
-Should sizing adopt the inspiration repo's Fibonacci story points (2-8 points, break down >13), or keep the current "one day, decidable from text" test?
-
-- Option A — Keep the one-day / four-tests vocabulary. Text-decidable, tool-checkable via `judge.mjs size-children`, no estimation ceremony; consistent across every skill.
-- Option B — Add story points alongside. Familiar and granular, but points are estimation ceremony the collection deliberately avoids, need calibration, and duplicate the one-day test's intent for autonomous single-author-plus-AI work.
-
-Recommendation: Option A (reject points). Points add a second sizing vocabulary without improving the decidable outcome the four tests already give.
-
-#### GitHub native sub-issue linking
-
-The inspiration repo uses GitHub's native sub-issue feature for parent-child linking and progress. Should `start-epic-delivery` adopt it, or keep the current textual `Depends on: #n` / `Epic:` issue bodies?
-
-- Option A — Keep textual linking. Already works wherever `gh` is authenticated, degrades cleanly to a `### Known limits` note otherwise; no new API surface.
-- Option B — Adopt native sub-issues. Nicer parent/child rollup in the GitHub UI, but adds an API dependency, a failure mode when the feature or permission is absent, and a materialization-layer change beyond the granularity focus of this task.
-
-Recommendation: Option A for this change; record Option B as a possible later enhancement. Native linking is presentation, not granularity, and expands surface area beyond the task's one-change scope.
+`create-epic-plan` also carries an explicit instruction to prefer parallel children that share a fixed contract over `depends_on` edges, so a shared shape is never recorded as a dependency and fewer waves are needed.
 
 ### Resolved Design Questions
 
-None yet. All questions above remain open pending user decision.
+#### Numeric PR-size signal at slicing time — Option A (advisory pre-check in `SLICING.md`)
+
+Add a size-signal note to `shared/SLICING.md` as a pre-check ahead of the four tests: a candidate unit that would change roughly more than 200-400 lines (generated code and lockfiles excluded) is a signal to look for a split before the four tests run. The four behavioral tests stay the only binding gate; the signal only surfaces oversize early, when a split is cheap, instead of at review time.
+
+Rationale: imports the inspiration repo's usefully concrete number as guidance while preserving the collection's behavioral, text-decidable gate; directly attacks "not granular enough … larger pull requests" at the moment splitting is cheap. Rejected: Option B (hard numeric gate) — line counts are hard to predict pre-implementation and conflict with the collection's "reviewer effort, not lines" stance; Option C (no new signal) — leaves the reported gap where oversize is caught only after the PR exists.
+
+#### Make `create-plan` a SLICING follower — Option A (lightweight per-phase re-check)
+
+`create-plan` links `SLICING.md` and runs a lightweight per-phase re-check of the four tests, splitting a failing phase by its symptom before writing implementation steps. Not a full re-derivation of the outline.
+
+Rationale: the single highest-leverage fix for large merge requests, because `create-plan` is the last artifact before code is written; closes the researched gap where an oversized outline phase reaches implementation unchecked. Rejected: Option B (keep inheritance) — outline phases and plan phases are 1:1 and nothing re-checks them, so a wrong outline boundary propagates straight to implementation.
+
+#### Correct SLICING's stated follower list — Option A (align list to reality plus the new follower)
+
+`shared/SLICING.md` lists exactly the skills that link and run the guide — `create-epic-plan`, `create-structure-outline`, `create-plan`, and `create-prd` — and separately describes `start-epic-delivery` as re-validating slices materialized there without re-sizing, rather than listing it as a follower.
+
+Rationale: the guide should name only the skills that actually run its tests, and describe materialization-time re-validation separately, so the document stops overstating its own reach. Rejected: Option B (add a real SLICING link to `start-epic-delivery`) — it only materializes an already-sized plan, so re-sizing there duplicates `create-epic-plan`'s gate.
+
+#### Stacking mechanism for fast autonomous delivery — Option A plus C made concrete
+
+Document dependency waves off the epic branch as the stacking model: `depends_on` → waves, per-child branch off the epic `base`, flag-guarded incomplete paths, later waves merge after prerequisites. Add an explicit instruction in `create-epic-plan` to prefer parallel children sharing a fixed contract over `depends_on` edges, so a shared shape is never recorded as a dependency and fewer waves are needed.
+
+Rationale: the existing structural model already delivers stacked, independently mergeable children; the leverage is making it explicit and minimizing `depends_on` edges, not adding stacking tooling. Rejected: Option B (stacked-diff tool/workflow) — adds tooling and per-child rebase burden and fights the "safe to merge alone" invariant.
+
+#### Sizing vocabulary — Option A (keep the one-day / four-tests vocabulary)
+
+Keep the one-day, four-tests vocabulary; do not add Fibonacci story points or a `points-` label scheme.
+
+Rationale: the four tests are text-decidable and tool-checkable via `judge.mjs size-children`, with no estimation ceremony, consistent across every skill. Rejected: Option B (add story points) — a second sizing vocabulary that adds calibration and ceremony the collection deliberately avoids without improving the decidable outcome.
+
+#### GitHub native sub-issue linking — Option A (keep textual linking)
+
+Keep the textual `Depends on: #n` / `Epic:` issue-body linking. Record native GitHub sub-issues as a possible later enhancement, outside this change.
+
+Rationale: textual linking already works wherever `gh` is authenticated and degrades cleanly to a `### Known limits` note otherwise; native linking is presentation, not granularity, and would expand surface area beyond this one-change scope. Rejected for now: Option B (adopt native sub-issues) — adds an API dependency and a failure mode when the feature or permission is absent, a materialization-layer change beyond the granularity focus of this task.
 
 ### Patterns to follow
 
@@ -161,13 +139,19 @@ Size every candidate against the slicing guide's four tests ... split each faili
 candidate using the split its symptom names ... re-run the tests ...
 ```
 
-#### Structural stacking already in place
+#### Structural stacking already in place, with minimized dependencies
 
-Ordering as `depends_on` → waves, per-child branch off the epic `base`; keep as the stacking model. — `skills/delivery/start-epic-delivery/SKILL.md:26`
+Ordering as `depends_on` → waves, per-child branch off the epic `base`; keep as the stacking model, and add an instruction in `create-epic-plan` to prefer parallel children sharing a fixed contract over `depends_on` edges. — `skills/delivery/start-epic-delivery/SKILL.md:26`, `skills/delivery/create-epic-plan/SKILL.md`
 
 ```
 Wave 1 is every child with no dependencies. Wave N+1 is every child whose
 dependencies are all in waves 1 to N.
+```
+
+```
+# create-epic-plan, when deciding child ordering:
+Prefer parallel children that share a fixed contract over a depends_on edge;
+a shared shape is not a dependency, so do not record it as one.
 ```
 
 ### Execution DAG
@@ -188,16 +172,15 @@ flowchart TD
 
 ### Review targets
 
-- The six Design Questions, especially the recommendations for the numeric size signal (advisory vs hard gate), making `create-plan` a SLICING follower, and rejecting story points.
-- The proposed scope boundary in "What we're not doing" — confirm native sub-issues, story points, stacked-diff tooling, and a milestone tier are correctly excluded from this one change.
-- Whether "advisory size signal" should carry a concrete number (e.g. a few hundred changed lines) in the guide, or stay order-of-magnitude.
+- The six now-resolved Design Questions, especially the concrete 200-400-line advisory size signal, making `create-plan` a SLICING follower, the corrected follower list, and the `create-epic-plan` shared-contract instruction that keeps a shared shape from being recorded as a `depends_on` dependency.
+- The scope boundary in "What we're not doing" — native sub-issues, story points, stacked-diff tooling, and a milestone tier stay excluded from this one change.
 
 ### Verify
 
-- [ ] User has chosen an option for each of the six Design Questions (or confirmed the recommendations) before `create-structure-outline` runs.
+- [ ] Resolved decisions reflect the orchestrator's choices for all six questions before `create-structure-outline` runs.
 - [ ] Scope boundary confirmed: this is one change to the skills, not a multi-phase program.
 
 ### Known limits
 
 - The inspiration repo's compound-engineering conventions (plan Implementation Units as a separate tracker, AI-review substituting for approval) were read as inspiration only and are not evaluated here; a later phase wanting them must treat them as external plugin behavior.
-- No child research workers were started; the newest research artifact (`03-research-issue-granularity.md`) and the sources digest were sufficient to fix direction. Design questions with numeric thresholds (exact size-signal number) are deliberately left for user decision rather than derived.
+- No child research workers were started; the newest research artifact (`03-research-issue-granularity.md`) and the sources digest were sufficient to fix direction. The exact size-signal number (200-400 changed lines, generated code and lockfiles excluded) was set by the orchestrator's decision rather than derived.
