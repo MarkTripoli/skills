@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/agent"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
@@ -52,23 +53,125 @@ func TestShortAnswerReplacesTheAckAndIsRecorded(t *testing.T) {
 
 func TestLongAnswerIsPostedUnderADoneAck(t *testing.T) {
 	s, slack, clock, runner := newDispatchService(t)
-	answer := strings.Repeat("é", maxAnswerRunes+1)
+	answer := strings.Repeat("é", answerEditLimit+1)
 	id := deliverOne(t, s, clock, runner, agent.RunOutcome{ExitCode: 0, Result: answer, ResultSource: "stdout"})
 
 	const root, ackTS = "1700000000.001000", "1700000000.900001"
 	if len(slack.updates) != 1 || slack.updates[0] != (slackUpdate{"D1", ackTS, "Done"}) {
 		t.Fatalf("updates = %+v, want the ack set to Done", slack.updates)
 	}
-	if len(slack.posts) != 2 || slack.posts[1] != (slackPost{"D1", root, answer}) {
-		t.Fatalf("posts = %d, want the ack then the full answer in the thread", len(slack.posts))
+	// 4001 runes in a single line splits into two chunks: 4000 + 1.
+	if len(slack.posts) != 3 || slack.posts[1] != (slackPost{"D1", root, strings.Repeat("é", answerEditLimit)}) || slack.posts[2] != (slackPost{"D1", root, "é"}) {
+		t.Fatalf("posts = %+v, want the ack then two chunk replies", slack.posts)
 	}
 	msgs, _ := s.DB.ListDMMessages(context.Background(), root)
 	want := db.DMMessage{RootTS: root, TS: "1700000000.900002", Author: db.AuthorBot, Text: answer, RunID: sql.NullString{String: id, Valid: true}}
 	if len(msgs) != 3 || msgs[1].Text != "Working on it" || msgs[2] != want {
-		t.Fatalf("dm_messages has %d rows; want the root, the untouched ack, and the answer at the new ts", len(msgs))
+		t.Fatalf("dm_messages has %d rows; want root, ack, and one answer row with full text", len(msgs))
 	}
 	if run := getRun(t, s, id); run.State != db.RunDone || run.ResultSource.String != "stdout" {
 		t.Fatalf("done row = %+v, want done from stdout", run)
+	}
+}
+
+func TestExactLimitAnswerEditsAckAndPostsNoReply(t *testing.T) {
+	s, slack, clock, runner := newDispatchService(t)
+	answer := strings.Repeat("x", answerEditLimit)
+	deliverOne(t, s, clock, runner, agent.RunOutcome{ExitCode: 0, Result: answer, ResultSource: "result.md"})
+
+	const ackTS = "1700000000.900001"
+	if len(slack.updates) != 1 || slack.updates[0] != (slackUpdate{"D1", ackTS, answer}) {
+		t.Fatalf("updates = %+v, want the ack edited to the full answer", slack.updates)
+	}
+	if len(slack.posts) != 1 {
+		t.Fatalf("posts = %d, want only the initial ack and no extra reply", len(slack.posts))
+	}
+}
+
+func TestLongAnswerTwoLinesChunked(t *testing.T) {
+	s, slack, clock, runner := newDispatchService(t)
+	line1 := strings.Repeat("a", 2000)
+	line2 := strings.Repeat("b", 2001)
+	answer := line1 + "\n" + line2 // 4002 runes total, over two lines
+	id := deliverOne(t, s, clock, runner, agent.RunOutcome{ExitCode: 0, Result: answer, ResultSource: "result.md"})
+
+	const root, ackTS = "1700000000.001000", "1700000000.900001"
+	if len(slack.updates) != 1 || slack.updates[0] != (slackUpdate{"D1", ackTS, "Done"}) {
+		t.Fatalf("updates = %+v, want the ack set to Done", slack.updates)
+	}
+	if len(slack.posts) != 3 {
+		t.Fatalf("posts count = %d, want 3 (ack + 2 chunks)", len(slack.posts))
+	}
+	if slack.posts[1] != (slackPost{"D1", root, line1 + "\n"}) || slack.posts[2] != (slackPost{"D1", root, line2}) {
+		t.Fatalf("posts[1]=%+v posts[2]=%+v, want line1+newline then line2", slack.posts[1], slack.posts[2])
+	}
+	msgs, _ := s.DB.ListDMMessages(context.Background(), root)
+	want := db.DMMessage{RootTS: root, TS: "1700000000.900002", Author: db.AuthorBot, Text: answer, RunID: sql.NullString{String: id, Valid: true}}
+	if len(msgs) != 3 || msgs[2] != want {
+		t.Fatalf("dm_messages = %+v, want root, ack, one full-text answer row", msgs)
+	}
+	if run := getRun(t, s, id); run.State != db.RunDone {
+		t.Fatalf("run state = %s, want done", run.State)
+	}
+}
+
+func TestLongAnswerSingleLineManyChunks(t *testing.T) {
+	s, slack, clock, runner := newDispatchService(t)
+	answer := strings.Repeat("z", 9000) // single line, 9000 runes → 3 chunks of ≤4000
+	id := deliverOne(t, s, clock, runner, agent.RunOutcome{ExitCode: 0, Result: answer, ResultSource: "result.md"})
+
+	const root, ackTS = "1700000000.001000", "1700000000.900001"
+	if len(slack.updates) != 1 || slack.updates[0] != (slackUpdate{"D1", ackTS, "Done"}) {
+		t.Fatalf("updates = %+v, want Done", slack.updates)
+	}
+	// posts: ack + 3 chunks
+	if len(slack.posts) != 4 {
+		t.Fatalf("posts count = %d, want 4 (ack + 3 chunks)", len(slack.posts))
+	}
+	for i, p := range slack.posts[1:] {
+		if utf8.RuneCountInString(p.text) > answerEditLimit {
+			t.Fatalf("chunk[%d] has %d runes, exceeds %d", i, utf8.RuneCountInString(p.text), answerEditLimit)
+		}
+	}
+	msgs, _ := s.DB.ListDMMessages(context.Background(), root)
+	want := db.DMMessage{RootTS: root, TS: "1700000000.900002", Author: db.AuthorBot, Text: answer, RunID: sql.NullString{String: id, Valid: true}}
+	if len(msgs) != 3 || msgs[2] != want {
+		t.Fatalf("dm_messages = %+v, want root, ack, one full-text answer row", msgs)
+	}
+	if run := getRun(t, s, id); run.State != db.RunDone {
+		t.Fatalf("run state = %s, want done", run.State)
+	}
+}
+
+func TestChunk(t *testing.T) {
+	cases := []struct {
+		name  string
+		text  string
+		limit int
+		want  []string
+	}{
+		{"empty", "", 10, nil},
+		{"fits exactly", "abc", 3, []string{"abc"}},
+		{"fits under limit", "abc", 10, []string{"abc"}},
+		{"hard split single line", "abcdef", 3, []string{"abc", "def"}},
+		{"split at newline", "ab\ncd", 4, []string{"ab\n", "cd"}},
+		{"multi-line fits one chunk", "ab\ncd", 10, []string{"ab\ncd"}},
+		{"split before second line overflows", "abc\nde", 4, []string{"abc\n", "de"}},
+		{"trailing newline no empty piece", "abc\n", 10, []string{"abc\n"}},
+		{"multibyte rune counted correctly", strings.Repeat("é", 5), 3, []string{"ééé", "éé"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := chunk(tc.text, tc.limit)
+			if len(got) != len(tc.want) {
+				t.Fatalf("chunk(%q, %d) = %q, want %q", tc.text, tc.limit, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("chunk(%q, %d)[%d] = %q, want %q", tc.text, tc.limit, i, got[i], tc.want[i])
+				}
+			}
+		})
 	}
 }
 
