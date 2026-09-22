@@ -11,6 +11,9 @@ type StartRunInput struct {
 	Goal        string   `json:"goal"`
 	Scope       string   `json:"scope"`
 	Links       []string `json:"links"`
+	// JiraIssue, when set, is the issue whose configured field receives the
+	// thread permalink after the root message posts.
+	JiraIssue string `json:"jira_issue,omitempty"`
 	// StartedAt is filled by the daemon and ignored on input.
 	StartedAt string `json:"started_at"`
 }

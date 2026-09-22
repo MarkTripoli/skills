@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"github.com/oklog/ulid/v2"
 	"github.com/spf13/cobra"
@@ -14,18 +15,25 @@ import (
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/slackapi"
 )
 
+// jiraIssuePattern is the issue key shape --jira-issue accepts.
+var jiraIssuePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]+-\d+$`)
+
 func newRunStart() *cobra.Command {
 	var in coordinator.StartRunInput
 	var channelFlag, repo string
 	c := &cobra.Command{
-		Use:   "start [--channel <C…|#name>] [--repo <path>] --work <s> --goal <s> --scope <s> [--link <url>]... [--owner <U…>] [--run-id <id>]",
+		Use:   "start [--channel <C…|#name>] [--repo <path>] --work <s> --goal <s> --scope <s> [--link <url>]... [--owner <U…>] [--run-id <id>] [--jira-issue <KEY>]",
 		Short: "Open the run's Slack thread with one root message",
 		Long: `Open the run's Slack thread with one root message.
 
 The channel comes from --channel, or from the single "Slack default channel:"
 line in the repository root AGENTS.md (--repo, default: the git root of the
 current directory). Either source is resolved through Slack to a channel the
-bot is a member of and that is not archived before the daemon is called.`,
+bot is a member of and that is not archived before the daemon is called.
+
+With --jira-issue the daemon writes the thread permalink to the Jira custom
+field named by setup --jira-field-id; a failed write is retried in the
+background and never blocks the run.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			p, err := home()
@@ -35,6 +43,14 @@ bot is a member of and that is not archived before the daemon is called.`,
 			cfg, err := loadConfig(p)
 			if err != nil {
 				return err
+			}
+			if in.JiraIssue != "" {
+				if !jiraIssuePattern.MatchString(in.JiraIssue) {
+					return usageErr("--jira-issue %q must look like PROJ-123", in.JiraIssue)
+				}
+				if !cfg.JiraEnabled() {
+					return usageErr("--jira-issue given but jira is not configured; rerun `slack-coordinator setup` with --jira-base-url, --jira-email, --jira-field-id and JIRA_API_TOKEN")
+				}
 			}
 			ref, err := refFromFlagsOrAgentsMD(channelFlag, repo)
 			if err != nil {
@@ -67,6 +83,7 @@ bot is a member of and that is not archived before the daemon is called.`,
 	f.StringArrayVar(&in.Links, "link", nil, "related URL (repeatable)")
 	f.StringVar(&in.OwnerUserID, "owner", "", "Slack user ID of the run owner (default: slack.owner_user_id from config)")
 	f.StringVar(&in.RunID, "run-id", "", "run identifier (default: a new ULID)")
+	f.StringVar(&in.JiraIssue, "jira-issue", "", "Jira issue key (PROJ-123) whose configured field receives the thread permalink")
 	return c
 }
 

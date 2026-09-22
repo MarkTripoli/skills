@@ -18,6 +18,7 @@ import (
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/coordinator"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/ipc"
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/jira"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/paths"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/slackapi"
 )
@@ -155,6 +156,11 @@ func Serve(ctx context.Context, p *paths.Paths, cfg *config.Config, opts Options
 		inbound, acker = socket.Inbound(), socket
 	}
 	coord := &coordinator.Coordinator{DB: rt.DB, Slack: rt.Slack, Now: time.Now, Quiet: quiet, Health: socketHealth}
+	if cfg.JiraEnabled() {
+		if coord.Jira, err = jira.New(*cfg.Jira); err != nil {
+			return err
+		}
+	}
 	health := func() ipc.HealthResult { return ipc.HealthResult{SocketMode: socketHealth()} }
 	coordinator.Register(rt.Server, coord, health, cancel)
 

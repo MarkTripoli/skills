@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
@@ -27,6 +28,9 @@ type Coordinator struct {
 	// Health reports the Socket Mode connection state (a slackapi.Socket*
 	// constant). Nil reads as not_started, so run check fails closed.
 	Health func() string
+	// Jira writes thread permalinks to issue fields. Nil when Jira is not
+	// configured; StartRun then refuses a JiraIssue before posting.
+	Jira BacklinkWriter
 }
 
 // stamp formats t as the RFC 3339 UTC string every timestamp column holds.
@@ -47,6 +51,8 @@ func (c *Coordinator) StartRun(ctx context.Context, in StartRunInput) (SlackRunR
 		return SlackRunRef{}, errors.New("owner_user_id is required")
 	case in.ChannelID == "":
 		return SlackRunRef{}, errors.New("channel_id is required")
+	case in.JiraIssue != "" && c.Jira == nil:
+		return SlackRunRef{}, errors.New("jira_issue given but jira is not configured")
 	}
 	if _, err := c.DB.GetRun(ctx, in.RunID); err == nil {
 		return SlackRunRef{}, fmt.Errorf("run %s already exists", in.RunID)
@@ -84,6 +90,16 @@ func (c *Coordinator) StartRun(ctx context.Context, in StartRunInput) (SlackRunR
 		NextStatusDue: c.nextDue(now),
 	}); err != nil {
 		return SlackRunRef{}, err
+	}
+	if in.JiraIssue != "" {
+		if err := c.DB.InsertBacklink(ctx, in.RunID, in.JiraIssue, permalink, startedAt); err != nil {
+			return SlackRunRef{}, err
+		}
+		// One immediate try; a failure stays pending for the scheduler and
+		// never fails the start.
+		if err := c.attemptBacklink(ctx, db.Backlink{RunID: in.RunID, IssueKey: in.JiraIssue, ThreadURL: permalink}, now); err != nil {
+			slog.Warn("jira backlink deferred", "run_id", in.RunID, "issue", in.JiraIssue, "error", err)
+		}
 	}
 	return SlackRunRef{RunID: in.RunID, ChannelID: in.ChannelID, ThreadTS: ts, Permalink: permalink}, nil
 }

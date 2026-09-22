@@ -20,6 +20,15 @@ CREATE TABLE IF NOT EXISTS owner_inputs (
   handled_at  TEXT,
   outcome     TEXT CHECK (outcome IN ('applied','rejected','answered')),
   PRIMARY KEY (run_id, message_ts)
+);
+CREATE TABLE IF NOT EXISTS jira_backlinks (
+  run_id     TEXT PRIMARY KEY REFERENCES runs(run_id),
+  issue_key  TEXT NOT NULL,
+  thread_url TEXT NOT NULL,
+  state      TEXT NOT NULL CHECK (state IN ('pending','delivered')) DEFAULT 'pending',
+  attempts   INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  next_attempt_at TEXT NOT NULL
 );`
 
 // migrationStatements are idempotent ALTER TABLE statements later schema

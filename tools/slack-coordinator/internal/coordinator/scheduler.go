@@ -12,15 +12,17 @@ import (
 )
 
 // StatusScheduler reposts the last status of every active run that has been
-// quiet for C.Quiet, so the thread shows the run is still alive, and retries
-// runs whose last post failed so run check can return to ready.
+// quiet for C.Quiet, so the thread shows the run is still alive, retries runs
+// whose last post failed so run check can return to ready, and retries Jira
+// backlinks that are due.
 type StatusScheduler struct {
 	C *Coordinator
 }
 
 // Tick posts one status message for every run due at now and for every run
-// carrying a delivery error, and resets each posted run's quiet interval from
-// now. Every run is attempted; the returned error joins the failures.
+// carrying a delivery error, resets each posted run's quiet interval from
+// now, then retries due Jira backlinks. Every run is attempted; the returned
+// error joins the failures.
 func (s *StatusScheduler) Tick(ctx context.Context, now time.Time) error {
 	due, err := s.C.DB.DueStatusRuns(ctx, stamp(now))
 	if err != nil {
@@ -42,6 +44,9 @@ func (s *StatusScheduler) Tick(ctx context.Context, now time.Time) error {
 				errs = append(errs, fmt.Errorf("run %s: %w", run.RunID, err))
 			}
 		}
+	}
+	if err := s.C.retryBacklinks(ctx, now); err != nil {
+		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
 }
