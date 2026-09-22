@@ -769,7 +769,7 @@ func (c *Client) SetThreadURL(ctx, issueKey, threadURL string) error // PUT {bas
 
 #### Automated Verification:
 
-- [ ] `cd tools/slack-coordinator && go test -race ./internal/jira/... ./internal/coordinator/... ./internal/cli/...`
+- [x] `cd tools/slack-coordinator && go test -race ./internal/jira/... ./internal/coordinator/... ./internal/cli/...`
 
 human-gated: false
 
