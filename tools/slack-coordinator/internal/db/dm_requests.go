@@ -137,3 +137,12 @@ func (d *DB) SetPendingProposal(ctx context.Context, rootTS, proposalJSON string
 	}
 	return nil
 }
+
+// ClearPendingProposal sets pending_proposal to NULL for rootTS.
+func (d *DB) ClearPendingProposal(ctx context.Context, rootTS string) error {
+	if _, err := d.sql.ExecContext(ctx,
+		`UPDATE dm_requests SET pending_proposal = NULL WHERE root_ts = ?`, rootTS); err != nil {
+		return fmt.Errorf("clear pending_proposal %s: %w", rootTS, err)
+	}
+	return nil
+}

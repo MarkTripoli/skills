@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/agent"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/slackapi"
 )
@@ -433,5 +435,260 @@ func TestOwnerReplyDuringActiveRunIsStoredWithoutNewRun(t *testing.T) {
 	}
 	if pending != 2 {
 		t.Fatalf("pending follow-up owner messages = %d, want 2", pending)
+	}
+}
+
+// storePendingProposalRequest inserts a dm_request with a pending_proposal JSON for testing confirm flows.
+// The run_id in the proposal is runID (stored as proposing run's id).
+func storePendingProposalRequest(t *testing.T, s *Service, rootTS, runID string, p pendingProposal) {
+	t.Helper()
+	ctx := context.Background()
+	now := stamp(s.Now())
+	if _, err := s.DB.InsertDMRequest(ctx, db.DMRequest{
+		RootTS: rootTS, ChannelID: "D1", ReceivedAt: now, LastMessageAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if runID != "" {
+		if err := s.DB.InsertAssistantRun(ctx, db.AssistantRun{
+			RunID: runID, Kind: db.RunKindDM,
+			RootTS:   sql.NullString{String: rootTS, Valid: true},
+			State:    db.RunDone,
+			QueuedAt: now,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	proposalJSON, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DB.SetPendingProposal(ctx, rootTS, string(proposalJSON)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestYesConfirmsScheduleProposal(t *testing.T) {
+	s, slack, clock := newTestService(t)
+	ctx := context.Background()
+	const root = "1700000000.001000"
+	const runID = "01JTEST00000000000000000001"
+
+	p := pendingProposal{
+		Proposal: agent.Proposal{
+			Watch:       []string{"C0GENERAL1"},
+			Trigger:     agent.Trigger{Kind: agent.TriggerSchedule, Daily: "09:00", TZ: "Europe/London"},
+			Instruction: "summarize PRs",
+			DeliverTo:   agent.DeliverTo{DM: true},
+		},
+		Confirmable: true,
+		RunID:       runID,
+	}
+	storePendingProposalRequest(t, s, root, runID, p)
+
+	clock.at = clock.at.Add(time.Minute)
+	routeDMEvent(t, s, dm("U1", "1700000001.000000", root, "yes"))
+
+	// No new assistant_runs row (only the proposing run).
+	total, _ := s.DB.CountAssistantRuns(ctx)
+	if total != 1 {
+		t.Fatalf("assistant_runs count = %d, want 1 (only the proposing run)", total)
+	}
+	wantWake(t, s, false)
+
+	// A task row must exist.
+	tasks, err := s.DB.ListTasks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("tasks count = %d, want 1", len(tasks))
+	}
+	task := tasks[0]
+	if task.State != db.TaskActive {
+		t.Errorf("task.State = %q, want active", task.State)
+	}
+	if task.Trigger != db.TriggerSchedule {
+		t.Errorf("task.Trigger = %q, want schedule", task.Trigger)
+	}
+	if task.Instruction != "summarize PRs" {
+		t.Errorf("task.Instruction = %q, want 'summarize PRs'", task.Instruction)
+	}
+	if !task.DueAt.Valid {
+		t.Fatal("task.DueAt is NULL, want a value")
+	}
+	// NextDue for daily 09:00 London after 2026-09-21T10:01:00Z is 2026-09-22T08:00:00Z (BST = UTC+1).
+	wantDue, _ := NextDue(task.Schedule.String, clock.at)
+	if task.DueAt.String != wantDue.UTC().Format(time.RFC3339) {
+		t.Errorf("task.DueAt = %q, want %q", task.DueAt.String, wantDue.UTC().Format(time.RFC3339))
+	}
+
+	// task_channels must have C0GENERAL1.
+	chs, _ := s.DB.TaskChannels(ctx, task.TaskID)
+	if len(chs) != 1 || chs[0] != "C0GENERAL1" {
+		t.Errorf("task_channels = %v, want [C0GENERAL1]", chs)
+	}
+
+	// pending_proposal must be cleared.
+	req, _, _ := s.DB.GetDMRequest(ctx, root)
+	if req.PendingProposal.Valid {
+		t.Error("pending_proposal not cleared after confirm")
+	}
+
+	// dm_messages: owner message with run_id set, bot reply with run_id set; none with run_id NULL.
+	msgs, _ := s.DB.ListDMMessages(ctx, root)
+	for _, m := range msgs {
+		if !m.RunID.Valid {
+			t.Errorf("dm_message ts=%s has run_id NULL, want proposing run_id", m.TS)
+		}
+	}
+
+	// Bot reply must contain "Recorded as t<id>".
+	wantPrefix := fmt.Sprintf("Recorded as t%d", task.TaskID)
+	var gotReply string
+	for _, post := range slack.posts {
+		if strings.HasPrefix(post.text, "Recorded") {
+			gotReply = post.text
+		}
+	}
+	if !strings.HasPrefix(gotReply, wantPrefix) {
+		t.Errorf("reply = %q, want prefix %q", gotReply, wantPrefix)
+	}
+	if !strings.Contains(gotReply, "next due") {
+		t.Errorf("reply = %q, want 'next due'", gotReply)
+	}
+}
+
+func TestOkDotAndEmojiAlsoConfirm(t *testing.T) {
+	for _, text := range []string{"Ok.", "👍", "Do it!"} {
+		t.Run(text, func(t *testing.T) {
+			s, _, _ := newTestService(t)
+			ctx := context.Background()
+			const root = "1700000000.001000"
+			const runID = "01JTEST00000000000000000002"
+
+			p := pendingProposal{
+				Proposal: agent.Proposal{
+					Watch:       []string{"C0GENERAL1"},
+					Trigger:     agent.Trigger{Kind: agent.TriggerSchedule, Daily: "09:00"},
+					Instruction: "do stuff",
+					DeliverTo:   agent.DeliverTo{DM: true},
+				},
+				Confirmable: true,
+				RunID:       runID,
+			}
+			storePendingProposalRequest(t, s, root, runID, p)
+
+			ts := fmt.Sprintf("1700000001.%06d", len(text))
+			routeDMEvent(t, s, dm("U1", ts, root, text))
+
+			tasks, _ := s.DB.ListTasks(ctx)
+			if len(tasks) != 1 {
+				t.Errorf("text=%q: tasks = %d, want 1", text, len(tasks))
+			}
+		})
+	}
+}
+
+func TestYesOnNotConfirmableRepliesWithInvite(t *testing.T) {
+	s, slack, _ := newTestService(t)
+	ctx := context.Background()
+	const root = "1700000000.001000"
+	const runID = "01JTEST00000000000000000003"
+
+	p := pendingProposal{
+		Proposal: agent.Proposal{
+			Watch:       []string{"C0GENERAL1"},
+			Trigger:     agent.Trigger{Kind: agent.TriggerSchedule, Daily: "09:00"},
+			Instruction: "do stuff",
+			DeliverTo:   agent.DeliverTo{DM: true},
+		},
+		Confirmable: false,
+		Unresolved:  []string{"secret"},
+		RunID:       runID,
+	}
+	storePendingProposalRequest(t, s, root, runID, p)
+
+	routeDMEvent(t, s, dm("U1", "1700000001.000000", root, "yes"))
+
+	// No task must be recorded.
+	tasks, _ := s.DB.ListTasks(ctx)
+	if len(tasks) != 0 {
+		t.Fatalf("tasks = %d, want 0 for non-confirmable", len(tasks))
+	}
+
+	// No new run.
+	total, _ := s.DB.CountAssistantRuns(ctx)
+	if total != 1 {
+		t.Fatalf("assistant_runs = %d, want 1", total)
+	}
+	wantWake(t, s, false)
+
+	// Bot reply must contain invite text.
+	var gotReply string
+	for _, post := range slack.posts {
+		if strings.Contains(post.text, "Invite") {
+			gotReply = post.text
+		}
+	}
+	if !strings.Contains(gotReply, "#secret") {
+		t.Errorf("invite reply = %q, want '#secret'", gotReply)
+	}
+	if !strings.Contains(gotReply, "then ask again") {
+		t.Errorf("invite reply = %q, want 'then ask again'", gotReply)
+	}
+}
+
+func TestEachMessageProposalRecordsWaitingForMessages(t *testing.T) {
+	s, slack, _ := newTestService(t)
+	ctx := context.Background()
+	const root = "1700000000.001000"
+	const runID = "01JTEST00000000000000000004"
+
+	p := pendingProposal{
+		Proposal: agent.Proposal{
+			Watch:       []string{"C0GENERAL1"},
+			Trigger:     agent.Trigger{Kind: agent.TriggerEachMessage, DebounceSeconds: 0},
+			Instruction: "process messages",
+			DeliverTo:   agent.DeliverTo{DM: true},
+		},
+		Confirmable: true,
+		RunID:       runID,
+	}
+	storePendingProposalRequest(t, s, root, runID, p)
+
+	routeDMEvent(t, s, dm("U1", "1700000001.000000", root, "yes"))
+
+	tasks, _ := s.DB.ListTasks(ctx)
+	if len(tasks) != 1 {
+		t.Fatalf("tasks = %d, want 1", len(tasks))
+	}
+	task := tasks[0]
+	if task.Trigger != db.TriggerEachMessage {
+		t.Errorf("trigger = %q, want each_message", task.Trigger)
+	}
+	if task.DueAt.Valid {
+		t.Errorf("due_at = %q, want NULL for each_message", task.DueAt.String)
+	}
+	if !task.DebounceSeconds.Valid || task.DebounceSeconds.Int64 != 300 {
+		t.Errorf("debounce_seconds = %v, want 300", task.DebounceSeconds)
+	}
+	if task.Schedule.Valid {
+		t.Errorf("schedule = %q, want NULL for each_message", task.Schedule.String)
+	}
+
+	// Reply must say "waiting for messages".
+	var gotReply string
+	for _, post := range slack.posts {
+		if strings.Contains(post.text, "waiting for messages") {
+			gotReply = post.text
+		}
+	}
+	wantPrefix := fmt.Sprintf("Recorded as t%d", task.TaskID)
+	if !strings.HasPrefix(gotReply, wantPrefix) {
+		t.Errorf("reply = %q, want prefix %q", gotReply, wantPrefix)
+	}
+	if !strings.Contains(gotReply, "waiting for messages") {
+		t.Errorf("reply = %q, want 'waiting for messages'", gotReply)
 	}
 }
