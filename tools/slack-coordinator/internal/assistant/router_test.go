@@ -19,7 +19,13 @@ import (
 // the clock it reads, and a coordinator sharing all three.
 func newTestService(t *testing.T) (*Service, *fakeSlack, *testClock) {
 	t.Helper()
-	p := paths.WithRoot(t.TempDir())
+	return newTestServiceAt(t, paths.WithRoot(t.TempDir()))
+}
+
+// newTestServiceAt is newTestService over the runtime root p, for tests that
+// also open its database file directly.
+func newTestServiceAt(t *testing.T, p *paths.Paths) (*Service, *fakeSlack, *testClock) {
+	t.Helper()
 	database, err := db.Open(p.DB())
 	if err != nil {
 		t.Fatal(err)

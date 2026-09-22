@@ -2,15 +2,18 @@ package assistant
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/coordinator"
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
 )
 
 // refusalText answers the first DM from anyone but the owner; %s is the
@@ -124,6 +127,48 @@ func (s *Service) refuse(ctx context.Context, msg *slackevents.MessageEvent) err
 	return nil
 }
 
-// collect records a public or private channel message for the tasks watching
-// its channel. No task watches channels yet; every message is dropped.
-func (s *Service) collect(context.Context, *slackevents.MessageEvent) error { return nil }
+// collect records a public or private channel message, top level or thread
+// reply and from any user, for the active tasks watching its channel. The
+// message is stored once with its permalink and bound unconsumed to every
+// watching task in one transaction; each each_message task whose binding is
+// new has its window closed at now + debounce_seconds. A channel no active
+// task watches costs one query and no Slack call, and a redelivered envelope
+// changes no row and moves no due_at.
+func (s *Service) collect(ctx context.Context, msg *slackevents.MessageEvent) error {
+	tasks, err := s.DB.WatchingTasks(ctx, msg.Channel)
+	if err != nil || len(tasks) == 0 {
+		return err
+	}
+	permalink, err := s.Slack.Permalink(ctx, msg.Channel, msg.TimeStamp)
+	if err != nil {
+		return err
+	}
+	now := s.Now()
+	return s.DB.Transact(ctx, func(tx *db.DB) error {
+		if err := tx.InsertCollectedMessage(ctx, db.CollectedMessage{
+			ChannelID:  msg.Channel,
+			TS:         msg.TimeStamp,
+			ThreadTS:   sql.NullString{String: msg.ThreadTimeStamp, Valid: msg.ThreadTimeStamp != ""},
+			UserID:     msg.User,
+			Text:       msg.Text,
+			Permalink:  permalink,
+			ReceivedAt: stamp(now),
+		}); err != nil {
+			return err
+		}
+		for _, t := range tasks {
+			bound, err := tx.BindMessageToTask(ctx, t.TaskID, msg.Channel, msg.TimeStamp)
+			if err != nil {
+				return err
+			}
+			if !bound || t.Trigger != db.TriggerEachMessage {
+				continue
+			}
+			due := now.Add(time.Duration(t.DebounceSeconds.Int64) * time.Second)
+			if err := tx.SetTaskDue(ctx, t.TaskID, stamp(due)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
