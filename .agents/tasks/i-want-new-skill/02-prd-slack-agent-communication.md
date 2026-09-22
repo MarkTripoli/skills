@@ -1,7 +1,7 @@
 ---
 type: design-prd
 task: i-want-new-skill
-summary: "This PRD defines one optional Slack thread per agent work run with fixed updates and owner steering in invited public or private channels. A repository default is exactly one `Slack default channel: <#name-or-ID>` line in root `AGENTS.md`; an unambiguous natural-language request from the controlling person may override it, then resolves once before run creation and persists the validated ID. Each workspace deployment uses one administrator-installed app from a repository-owned manifest, and headless setup validates protected tokens. Jira receives an optional backlink, while browser OAuth, direct messages, Windows services, non-owner participation, non-Jira ticket systems, workspace routing configuration, and shared app connections are deferred."
+summary: "This PRD defines one optional Slack thread per agent work run with fixed updates and owner steering in invited public or private channels. A repository default is one `Slack default channel: <#name-or-ID>` line in root `AGENTS.md`; an unambiguous natural-language override wins, resolves once, and persists the validated ID. One per-user daemon exclusively owns each workspace app and uses a brief make-before-break socket overlap during connection refresh. Headless setup validates an administrator-installed app and protected tokens; Jira receives an optional backlink, while browser OAuth, direct messages, Windows services, non-Jira systems, workspace routing configuration, steady multi-connection operation, and shared app ownership are deferred."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 472270dd717873b0f4fb002487ca0fa1abe92607
@@ -40,7 +40,7 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - Every fixed field appears in every message of its type; empty fields read `None`.
 - Slack-enabled work pauses when owner steering or required message delivery is unavailable.
 - Jira-linked runs publish the Slack thread URL to a dedicated Jira custom field; runs without Jira remain local-only.
-- One workspace deployment uses one Slack app Socket Mode connection owned by one per-user daemon.
+- One workspace deployment assigns one Slack app exclusively to one per-user daemon; that daemon may briefly overlap old and replacement Socket Mode sockets during connection refresh.
 - An administrator installs the repo-owned Slack app manifest; headless setup accepts injected bot and Socket Mode tokens and rejects an installation that does not match the expected app, workspace, scopes, and Socket Mode access.
 - Work threads may use public or private channels after an administrator invites the app; direct messages and multi-person direct messages are not supported.
 - Channel selection uses the repository root `AGENTS.md` default unless the person controlling the run explicitly names a different channel; both sources accept `#channel-name` or an immutable Slack channel ID.
@@ -112,6 +112,14 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - WHEN the owner gives a work-related instruction, the agent shall acknowledge and apply it before beginning its next work action.
 - IF the agent cannot apply an owner instruction, THEN it shall report the reason without claiming the change occurred.
 
+#### Socket Mode refresh preserves one healthy intake path
+
+- WHEN Slack requests a connection refresh or the daemon plans an in-process connection replacement, the daemon shall open and validate the replacement before closing the current socket.
+- WHILE either socket is healthy, Slack coordination shall remain available.
+- IF replacement setup fails while the current socket remains healthy, THEN the daemon shall keep using the current socket.
+- IF every healthy socket is lost, THEN Slack-enabled work shall enter the existing fail-closed outage behavior.
+- The brief overlap shall remain inside one daemon; service or executable restarts shall retain the existing fail-closed restart window.
+
 #### Slack outages pause work unless the local operator disables Slack
 
 - WHEN the coordinator, Slack event connection, or required message delivery is unavailable, the system shall pause the Slack-enabled run before its next state-changing action.
@@ -143,6 +151,7 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - Browser-based Slack OAuth installation and token refresh.
 - Direct messages and multi-person direct messages.
 - Workspace default channels, repository-to-channel mapping tables, and separate channel-routing services.
+- Steady-state multiple Socket Mode connections, active-active daemons, and cross-process socket handoff.
 
 ## Human Review
 
@@ -163,7 +172,8 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - [ ] Confirm runs without Jira perform no Jira operation.
 - [ ] Confirm setup validates an administrator-created Jira field by stable per-site ID and runtime requires no Jira admin privileges.
 - [ ] Confirm Slack-enabled setup supports native per-user daemon supervision on macOS and Linux, with Windows service support deferred.
-- [ ] Confirm one workspace deployment supports one Slack app connection owned by one per-user daemon and defers multi-user or multi-daemon sharing.
+- [ ] Confirm one workspace app is exclusively owned by one per-user daemon, with only a brief same-daemon old/new socket overlap during make-before-break refresh.
+- [ ] Confirm refresh remains healthy while either socket works and loss of every healthy socket triggers the existing fail-closed outage behavior.
 - [ ] Confirm administrators install the repo-owned manifest and setup accepts protected headless token injection while rejecting the wrong app, workspace, scopes, or Socket Mode access.
 - [ ] Confirm setup never reads repository-local `.env` files.
 - [ ] Confirm work threads support invited public and private channels while direct messages, multi-person direct messages, automatic channel joining, and posting without membership remain unsupported.
@@ -179,4 +189,4 @@ Add an optional Slack thread to an individual work run. The person controlling t
 - Same-user agent processes can construct the break-glass RPC and bypass the supported CLI confirmation.
 - Windows service support for the per-user coordinator daemon is deferred.
 - Slack retry schedule, reconciliation guarantees, deployed event-subscription drift, and agent runtime adapter wiring remain technical-design decisions.
-- One Slack app connection supports one per-user daemon for a workspace deployment; multiple independent users or daemons sharing that app are deferred.
+- One workspace deployment supports one per-user daemon owning the Slack app; multiple independent daemons remain deferred, and the only dual-socket period is same-daemon refresh handoff.

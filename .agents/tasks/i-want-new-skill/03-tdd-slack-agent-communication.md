@@ -1,7 +1,7 @@
 ---
 type: design-tdd
 task: i-want-new-skill
-summary: "A repo-owned per-user daemon and SQLite database are authoritative for coordinator state, with one Slack app Socket Mode connection bound exclusively to one daemon per workspace deployment. Repository defaults use one `Slack default channel: <#name-or-ID>` line in root `AGENTS.md`; an unambiguous natural-language request from the controlling person may override it, then resolves once before `startRun` and persists the validated ID. Administrators install the app from a repository-owned manifest for invited public and private channels, and headless setup validates protected tokens. No workspace default, mapping table, routing subsystem, browser OAuth, direct messages, Windows service, or shared app connection is introduced."
+summary: "A repo-owned per-user daemon and SQLite database are authoritative for coordinator state; one daemon exclusively owns each workspace app connection and uses a brief make-before-break two-socket overlap for connection refresh. Repository defaults use one `Slack default channel: <#name-or-ID>` line in root `AGENTS.md`; an unambiguous natural-language request from the controlling person may override it, then resolves once before `startRun` and persists the validated ID. Administrators install the app from a repository-owned manifest for invited public and private channels, and headless setup validates protected tokens. Browser OAuth, direct messages, Windows service support, steady multi-connection operation, and shared app ownership are deferred."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 36d73c2fdbd605df9a6f55904f80fcdda7f418fc
@@ -31,7 +31,7 @@ flowchart LR
     J --- DISC["Discoverability only:<br/>never gates work"]
 ```
 
-The Slack app is the primary integration. Its adapter creates the root message, posts canonical status and completion messages through the Slack Web API, and receives owner thread events through one Socket Mode connection owned by the per-user daemon. One workspace deployment binds that Slack app connection exclusively to that daemon. Multiple independent users or daemons must not share the app in this release because Slack may send each payload to any active connection without a predictable distribution pattern ([Slack Socket Mode documentation](https://docs.slack.dev/apis/events-api/using-socket-mode/)). The design adds no per-user app fleet, hosted event router, ingress-daemon mesh, or inbound Slack HTTP event endpoint.
+The Slack app is the primary integration. Its adapter creates the root message, posts canonical status and completion messages through the Slack Web API, and receives owner thread events through Socket Mode owned by the per-user daemon. One workspace deployment binds the app exclusively to that daemon; a brief two-socket overlap inside the same process is allowed only while replacing a connection. Multiple independent users or daemons must not share the app because Slack may send each payload to any active connection without a predictable distribution pattern ([Slack Socket Mode documentation](https://docs.slack.dev/apis/events-api/using-socket-mode/)). The design adds no per-user app fleet, hosted event router, ingress-daemon mesh, or inbound Slack HTTP event endpoint.
 
 Slack MCP access is supplementary. An MCP read or post cannot create or change the run-to-thread mapping, advance or clear a status deadline, mark owner input handled, or authorize the agent's next work action. An agent that learns about owner input through MCP must still submit that input to the coordinator and receive a coordinator action permit.
 
@@ -43,7 +43,7 @@ Slack MCP access is supplementary. An MCP read or post cannot create or change t
 | Owner identity and unhandled input | Local coordinator | Slack app supplies primary events; MCP observations must carry the same Slack message identity for deduplication |
 | Permission to begin the next work action | Local coordinator | Neither the Slack app nor MCP grants permission |
 | Slack API access | Slack app adapter through Socket Mode for inbound events and the Web API for outbound messages | MCP is optional and non-authoritative |
-| Slack app connection for one workspace deployment | One per-user coordinator daemon | Multiple users or daemons sharing the app are unsupported |
+| Slack app connection for one workspace deployment | One per-user coordinator daemon; brief dual sockets only during same-process handoff | Multiple users or daemons sharing the app are unsupported |
 
 The coordinator gates every state-changing boundary rather than relying on best-effort polling inside the agent:
 
@@ -102,6 +102,33 @@ flowchart TD
 
 The supported break-glass path is the local operator CLI. It requires explicit interactive confirmation, then asks the daemon to atomically disable Slack, record the interruption, and persist an audit receipt before work resumes. The receipt identifies the run, interruption, OS user, confirmation time, and disable time. If the transaction fails, the run remains paused. This release trusts the operating-system user: the agent adapter omits break-glass, but a same-user agent process can construct the RPC and bypass the CLI prompt. The prompt is a safety rail, not a security boundary. The original thread mapping remains available for later reconciliation through the existing status schema.
 
+#### Socket Mode refresh uses a brief same-daemon overlap
+
+On Slack `warning` or `refresh_requested`, or a planned in-process connection replacement, the daemon opens a new Socket Mode URL before closing the current socket. It waits for the replacement `hello`, verifies `connection_info.app_id`, marks the replacement able to receive and acknowledge envelopes, then closes the old socket. Slack health remains available while either socket is healthy. If replacement setup fails, the daemon keeps the old socket until Slack closes it; only loss of every healthy socket moves Slack-enabled runs into the fail-closed unavailable state.
+
+```mermaid
+sequenceDiagram
+    participant O as Old socket
+    participant D as Coordinator daemon
+    participant N as New socket
+    participant S as Slack
+
+    O-->>D: warning or refresh_requested
+    D->>S: apps.connections.open
+    S-->>D: replacement WebSocket URL
+    D->>N: connect
+    N-->>D: hello(app_id)
+    D->>D: Verify app ID and mark new socket healthy
+    D->>O: close
+    alt Replacement fails before hello
+        D->>D: Keep old socket healthy
+    else Every socket is lost
+        D->>D: Mark Slack unavailable and fail closed
+    end
+```
+
+Both sockets feed the same ingest path during the overlap, so existing durable event deduplication handles retries or duplicates regardless of which socket delivered them. The overlap never spans two daemon processes. A service or executable restart still uses the existing fail-closed restart window because no socket file-descriptor handoff is introduced.
+
 #### Administrators install the repo-owned Slack app before headless setup
 
 The repository owns a reusable Slack app manifest declaring Socket Mode, bot scopes, and bot event subscriptions. A workspace administrator creates or updates the Slack app from that manifest, installs it to the intended workspace, generates an app-level token with `connections:write`, and records the assigned Slack app ID and workspace ID as non-secret installation expectations. The first release does not host a browser OAuth callback or provision Slack apps per user.
@@ -159,7 +186,7 @@ flowchart TD
     O --> D[Per-user coordinator daemon]
     D -->|Unexpected exit| O
     D --> DB[(Per-user SQLite database)]
-    D --> SA[Single Slack Socket Mode connection]
+    D --> SA[Slack Socket Mode owner<br/>brief dual sockets during handoff]
     D --> T[Timer scheduler]
     D --> I[Owner-input inbox]
 
@@ -168,7 +195,7 @@ flowchart TD
     W[Later session or worktree] <-->|Reconnect by run identity| D
 ```
 
-Run IDs must be globally unique within the per-user SQLite database and namespaced with repository and task identity. Database location and Socket Mode reconnect and replay policy remain open.
+Run IDs must be globally unique within the per-user SQLite database and namespaced with repository and task identity. Database location and Socket Mode acknowledgement and replay policy remain open.
 
 #### SQLite persists coordinator authority across restarts
 
@@ -360,6 +387,22 @@ Credential validation errors identify the failed check without printing either t
 
 Setup reports update success only after the restarted daemon accepts IPC with durable state loaded and Slack health restored. A failed post-update health check leaves the new executable and service definition in place; setup does not automatically roll back potentially incompatible code after migrations may have run. Agent adapters remain fail-closed until an operator repairs the installation or uses durable break-glass.
 
+#### One connection manager performs same-process make-before-break handoff
+
+```text
+handleSocketRefresh(reason)
+├── apps.connections.open(appToken)
+├── connect replacement socket
+├── await hello and verify expected app ID
+├── attach replacement to shared envelope ingest
+├── mark replacement healthy
+└── close old socket
+    ├── replacement fails before healthy ──▶ retain old socket
+    └── no healthy socket remains ─────────▶ publish unavailable health
+```
+
+The connection manager serializes refresh attempts so only one replacement is pending. Both temporary sockets share one SQLite-backed ingest and deduplication path; they do not own separate run state. Health is the presence of at least one verified socket, not a particular socket identity. Planned daemon process updates do not use this path and remain governed by the service-restart design.
+
 #### A filesystem-protected Unix-domain socket carries typed local RPC
 
 The daemon listens on one Unix-domain socket inside a per-user runtime directory. The directory is mode `0700` and the socket is mode `0600`; the daemon exposes no loopback TCP or HTTP listener. The filesystem boundary authenticates the operating-system user, not an individual process.
@@ -511,7 +554,7 @@ The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input
 - Accept `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` only as a complete setup-time pair, or read both from the protected per-user credentials file. Never load repository-local `.env` files.
 - Keep Slack credentials outside SQLite, repositories, and native service definitions. Require a daemon-user-owned mode-`0600` regular file under a mode-`0700` per-user directory; reject symlinks and broader permissions.
 - Validate bot identity, expected workspace and app IDs, every manifest-required bot scope, `connections:write` behavior, and the Socket Mode `hello` app ID before activating the service. Never print token values.
-- Bind one Slack app Socket Mode connection for a workspace deployment exclusively to one per-user daemon. Reusing that app in another independent daemon is unsupported.
+- Bind each workspace Slack app exclusively to one per-user daemon. Permit two Socket Mode sockets only during a serialized same-process make-before-break handoff; close the old socket after the replacement `hello` passes app-identity validation.
 - Configure each Jira site with the stable field ID of an administrator-created dedicated Slack-thread field. Setup must validate existence, writability for the intended issue scope, and acceptance of the canonical Slack thread URL.
 - Keep Jira credentials outside SQLite. Runtime may edit the configured issue field but must not require Jira administration privileges, create fields, or discover them by name.
 - Treat the Unix-socket owner as trusted for this release. The CLI confirmation is mandatory in the supported path, but the daemon does not require stronger caller authentication.
@@ -536,6 +579,7 @@ The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input
 - Browser-based Slack OAuth installation or token refresh.
 - Direct messages and multi-person direct messages.
 - Workspace-level default channels, repository-to-channel mapping tables, or a separate channel-routing subsystem.
+- Steady-state multi-socket operation, active-active daemon processes, or socket handoff across a daemon executable restart.
 
 ### Execution DAG
 
@@ -558,7 +602,8 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 - [ ] Confirm setup installs a launchd user agent on macOS or a systemd user service on Linux, and each starts at login and restarts crashes without a system-wide daemon.
 - [ ] Confirm an update preserves SQLite and configuration, atomically replaces the executable and native service definition, restarts immediately, pauses active Slack-enabled runs fail-closed, and resumes them from durable state only after health is restored.
 - [ ] Confirm failed post-update health reports setup failure, retains the new executable and service definition, and leaves Slack-enabled runs fail-closed for operator repair or break-glass without automatic rollback.
-- [ ] Confirm one workspace deployment binds one Slack app Socket Mode connection to one per-user daemon and does not introduce per-user apps, a hosted router, or an ingress mesh.
+- [ ] Confirm one per-user daemon exclusively owns the workspace app while same-process Socket Mode refresh briefly overlaps old and replacement sockets until the replacement `hello` is verified.
+- [ ] Confirm handoff health stays available while either socket is healthy, both sockets share durable deduplication, and loss of every healthy socket triggers the existing fail-closed gate.
 - [ ] Confirm administrators install the repo-owned manifest and headless setup validates the expected app, workspace, bot scopes, and Socket Mode access from a complete injected token pair.
 - [ ] Confirm environment-supplied tokens are persisted only to a daemon-user-owned mode-`0600` credentials file and no repository-local `.env`, SQLite row, service definition, or log contains a Slack token.
 - [ ] Confirm the app supports invited public and private channels with `chat:write`, `channels:history`, `channels:read`, `groups:history`, `groups:read`, and `users:read`, subscribes to `message.channels` and `message.groups`, and does not request automatic-join or public-post bypass scopes.
@@ -575,7 +620,7 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 
 ### Known limits
 - SQLite file location, driver packaging, migrations, and backup policy.
-- Socket Mode reconnect, acknowledgement, and replay behavior.
+- Socket Mode acknowledgement timing, retry exhaustion, and replay ordering.
 - Bot and app-level tokens cannot introspect deployed event subscriptions; the live acceptance trial must detect manifest drift.
 - One workspace deployment supports one per-user daemon owning the Slack app connection; multiple independent users or daemons sharing that app are unsupported.
 - Same-user agent processes can construct the break-glass RPC and bypass the CLI confirmation; this is an accepted release limitation.
