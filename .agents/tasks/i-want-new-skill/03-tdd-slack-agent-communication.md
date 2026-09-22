@@ -1,7 +1,7 @@
 ---
 type: design-tdd
 task: i-want-new-skill
-summary: "A repo-owned per-user daemon and SQLite database are authoritative for coordinator state; one daemon exclusively owns each workspace app connection and uses a brief make-before-break two-socket overlap for connection refresh. Repository defaults use one `Slack default channel: <#name-or-ID>` line in root `AGENTS.md`; an unambiguous natural-language request from the controlling person may override it, then resolves once before `startRun` and persists the validated ID. Administrators install the app from a repository-owned manifest for invited public and private channels, and headless setup validates protected tokens. Browser OAuth, direct messages, Windows service support, steady multi-connection operation, and shared app ownership are deferred."
+summary: "A repository-owned per-user daemon maintains one Slack app Socket Mode connection and durable SQLite run/thread state. Agent runtimes create one optional thread per run, use one root AGENTS.md default channel unless an unambiguous natural-language run instruction overrides it, process owner steering before state-changing work, and fail closed when Slack coordination is unavailable. A confirmed local break-glass disables Slack for one run. Jira receives an optional backlink. launchd and systemd supervise the daemon on macOS and Linux."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 36d73c2fdbd605df9a6f55904f80fcdda7f418fc
@@ -13,573 +13,222 @@ Inputs: [task request](task.md), [current-state research](01-research-agent-comm
 
 ### System Design
 
-#### The local coordinator is authoritative across every Slack access path
+#### One local daemon owns Slack coordination
 
-The repository currently has no Slack transport, scheduled status publisher, run-to-thread mapping, or live owner-steering channel. The target adds a repo-owned coordinator that remains authoritative even when an agent also has a Slack MCP server.
+The first release adds one repository-owned daemon per operating-system user. That daemon owns one Slack app Socket Mode connection, one user-scoped SQLite database, outbound Slack Web API calls, owner replies, and quiet-status timers. Agent runtimes use a local coordinator client; they do not connect to Slack directly.
 
 ```mermaid
 flowchart LR
-    O[Owner] <--> ST[Slack thread]
-    ST <-->|Web API posts<br/>Socket Mode events| SA[Slack app adapter]
-    SA <--> C[Per-user coordinator daemon]
-    C -->|Thread URL projection| J[Jira dedicated custom field]
-    A[Agent runtime] <--> C
-    A -. optional supplementary access .-> MCP[Slack MCP server]
-    MCP -. read or post .-> ST
-
-    C --- AUTH["Authority: timers, local channel/thread id,<br/>owner-input state, action permits"]
-    J --- DISC["Discoverability only:<br/>never gates work"]
+    O[Owner] <--> T[Slack work thread]
+    T <-->|Web API and one Socket Mode connection| D[Per-user daemon]
+    A[Agent runtime] <--> D
+    D <--> DB[(SQLite run and thread state)]
+    D -->|Optional thread URL| J[Jira custom field]
 ```
 
-The Slack app is the primary integration. Its adapter creates the root message, posts canonical status and completion messages through the Slack Web API, and receives owner thread events through Socket Mode owned by the per-user daemon. One workspace deployment binds the app exclusively to that daemon; a brief two-socket overlap inside the same process is allowed only while replacing a connection. Multiple independent users or daemons must not share the app because Slack may send each payload to any active connection without a predictable distribution pattern ([Slack Socket Mode documentation](https://docs.slack.dev/apis/events-api/using-socket-mode/)). The design adds no per-user app fleet, hosted event router, ingress-daemon mesh, or inbound Slack HTTP event endpoint.
+The components have narrow ownership:
 
-Slack MCP access is supplementary. An MCP read or post cannot create or change the run-to-thread mapping, advance or clear a status deadline, mark owner input handled, or authorize the agent's next work action. An agent that learns about owner input through MCP must still submit that input to the coordinator and receive a coordinator action permit.
+| Component | Responsibility |
+|---|---|
+| Agent runtime adapter | Enable Slack for a run, choose its channel, report work events, check before state-changing work, handle owner input, and finish the run |
+| Per-user daemon | Own Slack connectivity, run state, message scheduling, owner-input state, break-glass state, and Jira backlink attempts |
+| Slack adapter | Create and reply in threads through the Web API; receive invited-channel events through Socket Mode |
+| SQLite store | Persist run/thread mapping, lifecycle, pending owner input, Slack mode, status deadline, and optional Jira backlink state |
+| Jira adapter | Write the canonical Slack thread URL to one configured custom field; never authorize or block work |
+| Local operator CLI | Confirm and request break-glass for one run |
 
-| Concern | Authority | Other paths |
-|---|---|---|
-| `run_id` to local Slack channel/thread identifier | Per-user SQLite database | Slack app and MCP may read the resolved identifier |
-| Jira-linked thread discovery | Dedicated Jira custom field containing the Slack thread URL | SQLite retains the local identifier and pending projection while Jira is unavailable; Jira never grants permits |
-| One-hour quiet-status deadline | Local coordinator clock and timer state | Agent activity may reset the deadline only through a coordinator work event |
-| Owner identity and unhandled input | Local coordinator | Slack app supplies primary events; MCP observations must carry the same Slack message identity for deduplication |
-| Permission to begin the next work action | Local coordinator | Neither the Slack app nor MCP grants permission |
-| Slack API access | Slack app adapter through Socket Mode for inbound events and the Web API for outbound messages | MCP is optional and non-authoritative |
-| Slack app connection for one workspace deployment | One per-user coordinator daemon; brief dual sockets only during same-process handoff | Multiple users or daemons sharing the app are unsupported |
+Slack MCP access, if independently available to an agent, is supplementary and never changes coordinator state.
 
-The coordinator gates every state-changing boundary rather than relying on best-effort polling inside the agent:
+#### One enabled run maps to one thread
 
-```mermaid
-sequenceDiagram
-    participant O as Owner
-    participant S as Slack
-    participant A as Slack app Socket Mode adapter
-    participant C as Local coordinator
-    participant R as Agent runtime
+Starting a Slack-enabled run creates one root message, stores `(run_id, channel_id, thread_ts)`, and schedules the quiet-status deadline. The daemon posts status messages on phase changes, blocker changes, and one hour of silence. Finishing, failing, or cancelling the run posts one completion message and closes the active lifecycle.
 
-    O->>S: Reply in work thread
-    S->>A: Socket Mode event envelope
-    A->>C: ingestOwnerEvent(run_id, event)
-    C->>C: Deduplicate event and increment steering generation
-    R->>C: beforeAction(run_id, boundary)
-    alt Owner input is unhandled
-        C-->>R: blocked(input)
-        R->>C: submitOwnerInputResolution(run_id, input_id, response)
-        C->>A: Post acknowledgement and answer or rejection
-        A->>S: Thread reply
-        A-->>C: Delivery confirmed
-        C->>C: Mark owner input handled
-        R->>C: beforeAction(run_id, boundary)
-    end
-    C-->>R: allowed(permit_id, generation)
-    R->>C: beginAction(permit_id)
-    alt Steering generation is unchanged
-        C-->>R: begun
-        R->>R: Execute state-changing boundary
-    else Later owner input advanced generation
-        C-->>R: stale
-        R->>C: beforeAction(run_id, boundary)
-    end
+The root, status, and completion fields are the fixed fields defined by the PRD. Missing values render as `None`. Slack-disabled runs bypass the coordinator integration and retain existing behavior.
+
+#### Channel selection has two sources
+
+Each repository root `AGENTS.md` must contain exactly one standalone, case-sensitive line:
+
+```text
+Slack default channel: <#name-or-ID>
 ```
 
-`beforeAction` and `beginAction` jointly define the gate. `beforeAction` checks Slack health and pending owner input, then creates a one-shot permit bound to the run, boundary type, and current steering generation. Immediately before execution, `beginAction` atomically rechecks Slack health and required delivery state, then consumes the permit only when it is still issued and the run generation is unchanged. An unavailable dependency leaves the permit unconsumed. A newly deduplicated owner event increments the generation and invalidates every older unconsumed permit. Owner input committed after consumption applies before the following action. Pure local reads and local reasoning require no permit.
+The controlling person's current run instruction may override that value when it unambiguously requests one `#channel-name` or Slack channel ID. Quoted material, ticket text, and incidental mentions do not count. Multiple or ambiguous requested channels stop before thread creation for clarification.
 
-#### Slack-enabled runs fail closed until recovery or local break-glass
+The runtime adapter selects the override or default, resolves it once through Slack, requires an invited non-archived public or private channel, and passes the resulting channel ID to the daemon. The daemon persists only that ID for the run. There is no workspace default, mapping table, cache, or routing service.
 
-A Slack-enabled run pauses state-changing actions when the coordinator is unreachable, Socket Mode is disconnected, or a required Slack message has not been delivered. Recovery restores the gate only after the coordinator can receive owner input and required outbound delivery succeeds.
+#### Owner steering gates state-changing work
 
-```mermaid
-flowchart TD
-    B[State-changing boundary] --> H{Coordinator and Slack healthy?}
-    H -->|yes| G[Evaluate pending owner input]
-    H -->|no| P[Pause state-changing actions]
-    P --> R{Service recovered?}
-    R -->|yes| G
-    R -->|no| L[Wait for explicit local break-glass command]
-    L --> D[Durably disable Slack for this run]
-    D --> I[Record interruption and override]
-    I --> C[Resume without Slack gating]
-    I -. Slack later recovers .-> N[Post reconciliation status to original thread]
-```
+The daemon records replies from the run owner as pending input. Before each state-changing action, the runtime adapter asks the daemon whether the run may proceed:
 
-The supported break-glass path is the local operator CLI. It requires explicit interactive confirmation, then asks the daemon to atomically disable Slack, record the interruption, and persist an audit receipt before work resumes. The receipt identifies the run, interruption, OS user, confirmation time, and disable time. If the transaction fails, the run remains paused. This release trusts the operating-system user: the agent adapter omits break-glass, but a same-user agent process can construct the RPC and bypass the CLI prompt. The prompt is a safety rail, not a security boundary. The original thread mapping remains available for later reconciliation through the existing status schema.
+- `ready`: Slack coordination is healthy and no owner input is pending.
+- `owner_input`: the agent must acknowledge and handle the input, then check again.
+- `unavailable`: the daemon, Socket Mode connection, or required Slack delivery is unavailable; the action remains paused.
+- `slack_disabled`: break-glass has disabled Slack for this run, so its existing non-Slack workflow may continue.
 
-#### Socket Mode refresh uses a brief same-daemon overlap
+This is a v1 coordination gate, not a distributed transaction around external side effects. The adapter performs the check immediately before starting state-changing work. No generation counters, one-shot permits, or multi-step reservation protocol are introduced.
 
-On Slack `warning` or `refresh_requested`, or a planned in-process connection replacement, the daemon opens a new Socket Mode URL before closing the current socket. It waits for the replacement `hello`, verifies `connection_info.app_id`, marks the replacement able to receive and acknowledge envelopes, then closes the old socket. Slack health remains available while either socket is healthy. If replacement setup fails, the daemon keeps the old socket until Slack closes it; only loss of every healthy socket moves Slack-enabled runs into the fail-closed unavailable state.
+#### Break-glass is explicit and scoped to one run
 
-```mermaid
-sequenceDiagram
-    participant O as Old socket
-    participant D as Coordinator daemon
-    participant N as New socket
-    participant S as Slack
+The local operator CLI identifies one run, displays the consequence, and requires confirmation. The daemon persists that run's `slack_disabled` mode before returning success. The run may then continue without Slack gating. Other runs remain unchanged, and the original channel/thread mapping stays available for operator reference.
 
-    O-->>D: warning or refresh_requested
-    D->>S: apps.connections.open
-    S-->>D: replacement WebSocket URL
-    D->>N: connect
-    N-->>D: hello(app_id)
-    D->>D: Verify app ID and mark new socket healthy
-    D->>O: close
-    alt Replacement fails before hello
-        D->>D: Keep old socket healthy
-    else Every socket is lost
-        D->>D: Mark Slack unavailable and fail closed
-    end
-```
+#### Native user services keep the daemon available
 
-Both sockets feed the same ingest path during the overlap, so existing durable event deduplication handles retries or duplicates regardless of which socket delivered them. The overlap never spans two daemon processes. A service or executable restart still uses the existing fail-closed restart window because no socket file-descriptor handoff is introduced.
+macOS setup installs a launchd user agent. Linux setup installs a systemd user service. Each starts at user login and restarts the daemon after an unexpected exit. The service is per-user, not system-wide or repository-specific. Windows supervision is deferred.
 
-#### Administrators install the repo-owned Slack app before headless setup
-
-The repository owns a reusable Slack app manifest declaring Socket Mode, bot scopes, and bot event subscriptions. A workspace administrator creates or updates the Slack app from that manifest, installs it to the intended workspace, generates an app-level token with `connections:write`, and records the assigned Slack app ID and workspace ID as non-secret installation expectations. The first release does not host a browser OAuth callback or provision Slack apps per user.
-
-Setup accepts one complete credential pair from `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`, or reads the pair from a per-user credentials file. It rejects a partial environment pair instead of combining environment and file values. Environment injection is setup-time input: after validation, setup atomically writes the pair to the credentials file so launchd and systemd restarts do not depend on a shell environment. The credentials file must be a regular, non-symlink file owned by the daemon user with mode `0600`; its parent directory must be owned by that user with mode `0700`. Tokens never enter SQLite, a native service definition, logs, or a repository-local `.env` file.
-
-| Validation | Setup proof | Failure |
-|---|---|---|
-| Repository declaration | Parse the checked-in manifest and derive its required bot scopes and event subscriptions | Invalid or incomplete manifest stops setup |
-| Bot and workspace identity | Call [`auth.test`](https://docs.slack.dev/reference/methods/auth.test/) with the `xoxb-` token and compare `team_id` with the configured workspace ID | Invalid token, non-bot identity, or workspace mismatch stops setup |
-| Installed bot scopes | Compare the response's [`x-oauth-scopes`](https://docs.slack.dev/authentication/installing-with-oauth/#appending_scopes) set with every required bot scope in the manifest; extra additive scopes are allowed | Any missing required scope stops setup |
-| Slack app identity | Call [`bots.info`](https://docs.slack.dev/reference/methods/bots.info/) for the returned `bot_id` and compare `bot.app_id` with the configured app ID | App mismatch stops setup |
-| Socket Mode token and app match | Call [`apps.connections.open`](https://docs.slack.dev/reference/methods/apps.connections.open/), connect to the returned URL, and compare `hello.connection_info.app_id` with both the bot app ID and configured app ID before closing the validation socket | Invalid app token, missing `connections:write`, disabled or unreachable Socket Mode, or app mismatch stops setup |
-
-The first release supports work threads in public and private channels where the app is already a member. The manifest requires bot scopes `chat:write`, `channels:history`, `channels:read`, `groups:history`, `groups:read`, and `users:read`; it subscribes to `message.channels` and `message.groups`. `channels:read` and `groups:read` support channel-name resolution and membership validation, while `users:read` supports the `bots.info` app-identity check. The administrator must invite the app to every eligible channel because neither `chat:write.public` nor automated channel joining is included.
-
-The supplied bot and app-level tokens cannot introspect the deployed event-subscription list. Setup validates the repository manifest statically; the live acceptance trial must prove that an owner thread reply reaches the daemon before the installation is declared operational.
-
-#### A runtime channel instruction overrides the repository default
-
-Each repository declares one default Slack channel through exactly one standalone `Slack default channel: <#name-or-ID>` line in its root `AGENTS.md`. The controlling person may override it with an unambiguous natural-language instruction that explicitly routes the current run to one `#channel-name` or immutable Slack channel ID. Mere channel mentions in quoted material, tickets, or task content are not overrides. No explicit request uses the repository default; multiple or ambiguous requested channels require clarification before the coordinator posts a root message. Slack-disabled runs remain unchanged.
-
-```mermaid
-flowchart TD
-    S[Slack-enabled run start] --> O{Runtime instruction names a channel?}
-    O -->|yes| R[Use runtime channel]
-    O -->|no| A[Read repository root AGENTS.md default]
-    A --> F{Default present?}
-    F -->|no| E[Reject Slack run start]
-    F -->|yes| C[Use repository default]
-    R --> V[Validate invited public or private channel]
-    C --> V
-    V -->|accessible| P[Persist channel ID with run and create root message]
-    V -->|unavailable| E
-```
-
-There is no workspace default, repository-to-channel mapping table, or independent routing service. SQLite stores only the channel selected for the run as part of the existing run-to-thread record.
-
-#### Native per-user supervisors keep the daemon alive across sessions
-
-Setup installs one operating-system-native per-user service for the coordinator. macOS uses a launchd user agent; Linux uses a systemd user service. The supervisor starts the daemon when the user logs in and restarts it after an unexpected process exit. The service is neither system-wide nor tied to a repository, worktree, terminal, or agent session.
-
-The canonical daemon source, service definitions, and installation logic remain repository-owned. Runtime state stays user-scoped. The daemon owns the Slack app's Socket Mode connection, quiet-hour timers, owner-input inbox, and run-to-thread mapping after an agent process exits or becomes idle. A later agent session reconnects through user-local IPC and resumes the same run state.
-
-Rerunning setup stages and validates the replacement executable and native service definition without modifying SQLite or user configuration. It atomically replaces each staged file, then immediately asks the native supervisor to restart the daemon. During the restart, coordinator IPC is unavailable, so active Slack-enabled runs pause every state-changing boundary under the existing fail-closed gate. The new daemon completes migrations, restores durable run state, re-establishes Socket Mode and required delivery health, then accepts IPC; agents resume only after those health conditions pass. If health does not recover, setup reports failure, leaves the new executable and service definition installed, and keeps runs paused for operator repair or durable break-glass. It never starts old code against potentially migrated state.
-
-```mermaid
-flowchart TD
-    S[Setup] --> P{Host platform}
-    P -->|macOS| L[Install launchd user agent]
-    P -->|Linux| U[Install systemd user service]
-    P -->|Windows| X[Unsupported in this release]
-    L --> O[OS starts daemon at user login]
-    U --> O
-    O --> D[Per-user coordinator daemon]
-    D -->|Unexpected exit| O
-    D --> DB[(Per-user SQLite database)]
-    D --> SA[Slack Socket Mode owner<br/>brief dual sockets during handoff]
-    D --> T[Timer scheduler]
-    D --> I[Owner-input inbox]
-
-    R1[Repository A agent] <-->|Framed typed RPC<br/>Unix-domain socket| D
-    R2[Repository B agent] <-->|Framed typed RPC<br/>Unix-domain socket| D
-    W[Later session or worktree] <-->|Reconnect by run identity| D
-```
-
-Run IDs must be globally unique within the per-user SQLite database and namespaced with repository and task identity. Database location and Socket Mode acknowledgement and replay policy remain open.
-
-#### SQLite persists coordinator authority across restarts
-
-One per-user SQLite database is the canonical durable state. The daemon is its only writer; agent adapters and the operator CLI mutate state through local RPC. Write-ahead logging, foreign-key enforcement, a busy timeout, and explicit transactions protect concurrent run activity. A schema migration must complete before the daemon accepts IPC or Socket Mode events.
-
-| Table | Key constraints | State owned |
-|---|---|---|
-| `runs` | `run_id` primary key; unique `(channel_id, thread_ts)` | Run locator, owner, lifecycle, Slack mode, steering generation, and next quiet-status deadline |
-| `owner_inputs` | `input_id` primary key; unique `(channel_id, thread_ts, message_ts)` | Owner message payload, handling state, and resolution |
-| `message_deliveries` | `delivery_id` primary key; unique idempotency key per run | Required outbound message, attempts, confirmation, and Slack message identity |
-| `action_permits` | `permit_id` primary key | Run, boundary kind, issued generation, one-shot state, issue time, and consumption time |
-| `interruptions` | `interruption_id` primary key | Availability cause, break-glass transition, local resumption, and reconciliation |
-| `break_glass_receipts` | `receipt_id` primary key; unique `interruption_id` | Run, interruption, OS user, confirmation time, and Slack-disable time |
-| `schema_migrations` | Migration version primary key | Applied schema version and checksum |
-| `jira_backlinks` | `run_id` primary key | Optional Jira issue locator, derived thread URL, custom-field delivery state, attempts, and last error |
-
-The coordinator commits related facts atomically: Slack thread identity with a pending Jira backlink, owner-event deduplication with a steering-generation increment and pending-input state, permit issuance with the gate decision, permit consumption with generation validation, timer advancement with a queued status delivery, and break-glass mode with its interruption and audit receipt. Process exit between those writes cannot expose a partially applied transition.
-
-#### Jira stores a discoverable backlink, not coordinator authority
-
-After Slack creates the root message, the coordinator stores its channel and thread timestamp in SQLite. For a Jira-linked run, it derives the canonical Slack thread URL, records a pending `jira_backlinks` row in the same transaction, and asks the Jira adapter to write that URL to the configured dedicated custom field.
-
-```mermaid
-sequenceDiagram
-    participant C as Coordinator
-    participant DB as SQLite
-    participant S as Slack Web API
-    participant J as Jira adapter
-
-    C->>S: Create root message
-    S-->>C: channel_id, thread_ts
-    C->>DB: Store local identifier and pending backlink
-    alt Run has Jira issue
-        C->>J: Set dedicated custom field to thread URL
-        alt Jira write succeeds
-            J-->>C: Confirmed
-            C->>DB: Mark backlink delivered
-        else Jira unavailable
-            J-->>C: Retryable failure
-            C->>DB: Keep backlink pending
-            C->>C: Continue Slack coordination
-        end
-    end
-```
-
-Jira failure never changes the quiet-status deadline, owner-input state, permit decision, or Slack health. Retrying the same thread URL is idempotent. Runs without a Jira issue do not create a `jira_backlinks` row or call Jira. Each Jira site configuration names an administrator-created field by stable ID. Setup validates that the field exists, is writable for the intended issue scope, and accepts the canonical Slack thread URL; runtime neither creates fields nor requires Jira admin privileges.
+There is one active Socket Mode connection for the configured Slack app. Standard reconnect behavior belongs to the selected Slack SDK; v1 defines no multi-connection handoff or acknowledgement protocol.
 
 ### Program Design
 
-#### Coordinator capabilities stay transport-independent
-
-The per-user daemon owns orchestration state and exposes a narrow local API to every supported agent runtime. Slack payloads remain behind the Slack app adapter; Jira custom-field updates remain behind a backlink adapter. The optional MCP client is not injected as daemon state, timer, supervision, or Jira authority.
+#### Modules
 
 ```text
-agent runtime integration
-├── startSlackRun(input) ──────────────────────▶ coordinator.startRun
-├── recordWorkEvent(event) ────────────────────▶ coordinator.recordWorkEvent
-├── executeStateChangingBoundary(runId, action)
-│   ├── beforeAction(runId, action.boundary) ──▶ issue one-shot permit
-│   ├── beginAction(permitId) ─────────────────▶ consume if generation matches
-│   ├── begun ─────────────────────────────────▶ action.execute
-│   └── blocked, stale, or unavailable ────────▶ pause or recheck
-├── submitOwnerInputResolution(result) ────────▶ coordinator.resolveOwnerInput
-└── finishSlackRun(outcome) ───────────────────▶ coordinator.finishRun
+agent runtime
+└── SlackRunClient
+    ├── resolveChannel
+    ├── startRun
+    ├── recordWorkEvent
+    ├── checkBeforeWrite
+    ├── resolveOwnerInput
+    └── finishRun
 
-per-user coordinator daemon
-├── SQLite operational state
-├── quiet-status scheduler
-├── owner-event inbox and deduplication
-├── action-permit gate
-├── SlackPort
-│   └── SlackAppAdapter ────────────────▶ Socket Mode events and Slack Web API
-└── JiraBacklinkPort
-    └── JiraCustomFieldAdapter ─────────▶ Dedicated Jira custom field
-
-optional agent capability
-└── SlackMcpClient ─────────────────────▶ supplementary Slack reads or posts
+per-user daemon
+├── RunCoordinator
+├── SQLiteRunStore
+├── SlackAdapter
+│   ├── one Socket Mode connection
+│   └── Web API client
+├── StatusScheduler
+├── JiraBacklinkAdapter
+└── LocalOperatorControl
 ```
 
-The logical boundary is:
+`RunCoordinator` contains the use cases. Transport and storage details stay behind the four adapters. The agent runtime has no direct database access. The operator CLI is the only supported caller of break-glass.
+
+#### Coordinator interface
 
 ```ts
-interface SlackWorkCoordinator {
+interface SlackRunCoordinator {
   startRun(input: StartRunInput): Promise<SlackRunRef>;
   recordWorkEvent(event: WorkEvent): Promise<void>;
-  ingestOwnerEvent(event: OwnerThreadEvent): Promise<IngestResult>;
-  beforeAction(runId: RunId, boundary: ActionBoundaryKind): Promise<ActionPermit>;
-  beginAction(permitId: PermitId): Promise<BeginActionResult>;
-  resolveOwnerInput(result: OwnerInputResolution): Promise<void>;
+  checkBeforeWrite(runId: RunId): Promise<WriteGate>;
+  resolveOwnerInput(input: OwnerInputResolution): Promise<void>;
   finishRun(input: FinishRunInput): Promise<void>;
 }
 
-interface JiraBacklinkPort {
-  writeThreadUrl(backlink: JiraThreadBacklink): Promise<void>;
-}
-
 interface LocalOperatorControl {
-  disableSlackWithBreakGlass(runId: RunId): Promise<BreakGlassReceipt>;
+  disableSlackForRun(runId: RunId): Promise<void>;
 }
 
-interface BreakGlassReceipt {
-  receiptId: string;
-  runId: RunId;
-  interruptionId: string;
-  invokedByUid: string;
-  confirmedAt: string;
-  disabledAt: string;
-}
-
-type ActionBoundaryKind =
-  | "write"
-  | "edit"
-  | "command"
-  | "subagent_dispatch"
-  | "external_request"
-  | "final_response";
-
-type ActionPermit =
-  | { kind: "allowed"; permitId: PermitId; generation: number; boundary: ActionBoundaryKind }
-  | { kind: "blocked"; pending: OwnerInput[] }
-  | { kind: "unavailable"; cause: SlackUnavailableCause };
-
-type BeginActionResult =
-  | { kind: "begun"; permitId: PermitId }
-  | { kind: "stale"; permitId: PermitId; currentGeneration: number }
-  | { kind: "unavailable"; cause: SlackUnavailableCause };
+type WriteGate =
+  | { kind: "ready" }
+  | { kind: "owner_input"; input: OwnerInput }
+  | { kind: "unavailable"; reason: string }
+  | { kind: "slack_disabled" };
 ```
 
-All runtime adapters must route the six `ActionBoundaryKind` operations through one boundary hook and must not execute when `beginAction` returns `stale` or `unavailable`. Local file reads and in-process reasoning bypass that hook. A coordinator IPC failure is treated as `unavailable` even though no response can arrive. `LocalOperatorControl` is intentionally absent from the agent runtime interface. SQLite is injected behind the coordinator's state-store boundary.
+The runtime adapter calls `checkBeforeWrite` immediately before state-changing work. It does not start that work for `owner_input` or `unavailable`. After it acknowledges and applies or rejects owner input through `resolveOwnerInput`, it checks again.
 
-#### Channel resolution is one adapter-level precedence check
+#### Durable state
 
-The runtime adapter already has the repository root and the controlling person's run instruction. It requires exactly one standalone line whose case-sensitive prefix is `Slack default channel: ` in the root `AGENTS.md`; zero or multiple matching lines are invalid repository configuration. The host agent interprets only the controlling person's current instruction and returns `none`, one explicit channel reference, or `ambiguous`; this uses the agent already handling the run rather than a separate extraction service. The adapter rejects `ambiguous`, applies a single override over the repository default, resolves and validates the selected reference through Slack, and passes only the ID to `startRun`.
+SQLite is stored in the operating-system user's application-state directory and written only by the daemon.
+
+| Table | Minimum state |
+|---|---|
+| `runs` | Run ID, owner Slack user ID, channel ID, thread timestamp, lifecycle, Slack mode, and next quiet-status deadline |
+| `owner_inputs` | Run ID, Slack message identity, message text, received time, and handled time |
+| `jira_backlinks` | Run ID, Jira issue reference, thread URL, and pending or delivered state |
+
+The Slack message identity is unique within `owner_inputs`, so a retried event does not create a second owner instruction. SQLite transactions cover each individual state transition. v1 does not add action-permit, interruption, delivery-attempt, or connection-handoff tables.
+
+#### Run lifecycle
 
 ```text
-resolveSlackChannel(runtimeInstruction, repositoryAgentsMd)
-├── require exactly one `Slack default channel: <ref>` line
-│   ├── missing directive ─────────────────────▶ return invalid_repository_config
-│   └── duplicate directives ──────────────────▶ return invalid_repository_config
-├── extract explicit override from controlling person's instruction
-│   ├── none ──────────────────────────────────▶ use repository default
-│   ├── one name or ID ────────────────────────▶ use runtime override
-│   └── multiple or ambiguous ─────────────────▶ return ambiguous_channel_override
-├── selected reference is a name
-│   └── paginate conversations.list(public_channel, private_channel)
-│       └── require one exact non-archived member-channel match
-├── selected reference is an ID
-│   └── conversations.info(channelId)
-│       └── require non-archived public/private channel membership
-└── startRun(resolvedChannelId)
+start Slack-enabled run
+├── resolve channel from run override or root AGENTS.md
+├── create root Slack message
+├── persist run and thread identity
+└── if Jira-linked, record and attempt backlink
+
+active run
+├── record phase or blocker changes
+├── post status after changes or one quiet hour
+├── receive owner replies as pending input
+└── check coordinator before state-changing work
+
+finish run
+├── post completion message
+└── persist terminal lifecycle
 ```
 
-Name lookup consumes every cursor page from `conversations.list`, collects exact `name` or `name_normalized` matches, and requires exactly one non-archived member channel. ID lookup validates the referenced conversation directly with `conversations.info`. Resolution runs once before `startRun`; it creates no channel cache or mapping table. Once `startRun` persists the ID, later status, steering, completion, restart, and reconciliation paths use that immutable run-to-thread mapping even if Slack later renames the channel.
+If the daemon or Slack connection is unavailable, or a required post fails, `checkBeforeWrite` returns `unavailable`. Recovery returns the run to normal checks. A confirmed break-glass changes only the selected run to `slack_disabled`.
 
-#### Setup validates headless credentials before installing the native user service
+#### Slack and Jira adapters
 
-The setup entrypoint validates one administrator-installed Slack app before activating its per-user daemon, then delegates service-manager operations to a platform adapter. The macOS adapter installs and loads a launchd user-agent definition with restart-on-crash behavior. The Linux adapter installs a systemd user unit, reloads the user manager, and enables the unit so it starts at login and restarts after a crash. An unsupported Windows host returns an explicit setup error without writing credentials or installing a partial service.
+The repository ships a Slack app manifest for invited public and private channels. It uses bot scopes `chat:write`, `channels:history`, `channels:read`, `groups:history`, `groups:read`, and `users:read`; bot events are `message.channels` and `message.groups`; the app token has `connections:write`.
 
-```text
-setupCoordinatorService(input)
-├── load repository Slack app manifest
-├── load expected app ID and workspace ID
-├── resolve complete credential pair
-│   ├── SLACK_BOT_TOKEN + SLACK_APP_TOKEN
-│   ├── protected per-user credentials file
-│   └── partial or absent pair ──▶ return invalid_credentials
-├── validate Slack installation
-│   ├── auth.test ──▶ bot identity + expected workspace
-│   ├── x-oauth-scopes ──▶ every manifest-required bot scope
-│   ├── bots.info ──▶ expected app identity
-│   └── apps.connections.open + hello ──▶ Socket Mode + same app identity
-├── atomically persist validated credentials as mode 0600
-├── detect host platform
-├── fresh install
-│   ├── darwin ──▶ install and load launchd user agent
-│   ├── linux ───▶ install, reload, and enable systemd user service
-│   └── win32 ───▶ return unsupported_platform
-└── update existing install
-    ├── stage and validate executable and native service definition
-    ├── atomically replace executable and service definition
-    ├── preserve SQLite database and user configuration
-    ├── restart native user service immediately
-    └── await coordinator health
-        ├── healthy ──▶ report success and release fail-closed pause
-        └── unhealthy ──▶ report failure, retain new version, keep runs paused
-```
+Setup takes a complete bot/app token pair from setup-time environment variables or protected per-user configuration, stores credentials outside repositories and SQLite, and never reads a repository-local `.env`. It validates that the configured app and workspace can open Socket Mode before enabling the user service. Browser OAuth and automatic app provisioning are out of scope.
 
-Credential validation errors identify the failed check without printing either token. Environment values become the new credentials file only after every validation succeeds; a failed candidate leaves an existing credentials file unchanged. The platform adapters own service-manager commands and definitions. The coordinator process receives the same executable path, user-local configuration, credentials path, database path, and socket path on both supported platforms; it contains no launchd or systemd branches.
-
-Setup reports update success only after the restarted daemon accepts IPC with durable state loaded and Slack health restored. A failed post-update health check leaves the new executable and service definition in place; setup does not automatically roll back potentially incompatible code after migrations may have run. Agent adapters remain fail-closed until an operator repairs the installation or uses durable break-glass.
-
-#### One connection manager performs same-process make-before-break handoff
-
-```text
-handleSocketRefresh(reason)
-├── apps.connections.open(appToken)
-├── connect replacement socket
-├── await hello and verify expected app ID
-├── attach replacement to shared envelope ingest
-├── mark replacement healthy
-└── close old socket
-    ├── replacement fails before healthy ──▶ retain old socket
-    └── no healthy socket remains ─────────▶ publish unavailable health
-```
-
-The connection manager serializes refresh attempts so only one replacement is pending. Both temporary sockets share one SQLite-backed ingest and deduplication path; they do not own separate run state. Health is the presence of at least one verified socket, not a particular socket identity. Planned daemon process updates do not use this path and remain governed by the service-restart design.
-
-#### A filesystem-protected Unix-domain socket carries typed local RPC
-
-The daemon listens on one Unix-domain socket inside a per-user runtime directory. The directory is mode `0700` and the socket is mode `0600`; the daemon exposes no loopback TCP or HTTP listener. The filesystem boundary authenticates the operating-system user, not an individual process.
-
-Each frame is a four-byte big-endian payload length followed by one UTF-8 JSON request or response. The discriminated method union supplies message types; `protocolVersion` supports explicit compatibility checks and `requestId` correlates exactly one response. Malformed frames, unsupported versions, unknown methods, and invalid payloads return typed errors without invoking coordinator logic.
-
-```ts
-interface RpcRequest<M extends string, P> {
-  protocolVersion: 1;
-  requestId: string;
-  method: M;
-  params: P;
-}
-
-interface BeforeActionInput {
-  runId: RunId;
-  boundary: ActionBoundaryKind;
-}
-
-interface BeginActionInput {
-  permitId: PermitId;
-}
-
-type CoordinatorRpcRequest =
-  | RpcRequest<"start_run", StartRunInput>
-  | RpcRequest<"record_work_event", WorkEvent>
-  | RpcRequest<"before_action", BeforeActionInput>
-  | RpcRequest<"begin_action", BeginActionInput>
-  | RpcRequest<"resolve_owner_input", OwnerInputResolution>
-  | RpcRequest<"finish_run", FinishRunInput>
-  | RpcRequest<"disable_slack_with_break_glass", { runId: RunId }>;
-
-type RpcResponse<T> =
-  | { protocolVersion: 1; requestId: string; ok: true; result: T }
-  | { protocolVersion: 1; requestId: string; ok: false; error: RpcError };
-
-interface RpcError {
-  code:
-    | "invalid_frame"
-    | "unsupported_version"
-    | "unknown_method"
-    | "invalid_params"
-    | "not_found"
-    | "conflict"
-    | "unavailable";
-  message: string;
-}
-```
-
-The agent adapter omits `disable_slack_with_break_glass`; the local operator CLI requires explicit interactive confirmation before presenting that request. The daemon commits the mode change, interruption, and audit receipt in one SQLite transaction and returns the persisted receipt. Because the filesystem boundary trusts the OS user, any same-user process can manually construct the RPC; the confirmation cannot be treated as authorization. The CLI first starts or recovers the daemon through its supervisor. If the daemon cannot commit the transaction, the run remains paused.
+For a Jira-linked run, the Jira adapter writes the canonical thread URL to the configured dedicated custom field by stable field ID. A failed write remains pending in SQLite and does not affect the Slack write gate. Runs without Jira do not call the adapter.
 
 ### Type Definitions
 
-The SQLite schema exposes this logical state to the coordinator:
-
 ```ts
-interface RunLocator {
-  runId: RunId;
-  repositoryRoot: string;
-  worktreeRoot: string;
-  taskDirectory: string;
-}
+type SlackMode = "enabled" | "slack_disabled";
+type RunLifecycle = "active" | "completed" | "failed" | "cancelled";
 
-interface SlackInstallationConfig {
-  expectedAppId: string;
-  expectedTeamId: string;
-  credentialsFilePath: string;
-}
-
-interface SlackCredentialsFileV1 {
-  version: 1;
-  botToken: string;
-  appToken: string;
-}
-
-type SlackChannelRef =
-  | { kind: "name"; name: string }
-  | { kind: "id"; channelId: string };
-
-type ChannelOverrideExtraction =
-  | { kind: "none" }
-  | { kind: "selected"; channel: SlackChannelRef }
-  | { kind: "ambiguous"; candidates: SlackChannelRef[] };
-
-interface ResolvedSlackChannel {
-  channelId: string;
-  source: "runtime_instruction" | "repository_agents_md";
-}
-
-interface JiraIssueRef {
-  siteId: string;
-  issueKey: string;
-}
-
-interface JiraSiteConfig {
-  siteId: string;
-  baseUrl: string;
-  slackThreadFieldId: string;
-}
-
-interface JiraThreadBacklink {
-  issue: JiraIssueRef;
-  threadUrl: string;
-}
-
-interface SlackRunState {
-  run: RunLocator;
+interface StartRunInput {
+  runId: string;
   ownerSlackUserId: string;
   channelId: string;
+  work: string;
+  goal: string;
+  scope: string;
+  links: string[];
+  jiraIssue?: { siteId: string; issueKey: string };
+}
+
+interface SlackRunRef {
+  runId: string;
+  channelId: string;
   threadTs: string;
-  lifecycle: "active" | "completed" | "failed" | "cancelled";
-  steeringGeneration: number;
-  slackMode: "enabled" | "paused_unavailable" | "disabled_break_glass";
-  nextQuietStatusDueAt: string;
-  pendingOwnerInputIds: string[];
-  interruptions: SlackInterruption[];
-  jiraIssue: JiraIssueRef | null;
 }
 
-interface SlackInterruption {
-  interruptionId: string;
-  startedAt: string;
-  cause: SlackUnavailableCause;
-  breakGlassAt: string | null;
-  resumedWithoutSlackAt: string | null;
-  reconciledMessageTs: string | null;
+interface OwnerInput {
+  runId: string;
+  channelId: string;
+  threadTs: string;
+  messageTs: string;
+  text: string;
 }
-
-type SlackUnavailableCause =
-  | "coordinator_unreachable"
-  | "socket_mode_disconnected"
-  | "required_delivery_unconfirmed";
 ```
-
-The Slack message identity `(channelId, threadTs, messageTs)` is the owner-input idempotency key. Delivery through both the Slack app and MCP converges on one owner-input record. The Jira custom field stores the canonical thread URL only as a discoverability projection; SQLite retains the channel/thread identifier and pending write state required for live coordination and outage recovery.
 
 ### Configuration
 
-- Install a launchd user agent on macOS and a systemd user service on Linux. Configure each to start the coordinator at user login and restart it after an unexpected exit.
-- Keep the service per-user. Setup must not require or install a system-wide daemon.
-- On update, preserve the SQLite database and user configuration, atomically replace the executable and native service definition, restart the daemon immediately, and wait for coordinator and Slack health before reporting success. Failed health leaves the new version installed and Slack-enabled runs paused; setup must not roll back automatically.
-- Store exactly one SQLite database in the operating-system user's application-state directory, never in a repository or worktree. The exact platform path remains open.
-- Enable write-ahead logging, foreign keys, and a bounded busy timeout on every connection.
-- Run ordered, transactional schema migrations before opening Socket Mode or local IPC.
-- Place the Unix-domain socket in the per-user runtime directory with a mode-`0700` parent and mode-`0600` socket; open no TCP listener.
-- Ship the canonical Slack app manifest with Socket Mode enabled, bot scopes `chat:write`, `channels:history`, `channels:read`, `groups:history`, `groups:read`, and `users:read`, and bot events `message.channels` and `message.groups`. Public and private channels are supported only when the app is a member.
-- Resolve a Slack-enabled run's channel from exactly two sources: an unambiguous natural-language override in the controlling person's current run instruction, then exactly one standalone `Slack default channel: <#name-or-ID>` line in the repository root `AGENTS.md`. A mere mention is not an override; multiple or ambiguous requested channels require clarification before `startRun`.
-- Require non-secret expected Slack app and workspace IDs in installation configuration.
-- Accept `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` only as a complete setup-time pair, or read both from the protected per-user credentials file. Never load repository-local `.env` files.
-- Keep Slack credentials outside SQLite, repositories, and native service definitions. Require a daemon-user-owned mode-`0600` regular file under a mode-`0700` per-user directory; reject symlinks and broader permissions.
-- Validate bot identity, expected workspace and app IDs, every manifest-required bot scope, `connections:write` behavior, and the Socket Mode `hello` app ID before activating the service. Never print token values.
-- Bind each workspace Slack app exclusively to one per-user daemon. Permit two Socket Mode sockets only during a serialized same-process make-before-break handoff; close the old socket after the replacement `hello` passes app-identity validation.
-- Configure each Jira site with the stable field ID of an administrator-created dedicated Slack-thread field. Setup must validate existence, writability for the intended issue scope, and acceptance of the canonical Slack thread URL.
-- Keep Jira credentials outside SQLite. Runtime may edit the configured issue field but must not require Jira administration privileges, create fields, or discover them by name.
-- Treat the Unix-socket owner as trusted for this release. The CLI confirmation is mandatory in the supported path, but the daemon does not require stronger caller authentication.
+- One Slack app and one bot/app token pair per daemon installation.
+- One user-scoped SQLite database outside repositories and worktrees.
+- One launchd user agent on macOS or systemd user service on Linux.
+- One root `AGENTS.md` directive per repository: `Slack default channel: <#name-or-ID>`.
+- Optional Jira site configuration with a dedicated custom-field ID.
+- No inbound HTTP endpoint, repository-local credential file, or system-wide daemon.
 
 ### Local Patterns
 
-- Preserve independent skill use across Claude Code, Codex, Oh My Pi, Pi, and portable installations; optional Atomic integration consumes the same canonical resources (`shared/CONVENTIONS.md:5-9`; `scripts/install.mjs:24-40,146-216`).
-- Keep canonical instructions and templates under `skills/delivery/<name>/`, then let runtime generation adapt worker mechanics rather than product behavior (`scripts/lib/build.mjs:15-35,70-120`).
-- Treat static/import checks as local contract evidence and require a live Slack trial before claiming hosted delivery or inbound steering works (`docs/testing.md:5-41`).
+- Keep canonical skills and templates under `skills/delivery/<name>/`; runtime generation adapts mechanics without changing product behavior (`scripts/lib/build.mjs:15-35,70-120`).
+- Preserve independent use across Claude Code, Codex, Oh My Pi, Pi, and portable installations (`scripts/install.mjs:24-40,146-216`).
+- Require a live Slack acceptance trial before claiming outbound delivery or inbound steering works (`docs/testing.md:5-41`).
 
 ### What We're Not Doing
 
-- Non-owner comments or steering.
-- Jira issue mutations other than writing the Slack thread URL to the dedicated custom field.
-- Jira labels and GitHub, Linear, or other ticket-system backlinks.
-- Windows daemon supervision and named-pipe IPC.
-- Runtime Jira custom-field creation or name-based field discovery.
-- Chat transports other than Slack.
-- Automatic Slack enablement for every work run.
-- Multiple independent users or daemons sharing one Slack app.
-- Per-user Slack app provisioning, a hosted Socket Mode event router, or an ingress-daemon mesh.
-- Browser-based Slack OAuth installation or token refresh.
-- Direct messages and multi-person direct messages.
-- Workspace-level default channels, repository-to-channel mapping tables, or a separate channel-routing subsystem.
-- Steady-state multi-socket operation, active-active daemon processes, or socket handoff across a daemon executable restart.
+- Non-owner steering, direct messages, or multi-person direct messages.
+- Chat systems other than Slack.
+- Multiple daemons sharing one Slack app or multiple simultaneous Socket Mode connections.
+- Socket handoff, custom acknowledgement, replay, or updater/rollback protocols.
+- Generation-fenced permits or distributed side-effect transactions.
+- Hosted Slack ingress, browser OAuth, or automatic app provisioning.
+- Workspace channel defaults, channel mapping tables, caches, or routing services.
+- Jira mutations other than the dedicated thread backlink.
+- Windows service support.
 
 ### Execution DAG
 
@@ -587,43 +236,27 @@ No execution-plan artifact exists. The task's fixed `prd` workflow continues fro
 
 ## Human Review
 
-### Review targets
+### Review Targets
 
-- System ownership, state flow, and Slack boundary.
-- Program module boundaries and dependency seams.
+- System ownership and the one-daemon, one-connection boundary.
+- One-thread-per-run state and channel selection.
+- Owner steering, fail-closed writes, and per-run break-glass.
+- Small module and storage boundaries.
 
 ### Verify
 
-- [ ] Confirm the design preserves the PRD's fixed message fields and timing rules.
-- [ ] Confirm inbound Slack events use Socket Mode only and no HTTP event endpoint is introduced.
-- [ ] Confirm owner steering takes effect before every write, edit, command, subagent dispatch, external request, and final response.
-- [ ] Confirm an unavailable coordinator, Socket Mode connection, or required Slack delivery pauses state-changing actions until recovery or durable local break-glass.
-- [ ] Confirm one per-user SQLite database durably owns coordinator-only timers, owner input, permits, deduplication, interruptions, and the local channel/thread identifier.
-- [ ] Confirm setup installs a launchd user agent on macOS or a systemd user service on Linux, and each starts at login and restarts crashes without a system-wide daemon.
-- [ ] Confirm an update preserves SQLite and configuration, atomically replaces the executable and native service definition, restarts immediately, pauses active Slack-enabled runs fail-closed, and resumes them from durable state only after health is restored.
-- [ ] Confirm failed post-update health reports setup failure, retains the new executable and service definition, and leaves Slack-enabled runs fail-closed for operator repair or break-glass without automatic rollback.
-- [ ] Confirm one per-user daemon exclusively owns the workspace app while same-process Socket Mode refresh briefly overlaps old and replacement sockets until the replacement `hello` is verified.
-- [ ] Confirm handoff health stays available while either socket is healthy, both sockets share durable deduplication, and loss of every healthy socket triggers the existing fail-closed gate.
-- [ ] Confirm administrators install the repo-owned manifest and headless setup validates the expected app, workspace, bot scopes, and Socket Mode access from a complete injected token pair.
-- [ ] Confirm environment-supplied tokens are persisted only to a daemon-user-owned mode-`0600` credentials file and no repository-local `.env`, SQLite row, service definition, or log contains a Slack token.
-- [ ] Confirm the app supports invited public and private channels with `chat:write`, `channels:history`, `channels:read`, `groups:history`, `groups:read`, and `users:read`, subscribes to `message.channels` and `message.groups`, and does not request automatic-join or public-post bypass scopes.
-- [ ] Confirm the repository default is exactly one standalone `Slack default channel: <#name-or-ID>` line in root `AGENTS.md`; missing or duplicate directives fail as invalid configuration even when a runtime override is present.
-- [ ] Confirm only an unambiguous natural-language request from the controlling person overrides the repository default; quoted mentions and task content do not, while multiple or ambiguous requested channels stop before thread creation for clarification.
-- [ ] Confirm the adapter resolves and validates the channel once before `startRun`, persists only the resolved channel ID, and introduces no workspace default, cache, mapping table, or routing subsystem.
-- [ ] Confirm a Jira-linked run projects its Slack thread URL to a dedicated custom field without giving Jira authority over timers, steering, or permits.
-- [ ] Confirm Jira outages leave the backlink pending without pausing Slack coordination and non-Jira runs stay local-only.
-- [ ] Confirm agent adapters and the operator CLI use framed typed request/response RPC over a filesystem-protected Unix-domain socket with no TCP listener.
-- [ ] Confirm Jira setup validates an administrator-created field by stable per-site ID and runtime requires no Jira admin privileges.
-- [ ] Confirm break-glass requires interactive CLI confirmation and a durable audit receipt while explicitly treating same-user RPC callers as trusted.
-- [ ] Confirm `beforeAction` issues a one-shot permit and `beginAction` consumes it only when the steering generation is unchanged.
-- [ ] Confirm Slack-disabled runs retain existing workflow behavior.
+- [ ] Confirm one per-user daemon owns one Socket Mode connection and one SQLite database.
+- [ ] Confirm every Slack-enabled run persists exactly one channel/thread mapping.
+- [ ] Confirm the runtime override takes precedence over exactly one root `AGENTS.md` default channel directive.
+- [ ] Confirm owner input is handled before the next state-changing action.
+- [ ] Confirm unavailable Slack coordination blocks state-changing work until recovery or explicit per-run break-glass.
+- [ ] Confirm break-glass persists `slack_disabled` only for the selected run.
+- [ ] Confirm optional Jira backlink failure does not block Slack coordination.
+- [ ] Confirm launchd and systemd supervise the per-user daemon on macOS and Linux.
+- [ ] Confirm the design contains no multi-connection handoff, custom ACK policy, updater/rollback protocol, or generation-fenced permit machinery.
+- [ ] Confirm Slack-disabled runs retain existing behavior.
 
-### Known limits
-- SQLite file location, driver packaging, migrations, and backup policy.
-- Socket Mode acknowledgement timing, retry exhaustion, and replay ordering.
-- Bot and app-level tokens cannot introspect deployed event subscriptions; the live acceptance trial must detect manifest drift.
-- One workspace deployment supports one per-user daemon owning the Slack app connection; multiple independent users or daemons sharing that app are unsupported.
-- Same-user agent processes can construct the break-glass RPC and bypass the CLI confirmation; this is an accepted release limitation.
-- A crash after permit consumption but before an external effect is observed requires action-specific idempotency or reconciliation.
-- Jira credential authorization, validation scope, existing-value conflicts, and retry guarantees.
-- Slack retry schedule, replay ordering, and reconciliation delivery guarantees.
+### Known Limits
+
+- The v1 write gate cannot make an external side effect atomic with a late-arriving Slack message.
+- Windows supervision, non-owner participation, additional chat systems, and shared Slack app ownership are deferred.

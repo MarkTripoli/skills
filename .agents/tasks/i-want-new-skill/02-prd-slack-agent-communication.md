@@ -1,7 +1,7 @@
 ---
 type: design-prd
 task: i-want-new-skill
-summary: "This PRD defines one optional Slack thread per agent work run with fixed updates and owner steering in invited public or private channels. A repository default is one `Slack default channel: <#name-or-ID>` line in root `AGENTS.md`; an unambiguous natural-language override wins, resolves once, and persists the validated ID. One per-user daemon exclusively owns each workspace app and uses a brief make-before-break socket overlap during connection refresh. Headless setup validates an administrator-installed app and protected tokens; Jira receives an optional backlink, while browser OAuth, direct messages, Windows services, non-Jira systems, workspace routing configuration, steady multi-connection operation, and shared app ownership are deferred."
+summary: "This PRD defines an optional Slack thread for each agent work run. One per-user daemon owns one Socket Mode connection and SQLite run/thread state. A repository declares one default channel in root AGENTS.md, an unambiguous natural-language run instruction may override it, the owner may steer work from the thread, and Slack-enabled state-changing work fails closed unless the local operator explicitly disables Slack for that run. Jira may receive a non-authoritative thread backlink. macOS and Linux use native per-user supervision."
 repo: MarkTripoli/skills
 branch: i-want-new-skill
 sha: 472270dd717873b0f4fb002487ca0fa1abe92607
@@ -13,180 +13,133 @@ Inputs: [task request](task.md) and [current-state research](01-research-agent-c
 
 ### Problem to Solve
 
-Agents can perform long-running work without giving the person controlling them a simple Slack view of progress or a way to respond.
+Long-running agent work lacks one owner-visible place for progress, questions, and redirection.
 
-- Start, status, and completion updates do not appear in one owner-visible thread.
-- The owner must inspect separate runtime tools and artifacts to understand or redirect active work.
-- Teams that do not configure Slack must keep their existing workflow unchanged.
-- A Jira-linked run needs a discoverable Slack-thread backlink without making Jira part of live coordination.
+- The owner must inspect separate runtime tools and artifacts to follow active work.
+- The agent has no durable Slack thread mapping after a process or terminal exits.
+- Slack outages must not allow Slack-enabled work to continue without owner visibility.
+- Jira-linked work needs a discoverable Slack backlink without making Jira part of coordination.
 
 ### Success Measures
 
-Initial success is a deterministic acceptance trial.
-
-- Every Slack-enabled trial run produces one thread with a start update, required status updates, and a completion update.
-- An owner reply is acknowledged and reflected in the work before the agent starts its next work action.
-- Equivalent runs with Slack disabled proceed without Slack setup or changed workflow behavior.
-- A Slack-enabled run pauses state-changing work during an integration outage; an explicit local break-glass resumes it without Slack and the original thread later records the interruption.
-- Every Jira-linked trial writes its Slack thread URL to the dedicated Jira custom field; Jira outages delay that backlink without stopping Slack coordination.
+- Each Slack-enabled trial run creates exactly one thread with start, status, and completion updates.
+- An owner reply is acknowledged and applied before the agent's next state-changing action.
+- A Slack-enabled run pauses state-changing work when the daemon or Slack connection is unavailable.
+- An explicit local break-glass command disables Slack only for the selected run and allows it to continue.
+- Slack-disabled runs retain their existing behavior.
+- A Jira-linked run writes its Slack thread URL to the configured Jira custom field without making Jira availability a work gate.
 
 ### Proposed Solution
 
-Add an optional Slack thread to an individual work run. The person controlling the agent becomes the thread owner.
+Add one optional Slack thread to a work run.
 
-- The agent posts fixed start, status, and completion message types.
-- The agent posts status when work changes and after one quiet hour.
-- The owner can ask questions or redirect active work from the thread.
-- Every fixed field appears in every message of its type; empty fields read `None`.
-- Slack-enabled work pauses when owner steering or required message delivery is unavailable.
-- Jira-linked runs publish the Slack thread URL to a dedicated Jira custom field; runs without Jira remain local-only.
-- One workspace deployment assigns one Slack app exclusively to one per-user daemon; that daemon may briefly overlap old and replacement Socket Mode sockets during connection refresh.
-- An administrator installs the repo-owned Slack app manifest; headless setup accepts injected bot and Socket Mode tokens and rejects an installation that does not match the expected app, workspace, scopes, and Socket Mode access.
-- Work threads may use public or private channels after an administrator invites the app; direct messages and multi-person direct messages are not supported.
-- Channel selection uses the repository root `AGENTS.md` default unless the person controlling the run explicitly names a different channel; both sources accept `#channel-name` or an immutable Slack channel ID.
+- One per-user daemon owns one Slack app Socket Mode connection and one user-scoped SQLite database.
+- SQLite stores each enabled run's owner, channel, thread timestamp, lifecycle, pending owner input, Slack mode, and optional Jira backlink state.
+- The repository default is exactly one standalone `Slack default channel: <#name-or-ID>` line in root `AGENTS.md`.
+- An unambiguous natural-language instruction from the person controlling the run may select another channel for that run.
+- The daemon receives owner replies, posts canonical updates, and exposes run state to agent runtime adapters.
+- Agent adapters check the daemon before state-changing work. Unavailable Slack coordination blocks the action unless break-glass has disabled Slack for that run.
+- macOS uses a launchd user agent; Linux uses a systemd user service.
 
 ### Alternative Solutions Considered
 
-- Enable Slack for every work run - rejected because Slack must remain optional.
-- Post only when work changes - rejected because a quiet run gives the owner no liveness signal.
-- Allow free-form updates - rejected because the requested message shape must be deterministic.
-- Store the Slack thread URL in a Jira label - rejected because labels are categorization metadata, not a dedicated backlink field.
-- Create or discover the Jira custom field at runtime - rejected because runtime shall not require Jira administration privileges.
-- Add a workspace default, repository mapping table, or routing service - rejected because the two instruction sources already define deterministic precedence.
-- Require a fixed runtime directive or structured option - rejected because the controlling person shall be able to express the override as an unambiguous natural-language instruction.
+- Enable Slack for every run — rejected because Slack must remain optional.
+- Use an HTTP Events API endpoint — rejected because v1 is a local per-user service with no hosted ingress.
+- Let every agent process own Slack directly — rejected because thread state and owner input must survive agent process exits.
+- Share one Slack app across independent daemons — rejected because v1 has one clear connection and state owner.
+- Add workspace defaults or repository mapping tables — rejected because the run instruction and root `AGENTS.md` already provide deterministic precedence.
+- Make Jira authoritative — rejected because Jira is optional discovery metadata, not live coordination.
 
 ### Solution Details
 
-#### One owner starts one work thread
+#### One enabled run owns one Slack thread
 
-- WHEN the person controlling the agent enables Slack for a work run, the system shall record that person as owner and create one thread.
-- WHEN the system creates the thread, the root message shall show `Work`, `Goal`, `Scope`, `Owner`, `Links`, and `Started at` in that order.
-- IF Slack is not enabled for a work run, THEN the system shall proceed without Slack setup or Slack messages.
+- WHEN the person controlling a run enables Slack, the system shall record that person as owner and create exactly one root message.
+- The root message shall show `Work`, `Goal`, `Scope`, `Owner`, `Links`, and `Started at`.
+- Status messages shall show `Current work`, `Completed since last update`, `Decisions`, `Blockers`, and `Up next`.
+- The system shall post status when the workflow phase changes, a blocker begins or clears, or an active run has been quiet for one hour.
+- The completion message shall show `Outcome`, `Completed work`, `Decisions`, `Unresolved items`, `Evidence`, `Links`, and `Finished at`.
+- Empty fixed fields shall render as `None`.
+- IF Slack is not enabled, THEN the run shall proceed without Slack setup or messages.
 
 #### The run instruction overrides the repository channel default
 
-- Each repository shall declare one default Slack channel with exactly one standalone `Slack default channel: <#name-or-ID>` line in its root `AGENTS.md`.
-- WHEN the person controlling a Slack-enabled run unambiguously asks in natural language to route the current run to one `#channel-name` or Slack channel ID, the system shall use that reference for the run.
-- Channel references appearing only in quoted text, ticket content, or task material shall not override the repository default.
-- IF the controlling person's request names multiple channels or is ambiguous, THEN the system shall ask for clarification before creating the Slack thread.
-- IF the run instruction does not supply a Slack channel reference, THEN the system shall use the repository's `AGENTS.md` default.
-- BEFORE creating the root message, the system shall resolve a name once, validate that the app is a member of the public or private channel, and persist the resolved channel ID for the run.
-- IF neither source resolves to an accessible invited public or private channel, THEN the system shall reject Slack run creation before posting the root message.
-- A later channel rename shall not change an active run's persisted channel ID.
-- The system shall not use a workspace default, repository-to-channel mapping table, channel cache, or separate routing subsystem.
-- A missing or repeated `Slack default channel:` directive shall be invalid repository configuration even when the run supplies an override.
+- Each repository shall contain exactly one standalone, case-sensitive `Slack default channel: <#name-or-ID>` line in root `AGENTS.md`.
+- An unambiguous natural-language request from the person controlling the run may select one `#channel-name` or Slack channel ID for that run.
+- Quoted text, ticket content, and incidental channel mentions shall not override the default.
+- Multiple or ambiguous requested channels shall require clarification before the thread is created.
+- Without an override, the system shall use the repository default.
+- Before creating the thread, the system shall resolve the selected reference to an invited public or private channel and persist its Slack channel ID.
+- Missing or duplicate default directives and inaccessible channels shall reject Slack run creation.
 
-#### Administrators provision Slack before headless setup
+#### One daemon owns Slack coordination
 
-- The repository shall provide the canonical Slack app manifest.
-- A workspace administrator shall create or update the app from that manifest, install it, and generate the bot token and Socket Mode app token.
-- The administrator shall invite the app to each public or private channel eligible for work threads.
-- Setup shall accept the complete token pair from environment variables or a daemon-user-owned mode-`0600` per-user credentials file.
-- Setup shall reject tokens for the wrong app or workspace, missing required bot scopes, or unavailable Socket Mode access before enabling Slack-backed work.
-- Setup shall not read repository-local `.env` files.
-- Browser-based OAuth installation is deferred.
+- One per-user daemon shall own one Slack app Socket Mode connection and all Slack-enabled run state for that operating-system user.
+- The daemon shall use the Slack Web API for outbound messages and Socket Mode for owner replies; v1 shall expose no inbound HTTP endpoint.
+- The Slack app shall be invited to each supported public or private channel before use.
+- Setup shall accept the bot and app tokens from protected per-user configuration and shall not read repository-local `.env` files.
+- macOS and Linux setup shall install native per-user supervision that starts the daemon at login and restarts it after a crash.
 
-#### Jira-linked runs publish one discoverable backlink
+#### The owner can steer active work
 
-- WHEN a Slack-enabled run is linked to a Jira issue, the system shall write the canonical Slack thread URL to the configured dedicated Jira custom field.
-- WHEN the Jira field already contains that same URL, the write shall succeed without creating another value.
-- IF Jira is unavailable when the thread is created, THEN the system shall retain the pending backlink locally and retry without pausing Slack coordination.
-- Jira shall not control status timers, owner-input handling, action permits, or interruption recovery.
-- IF a run has no Jira issue, THEN it shall remain local-only and perform no Jira operation.
-- The system shall not store the Slack thread URL in a Jira label.
-- An administrator shall create the dedicated Jira custom field and configure its stable field ID for that Jira site.
-- BEFORE Jira-linked runs are enabled for a site, setup shall validate that the configured field exists, is writable for the intended issues, and accepts the canonical Slack thread URL.
-- Runtime shall not require Jira administration privileges, create the field, or discover it by name.
+- WHEN the owner asks a work-related question, the agent shall acknowledge and answer it in the thread before its next state-changing action.
+- WHEN the owner redirects the work, the agent shall acknowledge and apply the instruction before its next state-changing action.
+- IF the instruction cannot be applied, THEN the agent shall report why without claiming it succeeded.
+- Messages from non-owners shall not steer v1 runs.
 
-#### Status updates show progress and liveness
+#### Slack-enabled work fails closed
 
-- WHEN the run enters a new workflow phase, the system shall post a status update.
-- WHEN a blocker begins or clears, the system shall post a status update.
-- WHILE an active run has produced no update for one hour, the system shall post a status update.
-- WHEN the system posts a status update, it shall show `Current work`, `Completed since last update`, `Decisions`, `Blockers`, and `Up next` in that order.
-- IF a status field has no information, THEN the system shall render `None` for that field.
+- Before a state-changing action, the agent runtime shall check the run with the daemon.
+- IF the daemon is unavailable, its Socket Mode connection is down, required Slack delivery failed, or owner input is pending, THEN the action shall not start.
+- WHEN coordination recovers and pending owner input is handled, the run may continue.
+- A local operator may invoke an explicit, confirmed break-glass command for one run. The daemon shall persist that run's Slack-disabled mode before work resumes.
+- Break-glass shall not disable Slack for any other run and shall not delete the original thread mapping.
 
-#### The owner can question or redirect the agent
+#### Jira receives an optional backlink
 
-- WHEN the owner asks a work-related question, the agent shall acknowledge and answer it in the thread before beginning its next work action.
-- WHEN the owner gives a work-related instruction, the agent shall acknowledge and apply it before beginning its next work action.
-- IF the agent cannot apply an owner instruction, THEN it shall report the reason without claiming the change occurred.
-
-#### Socket Mode refresh preserves one healthy intake path
-
-- WHEN Slack requests a connection refresh or the daemon plans an in-process connection replacement, the daemon shall open and validate the replacement before closing the current socket.
-- WHILE either socket is healthy, Slack coordination shall remain available.
-- IF replacement setup fails while the current socket remains healthy, THEN the daemon shall keep using the current socket.
-- IF every healthy socket is lost, THEN Slack-enabled work shall enter the existing fail-closed outage behavior.
-- The brief overlap shall remain inside one daemon; service or executable restarts shall retain the existing fail-closed restart window.
-
-#### Slack outages pause work unless the local operator disables Slack
-
-- WHEN the coordinator, Slack event connection, or required message delivery is unavailable, the system shall pause the Slack-enabled run before its next state-changing action.
-- WHEN service recovers before an override, the system shall process pending owner input and resume the run.
-- IF the local operator invokes the explicit break-glass command, THEN the system shall disable Slack for that run and resume its existing non-Slack workflow.
-- The supported break-glass CLI shall require explicit interactive confirmation before sending the override.
-- BEFORE work resumes, the system shall persist and return an audit receipt for the confirmed override.
-- The confirmation shall be treated as a same-user safety rail, not a security boundary; a same-user agent process may construct the underlying RPC.
-- WHEN break-glass resumes a run, the system shall retain the original thread mapping and a durable interruption record.
-- WHEN Slack delivery later recovers, the system shall post a status update to the original thread that records the interruption and local resumption.
-
-#### Completion closes the work thread
-
-- WHEN a run completes, fails, or is cancelled, the system shall post one completion update.
-- WHEN the system posts a completion update, it shall show `Outcome`, `Completed work`, `Decisions`, `Unresolved items`, `Evidence`, `Links`, and `Finished at` in that order.
-- IF a completion field has no information, THEN the system shall render `None` for that field.
+- WHEN a Slack-enabled run is linked to Jira, the system shall write the canonical thread URL to the configured dedicated custom field.
+- Jira field configuration shall use the administrator-provided stable field ID.
+- A Jira failure shall leave the backlink pending for retry without blocking Slack coordination.
+- Runs without Jira shall perform no Jira operation.
+- Jira shall not control owner input, status timing, or whether work may proceed.
 
 ### Out of Scope
 
-- Comments or steering from anyone other than the owner.
-- Jira issue mutations other than the dedicated Slack-thread custom field.
-- GitHub, Linear, and other ticket-system backlinks.
-- Jira labels for Slack thread URLs.
-- Supporting chat systems other than Slack.
-- Enabling Slack automatically for every work run.
-- Windows service support for the per-user coordinator daemon.
-- Multiple independent users or daemons sharing one Slack app, including any hosted event router or ingress-daemon mesh.
-- Per-user Slack app provisioning.
-- Browser-based Slack OAuth installation and token refresh.
+- Non-owner steering.
 - Direct messages and multi-person direct messages.
-- Workspace default channels, repository-to-channel mapping tables, and separate channel-routing services.
-- Steady-state multiple Socket Mode connections, active-active daemons, and cross-process socket handoff.
+- Chat systems other than Slack.
+- Automatic Slack enablement for every run.
+- Multiple users or daemons sharing one Slack app.
+- Multiple simultaneous Socket Mode connections, connection handoff protocols, or hosted Slack ingress.
+- Browser OAuth and automatic Slack app provisioning.
+- Workspace defaults, channel mapping tables, and routing services.
+- Jira changes other than the dedicated Slack thread backlink.
+- Windows service support.
 
 ## Human Review
 
 ### Review targets
 
-- The three message types and their fixed fields.
-- Status timing during active work.
-- Owner questions and steering.
-- Jira custom-field backlink behavior and Jira-independent coordination.
+- Optional one-thread-per-run behavior and fixed update fields.
+- Channel default and override precedence.
+- Owner steering and fail-closed state-changing work.
+- Per-run break-glass.
+- Jira backlink independence.
 
 ### Verify
 
-- [ ] Confirm that start, status, and completion are the required message types.
-- [ ] Confirm that owner instructions take effect before the agent begins its next work action.
-- [ ] Confirm Slack outages pause state-changing work and only explicit local break-glass resumes the run without Slack.
-- [ ] Confirm break-glass requires interactive CLI confirmation and persists an audit receipt before work resumes.
-- [ ] Confirm Jira-linked runs write the Slack thread URL to a dedicated custom field while Jira outages do not pause coordination.
-- [ ] Confirm runs without Jira perform no Jira operation.
-- [ ] Confirm setup validates an administrator-created Jira field by stable per-site ID and runtime requires no Jira admin privileges.
-- [ ] Confirm Slack-enabled setup supports native per-user daemon supervision on macOS and Linux, with Windows service support deferred.
-- [ ] Confirm one workspace app is exclusively owned by one per-user daemon, with only a brief same-daemon old/new socket overlap during make-before-break refresh.
-- [ ] Confirm refresh remains healthy while either socket works and loss of every healthy socket triggers the existing fail-closed outage behavior.
-- [ ] Confirm administrators install the repo-owned manifest and setup accepts protected headless token injection while rejecting the wrong app, workspace, scopes, or Socket Mode access.
-- [ ] Confirm setup never reads repository-local `.env` files.
-- [ ] Confirm work threads support invited public and private channels while direct messages, multi-person direct messages, automatic channel joining, and posting without membership remain unsupported.
-- [ ] Confirm each repository default is exactly one standalone `Slack default channel: <#name-or-ID>` line in root `AGENTS.md`, missing or duplicate directives are rejected, and an unambiguous natural-language instruction from the controlling person overrides the declared value.
-- [ ] Confirm quoted or incidental channel mentions do not override the default, while multiple or ambiguous requested channels require clarification before thread creation.
-- [ ] Confirm the system resolves and validates the channel once before run creation, persists the resolved ID, and introduces no third routing source or channel cache.
+- [ ] Confirm each Slack-enabled run creates one thread and Slack-disabled runs remain unchanged.
+- [ ] Confirm owner steering is handled before the next state-changing action.
+- [ ] Confirm unavailable Slack coordination blocks Slack-enabled state-changing work.
+- [ ] Confirm break-glass disables Slack only for the selected run and persists before work resumes.
+- [ ] Confirm the repository default is exactly one `Slack default channel: <#name-or-ID>` line and an unambiguous natural-language run instruction may override it.
+- [ ] Confirm channel selection resolves once to an invited public or private channel ID before thread creation.
+- [ ] Confirm one per-user daemon owns one Socket Mode connection and SQLite run/thread state.
+- [ ] Confirm macOS launchd and Linux systemd supervision start the daemon at login and restart crashes.
+- [ ] Confirm Jira receives only the optional thread backlink and Jira outages do not block Slack coordination.
 
-### Known limits
+### Known Limits
 
-- Non-owner comments are deferred.
-- GitHub, Linear, and non-owner participation are deferred.
-- Jira credential authorization, validation scope, conflicting existing values, and retry guarantees remain technical-design decisions.
-- Same-user agent processes can construct the break-glass RPC and bypass the supported CLI confirmation.
-- Windows service support for the per-user coordinator daemon is deferred.
-- Slack retry schedule, reconciliation guarantees, deployed event-subscription drift, and agent runtime adapter wiring remain technical-design decisions.
-- One workspace deployment supports one per-user daemon owning the Slack app; multiple independent daemons remain deferred, and the only dual-socket period is same-daemon refresh handoff.
+- Windows supervision is deferred.
+- Non-owner participation, direct messages, and additional chat or ticket systems are deferred.
+- Each Slack app is limited to one per-user daemon in v1.
