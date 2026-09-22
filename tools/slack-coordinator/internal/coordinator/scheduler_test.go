@@ -41,13 +41,13 @@ func newTestCoordinator(t *testing.T) (*Coordinator, *fakePoster, *time.Time) {
 	t.Cleanup(func() { database.Close() })
 	now := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
 	poster := &fakePoster{}
-	c := &Coordinator{DB: database, Slack: poster, Now: func() time.Time { return now }, Quiet: time.Hour}
+	c := &Coordinator{DB: database, Slack: poster, Now: func() time.Time { return now }, OwnerUserID: "U1", Quiet: time.Hour}
 	return c, poster, &now
 }
 
 func startTestRun(t *testing.T, c *Coordinator, runID string) {
 	t.Helper()
-	if _, err := c.StartRun(context.Background(), StartRunInput{RunID: runID, OwnerUserID: "U1", ChannelID: "C1", Work: "w"}); err != nil {
+	if _, err := c.StartRun(context.Background(), StartRunInput{RunID: runID, ChannelID: "C1", Work: "w"}); err != nil {
 		t.Fatal(err)
 	}
 }

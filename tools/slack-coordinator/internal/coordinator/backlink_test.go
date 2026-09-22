@@ -80,7 +80,7 @@ func backlinkRow(t *testing.T, c *Coordinator, runID string) db.Backlink {
 
 func TestBacklinkWritesPermalinkToTheConfiguredField(t *testing.T) {
 	c, f, _ := newJiraCoordinator(t, http.StatusNoContent)
-	ref, err := c.StartRun(context.Background(), StartRunInput{RunID: "RUN1", OwnerUserID: "U1", ChannelID: "C1", Work: "w", JiraIssue: "PROJ-7"})
+	ref, err := c.StartRun(context.Background(), StartRunInput{RunID: "RUN1", ChannelID: "C1", Work: "w", JiraIssue: "PROJ-7"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestBacklinkFailureStaysPendingAndRetriesWithBackoff(t *testing.T) {
 	c, f, now := newJiraCoordinator(t, http.StatusInternalServerError)
 	ctx := context.Background()
 	start := *now
-	if _, err := c.StartRun(ctx, StartRunInput{RunID: "RUN1", OwnerUserID: "U1", ChannelID: "C1", Work: "w", JiraIssue: "PROJ-7"}); err != nil {
+	if _, err := c.StartRun(ctx, StartRunInput{RunID: "RUN1", ChannelID: "C1", Work: "w", JiraIssue: "PROJ-7"}); err != nil {
 		t.Fatalf("a failed backlink failed the start: %v", err)
 	}
 	b := backlinkRow(t, c, "RUN1")
@@ -162,7 +162,7 @@ func TestStartRunWithoutJiraIssueNeverCallsJira(t *testing.T) {
 
 func TestStartRunRefusesJiraIssueWhenJiraIsNotConfigured(t *testing.T) {
 	c, poster, _ := newTestCoordinator(t)
-	_, err := c.StartRun(context.Background(), StartRunInput{RunID: "RUN1", OwnerUserID: "U1", ChannelID: "C1", JiraIssue: "PROJ-7"})
+	_, err := c.StartRun(context.Background(), StartRunInput{RunID: "RUN1", ChannelID: "C1", JiraIssue: "PROJ-7"})
 	if err == nil || len(poster.posts) != 0 {
 		t.Fatalf("err = %v, posts = %d; want a refusal before any post", err, len(poster.posts))
 	}

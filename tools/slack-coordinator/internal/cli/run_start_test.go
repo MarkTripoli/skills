@@ -362,3 +362,24 @@ func TestRunStartRefusesJiraIssueBeforeAnySlackCall(t *testing.T) {
 		t.Fatalf("refused --jira-issue still made %d Slack calls", n)
 	}
 }
+
+func TestRunStartRejectsOwnerFlagBeforeAnyCall(t *testing.T) {
+	fake, apiURL := newFakeSlack(t)
+	cfg := &config.Config{Slack: config.Slack{BotToken: "xoxb-1", AppToken: "xapp-1", OwnerUserID: "U1", APIURL: apiURL}}
+	startTestDaemon(t, cfg)
+
+	SetOutput(&bytes.Buffer{})
+	t.Cleanup(func() { output = os.Stdout })
+	root := NewRoot()
+	root.SetArgs([]string{"run", "start", "--owner", "U1", "--work", "w", "--goal", "g", "--scope", "s"})
+	err := root.Execute()
+	if code := exitCode(err); code != ExitUsage {
+		t.Fatalf("exit %d, want %d (err %v)", code, ExitUsage, err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "unknown flag: --owner") {
+		t.Fatalf("error %q does not name the unknown flag", err)
+	}
+	if n := fake.requests.Load(); n != 0 {
+		t.Fatalf("rejected --owner still made %d Slack calls", n)
+	}
+}

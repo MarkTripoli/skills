@@ -155,7 +155,7 @@ func Serve(ctx context.Context, p *paths.Paths, cfg *config.Config, opts Options
 		socketHealth = socket.Health
 		inbound, acker = socket.Inbound(), socket
 	}
-	coord := &coordinator.Coordinator{DB: rt.DB, Slack: rt.Slack, Now: time.Now, Quiet: quiet, Health: socketHealth}
+	coord := &coordinator.Coordinator{DB: rt.DB, Slack: rt.Slack, Now: time.Now, OwnerUserID: cfg.Slack.OwnerUserID, Quiet: quiet, Health: socketHealth}
 	if cfg.JiraEnabled() {
 		if coord.Jira, err = jira.New(*cfg.Jira); err != nil {
 			return err

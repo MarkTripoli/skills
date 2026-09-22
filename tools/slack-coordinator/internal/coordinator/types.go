@@ -2,10 +2,10 @@
 // Types here are the JSON-RPC wire shapes shared with the CLI.
 package coordinator
 
-// StartRunInput opens one Slack thread for a run.
+// StartRunInput opens one Slack thread for a run. The owner is not part of the
+// input: the daemon stamps its configured owner on every run.
 type StartRunInput struct {
 	RunID       string   `json:"run_id"`
-	OwnerUserID string   `json:"owner_user_id"`
 	ChannelID   string   `json:"channel_id"`
 	Work        string   `json:"work"`
 	Goal        string   `json:"goal"`
