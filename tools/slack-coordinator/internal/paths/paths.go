@@ -52,10 +52,32 @@ func (p *Paths) DaemonLog() string  { return filepath.Join(p.root, "daemon.log")
 // is informational; LockFile is what refuses a second daemon.
 func (p *Paths) LockFile() string { return filepath.Join(p.root, "daemon.lock") }
 
+// Workspace is the directory agent runs execute under.
+func (p *Paths) Workspace() string { return filepath.Join(p.root, "workspace") }
+
+// RunDir is the working directory of one agent run.
+func (p *Paths) RunDir(id string) string { return filepath.Join(p.Workspace(), "runs", id) }
+
+// OnboardCheckpoint records how far first-run onboarding progressed.
+func (p *Paths) OnboardCheckpoint() string { return filepath.Join(p.root, "onboard.json") }
+
 // EnsureDirs creates the root, readable by the owner only.
 func (p *Paths) EnsureDirs() error {
 	if err := os.MkdirAll(p.root, 0o700); err != nil {
 		return err
 	}
 	return os.Chmod(p.root, 0o700)
+}
+
+// EnsureWorkspace creates <root>/workspace/runs, both directories readable by
+// the owner only.
+func (p *Paths) EnsureWorkspace() error {
+	runs := filepath.Join(p.Workspace(), "runs")
+	if err := os.MkdirAll(runs, 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(p.Workspace(), 0o700); err != nil {
+		return err
+	}
+	return os.Chmod(runs, 0o700)
 }
