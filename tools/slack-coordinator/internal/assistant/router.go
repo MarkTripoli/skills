@@ -82,17 +82,25 @@ func userMessage(evt socketmode.Event) *slackevents.MessageEvent {
 }
 
 // routeDM handles a message in a direct-message channel. Only the owner is
-// heard: a top-level DM opens a request, a reply under a request root is
-// recorded as a follow-up, and text starting with `!` is left to the verb
-// handlers. Every other DM is dropped.
+// heard: a top-level DM starting with `!` is answered by its verb, any other
+// top-level DM opens a request, and a reply under a request root is recorded
+// as a follow-up. Every other DM, including a `!` reply in a thread, is dropped.
 func (s *Service) routeDM(ctx context.Context, msg *slackevents.MessageEvent) error {
-	if msg.User != s.Owner || strings.HasPrefix(strings.TrimSpace(msg.Text), "!") {
+	if msg.User != s.Owner {
 		return nil
 	}
-	if msg.ThreadTimeStamp == "" {
+	text := strings.TrimSpace(msg.Text)
+	switch {
+	case strings.HasPrefix(text, "!"):
+		if msg.ThreadTimeStamp != "" {
+			return nil
+		}
+		return s.runVerb(ctx, msg.Channel, text)
+	case msg.ThreadTimeStamp == "":
 		return s.newRequest(ctx, msg)
+	default:
+		return s.followUp(ctx, msg)
 	}
-	return s.followUp(ctx, msg)
 }
 
 // collect records a public or private channel message for the tasks watching

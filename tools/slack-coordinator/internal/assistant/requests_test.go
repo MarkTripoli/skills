@@ -193,9 +193,9 @@ func TestRouteDMDropsWhatIsNotARequest(t *testing.T) {
 	ctx := context.Background()
 	for _, msg := range []*slackevents.MessageEvent{
 		dm("U2", "1700000000.001000", "", "not the owner"),
-		dm("U1", "1700000000.002000", "", "!status"),
-		dm("U1", "1700000000.003000", "", "  !status with leading space"),
-		dm("U1", "1700000000.004000", "1600000000.000000", "reply under an unknown thread"),
+		dm("U2", "1700000000.002000", "", "!status from someone else"),
+		dm("U1", "1700000000.003000", "1600000000.000000", "reply under an unknown thread"),
+		dm("U1", "1700000000.004000", "1600000000.000000", "!status as a thread reply"),
 	} {
 		routeDMEvent(t, s, msg)
 		if _, ok, _ := s.DB.GetDMRequest(ctx, msg.TimeStamp); ok {
