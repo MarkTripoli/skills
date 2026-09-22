@@ -107,10 +107,16 @@ func waitForDaemon(timeout time.Duration) error {
 	return last
 }
 
+// stopDaemon asks the daemon to shut down. An installed service restarts it:
+// stop says so and still sends daemon.shutdown, because the daemon is the
+// only writer of SQLite and a clean exit is what the operator asked for.
 func stopDaemon(cmd *cobra.Command, _ []string) error {
 	p, err := home()
 	if err != nil {
 		return err
+	}
+	if s, serviceErr := serviceFor(p); serviceErr == nil && s.Installed() {
+		fmt.Fprintln(cmd.OutOrStdout(), supervisionNotice)
 	}
 	var out ipc.ShutdownResult
 	err = callDaemon(ipc.MethodDaemonShutdown, ipc.ShutdownParams{}, &out)
