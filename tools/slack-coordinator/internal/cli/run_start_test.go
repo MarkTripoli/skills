@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -19,6 +21,25 @@ import (
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/daemon"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/paths"
 )
+
+// fakeChannel is one row the fake conversations.info and conversations.list serve.
+type fakeChannel struct {
+	ID, Name         string
+	Archived, Member bool
+}
+
+func (c fakeChannel) json() string {
+	return fmt.Sprintf(`{"id":%q,"name":%q,"is_archived":%t,"is_member":%t}`, c.ID, c.Name, c.Archived, c.Member)
+}
+
+// testChannels is the workspace every CLI test sees. conversations.list serves
+// one channel per page, so a name on a later page exercises the cursor.
+var testChannels = []fakeChannel{
+	{ID: "C0000000001", Name: "agent-runs", Member: true},
+	{ID: "C0000000002", Name: "old-runs", Archived: true, Member: true},
+	{ID: "C0000000003", Name: "private-ops", Member: false},
+	{ID: "C0000000004", Name: "deep-runs", Member: true},
+}
 
 type fakeSlack struct {
 	mu    sync.Mutex
@@ -42,7 +63,31 @@ func newFakeSlack(t *testing.T) (*fakeSlack, string) {
 		_, _ = w.Write([]byte(`{"ok":true,"channel":"` + r.PostForm.Get("channel") + `","ts":"1700000000.000100"}`))
 	})
 	mux.HandleFunc("/chat.getPermalink", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"ok":true,"channel":"C1","permalink":"https://t.slack.com/archives/C1/p1700000000000100"}`))
+		ch := r.URL.Query().Get("channel")
+		_, _ = w.Write([]byte(`{"ok":true,"channel":"` + ch + `","permalink":"https://t.slack.com/archives/` + ch + `/p1700000000000100"}`))
+	})
+	mux.HandleFunc("/conversations.info", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		for _, c := range testChannels {
+			if c.ID == r.PostForm.Get("channel") {
+				_, _ = w.Write([]byte(`{"ok":true,"channel":` + c.json() + `}`))
+				return
+			}
+		}
+		_, _ = w.Write([]byte(`{"ok":false,"error":"channel_not_found"}`))
+	})
+	mux.HandleFunc("/conversations.list", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		i, _ := strconv.Atoi(r.PostForm.Get("cursor"))
+		if i >= len(testChannels) {
+			_, _ = w.Write([]byte(`{"ok":true,"channels":[],"response_metadata":{"next_cursor":""}}`))
+			return
+		}
+		next := ""
+		if i+1 < len(testChannels) {
+			next = strconv.Itoa(i + 1)
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"channels":[` + testChannels[i].json() + `],"response_metadata":{"next_cursor":"` + next + `"}}`))
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -96,7 +141,7 @@ func TestRunStartPostsOneRootMessage(t *testing.T) {
 	cfg := &config.Config{Slack: config.Slack{BotToken: "xoxb-1", AppToken: "xapp-1", OwnerUserID: "U1", APIURL: apiURL}}
 	stop := startTestDaemon(t, cfg)
 
-	args := []string{"run", "start", "--channel", "C1", "--work", "Add flag", "--goal", "Print commands", "--scope", "cli", "--link", "https://example.com/pr/1", "--run-id", "RUN1"}
+	args := []string{"run", "start", "--channel", "C0000000001", "--work", "Add flag", "--goal", "Print commands", "--scope", "cli", "--link", "https://example.com/pr/1", "--run-id", "RUN1"}
 	out, code := runCLI(t, args...)
 	if code != ExitOK {
 		t.Fatalf("run start exit %d, output %q", code, out)
@@ -105,7 +150,7 @@ func TestRunStartPostsOneRootMessage(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &ref); err != nil {
 		t.Fatalf("stdout %q is not JSON: %v", out, err)
 	}
-	want := coordinator.SlackRunRef{RunID: "RUN1", ChannelID: "C1", ThreadTS: "1700000000.000100", Permalink: "https://t.slack.com/archives/C1/p1700000000000100"}
+	want := coordinator.SlackRunRef{RunID: "RUN1", ChannelID: "C0000000001", ThreadTS: "1700000000.000100", Permalink: "https://t.slack.com/archives/C0000000001/p1700000000000100"}
 	if ref != want {
 		t.Fatalf("stdout = %+v, want %+v", ref, want)
 	}
@@ -118,7 +163,7 @@ func TestRunStartPostsOneRootMessage(t *testing.T) {
 			t.Errorf("root text missing %q:\n%s", part, text)
 		}
 	}
-	if fake.posts[0].Get("channel") != "C1" {
+	if fake.posts[0].Get("channel") != "C0000000001" {
 		t.Errorf("posted to channel %q", fake.posts[0].Get("channel"))
 	}
 
@@ -135,9 +180,75 @@ func TestRunStartPostsOneRootMessage(t *testing.T) {
 	}
 }
 
-func TestRunStartRequiresChannel(t *testing.T) {
-	t.Setenv(paths.EnvHome, t.TempDir())
-	if _, code := runCLI(t, "run", "start", "--work", "x"); code != ExitUsage {
-		t.Fatalf("missing --channel exit %d, want %d", code, ExitUsage)
+// writeRepo creates a repository root holding AGENTS.md with body and returns its path.
+func writeRepo(t *testing.T, agentsMD string) string {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "AGENTS.md"), []byte(agentsMD), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return repo
+}
+
+func TestRunStartResolvesAgentsMDDirectiveByName(t *testing.T) {
+	fake, apiURL := newFakeSlack(t)
+	cfg := &config.Config{Slack: config.Slack{BotToken: "xoxb-1", AppToken: "xapp-1", OwnerUserID: "U1", APIURL: apiURL}}
+	startTestDaemon(t, cfg)
+	repo := writeRepo(t, "# Project\n\nSlack default channel: #Deep-Runs\n")
+
+	out, code := runCLI(t, "run", "start", "--repo", repo, "--work", "x", "--run-id", "RUN2")
+	if code != ExitOK {
+		t.Fatalf("run start exit %d, output %q", code, out)
+	}
+	var ref coordinator.SlackRunRef
+	if err := json.Unmarshal([]byte(out), &ref); err != nil {
+		t.Fatalf("stdout %q is not JSON: %v", out, err)
+	}
+	if ref.ChannelID != "C0000000004" {
+		t.Fatalf("resolved channel %q, want C0000000004 (#deep-runs on the last list page)", ref.ChannelID)
+	}
+	if fake.count() != 1 || fake.posts[0].Get("channel") != "C0000000004" {
+		t.Fatalf("posts = %d to %q", fake.count(), fake.posts[0].Get("channel"))
+	}
+}
+
+func TestRunStartRefusesUnusableChannelsBeforePosting(t *testing.T) {
+	fake, apiURL := newFakeSlack(t)
+	cfg := &config.Config{Slack: config.Slack{BotToken: "xoxb-1", AppToken: "xapp-1", OwnerUserID: "U1", APIURL: apiURL}}
+	startTestDaemon(t, cfg)
+
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "archived by flag id", args: []string{"--channel", "C0000000002"}, want: "channel #old-runs is archived"},
+		{name: "not a member by flag name", args: []string{"--channel", "#private-ops"}, want: "bot is not a member of #private-ops"},
+		{name: "unknown id", args: []string{"--channel", "C0000000009"}, want: "channel C0000000009 not found"},
+		{name: "unknown name from AGENTS.md", args: []string{"--repo", writeRepo(t, "Slack default channel: #nowhere\n")}, want: "channel #nowhere not found"},
+		{name: "archived from AGENTS.md", args: []string{"--repo", writeRepo(t, "Slack default channel: old-runs\n")}, want: "channel #old-runs is archived"},
+		{name: "no directive", args: []string{"--repo", writeRepo(t, "# Project\n")}, want: "no `Slack default channel:` line"},
+		{name: "two directives", args: []string{"--repo", writeRepo(t, "Slack default channel: #a\nSlack default channel: #b\n")}, want: "more than one"},
+		{name: "missing AGENTS.md", args: []string{"--repo", t.TempDir()}, want: "AGENTS.md"},
+		{name: "comma in channel", args: []string{"--channel", "C0000000001,C0000000004"}, want: "without spaces or commas"},
+		{name: "space in channel", args: []string{"--channel", "agent runs"}, want: "without spaces or commas"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			SetOutput(&stderr)
+			t.Cleanup(func() { output = os.Stdout })
+			root := NewRoot()
+			root.SetArgs(append([]string{"run", "start", "--work", "x"}, tc.args...))
+			err := root.Execute()
+			if code := exitCode(err); code != ExitUsage {
+				t.Fatalf("exit %d, want %d (err %v)", code, ExitUsage, err)
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %q does not name the cause %q", err, tc.want)
+			}
+		})
+	}
+	if fake.count() != 0 {
+		t.Fatalf("refused channels still posted %d messages", fake.count())
 	}
 }

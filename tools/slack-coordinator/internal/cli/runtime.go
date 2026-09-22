@@ -3,6 +3,9 @@ package cli
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/ipc"
@@ -43,4 +46,12 @@ func callDaemon(method string, params, result interface{}) error {
 
 func writePID(p *paths.Paths, pid int) error {
 	return os.WriteFile(p.PIDFile(), []byte(fmt.Sprint(pid)), 0o600)
+}
+
+func gitRoot() (string, error) {
+	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return "", fmt.Errorf("find git root: %w", err)
+	}
+	return filepath.Abs(strings.TrimSpace(string(out)))
 }

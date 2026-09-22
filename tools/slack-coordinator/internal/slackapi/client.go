@@ -57,3 +57,18 @@ func (c *Client) PostMessage(ctx context.Context, channelID, threadTS, mrkdwn st
 func (c *Client) Permalink(ctx context.Context, channelID, ts string) (string, error) {
 	return c.api.GetPermalinkContext(ctx, &slack.PermalinkParameters{Channel: channelID, Ts: ts})
 }
+
+// ConversationInfo is conversations.info for one channel ID.
+func (c *Client) ConversationInfo(ctx context.Context, id string) (*slack.Channel, error) {
+	return c.api.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{ChannelID: id})
+}
+
+// ListConversations returns one conversations.list page of public and private
+// channels, archived included, 200 per page, with the cursor for the next page.
+func (c *Client) ListConversations(ctx context.Context, cursor string) ([]slack.Channel, string, error) {
+	return c.api.GetConversationsContext(ctx, &slack.GetConversationsParameters{
+		Cursor: cursor,
+		Limit:  200,
+		Types:  []string{"public_channel", "private_channel"},
+	})
+}
