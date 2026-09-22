@@ -14,9 +14,12 @@ import (
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
 )
 
-// maxAnswerRunes is the longest answer that replaces the ack in place; a
-// longer one is posted as its own thread message under a `Done` ack.
-const maxAnswerRunes = 4000
+// answerEditLimit is the longest answer that replaces the ack in place; a
+// longer one is split into chunks posted as thread replies under a `Done` ack.
+const answerEditLimit = 4000
+
+// maxAnswerRunes is the task-delivery name for answerEditLimit.
+const maxAnswerRunes = answerEditLimit
 
 // doneAck replaces the ack when the answer is too long to be the ack itself.
 const doneAck = "Done"
@@ -72,14 +75,14 @@ func (s *Service) deliverDM(ctx context.Context, run db.AssistantRun, out agent.
 }
 
 // answer puts result in req's thread and returns the ts of the message that
-// holds it: the edited ack when result fits it, else a new thread message
+// holds it: the edited ack when result fits it, else the first chunk's ts
 // under an ack set to doneAck. A request whose ack was never posted gets the
 // answer as a new thread message.
 func (s *Service) answer(ctx context.Context, req db.DMRequest, result string) (string, error) {
 	if !req.AckTS.Valid {
 		return s.Slack.PostMessage(ctx, req.ChannelID, req.RootTS, result)
 	}
-	if utf8.RuneCountInString(result) <= maxAnswerRunes {
+	if utf8.RuneCountInString(result) <= answerEditLimit {
 		if _, err := s.Slack.UpdateMessage(ctx, req.ChannelID, req.AckTS.String, result); err != nil {
 			return "", err
 		}
@@ -88,7 +91,66 @@ func (s *Service) answer(ctx context.Context, req db.DMRequest, result string) (
 	if _, err := s.Slack.UpdateMessage(ctx, req.ChannelID, req.AckTS.String, doneAck); err != nil {
 		return "", err
 	}
-	return s.Slack.PostMessage(ctx, req.ChannelID, req.RootTS, result)
+	chunks := chunk(result, answerEditLimit)
+	var firstTS string
+	for _, c := range chunks {
+		ts, err := s.Slack.PostMessage(ctx, req.ChannelID, req.RootTS, c)
+		if err != nil {
+			return "", err
+		}
+		if firstTS == "" {
+			firstTS = ts
+		}
+	}
+	return firstTS, nil
+}
+
+// chunk splits text at newline boundaries into pieces of at most limit runes,
+// hard-splitting any single line that exceeds limit. It never emits an empty piece.
+func chunk(text string, limit int) []string {
+	var result []string
+	var cur strings.Builder
+	curRunes := 0
+
+	flush := func() {
+		if curRunes > 0 {
+			result = append(result, cur.String())
+			cur.Reset()
+			curRunes = 0
+		}
+	}
+
+	for _, line := range strings.SplitAfter(text, "\n") {
+		if line == "" {
+			continue
+		}
+		lineRunes := []rune(line)
+		for len(lineRunes) > 0 {
+			space := limit - curRunes
+			if space <= 0 {
+				flush()
+				space = limit
+			}
+			take := len(lineRunes)
+			if take > space {
+				if curRunes > 0 {
+					flush()
+					space = limit
+					take = len(lineRunes)
+					if take > space {
+						take = space
+					}
+				} else {
+					take = space
+				}
+			}
+			cur.WriteString(string(lineRunes[:take]))
+			curRunes += take
+			lineRunes = lineRunes[take:]
+		}
+	}
+	flush()
+	return result
 }
 
 // deliverTo is the decoded tasks.deliver_to JSON.
@@ -237,7 +299,6 @@ func chunkResult(header, result string) []string {
 	}
 	return chunks
 }
-
 
 // failureText names why out is not an answer.
 func (s *Service) failureText(out agent.RunOutcome) string {
