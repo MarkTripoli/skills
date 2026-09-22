@@ -182,5 +182,26 @@ WHERE run_id = ?`, state, exitCode, timedOut, nullString(resultSource), nullStri
 	return nil
 }
 
+// CountStartedSince counts the assistant_runs whose started_at is >= ts
+// (RFC 3339 string comparison).
+func (d *DB) CountStartedSince(ctx context.Context, ts string) (int, error) {
+	var n int
+	if err := d.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM assistant_runs WHERE started_at >= ?`, ts).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count started since %s: %w", ts, err)
+	}
+	return n, nil
+}
+
+// CountTaskMessagesForRun counts the task_messages rows whose run_id equals runID.
+func (d *DB) CountTaskMessagesForRun(ctx context.Context, runID string) (int, error) {
+	var n int
+	if err := d.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM task_messages WHERE run_id = ?`, runID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count task messages for run %s: %w", runID, err)
+	}
+	return n, nil
+}
+
 // nullString is s as a NULL-when-empty column value.
 func nullString(s string) sql.NullString { return sql.NullString{String: s, Valid: s != ""} }

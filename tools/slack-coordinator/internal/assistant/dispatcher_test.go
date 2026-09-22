@@ -1,7 +1,10 @@
 package assistant
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +15,7 @@ import (
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/agent"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/paths"
 )
 
 // fakeRunner records every RunSpec and gives each run a Handle whose Wait
@@ -282,5 +286,278 @@ func TestShutdownRecordsCancelledRunAsFailed(t *testing.T) {
 	run := getRun(t, s, id)
 	if run.State != db.RunFailed || run.Failure.String != "daemon shutdown" || run.FinishedAt.String == "" {
 		t.Fatalf("row = %+v, want failed with daemon shutdown and finished_at", run)
+	}
+}
+
+func TestHourlyRunCapHoldsAndReleasesQueued(t *testing.T) {
+	s, _, clock, runner := newDispatchService(t)
+	s.Agent.MaxRunsPerHour = 2
+	ctx := context.Background()
+
+	// Queue three DM requests.
+	queueRequests(t, s, clock, "first", "second", "third")
+
+	// First tick: two spawn (cap = 2), third is held.
+	logged := captureLog(t)
+	if err := s.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if started := runner.started(); started != 2 {
+		t.Fatalf("after first tick: %d started, want 2", started)
+	}
+	if queued := countState(t, s, db.RunQueued); queued != 1 {
+		t.Fatalf("after first tick: %d queued, want 1", queued)
+	}
+
+	// Get the held run's ID.
+	held, ok, err := s.DB.OldestQueued(ctx)
+	if err != nil || !ok {
+		t.Fatalf("OldestQueued = %+v, %t, %v; want one queued run", held, ok, err)
+	}
+
+	// Log line must contain "cap reached: run <id> held (dm)".
+	wantLog := fmt.Sprintf("cap reached: run %s held (dm)", held.RunID)
+	if !strings.Contains(logged.String(), wantLog) {
+		t.Fatalf("log = %q, want it to contain %q", logged.String(), wantLog)
+	}
+
+	// Another tick while cap still holds: still 2 started, held row unchanged.
+	logged.Reset()
+	if err := s.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if started := runner.started(); started != 2 {
+		t.Fatalf("second tick spawned more runs: %d started, still want 2", started)
+	}
+	if !strings.Contains(logged.String(), wantLog) {
+		t.Fatalf("second tick log = %q, want cap-reached line again", logged.String())
+	}
+	// Queued state and run ID unchanged.
+	stillHeld := held
+	if h, ok2, err2 := s.DB.OldestQueued(ctx); err2 != nil || !ok2 || h.RunID != stillHeld.RunID || h.State != db.RunQueued {
+		t.Fatalf("held run changed or missing: %+v %t %v", h, ok2, err2)
+	}
+
+	// Advance clock 61 minutes: oldest started_at falls out of the rolling hour.
+	clock.at = clock.at.Add(61 * time.Minute)
+	runner.scripted = nil // no scripted outcome; let the third spawn block
+	if err := s.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if started := runner.started(); started != 3 {
+		t.Fatalf("after clock advance: %d started, want 3", started)
+	}
+	if queued := countState(t, s, db.RunQueued); queued != 0 {
+		t.Fatalf("after clock advance: %d queued, want 0", queued)
+	}
+}
+
+// --- helpers for task-run tests ---
+
+// newTaskDispatchService is newDispatchService with a raw SQL connection for
+// inserting and reading task-related rows directly.
+func newTaskDispatchService(t *testing.T) (*Service, *fakeSlack, *testClock, *fakeRunner, *sql.DB) {
+	t.Helper()
+	p := paths.WithRoot(t.TempDir())
+	s, slack, clock := newTestServiceAt(t, p)
+	runner := &fakeRunner{}
+	s.Runner = runner
+	s.Agent.Timeout = time.Minute
+	raw, err := sql.Open("sqlite", p.DB()+"?_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { raw.Close() })
+	return s, slack, clock, runner, raw
+}
+
+// insertScheduleTaskFull inserts an active schedule task and returns its id.
+func insertScheduleTaskFull(t *testing.T, raw *sql.DB, dueAt, instruction, scheduleJSON, deliverTo string, channels ...string) int64 {
+	t.Helper()
+	res, err := raw.Exec(`
+INSERT INTO tasks (state, instruction, trigger, schedule, deliver_to, request_root_ts, created_at, due_at)
+VALUES ('active', ?, 'schedule', ?, ?, '1700000000.000001', '2026-09-21T09:00:00Z', ?)`,
+		instruction, scheduleJSON, deliverTo, dueAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := res.LastInsertId()
+	for _, ch := range channels {
+		if _, err := raw.Exec(`INSERT INTO task_channels (task_id, channel_id) VALUES (?, ?)`, id, ch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return id
+}
+
+// insertWindowEndTask inserts an active window_end task with the given due_at.
+func insertWindowEndTask(t *testing.T, raw *sql.DB, dueAt, instruction, deliverTo string, channels ...string) int64 {
+	t.Helper()
+	res, err := raw.Exec(`
+INSERT INTO tasks (state, instruction, trigger, deliver_to, request_root_ts, created_at, due_at)
+VALUES ('active', ?, 'window_end', ?, '1700000000.000001', '2026-09-21T09:00:00Z', ?)`,
+		instruction, deliverTo, dueAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := res.LastInsertId()
+	for _, ch := range channels {
+		if _, err := raw.Exec(`INSERT INTO task_channels (task_id, channel_id) VALUES (?, ?)`, id, ch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return id
+}
+
+// bindMsg inserts a collected_message and a task_message for taskID.
+func bindMsg(t *testing.T, raw *sql.DB, taskID int64, channelID, ts, userID, text string) {
+	t.Helper()
+	if _, err := raw.Exec(`INSERT OR IGNORE INTO collected_messages (channel_id, ts, user_id, text, permalink, received_at)
+VALUES (?, ?, ?, ?, ?, '2026-09-21T09:01:00Z')`, channelID, ts, userID, text, "https://t.slack.com/p"+ts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT OR IGNORE INTO task_messages (task_id, channel_id, ts) VALUES (?, ?, ?)`, taskID, channelID, ts); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// readTaskCols reads a few key columns from tasks for taskID.
+func readTaskCols(t *testing.T, raw *sql.DB, taskID int64) (state string, dueAt sql.NullString, endedAt sql.NullString, lastStarted sql.NullString, failures int) {
+	t.Helper()
+	err := raw.QueryRow(`SELECT state, due_at, ended_at, last_run_started_at, consecutive_failures FROM tasks WHERE task_id = ?`, taskID).
+		Scan(&state, &dueAt, &endedAt, &lastStarted, &failures)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return
+}
+
+func TestEnqueueDueScheduleTaskWithMessages(t *testing.T) {
+	s, slack, clock, runner, raw := newTaskDispatchService(t)
+	slack.channels = map[string]string{"C1": "general"}
+	dueAt := clock.at.Add(-time.Minute).UTC().Format(time.RFC3339)
+	taskID := insertScheduleTaskFull(t, raw, dueAt, "watch #general", `{"every_hours":1}`, `{"dm":true}`, "C1")
+	bindMsg(t, raw, taskID, "C1", "1700000001.000001", "U2", "alpha")
+	bindMsg(t, raw, taskID, "C1", "1700000001.000002", "U2", "beta")
+	bindMsg(t, raw, taskID, "C1", "1700000001.000003", "U2", "gamma")
+
+	// Don't finish the run automatically so we can inspect files before delivery.
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if runner.started() != 1 {
+		t.Fatalf("started = %d, want 1 task run", runner.started())
+	}
+
+	// One bound run, three bound task_messages rows.
+	n, err := s.DB.CountRunsByState(context.Background(), db.RunRunning)
+	if err != nil || n != 1 {
+		t.Fatalf("running runs = %d, %v; want 1", n, err)
+	}
+	var bound int
+	if err := raw.QueryRow(`SELECT COUNT(*) FROM task_messages WHERE run_id IS NOT NULL`).Scan(&bound); err != nil {
+		t.Fatal(err)
+	}
+	if bound != 3 {
+		t.Fatalf("bound task_messages = %d, want 3", bound)
+	}
+
+	// messages.jsonl has three lines in ts order.
+	runDir := runner.specs[0].RunDir
+	jsonlBytes, err := os.ReadFile(filepath.Join(runDir, messagesFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc := bufio.NewScanner(bytes.NewReader(jsonlBytes))
+	var lines []string
+	for sc.Scan() {
+		if sc.Text() != "" {
+			lines = append(lines, sc.Text())
+		}
+	}
+	if len(lines) != 3 {
+		t.Fatalf("messages.jsonl has %d lines, want 3:\n%s", len(lines), jsonlBytes)
+	}
+	if !strings.Contains(lines[0], `"ts":"1700000001.000001"`) || !strings.Contains(lines[2], `"ts":"1700000001.000003"`) {
+		t.Fatalf("messages.jsonl lines not in ts order:\n%s", jsonlBytes)
+	}
+
+	// prompt.md has the instruction and the message count.
+	promptBytes, err := os.ReadFile(filepath.Join(runDir, promptFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"## Instruction", "watch #general", "3 messages in " + messagesFile} {
+		if !strings.Contains(string(promptBytes), want) {
+			t.Errorf("prompt.md lacks %q:\n%s", want, promptBytes)
+		}
+	}
+
+	// last_run_started_at is set.
+	_, _, _, lastStarted, _ := readTaskCols(t, raw, taskID)
+	if !lastStarted.Valid {
+		t.Fatal("tasks.last_run_started_at should be set after spawn")
+	}
+}
+
+func TestRunningTaskIsNotReenqueued(t *testing.T) {
+	s, _, clock, _, raw := newTaskDispatchService(t)
+	dueAt := clock.at.Add(-time.Minute).UTC().Format(time.RFC3339)
+	taskID := insertScheduleTaskFull(t, raw, dueAt, "watch", `{"every_hours":1}`, `{"dm":true}`, "C1")
+
+	// Manually insert a running run for the task.
+	existing := db.AssistantRun{
+		RunID:    "RUNNING01",
+		Kind:     db.RunKindTask,
+		TaskID:   sql.NullInt64{Int64: taskID, Valid: true},
+		State:    db.RunRunning,
+		QueuedAt: "2026-09-21T09:55:00Z",
+	}
+	if err := s.DB.InsertAssistantRun(context.Background(), existing); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.enqueueDueTasks(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	n, _ := s.DB.CountRunsByState(context.Background(), db.RunQueued)
+	if n != 0 {
+		t.Fatalf("queued runs = %d, want 0 (task already has a running run)", n)
+	}
+}
+
+func TestZeroMessageTaskSpawns(t *testing.T) {
+	s, slack, clock, runner, raw := newTaskDispatchService(t)
+	slack.channels = map[string]string{"C1": "general"}
+	dueAt := clock.at.Add(-time.Minute).UTC().Format(time.RFC3339)
+	insertScheduleTaskFull(t, raw, dueAt, "watch", `{"every_hours":1}`, `{"dm":true}`, "C1")
+
+	// No collected messages.
+	runner.scripted = []agent.RunOutcome{{ExitCode: 0, Result: "nothing", ResultSource: "result.md"}}
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if runner.started() != 1 {
+		t.Fatalf("started = %d, want the zero-message task still spawned", runner.started())
+	}
+	// messages.jsonl is empty.
+	runDir := runner.specs[0].RunDir
+	info, err := os.Stat(filepath.Join(runDir, messagesFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != 0 {
+		t.Fatalf("messages.jsonl has %d bytes, want empty for zero-message task", info.Size())
+	}
+	// prompt.md says "0 messages".
+	promptBytes, _ := os.ReadFile(filepath.Join(runDir, promptFile))
+	if !strings.Contains(string(promptBytes), "0 messages in "+messagesFile) {
+		t.Fatalf("prompt.md lacks '0 messages in messages.jsonl':\n%s", promptBytes)
+	}
+	// Wait for delivery.
+	s.inflight.Wait()
+	// Header should say "0 new items".
+	if len(slack.posts) != 1 || !strings.Contains(slack.posts[0].text, "0 new items") {
+		t.Fatalf("posts = %+v, want one post with '0 new items'", slack.posts)
 	}
 }

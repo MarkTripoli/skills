@@ -53,6 +53,8 @@ type Service struct {
 	verbs map[string]verb
 	// channelNames caches conversations.info names by channel id for `!tasks`.
 	channelNames map[string]string
+	// ownerDM caches the DM channel id for the owner, opened on the first task delivery.
+	ownerDM string
 	// wake receives one signal when inbound work is queued for the runner.
 	wake chan struct{}
 	// inflight counts the deliveries waiting on a running agent; RunDispatcher
