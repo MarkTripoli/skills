@@ -177,48 +177,134 @@ func TestChunk(t *testing.T) {
 	}
 }
 
-func TestOtherOutcomesFailTheRunWithoutTouchingSlack(t *testing.T) {
+func TestFailureEditsAckAndPostsReply(t *testing.T) {
 	cases := []struct {
-		name    string
-		out     agent.RunOutcome
-		failure string
+		name      string
+		out       agent.RunOutcome
+		wantCause string
+		wantFence bool
 	}{
-		{"non-zero exit", agent.RunOutcome{ExitCode: 3, Result: "partial", ResultSource: "stdout"}, "exit 3"},
-		{"timed out", agent.RunOutcome{ExitCode: -1, TimedOut: true}, "timed out after 1m0s"},
-		{"no result", agent.RunOutcome{ExitCode: 0}, "agent wrote no result"},
+		{
+			name:      "non-zero exit with stderr",
+			out:       agent.RunOutcome{ExitCode: 3, StderrTail: buildStderr(20), ResultSource: "stdout"},
+			wantCause: "exit 3",
+			wantFence: true,
+		},
+		{
+			name:      "timed out",
+			out:       agent.RunOutcome{ExitCode: -1, TimedOut: true},
+			wantCause: "timed out after 1m0s",
+			wantFence: false,
+		},
+		{
+			name:      "empty result",
+			out:       agent.RunOutcome{ExitCode: 0},
+			wantCause: "agent wrote no result",
+			wantFence: false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s, slack, clock, runner := newDispatchService(t)
-			logged := captureLog(t)
 			id := deliverOne(t, s, clock, runner, tc.out)
 
+			const root, ackTS = "1700000000.001000", "1700000000.900001"
+			if len(slack.updates) != 1 || slack.updates[0] != (slackUpdate{"D1", ackTS, "Failed"}) {
+				t.Fatalf("updates = %+v; want one edit to Failed", slack.updates)
+			}
+			if len(slack.posts) != 2 {
+				t.Fatalf("posts = %d; want ack then reply", len(slack.posts))
+			}
+			reply := slack.posts[1]
+			if reply.channel != "D1" || reply.thread != root {
+				t.Fatalf("reply = %+v; want D1 / root", reply)
+			}
+			if !strings.HasPrefix(reply.text, tc.wantCause) {
+				t.Fatalf("reply text = %q; want prefix %q", reply.text, tc.wantCause)
+			}
+			hasFence := strings.Contains(reply.text, "```")
+			if hasFence != tc.wantFence {
+				t.Fatalf("fence present = %t; want %t in %q", hasFence, tc.wantFence, reply.text)
+			}
+			if tc.wantFence {
+				lines := strings.Split(strings.TrimSuffix(strings.TrimPrefix(reply.text, tc.wantCause+"\n\n```\n"), "\n```"), "\n")
+				if len(lines) != 20 {
+					t.Fatalf("fence holds %d lines; want 20", len(lines))
+				}
+			}
+
 			run := getRun(t, s, id)
-			if run.State != db.RunFailed || run.Failure.String != tc.failure || run.ExitCode.Int64 != int64(tc.out.ExitCode) || run.TimedOut != tc.out.TimedOut || run.FinishedAt.String != "2026-09-21T10:00:01Z" {
-				t.Fatalf("row = %+v, want failed with %q, exit %d, timed_out %t", run, tc.failure, tc.out.ExitCode, tc.out.TimedOut)
+			if run.State != db.RunFailed || run.Failure.String != tc.wantCause {
+				t.Fatalf("row = %+v; want failed with %q", run, tc.wantCause)
 			}
-			if run.ResultSource.Valid != (tc.out.ResultSource != "") || run.ResultSource.String != tc.out.ResultSource {
-				t.Fatalf("result_source = %+v, want %q", run.ResultSource, tc.out.ResultSource)
+
+			msgs, err := s.DB.ListDMMessages(context.Background(), root)
+			if err != nil {
+				t.Fatal(err)
 			}
-			if len(slack.updates) != 0 || len(slack.posts) != 1 {
-				t.Fatalf("updates %+v posts %+v; want the ack left alone and nothing posted", slack.updates, slack.posts)
+			if len(msgs) < 3 {
+				t.Fatalf("dm_messages = %d rows; want root, ack, bot reply", len(msgs))
 			}
-			msgs, _ := s.DB.ListDMMessages(context.Background(), "1700000000.001000")
-			if len(msgs) != 2 || msgs[1].Text != "Working on it" {
-				t.Fatalf("dm_messages = %+v, want only the root and the ack", msgs)
+			bot := msgs[len(msgs)-1]
+			if bot.Author != db.AuthorBot || bot.RunID.String != id || !bot.RunID.Valid {
+				t.Fatalf("last dm_messages row = %+v; want bot row bound to run", bot)
 			}
-			if got, want := strings.Contains(logged.String(), "run "+id+": result.md missing, answered from stdout"), tc.out.ResultSource == "stdout"; got != want {
-				t.Fatalf("stdout log present = %t, want %t in %q", got, want, logged.String())
+			if !strings.HasPrefix(bot.Text, tc.wantCause) {
+				t.Fatalf("bot text = %q; want prefix %q", bot.Text, tc.wantCause)
 			}
 		})
 	}
 }
 
-// --- task-run delivery tests ---
+// buildStderr returns n newline-joined lines numbered from 1.
+func buildStderr(n int) string {
+	parts := make([]string, n)
+	for i := range parts {
+		parts[i] = fmt.Sprintf("line %d", i+1)
+	}
+	return strings.Join(parts, "\n")
+}
 
-// deliverOneTask sets up a schedule task with msgCount collected messages,
-// ticks to enqueue+spawn with the scripted outcome, waits for delivery, and
-// returns the task id and the run id.
+func TestErrBinaryMissingPostsReplyWithNoFence(t *testing.T) {
+	s, slack, clock, _ := newDispatchService(t)
+	runner := &fakeRunner{startErr: agent.ErrBinaryMissing{Name: "codex"}}
+	s.Runner = runner
+	roots := queueRequests(t, s, clock, "build me something")
+	root := roots[0]
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	const wantCause = `agent binary "codex" not found on PATH`
+	if len(slack.updates) != 1 || slack.updates[0].text != "Failed" {
+		t.Fatalf("updates = %+v; want one edit to Failed", slack.updates)
+	}
+	if len(slack.posts) < 2 {
+		t.Fatalf("posts = %d; want ack then reply", len(slack.posts))
+	}
+	reply := slack.posts[len(slack.posts)-1]
+	if reply.text != wantCause {
+		t.Fatalf("reply text = %q; want %q", reply.text, wantCause)
+	}
+	if strings.Contains(reply.text, "```") {
+		t.Fatalf("reply %q must not contain a fence", reply.text)
+	}
+
+	msgs, err := s.DB.ListDMMessages(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var botRow db.DMMessage
+	for _, m := range msgs {
+		if m.Author == db.AuthorBot && m.Text == wantCause {
+			botRow = m
+		}
+	}
+	if botRow.Author != db.AuthorBot || !botRow.RunID.Valid {
+		t.Fatalf("no bot dm_messages row with cause; msgs = %+v", msgs)
+	}
+}
+
 func deliverOneTask(t *testing.T, s *Service, slack *fakeSlack, clock *testClock, runner *fakeRunner, raw *sql.DB, out agent.RunOutcome, msgCount int) (taskID int64, runID string) {
 	t.Helper()
 	slack.channels = map[string]string{"C1": "general"}
