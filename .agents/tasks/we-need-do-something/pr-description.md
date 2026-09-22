@@ -44,7 +44,7 @@ Line 6 (the shared writing-guide sentence `validate.mjs` checks) is unchanged in
 
 ### Review targets
 
-- The size-signal wording in [shared/SLICING.md](../../../shared/SLICING.md) (200-400 changed lines, generated code and lockfiles excluded) and that it stays the sole owner of the number.
+- The size-signal wording in [shared/SLICING.md](shared/SLICING.md) (200-400 changed lines, generated code and lockfiles excluded) and that it stays the sole owner of the number.
 - That `start-epic-delivery` received a re-validation citation only, not a four-tests follower link.
 - The corrected follower-list sentence naming exactly `create-epic-plan`, `create-structure-outline`, `create-plan`, `create-prd`.
 
