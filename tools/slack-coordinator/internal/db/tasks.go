@@ -184,3 +184,68 @@ func (d *DB) CountTasksByState(ctx context.Context, state string) (int, error) {
 	}
 	return n, nil
 }
+
+// DueTasks returns active tasks with trigger schedule or window_end whose
+// due_at is at or before now and which have no queued or running run.
+func (d *DB) DueTasks(ctx context.Context, now string) ([]Task, error) {
+	rows, err := d.sql.QueryContext(ctx, `
+SELECT `+taskColumns+` FROM tasks
+WHERE state = 'active'
+  AND trigger IN ('schedule','window_end')
+  AND due_at IS NOT NULL AND due_at <= ?
+  AND task_id NOT IN (
+    SELECT task_id FROM assistant_runs
+    WHERE state IN ('queued','running') AND task_id IS NOT NULL
+  )
+ORDER BY task_id`, now)
+	if err != nil {
+		return nil, fmt.Errorf("due tasks: %w", err)
+	}
+	defer rows.Close()
+	var tasks []Task
+	for rows.Next() {
+		t, err := scanTask(rows)
+		if err != nil {
+			return nil, fmt.Errorf("due tasks: %w", err)
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, rows.Err()
+}
+
+// MarkTaskRunStarted sets last_run_started_at for taskID.
+func (d *DB) MarkTaskRunStarted(ctx context.Context, taskID int64, at string) error {
+	if _, err := d.sql.ExecContext(ctx,
+		`UPDATE tasks SET last_run_started_at = ? WHERE task_id = ?`, at, taskID); err != nil {
+		return fmt.Errorf("mark task %d run started: %w", taskID, err)
+	}
+	return nil
+}
+
+// RecordTaskSuccess updates the task after a successful run: sets last_result_at
+// and resets consecutive_failures. For schedule tasks nextDue advances due_at;
+// for window_end tasks endedAt is non-nil and the state is set to completed.
+func (d *DB) RecordTaskSuccess(ctx context.Context, taskID int64, nextDue, endedAt *string, resultAt string) error {
+	state := TaskActive
+	if endedAt != nil {
+		state = TaskCompleted
+	}
+	if _, err := d.sql.ExecContext(ctx, `
+UPDATE tasks SET last_result_at = ?, consecutive_failures = 0, due_at = ?, state = ?, ended_at = ?
+WHERE task_id = ?`, resultAt, nextDue, state, endedAt, taskID); err != nil {
+		return fmt.Errorf("record task %d success: %w", taskID, err)
+	}
+	return nil
+}
+
+// RecordTaskFailure increments consecutive_failures. For schedule tasks
+// nextDue (non-nil) advances due_at; for window_end tasks nextDue is nil and
+// due_at is left unchanged.
+func (d *DB) RecordTaskFailure(ctx context.Context, taskID int64, nextDue *string) error {
+	if _, err := d.sql.ExecContext(ctx, `
+UPDATE tasks SET consecutive_failures = consecutive_failures + 1, due_at = COALESCE(?, due_at)
+WHERE task_id = ?`, nextDue, taskID); err != nil {
+		return fmt.Errorf("record task %d failure: %w", taskID, err)
+	}
+	return nil
+}
