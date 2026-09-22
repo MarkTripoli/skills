@@ -1,5 +1,33 @@
 # @marktripoli/skills
 
+## 4.0.0
+
+### Major Changes
+
+- [#36](https://github.com/MarkTripoli/skills/pull/36) [`338aa70`](https://github.com/MarkTripoli/skills/commit/338aa70e027769af90768433a01e07a35ffa2371) Thanks [@Triippz](https://github.com/Triippz)! - Initialize new tasks with semantic artifact indexes and immutable iterations, support repository-configured task roots without migrating legacy tasks, install the portable index helper beside every skill, and require Atomic stages to register their output iterations.
+
+### Minor Changes
+
+- [#89](https://github.com/MarkTripoli/skills/pull/89) [`15dafeb`](https://github.com/MarkTripoli/skills/commit/15dafeb9fd3c9e9170d767590f679458a363332b) Thanks [@Triippz](https://github.com/Triippz)! - slack-coordinator runs queued owner DM requests through the configured agent, three at a time: the dispatcher writes `prompt.md` (with the embedded assistant skill text) and an empty `messages.jsonl` into the run directory, edits a `Queued behind` ack to `Working on it` when the run starts, and on a clean exit replaces the ack with the agent's answer (or posts a long answer under a `Done` ack); a non-zero exit, timeout, or empty result marks the run `failed` and leaves the ack alone.
+
+- [#81](https://github.com/MarkTripoli/skills/pull/81) [`71681a0`](https://github.com/MarkTripoli/skills/commit/71681a00098826cb4afbc8adef77df4c89e383b0) Thanks [@Triippz](https://github.com/Triippz)! - slack-coordinator answers a non-owner's first DM with one refusal naming the owner, records the sender in `refused_users`, and drops their later DMs silently.
+
+- [#74](https://github.com/MarkTripoli/skills/pull/74) [`fba7982`](https://github.com/MarkTripoli/skills/commit/fba7982438ff36f7dcf470a0723407ed0c01de00) Thanks [@Triippz](https://github.com/Triippz)! - Remove `run start --owner` from slack-coordinator; every run's owner is the `setup --owner` value the daemon holds.
+
+- [#105](https://github.com/MarkTripoli/skills/pull/105) [`367e1ec`](https://github.com/MarkTripoli/skills/commit/367e1ec89009c972c6ce77e9f2b4b2ebe68a3b9e) Thanks [@Triippz](https://github.com/Triippz)! - Add owner DMs, standing tasks, and `onboard` to the Slack coordinator.
+
+- [#39](https://github.com/MarkTripoli/skills/pull/39) [`f1309ee`](https://github.com/MarkTripoli/skills/commit/f1309eededc5a4c482f4c4dfbb5eeb70cb5130a0) Thanks [@Triippz](https://github.com/Triippz)! - Add the slack-coordinator daemon, CLI, and agent skill for one Slack thread per run with owner steering.
+
+### Patch Changes
+
+- [#108](https://github.com/MarkTripoli/skills/pull/108) [`489de5e`](https://github.com/MarkTripoli/skills/commit/489de5eb39f98ea331335925890cac7bd41195af) Thanks [@Triippz](https://github.com/Triippz)! - Document Slack coordinator install, service maintenance, and the agent-to-daemon contract.
+
+- [#38](https://github.com/MarkTripoli/skills/pull/38) [`2b7705f`](https://github.com/MarkTripoli/skills/commit/2b7705f371702f32ab8ad4086fec83a7a77a9d52) Thanks [@Triippz](https://github.com/Triippz)! - Slice future work into granular, reviewable pull requests: add an advisory size-signal pre-check to
+  shared/SLICING.md, make create-plan a slicing-guide follower with a per-phase four-tests re-check,
+  add the size signal and a prefer-shared-contract-over-depends_on rule to create-epic-plan, reference
+  the size signal in create-structure-outline, and cite the guide when start-epic-delivery re-validates
+  a materialized slice.
+
 ## 3.3.0
 
 ### Minor Changes
