@@ -2,6 +2,25 @@
 
 Slack coordinator posts one Slack thread per run of agent work and lets the run owner steer that run from the thread. It is distributed as the `slack-coordinator` binary, built from `tools/slack-coordinator/`, and installed separately from agent skills.
 
+## Install
+
+Skill installation does not install this binary. From a checkout of this collection, with the Go version named in `tools/slack-coordinator/go.mod`:
+
+```sh
+go build -o slack-coordinator ./tools/slack-coordinator/cmd/slack-coordinator
+```
+
+Put that file on `PATH`, then run `slack-coordinator onboard` as described below.
+
+When the bot token, the app-level token, and the owner id are already known, skip the walkthrough:
+
+```sh
+SLACK_BOT_TOKEN=xoxb-… SLACK_APP_TOKEN=xapp-… slack-coordinator setup --owner U… --install-service
+slack-coordinator daemon status
+```
+
+`setup` reads `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` from the environment, checks both against Slack, and writes `$SLACK_COORDINATOR_HOME/config.yaml` (default `~/.slack-coordinator`, mode 0600). It never reads a repository `.env`. `--install-service` installs the supervisor. Without that flag, start the process with `slack-coordinator daemon start`.
+
 ## Onboarding
 
 Run `slack-coordinator onboard` in a terminal. The walkthrough prints and performs these steps:
@@ -18,6 +37,65 @@ Run `slack-coordinator onboard` in a terminal. The walkthrough prints and perfor
 Use `--no-service` to start the daemon detached until logout or reboot instead of installing a service; `slack-coordinator service install` can add supervision later. For an already installed app, `--existing` updates its manifest, asks you to reinstall it for updated scopes, and lets you keep or replace the bot token. If a config already exists, normal onboarding offers repair mode: re-verify, reinstall the service, or replace a token. An interrupted walkthrough resumes from `$SLACK_COORDINATOR_HOME/onboard.json`; successful verification removes the checkpoint. The app configuration token comes from Slack’s **Your App Configuration Tokens** page, is requested only when needed, and is never written to config or the checkpoint.
 
 The full embedded app manifest is [slack-app-manifest.yaml](../tools/slack-coordinator/internal/manifest/slack-app-manifest.yaml). Setup’s `onboard` command is interactive; `slack-coordinator setup` remains available for non-interactive configuration when tokens and owner are already known.
+
+## Maintain
+
+Everything the daemon owns lives under `$SLACK_COORDINATOR_HOME` (default `~/.slack-coordinator`, mode 0700):
+
+| Path | Role |
+|---|---|
+| `config.yaml` | Bot token, app-level token, owner, and any `agent`, `retention`, or Jira keys. Mode 0600. |
+| `state.sqlite` | Runs, standing tasks, and DM threads. |
+| `socket` | Unix socket the CLI uses to reach the daemon. |
+| `daemon.log` | Daemon stdout and stderr, including the supervised process. |
+| `daemon.pid` | Pid recorded by `daemon start`. |
+| `daemon.lock` | Refuses a second daemon for this home. |
+| `onboard.json` | Walkthrough checkpoint. A verified setup deletes it. |
+| `workspace/runs/<id>` | One headless agent run: `prompt.md` in, `result.md` or `proposal.json` out. |
+| `slack-coordinator.plist` | macOS launchd agent. |
+
+On Linux the unit is `~/.config/systemd/user/com.marktripoli.slack-coordinator.service`. The label on both platforms is `com.marktripoli.slack-coordinator`.
+
+### Service
+
+```sh
+slack-coordinator service install
+slack-coordinator service status
+slack-coordinator service uninstall
+```
+
+`service install` writes the definition for this binary and this home, then starts supervision. The definition runs `slack-coordinator daemon serve` at login and restarts it after exit. Run `service install` again after the binary moves or `SLACK_COORDINATOR_HOME` changes; the definition records both. macOS loads `slack-coordinator.plist` with `launchctl load -w`. Linux runs `systemctl --user daemon-reload` and `systemctl --user enable --now`.
+
+`daemon start` launches a detached process until logout or reboot when no service is installed, and prints `daemon already running` when the socket already answers. `daemon status` prints `{"socket_mode":"…"}`. `daemon stop` asks for a clean shutdown. If a service is installed it also prints `service installed; use service uninstall to stop supervision`, because the supervisor starts the daemon again. `service uninstall` is what ends that loop.
+
+### Upgrade
+
+1. Rebuild or replace the `slack-coordinator` binary on `PATH`.
+2. Run `slack-coordinator service install` so supervision points at that binary.
+3. When a release adds Slack scopes, run `slack-coordinator onboard --existing`. It updates the installed app’s manifest, asks you to reinstall the app, and accepts a new bot token or Enter to keep the current one.
+
+Config, `state.sqlite`, and `workspace/` stay in place across an upgrade.
+
+### Tokens
+
+The app configuration token (`xoxe.xoxp-…`) is typed only while creating or updating the app. It is held in memory and is never written to `config.yaml` or `onboard.json`. Slack expires it; if a later step rejects it, generate another at [api.slack.com/apps](https://api.slack.com/apps) under **Your App Configuration Tokens**.
+
+The bot token (`xoxb-…`) and the app-level token (`xapp-…`, scope `connections:write`) are the tokens stored in `config.yaml`. To rotate one, run `slack-coordinator onboard` where a config already exists. The menu is `Existing setup found. [1] re-verify [2] reinstall service [3] replace a token`.
+
+- `1` checks the current setup by asking the owner to answer a DM.
+- `2` reinstalls the service. With `--no-service` it restarts the detached daemon instead.
+- `3` asks which token, checks the new value against Slack, writes it, leaves every other config key as it was, and restarts the daemon.
+
+Repair never creates a second Slack app.
+
+### When the daemon is down
+
+1. Run `slack-coordinator daemon status`. Exit `11` with `daemon unreachable` means nothing is listening on `socket`.
+2. Read `daemon.log`.
+3. If `slack-coordinator service status` reports the service installed, run `slack-coordinator service install` to rewrite and reload it. If the service is not installed, run `slack-coordinator daemon start`.
+4. If the process is up but Slack rejects the tokens, run `slack-coordinator onboard` and choose re-verify or replace a token.
+
+An agent that gets exit `11` from `run check` waits and retries. It does not install the service, start the daemon, or rotate a token.
 
 ## Assistant DMs
 
