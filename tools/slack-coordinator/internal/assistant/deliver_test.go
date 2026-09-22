@@ -434,8 +434,129 @@ func TestTaskRunFailureUnbindsMessagesAndIncrementsFailures(t *testing.T) {
 		t.Fatal("due_at should be advanced after schedule failure")
 	}
 
-	// No Slack call was made.
-	if len(slack.posts) != 0 || len(slack.opened) != 0 {
-		t.Fatal("no Slack post should be made after a task run failure")
+	// Failure notification posted to the DM target.
+	if len(slack.opened) != 1 || slack.opened[0] != "U1" {
+		t.Fatalf("opened = %v, want owner DM opened once", slack.opened)
+	}
+	wantText := "Failed: t1 · #general\nexit 1"
+	if len(slack.posts) != 1 || slack.posts[0] != (slackPost{"D1", "", wantText}) {
+		t.Fatalf("posts = %+v, want one failure post %q", slack.posts, wantText)
+	}
+}
+
+func TestTaskRunFailurePostsExitWithStderr(t *testing.T) {
+	s, slack, clock, runner, raw := newTaskDispatchService(t)
+	slack.channels = map[string]string{"C1": "general"}
+	stderr := buildStderr(20)
+	_, runID := deliverOneTask(t, s, slack, clock, runner, raw,
+		agent.RunOutcome{ExitCode: 2, StderrTail: stderr, ResultSource: "result.md"}, 2)
+	if runID == "" {
+		t.Fatal("no run started")
+	}
+
+	// DM opened, one failure post.
+	if len(slack.opened) != 1 || slack.opened[0] != "U1" {
+		t.Fatalf("opened = %v, want owner DM", slack.opened)
+	}
+	if len(slack.posts) != 1 {
+		t.Fatalf("posts = %d, want 1 failure post", len(slack.posts))
+	}
+	post := slack.posts[0]
+	if post.channel != "D1" || post.thread != "" {
+		t.Fatalf("post target = {%q, %q}, want {D1, }", post.channel, post.thread)
+	}
+	wantPrefix := "Failed: t1 · #general\nexit 2"
+	if !strings.HasPrefix(post.text, wantPrefix) {
+		t.Fatalf("post text = %q, want prefix %q", post.text, wantPrefix)
+	}
+	if !strings.Contains(post.text, "```") {
+		t.Fatalf("post text = %q, want stderr fence", post.text)
+	}
+	lines := strings.Split(strings.TrimSuffix(strings.TrimPrefix(post.text, wantPrefix+"\n\n```\n"), "\n```"), "\n")
+	if len(lines) != 20 {
+		t.Fatalf("fence holds %d lines, want 20", len(lines))
+	}
+
+	// task_messages.run_id is NULL.
+	var bound int
+	if err := raw.QueryRow(`SELECT COUNT(*) FROM task_messages WHERE run_id IS NOT NULL`).Scan(&bound); err != nil {
+		t.Fatal(err)
+	}
+	if bound != 0 {
+		t.Fatalf("bound task_messages = %d, want 0 after failure", bound)
+	}
+}
+
+func TestTaskRunFailurePostsTimeoutCause(t *testing.T) {
+	s, slack, clock, runner, raw := newTaskDispatchService(t)
+	s.Agent.Timeout = 10 * time.Minute
+	slack.channels = map[string]string{"C1": "general"}
+	_, runID := deliverOneTask(t, s, slack, clock, runner, raw,
+		agent.RunOutcome{ExitCode: -1, TimedOut: true}, 1)
+	if runID == "" {
+		t.Fatal("no run started")
+	}
+
+	if len(slack.posts) != 1 {
+		t.Fatalf("posts = %d, want 1", len(slack.posts))
+	}
+	wantText := "Failed: t1 · #general\ntimed out after 10m0s"
+	if slack.posts[0].text != wantText {
+		t.Fatalf("post text = %q, want %q", slack.posts[0].text, wantText)
+	}
+}
+
+func TestTaskRunFailurePostsEmptyResultCause(t *testing.T) {
+	s, slack, clock, runner, raw := newTaskDispatchService(t)
+	slack.channels = map[string]string{"C1": "general"}
+	_, runID := deliverOneTask(t, s, slack, clock, runner, raw,
+		agent.RunOutcome{ExitCode: 0, Result: ""}, 1)
+	if runID == "" {
+		t.Fatal("no run started")
+	}
+
+	if len(slack.posts) != 1 {
+		t.Fatalf("posts = %d, want 1", len(slack.posts))
+	}
+	wantText := "Failed: t1 · #general\nagent wrote no result"
+	if slack.posts[0].text != wantText {
+		t.Fatalf("post text = %q, want %q", slack.posts[0].text, wantText)
+	}
+}
+
+func TestTaskRunFailureChannelThreadDelivery(t *testing.T) {
+	s, slack, clock, runner, raw := newTaskDispatchService(t)
+	slack.channels = map[string]string{"C1": "general"}
+	dueAt := clock.at.Add(-time.Minute).UTC().Format(time.RFC3339)
+	deliverTo := `{"channel_id":"C2","thread_ts":"1700000000.555000"}`
+	taskID := insertScheduleTaskFull(t, raw, dueAt, "watch", `{"every_hours":1}`, deliverTo, "C1")
+	bindMsg(t, raw, taskID, "C1", "1700000001.000001", "U2", "hi")
+
+	runner.scripted = []agent.RunOutcome{{ExitCode: 3, ResultSource: "result.md"}}
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s.inflight.Wait()
+
+	if len(slack.opened) != 0 {
+		t.Fatalf("opened = %v, want no DM opened for channel-thread delivery", slack.opened)
+	}
+	if len(slack.posts) != 1 {
+		t.Fatalf("posts = %d, want 1 failure post", len(slack.posts))
+	}
+	want := slackPost{"C2", "1700000000.555000", "Failed: t1 · #general\nexit 3"}
+	if slack.posts[0] != want {
+		t.Fatalf("post = %+v, want %+v", slack.posts[0], want)
+	}
+}
+
+func TestShowIncludesExitCodeForFailedRun(t *testing.T) {
+	s, slack, _, raw := newCollectService(t)
+	task := insertTaskRow(t, raw, taskRow{state: db.TaskActive, instruction: "watch", trigger: db.TriggerSchedule, schedule: `{"every_hours":1}`})
+	insertTaskRun(t, raw, "R1", task, db.RunFailed, "2026-09-21T10:00:00Z", "2026-09-21T10:00:10Z", "2026-09-21T10:01:00Z", 2, "exit 2")
+
+	reply := verbReply(t, s, slack, "1700000000.001000", fmt.Sprintf("!show t%d", task))
+	if !strings.Contains(reply, "exit 2") {
+		t.Fatalf("!show output %q does not contain exit 2", reply)
 	}
 }

@@ -48,8 +48,9 @@ type Service struct {
 	Agent *config.Agent
 	// Runner spawns the agent process for each queued run; nil (no agent
 	// configured) leaves queued rows waiting.
-	Runner agent.Runner
-	Now    func() time.Time
+	Runner    agent.Runner
+	Now       func() time.Time
+	Retention config.Retention
 	// started is when the Service was constructed; `!status` reports uptime from it.
 	started time.Time
 	// verbs maps a lowercased `!` command to its handler; see verbs.go.
@@ -63,6 +64,12 @@ type Service struct {
 	// inflight counts the deliveries waiting on a running agent; RunDispatcher
 	// waits for them before returning.
 	inflight sync.WaitGroup
+	// handlesMu guards handles.
+	handlesMu sync.Mutex
+	// handles maps run_id to the live agent handle for that run; entries are
+	// added when spawn registers a goroutine and removed when the goroutine
+	// ends. RunDispatcher kills every entry on ctx cancellation.
+	handles map[string]*agent.Handle
 	// verifyMu guards verify, the setup verification waiting for the owner's
 	// reply; nil when none is pending. See verify.go.
 	verifyMu sync.Mutex
@@ -75,8 +82,9 @@ type Service struct {
 // New returns a Service over database and slack whose run-thread replies go to
 // coord, whose files live under p, whose DM requests run on agent (nil when
 // none is configured), and whose clock is now.
-func New(database *db.DB, slack SlackSurface, coord *coordinator.Coordinator, p *paths.Paths, owner string, agent *config.Agent, now func() time.Time) *Service {
-	s := &Service{DB: database, Slack: slack, Coord: coord, Paths: p, Owner: owner, Agent: agent, Now: now, started: now(), channelNames: map[string]string{}, wake: make(chan struct{}, 1)}
+func New(database *db.DB, slack SlackSurface, coord *coordinator.Coordinator, p *paths.Paths, owner string, agentCfg *config.Agent, now func() time.Time) *Service {
+	s := &Service{DB: database, Slack: slack, Coord: coord, Paths: p, Owner: owner, Agent: agentCfg, Now: now, started: now(), channelNames: map[string]string{}, wake: make(chan struct{}, 1)}
+	s.handles = make(map[string]*agent.Handle)
 	s.verbs = s.verbTable()
 	return s
 }
