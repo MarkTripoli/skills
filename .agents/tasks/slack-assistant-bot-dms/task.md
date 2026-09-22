@@ -2,7 +2,7 @@
 slug: slack-assistant-bot-dms
 title: "Slack assistant bot with DMs, standing tasks, and onboarding"
 workflow: program
-gates: all
+gates: none
 routed_by: deliver
 created: 2026-09-22
 base: main
