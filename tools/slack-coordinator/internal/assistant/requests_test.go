@@ -36,6 +36,7 @@ type fakeSlack struct {
 	opened    []string
 	channels  map[string]string
 	infoCalls int
+	ownerTZ   string // returned by UserInfo for the owner; "" means no TZ
 }
 
 type slackPost struct{ channel, thread, text string }
@@ -84,7 +85,7 @@ func (f *fakeSlack) UserInfo(_ context.Context, userID string) (slackapi.User, e
 	if userID != "U1" {
 		return slackapi.User{}, errors.New("users.info: user_not_found")
 	}
-	return slackapi.User{ID: "U1", DisplayName: "ada"}, nil
+	return slackapi.User{ID: "U1", DisplayName: "ada", TZ: f.ownerTZ}, nil
 }
 
 func (f *fakeSlack) ConversationInfo(_ context.Context, id string) (*slack.Channel, error) {
@@ -96,8 +97,20 @@ func (f *fakeSlack) ConversationInfo(_ context.Context, id string) (*slack.Chann
 		return nil, slack.SlackErrorResponse{Err: "channel_not_found"}
 	}
 	var ch slack.Channel
-	ch.ID, ch.Name = id, name
+	ch.ID, ch.Name, ch.IsMember = id, name, true
 	return &ch, nil
+}
+
+func (f *fakeSlack) ListConversations(_ context.Context, cursor string) ([]slack.Channel, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var result []slack.Channel
+	for id, name := range f.channels {
+		var ch slack.Channel
+		ch.ID, ch.Name, ch.IsMember = id, name, true
+		result = append(result, ch)
+	}
+	return result, "", nil
 }
 
 // dm is an owner message in DM channel D1; threadTS "" makes it top level.
