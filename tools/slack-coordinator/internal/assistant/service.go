@@ -45,8 +45,9 @@ type Service struct {
 	Agent *config.Agent
 	// Runner spawns the agent process for each queued run; nil (no agent
 	// configured) leaves queued rows waiting.
-	Runner agent.Runner
-	Now    func() time.Time
+	Runner    agent.Runner
+	Now       func() time.Time
+	Retention config.Retention
 	// started is when the Service was constructed; `!status` reports uptime from it.
 	started time.Time
 	// verbs maps a lowercased `!` command to its handler; see verbs.go.
