@@ -17,5 +17,6 @@ CREATE TABLE IF NOT EXISTS runs (
 // versions append; Open tolerates "duplicate column name".
 var migrationStatements = []string{
 	`ALTER TABLE runs ADD COLUMN next_status_due TEXT`,
-	`ALTER TABLE runs ADD COLUMN last_status TEXT`, // JSON of coordinator.WorkEvent
+	`ALTER TABLE runs ADD COLUMN last_status TEXT`,         // JSON of coordinator.WorkEvent
+	`ALTER TABLE runs ADD COLUMN last_delivery_error TEXT`, // last failed Slack post; NULL once a post succeeds
 }

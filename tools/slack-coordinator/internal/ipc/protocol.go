@@ -17,13 +17,16 @@ const (
 	MethodDaemonShutdown  = "daemon.shutdown"
 )
 
-// JSON-RPC 2.0 error codes.
+// JSON-RPC 2.0 error codes. ErrUnavailable is the implementation-defined code
+// for a request the daemon accepted but could not deliver to Slack; the CLI
+// maps it to exit 11 while every other code stays a usage error.
 const (
 	ErrParseError     = -32700
 	ErrInvalidRequest = -32600
 	ErrMethodNotFound = -32601
 	ErrInvalidParams  = -32602
 	ErrInternal       = -32603
+	ErrUnavailable    = -32000
 )
 
 // Request is a JSON-RPC 2.0 request.
@@ -56,8 +59,8 @@ type HealthParams struct{}
 // ShutdownParams has no fields but exists for consistency.
 type ShutdownParams struct{}
 
-// HealthResult reports the daemon's Socket Mode connection state.
-// It is "not_started" until the daemon owns a Socket Mode connection.
+// HealthResult reports the daemon's Socket Mode connection state:
+// "not_started" before the connection opens, then "connected" or "disconnected".
 type HealthResult struct {
 	SocketMode string `json:"socket_mode"`
 }

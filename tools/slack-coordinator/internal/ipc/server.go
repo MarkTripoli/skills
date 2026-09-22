@@ -157,7 +157,12 @@ func (s *Server) dispatch(ctx context.Context, req Request) *Response {
 	result, err := handler(ctx, req.Params)
 	if err != nil {
 		slog.Warn("ipc request failed", "method", req.Method, "error", err)
-		return NewErrorResponse(req.ID, ErrInternal, err.Error())
+		code := ErrInternal
+		var rpcErr *RPCError
+		if errors.As(err, &rpcErr) {
+			code = rpcErr.Code
+		}
+		return NewErrorResponse(req.ID, code, err.Error())
 	}
 
 	resp, err := NewResponse(req.ID, result)

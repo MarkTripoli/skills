@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/coordinator"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/daemon"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/paths"
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/slackapi"
 )
 
 // fakeChannel is one row the fake conversations.info and conversations.list serve.
@@ -44,6 +46,8 @@ var testChannels = []fakeChannel{
 type fakeSlack struct {
 	mu    sync.Mutex
 	posts []url.Values
+	// failPosts makes chat.postMessage answer 500 until cleared.
+	failPosts atomic.Bool
 }
 
 func (f *fakeSlack) count() int {
@@ -52,10 +56,21 @@ func (f *fakeSlack) count() int {
 	return len(f.posts)
 }
 
+// post returns the i-th recorded chat.postMessage form.
+func (f *fakeSlack) post(i int) url.Values {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.posts[i]
+}
+
 func newFakeSlack(t *testing.T) (*fakeSlack, string) {
 	f := &fakeSlack{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/chat.postMessage", func(w http.ResponseWriter, r *http.Request) {
+		if f.failPosts.Load() {
+			http.Error(w, "slack is down", http.StatusInternalServerError)
+			return
+		}
 		_ = r.ParseForm()
 		f.mu.Lock()
 		f.posts = append(f.posts, r.PostForm)
@@ -95,8 +110,15 @@ func newFakeSlack(t *testing.T) (*fakeSlack, string) {
 }
 
 // startTestDaemon runs the daemon in-process against a fresh home under /tmp,
-// so the Unix socket path fits, and returns a stop function.
+// so the Unix socket path fits, with Socket Mode reported connected, and
+// returns a stop function.
 func startTestDaemon(t *testing.T, cfg *config.Config) func() {
+	return startTestDaemonWith(t, cfg, daemon.Options{SocketModeHealth: func() string { return slackapi.SocketConnected }})
+}
+
+// startTestDaemonWith is startTestDaemon with explicit daemon options. Tests
+// always inject SocketModeHealth; no test opens a WebSocket.
+func startTestDaemonWith(t *testing.T, cfg *config.Config, opts daemon.Options) func() {
 	home, err := os.MkdirTemp("/tmp", "sc-")
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +131,7 @@ func startTestDaemon(t *testing.T, cfg *config.Config) func() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- daemon.Serve(ctx, paths.WithRoot(home), cfg, daemon.Options{}) }()
+	go func() { done <- daemon.Serve(ctx, paths.WithRoot(home), cfg, opts) }()
 	var once sync.Once
 	stop := func() {
 		once.Do(func() {

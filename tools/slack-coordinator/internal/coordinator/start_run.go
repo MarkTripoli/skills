@@ -24,6 +24,9 @@ type Coordinator struct {
 	// Quiet is how long an active run may stay silent before the scheduler
 	// reposts its last status.
 	Quiet time.Duration
+	// Health reports the Socket Mode connection state (a slackapi.Socket*
+	// constant). Nil reads as not_started, so run check fails closed.
+	Health func() string
 }
 
 // stamp formats t as the RFC 3339 UTC string every timestamp column holds.
@@ -63,7 +66,7 @@ func (c *Coordinator) StartRun(ctx context.Context, in StartRunInput) (SlackRunR
 	})
 	ts, err := c.Slack.PostMessage(ctx, in.ChannelID, "", text)
 	if err != nil {
-		return SlackRunRef{}, fmt.Errorf("post root message: %w", err)
+		return SlackRunRef{}, &DeliveryError{Err: fmt.Errorf("post root message: %w", err)}
 	}
 	permalink, err := c.Slack.Permalink(ctx, in.ChannelID, ts)
 	if err != nil {

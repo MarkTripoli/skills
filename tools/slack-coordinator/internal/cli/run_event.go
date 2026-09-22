@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"errors"
-
 	"github.com/spf13/cobra"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/coordinator"
@@ -35,17 +33,12 @@ interval with no further events. A run that has finished is refused.`,
 	return c
 }
 
-// callRunMethod sends one run.* request that returns no data. A daemon-side
-// refusal (unknown run, finished run, bad input) is a usage error (exit 2); a
-// dial failure stays exit 11.
+// callRunMethod sends one run.* request that returns no data and maps the
+// failure through daemonErr.
 func callRunMethod(method string, params interface{}) error {
 	var out ipc.EmptyResult
 	if err := callDaemon(method, params, &out); err != nil {
-		var rpcErr *ipc.RPCError
-		if errors.As(err, &rpcErr) {
-			return usageErr("%s", rpcErr.Message)
-		}
-		return err
+		return daemonErr(err)
 	}
 	return nil
 }

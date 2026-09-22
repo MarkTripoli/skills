@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 
@@ -54,11 +53,7 @@ bot is a member of and that is not archived before the daemon is called.`,
 			}
 			var runRef coordinator.SlackRunRef
 			if err := callDaemon(ipc.MethodRunStart, in, &runRef); err != nil {
-				var rpcErr *ipc.RPCError
-				if errors.As(err, &rpcErr) {
-					return usageErr("%s", rpcErr.Message)
-				}
-				return err
+				return daemonErr(err)
 			}
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(runRef)
 		},

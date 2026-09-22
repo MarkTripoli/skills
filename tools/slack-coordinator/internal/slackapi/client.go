@@ -30,6 +30,10 @@ func New(cfg config.Slack) *Client {
 	return &Client{api: slack.New(cfg.BotToken, opts...)}
 }
 
+// API exposes the SDK client for the Socket Mode connection, which the SDK
+// builds from a *slack.Client.
+func (c *Client) API() *slack.Client { return c.api }
+
 // AuthTest checks the bot token and returns the bot user and team.
 func (c *Client) AuthTest(ctx context.Context) (*slack.AuthTestResponse, error) {
 	return c.api.AuthTestContext(ctx)

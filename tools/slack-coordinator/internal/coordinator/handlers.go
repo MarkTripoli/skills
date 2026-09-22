@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/ipc"
@@ -16,7 +17,11 @@ func Register(s *ipc.Server, c *Coordinator, health func() ipc.HealthResult, shu
 		if err := decode(params, &in); err != nil {
 			return nil, err
 		}
-		return c.StartRun(ctx, in)
+		ref, err := c.StartRun(ctx, in)
+		if err != nil {
+			return nil, rpcError(err)
+		}
+		return ref, nil
 	})
 	s.Handle(ipc.MethodRunEvent, func(ctx context.Context, params json.RawMessage) (interface{}, error) {
 		var e WorkEvent
@@ -24,7 +29,7 @@ func Register(s *ipc.Server, c *Coordinator, health func() ipc.HealthResult, shu
 			return nil, err
 		}
 		if err := c.RecordWorkEvent(ctx, e); err != nil {
-			return nil, err
+			return nil, rpcError(err)
 		}
 		return ipc.EmptyResult{}, nil
 	})
@@ -34,9 +39,16 @@ func Register(s *ipc.Server, c *Coordinator, health func() ipc.HealthResult, shu
 			return nil, err
 		}
 		if err := c.FinishRun(ctx, in); err != nil {
-			return nil, err
+			return nil, rpcError(err)
 		}
 		return ipc.EmptyResult{}, nil
+	})
+	s.Handle(ipc.MethodRunCheck, func(ctx context.Context, params json.RawMessage) (interface{}, error) {
+		var in CheckParams
+		if err := decode(params, &in); err != nil {
+			return nil, err
+		}
+		return c.CheckBeforeWrite(ctx, in.RunID)
 	})
 	s.Handle(ipc.MethodDaemonHealth, func(context.Context, json.RawMessage) (interface{}, error) {
 		return health(), nil
@@ -45,6 +57,16 @@ func Register(s *ipc.Server, c *Coordinator, health func() ipc.HealthResult, shu
 		shutdown()
 		return ipc.ShutdownResult{OK: true}, nil
 	})
+}
+
+// rpcError gives a failed Slack post the ErrUnavailable code so the CLI exits
+// 11; every other failure keeps the default internal code (exit 2).
+func rpcError(err error) error {
+	var delivery *DeliveryError
+	if errors.As(err, &delivery) {
+		return &ipc.RPCError{Code: ipc.ErrUnavailable, Message: err.Error()}
+	}
+	return err
 }
 
 func decode(params json.RawMessage, into interface{}) error {

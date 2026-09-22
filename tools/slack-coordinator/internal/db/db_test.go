@@ -118,3 +118,54 @@ func TestStatusLifecycle(t *testing.T) {
 		t.Fatalf("DueStatusRuns after finish = %+v, want only run due", due)
 	}
 }
+
+func TestDeliveryErrorTracking(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	ctx := context.Background()
+
+	base := Run{OwnerUserID: "U1", ChannelID: "C1", ThreadTS: "1.0", Permalink: "p", Lifecycle: "active", SlackMode: "enabled", StartedAt: "2026-09-21T00:00:00Z"}
+	for _, id := range []string{"failing", "healthy", "disabled", "done"} {
+		r := base
+		r.RunID = id
+		if err := d.InsertRun(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := d.sql.ExecContext(ctx, `UPDATE runs SET slack_mode = 'slack_disabled' WHERE run_id = 'disabled'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.FinishRun(ctx, "done", "completed", "2026-09-21T01:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"failing", "disabled", "done"} {
+		if err := d.SetDeliveryError(ctx, id, "channel_not_found"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	failed, err := d.RunsWithDeliveryError(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(failed) != 1 || failed[0].RunID != "failing" || failed[0].LastDeliveryError.String != "channel_not_found" {
+		t.Fatalf("RunsWithDeliveryError = %+v, want only the active Slack-enabled run", failed)
+	}
+
+	if err := d.SetDeliveryError(ctx, "failing", ""); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := d.GetRun(ctx, "failing")
+	if got.LastDeliveryError.Valid {
+		t.Fatalf("empty message did not clear the error: %+v", got)
+	}
+	if failed, _ := d.RunsWithDeliveryError(ctx); len(failed) != 0 {
+		t.Fatalf("cleared run still listed: %+v", failed)
+	}
+	if err := d.SetDeliveryError(ctx, "missing", "x"); !errors.Is(err, ErrRunNotFound) {
+		t.Fatalf("SetDeliveryError(missing) = %v, want ErrRunNotFound", err)
+	}
+}

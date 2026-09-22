@@ -7,41 +7,59 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
 )
 
 // StatusScheduler reposts the last status of every active run that has been
-// quiet for C.Quiet, so the thread shows the run is still alive.
+// quiet for C.Quiet, so the thread shows the run is still alive, and retries
+// runs whose last post failed so run check can return to ready.
 type StatusScheduler struct {
 	C *Coordinator
 }
 
-// Tick posts one status message for every run due at now and resets each
-// run's quiet interval from now. Every due run is attempted; the returned
-// error joins the failures.
+// Tick posts one status message for every run due at now and for every run
+// carrying a delivery error, and resets each posted run's quiet interval from
+// now. Every run is attempted; the returned error joins the failures.
 func (s *StatusScheduler) Tick(ctx context.Context, now time.Time) error {
 	due, err := s.C.DB.DueStatusRuns(ctx, stamp(now))
 	if err != nil {
 		return err
 	}
+	failed, err := s.C.DB.RunsWithDeliveryError(ctx)
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]bool, len(due))
 	var errs []error
-	for _, run := range due {
-		e := WorkEvent{RunID: run.RunID}
-		if run.LastStatus.Valid {
-			if err := json.Unmarshal([]byte(run.LastStatus.String), &e); err != nil {
-				errs = append(errs, fmt.Errorf("run %s: decode last status: %w", run.RunID, err))
+	for _, batch := range [2][]db.Run{due, failed} {
+		for _, run := range batch {
+			if seen[run.RunID] {
 				continue
 			}
-			e.RunID = run.RunID
-		}
-		if _, err := s.C.Slack.PostMessage(ctx, run.ChannelID, run.ThreadTS, RenderStatus(e)); err != nil {
-			errs = append(errs, fmt.Errorf("run %s: post status message: %w", run.RunID, err))
-			continue
-		}
-		if err := s.C.storeStatus(ctx, e, now); err != nil {
-			errs = append(errs, err)
+			seen[run.RunID] = true
+			if err := s.repostStatus(ctx, run, now); err != nil {
+				errs = append(errs, fmt.Errorf("run %s: %w", run.RunID, err))
+			}
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// repostStatus posts run's last status again (an all-None status when the run
+// has none yet) and restarts its quiet interval.
+func (s *StatusScheduler) repostStatus(ctx context.Context, run db.Run, now time.Time) error {
+	e := WorkEvent{RunID: run.RunID}
+	if run.LastStatus.Valid {
+		if err := json.Unmarshal([]byte(run.LastStatus.String), &e); err != nil {
+			return fmt.Errorf("decode last status: %w", err)
+		}
+		e.RunID = run.RunID
+	}
+	if err := s.C.post(ctx, run, RenderStatus(e)); err != nil {
+		return fmt.Errorf("post status message: %w", err)
+	}
+	return s.C.storeStatus(ctx, e, now)
 }
 
 // Run calls Tick every `every` until ctx ends, logging failures.
