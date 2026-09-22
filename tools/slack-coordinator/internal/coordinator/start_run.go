@@ -22,6 +22,9 @@ type Coordinator struct {
 	DB    *db.DB
 	Slack Poster
 	Now   func() time.Time
+	// OwnerUserID is the configured owner (slack.owner_user_id) stamped on
+	// every run this daemon opens; only that user's thread replies are input.
+	OwnerUserID string
 	// Quiet is how long an active run may stay silent before the scheduler
 	// reposts its last status.
 	Quiet time.Duration
@@ -47,8 +50,6 @@ func (c *Coordinator) StartRun(ctx context.Context, in StartRunInput) (SlackRunR
 	switch {
 	case in.RunID == "":
 		return SlackRunRef{}, errors.New("run_id is required")
-	case in.OwnerUserID == "":
-		return SlackRunRef{}, errors.New("owner_user_id is required")
 	case in.ChannelID == "":
 		return SlackRunRef{}, errors.New("channel_id is required")
 	case in.JiraIssue != "" && c.Jira == nil:
@@ -66,7 +67,7 @@ func (c *Coordinator) StartRun(ctx context.Context, in StartRunInput) (SlackRunR
 		Work:        in.Work,
 		Goal:        in.Goal,
 		Scope:       in.Scope,
-		OwnerUserID: in.OwnerUserID,
+		OwnerUserID: c.OwnerUserID,
 		Links:       in.Links,
 		StartedAt:   startedAt,
 	})
@@ -80,7 +81,7 @@ func (c *Coordinator) StartRun(ctx context.Context, in StartRunInput) (SlackRunR
 	}
 	if err := c.DB.InsertRun(ctx, db.Run{
 		RunID:         in.RunID,
-		OwnerUserID:   in.OwnerUserID,
+		OwnerUserID:   c.OwnerUserID,
 		ChannelID:     in.ChannelID,
 		ThreadTS:      ts,
 		Permalink:     permalink,

@@ -14,6 +14,8 @@ import (
 
 	"github.com/slack-go/slack/socketmode"
 
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/agent"
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/assistant"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/coordinator"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
@@ -90,6 +92,10 @@ type Options struct {
 	// SchedulerPeriod is how often the daemon looks for due status reposts and
 	// failed posts to retry. Zero means DefaultSchedulerPeriod.
 	SchedulerPeriod time.Duration
+	// DispatcherPeriod is how often the daemon looks for queued assistant runs
+	// to spawn, beyond the wake a new request sends. Zero means
+	// DefaultDispatcherPeriod.
+	DispatcherPeriod time.Duration
 	// SocketModeHealth replaces the Socket Mode connection: when set, the daemon
 	// opens no WebSocket and reports this state to run check and daemon.health.
 	// Tests inject it; production leaves it nil.
@@ -107,6 +113,10 @@ const DefaultStatusInterval = time.Hour
 // DefaultSchedulerPeriod is how often the daemon ticks the status scheduler
 // when Options leaves it unset.
 const DefaultSchedulerPeriod = 30 * time.Second
+
+// DefaultDispatcherPeriod is how often the daemon ticks the assistant run
+// dispatcher when Options leaves it unset.
+const DefaultDispatcherPeriod = 5 * time.Second
 
 // Serve acquires the lock, opens SQLite, registers handlers, binds the socket,
 // and blocks until ctx ends or daemon.shutdown is called. It writes daemon.pid
@@ -147,6 +157,10 @@ func Serve(ctx context.Context, p *paths.Paths, cfg *config.Config, opts Options
 	if period <= 0 {
 		period = DefaultSchedulerPeriod
 	}
+	dispatcherPeriod := opts.DispatcherPeriod
+	if dispatcherPeriod <= 0 {
+		dispatcherPeriod = DefaultDispatcherPeriod
+	}
 	socketHealth := opts.SocketModeHealth
 	inbound, acker := opts.Inbound, opts.Acker
 	var socket *slackapi.SocketMode
@@ -155,18 +169,30 @@ func Serve(ctx context.Context, p *paths.Paths, cfg *config.Config, opts Options
 		socketHealth = socket.Health
 		inbound, acker = socket.Inbound(), socket
 	}
-	coord := &coordinator.Coordinator{DB: rt.DB, Slack: rt.Slack, Now: time.Now, Quiet: quiet, Health: socketHealth}
+	coord := &coordinator.Coordinator{DB: rt.DB, Slack: rt.Slack, Now: time.Now, OwnerUserID: cfg.Slack.OwnerUserID, Quiet: quiet, Health: socketHealth}
 	if cfg.JiraEnabled() {
 		if coord.Jira, err = jira.New(*cfg.Jira); err != nil {
 			return err
 		}
 	}
+	svc := assistant.New(rt.DB, rt.Slack, coord, p, cfg.Slack.OwnerUserID, cfg.Agent, time.Now)
+	svc.Retention = cfg.Retention
+	if cfg.AgentEnabled() {
+		adapter, err := agent.Lookup(cfg.Agent.Command)
+		if err != nil {
+			return err
+		}
+		svc.Runner = agent.NewRunner(adapter)
+	}
 	health := func() ipc.HealthResult { return ipc.HealthResult{SocketMode: socketHealth()} }
 	coordinator.Register(rt.Server, coord, health, cancel)
+	svc.Register(rt.Server)
 
 	var background sync.WaitGroup
 	background.Go(func() { (&coordinator.StatusScheduler{C: coord}).Run(ctx, period) })
-	background.Go(func() { coord.ConsumeInbound(ctx, inbound, acker) })
+	background.Go(func() { svc.ConsumeInbound(ctx, inbound, acker) })
+	background.Go(func() { svc.RunDispatcher(ctx, dispatcherPeriod) })
+	background.Go(func() { svc.RunPurge(ctx) })
 	if socket != nil {
 		background.Go(func() {
 			if err := socket.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {

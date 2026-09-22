@@ -7,14 +7,15 @@ import (
 
 // JSON-RPC 2.0 method names.
 const (
-	MethodRunStart        = "run.start"
-	MethodRunEvent        = "run.event"
-	MethodRunCheck        = "run.check"
-	MethodRunResolve      = "run.resolve"
-	MethodRunFinish       = "run.finish"
-	MethodRunDisableSlack = "run.disable_slack"
-	MethodDaemonHealth    = "daemon.health"
-	MethodDaemonShutdown  = "daemon.shutdown"
+	MethodRunStart             = "run.start"
+	MethodRunEvent             = "run.event"
+	MethodRunCheck             = "run.check"
+	MethodRunResolve           = "run.resolve"
+	MethodRunFinish            = "run.finish"
+	MethodRunDisableSlack      = "run.disable_slack"
+	MethodDaemonHealth         = "daemon.health"
+	MethodDaemonShutdown       = "daemon.shutdown"
+	MethodAssistantVerifyOwner = "assistant.verify_owner"
 )
 
 // JSON-RPC 2.0 error codes. ErrUnavailable is the implementation-defined code
@@ -68,6 +69,18 @@ type HealthResult struct {
 // ShutdownResult confirms shutdown was initiated.
 type ShutdownResult struct {
 	OK bool `json:"ok"`
+}
+
+// VerifyOwnerParams has no fields but exists for consistency.
+type VerifyOwnerParams struct{}
+
+// VerifyOwnerResult answers assistant.verify_owner: OK with the owner's display
+// name once the owner replied to the setup DM, or Timeout when no reply
+// arrived within the daemon's verification window.
+type VerifyOwnerResult struct {
+	OK          bool   `json:"ok"`
+	Timeout     bool   `json:"timeout,omitempty"`
+	DisplayName string `json:"display_name,omitempty"`
 }
 
 // EmptyResult is the reply of a method that succeeds without data.

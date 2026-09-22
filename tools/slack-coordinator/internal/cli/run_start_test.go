@@ -45,8 +45,9 @@ var testChannels = []fakeChannel{
 }
 
 type fakeSlack struct {
-	mu    sync.Mutex
-	posts []url.Values
+	mu      sync.Mutex
+	posts   []url.Values
+	updates []url.Values
 	// failPosts makes chat.postMessage answer 500 until cleared.
 	failPosts atomic.Bool
 	// requests counts every Web API call, whatever the method.
@@ -66,6 +67,19 @@ func (f *fakeSlack) post(i int) url.Values {
 	return f.posts[i]
 }
 
+func (f *fakeSlack) updateCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.updates)
+}
+
+// update returns the i-th recorded chat.update form.
+func (f *fakeSlack) update(i int) url.Values {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.updates[i]
+}
+
 func newFakeSlack(t *testing.T) (*fakeSlack, string) {
 	f := &fakeSlack{}
 	mux := http.NewServeMux()
@@ -79,6 +93,16 @@ func newFakeSlack(t *testing.T) (*fakeSlack, string) {
 		f.posts = append(f.posts, r.PostForm)
 		f.mu.Unlock()
 		_, _ = w.Write([]byte(`{"ok":true,"channel":"` + r.PostForm.Get("channel") + `","ts":"1700000000.000100"}`))
+	})
+	mux.HandleFunc("/chat.update", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		f.mu.Lock()
+		f.updates = append(f.updates, r.PostForm)
+		f.mu.Unlock()
+		_, _ = w.Write([]byte(`{"ok":true,"channel":"` + r.PostForm.Get("channel") + `","ts":"` + r.PostForm.Get("ts") + `","text":"edited"}`))
+	})
+	mux.HandleFunc("/reactions.add", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
 	mux.HandleFunc("/chat.getPermalink", func(w http.ResponseWriter, r *http.Request) {
 		ch := r.URL.Query().Get("channel")
@@ -125,16 +149,30 @@ func startTestDaemon(t *testing.T, cfg *config.Config) func() {
 // startTestDaemonWith is startTestDaemon with explicit daemon options. Tests
 // always inject SocketModeHealth; no test opens a WebSocket.
 func startTestDaemonWith(t *testing.T, cfg *config.Config, opts daemon.Options) func() {
+	home := newTestHome(t)
+	if err := config.Save(filepath.Join(home, "config.yaml"), cfg); err != nil {
+		t.Fatal(err)
+	}
+	return startTestDaemonAt(t, home, cfg, opts)
+}
+
+// newTestHome creates a fresh runtime home under /tmp, so the Unix socket
+// path fits, and points the CLI at it.
+func newTestHome(t *testing.T) string {
+	t.Helper()
 	home, err := os.MkdirTemp("/tmp", "sc-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(home) })
 	t.Setenv(paths.EnvHome, home)
-	if err := config.Save(filepath.Join(home, "config.yaml"), cfg); err != nil {
-		t.Fatal(err)
-	}
+	return home
+}
 
+// startTestDaemonAt serves cfg in-process from home, which need not hold a
+// config.yaml, and returns a stop function.
+func startTestDaemonAt(t *testing.T, home string, cfg *config.Config, opts daemon.Options) func() {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- daemon.Serve(ctx, paths.WithRoot(home), cfg, opts) }()
@@ -360,5 +398,26 @@ func TestRunStartRefusesJiraIssueBeforeAnySlackCall(t *testing.T) {
 	}
 	if n := fake.requests.Load(); n != 0 {
 		t.Fatalf("refused --jira-issue still made %d Slack calls", n)
+	}
+}
+
+func TestRunStartRejectsOwnerFlagBeforeAnyCall(t *testing.T) {
+	fake, apiURL := newFakeSlack(t)
+	cfg := &config.Config{Slack: config.Slack{BotToken: "xoxb-1", AppToken: "xapp-1", OwnerUserID: "U1", APIURL: apiURL}}
+	startTestDaemon(t, cfg)
+
+	SetOutput(&bytes.Buffer{})
+	t.Cleanup(func() { output = os.Stdout })
+	root := NewRoot()
+	root.SetArgs([]string{"run", "start", "--owner", "U1", "--work", "w", "--goal", "g", "--scope", "s"})
+	err := root.Execute()
+	if code := exitCode(err); code != ExitUsage {
+		t.Fatalf("exit %d, want %d (err %v)", code, ExitUsage, err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "unknown flag: --owner") {
+		t.Fatalf("error %q does not name the unknown flag", err)
+	}
+	if n := fake.requests.Load(); n != 0 {
+		t.Fatalf("rejected --owner still made %d Slack calls", n)
 	}
 }

@@ -1,12 +1,54 @@
-package coordinator
+package assistant
 
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
+
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/coordinator"
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/paths"
 )
+
+// newTestService returns a Service over a temp runtime root holding its
+// database, with a configured agent, the recording fakeSlack it posts through,
+// the clock it reads, and a coordinator sharing all three.
+func newTestService(t *testing.T) (*Service, *fakeSlack, *testClock) {
+	t.Helper()
+	return newTestServiceAt(t, paths.WithRoot(t.TempDir()))
+}
+
+// newTestServiceAt is newTestService over the runtime root p, for tests that
+// also open its database file directly.
+func newTestServiceAt(t *testing.T, p *paths.Paths) (*Service, *fakeSlack, *testClock) {
+	t.Helper()
+	database, err := db.Open(p.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	clock := &testClock{at: time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)}
+	slack := &fakeSlack{}
+	coord := &coordinator.Coordinator{DB: database, Slack: slack, Now: clock.Now, OwnerUserID: "U1", Quiet: time.Hour}
+	return New(database, slack, coord, p, "U1", &config.Agent{Command: "omp", Approval: "edits"}, clock.Now), slack, clock
+}
+
+// testClock is a clock tests advance by hand; Now is stable between advances.
+type testClock struct{ at time.Time }
+
+func (c *testClock) Now() time.Time { return c.at }
+
+// startTestRun opens runID for owner U1 in channel C1; fixedTS roots every run in one thread.
+func startTestRun(t *testing.T, c *coordinator.Coordinator, runID string) {
+	t.Helper()
+	if _, err := c.StartRun(context.Background(), coordinator.StartRunInput{RunID: runID, ChannelID: "C1", Work: "w"}); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // recordingAcker collects the envelope IDs ConsumeInbound acks.
 type recordingAcker struct{ acked []string }
@@ -26,16 +68,18 @@ func messageEnvelope(envelopeID string, msg *slackevents.MessageEvent) socketmod
 }
 
 func TestConsumeInboundKeepsOnlyOwnerThreadReplies(t *testing.T) {
-	c, _, _ := newTestCoordinator(t)
+	s, slack, _ := newTestService(t)
+	c := s.Coord
 	ctx := context.Background()
+	const thread = "1700000000.000100"
+	slack.fixedTS = thread
 	startTestRun(t, c, "RUN1") // owner U1, channel C1, thread 1700000000.000100
-	if err := c.FinishRun(ctx, FinishRunInput{RunID: "RUN1", Outcome: "completed"}); err != nil {
+	if err := c.FinishRun(ctx, coordinator.FinishRunInput{RunID: "RUN1", Outcome: "completed"}); err != nil {
 		t.Fatal(err)
 	}
-	// RUN2 is the active run; fakePoster gives every root the same ts, so RUN1
+	// RUN2 is the active run; fixedTS gives every root the same ts, so RUN1
 	// (completed) and RUN2 (active) share the thread and only RUN2 may match.
 	startTestRun(t, c, "RUN2")
-	const thread = "1700000000.000100"
 
 	reply := func(user, ts, text string) *slackevents.MessageEvent {
 		return &slackevents.MessageEvent{Type: "message", User: user, Text: text, TimeStamp: ts, ThreadTimeStamp: thread, Channel: "C1"}
@@ -63,7 +107,7 @@ func TestConsumeInboundKeepsOnlyOwnerThreadReplies(t *testing.T) {
 	close(events)
 
 	acker := &recordingAcker{}
-	c.ConsumeInbound(ctx, events, acker)
+	s.ConsumeInbound(ctx, events, acker)
 
 	if len(acker.acked) != len(envelopes) {
 		t.Fatalf("acked %d envelopes %v, want every one of %d", len(acker.acked), acker.acked, len(envelopes))
@@ -97,11 +141,11 @@ func TestConsumeInboundKeepsOnlyOwnerThreadReplies(t *testing.T) {
 }
 
 func TestConsumeInboundStopsWhenTheContextEnds(t *testing.T) {
-	c, _, _ := newTestCoordinator(t)
+	s, _, _ := newTestService(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		c.ConsumeInbound(ctx, make(chan socketmode.Event), nil)
+		s.ConsumeInbound(ctx, make(chan socketmode.Event), nil)
 		close(done)
 	}()
 	cancel()

@@ -2,21 +2,73 @@
 
 Slack coordinator posts one Slack thread per run of agent work and lets the run owner steer that run from the thread. It is distributed as the `slack-coordinator` binary, built from `tools/slack-coordinator/`, and installed separately from agent skills.
 
-## Trust model
+## Onboarding
 
-One per-user daemon owns the Slack bot and app tokens, the single Socket Mode connection, and the state database `~/.slack-coordinator/state.sqlite`. Agents never hold a token: the `slack-coordinator` CLI sends JSON-RPC requests over a Unix socket in the same home, and only the daemon writes Slack or SQLite. The daemon, CLI, and coding agents run as the same operating-system user; the socket and home directory are protected by file permissions, not by a security boundary against code already running as that user.
+Run `slack-coordinator onboard` in a terminal. The walkthrough prints and performs these steps:
 
-Steering is owner-only. `setup --owner <U…>` (or `run start --owner`) names the Slack user whose thread replies become pending input; replies from anyone else are ignored. A reply is never executed: the agent reads it, decides, and answers through `run resolve`.
+1. Create an app configuration token at [api.slack.com/apps](https://api.slack.com/apps) under **Your App Configuration Tokens > Generate**. This token authorizes app creation and manifest updates; it is held only in memory and never stored.
+2. Enter an app name, or press Enter to use “Slack assistant”; the CLI creates the app from its embedded manifest.
+3. The browser opens the workspace install page. Allow the install, then paste the Bot User OAuth Token shown under **OAuth & Permissions**.
+4. The browser opens **Basic Information**. Generate an app-level token with `connections:write` and paste it.
+5. Enter the owner’s workspace email or Slack user ID, then confirm the resolved user.
+6. The CLI checks both tokens, writes `$SLACK_COORDINATOR_HOME/config.yaml` (default `~/.slack-coordinator`), and installs a launchd (macOS) or systemd user service.
+7. The bot DMs the owner; reply in Slack within two minutes to verify the setup.
+8. The CLI reports verification and tells you to invite the bot to watched channels and DM it `!help`.
 
-## Setup
+Use `--no-service` to start the daemon detached until logout or reboot instead of installing a service; `slack-coordinator service install` can add supervision later. For an already installed app, `--existing` updates its manifest, asks you to reinstall it for updated scopes, and lets you keep or replace the bot token. If a config already exists, normal onboarding offers repair mode: re-verify, reinstall the service, or replace a token. An interrupted walkthrough resumes from `$SLACK_COORDINATOR_HOME/onboard.json`; successful verification removes the checkpoint. The app configuration token comes from Slack’s **Your App Configuration Tokens** page, is requested only when needed, and is never written to config or the checkpoint.
 
-1. Create the Slack app from [tools/slack-coordinator/slack-app-manifest.yaml](../tools/slack-coordinator/slack-app-manifest.yaml) ("Create New App > From an app manifest"); it enables Socket Mode and declares the bot scopes and message events the daemon needs. Install it to the workspace for the bot token, and create an app-level token with `connections:write` under "Basic Information > App-Level Tokens".
-2. Build the binary: `cd tools/slack-coordinator && go build ./cmd/slack-coordinator`, and place it on `PATH`.
-3. Export `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`, then run `slack-coordinator setup --owner <U…>`. Setup checks both tokens against Slack and writes `$SLACK_COORDINATOR_HOME/config.yaml` (default `~/.slack-coordinator`); it never reads a repository `.env`. Add `--install-service` to install the launchd (macOS) or systemd (Linux) user service in the same step, or run `slack-coordinator service install` later. Without a service, `slack-coordinator daemon start` runs the daemon in the background until `daemon stop`.
-4. Invite the bot to each channel runs will post in, and put one `Slack default channel: #name` line in the repository root `AGENTS.md`; `run start --channel` overrides it per run.
-5. Optional Jira backlinks: pass `--jira-base-url`, `--jira-email`, and `--jira-field-id customfield_N` to `setup` with `JIRA_API_TOKEN` in the environment. `run start --jira-issue PROJ-123` then writes the thread permalink to that field.
+The full embedded app manifest is [slack-app-manifest.yaml](../tools/slack-coordinator/internal/manifest/slack-app-manifest.yaml). Setup’s `onboard` command is interactive; `slack-coordinator setup` remains available for non-interactive configuration when tokens and owner are already known.
 
-`slack-coordinator daemon status` prints the daemon's health JSON, including the Socket Mode state.
+## Assistant DMs
+
+The owner can send these eight commands as a top-level DM:
+
+- `!help` — list commands; other text starts an assistant request.
+- `!status` — show daemon uptime, Socket Mode, run/task counts, agent, and disk use.
+- `!tasks` — list active and paused standing tasks.
+- `!show <id>` — show a task’s details and recent run results.
+- `!runs` — list active coding-agent runs.
+- `!pause <id>` — pause a standing task.
+- `!resume <id>` — resume a paused task.
+- `!cancel <id>` — cancel a standing task.
+
+A new request gets an eyes reaction and a threaded `Working on it` acknowledgement, or `Queued behind <n>` when earlier work is ahead. On success, the acknowledgement is edited with the answer when it fits; longer answers edit it to `Done` and post the answer in thread replies. On failure, the acknowledgement becomes `Failed` and a thread reply includes the failure and stderr tail. Owner follow-ups in a request thread are collected for the next run; messages from non-owners receive one refusal and later messages are silently dropped.
+
+The embedded agent instructions are [ASSISTANT.md](../tools/slack-coordinator/internal/assistant/skill/ASSISTANT.md).
+
+## Standing tasks
+
+An owner can ask the assistant for recurring work or work that waits on future channel messages. The agent proposes a task in the request thread; the owner must confirm the rendered proposal by replying `yes`, `y`, `confirm`, `confirmed`, `ok`, `okay`, `go`, `do it`, `👍`, or `:+1:`. Reply `no`, `n`, `cancel`, `never mind`, `nevermind`, `forget it`, or `drop it` to discard it, or reply with changes to revise it. A proposal with unresolved channels cannot be confirmed until the bot is invited and the channel resolves.
+
+Triggers are `schedule` (daily at a timezone, every N hours, or once at a time), `window end` (run when the requested collection window ends), and `each message` (collect channel messages and run after a quiet debounce). The default debounce is 5 minutes; the enforced minimum gap between `each message` runs is 10 minutes. `agent.max_runs_per_hour` caps how many runs the daemon starts in an hour. Delivery begins with `t<id> · #chan · N new items`. Three consecutive task failures pause the task and DM the owner; fix the cause and use `!resume <id>` to continue.
+
+## Configuration
+
+`config.yaml` can include these optional agent settings and retention windows:
+
+| Key | Meaning | Default |
+|---|---|---|
+| `agent.command` | Agent binary: `omp`, `claude`, or `codex`. | Required when `agent` is set |
+| `agent.approval` | `edits` permits file edits in the run directory, workspace, and `extra_dirs`; `full` also permits commands that change things outside those locations. | `edits` |
+| `agent.timeout` | Maximum run time. | `10m` |
+| `agent.max_runs_per_hour` | Maximum runs started in an hour. | `30` |
+| `agent.extra_dirs` | Additional absolute paths the agent may edit. | `[]` |
+| `retention.days` | Age after which old runs, completed/cancelled tasks, and inactive DM threads are purged. | `30` |
+| `retention.consumed_days` | Age after which messages already consumed by the owner are removed. | `7` |
+
+Purge bounds are:
+
+| Data | Purge rule |
+|---|---|
+| Consumed task messages | Remove after `consumed_days`; unconsumed messages are retained. |
+| Run history | Remove finished runs older than `days` only when more than the newest 20 for that task or DM thread. |
+| Completed or cancelled tasks | Remove the task and its runs after `days`. |
+| Inactive DM threads | Remove the request, messages, and runs after `days` since the last message. |
+| Run directories | Remove when their run records are purged; orphan run directories are cleaned up. |
+
+## Trust boundary
+
+The agent runs in `<root>/workspace/runs/<id>` with a scrubbed environment; it never holds a Slack token. Approval mode `edits` is the default. The daemon alone owns Slack tokens, the Socket Mode connection, and SQLite; the CLI communicates with it over a local Unix socket. The daemon, CLI, and coding agents run as the same operating-system user, so this is not a security boundary against code already running as that user.
 
 ## Operating model
 
@@ -35,7 +87,7 @@ Exit `1` is a refused confirmation, exit `2` a usage, config, or repository erro
 3. `run event --current [--completed]... [--decision]... [--blocker]... [--next]...` posts a status reply on phase changes and blockers; the daemon reposts the last status after one quiet interval (`daemon start --status-interval`, default one hour) with no newer event.
 4. `run finish --outcome completed|failed|cancelled [--completed]... [--decision]... [--unresolved]... [--evidence]... [--link]...` posts the completion reply and makes the run terminal.
 
-Every message renders its fixed fields in order and shows `None` for an empty one; the field tables are in the skill's [messages reference](../skills/delivery/slack-coordinator/references/messages.md).
+Every message renders its fixed fields in order and shows `None` for an empty one; the field tables are in the skill’s [messages reference](../skills/delivery/slack-coordinator/references/messages.md).
 
 ## Break glass
 
