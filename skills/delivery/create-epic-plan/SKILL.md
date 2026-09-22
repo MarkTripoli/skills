@@ -24,7 +24,7 @@ Split an epic into child tasks that ship as separate pull requests. The epic pla
 
 4. **Cut the epic into candidate children**: list the behaviors the epic delivers in the order a caller meets them, and make each behavior one candidate. Name the contract several candidates share (schema, endpoint shape, module seam) and fix it in `## Decomposition`, so siblings build against it instead of waiting for each other.
 
-5. **Size every candidate against the slicing guide's four tests**: one obligation, one vertical slice, one day, safe to merge alone. Split each candidate that fails a test using the split its symptom names in the guide, then re-run the four tests on the results. Record the evidence per child in `## Slice Check`.
+5. **Size every candidate against the slicing guide's four tests**: before the four tests, apply the guide's advisory size signal — a candidate that would change roughly more than 200-400 lines (generated code and lockfiles excluded) is a signal to look for a split now; the four tests remain the binding gate. Then run the four tests: one obligation, one vertical slice, one day, safe to merge alone. Split each candidate that fails a test using the split its symptom names in the guide, then re-run the four tests on the results. Record the evidence per child in `## Slice Check`.
 
 6. **Write each child's acceptance criteria** as EARS sentences per the slicing guide: one behavior each, observable state, no vague terms, and the failure or boundary paths that child owns.
 
@@ -44,7 +44,7 @@ Split an epic into child tasks that ship as separate pull requests. The epic pla
 - `flag` names the runtime flag whose default keeps today's behavior while the child's path merges unfinished. Omit it when the change is additive or unreachable until a later child.
 - A child's `prompt` is a self-contained task description naming the files and the behavior. It never references the epic's artifact directory; the child session cannot read it.
 - `workflow` per child is one of `full`, `lean`, `prd`, `oneshot`, `bugfix`: `oneshot` for a bounded change with a clear spec, `bugfix` for a reported defect to reproduce and fix, `full` when research or design is needed, `lean` or `prd` only when the task asks for them.
-- `depends_on` lists sibling names whose merged pull request the child needs. Keep it minimal so independent children run together.
+- `depends_on` lists sibling names whose merged pull request the child needs. Keep it minimal so independent children run together. Prefer parallel children that share a fixed contract over a `depends_on` edge; a shared shape is not a dependency, so do not record it as one.
 
 ## Output
 

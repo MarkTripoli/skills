@@ -1,10 +1,19 @@
 # Slicing guide
 
-One unit of work is one pull request. This guide is the test for whether a child task, an outline phase, or a stated behavior is already that small, and the split to apply when it is not. `create-epic-plan`, `start-epic-delivery`, `create-structure-outline`, and `create-prd` follow it.
+One unit of work is one pull request. This guide is the test for whether a child task, an outline phase, or a stated behavior is already that small, and the split to apply when it is not. `create-epic-plan`, `create-structure-outline`, `create-plan`, and `create-prd` follow it.
+`start-epic-delivery` re-validates the slices materialized from an approved plan against this guide
+without re-sizing them.
 
 ## The unit
 
 A child task produces one pull request a reviewer reads in one sitting and merges the day it starts. Work that cannot merge that day is not one unit; it is a wave of units that has not been split yet.
+
+## Size signal (advisory)
+
+Before running the four tests, estimate the unit's likely changed lines (generated code and
+lockfiles excluded). A candidate that would change roughly more than 200-400 lines is a signal to
+look for a split now, using the table below. The four tests remain the only binding gate; this
+signal only surfaces oversize early, when a split is cheap, instead of at review time.
 
 ## Four tests
 
