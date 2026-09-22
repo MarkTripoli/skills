@@ -8,6 +8,10 @@ Work with Claude Code, Codex, Oh My Pi, Pi, other agent what read `SKILL.md` fil
 
 The local Safety Dance Git gate and durable validation daemon are documented in [docs/safety-dance.md](docs/safety-dance.md). Its binary releases are separate from skill installation and Changesets.
 
+## Slack coordinator
+
+Agents report one run per Slack thread, and the run owner steers it from that thread, through the local `slack-coordinator` daemon documented in [docs/slack-coordinator.md](docs/slack-coordinator.md). The binary is built from `tools/slack-coordinator/`; skill installation never installs it.
+
 ## Install
 
 Use Node 22.20 or newer. Run in terminal:

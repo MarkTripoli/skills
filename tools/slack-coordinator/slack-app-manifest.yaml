@@ -1,0 +1,30 @@
+# Slack app manifest for slack-coordinator. Paste it into "Create New App > From an app manifest".
+# The app-level token (scope connections:write) is not part of a manifest: create it under
+# "Basic Information > App-Level Tokens" after the app exists and export it as SLACK_APP_TOKEN.
+display_information:
+  name: slack-coordinator
+  description: Posts one thread per agent run and reads the owner's replies in that thread.
+  background_color: "#1f2933"
+features:
+  bot_user:
+    display_name: slack-coordinator
+    always_online: false
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - channels:history
+      - channels:read
+      - groups:history
+      - groups:read
+      - users:read
+settings:
+  event_subscriptions:
+    bot_events:
+      - message.channels
+      - message.groups
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false

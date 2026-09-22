@@ -35,6 +35,13 @@ Passing offline contract no claim runtime ready. Old engine fixture no be Atomic
 `npm run test:safety-dance` is the offline Safety Dance gate. It runs the identity scan, Go race tests, `go vet`, a temporary binary build, and release-contract tests without provider credentials.
 
 `cd tools/safety-dance && make e2e` exercises temporary local repositories and remotes. It does not prove live pull-request or CI provider behavior or a hosted `safety-dance-v*` release; those remain deferred evidence requiring credentials or GitHub Actions. Windows is not a supported release target until its native gate and service path have CI coverage.
+
+## Slack coordinator proof boundaries
+
+`npm run test:slack-coordinator` is the offline Slack coordinator gate. It runs the Go race tests, `go vet`, and a temporary binary build in `tools/slack-coordinator/` without Slack credentials; inbound Socket Mode events and connection health are exercised through injected events and a fake Slack HTTP server.
+
+Live Slack delivery, Socket Mode inbound replies, launchd or systemd restart after `kill -9`, and Jira field writes are deferred evidence recorded under `.agents/tasks/i-want-new-skill/evidence/`; they gate nothing and need a Slack workspace, a supervising host, or Jira credentials.
+
 ## Atomic runtime proof
 
 Use scratch repo and scratch Atomic agent dir. Keep task stuff and other user state out of cleanup reach. Follow native [authoring](https://docs.bastani.ai/workflows/authoring) and [operations](https://docs.bastani.ai/workflows/operations) contract.
