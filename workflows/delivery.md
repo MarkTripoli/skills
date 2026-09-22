@@ -180,6 +180,7 @@ Artifact type be template frontmatter `type`. Human gates count only when turned
 | review-artifact-comments | comment-review | no | By hand; artifact feedback |
 | show-me | show-me | no | By hand; visual explanation |
 | safety-dance | none | no | By hand |
+| slack-coordinator | none | no | By hand; one Slack thread per run |
 
 ## Running skills by hand
 
