@@ -8,7 +8,6 @@ import (
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/daemon"
-	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/slackapi"
 )
 
 func newSetup() *cobra.Command {
@@ -58,7 +57,7 @@ them.`,
 					return err
 				}
 			}
-			client := slackapi.New(cfg.Slack)
+			client := newSlack(cfg.Slack)
 			auth, err := client.AuthTest(cmd.Context())
 			if err != nil {
 				return usageErr("bot token rejected by auth.test: %w", err)
