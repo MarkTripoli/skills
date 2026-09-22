@@ -6,28 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/daemon"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/slackapi"
 )
-
-// ownerDM is the Socket Mode envelope for a top-level DM from the owner.
-func ownerDM(ts, text string) socketmode.Event {
-	return socketmode.Event{
-		Type: socketmode.EventTypeEventsAPI,
-		Data: slackevents.EventsAPIEvent{
-			Type: slackevents.CallbackEvent,
-			InnerEvent: slackevents.EventsAPIInnerEvent{
-				Type: string(slackevents.Message),
-				Data: &slackevents.MessageEvent{Type: "message", User: "U1", Text: text, TimeStamp: ts, Channel: "D0000000001"},
-			},
-		},
-		Request: &socketmode.Request{Type: "events_api", EnvelopeID: ts},
-	}
-}
 
 // installFakeAgent puts an `omp` on PATH that is agent's fake-agent.sh
 // writing text to result.md.
@@ -61,7 +45,7 @@ func TestOwnerDMRunsTheAgentAndItsAnswerReplacesTheAck(t *testing.T) {
 		DispatcherPeriod: 10 * time.Millisecond,
 	})
 
-	inbound <- ownerDM("1700000000.000500", "summarize the open pull requests")
+	inbound <- ownerDM("U1", "D0000000001", "1700000000.000500", "summarize the open pull requests")
 
 	deadline := time.Now().Add(10 * time.Second)
 	for fake.updateCount() == 0 {
