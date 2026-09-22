@@ -304,9 +304,9 @@ Phase 1 requires `--channel`; `--owner` defaults to `config.Slack.OwnerUserID`; 
 
 #### Automated Verification:
 
-- [ ] `cd tools/slack-coordinator && go vet ./... && go test -race ./...`
-- [ ] `cd tools/slack-coordinator && go build -o /tmp/slack-coordinator ./cmd/slack-coordinator && /tmp/slack-coordinator --help`
-- [ ] `npm run test:slack-coordinator`
+- [x] `cd tools/slack-coordinator && go vet ./... && go test -race ./...`
+- [x] `cd tools/slack-coordinator && go build -o /tmp/slack-coordinator ./cmd/slack-coordinator && /tmp/slack-coordinator --help`
+- [x] `npm run test:slack-coordinator`
 
 human-gated: false
 
