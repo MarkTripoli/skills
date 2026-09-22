@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,9 +27,11 @@ import (
 // OpenConversation answers "D1" for any user; UserInfo names the owner "ada"
 // and fails for everyone else.
 type fakeSlack struct {
+	mu        sync.Mutex
 	fixedTS   string
 	postErr   error
 	posts     []slackPost
+	updates   []slackUpdate
 	reactions []slackReaction
 	opened    []string
 	channels  map[string]string
@@ -37,9 +40,13 @@ type fakeSlack struct {
 
 type slackPost struct{ channel, thread, text string }
 
+type slackUpdate struct{ channel, ts, text string }
+
 type slackReaction struct{ channel, ts, name string }
 
 func (f *fakeSlack) PostMessage(_ context.Context, channelID, threadTS, text string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.posts = append(f.posts, slackPost{channelID, threadTS, text})
 	if f.postErr != nil {
 		return "", f.postErr
@@ -50,9 +57,16 @@ func (f *fakeSlack) PostMessage(_ context.Context, channelID, threadTS, text str
 	return fmt.Sprintf("1700000000.%06d", 900000+len(f.posts)), nil
 }
 
-func (f *fakeSlack) UpdateMessage(_ context.Context, _, ts, _ string) (string, error) { return ts, nil }
+func (f *fakeSlack) UpdateMessage(_ context.Context, channelID, ts, text string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.updates = append(f.updates, slackUpdate{channelID, ts, text})
+	return ts, nil
+}
 
 func (f *fakeSlack) AddReaction(_ context.Context, channelID, ts, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.reactions = append(f.reactions, slackReaction{channelID, ts, name})
 	return nil
 }
@@ -74,6 +88,8 @@ func (f *fakeSlack) UserInfo(_ context.Context, userID string) (slackapi.User, e
 }
 
 func (f *fakeSlack) ConversationInfo(_ context.Context, id string) (*slack.Channel, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.infoCalls++
 	name, ok := f.channels[id]
 	if !ok {
