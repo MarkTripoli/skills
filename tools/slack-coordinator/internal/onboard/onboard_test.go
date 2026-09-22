@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/ipc"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/manifest"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/slackapi"
 )
@@ -24,7 +25,9 @@ var (
 
 // script answers prompts in order, records the URLs opened and every token
 // each Slack call carried, serves apps.manifest.create from a fixed result or
-// error, resolves two users, and stores config.yaml in a temporary home.
+// error, resolves two users, stores config.yaml in a temporary home, and
+// answers the daemon's verification from verifyResult (the owner replied,
+// unless a test says otherwise) after snapshotting onboard.json.
 type script struct {
 	t       *testing.T
 	answers []string
@@ -44,12 +47,24 @@ type script struct {
 	infoIDs      []string
 	authErr      error
 	authTokens   []string
+	probeErr     error
 	probeTokens  []string
 
-	configPath   string
-	saves        int
-	installCalls int
-	startCalls   int
+	configPath     string
+	saves          int
+	installCalls   int
+	uninstallCalls int
+	startCalls     int
+	restartCalls   int
+
+	cpPath       string
+	waitErr      error
+	waitCalls    int
+	verifyResult ipc.VerifyOwnerResult
+	verifyErr    error
+	verifyCalls  int
+	// cpAtVerify is onboard.json as the verification step found it.
+	cpAtVerify []byte
 }
 
 func (s *script) next(label string) (string, error) {
@@ -107,7 +122,7 @@ func (s *script) deps() Deps {
 		},
 		ProbeSocketMode: func(_ context.Context, token string) error {
 			s.probeTokens = append(s.probeTokens, token)
-			return nil
+			return s.probeErr
 		},
 		LoadConfig: func() (*config.Config, error) { return config.Read(s.configPath) },
 		SaveConfig: func(cfg *config.Config) error {
@@ -118,33 +133,55 @@ func (s *script) deps() Deps {
 			s.installCalls++
 			return nil
 		},
+		UninstallService: func() error {
+			s.uninstallCalls++
+			return nil
+		},
 		StartDaemon: func() error {
 			s.startCalls++
 			return nil
+		},
+		RestartDaemon: func() error {
+			s.restartCalls++
+			return nil
+		},
+		WaitDaemon: func(context.Context) error {
+			s.waitCalls++
+			return s.waitErr
+		},
+		VerifyOwner: func(context.Context) (ipc.VerifyOwnerResult, error) {
+			s.verifyCalls++
+			s.cpAtVerify, _ = os.ReadFile(s.cpPath)
+			return s.verifyResult, s.verifyErr
 		},
 	}
 }
 
 func newScript(t *testing.T, answers ...string) *script {
-	return &script{t: t, answers: answers, configPath: filepath.Join(t.TempDir(), "config.yaml")}
+	return &script{
+		t:            t,
+		answers:      answers,
+		configPath:   filepath.Join(t.TempDir(), "config.yaml"),
+		verifyResult: ipc.VerifyOwnerResult{OK: true, DisplayName: ada.DisplayName},
+	}
 }
 
 // run executes the walkthrough from cp against s and returns the checkpoint
-// path, the raw file after the run, and the error.
+// path, the raw file after the run (nil when removed), and the error.
 func run(t *testing.T, s *script, cp *Checkpoint) (string, []byte, error) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "onboard.json")
+	s.cpPath = filepath.Join(t.TempDir(), "onboard.json")
 	if cp.Step > 0 {
-		if err := cp.Save(path); err != nil {
+		if err := cp.Save(s.cpPath); err != nil {
 			t.Fatal(err)
 		}
 	}
-	err := Run(context.Background(), s.deps(), cp, path, s.flags)
-	raw, readErr := os.ReadFile(path)
+	err := Run(context.Background(), s.deps(), cp, s.cpPath, s.flags)
+	raw, readErr := os.ReadFile(s.cpPath)
 	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
 		t.Fatal(readErr)
 	}
-	return path, raw, err
+	return s.cpPath, raw, err
 }
 
 func decode(t *testing.T, raw []byte) map[string]any {
@@ -178,6 +215,32 @@ func tokensStep4() *Checkpoint {
 	return &Checkpoint{Step: 4, AppID: "A0STORED", AppName: "Stored", BotToken: "xoxb-bot", AppToken: "xapp-app"}
 }
 
+// existingSetup writes a config.yaml with slack tokens and an agent block, the
+// state a completed step 6 leaves behind.
+func existingSetup(t *testing.T, s *script) {
+	t.Helper()
+	existing := "agent:\n  command: omp\n  extra_dirs:\n    - /srv/repos\nslack:\n  bot_token: xoxb-old\n  app_token: xapp-old\n  owner_user_id: " + ada.ID + "\n"
+	if err := os.WriteFile(s.configPath, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// wantVerified checks the run ended verified: one verification after the
+// daemon answered, the checkpoint removed, and the next steps printed.
+func wantVerified(t *testing.T, s *script, raw []byte, verifiedLine string) {
+	t.Helper()
+	if s.waitCalls != 1 || s.verifyCalls != 1 {
+		t.Fatalf("WaitDaemon %d VerifyOwner %d; want one health wait then one verification", s.waitCalls, s.verifyCalls)
+	}
+	if raw != nil {
+		t.Fatalf("onboard.json still present after verification: %s", raw)
+	}
+	out := s.out.String()
+	if !strings.Contains(out, verifiedLine) || !strings.Contains(out, "Invite the bot to the channels it should watch, then DM it !help.") {
+		t.Fatalf("output %q lacks %q or the next steps", out, verifiedLine)
+	}
+}
+
 // count returns how many prompts start with prefix.
 func (s *script) count(prefix string) int {
 	n := 0
@@ -189,13 +252,14 @@ func (s *script) count(prefix string) int {
 	return n
 }
 
-func TestFreshRunCompletesSixStepsAndInstallsTheService(t *testing.T) {
+func TestFreshRunCompletesSevenStepsAndInstallsTheService(t *testing.T) {
 	s := newScript(t, configToken, "", "xoxb-bot", "xapp-app", "ada@example.com", "")
-	path, raw, err := run(t, s, &Checkpoint{})
+	_, raw, err := run(t, s, &Checkpoint{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	got := decode(t, raw)
+	wantVerified(t, s, raw, "Verified: ada replied to "+DefaultAppName+".")
+	got := decode(t, s.cpAtVerify)
 	want := map[string]any{"step": float64(6), "app_id": "A0EXAMPLE", "app_name": DefaultAppName, "bot_token": "xoxb-bot", "app_token": "xapp-app", "owner_user_id": ada.ID, "owner_display_name": ada.DisplayName, "service_installed": true}
 	for k, v := range want {
 		if got[k] != v {
@@ -230,15 +294,24 @@ func TestFreshRunCompletesSixStepsAndInstallsTheService(t *testing.T) {
 	if s.installCalls != 1 || s.startCalls != 0 {
 		t.Fatalf("InstallService %d StartDaemon %d; want the service installed and no detached start", s.installCalls, s.startCalls)
 	}
+	if bytes.Contains(s.cpAtVerify, []byte(configToken)) || bytes.Contains(s.cpAtVerify, []byte("xoxe")) {
+		t.Fatalf("onboard.json %q carries the configuration token", s.cpAtVerify)
+	}
+}
+
+func TestCheckpointIsOwnerOnlyWhileTheRunIsUnfinished(t *testing.T) {
+	s := newScript(t, ada.ID, "")
+	s.authErr = errors.New("invalid_auth")
+	path, _, err := run(t, s, tokensStep4())
+	if err == nil {
+		t.Fatal("Run succeeded with a rejected bot token")
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if mode := info.Mode().Perm(); mode != 0o600 {
 		t.Fatalf("onboard.json mode %o, want 0600", mode)
-	}
-	if bytes.Contains(raw, []byte(configToken)) || bytes.Contains(raw, []byte("xoxe")) {
-		t.Fatalf("onboard.json %q carries the configuration token", raw)
 	}
 }
 
@@ -251,15 +324,16 @@ func TestOwnerByIDUsesUsersInfoWithTheBotToken(t *testing.T) {
 	if strings.Join(s.infoTokens, ",") != "xoxb-bot" || strings.Join(s.infoIDs, ",") != grace.ID || len(s.lookupEmails) != 0 {
 		t.Fatalf("users.info tokens %v ids %v, lookupByEmail emails %v; want one info call with the bot token", s.infoTokens, s.infoIDs, s.lookupEmails)
 	}
-	got := decode(t, raw)
+	got := decode(t, s.cpAtVerify)
 	if got["owner_user_id"] != grace.ID || got["owner_display_name"] != grace.DisplayName || got["step"] != float64(6) {
-		t.Fatalf("onboard.json = %v", got)
+		t.Fatalf("onboard.json at verification = %v", got)
 	}
+	wantVerified(t, s, raw, "Verified: ada replied to Stored.")
 }
 
 func TestUnknownOwnerRepromptsWithoutWritingConfig(t *testing.T) {
 	s := newScript(t, "nobody@example.com", "bob", "U0000000009", ada.ID, "")
-	_, raw, err := run(t, s, tokensStep4())
+	_, _, err := run(t, s, tokensStep4())
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -275,21 +349,21 @@ func TestUnknownOwnerRepromptsWithoutWritingConfig(t *testing.T) {
 	if s.saves != 1 {
 		t.Fatalf("config saved %d times, want once after the owner resolved", s.saves)
 	}
-	if got := decode(t, raw); got["owner_user_id"] != ada.ID {
-		t.Fatalf("onboard.json = %v", got)
+	if cfg := savedConfig(t, s); cfg.Slack.OwnerUserID != ada.ID {
+		t.Fatalf("config.yaml owner = %q", cfg.Slack.OwnerUserID)
 	}
 }
 
 func TestDecliningTheOwnerReprompts(t *testing.T) {
 	s := newScript(t, "ada@example.com", "n", grace.ID, "")
-	_, raw, err := run(t, s, tokensStep4())
+	_, _, err := run(t, s, tokensStep4())
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if n := s.count("Owner: "); n != 2 {
 		t.Fatalf("confirmation prompted %d times, want 2; prompts %q", n, s.prompts)
 	}
-	got := decode(t, raw)
+	got := decode(t, s.cpAtVerify)
 	if got["owner_user_id"] != grace.ID || got["owner_display_name"] != grace.DisplayName {
 		t.Fatalf("onboard.json = %v, want the second owner", got)
 	}
@@ -298,7 +372,7 @@ func TestDecliningTheOwnerReprompts(t *testing.T) {
 	}
 }
 
-func TestWriteConfigKeepsAnExistingAgentBlock(t *testing.T) {
+func TestMidWalkthroughResumeKeepsAnExistingAgentBlock(t *testing.T) {
 	s := newScript(t, ada.ID, "")
 	existing := "agent:\n  command: omp\n  extra_dirs:\n    - /srv/repos\nretention:\n  days: 90\n  consumed_days: 3\nslack:\n  bot_token: xoxb-old\n  app_token: xapp-old\n  owner_user_id: U0LD\n"
 	if err := os.WriteFile(s.configPath, []byte(existing), 0o600); err != nil {
@@ -306,6 +380,9 @@ func TestWriteConfigKeepsAnExistingAgentBlock(t *testing.T) {
 	}
 	if _, _, err := run(t, s, tokensStep4()); err != nil {
 		t.Fatalf("Run: %v", err)
+	}
+	if s.count("Existing setup found.") != 0 {
+		t.Fatalf("prompts %q offered repair to a walkthrough resumed at step 4", s.prompts)
 	}
 	cfg := savedConfig(t, s)
 	if cfg.Slack.BotToken != "xoxb-bot" || cfg.Slack.AppToken != "xapp-app" || cfg.Slack.OwnerUserID != ada.ID {
@@ -329,15 +406,122 @@ func TestNoServiceStartsTheDaemonInstead(t *testing.T) {
 	if s.startCalls != 1 || s.installCalls != 0 {
 		t.Fatalf("StartDaemon %d InstallService %d; want the detached start only", s.startCalls, s.installCalls)
 	}
-	if !strings.Contains(s.out.String(), "The daemon runs until you log out or reboot; run slack-coordinator service install to keep it running.") {
-		t.Fatalf("output %q does not say the daemon is unsupervised", s.out.String())
+	wantVerified(t, s, raw, "Verified: ada replied to Stored.")
+	out := s.out.String()
+	closing := "Verification passed; the daemon runs until you log out or reboot. Run slack-coordinator service install to keep it running."
+	if !strings.HasSuffix(strings.TrimSpace(out), closing) {
+		t.Fatalf("output %q does not close by saying verification passed and the daemon is unsupervised", out)
 	}
-	got := decode(t, raw)
-	if got["step"] != float64(6) {
-		t.Fatalf("step = %v, want 6", got["step"])
-	}
-	if _, ok := got["service_installed"]; ok {
+	if got := decode(t, s.cpAtVerify); got["service_installed"] != nil {
 		t.Fatalf("onboard.json claims a service was installed: %v", got)
+	}
+}
+
+func TestVerifyTimeoutPrintsHintsInOrderAndKeepsEverything(t *testing.T) {
+	s := newScript(t, ada.ID, "")
+	s.verifyResult = ipc.VerifyOwnerResult{Timeout: true}
+	_, raw, err := run(t, s, tokensStep4())
+	if !errors.Is(err, ErrVerifyTimeout) {
+		t.Fatalf("error %v, want ErrVerifyTimeout", err)
+	}
+	out := s.out.String()
+	hints := []string{
+		"1. The app was not reinstalled after the scope change; reinstall it at https://api.slack.com/apps/A0STORED/install-on-team.",
+		"2. The message.im event subscription is missing",
+		"3. The owner id is wrong; config.yaml names " + ada.ID + ".",
+	}
+	last := -1
+	for _, h := range hints {
+		i := strings.Index(out, h)
+		if i < 0 || i < last {
+			t.Fatalf("output %q lacks %q in order", out, h)
+		}
+		last = i
+	}
+	if strings.Contains(out, "Invite the bot") {
+		t.Fatalf("output %q prints next steps after a failed verification", out)
+	}
+	if got := decode(t, raw); got["step"] != float64(6) {
+		t.Fatalf("onboard.json = %v, want step 6 kept", got)
+	}
+	savedConfig(t, s)
+	if s.installCalls != 1 || s.uninstallCalls != 0 || s.restartCalls != 0 {
+		t.Fatalf("install %d uninstall %d restart %d; the service must be left as installed", s.installCalls, s.uninstallCalls, s.restartCalls)
+	}
+}
+
+func TestRepairReverifiesAnExistingSetupWithoutCreatingAnApp(t *testing.T) {
+	s := newScript(t, "x", "1")
+	existingSetup(t, s)
+	_, raw, err := run(t, s, &Checkpoint{Step: 6, AppID: "A0STORED", AppName: "Stored", BotToken: "xoxb-old", AppToken: "xapp-old", OwnerUserID: ada.ID})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if s.prompts[0] != repairMenu || !strings.Contains(s.out.String(), "Answer with a number from 1 to 3.") {
+		t.Fatalf("prompts %q output %q; want the repair menu and a reprompt after a bad answer", s.prompts, s.out.String())
+	}
+	if s.createCalls != 0 || s.saves != 0 || s.installCalls != 0 || s.uninstallCalls != 0 || s.restartCalls != 0 {
+		t.Fatalf("create %d save %d install %d uninstall %d restart %d; re-verify must only verify", s.createCalls, s.saves, s.installCalls, s.uninstallCalls, s.restartCalls)
+	}
+	wantVerified(t, s, raw, "Verified: ada replied to Stored.")
+}
+
+func TestRepairReinstallsTheServiceThenVerifies(t *testing.T) {
+	s := newScript(t, "2")
+	existingSetup(t, s)
+	_, raw, err := run(t, s, &Checkpoint{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if s.createCalls != 0 || s.uninstallCalls != 1 || s.installCalls != 1 || s.restartCalls != 0 {
+		t.Fatalf("create %d uninstall %d install %d restart %d; want the service removed and installed again", s.createCalls, s.uninstallCalls, s.installCalls, s.restartCalls)
+	}
+	wantVerified(t, s, raw, "Verified: ada replied.")
+
+	s = newScript(t, "2")
+	s.flags.NoService = true
+	existingSetup(t, s)
+	if _, _, err := run(t, s, &Checkpoint{}); err != nil {
+		t.Fatalf("Run with --no-service: %v", err)
+	}
+	if s.uninstallCalls != 0 || s.installCalls != 0 || s.restartCalls != 1 {
+		t.Fatalf("uninstall %d install %d restart %d; --no-service must restart the detached daemon", s.uninstallCalls, s.installCalls, s.restartCalls)
+	}
+}
+
+func TestRepairReplacesOneTokenAndRestartsTheDaemon(t *testing.T) {
+	s := newScript(t, "3", "1", "xoxp-wrong", "xoxb-new")
+	existingSetup(t, s)
+	_, raw, err := run(t, s, &Checkpoint{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.Join(s.authTokens, ",") != "xoxb-new" || len(s.probeTokens) != 0 {
+		t.Fatalf("auth.test tokens %v probe tokens %v; want the new bot token checked once", s.authTokens, s.probeTokens)
+	}
+	cfg := savedConfig(t, s)
+	if cfg.Slack.BotToken != "xoxb-new" || cfg.Slack.AppToken != "xapp-old" || cfg.Slack.OwnerUserID != ada.ID {
+		t.Fatalf("slack = %+v, want only the bot token replaced", cfg.Slack)
+	}
+	if cfg.Agent == nil || cfg.Agent.Command != "omp" {
+		t.Fatalf("agent = %+v, want the pre-existing block", cfg.Agent)
+	}
+	if s.createCalls != 0 || s.restartCalls != 1 || s.installCalls != 0 {
+		t.Fatalf("create %d restart %d install %d; want one restart and no app or service work", s.createCalls, s.restartCalls, s.installCalls)
+	}
+	wantVerified(t, s, raw, "Verified: ada replied.")
+}
+
+func TestRepairRejectedTokenLeavesConfigUnchanged(t *testing.T) {
+	s := newScript(t, "3", "2", "xapp-new")
+	s.probeErr = errors.New("invalid_auth")
+	existingSetup(t, s)
+	_, _, err := run(t, s, &Checkpoint{})
+	if err == nil || !strings.Contains(err.Error(), "replace token: app token cannot open Socket Mode") {
+		t.Fatalf("error %v", err)
+	}
+	if s.saves != 0 || s.restartCalls != 0 || s.verifyCalls != 0 {
+		t.Fatalf("saves %d restarts %d verifications %d after a rejected token; want none", s.saves, s.restartCalls, s.verifyCalls)
 	}
 }
 
@@ -355,14 +539,14 @@ func TestAuthTestFailureLeavesStepFiveWithoutConfig(t *testing.T) {
 	if _, statErr := os.Stat(s.configPath); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("config.yaml written after a rejected bot token: %v", statErr)
 	}
-	if len(s.probeTokens) != 0 || s.installCalls != 0 || s.startCalls != 0 {
-		t.Fatalf("probe %d install %d start %d after auth.test failed; want none", len(s.probeTokens), s.installCalls, s.startCalls)
+	if len(s.probeTokens) != 0 || s.installCalls != 0 || s.startCalls != 0 || s.verifyCalls != 0 {
+		t.Fatalf("probe %d install %d start %d verify %d after auth.test failed; want none", len(s.probeTokens), s.installCalls, s.startCalls, s.verifyCalls)
 	}
 }
 
 func TestWrongBotTokenPrefixRepromptsWithoutAdvancing(t *testing.T) {
 	s := newScript(t, configToken, "Ops bot", "xoxp-user-token", "xoxb-bot", "xapp-app", ada.ID, "")
-	_, raw, err := run(t, s, &Checkpoint{})
+	_, _, err := run(t, s, &Checkpoint{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -372,7 +556,7 @@ func TestWrongBotTokenPrefixRepromptsWithoutAdvancing(t *testing.T) {
 	if !strings.Contains(s.out.String(), "does not start with xoxb-") {
 		t.Fatalf("output %q does not say why the paste was refused", s.out.String())
 	}
-	got := decode(t, raw)
+	got := decode(t, s.cpAtVerify)
 	if got["bot_token"] != "xoxb-bot" || got["app_name"] != "Ops bot" || got["step"] != float64(6) {
 		t.Fatalf("onboard.json = %v", got)
 	}
@@ -426,22 +610,23 @@ func TestResumeFromStepTwoSkipsCreateAndUsesStoredAppID(t *testing.T) {
 	if len(s.urls) != 2 || s.urls[0] != "https://api.slack.com/apps/A0STORED/install-on-team" || s.urls[1] != "https://api.slack.com/apps/A0STORED/general" {
 		t.Fatalf("opened %v; want URLs built from the stored app id", s.urls)
 	}
-	got := decode(t, raw)
+	got := decode(t, s.cpAtVerify)
 	if got["step"] != float64(6) || got["app_id"] != "A0STORED" || got["app_name"] != "Stored" || got["bot_token"] != "xoxb-bot" || got["app_token"] != "xapp-app" {
 		t.Fatalf("onboard.json = %v", got)
 	}
+	wantVerified(t, s, raw, "Verified: ada replied to Stored.")
 }
 
 func TestResumeFromStepOneAsksForTheTokenAgainWithoutRegressing(t *testing.T) {
 	s := newScript(t, configToken, "", "xoxb-bot", "xapp-app", ada.ID, "")
-	_, raw, err := run(t, s, &Checkpoint{Step: 1})
+	_, _, err := run(t, s, &Checkpoint{Step: 1})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if s.createCalls != 1 || s.createTokens[0] != configToken {
 		t.Fatalf("ManifestCreate calls %d tokens %v; want one call with the re-prompted token", s.createCalls, s.createTokens)
 	}
-	if got := decode(t, raw); got["step"] != float64(6) {
+	if got := decode(t, s.cpAtVerify); got["step"] != float64(6) {
 		t.Fatalf("step = %v, want 6", got["step"])
 	}
 }
@@ -450,19 +635,15 @@ func TestBrowserOpenFailureWarnsAndContinuesToThePrompt(t *testing.T) {
 	s := newScript(t, configToken, "", "xoxb-bot", "xapp-app", ada.ID, "")
 	deps := s.deps()
 	deps.OpenURL = func(string) error { return errors.New("exec: \"xdg-open\": executable file not found in $PATH") }
-	path := filepath.Join(t.TempDir(), "onboard.json")
-	if err := Run(context.Background(), deps, &Checkpoint{}, path, Flags{}); err != nil {
+	s.cpPath = filepath.Join(t.TempDir(), "onboard.json")
+	if err := Run(context.Background(), deps, &Checkpoint{}, s.cpPath, Flags{}); err != nil {
 		t.Fatalf("Run: %v; an opener failure must not stop the walkthrough", err)
 	}
 	out := s.out.String()
 	if !strings.Contains(out, "Opening https://slack.com/oauth/v2/authorize?client_id=1") || !strings.Contains(out, "open the URL above by hand") {
 		t.Fatalf("output %q must print the URL and say the browser did not open", out)
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := decode(t, raw); got["step"] != float64(6) || got["bot_token"] != "xoxb-bot" {
+	if got := decode(t, s.cpAtVerify); got["step"] != float64(6) || got["bot_token"] != "xoxb-bot" {
 		t.Fatalf("onboard.json = %v, want both tokens recorded", got)
 	}
 }

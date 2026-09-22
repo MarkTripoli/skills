@@ -122,23 +122,44 @@ func (s *Server) handleConn(conn net.Conn) {
 	}()
 	defer cancel()
 
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
+	lines := make(chan []byte)
+	go func() {
+		defer close(lines)
+		for scanner.Scan() {
+			line := append([]byte(nil), scanner.Bytes()...)
+			select {
+			case lines <- line:
+			case <-ctx.Done():
+				return
+			}
 		}
+		cancel()
+	}()
 
-		var req Request
-		if err := json.Unmarshal(line, &req); err != nil {
-			slog.Warn("ipc request failed", "method", "<parse>", "error", "invalid json")
-			_ = encoder.Encode(NewErrorResponse(0, ErrParseError, "invalid json"))
-			continue
-		}
-
-		resp := s.dispatch(ctx, req)
-		if err := encoder.Encode(resp); err != nil {
-			slog.Error("write response", "error", err)
+	for {
+		select {
+		case <-ctx.Done():
 			return
+		case line, ok := <-lines:
+			if !ok {
+				return
+			}
+			if len(line) == 0 {
+				continue
+			}
+
+			var req Request
+			if err := json.Unmarshal(line, &req); err != nil {
+				slog.Warn("ipc request failed", "method", "<parse>", "error", "invalid json")
+				_ = encoder.Encode(NewErrorResponse(0, ErrParseError, "invalid json"))
+				continue
+			}
+
+			resp := s.dispatch(ctx, req)
+			if err := encoder.Encode(resp); err != nil {
+				slog.Error("write response", "error", err)
+				return
+			}
 		}
 	}
 }

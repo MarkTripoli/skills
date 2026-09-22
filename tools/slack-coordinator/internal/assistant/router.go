@@ -91,9 +91,11 @@ func userMessage(evt socketmode.Event) *slackevents.MessageEvent {
 
 // routeDM handles a message in a direct-message channel. A sender other than
 // the owner is refused once (see refuse). From the owner, a top-level DM
-// starting with `!` is answered by its verb, any other top-level DM opens a
-// request, and a reply under a request root is recorded as a follow-up. Every
-// other DM, including a `!` reply in a thread, is dropped.
+// starting with `!` is answered by its verb; while a setup verification is
+// pending, the DM that answers it (see resolveVerify) is consumed without a
+// row; any other top-level DM opens a request, and a reply under a request
+// root is recorded as a follow-up. Every other DM, including a `!` reply in a
+// thread, is dropped.
 func (s *Service) routeDM(ctx context.Context, msg *slackevents.MessageEvent) error {
 	if msg.User != s.Owner {
 		return s.refuse(ctx, msg)
@@ -105,6 +107,8 @@ func (s *Service) routeDM(ctx context.Context, msg *slackevents.MessageEvent) er
 			return nil
 		}
 		return s.runVerb(ctx, msg.Channel, text)
+	case s.resolveVerify(msg):
+		return nil
 	case msg.ThreadTimeStamp == "":
 		return s.newRequest(ctx, msg)
 	default:

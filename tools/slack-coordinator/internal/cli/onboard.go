@@ -9,12 +9,14 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/daemon"
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/ipc"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/onboard"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/paths"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/slackapi"
@@ -59,10 +61,14 @@ embedded manifest with an app configuration token, opens the install page for
 the bot token, opens Basic Information for the app-level token, resolves the
 owner by email or user id, checks both tokens against Slack, writes
 $SLACK_COORDINATOR_HOME/config.yaml (mode 0600, keeping any agent, retention,
-and jira settings already there), and installs the launchd or systemd user
-service. Progress is checkpointed in $SLACK_COORDINATOR_HOME/onboard.json
-(mode 0600) after every step, so an interrupted run resumes where it stopped.
-The configuration token is never written to disk.`,
+and jira settings already there), installs the launchd or systemd user
+service, then has the bot DM the owner and waits up to two minutes for the
+reply. Progress is checkpointed in $SLACK_COORDINATOR_HOME/onboard.json
+(mode 0600) after every step, so an interrupted run resumes where it stopped;
+a verified setup removes the checkpoint. With a config.yaml already in place
+the command offers repair (re-verify, reinstall the service, replace a token)
+instead of creating a second app. The configuration token is never written
+to disk.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if flags.Existing {
@@ -84,7 +90,6 @@ The configuration token is never written to disk.`,
 			if err := onboard.Run(cmd.Context(), deps, cp, cpPath, flags); err != nil {
 				return usageErr("%w", err)
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "Setup written; verification arrives in a later change.")
 			return nil
 		},
 	}
@@ -95,7 +100,8 @@ The configuration token is never written to disk.`,
 
 // onboardDeps binds the walkthrough to the command's stdin and stdout, the
 // platform browser, Slack clients built from the tokens each call carries,
-// config.yaml under p, and the service install and daemon start paths.
+// config.yaml under p, the service install and daemon start paths, and the
+// daemon's IPC socket for verification.
 func onboardDeps(cmd *cobra.Command, p *paths.Paths) onboard.Deps {
 	in := bufio.NewReader(cmd.InOrStdin())
 	out := cmd.OutOrStdout()
@@ -157,6 +163,33 @@ func onboardDeps(cmd *cobra.Command, p *paths.Paths) onboard.Deps {
 			fmt.Fprintf(out, "service installed at %s\n", path)
 			return nil
 		},
-		StartDaemon: func() error { return startDetachedDaemon(out, daemon.DefaultStatusInterval) },
+		UninstallService: func() error {
+			s, path, err := service()
+			if err != nil {
+				return err
+			}
+			if !s.Installed() {
+				return nil
+			}
+			if err := s.Uninstall(); err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "service removed from %s\n", path)
+			return nil
+		},
+		StartDaemon:   func() error { return startDetachedDaemon(out, daemon.DefaultStatusInterval) },
+		RestartDaemon: func() error { return restartDaemon(out) },
+		WaitDaemon:    func(context.Context) error { return waitForDaemon(5 * time.Second) },
+		VerifyOwner: func(ctx context.Context) (ipc.VerifyOwnerResult, error) {
+			var res ipc.VerifyOwnerResult
+			if err := callDaemonWithin(ctx, verifyOwnerDeadline, ipc.MethodAssistantVerifyOwner, ipc.VerifyOwnerParams{}, &res); err != nil {
+				return ipc.VerifyOwnerResult{}, daemonErr(err)
+			}
+			return res, nil
+		},
 	}
 }
+
+// verifyOwnerDeadline is the reply deadline for assistant.verify_owner: the
+// daemon's own 120 s window plus slack for the Slack calls around it.
+const verifyOwnerDeadline = 130 * time.Second
