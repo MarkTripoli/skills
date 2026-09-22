@@ -3,6 +3,8 @@ package assistant
 import (
 	"context"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -49,7 +51,43 @@ func (s *Service) runPurgeOnce(ctx context.Context) {
 		slog.Warn("purge failed", "error", err)
 		return
 	}
-	if len(ids) > 0 {
-		slog.Info("purge deleted assistant runs", "count", len(ids))
+
+	removed := 0
+
+	// Remove the run directory of every deleted assistant_runs row.
+	for _, id := range ids {
+		dir := s.Paths.RunDir(id)
+		if err := os.RemoveAll(dir); err != nil {
+			slog.Error("run directory not removed", "path", dir, "error", err)
+		} else {
+			removed++
+		}
+	}
+
+	// Scan the runs directory for orphaned entries whose row no longer exists.
+	runsDir := filepath.Join(s.Paths.Workspace(), "runs")
+	entries, readErr := os.ReadDir(runsDir)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		slog.Warn("purge could not scan runs directory", "path", runsDir, "error", readErr)
+	}
+	for _, e := range entries {
+		id := e.Name()
+		exists, err := s.DB.AssistantRunExists(ctx, id)
+		if err != nil {
+			slog.Error("run directory not removed", "path", filepath.Join(runsDir, id), "error", err)
+			continue
+		}
+		if !exists {
+			dir := filepath.Join(runsDir, id)
+			if err := os.RemoveAll(dir); err != nil {
+				slog.Error("run directory not removed", "path", dir, "error", err)
+			} else {
+				removed++
+			}
+		}
+	}
+
+	if len(ids) > 0 || removed > 0 {
+		slog.Info("purge deleted assistant runs", "count", len(ids), "dirs_removed", removed)
 	}
 }

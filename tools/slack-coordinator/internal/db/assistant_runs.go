@@ -270,3 +270,14 @@ FROM assistant_runs WHERE state = 'running' AND daemon_pid != ?`, thisPID)
 	}
 	return runs, rows.Err()
 }
+
+// AssistantRunExists reports whether a row with runID exists in assistant_runs.
+func (d *DB) AssistantRunExists(ctx context.Context, runID string) (bool, error) {
+	var n int
+	err := d.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM assistant_runs WHERE run_id = ?`, runID).Scan(&n)
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
