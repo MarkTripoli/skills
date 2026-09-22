@@ -32,6 +32,7 @@ type promptInput struct {
 	Approval string // edits | full
 	Request  string // the newest owner message
 	Thread   []db.DMMessage
+	PendingProposal string
 }
 
 // renderPrompt writes the prompt for p: a header naming the run, its kind and
@@ -47,6 +48,11 @@ func renderPrompt(p promptInput) string {
 	b.WriteString("\n\n## Thread so far\n\n")
 	for _, m := range p.Thread {
 		fmt.Fprintf(&b, "%s: %s\n", m.Author, m.Text)
+	}
+	if p.PendingProposal != "" {
+		b.WriteString("\n## Pending proposal\n\n```json\n")
+		b.WriteString(p.PendingProposal)
+		b.WriteString("\n```\n")
 	}
 	b.WriteString("\n## Collected messages\n\n0 messages in " + messagesFile + "\n")
 	return b.String()

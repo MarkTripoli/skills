@@ -87,6 +87,9 @@ func (s *Service) deliverDM(ctx context.Context, run db.AssistantRun, out agent.
 		if err := tx.UpsertDMMessage(writeCtx, row); err != nil {
 			return err
 		}
+		if err := tx.ClearPendingProposal(writeCtx, req.RootTS); err != nil {
+			return err
+		}
 		return tx.FinishAssistantRun(writeCtx, run.RunID, db.RunDone, 0, false, out.ResultSource, "", now)
 	})
 }

@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -556,6 +558,127 @@ func TestYesConfirmsScheduleProposal(t *testing.T) {
 	}
 	if !strings.Contains(gotReply, "next due") {
 		t.Errorf("reply = %q, want 'next due'", gotReply)
+	}
+}
+
+func TestCancelDropsPendingProposal(t *testing.T) {
+	for _, text := range []string{"no", "Never mind!"} {
+		t.Run(text, func(t *testing.T) {
+			s, slack, _ := newTestService(t)
+			ctx := context.Background()
+			const root = "1700000000.001000"
+			const runID = "01JTEST00000000000000000005"
+			storePendingProposalRequest(t, s, root, runID, pendingProposal{RunID: runID})
+
+			routeDMEvent(t, s, dm("U1", "1700000001.000000", root, text))
+			wantWake(t, s, false)
+			req, _, _ := s.DB.GetDMRequest(ctx, root)
+			if req.PendingProposal.Valid {
+				t.Fatal("pending proposal was not cleared")
+			}
+			if count, _ := s.DB.CountAssistantRuns(ctx); count != 1 {
+				t.Fatalf("assistant runs = %d, want only the proposing run", count)
+			}
+			msgs, _ := s.DB.ListDMMessages(ctx, root)
+			if len(msgs) != 2 || !msgs[0].RunID.Valid || msgs[0].RunID.String != runID || !msgs[1].RunID.Valid || msgs[1].RunID.String != runID || msgs[0].Text != "Dropped the proposal." {
+				t.Fatalf("dm_messages = %+v, want owner and dropped reply bound to %s", msgs, runID)
+			}
+			if len(slack.posts) != 1 || slack.posts[0].text != "Dropped the proposal." {
+				t.Fatalf("posts = %+v, want the dropped reply", slack.posts)
+			}
+		})
+	}
+}
+
+func TestFollowUpPromptIncludesPendingProposal(t *testing.T) {
+	s, _, clock, runner := newDispatchService(t)
+	ctx := context.Background()
+	const root = "1700000000.001000"
+	const runID = "01JTEST00000000000000000006"
+	proposalJSON := `{"proposal":{"summary":"stored proposal"},"run_id":"` + runID + `"}`
+	if _, err := s.DB.InsertDMRequest(ctx, db.DMRequest{RootTS: root, ChannelID: "D1", ReceivedAt: stamp(s.Now()), LastMessageAt: stamp(s.Now())}); err != nil {
+		t.Fatal(err)
+	}
+	runner.scripted = []agent.RunOutcome{{ExitCode: 0, Result: "updated plan", ResultSource: "result.md"}}
+	if err := s.DB.SetPendingProposal(ctx, root, proposalJSON); err != nil {
+		t.Fatal(err)
+	}
+	clock.at = clock.at.Add(time.Minute)
+	routeDMEvent(t, s, dm("U1", "1700000001.000000", root, "every 2 hours instead"))
+	<-s.Wake()
+	if err := s.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s.inflight.Wait()
+	if n, _ := s.DB.CountAssistantRuns(ctx); n != 1 {
+		t.Fatalf("assistant runs = %d, want one follow-up", n)
+	}
+	if len(runner.specs) == 0 {
+		t.Fatal("follow-up run was not started")
+	}
+	prompt, err := os.ReadFile(filepath.Join(runner.specs[0].RunDir, "prompt.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(prompt)
+	for _, want := range []string{"## Pending proposal", proposalJSON, "## Collected messages", "every 2 hours instead"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("prompt.md lacks %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestSuccessfulPlainFollowUpClearsPendingProposal(t *testing.T) {
+	s, _, clock, runner := newDispatchService(t)
+	ctx := context.Background()
+	const root = "1700000000.001000"
+	const proposalRunID = "01JTEST00000000000000000007"
+	storePendingProposalRequest(t, s, root, proposalRunID, pendingProposal{RunID: proposalRunID})
+	runner.scripted = []agent.RunOutcome{{ExitCode: 0, Result: "updated plan", ResultSource: "result.md"}}
+	clock.at = clock.at.Add(time.Second)
+	routeDMEvent(t, s, dm("U1", "1700000001.000000", root, "every 2 hours instead"))
+	<-s.Wake()
+	if err := s.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s.inflight.Wait()
+	req, _, _ := s.DB.GetDMRequest(ctx, root)
+	if req.PendingProposal.Valid {
+		t.Fatal("pending proposal was not cleared by plain result")
+	}
+}
+
+func TestFollowUpProposalReplacesPendingProposal(t *testing.T) {
+	s, _, clock, runner := newDispatchService(t)
+	ctx := context.Background()
+	const root = "1700000000.001000"
+	const oldRunID = "01JTEST00000000000000000008"
+	storePendingProposalRequest(t, s, root, oldRunID, pendingProposal{RunID: oldRunID})
+	proposal := &agent.Proposal{
+		Watch:       []string{"C0GENERAL1"},
+		Trigger:     agent.Trigger{Kind: agent.TriggerSchedule, Daily: "09:00"},
+		Instruction: "summarize PRs",
+		DeliverTo:   agent.DeliverTo{DM: true},
+		Summary:     "summarize PRs every morning",
+	}
+	if err := proposal.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	runner.scripted = []agent.RunOutcome{{ExitCode: 0, Proposal: proposal, ResultSource: "result.md"}}
+	clock.at = clock.at.Add(time.Second)
+	routeDMEvent(t, s, dm("U1", "1700000001.000000", root, "every morning instead"))
+	<-s.Wake()
+	if err := s.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s.inflight.Wait()
+	req, _, _ := s.DB.GetDMRequest(ctx, root)
+	var got pendingProposal
+	if err := json.Unmarshal([]byte(req.PendingProposal.String), &got); err != nil {
+		t.Fatalf("unmarshal replaced proposal: %v", err)
+	}
+	if !req.PendingProposal.Valid || got.Proposal.Summary != proposal.Summary || got.RunID == oldRunID || got.RunID == "" {
+		t.Fatalf("pending proposal = %+v, want replacement proposal with a new run id", got)
 	}
 }
 
