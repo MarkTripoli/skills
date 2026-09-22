@@ -3,8 +3,13 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"strings"
 )
+
+// ErrTaskNotFound reports a task_id with no row.
+var ErrTaskNotFound = errors.New("task not found")
 
 // Values of tasks.state.
 const (
@@ -20,6 +25,113 @@ const (
 	TriggerWindowEnd   = "window_end"
 	TriggerEachMessage = "each_message"
 )
+
+// Task is one row of the tasks table. Timestamps are RFC 3339 UTC strings;
+// Schedule is the JSON schemaSQL documents, NULL for each_message tasks.
+type Task struct {
+	TaskID              int64
+	State               string
+	Instruction         string
+	Trigger             string
+	Schedule            sql.NullString
+	DebounceSeconds     sql.NullInt64
+	DeliverTo           string
+	RequestRootTS       string
+	CreatedAt           string
+	DueAt               sql.NullString
+	LastRunStartedAt    sql.NullString
+	LastResultAt        sql.NullString
+	ConsecutiveFailures int
+	EndedAt             sql.NullString
+}
+
+const taskColumns = `task_id, state, instruction, trigger, schedule, debounce_seconds, deliver_to, request_root_ts, created_at, due_at, last_run_started_at, last_result_at, consecutive_failures, ended_at`
+
+func scanTask(s scanner) (Task, error) {
+	var t Task
+	err := s.Scan(&t.TaskID, &t.State, &t.Instruction, &t.Trigger, &t.Schedule, &t.DebounceSeconds, &t.DeliverTo, &t.RequestRootTS, &t.CreatedAt, &t.DueAt, &t.LastRunStartedAt, &t.LastResultAt, &t.ConsecutiveFailures, &t.EndedAt)
+	return t, err
+}
+
+// ListTasks lists the tasks in any of states, ascending by task_id; with no
+// states it lists every task.
+func (d *DB) ListTasks(ctx context.Context, states ...string) ([]Task, error) {
+	query := `SELECT ` + taskColumns + ` FROM tasks`
+	args := make([]any, len(states))
+	if len(states) > 0 {
+		query += ` WHERE state IN (?` + strings.Repeat(",?", len(states)-1) + `)`
+		for i, s := range states {
+			args[i] = s
+		}
+	}
+	rows, err := d.sql.QueryContext(ctx, query+` ORDER BY task_id`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list tasks: %w", err)
+	}
+	defer rows.Close()
+	var tasks []Task
+	for rows.Next() {
+		t, err := scanTask(rows)
+		if err != nil {
+			return nil, fmt.Errorf("list tasks: %w", err)
+		}
+		tasks = append(tasks, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list tasks: %w", err)
+	}
+	return tasks, nil
+}
+
+// GetTask returns the task with taskID, or ErrTaskNotFound.
+func (d *DB) GetTask(ctx context.Context, taskID int64) (Task, error) {
+	t, err := scanTask(d.sql.QueryRowContext(ctx, `SELECT `+taskColumns+` FROM tasks WHERE task_id = ?`, taskID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Task{}, ErrTaskNotFound
+	}
+	if err != nil {
+		return Task{}, fmt.Errorf("get task %d: %w", taskID, err)
+	}
+	return t, nil
+}
+
+// TaskChannels lists the channel ids taskID watches, ascending.
+func (d *DB) TaskChannels(ctx context.Context, taskID int64) ([]string, error) {
+	rows, err := d.sql.QueryContext(ctx, `SELECT channel_id FROM task_channels WHERE task_id = ? ORDER BY channel_id`, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("task channels %d: %w", taskID, err)
+	}
+	defer rows.Close()
+	var channels []string
+	for rows.Next() {
+		var ch string
+		if err := rows.Scan(&ch); err != nil {
+			return nil, fmt.Errorf("task channels %d: %w", taskID, err)
+		}
+		channels = append(channels, ch)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("task channels %d: %w", taskID, err)
+	}
+	return channels, nil
+}
+
+// SetTaskState moves taskID to state with due_at and ended_at set to dueAt
+// and endedAt, NULL for a nil pointer.
+func (d *DB) SetTaskState(ctx context.Context, taskID int64, state string, dueAt, endedAt *string) error {
+	if _, err := d.sql.ExecContext(ctx, `UPDATE tasks SET state = ?, due_at = ?, ended_at = ? WHERE task_id = ?`, state, dueAt, endedAt, taskID); err != nil {
+		return fmt.Errorf("set task state %d: %w", taskID, err)
+	}
+	return nil
+}
+
+// ResetTaskFailures zeroes taskID's consecutive_failures.
+func (d *DB) ResetTaskFailures(ctx context.Context, taskID int64) error {
+	if _, err := d.sql.ExecContext(ctx, `UPDATE tasks SET consecutive_failures = 0 WHERE task_id = ?`, taskID); err != nil {
+		return fmt.Errorf("reset task failures %d: %w", taskID, err)
+	}
+	return nil
+}
 
 // WatchingTask is what the collector needs from an active task watching a
 // channel: its id, its trigger, and the debounce an each_message task closes

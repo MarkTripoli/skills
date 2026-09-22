@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
@@ -19,7 +20,9 @@ import (
 
 // fakeSlack records every call. PostMessage answers with fixedTS when set (so
 // every run root shares one thread) and otherwise with a fresh ts per post;
-// postErr, when set, is returned after the attempt is recorded.
+// postErr, when set, is returned after the attempt is recorded. channels maps
+// a channel id to the name conversations.info answers; an id outside it is
+// channel_not_found, and infoCalls counts every lookup.
 // OpenConversation answers "D1" for any user; UserInfo names the owner "ada"
 // and fails for everyone else.
 type fakeSlack struct {
@@ -28,6 +31,8 @@ type fakeSlack struct {
 	posts     []slackPost
 	reactions []slackReaction
 	opened    []string
+	channels  map[string]string
+	infoCalls int
 }
 
 type slackPost struct{ channel, thread, text string }
@@ -66,6 +71,17 @@ func (f *fakeSlack) UserInfo(_ context.Context, userID string) (slackapi.User, e
 		return slackapi.User{}, errors.New("users.info: user_not_found")
 	}
 	return slackapi.User{ID: "U1", DisplayName: "ada"}, nil
+}
+
+func (f *fakeSlack) ConversationInfo(_ context.Context, id string) (*slack.Channel, error) {
+	f.infoCalls++
+	name, ok := f.channels[id]
+	if !ok {
+		return nil, slack.SlackErrorResponse{Err: "channel_not_found"}
+	}
+	var ch slack.Channel
+	ch.ID, ch.Name = id, name
+	return &ch, nil
 }
 
 // dm is an owner message in DM channel D1; threadTS "" makes it top level.
