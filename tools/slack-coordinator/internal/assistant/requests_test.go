@@ -1,9 +1,13 @@
 package assistant
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,9 +17,11 @@ import (
 )
 
 // fakeSlack records every call. PostMessage answers with fixedTS when set (so
-// every run root shares one thread) and otherwise with a fresh ts per post.
+// every run root shares one thread) and otherwise with a fresh ts per post;
+// postErr, when set, is returned after the attempt is recorded.
 type fakeSlack struct {
 	fixedTS   string
+	postErr   error
 	posts     []slackPost
 	reactions []slackReaction
 }
@@ -26,6 +32,9 @@ type slackReaction struct{ channel, ts, name string }
 
 func (f *fakeSlack) PostMessage(_ context.Context, channelID, threadTS, text string) (string, error) {
 	f.posts = append(f.posts, slackPost{channelID, threadTS, text})
+	if f.postErr != nil {
+		return "", f.postErr
+	}
 	if f.fixedTS != "" {
 		return f.fixedTS, nil
 	}
@@ -68,6 +77,28 @@ func wantWake(t *testing.T, s *Service, want bool) {
 			t.Fatal("the runner was not woken after a request was queued")
 		}
 	}
+}
+
+// captureLog routes slog's default logger into the returned buffer until the
+// test ends.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return &buf
+}
+
+// isRefused reports whether refused_users holds userID: a fresh insert that
+// changes nothing proves the row is there.
+func isRefused(t *testing.T, s *Service, userID string) bool {
+	t.Helper()
+	inserted, err := s.DB.InsertRefusedUser(context.Background(), userID, "probe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return !inserted
 }
 
 func TestOwnerTopLevelDMOpensRequestOnce(t *testing.T) {
@@ -188,11 +219,57 @@ func TestOwnerReplyUnderRequestIsRecordedAsFollowUp(t *testing.T) {
 	}
 }
 
+func TestNonOwnerDMIsRefusedOnceThenDropped(t *testing.T) {
+	s, slack, clock := newTestService(t)
+	const refusal = "This assistant only takes instructions from its owner, <@U1>."
+
+	routeDMEvent(t, s, dm("U2", "1700000000.001000", "", "hello?"))
+	clock.at = clock.at.Add(time.Minute)
+	routeDMEvent(t, s, dm("U2", "1700000000.002000", "1700000000.001000", "anyone there?"))
+
+	if len(slack.posts) != 1 || slack.posts[0] != (slackPost{"D1", "", refusal}) {
+		t.Fatalf("posts = %+v, want exactly one top-level refusal", slack.posts)
+	}
+	if !isRefused(t, s, "U2") {
+		t.Fatal("no refused_users row for U2")
+	}
+	if _, ok, _ := s.DB.GetDMRequest(context.Background(), "1700000000.001000"); ok {
+		t.Fatal("a non-owner DM opened a request")
+	}
+	if len(slack.reactions) != 0 {
+		t.Fatalf("reactions = %+v, want none", slack.reactions)
+	}
+	wantWake(t, s, false)
+}
+
+func TestFailedRefusalPostKeepsTheRowAndLogs(t *testing.T) {
+	s, slack, _ := newTestService(t)
+	logged := captureLog(t)
+	slack.postErr = errors.New("slack is down")
+
+	routeDMEvent(t, s, dm("U2", "1700000000.001000", "", "hello?"))
+
+	if !isRefused(t, s, "U2") {
+		t.Fatal("the failed post rolled back the refused_users row")
+	}
+	if len(slack.posts) != 1 {
+		t.Fatalf("posts = %+v, want one attempted refusal", slack.posts)
+	}
+	if !strings.Contains(logged.String(), "level=ERROR") || !strings.Contains(logged.String(), "slack is down") {
+		t.Fatalf("log %q does not carry the post error at ERROR", logged.String())
+	}
+
+	slack.postErr = nil
+	routeDMEvent(t, s, dm("U2", "1700000000.002000", "", "still there?"))
+	if len(slack.posts) != 1 {
+		t.Fatalf("posts = %+v, want no second refusal after the failed one", slack.posts)
+	}
+}
+
 func TestRouteDMDropsWhatIsNotARequest(t *testing.T) {
 	s, slack, _ := newTestService(t)
 	ctx := context.Background()
 	for _, msg := range []*slackevents.MessageEvent{
-		dm("U2", "1700000000.001000", "", "not the owner"),
 		dm("U1", "1700000000.002000", "", "!status"),
 		dm("U1", "1700000000.003000", "", "  !status with leading space"),
 		dm("U1", "1700000000.004000", "1600000000.000000", "reply under an unknown thread"),

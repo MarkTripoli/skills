@@ -419,3 +419,26 @@ func TestTransactRollsBackOnErrorAndRefusesNesting(t *testing.T) {
 		t.Fatalf("committed messages = %+v, %v", msgs, err)
 	}
 }
+
+func TestInsertRefusedUserKeepsTheFirstRow(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	ctx := context.Background()
+
+	if inserted, err := d.InsertRefusedUser(ctx, "U2", "2026-09-21T10:00:00Z"); err != nil || !inserted {
+		t.Fatalf("first insert = %t, %v; want a new row", inserted, err)
+	}
+	if inserted, err := d.InsertRefusedUser(ctx, "U2", "2026-09-21T10:01:00Z"); err != nil || inserted {
+		t.Fatalf("second insert = %t, %v; want it ignored", inserted, err)
+	}
+	var at string
+	if err := d.sql.QueryRowContext(ctx, `SELECT refused_at FROM refused_users WHERE user_id = ?`, "U2").Scan(&at); err != nil {
+		t.Fatal(err)
+	}
+	if at != "2026-09-21T10:00:00Z" {
+		t.Fatalf("refused_at = %s, want the first refusal's time kept", at)
+	}
+}
