@@ -41,6 +41,43 @@ VALUES (?, ?, ?, ?, ?, ?)`, r.RunID, r.Kind, r.RootTS, r.TaskID, r.State, r.Queu
 	return nil
 }
 
+// TaskRun is what `!show` reports about one assistant_runs row: when it ran,
+// its state, and how it ended. ExitCode and Failure are NULL until the runner
+// records an outcome.
+type TaskRun struct {
+	RunID      string
+	State      string
+	QueuedAt   string
+	StartedAt  sql.NullString
+	FinishedAt sql.NullString
+	ExitCode   sql.NullInt64
+	Failure    sql.NullString
+}
+
+// RecentRunsForTask lists at most limit of taskID's runs, newest queued first.
+func (d *DB) RecentRunsForTask(ctx context.Context, taskID int64, limit int) ([]TaskRun, error) {
+	rows, err := d.sql.QueryContext(ctx, `
+SELECT run_id, state, queued_at, started_at, finished_at, exit_code, failure
+FROM assistant_runs WHERE task_id = ?
+ORDER BY queued_at DESC, run_id DESC LIMIT ?`, taskID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("recent runs for task %d: %w", taskID, err)
+	}
+	defer rows.Close()
+	var runs []TaskRun
+	for rows.Next() {
+		var r TaskRun
+		if err := rows.Scan(&r.RunID, &r.State, &r.QueuedAt, &r.StartedAt, &r.FinishedAt, &r.ExitCode, &r.Failure); err != nil {
+			return nil, fmt.Errorf("recent runs for task %d: %w", taskID, err)
+		}
+		runs = append(runs, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("recent runs for task %d: %w", taskID, err)
+	}
+	return runs, nil
+}
+
 // CountRunsByState counts the assistant runs in state.
 func (d *DB) CountRunsByState(ctx context.Context, state string) (int, error) {
 	var n int

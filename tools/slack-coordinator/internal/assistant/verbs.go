@@ -18,9 +18,7 @@ import (
 // whitespace-separated tokens after the verb itself.
 type verb func(ctx context.Context, args []string) (string, error)
 
-// helpText lists every verb the DM understands. The task verbs are listed
-// before they work so the table is stable; until then they answer
-// notAvailableReply.
+// helpText lists every verb the DM understands.
 const helpText = "```\n" +
 	"!help          this table\n" +
 	"!status        uptime, Socket Mode, run and task counts, agent, disk use\n" +
@@ -33,24 +31,33 @@ const helpText = "```\n" +
 	"```\n" +
 	"Anything else sent here goes to the assistant."
 
-// notAvailableReply answers a listed verb whose handler is not implemented yet.
-const notAvailableReply = "not available yet"
-
 // noActiveRunsReply answers `!runs` when no runs row is active.
 const noActiveRunsReply = "No active runs."
 
+// noTasksReply answers `!tasks` when no task is active or paused.
+const noTasksReply = "No standing tasks."
+
+// waitingForMessages stands in for a due time when a task has none: an
+// each_message task waits for its watched channels, a paused task waits too.
+const waitingForMessages = "waiting for messages"
+
+// showRunLimit is how many of a task's newest runs `!show` prints.
+const showRunLimit = 5
+
+// resultExcerptRunes bounds the result.md text `!show` prints per run.
+const resultExcerptRunes = 500
+
 // verbTable maps each lowercased verb to its handler.
 func (s *Service) verbTable() map[string]verb {
-	notYet := func(context.Context, []string) (string, error) { return notAvailableReply, nil }
 	return map[string]verb{
 		"!help":   s.help,
 		"!status": s.status,
 		"!runs":   s.runs,
-		"!tasks":  notYet,
-		"!show":   notYet,
-		"!pause":  notYet,
-		"!resume": notYet,
-		"!cancel": notYet,
+		"!tasks":  s.tasks,
+		"!show":   s.show,
+		"!pause":  s.pause,
+		"!resume": s.resume,
+		"!cancel": s.cancel,
 	}
 }
 
@@ -129,6 +136,208 @@ func (s *Service) runs(ctx context.Context, _ []string) (string, error) {
 		fmt.Fprintf(&b, "%s · %s · started %s · %s", r.RunID, r.ChannelID, r.StartedAt, r.Permalink)
 	}
 	return b.String(), nil
+}
+
+// tasks lists the active and paused tasks, one per line, or noTasksReply.
+func (s *Service) tasks(ctx context.Context, _ []string) (string, error) {
+	list, err := s.DB.ListTasks(ctx, db.TaskActive, db.TaskPaused)
+	if err != nil {
+		return "", err
+	}
+	if len(list) == 0 {
+		return noTasksReply, nil
+	}
+	var b strings.Builder
+	for i, t := range list {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		channels, err := s.DB.TaskChannels(ctx, t.TaskID)
+		if err != nil {
+			return "", err
+		}
+		names := make([]string, len(channels))
+		for j, id := range channels {
+			names[j] = s.channelName(ctx, id)
+		}
+		watches := "none"
+		if len(names) > 0 {
+			watches = strings.Join(names, ", ")
+		}
+		next := waitingForMessages
+		if t.DueAt.Valid {
+			next = dueText(t, t.DueAt.String)
+		}
+		last := "none"
+		if t.LastResultAt.Valid {
+			last = t.LastResultAt.String
+		}
+		fmt.Fprintf(&b, "t%d · %s · watches %s · %s · next %s · last result %s", t.TaskID, t.State, watches, scheduleText(t), next, last)
+	}
+	return b.String(), nil
+}
+
+// show prints one task: its state, its instruction verbatim, and its newest
+// runs, each followed by an excerpt of its result.md when the run dir has one.
+// Completed and cancelled tasks show like any other row.
+func (s *Service) show(ctx context.Context, args []string) (string, error) {
+	t, reply, err := s.taskArg(ctx, args)
+	if err != nil || reply != "" {
+		return reply, err
+	}
+	runs, err := s.DB.RecentRunsForTask(ctx, t.TaskID, showRunLimit)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "t%d · %s\n%s", t.TaskID, t.State, t.Instruction)
+	for _, r := range runs {
+		b.WriteString("\n" + runLine(r))
+		excerpt, err := resultExcerpt(filepath.Join(s.Paths.RunDir(r.RunID), "result.md"))
+		if err != nil {
+			return "", err
+		}
+		if excerpt != "" {
+			b.WriteString("\n" + excerpt)
+		}
+	}
+	return b.String(), nil
+}
+
+// runLine is one `!show` run: when it ended (or started, or was queued), its
+// state, and its exit code or failure once it has one.
+func runLine(r db.TaskRun) string {
+	when := r.QueuedAt
+	switch {
+	case r.FinishedAt.Valid:
+		when = r.FinishedAt.String
+	case r.StartedAt.Valid:
+		when = r.StartedAt.String
+	}
+	line := when + " · " + r.State
+	switch {
+	case r.ExitCode.Valid:
+		line += fmt.Sprintf(" · exit %d", r.ExitCode.Int64)
+	case r.Failure.Valid:
+		line += " · " + r.Failure.String
+	}
+	return line
+}
+
+// resultExcerpt reads at most resultExcerptRunes of the file at name, trailing
+// whitespace trimmed; a missing file is "".
+func resultExcerpt(name string) (string, error) {
+	data, err := os.ReadFile(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	text := string(data)
+	if runes := []rune(text); len(runes) > resultExcerptRunes {
+		text = string(runes[:resultExcerptRunes])
+	}
+	return strings.TrimRight(text, " \t\r\n"), nil
+}
+
+// pause moves an active task to paused and clears its due time.
+func (s *Service) pause(ctx context.Context, args []string) (string, error) {
+	t, reply, err := s.taskArg(ctx, args)
+	if err != nil || reply != "" {
+		return reply, err
+	}
+	if t.State != db.TaskActive {
+		return fmt.Sprintf("t%d is %s", t.TaskID, t.State), nil
+	}
+	if err := s.DB.SetTaskState(ctx, t.TaskID, db.TaskPaused, nil, nil); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("t%d paused", t.TaskID), nil
+}
+
+// resume moves a paused task back to active with a fresh due time from its
+// schedule (none for each_message, or for a window whose `at` has passed) and
+// forgets its consecutive failures.
+func (s *Service) resume(ctx context.Context, args []string) (string, error) {
+	t, reply, err := s.taskArg(ctx, args)
+	if err != nil || reply != "" {
+		return reply, err
+	}
+	if t.State != db.TaskPaused {
+		return fmt.Sprintf("t%d is %s", t.TaskID, t.State), nil
+	}
+	var due *string
+	next := waitingForMessages
+	if t.Trigger != db.TriggerEachMessage {
+		at, err := NextDue(t.Schedule.String, s.Now())
+		if err != nil {
+			return "", fmt.Errorf("resume t%d: %w", t.TaskID, err)
+		}
+		if at.IsZero() {
+			next = "window already passed"
+		} else {
+			d := stamp(at)
+			due = &d
+			next = "next due " + dueText(t, d)
+		}
+	}
+	err = s.DB.Transact(ctx, func(tx *db.DB) error {
+		if err := tx.SetTaskState(ctx, t.TaskID, db.TaskActive, due, nil); err != nil {
+			return err
+		}
+		return tx.ResetTaskFailures(ctx, t.TaskID)
+	})
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("t%d resumed · %s", t.TaskID, next), nil
+}
+
+// cancel ends an active or paused task now.
+func (s *Service) cancel(ctx context.Context, args []string) (string, error) {
+	t, reply, err := s.taskArg(ctx, args)
+	if err != nil || reply != "" {
+		return reply, err
+	}
+	if t.State != db.TaskActive && t.State != db.TaskPaused {
+		return fmt.Sprintf("t%d is %s", t.TaskID, t.State), nil
+	}
+	ended := stamp(s.Now())
+	if err := s.DB.SetTaskState(ctx, t.TaskID, db.TaskCancelled, nil, &ended); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("t%d cancelled", t.TaskID), nil
+}
+
+// taskArg resolves the id argument of a task verb to its row. A missing,
+// malformed, or unknown id yields the reply naming the active and paused ids
+// instead, and the verb posts that.
+func (s *Service) taskArg(ctx context.Context, args []string) (db.Task, string, error) {
+	if len(args) > 0 {
+		if id, err := parseTaskID(args[0]); err == nil {
+			t, err := s.DB.GetTask(ctx, id)
+			if err == nil {
+				return t, "", nil
+			}
+			if !errors.Is(err, db.ErrTaskNotFound) {
+				return db.Task{}, "", err
+			}
+		}
+	}
+	known, err := s.DB.ListTasks(ctx, db.TaskActive, db.TaskPaused)
+	if err != nil {
+		return db.Task{}, "", err
+	}
+	var b strings.Builder
+	b.WriteString("unknown id, known:")
+	for _, t := range known {
+		fmt.Fprintf(&b, " t%d", t.TaskID)
+	}
+	if len(known) == 0 {
+		b.WriteString(" none")
+	}
+	return db.Task{}, b.String(), nil
 }
 
 // socketHealth is the coordinator's Socket Mode state; a coordinator without
