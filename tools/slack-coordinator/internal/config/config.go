@@ -67,9 +67,26 @@ type Config struct {
 // Load reads path, fills defaults for unset agent and retention values, and
 // validates the result. A missing file names the command that writes it.
 func Load(path string) (*Config, error) {
+	cfg, err := Read(path)
+	if err != nil {
+		return nil, err
+	}
+	if cfg == nil {
+		return nil, fmt.Errorf("%s does not exist; run `slack-coordinator setup` first", path)
+	}
+	cfg.ApplyDefaults()
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return cfg, nil
+}
+
+// Read parses path as written, without defaults or validation, so a partial
+// file survives a rewrite of only some keys. An absent file is nil, nil.
+func Read(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("%s does not exist; run `slack-coordinator setup` first", path)
+		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
@@ -77,10 +94,6 @@ func Load(path string) (*Config, error) {
 	var cfg Config
 	if err := yaml.Unmarshal(raw, &cfg); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
-	}
-	cfg.ApplyDefaults()
-	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return &cfg, nil
 }

@@ -379,6 +379,57 @@ func TestAssistantCheckConstraintsRejectUnknownValues(t *testing.T) {
 	}
 }
 
+func TestStatusCountsFilterByStateAndLifecycle(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	ctx := context.Background()
+	for _, state := range []string{TaskActive, TaskActive, TaskPaused, TaskCancelled} {
+		if _, err := d.root.Exec(`INSERT INTO tasks (state, instruction, trigger, deliver_to, request_root_ts, created_at) VALUES (?,'i','schedule','{"dm":true}','1.0','t')`, state); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := d.root.Exec(`INSERT INTO collected_messages (channel_id, ts, user_id, text, permalink, received_at) VALUES ('C1','1.0','U2','hi','p','t'), ('C1','2.0','U2','again','p','t')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []AssistantRun{
+		{RunID: "A1", Kind: RunKindDM, State: RunQueued, QueuedAt: "t"},
+		{RunID: "A2", Kind: RunKindTask, State: RunDone, QueuedAt: "t"},
+		{RunID: "A3", Kind: RunKindDM, State: RunFailed, QueuedAt: "t"},
+	} {
+		if err := d.InsertAssistantRun(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, r := range []Run{
+		{RunID: "R1", OwnerUserID: "U1", ChannelID: "C1", ThreadTS: "1.1", Permalink: "p1", Lifecycle: "active", SlackMode: SlackEnabled, StartedAt: "2026-09-21T10:01:00Z"},
+		{RunID: "R2", OwnerUserID: "U1", ChannelID: "C1", ThreadTS: "1.2", Permalink: "p2", Lifecycle: "completed", SlackMode: SlackEnabled, StartedAt: "2026-09-21T10:00:00Z"},
+		{RunID: "R3", OwnerUserID: "U1", ChannelID: "C2", ThreadTS: "1.3", Permalink: "p3", Lifecycle: "active", SlackMode: SlackDisabled, StartedAt: "2026-09-21T09:00:00Z"},
+	} {
+		if err := d.InsertRun(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for state, want := range map[string]int{TaskActive: 2, TaskPaused: 1, TaskCompleted: 0, TaskCancelled: 1} {
+		if n, err := d.CountTasksByState(ctx, state); err != nil || n != want {
+			t.Errorf("CountTasksByState(%s) = %d, %v; want %d", state, n, err, want)
+		}
+	}
+	if n, err := d.CountCollectedMessages(ctx); err != nil || n != 2 {
+		t.Errorf("CountCollectedMessages = %d, %v; want 2", n, err)
+	}
+	if n, err := d.CountAssistantRuns(ctx); err != nil || n != 3 {
+		t.Errorf("CountAssistantRuns = %d, %v; want every state counted, 3", n, err)
+	}
+	active, err := d.ActiveRuns(ctx)
+	if err != nil || len(active) != 2 || active[0].RunID != "R3" || active[1].RunID != "R1" {
+		t.Errorf("ActiveRuns = %+v, %v; want R3 then R1 whatever their slack_mode, oldest start first", active, err)
+	}
+}
+
 func TestTransactRollsBackOnErrorAndRefusesNesting(t *testing.T) {
 	d, err := Open(filepath.Join(t.TempDir(), "state.sqlite"))
 	if err != nil {
@@ -417,5 +468,28 @@ func TestTransactRollsBackOnErrorAndRefusesNesting(t *testing.T) {
 	msgs, err := d.ListDMMessages(ctx, "1.0")
 	if err != nil || len(msgs) != 1 || msgs[0].Text != "hi" {
 		t.Fatalf("committed messages = %+v, %v", msgs, err)
+	}
+}
+
+func TestInsertRefusedUserKeepsTheFirstRow(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	ctx := context.Background()
+
+	if inserted, err := d.InsertRefusedUser(ctx, "U2", "2026-09-21T10:00:00Z"); err != nil || !inserted {
+		t.Fatalf("first insert = %t, %v; want a new row", inserted, err)
+	}
+	if inserted, err := d.InsertRefusedUser(ctx, "U2", "2026-09-21T10:01:00Z"); err != nil || inserted {
+		t.Fatalf("second insert = %t, %v; want it ignored", inserted, err)
+	}
+	var at string
+	if err := d.sql.QueryRowContext(ctx, `SELECT refused_at FROM refused_users WHERE user_id = ?`, "U2").Scan(&at); err != nil {
+		t.Fatal(err)
+	}
+	if at != "2026-09-21T10:00:00Z" {
+		t.Fatalf("refused_at = %s, want the first refusal's time kept", at)
 	}
 }

@@ -50,6 +50,15 @@ func (d *DB) CountRunsByState(ctx context.Context, state string) (int, error) {
 	return n, nil
 }
 
+// CountAssistantRuns counts every assistant_runs row, whatever its state.
+func (d *DB) CountAssistantRuns(ctx context.Context) (int, error) {
+	var n int
+	if err := d.sql.QueryRowContext(ctx, `SELECT COUNT(*) FROM assistant_runs`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count assistant runs: %w", err)
+	}
+	return n, nil
+}
+
 // CountQueuedBefore counts the queued runs whose queued_at is earlier than
 // queuedAt: the runs ahead of one queued at that instant.
 func (d *DB) CountQueuedBefore(ctx context.Context, queuedAt string) (int, error) {

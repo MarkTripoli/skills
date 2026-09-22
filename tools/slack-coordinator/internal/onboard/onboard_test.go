@@ -10,25 +10,46 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/manifest"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/slackapi"
 )
 
 const configToken = "xoxe.xoxp-1-configuration"
 
-// script answers prompts in order, records the URLs opened, and serves
-// apps.manifest.create from a fixed result or error.
+var (
+	ada   = slackapi.User{ID: "U0000000001", DisplayName: "ada"}
+	grace = slackapi.User{ID: "W0000000002", DisplayName: "Grace Hopper"}
+)
+
+// script answers prompts in order, records the URLs opened and every token
+// each Slack call carried, serves apps.manifest.create from a fixed result or
+// error, resolves two users, and stores config.yaml in a temporary home.
 type script struct {
 	t       *testing.T
 	answers []string
 	prompts []string
 	urls    []string
 	out     bytes.Buffer
+	flags   Flags
 
 	createErr    error
 	createCalls  int
 	createTokens []string
 	createBodies []string
+
+	lookupTokens []string
+	lookupEmails []string
+	infoTokens   []string
+	infoIDs      []string
+	authErr      error
+	authTokens   []string
+	probeTokens  []string
+
+	configPath   string
+	saves        int
+	installCalls int
+	startCalls   int
 }
 
 func (s *script) next(label string) (string, error) {
@@ -61,11 +82,51 @@ func (s *script) deps() Deps {
 		},
 		Slack: s,
 		Out:   &s.out,
+		LookupUserByEmail: func(_ context.Context, token, email string) (slackapi.User, error) {
+			s.lookupTokens = append(s.lookupTokens, token)
+			s.lookupEmails = append(s.lookupEmails, email)
+			if email == "ada@example.com" {
+				return ada, nil
+			}
+			return slackapi.User{}, errors.New("users.lookupByEmail: users_not_found")
+		},
+		UserInfo: func(_ context.Context, token, id string) (slackapi.User, error) {
+			s.infoTokens = append(s.infoTokens, token)
+			s.infoIDs = append(s.infoIDs, id)
+			switch id {
+			case ada.ID:
+				return ada, nil
+			case grace.ID:
+				return grace, nil
+			}
+			return slackapi.User{}, errors.New("users.info: user_not_found")
+		},
+		AuthTest: func(_ context.Context, token string) error {
+			s.authTokens = append(s.authTokens, token)
+			return s.authErr
+		},
+		ProbeSocketMode: func(_ context.Context, token string) error {
+			s.probeTokens = append(s.probeTokens, token)
+			return nil
+		},
+		LoadConfig: func() (*config.Config, error) { return config.Read(s.configPath) },
+		SaveConfig: func(cfg *config.Config) error {
+			s.saves++
+			return config.Save(s.configPath, cfg)
+		},
+		InstallService: func() error {
+			s.installCalls++
+			return nil
+		},
+		StartDaemon: func() error {
+			s.startCalls++
+			return nil
+		},
 	}
 }
 
 func newScript(t *testing.T, answers ...string) *script {
-	return &script{t: t, answers: answers}
+	return &script{t: t, answers: answers, configPath: filepath.Join(t.TempDir(), "config.yaml")}
 }
 
 // run executes the walkthrough from cp against s and returns the checkpoint
@@ -78,7 +139,7 @@ func run(t *testing.T, s *script, cp *Checkpoint) (string, []byte, error) {
 			t.Fatal(err)
 		}
 	}
-	err := Run(context.Background(), s.deps(), cp, path, Flags{})
+	err := Run(context.Background(), s.deps(), cp, path, s.flags)
 	raw, readErr := os.ReadFile(path)
 	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
 		t.Fatal(readErr)
@@ -95,14 +156,47 @@ func decode(t *testing.T, raw []byte) map[string]any {
 	return m
 }
 
-func TestFreshRunCompletesFourStepsAndRecordsBothTokens(t *testing.T) {
-	s := newScript(t, configToken, "", "xoxb-bot", "xapp-app")
+// savedConfig reads the config.yaml the run wrote and checks its mode.
+func savedConfig(t *testing.T, s *script) *config.Config {
+	t.Helper()
+	info, err := os.Stat(s.configPath)
+	if err != nil {
+		t.Fatalf("config.yaml: %v", err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o600 {
+		t.Fatalf("config.yaml mode %o, want 0600", mode)
+	}
+	cfg, err := config.Load(s.configPath)
+	if err != nil {
+		t.Fatalf("config.yaml does not load: %v", err)
+	}
+	return cfg
+}
+
+// tokensStep4 is the checkpoint a run that collected both tokens leaves.
+func tokensStep4() *Checkpoint {
+	return &Checkpoint{Step: 4, AppID: "A0STORED", AppName: "Stored", BotToken: "xoxb-bot", AppToken: "xapp-app"}
+}
+
+// count returns how many prompts start with prefix.
+func (s *script) count(prefix string) int {
+	n := 0
+	for _, p := range s.prompts {
+		if strings.HasPrefix(p, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+func TestFreshRunCompletesSixStepsAndInstallsTheService(t *testing.T) {
+	s := newScript(t, configToken, "", "xoxb-bot", "xapp-app", "ada@example.com", "")
 	path, raw, err := run(t, s, &Checkpoint{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	got := decode(t, raw)
-	want := map[string]any{"step": float64(4), "app_id": "A0EXAMPLE", "app_name": DefaultAppName, "bot_token": "xoxb-bot", "app_token": "xapp-app"}
+	want := map[string]any{"step": float64(6), "app_id": "A0EXAMPLE", "app_name": DefaultAppName, "bot_token": "xoxb-bot", "app_token": "xapp-app", "owner_user_id": ada.ID, "owner_display_name": ada.DisplayName, "service_installed": true}
 	for k, v := range want {
 		if got[k] != v {
 			t.Errorf("%s = %v, want %v", k, got[k], v)
@@ -120,6 +214,22 @@ func TestFreshRunCompletesFourStepsAndRecordsBothTokens(t *testing.T) {
 	if out := s.out.String(); !strings.Contains(out, "Created app A0EXAMPLE") || strings.Contains(out, "Created "+DefaultAppName) {
 		t.Fatalf("output %q must report the app id and not attribute the prompted name to Slack", out)
 	}
+	if got := strings.Join(s.lookupTokens, ","); got != "xoxb-bot" || s.lookupEmails[0] != "ada@example.com" || len(s.infoIDs) != 0 {
+		t.Fatalf("lookupByEmail tokens %v emails %v, users.info ids %v; want one lookup with the bot token", s.lookupTokens, s.lookupEmails, s.infoIDs)
+	}
+	if !strings.Contains(strings.Join(s.prompts, "\n"), "Owner: ada (U0000000001). Correct? [Y/n]") {
+		t.Fatalf("prompts %q lack the owner confirmation", s.prompts)
+	}
+	if strings.Join(s.authTokens, ",") != "xoxb-bot" || strings.Join(s.probeTokens, ",") != "xapp-app" {
+		t.Fatalf("auth.test tokens %v, apps.connections.open tokens %v; want the pasted bot and app tokens", s.authTokens, s.probeTokens)
+	}
+	cfg := savedConfig(t, s)
+	if cfg.Slack.BotToken != "xoxb-bot" || cfg.Slack.AppToken != "xapp-app" || cfg.Slack.OwnerUserID != ada.ID {
+		t.Fatalf("config.yaml slack = %+v", cfg.Slack)
+	}
+	if s.installCalls != 1 || s.startCalls != 0 {
+		t.Fatalf("InstallService %d StartDaemon %d; want the service installed and no detached start", s.installCalls, s.startCalls)
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
@@ -132,26 +242,138 @@ func TestFreshRunCompletesFourStepsAndRecordsBothTokens(t *testing.T) {
 	}
 }
 
+func TestOwnerByIDUsesUsersInfoWithTheBotToken(t *testing.T) {
+	s := newScript(t, grace.ID, "y")
+	_, raw, err := run(t, s, tokensStep4())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.Join(s.infoTokens, ",") != "xoxb-bot" || strings.Join(s.infoIDs, ",") != grace.ID || len(s.lookupEmails) != 0 {
+		t.Fatalf("users.info tokens %v ids %v, lookupByEmail emails %v; want one info call with the bot token", s.infoTokens, s.infoIDs, s.lookupEmails)
+	}
+	got := decode(t, raw)
+	if got["owner_user_id"] != grace.ID || got["owner_display_name"] != grace.DisplayName || got["step"] != float64(6) {
+		t.Fatalf("onboard.json = %v", got)
+	}
+}
+
+func TestUnknownOwnerRepromptsWithoutWritingConfig(t *testing.T) {
+	s := newScript(t, "nobody@example.com", "bob", "U0000000009", ada.ID, "")
+	_, raw, err := run(t, s, tokensStep4())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if n := s.count("Owner email or Slack user id"); n != 4 {
+		t.Fatalf("owner prompted %d times, want 4; prompts %q", n, s.prompts)
+	}
+	if n := strings.Count(s.out.String(), "No such user in this workspace."); n != 3 {
+		t.Fatalf("refusal printed %d times, want 3; output %q", n, s.out.String())
+	}
+	if got := strings.Join(s.infoIDs, ","); got != "U0000000009,"+ada.ID {
+		t.Fatalf("users.info ids %q; the malformed id must not reach Slack", got)
+	}
+	if s.saves != 1 {
+		t.Fatalf("config saved %d times, want once after the owner resolved", s.saves)
+	}
+	if got := decode(t, raw); got["owner_user_id"] != ada.ID {
+		t.Fatalf("onboard.json = %v", got)
+	}
+}
+
+func TestDecliningTheOwnerReprompts(t *testing.T) {
+	s := newScript(t, "ada@example.com", "n", grace.ID, "")
+	_, raw, err := run(t, s, tokensStep4())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if n := s.count("Owner: "); n != 2 {
+		t.Fatalf("confirmation prompted %d times, want 2; prompts %q", n, s.prompts)
+	}
+	got := decode(t, raw)
+	if got["owner_user_id"] != grace.ID || got["owner_display_name"] != grace.DisplayName {
+		t.Fatalf("onboard.json = %v, want the second owner", got)
+	}
+	if cfg := savedConfig(t, s); cfg.Slack.OwnerUserID != grace.ID {
+		t.Fatalf("config.yaml owner = %q, want %q", cfg.Slack.OwnerUserID, grace.ID)
+	}
+}
+
+func TestWriteConfigKeepsAnExistingAgentBlock(t *testing.T) {
+	s := newScript(t, ada.ID, "")
+	existing := "agent:\n  command: omp\n  extra_dirs:\n    - /srv/repos\nretention:\n  days: 90\n  consumed_days: 3\nslack:\n  bot_token: xoxb-old\n  app_token: xapp-old\n  owner_user_id: U0LD\n"
+	if err := os.WriteFile(s.configPath, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := run(t, s, tokensStep4()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	cfg := savedConfig(t, s)
+	if cfg.Slack.BotToken != "xoxb-bot" || cfg.Slack.AppToken != "xapp-app" || cfg.Slack.OwnerUserID != ada.ID {
+		t.Fatalf("slack = %+v, want the pasted tokens and the resolved owner", cfg.Slack)
+	}
+	if cfg.Agent == nil || cfg.Agent.Command != "omp" || len(cfg.Agent.ExtraDirs) != 1 || cfg.Agent.ExtraDirs[0] != "/srv/repos" {
+		t.Fatalf("agent = %+v, want the pre-existing block", cfg.Agent)
+	}
+	if cfg.Retention.Days != 90 || cfg.Retention.ConsumedDays != 3 {
+		t.Fatalf("retention = %+v, want the pre-existing values", cfg.Retention)
+	}
+}
+
+func TestNoServiceStartsTheDaemonInstead(t *testing.T) {
+	s := newScript(t, ada.ID, "")
+	s.flags.NoService = true
+	_, raw, err := run(t, s, tokensStep4())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if s.startCalls != 1 || s.installCalls != 0 {
+		t.Fatalf("StartDaemon %d InstallService %d; want the detached start only", s.startCalls, s.installCalls)
+	}
+	if !strings.Contains(s.out.String(), "The daemon runs until you log out or reboot; run slack-coordinator service install to keep it running.") {
+		t.Fatalf("output %q does not say the daemon is unsupervised", s.out.String())
+	}
+	got := decode(t, raw)
+	if got["step"] != float64(6) {
+		t.Fatalf("step = %v, want 6", got["step"])
+	}
+	if _, ok := got["service_installed"]; ok {
+		t.Fatalf("onboard.json claims a service was installed: %v", got)
+	}
+}
+
+func TestAuthTestFailureLeavesStepFiveWithoutConfig(t *testing.T) {
+	s := newScript(t, ada.ID, "")
+	s.authErr = errors.New("invalid_auth")
+	_, raw, err := run(t, s, tokensStep4())
+	if err == nil || !strings.HasPrefix(err.Error(), "write config and start: ") || !strings.Contains(err.Error(), "invalid_auth") {
+		t.Fatalf("error %v, want write config and start: <cause>", err)
+	}
+	got := decode(t, raw)
+	if got["step"] != float64(5) || got["owner_user_id"] != ada.ID {
+		t.Fatalf("onboard.json = %v, want step 5 with the owner recorded", got)
+	}
+	if _, statErr := os.Stat(s.configPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("config.yaml written after a rejected bot token: %v", statErr)
+	}
+	if len(s.probeTokens) != 0 || s.installCalls != 0 || s.startCalls != 0 {
+		t.Fatalf("probe %d install %d start %d after auth.test failed; want none", len(s.probeTokens), s.installCalls, s.startCalls)
+	}
+}
+
 func TestWrongBotTokenPrefixRepromptsWithoutAdvancing(t *testing.T) {
-	s := newScript(t, configToken, "Ops bot", "xoxp-user-token", "xoxb-bot", "xapp-app")
+	s := newScript(t, configToken, "Ops bot", "xoxp-user-token", "xoxb-bot", "xapp-app", ada.ID, "")
 	_, raw, err := run(t, s, &Checkpoint{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	botPrompts := 0
-	for _, p := range s.prompts {
-		if strings.HasPrefix(p, "Bot token") {
-			botPrompts++
-		}
-	}
-	if botPrompts != 2 {
-		t.Fatalf("bot token prompted %d times, want 2 (one re-prompt); prompts %q", botPrompts, s.prompts)
+	if n := s.count("Bot token"); n != 2 {
+		t.Fatalf("bot token prompted %d times, want 2 (one re-prompt); prompts %q", n, s.prompts)
 	}
 	if !strings.Contains(s.out.String(), "does not start with xoxb-") {
 		t.Fatalf("output %q does not say why the paste was refused", s.out.String())
 	}
 	got := decode(t, raw)
-	if got["bot_token"] != "xoxb-bot" || got["app_name"] != "Ops bot" || got["step"] != float64(4) {
+	if got["bot_token"] != "xoxb-bot" || got["app_name"] != "Ops bot" || got["step"] != float64(6) {
 		t.Fatalf("onboard.json = %v", got)
 	}
 }
@@ -190,7 +412,7 @@ func TestInvalidAuthNamesTheExpiredConfigurationToken(t *testing.T) {
 }
 
 func TestResumeFromStepTwoSkipsCreateAndUsesStoredAppID(t *testing.T) {
-	s := newScript(t, "xoxb-bot", "xapp-app")
+	s := newScript(t, "xoxb-bot", "xapp-app", ada.ID, "")
 	_, raw, err := run(t, s, &Checkpoint{Step: 2, AppID: "A0STORED", AppName: "Stored"})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -198,22 +420,20 @@ func TestResumeFromStepTwoSkipsCreateAndUsesStoredAppID(t *testing.T) {
 	if s.createCalls != 0 {
 		t.Fatalf("ManifestCreate called %d times on resume", s.createCalls)
 	}
-	for _, p := range s.prompts {
-		if strings.HasPrefix(p, "App configuration token") {
-			t.Fatalf("configuration token prompted although no remaining step needs it; prompts %q", s.prompts)
-		}
+	if n := s.count("App configuration token"); n != 0 {
+		t.Fatalf("configuration token prompted although no remaining step needs it; prompts %q", s.prompts)
 	}
 	if len(s.urls) != 2 || s.urls[0] != "https://api.slack.com/apps/A0STORED/install-on-team" || s.urls[1] != "https://api.slack.com/apps/A0STORED/general" {
 		t.Fatalf("opened %v; want URLs built from the stored app id", s.urls)
 	}
 	got := decode(t, raw)
-	if got["step"] != float64(4) || got["app_id"] != "A0STORED" || got["app_name"] != "Stored" || got["bot_token"] != "xoxb-bot" || got["app_token"] != "xapp-app" {
+	if got["step"] != float64(6) || got["app_id"] != "A0STORED" || got["app_name"] != "Stored" || got["bot_token"] != "xoxb-bot" || got["app_token"] != "xapp-app" {
 		t.Fatalf("onboard.json = %v", got)
 	}
 }
 
 func TestResumeFromStepOneAsksForTheTokenAgainWithoutRegressing(t *testing.T) {
-	s := newScript(t, configToken, "", "xoxb-bot", "xapp-app")
+	s := newScript(t, configToken, "", "xoxb-bot", "xapp-app", ada.ID, "")
 	_, raw, err := run(t, s, &Checkpoint{Step: 1})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -221,13 +441,13 @@ func TestResumeFromStepOneAsksForTheTokenAgainWithoutRegressing(t *testing.T) {
 	if s.createCalls != 1 || s.createTokens[0] != configToken {
 		t.Fatalf("ManifestCreate calls %d tokens %v; want one call with the re-prompted token", s.createCalls, s.createTokens)
 	}
-	if got := decode(t, raw); got["step"] != float64(4) {
-		t.Fatalf("step = %v, want 4", got["step"])
+	if got := decode(t, raw); got["step"] != float64(6) {
+		t.Fatalf("step = %v, want 6", got["step"])
 	}
 }
 
 func TestBrowserOpenFailureWarnsAndContinuesToThePrompt(t *testing.T) {
-	s := newScript(t, configToken, "", "xoxb-bot", "xapp-app")
+	s := newScript(t, configToken, "", "xoxb-bot", "xapp-app", ada.ID, "")
 	deps := s.deps()
 	deps.OpenURL = func(string) error { return errors.New("exec: \"xdg-open\": executable file not found in $PATH") }
 	path := filepath.Join(t.TempDir(), "onboard.json")
@@ -242,7 +462,7 @@ func TestBrowserOpenFailureWarnsAndContinuesToThePrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := decode(t, raw); got["step"] != float64(4) || got["bot_token"] != "xoxb-bot" {
+	if got := decode(t, raw); got["step"] != float64(6) || got["bot_token"] != "xoxb-bot" {
 		t.Fatalf("onboard.json = %v, want both tokens recorded", got)
 	}
 }

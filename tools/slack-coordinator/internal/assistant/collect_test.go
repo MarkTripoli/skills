@@ -3,13 +3,13 @@ package assistant
 import (
 	"context"
 	"database/sql"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/slack-go/slack/slackevents"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/paths"
 )
 
 // newCollectService is newTestService plus a second connection to the same
@@ -17,9 +17,9 @@ import (
 // rows collect wrote.
 func newCollectService(t *testing.T) (*Service, *fakeSlack, *testClock, *sql.DB) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "state.sqlite")
-	s, slack, clock := newTestServiceAt(t, path)
-	raw, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)")
+	p := paths.WithRoot(t.TempDir())
+	s, slack, clock := newTestServiceAt(t, p)
+	raw, err := sql.Open("sqlite", p.DB()+"?_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		t.Fatal(err)
 	}

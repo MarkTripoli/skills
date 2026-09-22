@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -14,6 +15,10 @@ import (
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/coordinator"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
 )
+
+// refusalText answers the first DM from anyone but the owner; %s is the
+// owner's Slack user id.
+const refusalText = "This assistant only takes instructions from its owner, <@%s>."
 
 // ConsumeInbound reads Socket Mode envelopes until events closes or ctx ends.
 // Every envelope carrying a Request is acked first; a nil ack drops the acks
@@ -84,18 +89,42 @@ func userMessage(evt socketmode.Event) *slackevents.MessageEvent {
 	return msg
 }
 
-// routeDM handles a message in a direct-message channel. Only the owner is
-// heard: a top-level DM opens a request, a reply under a request root is
-// recorded as a follow-up, and text starting with `!` is left to the verb
-// handlers. Every other DM is dropped.
+// routeDM handles a message in a direct-message channel. A sender other than
+// the owner is refused once (see refuse). From the owner, a top-level DM
+// starting with `!` is answered by its verb, any other top-level DM opens a
+// request, and a reply under a request root is recorded as a follow-up. Every
+// other DM, including a `!` reply in a thread, is dropped.
 func (s *Service) routeDM(ctx context.Context, msg *slackevents.MessageEvent) error {
-	if msg.User != s.Owner || strings.HasPrefix(strings.TrimSpace(msg.Text), "!") {
-		return nil
+	if msg.User != s.Owner {
+		return s.refuse(ctx, msg)
 	}
-	if msg.ThreadTimeStamp == "" {
+	text := strings.TrimSpace(msg.Text)
+	switch {
+	case strings.HasPrefix(text, "!"):
+		if msg.ThreadTimeStamp != "" {
+			return nil
+		}
+		return s.runVerb(ctx, msg.Channel, text)
+	case msg.ThreadTimeStamp == "":
 		return s.newRequest(ctx, msg)
+	default:
+		return s.followUp(ctx, msg)
 	}
-	return s.followUp(ctx, msg)
+}
+
+// refuse answers a DM from anyone but the owner: the sender's first DM stores
+// a refused_users row and posts the refusal at the top level of that DM; every
+// later DM from a stored sender is dropped without a post. A failed post is
+// logged and keeps the row, so the sender is never told twice.
+func (s *Service) refuse(ctx context.Context, msg *slackevents.MessageEvent) error {
+	inserted, err := s.DB.InsertRefusedUser(ctx, msg.User, stamp(s.Now()))
+	if err != nil || !inserted {
+		return err
+	}
+	if _, err := s.Slack.PostMessage(ctx, msg.Channel, "", fmt.Sprintf(refusalText, s.Owner)); err != nil {
+		slog.Error("refusal not posted", "user", msg.User, "channel", msg.Channel, "error", err)
+	}
+	return nil
 }
 
 // collect records a public or private channel message, top level or thread

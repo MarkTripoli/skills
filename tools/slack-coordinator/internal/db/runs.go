@@ -102,6 +102,30 @@ func (d *DB) DisableSlack(ctx context.Context, runID string) error {
 	return fmt.Errorf("%w: %s is %s", ErrRunNotActive, runID, r.Lifecycle)
 }
 
+// ActiveRuns lists every run whose lifecycle is active, oldest start first.
+func (d *DB) ActiveRuns(ctx context.Context) ([]Run, error) {
+	rows, err := d.sql.QueryContext(ctx, `
+SELECT `+runColumns+` FROM runs
+WHERE lifecycle = 'active'
+ORDER BY started_at, run_id`)
+	if err != nil {
+		return nil, fmt.Errorf("active runs: %w", err)
+	}
+	defer rows.Close()
+	var active []Run
+	for rows.Next() {
+		r, err := scanRun(rows)
+		if err != nil {
+			return nil, fmt.Errorf("active runs: %w", err)
+		}
+		active = append(active, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("active runs: %w", err)
+	}
+	return active, nil
+}
+
 // RunsWithDeliveryError lists the Slack-enabled active runs whose last post
 // failed, for the scheduler to retry.
 func (d *DB) RunsWithDeliveryError(ctx context.Context) ([]Run, error) {
