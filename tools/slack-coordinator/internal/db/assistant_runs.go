@@ -205,3 +205,46 @@ func (d *DB) CountTaskMessagesForRun(ctx context.Context, runID string) (int, er
 
 // nullString is s as a NULL-when-empty column value.
 func nullString(s string) sql.NullString { return sql.NullString{String: s, Valid: s != ""} }
+
+// HasActiveRunForRoot reports whether rootTS has any queued or running run.
+func (d *DB) HasActiveRunForRoot(ctx context.Context, rootTS string) (bool, error) {
+	var n int
+	if err := d.sql.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM assistant_runs WHERE root_ts = ? AND state IN ('queued', 'running')`, rootTS).Scan(&n); err != nil {
+		return false, fmt.Errorf("has active run for root %s: %w", rootTS, err)
+	}
+	return n > 0, nil
+}
+
+// OldestQueuedSpawnable returns the queued run with the earliest queued_at
+// whose root_ts has no running sibling (so follow-up runs for a thread already
+// running are skipped until that run finishes). Runs with a NULL root_ts
+// (non-DM kinds) are always eligible. Ties order by run_id.
+func (d *DB) OldestQueuedSpawnable(ctx context.Context) (AssistantRun, bool, error) {
+	r, err := scanAssistantRun(d.sql.QueryRowContext(ctx, `
+SELECT `+assistantRunColumns+` FROM assistant_runs
+WHERE state = 'queued'
+  AND (root_ts IS NULL OR NOT EXISTS (
+    SELECT 1 FROM assistant_runs r2
+    WHERE r2.root_ts = assistant_runs.root_ts AND r2.state = 'running'
+  ))
+ORDER BY queued_at, run_id LIMIT 1`))
+	if errors.Is(err, sql.ErrNoRows) {
+		return AssistantRun{}, false, nil
+	}
+	if err != nil {
+		return AssistantRun{}, false, fmt.Errorf("oldest queued spawnable run: %w", err)
+	}
+	return r, true, nil
+}
+
+// ClaimPendingOwnerMessages sets run_id on every owner dm_messages row for
+// rootTS that has not yet been claimed by a run.
+func (d *DB) ClaimPendingOwnerMessages(ctx context.Context, runID, rootTS string) error {
+	if _, err := d.sql.ExecContext(ctx, `
+UPDATE dm_messages SET run_id = ? WHERE root_ts = ? AND author = 'owner' AND run_id IS NULL`,
+		runID, rootTS); err != nil {
+		return fmt.Errorf("claim pending owner messages %s: %w", rootTS, err)
+	}
+	return nil
+}

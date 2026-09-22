@@ -334,3 +334,91 @@ func TestRouteDMDropsWhatIsNotARequest(t *testing.T) {
 	}
 	wantWake(t, s, false)
 }
+
+func TestOwnerReplyAfterDoneRunQueuesNewRun(t *testing.T) {
+	s, slack, clock := newTestService(t)
+	ctx := context.Background()
+	const root = "1700000000.001000"
+
+	// Open the request; drain the initial queued run wake.
+	routeDMEvent(t, s, dm("U1", root, "", "first"))
+	<-s.Wake()
+
+	// Mark the initial run done so no active run remains for this thread.
+	r, ok, err := s.DB.OldestQueuedSpawnable(ctx)
+	if err != nil || !ok {
+		t.Fatalf("OldestQueuedSpawnable: %v %v", ok, err)
+	}
+	if err := s.DB.FinishAssistantRun(ctx, r.RunID, db.RunDone, 0, false, "result.md", "", stamp(clock.at)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Send a follow-up reply after the run is done.
+	clock.at = clock.at.Add(time.Minute)
+	routeDMEvent(t, s, dm("U1", "1700000001.000000", root, "also check the docs"))
+	wantWake(t, s, true)
+
+	// A new queued run must exist for this thread.
+	if n, _ := s.DB.CountRunsByState(ctx, db.RunQueued); n != 1 {
+		t.Fatalf("queued runs = %d, want 1 new run for the follow-up", n)
+	}
+	// A Working on it ack must have been posted in the thread.
+	var gotAck bool
+	for _, p := range slack.posts {
+		if p.thread == root && p.text == workingAck {
+			gotAck = true
+		}
+	}
+	if !gotAck {
+		t.Fatalf("posts = %+v, want a Working on it ack in thread %s", slack.posts, root)
+	}
+	// ack_ts must be updated on the request.
+	req, _, _ := s.DB.GetDMRequest(ctx, root)
+	if !req.AckTS.Valid {
+		t.Fatalf("ack_ts not set after follow-up ack")
+	}
+	// last_message_at must be the follow-up time.
+	if req.LastMessageAt != "2026-09-21T10:01:00Z" {
+		t.Fatalf("last_message_at = %s, want the follow-up time", req.LastMessageAt)
+	}
+}
+
+func TestOwnerReplyDuringActiveRunIsStoredWithoutNewRun(t *testing.T) {
+	s, _, clock := newTestService(t)
+	ctx := context.Background()
+	const root = "1700000000.001000"
+
+	routeDMEvent(t, s, dm("U1", root, "", "first"))
+	<-s.Wake()
+
+	// Mark the run as running so it is active.
+	r, _, _ := s.DB.OldestQueuedSpawnable(ctx)
+	if err := s.DB.MarkRunning(ctx, r.RunID, 9001, 9001, 9001, stamp(clock.at)); err != nil {
+		t.Fatal(err)
+	}
+
+	clock.at = clock.at.Add(time.Second)
+	routeDMEvent(t, s, dm("U1", "1700000001.000000", root, "also the docs"))
+	clock.at = clock.at.Add(time.Second)
+	routeDMEvent(t, s, dm("U1", "1700000002.000000", root, "and the tests"))
+	wantWake(t, s, false)
+
+	// No new run must be inserted.
+	if n, _ := s.DB.CountRunsByState(ctx, db.RunRunning); n != 1 {
+		t.Fatalf("running runs = %d, want exactly 1 (the original)", n)
+	}
+	if n, _ := s.DB.CountAssistantRuns(ctx); n != 1 {
+		t.Fatalf("total runs = %d, want exactly 1", n)
+	}
+	// Both follow-up messages (not the root) must be stored with run_id NULL.
+	msgs, _ := s.DB.ListDMMessages(ctx, root)
+	var pending int
+	for _, m := range msgs {
+		if m.Author == db.AuthorOwner && m.TS != root && !m.RunID.Valid {
+			pending++
+		}
+	}
+	if pending != 2 {
+		t.Fatalf("pending follow-up owner messages = %d, want 2", pending)
+	}
+}
