@@ -401,3 +401,38 @@ func TestTaskVerbsRejectUnknownAndMalformedIds(t *testing.T) {
 		t.Errorf("!cancel on a cancelled task answered %q", reply)
 	}
 }
+
+func TestResumeEachMessageWithPendingMessagesSetsEachMessageDueAt(t *testing.T) {
+	s, slack, clock, raw := newCollectService(t)
+	debounce := sql.NullInt64{Int64: 60, Valid: true}
+	id := insertTaskRow(t, raw, taskRow{
+		state: db.TaskPaused, instruction: "w", trigger: db.TriggerEachMessage, debounce: debounce, failures: 3,
+	}, "C1")
+	// Insert unconsumed task_messages directly (no collected_message FK needed; use OR IGNORE).
+	if _, err := raw.Exec(`INSERT OR IGNORE INTO collected_messages (channel_id, ts, user_id, text, permalink, received_at)
+VALUES ('C1', '1700000200.000001', 'U2', 'hi', 'https://t.slack.com/p1', '2026-09-21T09:01:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT INTO task_messages (task_id, channel_id, ts) VALUES (?, 'C1', '1700000200.000001')`, id); err != nil {
+		t.Fatal(err)
+	}
+
+	wantDue := stamp(clock.at.Add(60 * time.Second))
+	reply := verbReply(t, s, slack, "1700000000.001001", fmt.Sprintf("!resume t%d", id))
+	wantReply := fmt.Sprintf("t%d resumed · next due %s", id, wantDue)
+	if reply != wantReply {
+		t.Errorf("!resume answered %q, want %q", reply, wantReply)
+	}
+
+	// Task is active, due_at = now + 60s, failures = 0.
+	state, dueAt, _, failures := taskState(t, raw, id)
+	if state != db.TaskActive {
+		t.Errorf("state = %q, want active", state)
+	}
+	if !dueAt.Valid || dueAt.String != wantDue {
+		t.Errorf("due_at = %v, want %q", dueAt, wantDue)
+	}
+	if failures != 0 {
+		t.Errorf("consecutive_failures = %d, want 0", failures)
+	}
+}

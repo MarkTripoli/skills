@@ -114,3 +114,15 @@ func (d *DB) UnbindRunMessages(ctx context.Context, runID string) error {
 	}
 	return nil
 }
+
+// HasUnconsumedMessages reports whether taskID has at least one task_messages
+// row with run_id NULL (collected but not yet bound to a run).
+func (d *DB) HasUnconsumedMessages(ctx context.Context, taskID int64) (bool, error) {
+	var n int
+	err := d.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM task_messages WHERE task_id = ? AND run_id IS NULL`, taskID).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("has unconsumed messages %d: %w", taskID, err)
+	}
+	return n > 0, nil
+}
