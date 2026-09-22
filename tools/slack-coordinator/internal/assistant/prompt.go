@@ -1,7 +1,9 @@
 package assistant
 
 import (
+	"bytes"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -71,6 +73,62 @@ func writeInputs(runDir, prompt string) error {
 		return fmt.Errorf("write %s: %w", promptFile, err)
 	}
 	if err := os.WriteFile(filepath.Join(runDir, messagesFile), nil, 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", messagesFile, err)
+	}
+	return nil
+}
+
+// taskMessageJSON is the JSON shape of one messages.jsonl line.
+type taskMessageJSON struct {
+	Author    string `json:"author"`
+	Channel   string `json:"channel"`
+	TS        string `json:"ts"`
+	Text      string `json:"text"`
+	Permalink string `json:"permalink"`
+}
+
+// renderTaskPrompt writes the prompt for a task run: a header, the skill text,
+// the task's instruction, its last result (or "(none)"), and the message count.
+func renderTaskPrompt(runID, approval string, task db.Task, msgCount int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Assistant run %s\n\nkind: task · approval: %s\n\n", runID, approval)
+	b.WriteString(strings.TrimRight(skillText, "\n"))
+	b.WriteString("\n\n## Instruction\n\n")
+	b.WriteString(task.Instruction)
+	b.WriteString("\n\n## Previous result\n\n")
+	if task.LastResultAt.Valid {
+		b.WriteString("(see previous run)")
+	} else {
+		b.WriteString("(none)")
+	}
+	fmt.Fprintf(&b, "\n\n## Collected messages\n\n%d messages in %s\n", msgCount, messagesFile)
+	return b.String()
+}
+
+// writeTaskInputs creates runDir, writes prompt.md, and writes messages.jsonl
+// with one JSON object per message in the order given, both readable by the
+// owner only.
+func writeTaskInputs(runDir, prompt string, msgs []db.TaskMessage) error {
+	if err := agent.Create(runDir); err != nil {
+		return fmt.Errorf("create run dir: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, promptFile), []byte(prompt), 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", promptFile, err)
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	for _, m := range msgs {
+		if err := enc.Encode(taskMessageJSON{
+			Author:    m.Author,
+			Channel:   m.ChannelID,
+			TS:        m.TS,
+			Text:      m.Text,
+			Permalink: m.Permalink,
+		}); err != nil {
+			return fmt.Errorf("encode message: %w", err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(runDir, messagesFile), buf.Bytes(), 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", messagesFile, err)
 	}
 	return nil

@@ -71,9 +71,6 @@ instead of creating a second app. The configuration token is never written
 to disk.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if flags.Existing {
-				return usageErr("not implemented yet")
-			}
 			p, err := home()
 			if err != nil {
 				return err
