@@ -88,11 +88,11 @@ The four tests, the split table, the acceptance-criteria section, and the depend
 
 #### Automated Verification:
 
-- [ ] `node scripts/validate.mjs`
-- [ ] `grep -q "Size signal (advisory)" shared/SLICING.md`
-- [ ] `grep -q 'create-structure-outline`, `create-plan`, and `create-prd` follow it' shared/SLICING.md`
-- [ ] `grep -q 'start-epic-delivery` re-validates' shared/SLICING.md`
-- [ ] `grep -qv "start-epic-delivery.*create-structure-outline.*create-prd. follow it" shared/SLICING.md` (old sentence gone)
+- [x] `node scripts/validate.mjs`
+- [x] `grep -q "Size signal (advisory)" shared/SLICING.md`
+- [x] `grep -q 'create-structure-outline`, `create-plan`, and `create-prd` follow it' shared/SLICING.md`
+- [x] `grep -q 'start-epic-delivery` re-validates' shared/SLICING.md`
+- [x] `grep -qv "start-epic-delivery.*create-structure-outline.*create-prd. follow it" shared/SLICING.md` (old sentence gone)
 
 human-gated: false
 
@@ -131,10 +131,10 @@ human-gated: false
 
 #### Automated Verification:
 
-- [ ] `node scripts/validate.mjs` (confirms line 6 is still the shared sentence)
-- [ ] `grep -q "shared/SLICING.md" skills/delivery/create-plan/SKILL.md`
-- [ ] `grep -qi "re-size each outline phase" skills/delivery/create-plan/SKILL.md`
-- [ ] `sed -n '6p' skills/delivery/create-plan/SKILL.md | grep -q "writing guide"` (line 6 unchanged)
+- [x] `node scripts/validate.mjs` (confirms line 6 is still the shared sentence)
+- [x] `grep -q "shared/SLICING.md" skills/delivery/create-plan/SKILL.md`
+- [x] `grep -qi "re-size each outline phase" skills/delivery/create-plan/SKILL.md`
+- [x] `sed -n '6p' skills/delivery/create-plan/SKILL.md | grep -q "writing guide"` (line 6 unchanged)
 
 human-gated: false
 
@@ -172,10 +172,10 @@ human-gated: false
 
 #### Automated Verification:
 
-- [ ] `node scripts/validate.mjs`
-- [ ] `grep -qi "size signal" skills/delivery/create-epic-plan/SKILL.md`
-- [ ] `grep -qi "shared shape is not a dependency" skills/delivery/create-epic-plan/SKILL.md`
-- [ ] `sed -n '6p' skills/delivery/create-epic-plan/SKILL.md | grep -q "writing guide"` (line 6 unchanged)
+- [x] `node scripts/validate.mjs`
+- [x] `grep -qi "size signal" skills/delivery/create-epic-plan/SKILL.md`
+- [x] `grep -qi "shared shape is not a dependency" skills/delivery/create-epic-plan/SKILL.md`
+- [x] `sed -n '6p' skills/delivery/create-epic-plan/SKILL.md | grep -q "writing guide"` (line 6 unchanged)
 
 human-gated: false
 
@@ -230,12 +230,12 @@ a materialized slice.
 
 #### Automated Verification:
 
-- [ ] `node scripts/validate.mjs`
-- [ ] `node scripts/sync-plugin.mjs --check`
-- [ ] `grep -qi "size signal" skills/delivery/create-structure-outline/SKILL.md`
-- [ ] `grep -q "shared/SLICING.md" skills/delivery/start-epic-delivery/SKILL.md`
-- [ ] `ls .changeset/*.md | grep -qv -e README -e config` (a new changeset entry exists)
-- [ ] `sed -n '6p' skills/delivery/create-structure-outline/SKILL.md | grep -q "writing guide" && sed -n '6p' skills/delivery/start-epic-delivery/SKILL.md | grep -q "writing guide"` (line 6 unchanged in both)
+- [x] `node scripts/validate.mjs`
+- [x] `node scripts/sync-plugin.mjs --check`
+- [x] `grep -qi "size signal" skills/delivery/create-structure-outline/SKILL.md`
+- [x] `grep -q "shared/SLICING.md" skills/delivery/start-epic-delivery/SKILL.md`
+- [x] `ls .changeset/*.md | grep -qv -e README -e config` (a new changeset entry exists)
+- [x] `sed -n '6p' skills/delivery/create-structure-outline/SKILL.md | grep -q "writing guide" && sed -n '6p' skills/delivery/start-epic-delivery/SKILL.md | grep -q "writing guide"` (line 6 unchanged in both)
 
 human-gated: false
 
