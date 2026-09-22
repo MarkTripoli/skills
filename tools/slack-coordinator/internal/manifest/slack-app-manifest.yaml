@@ -17,12 +17,18 @@ oauth_config:
       - channels:read
       - groups:history
       - groups:read
+      - im:history
+      - im:read
+      - im:write
+      - reactions:write
       - users:read
+      - users:read.email
 settings:
   event_subscriptions:
     bot_events:
       - message.channels
       - message.groups
+      - message.im
   interactivity:
     is_enabled: false
   org_deploy_enabled: false

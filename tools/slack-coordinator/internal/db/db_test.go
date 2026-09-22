@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -308,7 +309,7 @@ func TestOpenAddsAssistantTablesToExistingDatabase(t *testing.T) {
 	}
 	defer d.Close()
 
-	rows, err := d.sql.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
+	rows, err := d.root.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,7 +349,7 @@ func TestAssistantCheckConstraintsRejectUnknownValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer d.Close()
-	if _, err := d.sql.Exec(`INSERT INTO dm_requests (root_ts, channel_id, received_at, last_message_at) VALUES ('1.0','D1','t','t')`); err != nil {
+	if _, err := d.root.Exec(`INSERT INTO dm_requests (root_ts, channel_id, received_at, last_message_at) VALUES ('1.0','D1','t','t')`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -367,7 +368,7 @@ func TestAssistantCheckConstraintsRejectUnknownValues(t *testing.T) {
 	}
 	for _, tc := range cases {
 		for _, value := range []string{tc.valid, "bogus"} {
-			_, err := d.sql.Exec(tc.insert, value)
+			_, err := d.root.Exec(tc.insert, value)
 			switch {
 			case value == tc.valid && err != nil:
 				t.Errorf("%s = %q rejected: %v", tc.column, value, err)
@@ -375,5 +376,46 @@ func TestAssistantCheckConstraintsRejectUnknownValues(t *testing.T) {
 				t.Errorf("%s = %q inserted; want the CHECK constraint to refuse it", tc.column, value)
 			}
 		}
+	}
+}
+
+func TestTransactRollsBackOnErrorAndRefusesNesting(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	ctx := context.Background()
+	req := DMRequest{RootTS: "1.0", ChannelID: "D1", ReceivedAt: "t", LastMessageAt: "t"}
+
+	failed := errors.New("second write failed")
+	err = d.Transact(ctx, func(tx *DB) error {
+		if _, err := tx.InsertDMRequest(ctx, req); err != nil {
+			return err
+		}
+		if err := tx.Transact(ctx, func(*DB) error { return nil }); err == nil {
+			t.Error("a nested Transact ran instead of failing")
+		}
+		return failed
+	})
+	if !errors.Is(err, failed) {
+		t.Fatalf("Transact = %v, want the callback's error", err)
+	}
+	if _, ok, _ := d.GetDMRequest(ctx, "1.0"); ok {
+		t.Fatal("the rolled-back insert is visible")
+	}
+
+	if err := d.Transact(ctx, func(tx *DB) error {
+		inserted, err := tx.InsertDMRequest(ctx, req)
+		if err != nil || !inserted {
+			return fmt.Errorf("insert = %t, %v", inserted, err)
+		}
+		return tx.InsertDMMessage(ctx, DMMessage{RootTS: "1.0", TS: "1.0", Author: AuthorOwner, Text: "hi"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := d.ListDMMessages(ctx, "1.0")
+	if err != nil || len(msgs) != 1 || msgs[0].Text != "hi" {
+		t.Fatalf("committed messages = %+v, %v", msgs, err)
 	}
 }

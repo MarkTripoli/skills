@@ -7,6 +7,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/coordinator"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
 )
@@ -15,6 +16,8 @@ import (
 // satisfies it.
 type SlackSurface interface {
 	PostMessage(ctx context.Context, channelID, threadTS, text string) (string, error)
+	UpdateMessage(ctx context.Context, channelID, ts, text string) (string, error)
+	AddReaction(ctx context.Context, channelID, ts, name string) error
 	Permalink(ctx context.Context, channelID, ts string) (string, error)
 }
 
@@ -25,18 +28,34 @@ type Service struct {
 	Coord *coordinator.Coordinator
 	// Owner is the Slack user id whose instructions the assistant follows.
 	Owner string
+	// Agent is the configured coding agent; nil when config.yaml has no agent,
+	// in which case DM requests are refused with a pointer to the setting.
+	Agent *config.Agent
 	Now   func() time.Time
 	// wake receives one signal when inbound work is queued for the runner.
 	wake chan struct{}
 }
 
 // New returns a Service over database and slack whose run-thread replies go to
-// coord and whose clock is now.
-func New(database *db.DB, slack SlackSurface, coord *coordinator.Coordinator, owner string, now func() time.Time) *Service {
-	return &Service{DB: database, Slack: slack, Coord: coord, Owner: owner, Now: now, wake: make(chan struct{}, 1)}
+// coord, whose DM requests run on agent (nil when none is configured), and
+// whose clock is now.
+func New(database *db.DB, slack SlackSurface, coord *coordinator.Coordinator, owner string, agent *config.Agent, now func() time.Time) *Service {
+	return &Service{DB: database, Slack: slack, Coord: coord, Owner: owner, Agent: agent, Now: now, wake: make(chan struct{}, 1)}
 }
 
 // Wake receives one value each time inbound work is queued. The channel has
 // capacity one, so a signal sent while one is pending is dropped rather than
 // blocking the router.
 func (s *Service) Wake() <-chan struct{} { return s.wake }
+
+// signalWake wakes the runner without blocking; a pending signal already
+// covers this one.
+func (s *Service) signalWake() {
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+}
+
+// stamp formats t as the RFC 3339 UTC string every timestamp column holds.
+func stamp(t time.Time) string { return t.UTC().Format(time.RFC3339) }
