@@ -684,8 +684,8 @@ func (s Service) Installed() bool
 
 #### Automated Verification:
 
-- [ ] `cd tools/slack-coordinator && go test -race ./internal/daemon/... ./internal/cli/...`
-- [ ] `cd tools/slack-coordinator && GOOS=linux go build ./... && GOOS=darwin go build ./...`
+- [x] `cd tools/slack-coordinator && go test -race ./internal/daemon/... ./internal/cli/...`
+- [x] `cd tools/slack-coordinator && GOOS=linux go build ./... && GOOS=darwin go build ./...`
 
 human-gated: false
 
