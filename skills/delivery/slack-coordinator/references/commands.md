@@ -31,10 +31,10 @@ The `slack-coordinator` executable reports one run to one Slack thread and reads
 ## Start
 
 ```sh
-slack-coordinator run start --work <s> --goal <s> --scope <s> [--link <url>]... [--channel <C…|#name>] [--repo <path>] [--owner <U…>] [--run-id <id>] [--jira-issue <KEY>]
+slack-coordinator run start --work <s> --goal <s> --scope <s> [--link <url>]... [--channel <C…|#name>] [--repo <path>] [--run-id <id>] [--jira-issue <KEY>]
 ```
 
-Prints one JSON object: `{"run_id","channel_id","thread_ts","permalink"}`. `--run-id` defaults to a new ULID; `--owner` defaults to the `setup --owner` value. The channel comes from `--channel` or the root `AGENTS.md` directive ([channel-selection.md](channel-selection.md)). `--jira-issue PROJ-123` asks the daemon to write the permalink to the configured Jira field; it exits `2` when Jira is not configured and never blocks the run afterwards.
+Prints one JSON object: `{"run_id","channel_id","thread_ts","permalink"}`. `--run-id` defaults to a new ULID. The channel comes from `--channel` or the root `AGENTS.md` directive ([channel-selection.md](channel-selection.md)). `--jira-issue PROJ-123` asks the daemon to write the permalink to the configured Jira field; it exits `2` when Jira is not configured and never blocks the run afterwards.
 
 ## Check
 

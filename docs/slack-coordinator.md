@@ -6,7 +6,7 @@ Slack coordinator posts one Slack thread per run of agent work and lets the run 
 
 One per-user daemon owns the Slack bot and app tokens, the single Socket Mode connection, and the state database `~/.slack-coordinator/state.sqlite`. Agents never hold a token: the `slack-coordinator` CLI sends JSON-RPC requests over a Unix socket in the same home, and only the daemon writes Slack or SQLite. The daemon, CLI, and coding agents run as the same operating-system user; the socket and home directory are protected by file permissions, not by a security boundary against code already running as that user.
 
-Steering is owner-only. `setup --owner <U…>` (or `run start --owner`) names the Slack user whose thread replies become pending input; replies from anyone else are ignored. A reply is never executed: the agent reads it, decides, and answers through `run resolve`.
+Steering is owner-only. `setup --owner <U…>` names the Slack user whose thread replies become pending input; the daemon stamps that user on every run it opens, and replies from anyone else are ignored. A reply is never executed: the agent reads it, decides, and answers through `run resolve`.
 
 ## Setup
 

@@ -11,7 +11,7 @@ Posted once as the thread's first message.
 | Work | `--work <s>` (required) | not allowed |
 | Goal | `--goal <s>` (required) | not allowed |
 | Scope | `--scope <s>` (required) | not allowed |
-| Owner | `--owner <U…>`, default the `setup --owner` value | `None` when neither is set; owner replies are then never recognized |
+| Owner | the configured owner (`setup --owner`) | never omitted; the daemon stamps it on every run |
 | Links | `--link <url>` (repeatable) | `None` |
 | Started at | filled by the daemon (RFC 3339, UTC) | never omitted |
 
