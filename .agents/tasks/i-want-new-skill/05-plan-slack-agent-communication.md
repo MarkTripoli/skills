@@ -849,10 +849,10 @@ Add the slack-coordinator daemon, CLI, and agent skill for one Slack thread per 
 
 #### Automated Verification:
 
-- [ ] `node scripts/validate.mjs`
-- [ ] `node scripts/sync-plugin.mjs --check`
-- [ ] `HOME=$(mktemp -d) node scripts/install.mjs portable --skill slack-coordinator --yes` exits 0 and installs `SKILL.md` with the three references (flags per `scripts/install.mjs:5-13`)
-- [ ] `npm test`
+- [x] `node scripts/validate.mjs`
+- [x] `node scripts/sync-plugin.mjs --check`
+- [x] `HOME=$(mktemp -d) node scripts/install.mjs portable --skill slack-coordinator --yes` exits 0 and installs `SKILL.md` with the three references (flags per `scripts/install.mjs:5-13`)
+- [x] `npm test`
 
 human-gated: false
 
