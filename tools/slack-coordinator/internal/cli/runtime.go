@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/ipc"
@@ -40,9 +42,17 @@ func dialDaemon() (*ipc.Client, error) {
 	return ipc.Dial(p.Socket())
 }
 
-// callDaemon sends one request to the daemon. A failed dial is exit 11; a
-// JSON-RPC error comes back as *ipc.RPCError.
+// callDaemon sends one request to the daemon with the client's default reply
+// deadline. A failed dial is exit 11; a JSON-RPC error comes back as
+// *ipc.RPCError.
 func callDaemon(method string, params, result interface{}) error {
+	return callDaemonWithin(context.Background(), 0, method, params, result)
+}
+
+// callDaemonWithin is callDaemon with cancellation and a reply deadline for a
+// method that legitimately blocks longer than the default, such as
+// assistant.verify_owner; zero keeps the default.
+func callDaemonWithin(ctx context.Context, timeout time.Duration, method string, params, result interface{}) error {
 	c, err := dialDaemon()
 	if err != nil {
 		var coded *ExitCodeError
@@ -52,7 +62,7 @@ func callDaemon(method string, params, result interface{}) error {
 		return unavailableErr(err)
 	}
 	defer c.Close()
-	return c.Call(method, params, result)
+	return c.CallWithContext(ctx, method, params, result, timeout)
 }
 
 // daemonErr maps a callDaemon failure to the exit code the daemon's answer

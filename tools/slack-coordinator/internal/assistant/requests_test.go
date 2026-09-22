@@ -16,6 +16,7 @@ import (
 	"github.com/slack-go/slack/slackevents"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/slackapi"
 )
 
 // fakeSlack records every call. PostMessage answers with fixedTS when set (so
@@ -23,6 +24,8 @@ import (
 // postErr, when set, is returned after the attempt is recorded. channels maps
 // a channel id to the name conversations.info answers; an id outside it is
 // channel_not_found, and infoCalls counts every lookup.
+// OpenConversation answers "D1" for any user; UserInfo names the owner "ada"
+// and fails for everyone else.
 type fakeSlack struct {
 	mu        sync.Mutex
 	fixedTS   string
@@ -30,6 +33,7 @@ type fakeSlack struct {
 	posts     []slackPost
 	updates   []slackUpdate
 	reactions []slackReaction
+	opened    []string
 	channels  map[string]string
 	infoCalls int
 }
@@ -69,6 +73,18 @@ func (f *fakeSlack) AddReaction(_ context.Context, channelID, ts, name string) e
 
 func (f *fakeSlack) Permalink(_ context.Context, channelID, ts string) (string, error) {
 	return "https://t.slack.com/archives/" + channelID + "/p" + ts, nil
+}
+
+func (f *fakeSlack) OpenConversation(_ context.Context, userID string) (string, error) {
+	f.opened = append(f.opened, userID)
+	return "D1", nil
+}
+
+func (f *fakeSlack) UserInfo(_ context.Context, userID string) (slackapi.User, error) {
+	if userID != "U1" {
+		return slackapi.User{}, errors.New("users.info: user_not_found")
+	}
+	return slackapi.User{ID: "U1", DisplayName: "ada"}, nil
 }
 
 func (f *fakeSlack) ConversationInfo(_ context.Context, id string) (*slack.Channel, error) {

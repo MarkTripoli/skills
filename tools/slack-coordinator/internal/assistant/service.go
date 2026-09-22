@@ -13,6 +13,7 @@ import (
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/coordinator"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/paths"
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/slackapi"
 	"github.com/slack-go/slack"
 )
 
@@ -23,6 +24,8 @@ type SlackSurface interface {
 	UpdateMessage(ctx context.Context, channelID, ts, text string) (string, error)
 	AddReaction(ctx context.Context, channelID, ts, name string) error
 	Permalink(ctx context.Context, channelID, ts string) (string, error)
+	OpenConversation(ctx context.Context, userID string) (string, error)
+	UserInfo(ctx context.Context, userID string) (slackapi.User, error)
 	// ConversationInfo is conversations.info for one channel ID; `!tasks`
 	// names watched channels through it.
 	ConversationInfo(ctx context.Context, id string) (*slack.Channel, error)
@@ -55,6 +58,13 @@ type Service struct {
 	// inflight counts the deliveries waiting on a running agent; RunDispatcher
 	// waits for them before returning.
 	inflight sync.WaitGroup
+	// verifyMu guards verify, the setup verification waiting for the owner's
+	// reply; nil when none is pending. See verify.go.
+	verifyMu sync.Mutex
+	verify   *pendingVerify
+	// verifyTimeout bounds one verification; zero means defaultVerifyTimeout.
+	// Tests shorten it.
+	verifyTimeout time.Duration
 }
 
 // New returns a Service over database and slack whose run-thread replies go to

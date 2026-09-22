@@ -149,16 +149,30 @@ func startTestDaemon(t *testing.T, cfg *config.Config) func() {
 // startTestDaemonWith is startTestDaemon with explicit daemon options. Tests
 // always inject SocketModeHealth; no test opens a WebSocket.
 func startTestDaemonWith(t *testing.T, cfg *config.Config, opts daemon.Options) func() {
+	home := newTestHome(t)
+	if err := config.Save(filepath.Join(home, "config.yaml"), cfg); err != nil {
+		t.Fatal(err)
+	}
+	return startTestDaemonAt(t, home, cfg, opts)
+}
+
+// newTestHome creates a fresh runtime home under /tmp, so the Unix socket
+// path fits, and points the CLI at it.
+func newTestHome(t *testing.T) string {
+	t.Helper()
 	home, err := os.MkdirTemp("/tmp", "sc-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(home) })
 	t.Setenv(paths.EnvHome, home)
-	if err := config.Save(filepath.Join(home, "config.yaml"), cfg); err != nil {
-		t.Fatal(err)
-	}
+	return home
+}
 
+// startTestDaemonAt serves cfg in-process from home, which need not hold a
+// config.yaml, and returns a stop function.
+func startTestDaemonAt(t *testing.T, home string, cfg *config.Config, opts daemon.Options) func() {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- daemon.Serve(ctx, paths.WithRoot(home), cfg, opts) }()

@@ -185,6 +185,7 @@ func Serve(ctx context.Context, p *paths.Paths, cfg *config.Config, opts Options
 	}
 	health := func() ipc.HealthResult { return ipc.HealthResult{SocketMode: socketHealth()} }
 	coordinator.Register(rt.Server, coord, health, cancel)
+	svc.Register(rt.Server)
 
 	var background sync.WaitGroup
 	background.Go(func() { (&coordinator.StatusScheduler{C: coord}).Run(ctx, period) })
