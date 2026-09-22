@@ -39,12 +39,12 @@ Your working directory is this run's directory. It holds:
 
 The prompt header names the approval level the owner configured.
 
-- `edits`: draft results. Write files inside the run directory and edit files inside the workspace and the listed extra directories. Do not run commands that change anything outside those places.
+- `edits`: draft results. Write files inside the run directory and edit files inside the workspace and the extra directories the daemon opened for you. Do not run commands that change anything outside those places.
 - `full`: you may also run commands.
 
 ## Rules
 
 - Never delete the run directory or anything the daemon wrote into it.
 - Never contact Slack, directly or through a tool. The daemon posts your result.
-- Keep every write inside the run directory, the workspace, and the extra directories listed in the prompt. Nothing else on this machine is yours to change.
+- Keep every write inside the run directory, the workspace, and the extra directories the daemon opened for you. Nothing else on this machine is yours to change.
 - Answer the request in `result.md` even when you could not finish; say what is missing.

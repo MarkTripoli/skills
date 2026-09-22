@@ -34,29 +34,35 @@ func (s *Service) deliver(ctx context.Context, run db.AssistantRun, out agent.Ru
 }
 
 func (s *Service) deliverDM(ctx context.Context, run db.AssistantRun, out agent.RunOutcome) error {
+	writeCtx := context.WithoutCancel(ctx)
 	now := stamp(s.Now())
 	if out.ExitCode != 0 || out.TimedOut || out.Result == "" {
-		return s.DB.FinishAssistantRun(ctx, run.RunID, db.RunFailed, out.ExitCode, out.TimedOut, out.ResultSource, s.failureText(out), now)
+		failure := s.failureText(out)
+		if ctx.Err() != nil && out.TimedOut {
+			failure = "daemon shutdown"
+		}
+		return s.DB.FinishAssistantRun(writeCtx, run.RunID, db.RunFailed, out.ExitCode, out.TimedOut, out.ResultSource, failure, now)
 	}
-	req, ok, err := s.DB.GetDMRequest(ctx, run.RootTS.String)
+	req, ok, err := s.DB.GetDMRequest(writeCtx, run.RootTS.String)
 	if err != nil {
-		return err
+		return s.DB.FinishAssistantRun(writeCtx, run.RunID, db.RunFailed, 0, false, out.ResultSource, "deliver: "+err.Error(), now)
 	}
 	if !ok {
-		return fmt.Errorf("dm request %s not found", run.RootTS.String)
+		err := fmt.Errorf("dm request %s not found", run.RootTS.String)
+		return s.DB.FinishAssistantRun(writeCtx, run.RunID, db.RunFailed, 0, false, out.ResultSource, "deliver: "+err.Error(), now)
 	}
 	answerTS, err := s.answer(ctx, req, out.Result)
 	if err != nil {
 		// The answer is on disk in the run directory; free the slot and keep
 		// the reason rather than hold the row running forever.
-		return s.DB.FinishAssistantRun(ctx, run.RunID, db.RunFailed, 0, false, out.ResultSource, "deliver: "+err.Error(), now)
+		return s.DB.FinishAssistantRun(writeCtx, run.RunID, db.RunFailed, 0, false, out.ResultSource, "deliver: "+err.Error(), now)
 	}
-	return s.DB.Transact(ctx, func(tx *db.DB) error {
+	return s.DB.Transact(writeCtx, func(tx *db.DB) error {
 		row := db.DMMessage{RootTS: req.RootTS, TS: answerTS, Author: db.AuthorBot, Text: out.Result, RunID: sql.NullString{String: run.RunID, Valid: true}}
-		if err := tx.UpsertDMMessage(ctx, row); err != nil {
+		if err := tx.UpsertDMMessage(writeCtx, row); err != nil {
 			return err
 		}
-		return tx.FinishAssistantRun(ctx, run.RunID, db.RunDone, 0, false, out.ResultSource, "", now)
+		return tx.FinishAssistantRun(writeCtx, run.RunID, db.RunDone, 0, false, out.ResultSource, "", now)
 	})
 }
 

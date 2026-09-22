@@ -260,3 +260,21 @@ func TestWakeTicksTheDispatcherBeforeItsPeriod(t *testing.T) {
 	cancel()
 	<-stopped
 }
+
+func TestShutdownRecordsCancelledRunAsFailed(t *testing.T) {
+	s, _, clock, runner := newDispatchService(t)
+	queueRequests(t, s, clock, "first")
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := s.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	id := runner.runID(0)
+	cancel()
+	runner.finish(0, agent.RunOutcome{ExitCode: -1, TimedOut: true})
+	s.inflight.Wait()
+
+	run := getRun(t, s, id)
+	if run.State != db.RunFailed || run.Failure.String != "daemon shutdown" || run.FinishedAt.String == "" {
+		t.Fatalf("row = %+v, want failed with daemon shutdown and finished_at", run)
+	}
+}
