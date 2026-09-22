@@ -12,6 +12,8 @@ The local Safety Dance Git gate and durable validation daemon are documented in 
 
 Agents report one run per Slack thread, and the run owner steers it from that thread, through the local `slack-coordinator` daemon documented in [docs/slack-coordinator.md](docs/slack-coordinator.md). The binary is built from `tools/slack-coordinator/`; skill installation never installs it.
 
+The assistant also supports owner DMs and standing tasks.
+
 ## Install
 
 Use Node 22.20 or newer. Run in terminal:
