@@ -57,7 +57,7 @@ func (s *Service) spawnQueued(ctx context.Context) error {
 		if running >= maxRunningRuns {
 			return nil
 		}
-		run, ok, err := s.DB.OldestQueued(ctx)
+		run, ok, err := s.DB.OldestQueuedSpawnable(ctx)
 		if err != nil || !ok {
 			return err
 		}
@@ -81,6 +81,11 @@ func (s *Service) spawn(ctx context.Context, run db.AssistantRun) error {
 	if err := s.DB.MarkRunning(ctx, run.RunID, st.handle.Pid, st.handle.Pgid, os.Getpid(), stamp(s.Now())); err != nil {
 		st.handle.Kill()
 		return err
+	}
+	if run.Kind == db.RunKindDM && run.RootTS.Valid {
+		if err := s.DB.ClaimPendingOwnerMessages(ctx, run.RunID, run.RootTS.String); err != nil {
+			slog.Warn("pending owner messages not claimed", "run", run.RunID, "error", err)
+		}
 	}
 	if ack := st.req.AckTS; ack.Valid && strings.HasPrefix(ackText(st.thread, ack.String), queuedAckPrefix) {
 		if _, err := s.Slack.UpdateMessage(ctx, st.req.ChannelID, ack.String, workingAck); err != nil {

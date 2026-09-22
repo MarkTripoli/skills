@@ -2,6 +2,7 @@ package assistant
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -276,5 +277,157 @@ func TestShutdownRecordsCancelledRunAsFailed(t *testing.T) {
 	run := getRun(t, s, id)
 	if run.State != db.RunFailed || run.Failure.String != "daemon shutdown" || run.FinishedAt.String == "" {
 		t.Fatalf("row = %+v, want failed with daemon shutdown and finished_at", run)
+	}
+}
+
+func TestFollowUpRunPromptContainsAllPriorMessages(t *testing.T) {
+	s, _, clock, runner := newDispatchService(t)
+	ctx := context.Background()
+	const root = "1700000000.001000"
+
+	// Open the request and drain the initial run's wake.
+	routeDMEvent(t, s, dm("U1", root, "", "first question"))
+	<-s.Wake()
+
+	// Mark the initial queued run done.
+	r, ok, err := s.DB.OldestQueuedSpawnable(ctx)
+	if err != nil || !ok {
+		t.Fatalf("OldestQueuedSpawnable: %v %v", ok, err)
+	}
+	if err := s.DB.FinishAssistantRun(ctx, r.RunID, db.RunDone, 0, false, "result.md", "", stamp(clock.at)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Send a follow-up; it queues a new run and wakes the dispatcher.
+	clock.at = clock.at.Add(time.Minute)
+	routeDMEvent(t, s, dm("U1", "1700000001.000000", root, "follow-up question"))
+	<-s.Wake()
+
+	// Spawn the follow-up run.
+	if err := s.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if runner.started() != 1 {
+		t.Fatalf("started = %d, want 1 run spawned for the follow-up", runner.started())
+	}
+
+	// Prompt must list every dm_messages row in order.
+	runID := runner.runID(0)
+	prompt, err := os.ReadFile(filepath.Join(s.Paths.RunDir(runID), promptFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"## Thread so far\n\n",
+		"owner: first question\n",
+		"owner: follow-up question\n",
+	} {
+		if !strings.Contains(string(prompt), want) {
+			t.Errorf("prompt.md lacks %q:\n%s", want, prompt)
+		}
+	}
+	// The thread ordering: owner root, bot ack (from initial), owner follow-up, bot ack (from follow-up).
+	if idx := strings.Index(string(prompt), "owner: first question"); idx == -1 {
+		t.Error("prompt.md missing first question before follow-up")
+	}
+}
+
+func TestTwoRepliesDuringRunningRunAreClaimedWhenNextSpawns(t *testing.T) {
+	s, _, clock, runner := newDispatchService(t)
+	ctx := context.Background()
+	const root = "1700000000.001000"
+
+	// Open the request and spawn the first run.
+	routeDMEvent(t, s, dm("U1", root, "", "initial"))
+	<-s.Wake()
+	if err := s.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if runner.started() != 1 {
+		t.Fatalf("started = %d, want 1 run spawned for initial", runner.started())
+	}
+	firstRunID := runner.runID(0)
+
+	// Send two replies while the run is running; both must be stored with run_id NULL,
+	// and no new assistant_runs row must be inserted.
+	clock.at = clock.at.Add(time.Second)
+	routeDMEvent(t, s, dm("U1", "1700000001.000000", root, "first follow-up"))
+	clock.at = clock.at.Add(time.Second)
+	routeDMEvent(t, s, dm("U1", "1700000002.000000", root, "second follow-up"))
+	if n, _ := s.DB.CountAssistantRuns(ctx); n != 1 {
+		t.Fatalf("total runs = %d, want exactly 1 (no second run while running)", n)
+	}
+
+	// Finish the first run.
+	runner.finish(0, agent.RunOutcome{ExitCode: 0, Result: "done", ResultSource: "result.md"})
+	waitState(t, s, firstRunID, db.RunDone)
+
+	// Owner sends a third reply after the run is done; this queues a new run.
+	clock.at = clock.at.Add(time.Second)
+	routeDMEvent(t, s, dm("U1", "1700000003.000000", root, "third follow-up after done"))
+	<-s.Wake()
+
+	if err := s.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if runner.started() != 2 {
+		t.Fatalf("started = %d, want 2 runs total", runner.started())
+	}
+
+	// All owner follow-up rows must now have run_id set (claimed by the second run).
+	msgs, _ := s.DB.ListDMMessages(ctx, root)
+	for _, m := range msgs {
+		if m.Author == db.AuthorOwner && m.TS != root && !m.RunID.Valid {
+			t.Errorf("owner message ts=%s still has run_id NULL after second run spawned", m.TS)
+		}
+	}
+}
+
+func TestDispatcherSkipsThreadWithRunningRun(t *testing.T) {
+	s, _, clock, runner := newDispatchService(t)
+	ctx := context.Background()
+
+	// Queue two separate requests. queueRequests drains the wake each time.
+	roots := queueRequests(t, s, clock, "alpha", "beta")
+	rootA, rootB := roots[0], roots[1]
+
+	// Mark rootA's queued run as running directly (bypass the fakeRunner so
+	// runner.started() stays 0).
+	rA, ok, err := s.DB.OldestQueuedSpawnable(ctx)
+	if err != nil || !ok {
+		t.Fatalf("OldestQueuedSpawnable: %v %v", ok, err)
+	}
+	if rA.RootTS.String != rootA {
+		t.Fatalf("oldest queued = %s, want rootA %s", rA.RootTS.String, rootA)
+	}
+	if err := s.DB.MarkRunning(ctx, rA.RunID, 9001, 9001, 9001, stamp(clock.at)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Also insert a second queued run for rootA (as if a follow-up was queued
+	// while A1 was running — e.g. injected directly) to give rootA both a
+	// running row and a queued row simultaneously.
+	clock.at = clock.at.Add(time.Second)
+	if err := s.DB.InsertAssistantRun(ctx, db.AssistantRun{
+		RunID:    "FOLLOWUP-A",
+		Kind:     db.RunKindDM,
+		RootTS:   sql.NullString{String: rootA, Valid: true},
+		State:    db.RunQueued,
+		QueuedAt: stamp(clock.at),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// rootA: running(A1) + queued(FOLLOWUP-A); rootB: queued(B1).
+	// A tick must spawn rootB and skip rootA's queued row.
+	if err := s.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if runner.started() != 1 {
+		t.Fatalf("started = %d, want 1 (rootB spawned, rootA's queued skipped)", runner.started())
+	}
+	spawned := getRun(t, s, runner.runID(0))
+	if spawned.RootTS.String != rootB {
+		t.Fatalf("spawned run root = %s, want rootB %s", spawned.RootTS.String, rootB)
 	}
 }
