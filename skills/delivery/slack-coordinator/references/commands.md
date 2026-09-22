@@ -1,6 +1,6 @@
 # Slack coordinator commands
 
-The `slack-coordinator` executable reports one run to one Slack thread and reads the owner's replies. Run it from the repository the run works in, keep the `run_id` it prints, and preserve every exit status; the codes carry the decision.
+The `slack-coordinator` executable reports one run to one Slack thread and reads the owner's replies. Run it from the repository the run works in, keep the `run_id` it prints, and preserve every exit status; the codes carry the decision. The agent never holds a Slack token and never calls the Slack Web API. Each command talks to the per-user daemon over the Unix socket at `$SLACK_COORDINATOR_HOME/socket` (default `~/.slack-coordinator/socket`).
 
 ## Command flow
 
