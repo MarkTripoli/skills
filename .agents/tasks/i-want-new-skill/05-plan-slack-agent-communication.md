@@ -373,8 +373,8 @@ id, err := channel.Resolve(ctx, slackClient, ref)      // exit 2 with the resolv
 
 #### Automated Verification:
 
-- [ ] `cd tools/slack-coordinator && go test -race ./internal/channel/... ./internal/cli/...`
-- [ ] `cd tools/slack-coordinator && go vet ./...`
+- [x] `cd tools/slack-coordinator && go test -race ./internal/channel/... ./internal/cli/...`
+- [x] `cd tools/slack-coordinator && go vet ./...`
 
 human-gated: false
 
