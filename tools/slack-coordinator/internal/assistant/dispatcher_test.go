@@ -713,3 +713,216 @@ func TestZeroMessageTaskSpawns(t *testing.T) {
 		t.Fatalf("posts = %+v, want one post with '0 new items'", slack.posts)
 	}
 }
+
+// --- each_message task tests ---
+
+// insertEachMessageTask inserts an active each_message task with debounce and
+// optional due_at and last_run_started_at (empty string = NULL).
+func insertEachMessageTask(t *testing.T, raw *sql.DB, dueAt, lastStarted string, debounceSeconds int64, channels ...string) int64 {
+	t.Helper()
+	var debounce sql.NullInt64
+	if debounceSeconds > 0 {
+		debounce = sql.NullInt64{Int64: debounceSeconds, Valid: true}
+	}
+	res, err := raw.Exec(`
+INSERT INTO tasks (state, instruction, trigger, debounce_seconds, deliver_to, request_root_ts, created_at, due_at, last_run_started_at)
+VALUES ('active', 'watch', 'each_message', ?, '{"dm":true}', '1700000000.000001', '2026-09-21T09:00:00Z', NULLIF(?, ''), NULLIF(?, ''))`,
+		debounce, dueAt, lastStarted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := res.LastInsertId()
+	for _, ch := range channels {
+		if _, err := raw.Exec(`INSERT INTO task_channels (task_id, channel_id) VALUES (?, ?)`, id, ch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return id
+}
+
+// TestEachMessageBeforeDueAtIsHeld checks that a tick before due_at does
+// nothing, while a tick at due_at (with no prior run) enqueues and clears due_at.
+func TestEachMessageBeforeDueAtIsHeld(t *testing.T) {
+	s, _, clock, _, raw := newTaskDispatchService(t)
+	// T0 = clock.at; due_at = T0+5m
+	T0 := clock.at
+	dueAt := T0.Add(5 * time.Minute).UTC().Format(time.RFC3339)
+	taskID := insertEachMessageTask(t, raw, dueAt, "", 300, "C1")
+	bindMsg(t, raw, taskID, "C1", "1700000001.000001", "U2", "hello")
+
+	// Tick at T0+4m: nothing enqueued (not yet due).
+	clock.at = T0.Add(4 * time.Minute)
+	if err := s.enqueueDueTasks(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	n, _ := s.DB.CountRunsByState(context.Background(), db.RunQueued)
+	if n != 0 {
+		t.Fatalf("queued = %d at T0+4m, want 0 (not yet due)", n)
+	}
+
+	// Tick at T0+5m: enqueued and due_at cleared.
+	clock.at = T0.Add(5 * time.Minute)
+	if err := s.enqueueDueTasks(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	n, _ = s.DB.CountRunsByState(context.Background(), db.RunQueued)
+	if n != 1 {
+		t.Fatalf("queued = %d at T0+5m, want 1", n)
+	}
+	_, dueAtCol, _, _, _ := readTaskCols(t, raw, taskID)
+	if dueAtCol.Valid {
+		t.Fatalf("due_at = %q, want NULL after enqueue", dueAtCol.String)
+	}
+}
+
+// TestEachMessageFloorHoldsAndThenReleases verifies the 10-minute floor:
+// a second message arrives at T0+6m while last_run_started_at=T0+5m, the
+// collector sets due_at=T0+11m (simulated), tick at T0+11m is held by the
+// floor (floor expires at T0+15m), tick at T0+15m enqueues both messages.
+func TestEachMessageFloorHoldsAndThenReleases(t *testing.T) {
+	s, _, clock, _, raw := newTaskDispatchService(t)
+	T0 := clock.at
+
+	// Simulate state after the first run started at T0+5m:
+	// last_run_started_at=T0+5m, due_at=T0+11m (6m arrival + 5m debounce).
+	lastStarted := T0.Add(5 * time.Minute).UTC().Format(time.RFC3339)
+	dueAt := T0.Add(11 * time.Minute).UTC().Format(time.RFC3339)
+	taskID := insertEachMessageTask(t, raw, dueAt, lastStarted, 300, "C1")
+	bindMsg(t, raw, taskID, "C1", "1700000002.000001", "U2", "second")
+
+	// Tick at T0+11m: due_at passed but floor (T0+5m + 10m = T0+15m) not reached.
+	clock.at = T0.Add(11 * time.Minute)
+	if err := s.enqueueDueTasks(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	n, _ := s.DB.CountRunsByState(context.Background(), db.RunQueued)
+	if n != 0 {
+		t.Fatalf("queued = %d at T0+11m, want 0 (inside floor)", n)
+	}
+
+	// Tick at T0+15m: floor crossed, run enqueued.
+	clock.at = T0.Add(15 * time.Minute)
+	if err := s.enqueueDueTasks(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	n, _ = s.DB.CountRunsByState(context.Background(), db.RunQueued)
+	if n != 1 {
+		t.Fatalf("queued = %d at T0+15m, want 1", n)
+	}
+
+	// Message is bound to the run.
+	var bound int
+	if err := raw.QueryRow(`SELECT COUNT(*) FROM task_messages WHERE run_id IS NOT NULL`).Scan(&bound); err != nil {
+		t.Fatal(err)
+	}
+	if bound != 1 {
+		t.Fatalf("bound task_messages = %d, want 1", bound)
+	}
+	_, dueAtCol, _, _, _ := readTaskCols(t, raw, taskID)
+	if dueAtCol.Valid {
+		t.Fatalf("due_at = %q, want NULL after enqueue", dueAtCol.String)
+	}
+}
+
+// TestEachMessageDebounceSecondsHonored verifies that due_at computed from a
+// custom debounce_seconds=60 is respected (enqueue fires exactly when due_at <= now).
+func TestEachMessageDebounceSecondsHonored(t *testing.T) {
+	s, _, clock, _, raw := newTaskDispatchService(t)
+	T0 := clock.at
+	// due_at = T0+60s (debounce=60 applied externally by collector).
+	dueAt := T0.Add(60 * time.Second).UTC().Format(time.RFC3339)
+	taskID := insertEachMessageTask(t, raw, dueAt, "", 60, "C1")
+	bindMsg(t, raw, taskID, "C1", "1700000001.000001", "U2", "ping")
+
+	// Tick at T0+59s: not yet due.
+	clock.at = T0.Add(59 * time.Second)
+	if err := s.enqueueDueTasks(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	n, _ := s.DB.CountRunsByState(context.Background(), db.RunQueued)
+	if n != 0 {
+		t.Fatalf("queued = %d at T0+59s, want 0", n)
+	}
+
+	// Tick at T0+60s: due.
+	clock.at = T0.Add(60 * time.Second)
+	if err := s.enqueueDueTasks(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	n, _ = s.DB.CountRunsByState(context.Background(), db.RunQueued)
+	if n != 1 {
+		t.Fatalf("queued = %d at T0+60s, want 1", n)
+	}
+}
+
+// TestEachMessageSuccessLeavesTaskActive verifies that after a successful run
+// the task stays active with due_at NULL and ended_at NULL.
+func TestEachMessageSuccessLeavesTaskActive(t *testing.T) {
+	s, slack, clock, runner, raw := newTaskDispatchService(t)
+	slack.channels = map[string]string{"C1": "general"}
+	T0 := clock.at
+	dueAt := T0.Add(-time.Minute).UTC().Format(time.RFC3339)
+	taskID := insertEachMessageTask(t, raw, dueAt, "", 300, "C1")
+	bindMsg(t, raw, taskID, "C1", "1700000001.000001", "U2", "hello")
+
+	runner.scripted = []agent.RunOutcome{{ExitCode: 0, Result: "done", ResultSource: "result.md"}}
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s.inflight.Wait()
+
+	state, dueAtCol, endedAt, _, failures := readTaskCols(t, raw, taskID)
+	if state != "active" {
+		t.Fatalf("task state = %q, want active", state)
+	}
+	if dueAtCol.Valid {
+		t.Fatalf("due_at = %q, want NULL after each_message success", dueAtCol.String)
+	}
+	if endedAt.Valid {
+		t.Fatalf("ended_at = %q, want NULL (task not completed)", endedAt.String)
+	}
+	if failures != 0 {
+		t.Fatalf("consecutive_failures = %d, want 0", failures)
+	}
+}
+
+// TestEachMessageFailureUnbindsMessagesAndLeavesTaskActive verifies that after
+// a failed run the messages are unbound, due_at remains NULL, and the task
+// stays active with incremented consecutive_failures.
+func TestEachMessageFailureUnbindsMessagesAndLeavesTaskActive(t *testing.T) {
+	s, _, clock, runner, raw := newTaskDispatchService(t)
+	T0 := clock.at
+	dueAt := T0.Add(-time.Minute).UTC().Format(time.RFC3339)
+	taskID := insertEachMessageTask(t, raw, dueAt, "", 300, "C1")
+	bindMsg(t, raw, taskID, "C1", "1700000001.000001", "U2", "hello")
+	bindMsg(t, raw, taskID, "C1", "1700000001.000002", "U2", "world")
+
+	runner.scripted = []agent.RunOutcome{{ExitCode: 1, ResultSource: "result.md"}}
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s.inflight.Wait()
+
+	// Messages unbound.
+	var bound int
+	if err := raw.QueryRow(`SELECT COUNT(*) FROM task_messages WHERE run_id IS NOT NULL`).Scan(&bound); err != nil {
+		t.Fatal(err)
+	}
+	if bound != 0 {
+		t.Fatalf("bound task_messages = %d, want 0 after failure", bound)
+	}
+
+	state, dueAtCol, endedAt, _, failures := readTaskCols(t, raw, taskID)
+	if state != "active" {
+		t.Fatalf("task state = %q, want active", state)
+	}
+	if dueAtCol.Valid {
+		t.Fatalf("due_at = %q, want NULL (unchanged after failure)", dueAtCol.String)
+	}
+	if endedAt.Valid {
+		t.Fatalf("ended_at = %q, want NULL", endedAt.String)
+	}
+	if failures != 1 {
+		t.Fatalf("consecutive_failures = %d, want 1", failures)
+	}
+}

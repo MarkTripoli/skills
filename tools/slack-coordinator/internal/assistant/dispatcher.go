@@ -20,6 +20,10 @@ import (
 const (
 	queuedAckPrefix = "Queued behind"
 	workingAck      = "Working on it"
+
+	// eachMessageFloor is the minimum gap the dispatcher enforces between
+	// successive runs of an each_message task, measured from last_run_started_at.
+	eachMessageFloor = 10 * time.Minute
 )
 
 // RunDispatcher calls Tick every period and whenever Wake signals, until ctx
@@ -53,13 +57,17 @@ func (s *Service) Tick(ctx context.Context) error {
 // enqueueDueTasks queries for active schedule/window_end tasks whose due_at
 // has passed and which have no queued or running run, then inserts one queued
 // assistant_runs row per task and binds that task's unconsumed messages to it.
+// It also handles each_message tasks that have crossed their debounce window
+// and are outside the 10-minute floor since last_run_started_at.
 func (s *Service) enqueueDueTasks(ctx context.Context) error {
-	tasks, err := s.DB.DueTasks(ctx, stamp(s.Now()))
+	now := s.Now()
+	nowStr := stamp(now)
+
+	tasks, err := s.DB.DueTasks(ctx, nowStr)
 	if err != nil {
 		return err
 	}
 	for _, task := range tasks {
-		now := stamp(s.Now())
 		runID := ulid.Make().String()
 		if err := s.DB.Transact(ctx, func(tx *db.DB) error {
 			if err := tx.InsertAssistantRun(ctx, db.AssistantRun{
@@ -67,12 +75,38 @@ func (s *Service) enqueueDueTasks(ctx context.Context) error {
 				Kind:     db.RunKindTask,
 				TaskID:   sql.NullInt64{Int64: task.TaskID, Valid: true},
 				State:    db.RunQueued,
-				QueuedAt: now,
+				QueuedAt: nowStr,
 			}); err != nil {
 				return err
 			}
 			_, err := tx.BindUnconsumedToRun(ctx, task.TaskID, runID)
 			return err
+		}); err != nil {
+			return err
+		}
+	}
+
+	floorStr := stamp(now.Add(-eachMessageFloor))
+	emTasks, err := s.DB.DueEachMessageTasks(ctx, nowStr, floorStr)
+	if err != nil {
+		return err
+	}
+	for _, task := range emTasks {
+		runID := ulid.Make().String()
+		if err := s.DB.Transact(ctx, func(tx *db.DB) error {
+			if err := tx.InsertAssistantRun(ctx, db.AssistantRun{
+				RunID:    runID,
+				Kind:     db.RunKindTask,
+				TaskID:   sql.NullInt64{Int64: task.TaskID, Valid: true},
+				State:    db.RunQueued,
+				QueuedAt: nowStr,
+			}); err != nil {
+				return err
+			}
+			if _, err := tx.BindUnconsumedToRun(ctx, task.TaskID, runID); err != nil {
+				return err
+			}
+			return tx.ClearTaskDue(ctx, task.TaskID)
 		}); err != nil {
 			return err
 		}
