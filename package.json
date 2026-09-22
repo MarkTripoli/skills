@@ -17,8 +17,9 @@
   },
   "scripts": {
     "postinstall": "node scripts/prepare.mjs",
-    "test": "node scripts/validate.mjs && node scripts/sync-plugin.mjs --check && node --test tests/*.test.mjs skills/delivery/jev-ui/scripts/test-acceptance.mjs && npm run test:safety-dance",
+    "test": "node scripts/validate.mjs && node scripts/sync-plugin.mjs --check && node --test tests/*.test.mjs skills/delivery/jev-ui/scripts/test-acceptance.mjs && npm run test:safety-dance && npm run test:slack-coordinator",
     "test:safety-dance": "node scripts/check-safety-dance-identity.mjs && (cd tools/safety-dance && go test -race ./... && go vet ./... && tmp=$(mktemp -d) && trap \"rm -rf \\\"$tmp\\\"\" EXIT && go build -o \"$tmp/safety-dance\" ./cmd/safety-dance && make e2e) && node --test tests/safety-dance-release.test.mjs",
+    "test:slack-coordinator": "cd tools/slack-coordinator && go test -race ./... && go vet ./... && tmp=$(mktemp -d) && trap \"rm -rf \\\"$tmp\\\"\" EXIT && go build -o \"$tmp/slack-coordinator\" ./cmd/slack-coordinator",
     "validate": "node scripts/validate.mjs",
     "evals": "node evals/run.mjs",
     "check-commits": "node scripts/check-commits.mjs",
