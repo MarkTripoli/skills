@@ -36,6 +36,6 @@ func NewRoot() *cobra.Command {
 		SilenceErrors: true,
 	}
 	root.SetOut(output)
-	root.AddCommand(newSetup(), newDaemon(), newService(), newRun())
+	root.AddCommand(newSetup(), newOnboard(), newDaemon(), newService(), newRun())
 	return root
 }
