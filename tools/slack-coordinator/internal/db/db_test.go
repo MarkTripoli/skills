@@ -249,3 +249,131 @@ func TestOwnerInputsPendingUntilResolved(t *testing.T) {
 		t.Fatal("input still pending after both were resolved")
 	}
 }
+
+// mainSchemaSQL is the three-table schema a state.sqlite created before the
+// assistant tables existed carries; Open must upgrade such a file in place.
+const mainSchemaSQL = `
+CREATE TABLE runs (
+  run_id        TEXT PRIMARY KEY,
+  owner_user_id TEXT NOT NULL,
+  channel_id    TEXT NOT NULL,
+  thread_ts     TEXT NOT NULL,
+  permalink     TEXT NOT NULL,
+  lifecycle     TEXT NOT NULL CHECK (lifecycle IN ('active','completed','failed','cancelled')),
+  slack_mode    TEXT NOT NULL CHECK (slack_mode IN ('enabled','slack_disabled')) DEFAULT 'enabled',
+  started_at    TEXT NOT NULL,
+  finished_at   TEXT,
+  next_status_due TEXT,
+  last_status TEXT,
+  last_delivery_error TEXT
+);
+CREATE TABLE owner_inputs (
+  run_id      TEXT NOT NULL REFERENCES runs(run_id),
+  message_ts  TEXT NOT NULL,
+  text        TEXT NOT NULL,
+  received_at TEXT NOT NULL,
+  handled_at  TEXT,
+  outcome     TEXT CHECK (outcome IN ('applied','rejected','answered')),
+  PRIMARY KEY (run_id, message_ts)
+);
+CREATE TABLE jira_backlinks (
+  run_id     TEXT PRIMARY KEY REFERENCES runs(run_id),
+  issue_key  TEXT NOT NULL,
+  thread_url TEXT NOT NULL,
+  state      TEXT NOT NULL CHECK (state IN ('pending','delivered')) DEFAULT 'pending',
+  attempts   INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  next_attempt_at TEXT NOT NULL
+);`
+
+func TestOpenAddsAssistantTablesToExistingDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.sqlite")
+	old, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.Exec(mainSchemaSQL); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.Exec(`INSERT INTO runs (run_id, owner_user_id, channel_id, thread_ts, permalink, lifecycle, started_at) VALUES ('r1','U1','C1','1.0','p','active','t')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := old.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on a pre-assistant database: %v", err)
+	}
+	defer d.Close()
+
+	rows, err := d.sql.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	got := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		got[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"runs", "owner_inputs", "jira_backlinks",
+		"tasks", "task_channels", "collected_messages", "task_messages",
+		"dm_requests", "dm_messages", "assistant_runs", "refused_users",
+	}
+	for _, name := range want {
+		if !got[name] {
+			t.Errorf("table %s missing after Open", name)
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("sqlite_master lists %d tables %v, want %d", len(got), got, len(want))
+	}
+	if _, err := d.GetRun(context.Background(), "r1"); err != nil {
+		t.Fatalf("row written before the upgrade is unreadable: %v", err)
+	}
+}
+
+func TestAssistantCheckConstraintsRejectUnknownValues(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if _, err := d.sql.Exec(`INSERT INTO dm_requests (root_ts, channel_id, received_at, last_message_at) VALUES ('1.0','D1','t','t')`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Each insert binds the constrained column to ?1; a second ?1 in a primary
+	// key column keeps the valid and invalid rows from colliding on the key.
+	cases := []struct {
+		column string
+		insert string
+		valid  string
+	}{
+		{"tasks.state", `INSERT INTO tasks (state, instruction, trigger, deliver_to, request_root_ts, created_at) VALUES (?1,'i','schedule','{"dm":true}','1.0','t')`, "paused"},
+		{"tasks.trigger", `INSERT INTO tasks (state, instruction, trigger, deliver_to, request_root_ts, created_at) VALUES ('active','i',?1,'{"dm":true}','1.0','t')`, "window_end"},
+		{"dm_messages.author", `INSERT INTO dm_messages (root_ts, ts, author, text) VALUES ('1.0',?1,?1,'hi')`, "owner"},
+		{"assistant_runs.kind", `INSERT INTO assistant_runs (run_id, kind, state, queued_at) VALUES (?1,?1,'queued','t')`, "dm"},
+		{"assistant_runs.state", `INSERT INTO assistant_runs (run_id, kind, state, queued_at) VALUES (?1,'task',?1,'t')`, "running"},
+	}
+	for _, tc := range cases {
+		for _, value := range []string{tc.valid, "bogus"} {
+			_, err := d.sql.Exec(tc.insert, value)
+			switch {
+			case value == tc.valid && err != nil:
+				t.Errorf("%s = %q rejected: %v", tc.column, value, err)
+			case value != tc.valid && err == nil:
+				t.Errorf("%s = %q inserted; want the CHECK constraint to refuse it", tc.column, value)
+			}
+		}
+	}
+}
