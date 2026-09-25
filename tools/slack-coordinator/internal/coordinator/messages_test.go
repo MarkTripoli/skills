@@ -8,7 +8,6 @@ const rootGolden = `*Work:* Add --verbose flag
 *Owner:* <@U123>
 *Links:*
 • https://github.com/o/r/pull/1
-• https://jira.example/browse/K-1
 *Started at:* 2026-09-21T10:00:00Z`
 
 const rootEmptyGolden = `*Work:* None
@@ -24,7 +23,7 @@ func TestRenderRoot(t *testing.T) {
 		Goal:        "Print each command before running it",
 		Scope:       "internal/cli only",
 		OwnerUserID: "U123",
-		Links:       []string{"https://github.com/o/r/pull/1", "https://jira.example/browse/K-1"},
+		Links:       []string{"https://github.com/o/r/pull/1"},
 		StartedAt:   "2026-09-21T10:00:00Z",
 	})
 	if got != rootGolden {

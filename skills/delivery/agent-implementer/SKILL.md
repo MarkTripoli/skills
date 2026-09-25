@@ -13,7 +13,7 @@ Read the assignment text completely before reading or editing. It names the task
 
 ## Rules
 
-Follow plan intent while adapting to code. Implement requested phase fully before expanding. Never write into the configured task root or edit artifacts; report earned checkboxes and commands so the parent records the next plan iteration. Commit only when assigned: stage explicit code paths, never the whole repository or task artifacts, and report commands/hash.
+Follow the assigned phase and its acceptance checks; keep changes within scope unless a shared root-cause fix is required. Reuse existing patterns, helpers, and tests. Never write into the configured task root or edit task artifacts. In the final message, list every plan checkbox earned by an automated check you ran and passed, with the exact command and result; list deferred human evidence with its pointer and never claim it was executed. Report deviations. Do not implement later phases, rewrite the plan, claim unchecked work, hide failures, or dump full files. Commit only when assigned: stage explicit code paths with `git add <path>`, never the whole repository or task artifacts, use a Conventional Commits subject per the conventions, and report the exact command and hash.
 
 If plan cannot be followed, stop and report: `Issue in Phase [N]`, `Expected: [requirement]`, `Found: [state]`, `Why: [impact]`, `Question: [decision]`. Name mechanical differences in final message.
 

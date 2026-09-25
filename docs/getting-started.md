@@ -2,17 +2,35 @@
 
 Start with one skill: instruction coding agent follow for one job. Add Atomic later if want many step.
 
-## Install only what you need
+## Install and discover skills
 
-Need Node 20.12 or newer. In terminal:
+Use the repository installer (Node 20.12 or newer) to list available skills or install a selection:
 
 ```sh
-npx github:MarkTripoli/skills
-# Or choose one agent and skill without menus:
+npx github:MarkTripoli/skills --list
+npx github:MarkTripoli/skills --skill video-iterative-development --yes
+# Choose an agent and skill without menus:
 npx github:MarkTripoli/skills oh-my-pi --skill create-research-questions --yes
 ```
 
-Say `--skill` again for more skill. Add `--project` for install only in this repo. See [all install options](cheatsheet.md#install).
+The installer supports Claude Code, Codex, Oh My Pi, Pi, and portable skill files. Add `--project` for project-local installation; home installation is the default. Repeat `--skill` to install more than one skill. See [all install options](cheatsheet.md#install).
+
+For skill files only, skills.sh also supports this collection (Node 22.20 or newer):
+
+```sh
+npx skills@latest add MarkTripoli/skills --agent claude-code codex --skill create-research-questions --yes
+```
+
+This does not install worker setup or Atomic workflow resources. Use the repository installer for those.
+
+## Video-iterative delivery
+
+- [`video-iterative-development`](../skills/delivery/video-iterative-development/SKILL.md) scopes authenticated backend/API and frontend work to the smallest required layers, then proves changed contracts and real user flows with appropriate evidence.
+- [`video-iterative-orchestration`](../skills/delivery/video-iterative-orchestration/SKILL.md) coordinates prioritized, dependency-aware requirements through isolated worktrees, durable run state, recovery, and delivery gates. It uses the development skill for each implementation.
+
+## Slack visibility
+
+[`agent-slack-control-plane`](../skills/delivery/agent-slack-control-plane/SKILL.md) describes sparse feature updates and opt-in work-item run visibility and steering. It does not implement product work. Installing the skill does not by itself enable automatic task threading or provide a Slack daemon; follow the skill's operating contract and use [Slack coordinator](slack-coordinator.md) for the separately installed daemon.
 
 ## Run a phase by hand
 

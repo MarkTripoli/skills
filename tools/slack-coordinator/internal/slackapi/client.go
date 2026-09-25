@@ -18,7 +18,8 @@ import (
 
 // Client is one authenticated Slack Web API client.
 type Client struct {
-	api *slack.Client
+	api      *slack.Client
+	botToken string
 	// httpClient and apiURL back the manifest calls, which bypass the SDK
 	// because its apps.manifest.* helpers take a typed Manifest struct and
 	// drop app_id and oauth_authorize_url from the response.
@@ -39,7 +40,7 @@ func New(cfg config.Slack) *Client {
 		}
 		opts = append(opts, slack.OptionAPIURL(apiURL))
 	}
-	return &Client{api: slack.New(cfg.BotToken, opts...), httpClient: httpClient, apiURL: apiURL}
+	return &Client{api: slack.New(cfg.BotToken, opts...), botToken: cfg.BotToken, httpClient: httpClient, apiURL: apiURL}
 }
 
 // API exposes the SDK client for the Socket Mode connection, which the SDK
@@ -69,6 +70,30 @@ func (c *Client) PostMessage(ctx context.Context, channelID, threadTS, mrkdwn st
 	return ts, err
 }
 
+// PostBlocksMessage posts Block Kit blocks with a complete accessible text
+// fallback. Empty blocks send only the fallback for messages too large for a
+// Slack section block.
+func (c *Client) PostBlocksMessage(ctx context.Context, channelID, threadTS, fallback string, blocks []slack.Block) (string, error) {
+	opts := []slack.MsgOption{slack.MsgOptionText(fallback, false), slack.MsgOptionDisableLinkUnfurl()}
+	if len(blocks) > 0 {
+		opts = append(opts, slack.MsgOptionBlocks(blocks...))
+	}
+	if threadTS != "" {
+		opts = append(opts, slack.MsgOptionTS(threadTS))
+	}
+	_, ts, err := c.api.PostMessageContext(ctx, channelID, opts...)
+	return ts, err
+}
+
+// UpdateBlocksMessage edits the root with the same accessible fallback and
+// structured blocks as a posted message. An empty block list replaces older
+// blocks as well, so oversized updates never leave stale content visible.
+func (c *Client) UpdateBlocksMessage(ctx context.Context, channelID, ts, fallback string, blocks []slack.Block) error {
+	opts := []slack.MsgOption{slack.MsgOptionText(fallback, false), slack.MsgOptionDisableLinkUnfurl(), slack.MsgOptionBlocks(blocks...)}
+	_, _, _, err := c.api.UpdateMessageContext(ctx, channelID, ts, opts...)
+	return err
+}
+
 // Permalink returns the canonical URL of one message.
 func (c *Client) Permalink(ctx context.Context, channelID, ts string) (string, error) {
 	return c.api.GetPermalinkContext(ctx, &slack.PermalinkParameters{Channel: channelID, Ts: ts})
@@ -85,7 +110,7 @@ func (c *Client) AddReaction(ctx context.Context, channelID, ts, name string) er
 	return c.api.AddReactionContext(ctx, name, slack.NewRefToMessage(channelID, ts))
 }
 
-// OpenConversation opens or resumes the DM with userID and returns its D… channel ID.
+// OpenConversation opens or resumes the DM with userID and returns its channel ID.
 func (c *Client) OpenConversation(ctx context.Context, userID string) (string, error) {
 	channel, _, _, err := c.api.OpenConversationContext(ctx, &slack.OpenConversationParameters{Users: []string{userID}})
 	if err != nil {

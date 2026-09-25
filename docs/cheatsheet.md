@@ -4,13 +4,16 @@ First time? Use [getting started](getting-started.md). Full workflow: [delivery 
 
 ## Install
 
-Need Node 20.12+. Type in terminal:
+Use the repository installer (Node 20.12 or newer):
 
 ```sh
-npx github:MarkTripoli/skills
+npx github:MarkTripoli/skills --list
+npx github:MarkTripoli/skills --skill create-plan --yes
 npx github:MarkTripoli/skills codex --skill create-plan --yes
 npx github:MarkTripoli/skills portable --atomic --project --yes
 ```
+
+`--list` prints available skills and exits. Omit `--yes` in a terminal to choose interactively.
 
 | Option | Effect |
 |---|---|
@@ -22,7 +25,7 @@ npx github:MarkTripoli/skills portable --atomic --project --yes
 | `--dry-run` | Show change, no write |
 | `--yes`, `-y` | Skip menu + confirm. Default to found agent + all skill |
 | `--uninstall` | Remove picked managed file. Add `--atomic` for workflow too |
-| `--list`, `--help` | List skill or show usage, then stop |
+| `--list`, `--help` | List available skills or show usage, then stop |
 
 Uninstall no kill task doc or worktree.
 
@@ -42,6 +45,7 @@ npx github:MarkTripoli/skills oh-my-pi --skill iterate-evidence --project --yes
 ```
 
 Then run `/iterate-evidence @<task-directory-or-iteration-receipt>` with wanted behavior + fix power. Default: three fix round. `0`: look only. Picked uninstall take companion, leave recorder. Use this repo installer for dependency closure. Plain skill copy no guarantee it. See [the independent loop](getting-started.md#inspect-and-repair-recorded-behavior).
+
 ### File locations
 
 | Agent | User skills | User workers |
@@ -62,6 +66,12 @@ Atomic install `workflows/skills-delivery/` and brother `skills-delivery.mjs` un
 - [skills.sh](https://skills.sh/MarkTripoli/skills): `npx skills@latest add MarkTripoli/skills` install skill only.
 - Pinned release: `npx github:MarkTripoli/skills#v<version>`.
 - Checkout: `node scripts/install.mjs`. Build runtime file under `dist/` with `npm run build -- --runtime <claude-code|codex|oh-my-pi|pi>`; installer own portable output.
+
+## New delivery skills
+
+- [`video-iterative-development`](../skills/delivery/video-iterative-development/SKILL.md): scope authenticated backend/API and frontend changes to the required layers; verify changed contracts and real user-visible flows with reviewable evidence.
+- [`video-iterative-orchestration`](../skills/delivery/video-iterative-orchestration/SKILL.md): coordinate ordered, dependency-aware requirements through isolated worktrees, durable state, recovery, and delivery gates.
+- [`agent-slack-control-plane`](../skills/delivery/agent-slack-control-plane/SKILL.md): describes sparse feature updates and explicitly enabled work-item-run visibility and steering. Skill installation alone does not enable automatic task threading or install the separate Slack daemon.
 
 ## Manual phases
 

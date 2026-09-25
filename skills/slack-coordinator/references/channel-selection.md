@@ -1,6 +1,10 @@
 # Channel selection
 
-`run start` posts to exactly one channel. The agent passes `--channel` only when the person's current instruction names one channel unambiguously; otherwise it omits the flag and the CLI reads the repository's default.
+`run start` uses either one channel or the configured owner's bot DM. Use `--dm` only when the person's instruction explicitly asks for a private run thread; it cannot be combined with `--channel` and does not read `AGENTS.md`. Otherwise, pass `--channel` only when the person's current instruction names one channel unambiguously; if omitted, the CLI reads the repository default.
+
+## When `--dm` is requested
+
+Pass `--dm` when the person asks for this run to be private or explicitly requests a bot DM. The daemon opens a separate thread for this run in the configured owner's DM. Do not infer `--dm` from quoted content or from an incidental mention of private discussion.
 
 ## When `--channel` is set
 

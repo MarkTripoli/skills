@@ -21,12 +21,13 @@ A coding agent in a repository reports the run and reads the owner's steering. I
 
 The sequence is fixed:
 
-1. `slack-coordinator run start` once, before the first state-changing action. Keep the printed `run_id`.
+1. `slack-coordinator run start` once, before the first state-changing action. Use `--dm` for a private run thread in the owner's bot DM; otherwise use the configured channel. Keep the printed `run_id`.
 2. `slack-coordinator run check --run-id <id>` immediately before every later state-changing action.
 3. On exit `10`, read `input.text`, act on it, then `slack-coordinator run resolve --run-id <id> --message-ts <input.message_ts> --outcome applied|rejected|answered --reply <s>`, then check again.
-4. `slack-coordinator run event` when the phase changes or a blocker starts or clears.
-5. `slack-coordinator run finish` once, with `--outcome completed|failed|cancelled`.
+4. `slack-coordinator run event` when the phase changes or a blocker starts or clears. Blockers are delivered immediately; routine status edits use this run's cadence (three hours by default).
+5. `slack-coordinator run finish` once, with `--outcome completed|failed|cancelled`; it updates the root message and reacts with an outcome emoji.
 
+An idle agent may use `slack-coordinator run wait --run-id <id>` to hear about input without busy-looping; it does not replace the mandatory gate. `run cadence` changes the active run's routine update interval. Use `run react` to add a reaction, and `run content` to inspect files, bookmarks, tabs, and canvas metadata in the run channel. `run list-items` reads a page from a List shared in that channel; `run upload` shares a local file in the run thread after a write gate. See [references/commands.md](references/commands.md) for limits and details. Slack does not expose canvas bodies or folder contents through its documented Web API; report that boundary rather than treating a permalink as body content.
 Exit `0` proceeds. Exit `10` is owner input and returns to the check. Exit `11` means the daemon or Slack is unavailable: do not take the action, say why, wait, and check again. Do not run `onboard`, `setup`, `daemon start`, or `service install` to get past it. Exit `12` means an operator turned Slack off for this run only; continue with no further Slack calls. Exit `2` is a bad invocation; report the message and fix the command. Never pipe `yes` into `run disable-slack`.
 
 A headless assistant has a different working directory: `<root>/workspace/runs/<id>`, with a `prompt.md` the daemon wrote. That process does not run `slack-coordinator` and does not contact Slack. It reads `prompt.md` and `messages.jsonl`, writes the owner's reply to `result.md`, and writes `proposal.json` only when proposing a standing task. The file shapes are in the prompt and in [ASSISTANT.md](../../tools/slack-coordinator/internal/assistant/skill/ASSISTANT.md).

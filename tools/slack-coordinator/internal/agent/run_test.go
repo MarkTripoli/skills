@@ -14,7 +14,7 @@ import (
 )
 
 // fakeAdapter runs testdata/fake-agent.sh and reads stdout.log as the final
-// text, like the omp and claude rows.
+// text, like the pi and claude rows.
 type fakeAdapter struct{ command string }
 
 func (a fakeAdapter) Command() string                  { return a.command }
@@ -140,7 +140,7 @@ func TestContextEndKillsProcessGroup(t *testing.T) {
 }
 
 func TestEnvironmentDropsSecretsAndHome(t *testing.T) {
-	names := []string{"SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "JIRA_API_TOKEN", "SLACK_COORDINATOR_HOME"}
+	names := []string{"SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_COORDINATOR_HOME"}
 	for _, name := range names {
 		t.Setenv(name, "secret-"+name)
 	}
@@ -258,7 +258,7 @@ func TestStartReportsMissingBinaryBeforeCreatingAnything(t *testing.T) {
 	if !errors.As(err, &missing) || missing.Name != "no-such-agent-binary" {
 		t.Fatalf("err = %v, want ErrBinaryMissing naming the command", err)
 	}
-	if want := `agent binary "no-such-agent-binary" not found on PATH`; err.Error() != want {
+	if want := (ErrBinaryMissing{Name: "no-such-agent-binary"}).Error(); err.Error() != want {
 		t.Errorf("error = %q, want %q", err.Error(), want)
 	}
 	if _, statErr := os.Stat(spec.RunDir); !errors.Is(statErr, os.ErrNotExist) {

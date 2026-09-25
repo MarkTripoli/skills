@@ -278,12 +278,13 @@ func (s *Service) startDM(ctx context.Context, run db.AssistantRun) (startedRun,
 		return startedRun{}, fmt.Errorf("ensure workspace: %w", err)
 	}
 	runDir := s.Paths.RunDir(run.RunID)
+	request := newestOwnerMessage(thread)
 	prompt := renderPrompt(promptInput{
-		RunID:    run.RunID,
-		Kind:     "dm request",
-		Approval: s.Agent.Approval,
-		Request:  newestOwnerMessage(thread),
-		Thread:   thread,
+		RunID:           run.RunID,
+		Kind:            "dm request",
+		Approval:        s.Agent.Approval,
+		Request:         request,
+		Thread:          thread,
 		PendingProposal: req.PendingProposal.String,
 	})
 	if err := writeInputs(runDir, prompt); err != nil {
@@ -294,6 +295,7 @@ func (s *Service) startDM(ctx context.Context, run db.AssistantRun) (startedRun,
 		Approval:  s.Agent.Approval,
 		ExtraDirs: s.Agent.ExtraDirs,
 		Timeout:   s.Agent.Timeout,
+		Model:     agent.SelectModel(s.Agent.Command, request),
 	})
 	if err != nil {
 		return startedRun{}, err
@@ -331,6 +333,7 @@ func (s *Service) startTask(ctx context.Context, run db.AssistantRun) (startedRu
 		Approval:  s.Agent.Approval,
 		ExtraDirs: s.Agent.ExtraDirs,
 		Timeout:   s.Agent.Timeout,
+		Model:     agent.SelectModel(s.Agent.Command, task.Instruction),
 	})
 	if err != nil {
 		return startedRun{}, err

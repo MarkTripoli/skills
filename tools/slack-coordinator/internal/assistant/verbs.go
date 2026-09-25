@@ -28,6 +28,7 @@ const helpText = "```\n" +
 	"!pause <id>    pause a task\n" +
 	"!resume <id>   resume a paused task\n" +
 	"!cancel <id>   cancel a task\n" +
+	"!to <run-id> <message> send input to an active run\n" +
 	"```\n" +
 	"Anything else sent here goes to the assistant."
 

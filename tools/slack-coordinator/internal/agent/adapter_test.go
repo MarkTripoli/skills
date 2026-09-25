@@ -16,26 +16,28 @@ const (
 func TestArgsMatchTablePerApprovalAndExtraDirs(t *testing.T) {
 	two := []string{"/home/u/proj", "/home/u/notes"}
 	addDirs := []string{"--add-dir", two[0], "--add-dir", two[1]}
+	piArgs := []string{"-p", "--model", modelPiSonnet, "--no-session", instruction}
 	cases := []struct {
 		name      string
 		approval  string
 		extraDirs []string
 		want      []string
 	}{
-		{"omp", "edits", nil, []string{"-p", "--cwd", runDir, "--approval-mode", "write", "--no-session", "--max-time", "10m0s", instruction}},
-		{"omp", "full", nil, []string{"-p", "--cwd", runDir, "--auto-approve", "--no-session", "--max-time", "10m0s", instruction}},
-		{"omp", "edits", two, join([]string{"-p", "--cwd", runDir, "--approval-mode", "write", "--no-session", "--max-time", "10m0s"}, addDirs, instruction)},
-		{"omp", "full", two, join([]string{"-p", "--cwd", runDir, "--auto-approve", "--no-session", "--max-time", "10m0s"}, addDirs, instruction)},
+		// pi 0.87.0 has no --cwd, --add-dir, or approval flag. ExtraDirs are ignored.
+		{"pi", "edits", nil, piArgs},
+		{"pi", "full", nil, piArgs},
+		{"pi", "edits", two, piArgs},
+		{"pi", "full", two, piArgs},
 
-		{"claude", "edits", nil, []string{"-p", "--output-format", "text", "--permission-mode", "acceptEdits", "--no-session-persistence", instruction}},
-		{"claude", "full", nil, []string{"-p", "--output-format", "text", "--permission-mode", "bypassPermissions", "--no-session-persistence", instruction}},
-		{"claude", "edits", two, join([]string{"-p", "--output-format", "text", "--permission-mode", "acceptEdits", "--no-session-persistence"}, addDirs, instruction)},
-		{"claude", "full", two, join([]string{"-p", "--output-format", "text", "--permission-mode", "bypassPermissions", "--no-session-persistence"}, addDirs, instruction)},
+		{"claude", "edits", nil, []string{"-p", "--model", "sonnet", "--output-format", "text", "--permission-mode", "acceptEdits", "--no-session-persistence", instruction}},
+		{"claude", "full", nil, []string{"-p", "--model", "sonnet", "--output-format", "text", "--permission-mode", "bypassPermissions", "--no-session-persistence", instruction}},
+		{"claude", "edits", two, join([]string{"-p", "--model", "sonnet", "--output-format", "text", "--permission-mode", "acceptEdits", "--no-session-persistence"}, addDirs, instruction)},
+		{"claude", "full", two, join([]string{"-p", "--model", "sonnet", "--output-format", "text", "--permission-mode", "bypassPermissions", "--no-session-persistence"}, addDirs, instruction)},
 
-		{"codex", "edits", nil, []string{"exec", "-C", runDir, "--skip-git-repo-check", "-s", "workspace-write", "--ephemeral", "-o", "last-message.md", instruction}},
-		{"codex", "full", nil, []string{"exec", "-C", runDir, "--skip-git-repo-check", "-s", "workspace-write", "--ephemeral", "--approve-for-me", "-o", "last-message.md", instruction}},
-		{"codex", "edits", two, join([]string{"exec", "-C", runDir, "--skip-git-repo-check", "-s", "workspace-write", "--ephemeral"}, addDirs, "-o", "last-message.md", instruction)},
-		{"codex", "full", two, join([]string{"exec", "-C", runDir, "--skip-git-repo-check", "-s", "workspace-write", "--ephemeral"}, addDirs, "--approve-for-me", "-o", "last-message.md", instruction)},
+		{"codex", "edits", nil, []string{"exec", "--model", modelCodexLuna, "-C", runDir, "--skip-git-repo-check", "-s", "workspace-write", "--ephemeral", "-o", "last-message.md", instruction}},
+		{"codex", "full", nil, []string{"exec", "--model", modelCodexLuna, "-C", runDir, "--skip-git-repo-check", "-s", "workspace-write", "--ephemeral", "--approve-for-me", "-o", "last-message.md", instruction}},
+		{"codex", "edits", two, join([]string{"exec", "--model", modelCodexLuna, "-C", runDir, "--skip-git-repo-check", "-s", "workspace-write", "--ephemeral"}, addDirs, "-o", "last-message.md", instruction)},
+		{"codex", "full", two, join([]string{"exec", "--model", modelCodexLuna, "-C", runDir, "--skip-git-repo-check", "-s", "workspace-write", "--ephemeral"}, addDirs, "--approve-for-me", "-o", "last-message.md", instruction)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name+"/"+tc.approval+"/"+dirsLabel(tc.extraDirs), func(t *testing.T) {
@@ -54,9 +56,21 @@ func TestArgsMatchTablePerApprovalAndExtraDirs(t *testing.T) {
 	}
 }
 
+func TestArgsHonorExplicitModel(t *testing.T) {
+	a, err := Lookup("pi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := a.Args(RunSpec{RunDir: runDir, Approval: "edits", Timeout: timeout, Model: "claude-bridge/claude-opus-5"})
+	want := []string{"-p", "--model", "claude-bridge/claude-opus-5", "--no-session", instruction}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Args =\n  %q\nwant\n  %q", got, want)
+	}
+}
+
 func TestFinalTextPathPerAdapter(t *testing.T) {
 	cases := map[string]string{
-		"omp":    filepath.Join(runDir, "stdout.log"),
+		"pi":     filepath.Join(runDir, "stdout.log"),
 		"claude": filepath.Join(runDir, "stdout.log"),
 		"codex":  filepath.Join(runDir, "last-message.md"),
 	}
@@ -79,8 +93,11 @@ func TestLookupRejectsUnknownCommand(t *testing.T) {
 	if err == nil {
 		t.Fatal("Lookup returned nil error for unknown name")
 	}
-	if want := `unknown agent command "aider"; use omp, claude, or codex`; err.Error() != want {
+	if want := `unknown agent command "aider"; use pi, claude, or codex`; err.Error() != want {
 		t.Fatalf("error = %q, want %q", err.Error(), want)
+	}
+	if _, err := Lookup("omp"); err == nil || err.Error() != `unknown agent command "omp"; use pi, claude, or codex` {
+		t.Fatalf("Lookup(omp) = %v, want the pi, claude, or codex list", err)
 	}
 }
 

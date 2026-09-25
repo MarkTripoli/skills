@@ -45,13 +45,22 @@ func TestRunCheckFailsClosedUntilDeliveryRecovers(t *testing.T) {
 		t.Fatalf("ready gate run summary %+v; want the run's id, channel, and permalink", gate.Run)
 	}
 
+	if _, code := runCLI(t, "run", "cadence", "--run-id", "RUN1", "--every", "1s"); code != ExitOK {
+		t.Fatalf("set short test cadence: exit %d", code)
+	}
+	time.Sleep(time.Second)
+	updatesBeforeFailure := fake.updateCount()
+	fake.failUpdates.Store(true)
 	fake.failPosts.Store(true)
 	if _, code := runCLI(t, "run", "event", "--run-id", "RUN1", "--current", "x"); code != ExitUnavailable {
-		t.Fatalf("run event with Slack failing exit %d, want %d", code, ExitUnavailable)
+		t.Fatalf("run event with root edit failing exit %d, want %d", code, ExitUnavailable)
 	}
 	gate, code = checkGate(t, "RUN1")
 	if code != ExitUnavailable || gate.Kind != "unavailable" || !strings.Contains(gate.Reason, "500") {
-		t.Fatalf("after a failed post: exit %d, gate %+v; want 11, unavailable, and the Slack error", code, gate)
+		t.Fatalf("after a failed root edit: exit %d, gate %+v; want 11, unavailable, and the Slack error", code, gate)
+	}
+	if fake.updateCount() <= updatesBeforeFailure || fake.update(fake.updateCount()-1).Get("ts") != "1700000000.000100" {
+		t.Fatalf("failing Slack did not receive a failed root edit: %d edits before, %d after", updatesBeforeFailure, fake.updateCount())
 	}
 	if _, code := runCLI(t, "run", "finish", "--run-id", "RUN1", "--outcome", "completed"); code != ExitUnavailable {
 		t.Fatalf("run finish with Slack failing exit %d, want %d", code, ExitUnavailable)
@@ -63,6 +72,7 @@ func TestRunCheckFailsClosedUntilDeliveryRecovers(t *testing.T) {
 		t.Fatalf("failing Slack recorded %d posts, want only the root", fake.count())
 	}
 
+	fake.failUpdates.Store(false)
 	fake.failPosts.Store(false)
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -75,19 +85,25 @@ func TestRunCheckFailsClosedUntilDeliveryRecovers(t *testing.T) {
 	if code != ExitOK || gate.Kind != "ready" {
 		t.Fatalf("after Slack recovered: exit %d, gate %+v; want the scheduler retry to clear the error", code, gate)
 	}
-	if fake.count() < 2 || fake.post(1).Get("thread_ts") != "1700000000.000100" {
-		t.Fatalf("retry did not repost the status in the thread: %d posts", fake.count())
+	if fake.count() != 1 || fake.updateCount() < 2 || fake.update(0).Get("ts") != "1700000000.000100" {
+		t.Fatalf("retry did not edit root: %d posts, %d edits", fake.count(), fake.updateCount())
 	}
 	if _, code := runCLI(t, "run", "finish", "--run-id", "RUN1", "--outcome", "completed"); code != ExitOK {
 		t.Fatalf("run finish after recovery exit %d, want 0", code)
 	}
+	if _, code := runCLI(t, "run", "check", "--run-id", "RUN1"); code != ExitUsage {
+		t.Fatalf("finished run check exit %d, want usage", code)
+	}
+	if _, code := runCLI(t, "run", "start", "--channel", "C0000000001", "--work", "next run", "--run-id", "RUN3"); code != ExitOK {
+		t.Fatalf("start active sibling run exit %d", code)
+	}
 
 	health.Store(slackapi.SocketDisconnected)
-	if gate, code := checkGate(t, "RUN1"); code != ExitUnavailable || gate.Reason != "socket_mode disconnected" {
+	if gate, code := checkGate(t, "RUN3"); code != ExitUnavailable || gate.Reason != "socket_mode disconnected" {
 		t.Fatalf("disconnected socket: exit %d, gate %+v", code, gate)
 	}
 	health.Store(slackapi.SocketConnected)
-	if _, code := checkGate(t, "RUN1"); code != ExitOK {
+	if _, code := checkGate(t, "RUN3"); code != ExitOK {
 		t.Fatalf("reconnected socket: exit %d, want 0", code)
 	}
 
@@ -99,7 +115,7 @@ func TestRunCheckFailsClosedUntilDeliveryRecovers(t *testing.T) {
 	}
 
 	stop()
-	gate, code = checkGate(t, "RUN1")
+	gate, code = checkGate(t, "RUN3")
 	if code != ExitUnavailable || gate.Kind != "unavailable" || !strings.HasPrefix(gate.Reason, "daemon unreachable: ") {
 		t.Fatalf("no daemon: exit %d, gate %+v; want 11 and a daemon unreachable reason", code, gate)
 	}

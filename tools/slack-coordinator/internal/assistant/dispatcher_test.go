@@ -147,8 +147,8 @@ func TestTickFillsThreeSlotsAndBackfillsAfterADelivery(t *testing.T) {
 		t.Fatalf("after one tick: %d running, %d queued, %d started; want 3, 1, 3", running, queued, runner.started())
 	}
 	first := runner.runID(0)
-	wantSpec := agent.RunSpec{RunDir: s.Paths.RunDir(first), Approval: "edits", Timeout: time.Minute}
-	if runner.specs[0].RunDir != wantSpec.RunDir || runner.specs[0].Approval != wantSpec.Approval || runner.specs[0].Timeout != wantSpec.Timeout || runner.specs[0].ExtraDirs != nil {
+	wantSpec := agent.RunSpec{RunDir: s.Paths.RunDir(first), Approval: "edits", Timeout: time.Minute, Model: "claude-bridge/claude-sonnet-5"}
+	if runner.specs[0].RunDir != wantSpec.RunDir || runner.specs[0].Approval != wantSpec.Approval || runner.specs[0].Timeout != wantSpec.Timeout || runner.specs[0].ExtraDirs != nil || runner.specs[0].Model != wantSpec.Model {
 		t.Fatalf("RunSpec = %+v, want %+v", runner.specs[0], wantSpec)
 	}
 	run := getRun(t, s, first)
@@ -213,6 +213,39 @@ func TestTickFillsThreeSlotsAndBackfillsAfterADelivery(t *testing.T) {
 	}
 }
 
+func TestDMRunModelComesFromTheNewestOwnerMessage(t *testing.T) {
+	s, _, clock, runner := newDispatchService(t)
+	ctx := context.Background()
+	const root = "1700000000.001000"
+	routeDMEvent(t, s, dm("U1", root, "", "for this please use opus 5.5"))
+	<-s.Wake()
+	if err := s.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if runner.started() != 1 || runner.specs[0].Model != "claude-bridge/claude-opus-5" {
+		t.Fatalf("started %d model %q, want claude-bridge/claude-opus-5", runner.started(), modelOrEmpty(runner))
+	}
+	if err := s.DB.FinishAssistantRun(ctx, runner.runID(0), db.RunDone, 0, false, "result.md", "", stamp(clock.at)); err != nil {
+		t.Fatal(err)
+	}
+	clock.at = clock.at.Add(time.Minute)
+	routeDMEvent(t, s, dm("U1", "1700000001.000000", root, "summarize the open pull requests"))
+	<-s.Wake()
+	if err := s.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if runner.started() != 2 || runner.specs[1].Model != "claude-bridge/claude-sonnet-5" {
+		t.Fatalf("follow-up model = %q, want the sonnet default", runner.specs[1].Model)
+	}
+}
+
+func modelOrEmpty(runner *fakeRunner) string {
+	if runner.started() == 0 {
+		return ""
+	}
+	return runner.specs[0].Model
+}
+
 func TestTickRecordsARunThatCannotStartAsFailed(t *testing.T) {
 	s, slack, clock, runner := newDispatchService(t)
 	runner.startErr = agent.ErrBinaryMissing{Name: "omp"}
@@ -243,7 +276,7 @@ func TestTickRecordsARunThatCannotStartAsFailed(t *testing.T) {
 		t.Fatalf("run directories = %v, %v; want one per request", entries, err)
 	}
 	run := getRun(t, s, entries[0].Name())
-	if run.State != db.RunFailed || run.Failure.String != `agent binary "omp" not found on PATH` || run.ExitCode.Int64 != -1 || run.FinishedAt.String == "" {
+	if run.State != db.RunFailed || run.Failure.String != (agent.ErrBinaryMissing{Name: "omp"}).Error() || run.ExitCode.Int64 != -1 || run.FinishedAt.String == "" {
 		t.Fatalf("failed row = %+v, want the start error as failure, exit -1, finished_at set", run)
 	}
 }

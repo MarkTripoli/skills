@@ -13,7 +13,7 @@ import (
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/slackapi"
 )
 
-// installFakeAgent puts an `omp` on PATH that is agent's fake-agent.sh
+// installFakeAgent puts a `pi` on PATH that is agent's fake-agent.sh
 // writing text to result.md.
 func installFakeAgent(t *testing.T, text string) {
 	t.Helper()
@@ -22,7 +22,7 @@ func installFakeAgent(t *testing.T, text string) {
 		t.Fatal(err)
 	}
 	bin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "omp"), script, 0o700); err != nil {
+	if err := os.WriteFile(filepath.Join(bin, "pi"), script, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -36,7 +36,7 @@ func TestOwnerDMRunsTheAgentAndItsAnswerReplacesTheAck(t *testing.T) {
 	fake, apiURL := newFakeSlack(t)
 	cfg := &config.Config{
 		Slack: config.Slack{BotToken: "xoxb-1", AppToken: "xapp-1", OwnerUserID: "U1", APIURL: apiURL},
-		Agent: &config.Agent{Command: "omp", Approval: "edits", Timeout: 30 * time.Second, MaxRunsPerHour: 30},
+		Agent: &config.Agent{Command: "pi", Approval: "edits", Timeout: 30 * time.Second, MaxRunsPerHour: 30},
 	}
 	inbound := make(chan socketmode.Event, 8)
 	startTestDaemonWith(t, cfg, daemon.Options{

@@ -2,12 +2,15 @@ package slackapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/slack-go/slack"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
 )
@@ -198,6 +201,32 @@ func TestSetupProbesAndPostsThroughFakeServer(t *testing.T) {
 	}
 	if link != "https://t.slack.com/archives/C1/p1700000000000100" {
 		t.Fatalf("Permalink = %q", link)
+	}
+}
+
+func TestPostBlocksMessageIncludesFallbackAndBlockKit(t *testing.T) {
+	f := &fakeSlack{}
+	c := newClient(t, f)
+	blocks := []slack.Block{
+		slack.NewHeaderBlock(slack.NewTextBlockObject(slack.PlainTextType, "Run started", true, false)),
+		slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, "*Work:* Add a feature", false, false), nil, nil),
+	}
+	if _, err := c.PostBlocksMessage(context.Background(), "C1", "1699999999.000001", "*Work:* Add a feature", blocks); err != nil {
+		t.Fatal(err)
+	}
+	form := f.posts[0]
+	if got := form.Get("text"); got != "*Work:* Add a feature" {
+		t.Fatalf("fallback text = %q", got)
+	}
+	var got []map[string]any
+	if err := json.Unmarshal([]byte(form.Get("blocks")), &got); err != nil {
+		t.Fatalf("decode Block Kit payload: %v", err)
+	}
+	if len(got) != 2 || got[0]["type"] != "header" || got[1]["type"] != "section" {
+		t.Fatalf("blocks = %#v", got)
+	}
+	if form.Get("thread_ts") != "1699999999.000001" {
+		t.Fatalf("thread_ts = %q", form.Get("thread_ts"))
 	}
 }
 

@@ -83,12 +83,54 @@ class EvidencePipeline(unittest.TestCase):
             manifest = json.loads((session / "manifest.json").read_text())
             self.assertGreater(manifest["render"]["canvas"][0], 640)
 
+    def test_default_cards_are_concise_and_keep_title_summary(self):
+        session = self.record_synthetic("concise", seconds=1.7)
+        stopped = run("stop", session)
+        self.assertTrue(stopped["verified"])
+        manifest = json.loads((session / "manifest.json").read_text())
+        self.assertEqual(manifest["timing"]["card_seconds"], 2.5 if self.overlay else 0)
+        self.assertEqual(manifest["title"], "Synthetic concise")
+        self.assertIn("Synthetic concise", (session / "report.md").read_text())
+        self.assertGreater(duration(session / "evidence.mp4"), 0)
+
     def test_caveats_written_by_stop_survive_render(self):
         session = self.record_synthetic("caveats", seconds=1.5)
         run("stop", session, "--card-seconds", CARD, "--caveats", "Nothing to add.")
         self.assertIn("Nothing to add.", (session / "report.md").read_text())
         run("render", session, "--card-seconds", CARD, "--no-cards")
         self.assertIn("Nothing to add.", (session / "report.md").read_text())
+
+    def test_out_of_range_external_assertion_stays_in_report_but_not_overlay(self):
+        clip = self.root / "short-external.mp4"
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+                        "testsrc2=size=360x640:rate=30", "-t", "1.9", "-pix_fmt", "yuv420p", str(clip)], check=True)
+        session = self.root / "out-of-range"
+        run("start", "--output", session, "--source", "external", "--title", "Out of range")
+        run("annotate", session, "--type", "test_start", "--message", "Watched flow", "--at", 0.2)
+        run("annotate", session, "--type", "assertion", "--result", "passed", "--message", "Late assertion", "--at", 3.5)
+        stopped = run("stop", session, "--video", clip, "--video-started-at", 0.8, "--card-seconds", CARD)
+        manifest = json.loads((session / "manifest.json").read_text())
+        event = next(item for item in manifest["events"] if item["message"] == "Late assertion")
+        self.assertEqual(stopped["tests"]["passed"], 1)
+        self.assertFalse(event["overlay"])
+        self.assertEqual(event["timing_status"], "outside_approximate_media_mapping")
+        self.assertEqual(manifest["assertion_tally"]["passed"], 0)
+        report = (session / "report.md").read_text()
+        self.assertIn("Late assertion", report)
+        self.assertIn("source 00:03.5", report)
+        self.assertIn("actual first encoded frame time is unknown", report)
+
+    def test_rejects_non_finite_external_start_marker(self):
+        clip = self.root / "finite-marker.mp4"
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+                        "testsrc2=size=360x640:rate=30", "-t", "1", "-pix_fmt", "yuv420p", str(clip)], check=True)
+        for value in ("nan", "inf", "not-a-number"):
+            with self.subTest(value=value):
+                session = self.root / ("invalid-marker-" + value)
+                run("start", "--output", session, "--source", "external", "--title", "Invalid marker")
+                result = run("stop", session, "--video", clip, "--video-started-at", value, expect=2)
+                self.assertIn("finite epoch timestamp", result.stderr)
+                self.assertFalse((session / "manifest.json").exists())
 
     def test_external_video_import_and_compose(self):
         clip = self.root / "clip.mp4"

@@ -97,7 +97,7 @@ func TestStatusReportsTheDaemon(t *testing.T) {
 		"socket mode: connected",
 		"active runs: 1",
 		"tasks: active 0 · paused 0 · completed 0 · cancelled 0",
-		"agent: omp (approval: edits)",
+		"agent: pi (approval: edits)",
 		"messages: 0 · runs: 2",
 	}
 	if len(lines) != len(want)+1 {

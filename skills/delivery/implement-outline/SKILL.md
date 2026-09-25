@@ -15,7 +15,7 @@ Coordinate phased implementation from the current `planning.structure` artifact 
 
 Locate the task directory and read `task.md` per the conventions, including the create-when-missing rule.
 
-If the user supplied a specific outline path, use it as input. Otherwise use current `planning.structure` from `index.json`.
+If the user supplied a specific outline path or `@file`, use it as input. Otherwise use current `planning.structure` from `index.json`.
 
 Companion documents when present: research, design discussion, PRD, TDD, `task.md` or `ticket.md`.
 

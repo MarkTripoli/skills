@@ -275,7 +275,7 @@ func TestErrBinaryMissingPostsReplyWithNoFence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const wantCause = `agent binary "codex" not found on PATH`
+	wantCause := (agent.ErrBinaryMissing{Name: "codex"}).Error()
 	if len(slack.updates) != 1 || slack.updates[0].text != "Failed" {
 		t.Fatalf("updates = %+v; want one edit to Failed", slack.updates)
 	}

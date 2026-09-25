@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -11,17 +12,21 @@ import (
 
 // runCLIWithStdin is runCLI with stdin supplied for commands that prompt.
 func runCLIWithStdin(t *testing.T, stdin string, args ...string) (string, int) {
+	return runCLIWithReader(t, strings.NewReader(stdin), args...)
+}
+
+func runCLIWithReader(t *testing.T, stdin io.Reader, args ...string) (string, int) {
 	var buf bytes.Buffer
 	SetOutput(&buf)
 	t.Cleanup(func() { output = os.Stdout })
 	root := NewRoot()
-	root.SetIn(strings.NewReader(stdin))
+	root.SetIn(stdin)
 	root.SetArgs(args)
 	err := root.Execute()
 	return buf.String(), exitCode(err)
 }
 
-func TestRunDisableSlackBreaksGlassForOneRunAfterYes(t *testing.T) {
+func TestRunDisableSlackRejectsPipedConfirmation(t *testing.T) {
 	fake, apiURL := newFakeSlack(t)
 	cfg := &config.Config{Slack: config.Slack{BotToken: "xoxb-1", AppToken: "xapp-1", OwnerUserID: "U1", APIURL: apiURL}}
 	startTestDaemon(t, cfg)
@@ -31,20 +36,41 @@ func TestRunDisableSlackBreaksGlassForOneRunAfterYes(t *testing.T) {
 		}
 	}
 	posts := fake.count()
-	summary := "run_id: RUN1\nchannel_id: C0000000001\npermalink: https://t.slack.com/archives/C0000000001/p1700000000000100\n" +
-		"Slack gating stops for this run only. Type yes to continue: "
+	summary := "run_id: RUN1\nchannel_id: C0000000001\npermalink: https://t.slack.com/archives/C0000000001/p1700000000000100\n"
 
-	// Anything but "yes" refuses without an IPC call: both runs stay enabled.
-	for name, stdin := range map[string]string{"no": "no\n", "empty": "", "yes with noise": "yes please\n"} {
+	// Even the exact confirmation is refused when stdin is not an operator terminal.
+	for name, stdin := range map[string]string{"no": "no\n", "empty": "", "yes with noise": "yes please\n", "reader yes": "yes\n"} {
 		out, code := runCLIWithStdin(t, stdin, "run", "disable-slack", "--run-id", "RUN1")
-		if code != ExitRefused || !strings.HasPrefix(out, summary) {
-			t.Fatalf("%s: exit %d, output %q; want %d after the summary and prompt", name, code, out, ExitRefused)
+		if code != ExitRefused || out != summary {
+			t.Fatalf("%s: exit %d, output %q; want %d after summary without a prompt", name, code, out, ExitRefused)
 		}
 		for _, id := range []string{"RUN1", "RUN2"} {
 			if gate, code := checkGate(t, id); code != ExitOK || gate.Kind != "ready" {
-				t.Fatalf("%s: %s after a refused break-glass: exit %d, gate %+v; want ready", name, id, code, gate)
+				t.Fatalf("%s: %s after refused break-glass: exit %d, gate %+v; want ready", name, id, code, gate)
 			}
 		}
+	}
+
+	pipeReader, pipeWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(pipeWriter, "yes\n"); err != nil {
+		pipeReader.Close()
+		pipeWriter.Close()
+		t.Fatal(err)
+	}
+	if err := pipeWriter.Close(); err != nil {
+		pipeReader.Close()
+		t.Fatal(err)
+	}
+	out, code := runCLIWithReader(t, pipeReader, "run", "disable-slack", "--run-id", "RUN1")
+	pipeReader.Close()
+	if code != ExitRefused || out != summary {
+		t.Fatalf("piped yes: exit %d, output %q; want %d after summary without a prompt", code, out, ExitRefused)
+	}
+	if gate, code := checkGate(t, "RUN1"); code != ExitOK || gate.Kind != "ready" {
+		t.Fatalf("run after piped break-glass: exit %d, gate %+v; want ready", code, gate)
 	}
 
 	if _, code := runCLIWithStdin(t, "yes\n", "run", "disable-slack", "--run-id", "NOPE"); code != ExitUsage {
@@ -53,40 +79,8 @@ func TestRunDisableSlackBreaksGlassForOneRunAfterYes(t *testing.T) {
 	if _, code := runCLIWithStdin(t, "yes\n", "run", "disable-slack"); code != ExitUsage {
 		t.Fatalf("disable-slack without --run-id exit %d, want %d", code, ExitUsage)
 	}
-
-	out, code := runCLIWithStdin(t, "yes\n", "run", "disable-slack", "--run-id", "RUN1")
-	if code != ExitOK || out != summary {
-		t.Fatalf("disable-slack with yes: exit %d, output %q", code, out)
-	}
-	gate, code := checkGate(t, "RUN1")
-	if code != ExitSlackDisabled || gate.Kind != "slack_disabled" || gate.Reason != "" || gate.Input != nil {
-		t.Fatalf("disabled run: exit %d, gate %+v; want %d and slack_disabled", code, gate, ExitSlackDisabled)
-	}
-	if gate.Run == nil || gate.Run.RunID != "RUN1" {
-		t.Fatalf("slack_disabled gate run summary %+v; want RUN1", gate.Run)
-	}
-	if gate, code := checkGate(t, "RUN2"); code != ExitOK || gate.Kind != "ready" {
-		t.Fatalf("sibling run after the break-glass: exit %d, gate %+v; want ready", code, gate)
-	}
-
-	// Posts stop for the disabled run while SQLite keeps recording.
-	if _, code := runCLI(t, "run", "event", "--run-id", "RUN1", "--current", "offline"); code != ExitOK {
-		t.Fatalf("run event on a disabled run exit %d, want 0", code)
-	}
-	if _, code := runCLI(t, "run", "finish", "--run-id", "RUN1", "--outcome", "completed"); code != ExitOK {
-		t.Fatalf("run finish on a disabled run exit %d, want 0", code)
-	}
 	if fake.count() != posts {
-		t.Fatalf("disabled run made %d chat.postMessage requests, want 0", fake.count()-posts)
-	}
-	if _, code := runCLI(t, "run", "event", "--run-id", "RUN1", "--current", "after finish"); code != ExitUsage {
-		t.Fatalf("run event on a finished disabled run exit %d, want %d", code, ExitUsage)
-	}
-	if _, code := runCLI(t, "run", "event", "--run-id", "RUN2", "--current", "still posting"); code != ExitOK || fake.count() != posts+1 {
-		t.Fatalf("sibling run event: exit %d with %d new posts; want 0 and one post", code, fake.count()-posts)
-	}
-	if _, code := runCLIWithStdin(t, "yes\n", "run", "disable-slack", "--run-id", "RUN1"); code != ExitUsage {
-		t.Fatalf("disable-slack on a finished run exit %d, want %d", code, ExitUsage)
+		t.Fatalf("refused break-glass changed Slack messages; got %d posts, want %d", fake.count(), posts)
 	}
 }
 

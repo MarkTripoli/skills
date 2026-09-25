@@ -21,7 +21,7 @@ Determine merge target: existing pull request base, else `base:` from `task.md`,
 
 Read `task.md`/`ticket.md` and current indexed implementation source (prefer `planning.plan`, `planning.structure`, `design.tdd`, `design.prd`). Use current artifact summaries to avoid unrelated documents. Read repo instructions, changed tests, commits, and PR description before judging.
 
-When `task.md` lists acceptance criteria, decide each one against the diff and tests. When `review.verification` has a current iteration, read its items table first: a criterion recorded as `pass` with a command and quoted output is proven; `fail` and `untested` items are findings to confirm.
+When `task.md` lists acceptance criteria, decide each one against the diff and tests. A criterion the change does not prove is a major-severity finding; a criterion the change contradicts is critical. When `review.verification` has a current iteration, read its items table first: a criterion recorded as `pass` with a command and quoted output is proven; `fail` and `untested` items are findings to confirm.
 
 Before allocating a new review, when `review.code` has a current iteration, read only that iteration's `### CR-...` heading lines. Record each in `## Previous Round` as `fixed`, `still open`, or `declined`, decided from the current diff and current `review.fixes` evidence, never from the prior reviewer's reasoning. Raise still-open entries again with new identifiers.
 

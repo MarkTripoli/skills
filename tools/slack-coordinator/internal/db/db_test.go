@@ -31,8 +31,11 @@ func TestRunsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != want {
-		t.Fatalf("GetRun = %+v, want %+v", got, want)
+	if got.RunID != want.RunID || got.OwnerUserID != want.OwnerUserID || got.ChannelID != want.ChannelID || got.ThreadTS != want.ThreadTS || got.Permalink != want.Permalink || got.Lifecycle != want.Lifecycle || got.SlackMode != want.SlackMode || got.StartedAt != want.StartedAt {
+		t.Fatalf("GetRun = %+v; run identity or lifecycle fields did not round-trip", got)
+	}
+	if got.StatusIntervalSeconds != DefaultStatusIntervalSeconds {
+		t.Fatalf("GetRun status interval = %d, want default %d", got.StatusIntervalSeconds, DefaultStatusIntervalSeconds)
 	}
 	if err := d.InsertRun(ctx, want); err == nil {
 		t.Fatal("duplicate run_id inserted")
@@ -169,6 +172,35 @@ func TestDeliveryErrorTracking(t *testing.T) {
 	if err := d.SetDeliveryError(ctx, "missing", "x"); !errors.Is(err, ErrRunNotFound) {
 		t.Fatalf("SetDeliveryError(missing) = %v, want ErrRunNotFound", err)
 	}
+
+	uncertain := base
+	uncertain.RunID = "uncertain"
+	if err := d.InsertRun(ctx, uncertain); err != nil {
+		t.Fatal(err)
+	}
+	uncertainMsg := UploadOutcomeUncertainPrefix + "response lost"
+	if err := d.SetDeliveryError(ctx, "uncertain", uncertainMsg); err != nil {
+		t.Fatal(err)
+	}
+	for _, ordinary := range []string{"channel_not_found", ""} {
+		if err := d.SetDeliveryError(ctx, "uncertain", ordinary); err != nil {
+			t.Fatal(err)
+		}
+		got, err := d.GetRun(ctx, "uncertain")
+		if err != nil || !got.LastDeliveryError.Valid || got.LastDeliveryError.String != uncertainMsg {
+			t.Fatalf("ordinary transition %q overwrote uncertain upload: run=%+v err=%v", ordinary, got, err)
+		}
+	}
+	if err := d.DisableSlack(ctx, "uncertain"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetDeliveryError(ctx, "uncertain", ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err = d.GetRun(ctx, "uncertain")
+	if err != nil || got.LastDeliveryError.Valid {
+		t.Fatalf("explicit Slack disable did not release uncertain error: run=%+v err=%v", got, err)
+	}
 }
 
 func TestOwnerInputsPendingUntilResolved(t *testing.T) {
@@ -224,6 +256,30 @@ func TestOwnerInputsPendingUntilResolved(t *testing.T) {
 		t.Fatalf("PendingOwnerInput(1.2) = %+v, %v", in, err)
 	}
 
+	if err := d.ResolveOwnerInput(ctx, "active", "1.1", "applied", "2026-09-21T00:05:00Z"); !errors.Is(err, ErrOwnerInputNotPending) {
+		t.Fatalf("resolve before claim = %v, want ErrOwnerInputNotPending", err)
+	}
+	if claimed, err := d.ClaimOwnerInput(ctx, "active", "1.1", "2026-09-21T00:04:00Z"); err != nil || !claimed {
+		t.Fatalf("ClaimOwnerInput(1.1) = %t, %v; want claimed", claimed, err)
+	}
+	if claimed, err := d.ClaimOwnerInput(ctx, "active", "1.1", "2026-09-21T00:04:01Z"); err != nil || claimed {
+		t.Fatalf("duplicate ClaimOwnerInput(1.1) = %t, %v; want not claimed", claimed, err)
+	}
+	if ts, err := d.ClaimedOwnerInput(ctx, "active"); err != nil || ts != "1.1" {
+		t.Fatalf("ClaimedOwnerInput = %q, %v; want 1.1", ts, err)
+	}
+	if _, err := d.PendingOwnerInput(ctx, "active", "1.1"); !errors.Is(err, ErrOwnerInputNotPending) {
+		t.Fatalf("PendingOwnerInput after claim = %v, want ErrOwnerInputNotPending", err)
+	}
+	if err := d.ResolveOwnerInput(ctx, "active", "9.9", "applied", "t"); !errors.Is(err, ErrOwnerInputNotPending) {
+		t.Fatalf("resolve of a missing input = %v, want ErrOwnerInputNotPending", err)
+	}
+	if err := d.ResolveOwnerInput(ctx, "active", "1.1", "bogus", "t"); err == nil || errors.Is(err, ErrOwnerInputNotPending) {
+		t.Fatalf("outcome outside the CHECK constraint = %v, want a constraint error", err)
+	}
+	if ts, err := d.ClaimedOwnerInput(ctx, "active"); err != nil || ts != "1.1" {
+		t.Fatalf("failed resolve lost its claim: ClaimedOwnerInput = %q, %v", ts, err)
+	}
 	if err := d.ResolveOwnerInput(ctx, "active", "1.1", "applied", "2026-09-21T00:05:00Z"); err != nil {
 		t.Fatal(err)
 	}
@@ -233,18 +289,18 @@ func TestOwnerInputsPendingUntilResolved(t *testing.T) {
 	if _, err := d.PendingOwnerInput(ctx, "active", "1.1"); !errors.Is(err, ErrOwnerInputNotPending) {
 		t.Fatalf("PendingOwnerInput after resolve = %v, want ErrOwnerInputNotPending", err)
 	}
-	if err := d.ResolveOwnerInput(ctx, "active", "9.9", "applied", "t"); !errors.Is(err, ErrOwnerInputNotPending) {
-		t.Fatalf("resolve of a missing input = %v, want ErrOwnerInputNotPending", err)
-	}
-	if err := d.ResolveOwnerInput(ctx, "active", "1.2", "bogus", "t"); err == nil || errors.Is(err, ErrOwnerInputNotPending) {
-		t.Fatalf("outcome outside the CHECK constraint = %v, want a constraint error", err)
-	}
 	got, ok, err = d.OldestUnhandledInput(ctx, "active")
 	if err != nil || !ok || got.MessageTS != "1.2" {
 		t.Fatalf("OldestUnhandledInput after resolving 1.1 = %+v, %t, %v; want the 1.2 row", got, ok, err)
 	}
+	if err := d.ResolveOwnerInput(ctx, "active", "1.2", "answered", "t"); !errors.Is(err, ErrOwnerInputNotPending) {
+		t.Fatalf("resolve before claim = %v, want ErrOwnerInputNotPending", err)
+	}
+	if claimed, err := d.ClaimOwnerInput(ctx, "active", "1.2", "2026-09-21T00:06:00Z"); err != nil || !claimed {
+		t.Fatalf("ClaimOwnerInput(1.2) = %t, %v; want claimed", claimed, err)
+	}
 	if err := d.ResolveOwnerInput(ctx, "active", "1.2", "answered", "t"); err != nil {
-		t.Fatal(err)
+		t.Fatalf("resolve claimed input = %v", err)
 	}
 	if _, ok, _ := d.OldestUnhandledInput(ctx, "active"); ok {
 		t.Fatal("input still pending after both were resolved")
@@ -276,15 +332,6 @@ CREATE TABLE owner_inputs (
   handled_at  TEXT,
   outcome     TEXT CHECK (outcome IN ('applied','rejected','answered')),
   PRIMARY KEY (run_id, message_ts)
-);
-CREATE TABLE jira_backlinks (
-  run_id     TEXT PRIMARY KEY REFERENCES runs(run_id),
-  issue_key  TEXT NOT NULL,
-  thread_url TEXT NOT NULL,
-  state      TEXT NOT NULL CHECK (state IN ('pending','delivered')) DEFAULT 'pending',
-  attempts   INTEGER NOT NULL DEFAULT 0,
-  last_error TEXT,
-  next_attempt_at TEXT NOT NULL
 );`
 
 func TestOpenAddsAssistantTablesToExistingDatabase(t *testing.T) {
@@ -326,7 +373,7 @@ func TestOpenAddsAssistantTablesToExistingDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"runs", "owner_inputs", "jira_backlinks",
+		"runs", "owner_inputs", "terminal_notices",
 		"tasks", "task_channels", "collected_messages", "task_messages",
 		"dm_requests", "dm_messages", "assistant_runs", "refused_users",
 	}

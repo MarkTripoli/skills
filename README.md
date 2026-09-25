@@ -8,35 +8,40 @@ Work with Claude Code, Codex, Oh My Pi, Pi, other agent what read `SKILL.md` fil
 
 The local Safety Dance Git gate and durable validation daemon are documented in [docs/safety-dance.md](docs/safety-dance.md). Its binary releases are separate from skill installation and Changesets.
 
-## Slack coordinator
+## Slack visibility
 
-Agents report one run per Slack thread, and the run owner steers it from that thread, through the local `slack-coordinator` daemon documented in [docs/slack-coordinator.md](docs/slack-coordinator.md). The binary is built from `tools/slack-coordinator/`; skill installation never installs it. That document covers install, the service, upgrades, token rotation, and what to do when the daemon is down. The agent skill talks to the daemon only through the `slack-coordinator` CLI.
+[`agent-slack-control-plane`](skills/delivery/agent-slack-control-plane/SKILL.md) describes two operator-controlled patterns: sparse feature updates and opt-in work-item run visibility and steering. It does not implement product work. Installing the skill alone does not enable automatic task threading; see its guide for the current operating contract. The separate [`slack-coordinator`](skills/slack-coordinator/SKILL.md) skill operates the daemon documented in [docs/slack-coordinator.md](docs/slack-coordinator.md); installing either skill does not install the daemon.
 
-The assistant also supports owner DMs and standing tasks.
+## Install and discover skills
 
-## Install
-
-Use Node 22.20 or newer. Run in terminal:
+Use the repository installer (Node 20.12 or newer) to browse or install personal skills:
 
 ```sh
-npx skills@latest add MarkTripoli/skills
-# Or choose agents and one skill without menus:
+npx github:MarkTripoli/skills --list
+npx github:MarkTripoli/skills --skill create-research-questions --yes
+# Choose an agent and skill without menus:
+npx github:MarkTripoli/skills codex --skill create-research-questions --yes
+```
+
+The installer supports Claude Code, Codex, Oh My Pi, Pi, and portable skill files. Add `--project` for project-local installation; home installation is the default. Repeat `--skill` to select more skills. See the [installer reference](docs/cheatsheet.md#install) for targets, locations, and options.
+
+For a skill-file-only install through skills.sh (Node 22.20 or newer):
+
+```sh
 npx skills@latest add MarkTripoli/skills --agent claude-code codex --skill create-research-questions --yes
 ```
 
-Pick agent and skill when asked. `--agent` pick agent; `--skill` pick skill. Install project-local by default; add `--global` for all project.
-
-This put skill file only. For agent-specific worker setup or Atomic, use this repo installer (Node 20.12 or newer):
+The skills.sh installer does not install worker setup or Atomic. Use this repository's installer for those:
 
 ```sh
-npx github:MarkTripoli/skills
+npx github:MarkTripoli/skills portable --atomic --yes
 ```
 
-See [repository installer reference](docs/cheatsheet.md#install) for its own flag, file place, other install way.
+`--atomic` installs the full skill collection and optional workflow. Follow [Atomic setup steps](docs/getting-started.md#add-optional-atomic-orchestration).
 
 ## Use skills independently
 
-Open code agent in repo you want change. Run:
+Open the coding agent in the repository you want to change. Run:
 
 ```text
 /create-research-questions Explain how login works in this project.
@@ -44,21 +49,22 @@ Open code agent in repo you want change. Run:
 
 In Codex, use `$create-research-questions` instead.
 
-Each step save task doc, call **artifact**. New task keep immutable artifact iteration under `artifacts/<kind>/<variant>/`, picked by task `index.json`. New task normally use **worktree**: separate checkout on own branch. Read result, then open new session in named checkout and run next command.
+Each step saves a task document, called an **artifact**. A new task normally uses a **worktree**: a separate checkout on its own branch. Read the result, then open a new session in the named checkout and run the next command.
 
-Install only skill you need. Suggested next skill not hidden dependency. See [getting started](docs/getting-started.md) or [common skill sequences](workflows/delivery.md#workflow-choices-and-manual-chains).
+Install only the skill you need; suggested next skills are not hidden dependencies. See [getting started](docs/getting-started.md) or [common skill sequences](workflows/delivery.md#workflow-choices-and-manual-chains).
 
-For allowed poke and fix of recorded behavior, use [iterate-evidence](docs/getting-started.md#inspect-and-repair-recorded-behavior). Its chosen repo install bring recorder dependency; Atomic not need.
+[`video-iterative-development`](skills/delivery/video-iterative-development/SKILL.md) scopes authenticated backend/frontend requirements and requires appropriate API or real user-flow evidence. [`video-iterative-orchestration`](skills/delivery/video-iterative-orchestration/SKILL.md) coordinates ordered, dependency-aware requirements through isolated worktrees and delivery gates.
+
+For an authorized inspect-and-repair loop on recorded behavior, use [iterate-evidence](docs/getting-started.md#inspect-and-repair-recorded-behavior). Its repository-installer selection includes the recorder dependency; Atomic is not required.
 
 ## Optional Atomic orchestration
 
-Atomic run skill in separate session and stop for your yes. Install and sign in to Atomic separate, then add workflow:
+Atomic runs the skill workflow in a separate session and pauses for approval. Install and sign in to Atomic separately, then add the workflow using the full skill collection:
 
 ```sh
 npx github:MarkTripoli/skills portable --atomic --yes
 ```
 
-This need all skill. Follow [Atomic setup steps](docs/getting-started.md#add-optional-atomic-orchestration). Run with no screen need `gates=none`.
 
 ## Develop
 

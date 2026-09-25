@@ -23,23 +23,20 @@ CREATE TABLE IF NOT EXISTS runs (
   started_at    TEXT NOT NULL,
   finished_at   TEXT
 );
+CREATE TABLE IF NOT EXISTS terminal_notices (
+  run_id TEXT NOT NULL REFERENCES runs(run_id),
+  message_ts TEXT NOT NULL,
+  PRIMARY KEY (run_id, message_ts)
+);
 CREATE TABLE IF NOT EXISTS owner_inputs (
   run_id      TEXT NOT NULL REFERENCES runs(run_id),
   message_ts  TEXT NOT NULL,
   text        TEXT NOT NULL,
   received_at TEXT NOT NULL,
   handled_at  TEXT,
+  claimed_at  TEXT,
   outcome     TEXT CHECK (outcome IN ('applied','rejected','answered')),
   PRIMARY KEY (run_id, message_ts)
-);
-CREATE TABLE IF NOT EXISTS jira_backlinks (
-  run_id     TEXT PRIMARY KEY REFERENCES runs(run_id),
-  issue_key  TEXT NOT NULL,
-  thread_url TEXT NOT NULL,
-  state      TEXT NOT NULL CHECK (state IN ('pending','delivered')) DEFAULT 'pending',
-  attempts   INTEGER NOT NULL DEFAULT 0,
-  last_error TEXT,
-  next_attempt_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS tasks (
   task_id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,6 +95,10 @@ CREATE TABLE IF NOT EXISTS refused_users (user_id TEXT PRIMARY KEY, refused_at T
 // versions append; Open tolerates "duplicate column name".
 var migrationStatements = []string{
 	`ALTER TABLE runs ADD COLUMN next_status_due TEXT`,
-	`ALTER TABLE runs ADD COLUMN last_status TEXT`,         // JSON of coordinator.WorkEvent
+	`ALTER TABLE runs ADD COLUMN last_status TEXT`,  // JSON of coordinator.WorkEvent
+	`ALTER TABLE runs ADD COLUMN root_message TEXT`, // JSON of coordinator.RootMessage; NULL for pre-upgrade runs
+	`ALTER TABLE runs ADD COLUMN status_interval_seconds INTEGER NOT NULL DEFAULT 10800`,
+	`ALTER TABLE runs ADD COLUMN last_root_update TEXT`,    // UTC time of most recent root post or status edit
 	`ALTER TABLE runs ADD COLUMN last_delivery_error TEXT`, // last failed Slack post; NULL once a post succeeds
+	`ALTER TABLE owner_inputs ADD COLUMN claimed_at TEXT`,
 }

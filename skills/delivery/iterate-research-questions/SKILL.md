@@ -11,7 +11,7 @@ Revise an existing research-questions document. Preserve its purpose: neutral qu
 
 ## Input
 
-The invocation may provide a research-questions path, feedback file, pasted feedback, or instructions. Without an explicit artifact, select current `research.questions` through `index.json`.
+The invocation may provide a research-questions path, an `@artifact` reference, a feedback file, pasted feedback, or instructions. Resolve the selected artifact within the task directory; if only a task directory or slug is given, select the current `research.questions` through `index.json`. Do not substitute a different artifact when an explicit one was named.
 
 - One research-questions artifact: read it.
 - Multiple: use the newest of type `research-questions` unless the user named one; ask when the choice is unclear.
@@ -26,7 +26,7 @@ Beyond `task.md`, do not read `ticket.md`, design artifacts, research artifacts,
 
 3. **Read feedback**. Read the feedback the user supplied (message or named file) fully, including any explicit `@...` input. There are no comment identifiers, no resolve step, and no delete step: apply the change, or say why it was not applied.
 
-4. **Create the revision**. Copy current questions into the next `research.questions` iteration and edit that new file; never edit a recorded iteration. Preserve frontmatter and Key Context Pointers. A legacy task without `index.json` follows the conventions' in-place rule.
+4. **Create the revision**. Copy current questions into the next `research.questions` iteration and edit that new file; never edit a recorded iteration. Preserve frontmatter and **Key Context Pointers**. Keep existing pointers verbatim and add newly provided links, repositories, libraries, dependencies, paths, commands, and issue keys. A legacy task without `index.json` follows the conventions' in-place rule.
 
 5. **Keep questions objective**. Revised questions describe discovery only: what exists, where behavior/data lives, how pieces interact, what contracts/patterns/dependencies/tests/edge cases are present. Remove or rewrite wording that asks how to build the feature, where to put new code, whether to refactor, or what approach is preferable.
 

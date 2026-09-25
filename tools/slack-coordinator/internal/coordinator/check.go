@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/slackapi"
@@ -31,6 +32,28 @@ type WriteGate struct {
 	Run    *RunSummary `json:"run,omitempty"`
 }
 
+// WaitBeforeWrite returns a changed gate promptly, or rechecks it at the
+// deadline. It never holds a database transaction while waiting.
+func (c *Coordinator) WaitBeforeWrite(ctx context.Context, runID string) (WriteGate, error) {
+	deadline := time.NewTimer(20 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		gate, err := c.CheckBeforeWrite(ctx, runID)
+		if err != nil || gate.Kind != GateReady {
+			return gate, err
+		}
+		select {
+		case <-ctx.Done():
+			return WriteGate{}, ctx.Err()
+		case <-deadline.C:
+			return c.CheckBeforeWrite(ctx, runID)
+		case <-ticker.C:
+		}
+	}
+}
+
 // health reports the Socket Mode state, or not_started when the coordinator
 // has no connection to ask.
 func (c *Coordinator) health() string {
@@ -49,7 +72,7 @@ func (c *Coordinator) CheckBeforeWrite(ctx context.Context, runID string) (Write
 	if runID == "" {
 		return WriteGate{}, errors.New("run_id is required")
 	}
-	run, err := c.DB.GetRun(ctx, runID)
+	run, err := c.activeRun(ctx, runID)
 	if err != nil {
 		return WriteGate{}, err
 	}
@@ -64,6 +87,12 @@ func (c *Coordinator) CheckBeforeWrite(ctx context.Context, runID string) (Write
 	}
 	if run.LastDeliveryError.Valid {
 		gate.Kind, gate.Reason = GateUnavailable, run.LastDeliveryError.String
+		return gate, nil
+	}
+	if messageTS, err := c.DB.ClaimedOwnerInput(ctx, runID); err != nil {
+		return WriteGate{}, err
+	} else if messageTS != "" {
+		gate.Kind, gate.Reason = GateUnavailable, "owner input "+messageTS+" has an unresolved reply delivery; reconcile before continuing"
 		return gate, nil
 	}
 	in, pending, err := c.DB.OldestUnhandledInput(ctx, runID)

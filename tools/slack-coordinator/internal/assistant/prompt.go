@@ -27,11 +27,11 @@ const (
 
 // promptInput is what one prompt.md says beyond the skill text.
 type promptInput struct {
-	RunID    string
-	Kind     string // "dm request"
-	Approval string // edits | full
-	Request  string // the newest owner message
-	Thread   []db.DMMessage
+	RunID           string
+	Kind            string // "dm request"
+	Approval        string // edits | full
+	Request         string // the newest owner message
+	Thread          []db.DMMessage
 	PendingProposal string
 }
 

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { boundaryState, eligible, initialState, judgment, reconcileRecovery, runSkill, stagePrompt } from '../atomic/lib/controller.mjs';
+import { boundaryState, eligible, gated, initialState, judgment, reconcileRecovery, runSkill, stagePrompt } from '../atomic/lib/controller.mjs';
 import { digest, observeArtifacts, planProgress, readArtifact } from '../atomic/lib/artifacts.mjs';
 import { ensureTask, revision } from '../atomic/lib/workspace.mjs';
 
@@ -226,4 +226,10 @@ test('ensureTask refuses an unrelated preexisting worktree path', () => {
   assert.throws(() => ensureTask({ request }, repo, runId, 'oneshot'), /already exists|refusing/);
   fs.rmSync(target, { recursive: true, force: true });
   fs.rmSync(repo, { recursive: true, force: true });
+});
+
+test('PR-only approval gates select the pull request description', () => {
+  assert.equal(gated('pr-description', 'pr'), true);
+  assert.equal(gated('pr-review', 'pr'), false);
+  assert.equal(gated('plan', 'pr'), false);
 });

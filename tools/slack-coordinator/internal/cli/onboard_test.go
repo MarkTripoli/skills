@@ -47,12 +47,12 @@ func runOnboard(t *testing.T, stdin string, args ...string) (out string, urls []
 // token auth.test, apps.connections.open, and users.info carried, and every
 // chat.postMessage form; conversations.open answers D0CLI for any user.
 type onboardSlack struct {
-	url                                      string
-	manifestAuth, manifestBody               string
-	manifestUpdateAuth, manifestUpdateAppID  string
-	manifestUpdateBody                       string
-	authTokens, probeTokens                  []string
-	infoTokens, infoUsers                    []string
+	url                                     string
+	manifestAuth, manifestBody              string
+	manifestUpdateAuth, manifestUpdateAppID string
+	manifestUpdateBody                      string
+	authTokens, probeTokens                 []string
+	infoTokens, infoUsers                   []string
 
 	mu    sync.Mutex
 	posts []url.Values
