@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"errors"
+	"github.com/slack-go/slack"
 	"testing"
 	"time"
 
@@ -36,6 +37,7 @@ func TestCheckBeforeWriteOrdersHealthBeforeDelivery(t *testing.T) {
 		t.Fatalf("connected, no failures: %+v, %v", gate, err)
 	}
 
+	*now = now.Add(3 * time.Hour)
 	poster.fail = errors.New("channel_not_found")
 	err := c.RecordWorkEvent(ctx, WorkEvent{RunID: "RUN1", Current: "x"})
 	var delivery *DeliveryError
@@ -59,14 +61,14 @@ func TestCheckBeforeWriteOrdersHealthBeforeDelivery(t *testing.T) {
 	if err := (&StatusScheduler{C: c}).Tick(ctx, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if len(poster.posts) != 2 || poster.posts[1].ThreadTS != "1700000000.000100" {
-		t.Fatalf("retry posts = %+v, want the status reposted in the thread", poster.posts)
+	if len(poster.posts) != 1 || len(poster.updates) != 1 || poster.updates[0].ThreadTS != "1700000000.000100" {
+		t.Fatalf("retry did not edit the root: posts=%+v updates=%+v", poster.posts, poster.updates)
 	}
 	if gate, err := c.CheckBeforeWrite(ctx, "RUN1"); err != nil || !gateIs(gate, GateReady, "") {
 		t.Fatalf("after the retry: %+v, %v", gate, err)
 	}
-	if err := (&StatusScheduler{C: c}).Tick(ctx, now.Add(2*time.Minute)); err != nil || len(poster.posts) != 2 {
-		t.Fatalf("cleared run retried again: %d posts, %v", len(poster.posts), err)
+	if err := (&StatusScheduler{C: c}).Tick(ctx, now.Add(2*time.Minute)); err != nil || len(poster.updates) != 1 {
+		t.Fatalf("cleared run retried again: %d edits, %v", len(poster.updates), err)
 	}
 }
 
@@ -138,7 +140,7 @@ func TestCheckBeforeWriteReportsOwnerInputUntilResolved(t *testing.T) {
 		t.Fatalf("refused resolutions posted; %d posts", len(poster.posts))
 	}
 
-	poster.fail = errors.New("channel_not_found")
+	poster.fail = slack.SlackErrorResponse{Err: "channel_not_found"}
 	res := OwnerInputResolution{RunID: "RUN1", MessageTS: "1700000000.000200", Outcome: "applied", Reply: "Stopping as asked."}
 	var delivery *DeliveryError
 	if err := c.ResolveOwnerInput(ctx, res); !errors.As(err, &delivery) {
@@ -152,8 +154,12 @@ func TestCheckBeforeWriteReportsOwnerInputUntilResolved(t *testing.T) {
 	if err := c.ResolveOwnerInput(ctx, res); err != nil {
 		t.Fatal(err)
 	}
-	if len(poster.posts) != 2 || poster.posts[1] != (post{"C1", "1700000000.000100", "Stopping as asked."}) {
+	if len(poster.posts) != 2 {
 		t.Fatalf("acknowledgement posts = %+v, want one thread reply with the given text", poster.posts)
+	}
+	ack := poster.posts[1]
+	if ack.ChannelID != "C1" || ack.ThreadTS != "1700000000.000100" || ack.Text != "Stopping as asked." || len(ack.Blocks) != 0 {
+		t.Fatalf("acknowledgement = %+v, want plain-text thread reply", ack)
 	}
 	if err := c.ResolveOwnerInput(ctx, res); !errors.Is(err, db.ErrOwnerInputNotPending) || len(poster.posts) != 2 {
 		t.Fatalf("second resolve = %v with %d posts; want ErrOwnerInputNotPending and no new post", err, len(poster.posts))
@@ -167,5 +173,33 @@ func TestCheckBeforeWriteReportsOwnerInputUntilResolved(t *testing.T) {
 	}
 	if gate, err := c.CheckBeforeWrite(ctx, "RUN1"); err != nil || !gateIs(gate, GateReady, "") {
 		t.Fatalf("after resolving every input: %+v, %v; want ready", gate, err)
+	}
+}
+
+func TestAmbiguousReplyDeliveryCannotBeRetriedOrBypassGate(t *testing.T) {
+	c, poster, _ := newTestCoordinator(t)
+	ctx := context.Background()
+	startTestRun(t, c, "RUN1")
+	c.Health = func() string { return slackapi.SocketConnected }
+	if _, err := c.DB.InsertOwnerInput(ctx, db.OwnerInput{RunID: "RUN1", MessageTS: "2.0", Text: "stop", ReceivedAt: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	reply := OwnerInputResolution{RunID: "RUN1", MessageTS: "2.0", Outcome: "applied", Reply: "Stopped."}
+	poster.fail = errors.New("network timeout")
+	if err := c.ResolveOwnerInput(ctx, reply); !errors.Is(err, ErrResolveUnavailable) {
+		t.Fatalf("ambiguous post = %v, want unavailable", err)
+	}
+	poster.fail = nil
+	if gate, err := c.CheckBeforeWrite(ctx, "RUN1"); err != nil || gate.Kind != GateUnavailable {
+		t.Fatalf("claimed input must block work: %+v, %v", gate, err)
+	}
+	if err := c.DB.SetDeliveryError(ctx, "RUN1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if gate, err := c.CheckBeforeWrite(ctx, "RUN1"); err != nil || gate.Kind != GateUnavailable || gate.Reason == "" {
+		t.Fatalf("clearing delivery error bypassed claimed input: %+v, %v", gate, err)
+	}
+	if err := c.ResolveOwnerInput(ctx, reply); !errors.Is(err, ErrResolveUnavailable) || len(poster.posts) != 1 {
+		t.Fatalf("retry after ambiguous post = %v, posts %d; want unavailable and no reply", err, len(poster.posts))
 	}
 }

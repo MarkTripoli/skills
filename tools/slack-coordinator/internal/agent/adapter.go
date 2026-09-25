@@ -26,17 +26,22 @@ type RunSpec struct {
 	Approval  string // edits | full; anything else builds the edits row
 	ExtraDirs []string
 	Timeout   time.Duration
+	// Bin is the absolute executable. Empty means look up Command on PATH.
+	Bin string
+	// Model is the --model value. Empty means the command default from
+	// SelectModel, so a run never inherits the CLI's own default.
+	Model string
 }
 
 // instruction is the prompt every adapter passes as its final argument; the
 // runner writes the real prompt to prompt.md in RunDir.
 const instruction = "Read prompt.md in the current directory and follow it."
 
-// Lookup returns the adapter for omp, claude, or codex.
+// Lookup returns the adapter for pi, claude, or codex.
 func Lookup(name string) (Adapter, error) {
 	a, ok := adapters[name]
 	if !ok {
-		return nil, fmt.Errorf("unknown agent command %q; use omp, claude, or codex", name)
+		return nil, fmt.Errorf("unknown agent command %q; use pi, claude, or codex", name)
 	}
 	return a, nil
 }
@@ -51,23 +56,17 @@ func (a adapter) Command() string                    { return a.command }
 func (a adapter) Args(spec RunSpec) []string         { return a.args(spec) }
 func (a adapter) FinalTextPath(runDir string) string { return filepath.Join(runDir, a.finalText) }
 
-// adapters is the single argv table. Each row is
-// <head> [--add-dir D]... <tail> <instruction>; the head carries the approval
-// flags that differ between edits and full. Flags checked against omp 18.1.22,
+// adapters is the single argv table. Claude and codex rows are
+// <head> [--add-dir D]... <tail> <instruction>. Pi takes neither --add-dir
+// nor a working-directory flag: the runner sets the process directory and
+// kills the process group on Timeout. Flags checked against pi 0.87.0,
 // claude 2.1.258, and codex 0.155.1.
 var adapters = map[string]adapter{
-	"omp": {
-		command:   "omp",
+	"pi": {
+		command:   "pi",
 		finalText: "stdout.log",
 		args: func(spec RunSpec) []string {
-			head := []string{"-p", "--cwd", spec.RunDir}
-			if spec.Approval == "full" {
-				head = append(head, "--auto-approve")
-			} else {
-				head = append(head, "--approval-mode", "write")
-			}
-			head = append(head, "--no-session", "--max-time", spec.Timeout.String())
-			return argv(spec, head, nil)
+			return []string{"-p", "--model", modelID(spec, "pi"), "--no-session", instruction}
 		},
 	},
 	"claude": {
@@ -78,7 +77,7 @@ var adapters = map[string]adapter{
 			if spec.Approval == "full" {
 				mode = "bypassPermissions"
 			}
-			head := []string{"-p", "--output-format", "text", "--permission-mode", mode, "--no-session-persistence"}
+			head := []string{"-p", "--model", modelID(spec, "claude"), "--output-format", "text", "--permission-mode", mode, "--no-session-persistence"}
 			return argv(spec, head, nil)
 		},
 	},
@@ -86,7 +85,7 @@ var adapters = map[string]adapter{
 		command:   "codex",
 		finalText: "last-message.md",
 		args: func(spec RunSpec) []string {
-			head := []string{"exec", "-C", spec.RunDir, "--skip-git-repo-check", "-s", "workspace-write", "--ephemeral"}
+			head := []string{"exec", "--model", modelID(spec, "codex"), "-C", spec.RunDir, "--skip-git-repo-check", "-s", "workspace-write", "--ephemeral"}
 			tail := []string{"-o", "last-message.md"}
 			if spec.Approval == "full" {
 				tail = append([]string{"--approve-for-me"}, tail...)

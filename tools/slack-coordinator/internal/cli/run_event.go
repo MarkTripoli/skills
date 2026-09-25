@@ -11,11 +11,10 @@ func newRunEvent() *cobra.Command {
 	var e coordinator.WorkEvent
 	c := &cobra.Command{
 		Use:   "event --run-id <id> --current <s> [--completed <s>]... [--decision <s>]... [--blocker <s>]... [--next <s>]...",
-		Short: "Post a status update to the run's thread",
-		Long: `Post a status update to the run's thread.
-
-The update is stored as the run's last status and reposted after one quiet
-interval with no further events. A run that has finished is refused.`,
+		Short: "Save a status update for the run's root message",
+		Long: `Save the latest status for the run's root message. Routine changes are
+coalesced to the run's cadence (3h by default); new blockers and cleared
+blockers update immediately. A run that has finished is refused.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return callRunMethod(ipc.MethodRunEvent, e)

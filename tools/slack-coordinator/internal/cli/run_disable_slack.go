@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/coordinator"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/ipc"
@@ -23,8 +25,9 @@ func newRunDisableSlack() *cobra.Command {
 		Long: `Break glass: stop Slack posts and gating for one run.
 
 The run's id, channel, and permalink are printed, then a confirmation is read
-from stdin. Only the exact answer "yes" disables Slack; anything else exits 1
-and changes nothing. Afterwards run check answers {"kind":"slack_disabled"}
+from an interactive terminal. Piped input is refused. Only the exact answer
+"yes" disables Slack; anything else exits 1 and changes nothing. Afterwards
+run check answers {"kind":"slack_disabled"}
 with exit 12, run event and run finish keep recording in SQLite without
 posting, and every other run is untouched.`,
 		Args: cobra.NoArgs,
@@ -38,8 +41,13 @@ posting, and every other run is untouched.`,
 			}
 			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "run_id: %s\nchannel_id: %s\npermalink: %s\n", gate.Run.RunID, gate.Run.ChannelID, gate.Run.Permalink)
+			input := cmd.InOrStdin()
+			f, ok := input.(*os.File)
+			if !ok || !term.IsTerminal(int(f.Fd())) {
+				return &ExitCodeError{Code: ExitRefused, Err: errors.New("confirmation requires an interactive terminal; Slack stays enabled for " + params.RunID)}
+			}
 			fmt.Fprint(out, disableSlackPrompt)
-			answer, err := readAnswer(bufio.NewReader(cmd.InOrStdin()))
+			answer, err := readAnswer(bufio.NewReader(input))
 			if err != nil {
 				if !errors.Is(err, io.EOF) {
 					return err

@@ -17,7 +17,7 @@ Locate: If assignment has a file, read it completely. If only a task directory, 
 
 Extract: Capture files expected created/modified/deleted, patterns, boundaries, criteria, APIs/shapes/UI/commands/tests, manual checks. Concise notes. No long quotes.
 
-Analyze: Resolve the base branch from the assignment; otherwise from the pull request (`gh pr view --json baseRefName` for GitHub remotes, `glab mr view` for GitLab remotes); otherwise the repository default branch (`git symbolic-ref refs/remotes/origin/HEAD`, else `main`). Run `git status --short --branch`, `git diff --name-status <base>...HEAD`, and `git diff <base>...HEAD`. Include uncommitted changes from `git status` in the review when present. Read changed files mattering for behavior. Do not read unrelated task artifacts or broad repository areas.
+Analyze: Resolve the base branch from the assignment; otherwise from the pull request (`gh pr view --json baseRefName`); otherwise the repository default branch (`git symbolic-ref refs/remotes/origin/HEAD`, else `main`). Run `git status --short --branch`, `git diff --name-status <base>...HEAD`, and `git diff <base>...HEAD`. Include uncommitted changes from `git status` in the review when present. Read changed files mattering for behavior. Do not read unrelated task artifacts or broad repository areas.
 
 Categorize: **As planned** (items in diff with expected behavior), **Deviations** (different; expected, actual, reason when evident), **Additions** (new not in plan; rationale when visible), **Missing** (in plan, not in diff; distinguish omissions from deferred).
 

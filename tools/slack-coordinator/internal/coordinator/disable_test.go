@@ -66,11 +66,12 @@ func TestDisableSlackForRunSilencesOneRunOnly(t *testing.T) {
 	if run.Lifecycle != "completed" {
 		t.Fatalf("disabled run after finish: %+v", run)
 	}
-	// Both runs share the fake's channel and thread ts, so the one new post is
-	// identified by its text: RUN2's all-None quiet-interval repost, never
-	// RUN1's "offline work" status or its completion.
-	if got := len(poster.posts) - posts; got != 1 || !strings.Contains(poster.posts[posts].Text, "*Current work:* None") {
-		t.Fatalf("after disabling RUN1: %d new posts %+v; want only RUN2's quiet-interval repost", got, poster.posts[posts:])
+	if len(poster.reactions) != 0 {
+		t.Fatalf("disabled run reacted: %+v", poster.reactions)
+	}
+	// Neither disabled work nor idle sibling runs generate Slack messages.
+	if got := len(poster.posts) - posts; got != 0 || len(poster.updates) != 0 {
+		t.Fatalf("after disabling RUN1: %d new posts, %d edits", got, len(poster.updates))
 	}
 	for _, p := range poster.posts {
 		if strings.Contains(p.Text, "offline work") || strings.Contains(p.Text, "*Outcome:*") {

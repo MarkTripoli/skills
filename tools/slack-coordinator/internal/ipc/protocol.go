@@ -9,9 +9,15 @@ import (
 const (
 	MethodRunStart             = "run.start"
 	MethodRunEvent             = "run.event"
+	MethodRunCadence           = "run.cadence"
 	MethodRunCheck             = "run.check"
+	MethodRunWait              = "run.wait"
 	MethodRunResolve           = "run.resolve"
 	MethodRunFinish            = "run.finish"
+	MethodRunReact             = "run.react"
+	MethodRunContent           = "run.content"
+	MethodRunListItems         = "run.list_items"
+	MethodRunUpload            = "run.upload"
 	MethodRunDisableSlack      = "run.disable_slack"
 	MethodDaemonHealth         = "daemon.health"
 	MethodDaemonShutdown       = "daemon.shutdown"
@@ -28,6 +34,7 @@ const (
 	ErrInvalidParams  = -32602
 	ErrInternal       = -32603
 	ErrUnavailable    = -32000
+	ErrSlackDisabled  = -32001
 )
 
 // Request is a JSON-RPC 2.0 request.

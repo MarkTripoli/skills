@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"regexp"
 
 	"github.com/oklog/ulid/v2"
 	"github.com/spf13/cobra"
@@ -15,27 +14,27 @@ import (
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/slackapi"
 )
 
-// jiraIssuePattern is the issue key shape --jira-issue accepts.
-var jiraIssuePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]+-\d+$`)
-
 func newRunStart() *cobra.Command {
 	var in coordinator.StartRunInput
 	var channelFlag, repo string
+	var dm bool
 	c := &cobra.Command{
-		Use:   "start [--channel <C…|#name>] [--repo <path>] --work <s> --goal <s> --scope <s> [--link <url>]... [--run-id <id>] [--jira-issue <KEY>]",
+		Use:   "start [--channel <C…|#name> | --dm] [--repo <path>] --work <s> --goal <s> --scope <s> [--link <url>]... [--run-id <id>]",
 		Short: "Open the run's Slack thread with one root message",
 		Long: `Open the run's Slack thread with one root message.
 
 The channel comes from --channel, or from the single "Slack default channel:"
 line in the repository root AGENTS.md (--repo, default: the git root of the
 current directory). Either source is resolved through Slack to a channel the
-bot is a member of and that is not archived before the daemon is called.
-
-With --jira-issue the daemon writes the thread permalink to the Jira custom
-field named by setup --jira-field-id; a failed write is retried in the
-background and never blocks the run.`,
+bot is a member of and that is not archived before the daemon is called. With
+--dm, the daemon opens a direct message with the configured owner instead; no
+repository channel directive is read.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if dm && channelFlag != "" {
+				return usageErr("--dm and --channel are mutually exclusive")
+			}
+			in.DM = dm
 			p, err := home()
 			if err != nil {
 				return err
@@ -44,23 +43,17 @@ background and never blocks the run.`,
 			if err != nil {
 				return err
 			}
-			if in.JiraIssue != "" {
-				if !jiraIssuePattern.MatchString(in.JiraIssue) {
-					return usageErr("--jira-issue %q must look like PROJ-123", in.JiraIssue)
+			if !dm {
+				ref, err := refFromFlagsOrAgentsMD(channelFlag, repo)
+				if err != nil {
+					return err
 				}
-				if !cfg.JiraEnabled() {
-					return usageErr("--jira-issue given but jira is not configured; rerun `slack-coordinator setup` with --jira-base-url, --jira-email, --jira-field-id and JIRA_API_TOKEN")
+				id, err := channel.Resolve(cmd.Context(), slackapi.New(cfg.Slack), ref)
+				if err != nil {
+					return usageErr("%w", err)
 				}
+				in.ChannelID = id
 			}
-			ref, err := refFromFlagsOrAgentsMD(channelFlag, repo)
-			if err != nil {
-				return err
-			}
-			id, err := channel.Resolve(cmd.Context(), slackapi.New(cfg.Slack), ref)
-			if err != nil {
-				return usageErr("%w", err)
-			}
-			in.ChannelID = id
 			if in.RunID == "" {
 				in.RunID = ulid.Make().String()
 			}
@@ -73,13 +66,13 @@ background and never blocks the run.`,
 	}
 	f := c.Flags()
 	f.StringVar(&channelFlag, "channel", "", "Slack channel ID or #name to post in (default: the AGENTS.md directive)")
+	f.BoolVar(&dm, "dm", false, "open the run thread in a direct message with the configured owner")
 	f.StringVar(&repo, "repo", "", "repository root holding AGENTS.md (default: git root of the current directory)")
 	f.StringVar(&in.Work, "work", "", "what the run is doing")
 	f.StringVar(&in.Goal, "goal", "", "what done looks like")
 	f.StringVar(&in.Scope, "scope", "", "what the run touches and leaves alone")
 	f.StringArrayVar(&in.Links, "link", nil, "related URL (repeatable)")
 	f.StringVar(&in.RunID, "run-id", "", "run identifier (default: a new ULID)")
-	f.StringVar(&in.JiraIssue, "jira-issue", "", "Jira issue key (PROJ-123) whose configured field receives the thread permalink")
 	return c
 }
 

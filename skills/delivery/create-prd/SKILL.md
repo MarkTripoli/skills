@@ -29,13 +29,13 @@ Read from this skill directory: `references/prd_template.md`, `references/prd_fi
 
 ## Step 1: Understand the context
 
-Locate the task and read `task.md`. Read task/ticket, current `design.discussion` or `research.primary`, current `research.sources`, and user-mentioned files fully. Use summaries from other current indexed artifacts. Exclude research questions. Read the template before writing.
+First, resolve the task directory using the repository-configured task root and read `task.md` per the conventions, creating it from the user's message when none exists. For indexed tasks, read and validate `index.json`; select current artifacts through each canonical series' `current` pointer, never by scanning for the newest file. Read the primary inputs fully: the task or ticket; the current `design.discussion`, or current `research.primary` when no design discussion exists; current `research.sources` when present; and user-mentioned files. For other artifacts, use their index `summary` fields to choose relevant context, opening only those artifacts and reading by heading. Exclude research-question artifacts. Only when `index.json` is genuinely absent, follow the conventions' legacy artifact-selection rules. Read `references/prd_template.md` before writing.
 
 PRD can start from detailed ticket, research, design discussion, gathered sources, or short request. Ground claims in source. Reference upstream artifacts; do not copy. If context is thin, ask questions instead of inventing. Capture product implications of technical constraints; leave implementation for TDD.
 
 ## Converting an existing product document
 
-When the request converts an existing PRD/spec and current `research.sources` (or a named file) holds it, skip the interview and write the PRD in one pass:
+When the request asks to convert, import, adopt, or port an existing PRD, product spec, or brief, and the current `research.sources` artifact (or a file the user names) holds it, skip the interview and write the PRD in one pass:
 
 1. Map the source onto the template: its problem statement and user impact become Problem to Solve; its goals, metrics, or success criteria become Success Measures; its chosen approach becomes Proposed Solution; rejected options become Alternative Solutions Considered; each requirement, user story, flow, or acceptance criterion becomes one Solution Details obligation with an observable outcome; its non-goals become Out of Scope. Beside each mapped statement cite the source as the sources artifact records it: location and pointer.
 2. A template section the source does not cover reads `Not stated in <source title>.` followed by the closest fact the source gives, never an invented one. Each such section, and each source statement too vague to be one obligation, becomes one `### Known limits` item and one `### Verify` box naming the decision the reader must make.

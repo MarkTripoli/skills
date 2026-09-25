@@ -59,6 +59,8 @@
     "./skills/delivery/start-epic-delivery",
     "./skills/delivery/test-app",
     "./skills/delivery/typed-judgment",
-    "./skills/delivery/verify-implementation"
+    "./skills/delivery/verify-implementation",
+    "./skills/delivery/video-iterative-development",
+    "./skills/delivery/video-iterative-orchestration"
   ]
 }

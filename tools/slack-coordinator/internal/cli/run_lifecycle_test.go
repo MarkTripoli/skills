@@ -23,11 +23,14 @@ func TestRunEventAndFinishPostInTheThread(t *testing.T) {
 	if fake.count() != 2 {
 		t.Fatalf("chat.postMessage called %d times after event, want 2", fake.count())
 	}
-	status := fake.posts[1]
-	if status.Get("thread_ts") != "1700000000.000100" || status.Get("channel") != "C0000000001" {
-		t.Fatalf("status not posted as a thread reply: channel=%q thread_ts=%q", status.Get("channel"), status.Get("thread_ts"))
+	if fake.posts[1].Get("text") != "Blocked: review" || fake.posts[1].Get("thread_ts") != "1700000000.000100" || fake.updateCount() != 1 {
+		t.Fatalf("only blocker should post to thread: posts=%v updates=%d", fake.posts, fake.updateCount())
 	}
-	for _, part := range []string{"*Current work:* Wiring flags", "*Completed since last update:*\n• Parsed flag", "*Decisions:*\n• stderr", "*Blockers:*\n• review", "*Up next:*\n• docs"} {
+	status := fake.update(0)
+	if status.Get("ts") != "1700000000.000100" || status.Get("channel") != "C0000000001" {
+		t.Fatalf("status did not edit root: channel=%q ts=%q", status.Get("channel"), status.Get("ts"))
+	}
+	for _, part := range []string{"*Work:* x", "*Current work:* Wiring flags", "*Completed since last update:*\n• Parsed flag", "*Decisions:*\n• stderr", "*Blockers:*\n• review", "*Up next:*\n• docs"} {
 		if !strings.Contains(status.Get("text"), part) {
 			t.Errorf("status text missing %q:\n%s", part, status.Get("text"))
 		}
@@ -50,12 +53,12 @@ func TestRunEventAndFinishPostInTheThread(t *testing.T) {
 	if code != ExitOK || out != "" {
 		t.Fatalf("run finish exit %d, output %q; want 0 and no output", code, out)
 	}
-	if fake.count() != 3 {
-		t.Fatalf("chat.postMessage called %d times after finish, want 3", fake.count())
+	if fake.count() != 2 || fake.updateCount() != 2 {
+		t.Fatalf("completion should edit root: posts=%d edits=%d", fake.count(), fake.updateCount())
 	}
-	completion := fake.posts[2]
-	if completion.Get("thread_ts") != "1700000000.000100" {
-		t.Fatalf("completion not posted as a thread reply: thread_ts=%q", completion.Get("thread_ts"))
+	completion := fake.update(1)
+	if completion.Get("ts") != "1700000000.000100" {
+		t.Fatalf("completion edited wrong message: ts=%q", completion.Get("ts"))
 	}
 	for _, part := range []string{"*Outcome:* completed", "*Completed work:*\n• Added flag", "*Unresolved items:* None", "*Evidence:*\n• go test", "*Links:*\n• https://example.com/pr/1", "*Finished at:* "} {
 		if !strings.Contains(completion.Get("text"), part) {
@@ -69,8 +72,8 @@ func TestRunEventAndFinishPostInTheThread(t *testing.T) {
 	if _, code := runCLI(t, "run", "finish", "--run-id", "RUN1", "--outcome", "failed"); code != ExitUsage {
 		t.Fatalf("second run finish exit %d, want %d", code, ExitUsage)
 	}
-	if fake.count() != 3 {
-		t.Fatalf("terminal run still posted; %d posts", fake.count())
+	if fake.count() != 2 || fake.updateCount() != 2 {
+		t.Fatalf("terminal run still sent messages; %d posts, %d edits", fake.count(), fake.updateCount())
 	}
 
 	stop()

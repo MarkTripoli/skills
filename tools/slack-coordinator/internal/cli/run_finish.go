@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"strings"
+
 	"github.com/spf13/cobra"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/coordinator"
@@ -10,7 +12,7 @@ import (
 func newRunFinish() *cobra.Command {
 	var in coordinator.FinishRunInput
 	c := &cobra.Command{
-		Use:   "finish --run-id <id> --outcome completed|failed|cancelled [--completed <s>]... [--decision <s>]... [--unresolved <s>]... [--evidence <s>]... [--link <url>]...",
+		Use:   "finish --run-id <id> --outcome completed|failed|cancelled [--emoji <name|none>] [--completed <s>]... [--decision <s>]... [--unresolved <s>]... [--evidence <s>]... [--link <url>]...",
 		Short: "Post the completion message and close the run",
 		Long: `Post the completion message and close the run.
 
@@ -23,12 +25,16 @@ calls for the same run are refused.`,
 			default:
 				return usageErr("--outcome must be completed, failed, or cancelled, got %q", in.Outcome)
 			}
+			if cmd.Flags().Changed("emoji") && strings.Trim(strings.TrimSpace(in.Emoji), ":") == "" {
+				return usageErr("--emoji requires a name")
+			}
 			return callRunMethod(ipc.MethodRunFinish, in)
 		},
 	}
 	f := c.Flags()
 	f.StringVar(&in.RunID, "run-id", "", "run identifier printed by run start")
 	f.StringVar(&in.Outcome, "outcome", "", "completed, failed, or cancelled")
+	f.StringVar(&in.Emoji, "emoji", "", "reaction on the main message (none disables it; default depends on outcome)")
 	f.StringArrayVar(&in.Completed, "completed", nil, "work completed (repeatable)")
 	f.StringArrayVar(&in.Decisions, "decision", nil, "decision made (repeatable)")
 	f.StringArrayVar(&in.Unresolved, "unresolved", nil, "item left unresolved (repeatable)")

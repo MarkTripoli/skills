@@ -147,17 +147,18 @@ func Run(ctx context.Context, deps Deps, cp *Checkpoint, cpPath string, flags Fl
 		return runExisting(ctx, deps, cp, cpPath, flags)
 	}
 	st := &state{deps: deps, cp: cp, flags: flags}
-	if cp.Step == 0 || cp.Step >= configStep {
-		cfg, err := deps.LoadConfig()
-		if err != nil {
+	cfg, err := deps.LoadConfig()
+	if err != nil {
+		return err
+	}
+	// A finished setup wins over a checkpoint left by an abandoned onboard.
+	// A mid-walkthrough checkpoint (an app id or a token already stored) still resumes.
+	staleEarly := cp.Step > 0 && cp.Step < configStep && cp.AppID == "" && cp.BotToken == "" && cp.AppToken == ""
+	if cfg != nil && cfg.Slack.BotToken != "" && (cp.Step == 0 || cp.Step >= configStep || staleEarly) {
+		if err := repair(ctx, st, cfg); err != nil {
 			return err
 		}
-		if cfg != nil && cfg.Slack.BotToken != "" {
-			if err := repair(ctx, st, cfg); err != nil {
-				return err
-			}
-			return finish(st, cpPath)
-		}
+		return finish(st, cpPath)
 	}
 	start := cp.Step + 1
 	if start > tokenStep && needsToken(start) {
@@ -185,8 +186,9 @@ func Run(ctx context.Context, deps Deps, cp *Checkpoint, cpPath string, flags Fl
 
 // runExisting implements --existing: updates the installed app's manifest,
 // prompts for a reinstall, optionally replaces the bot token, and runs the
-// verify step. config.yaml must already exist; onboard.json may supply the
-// app id, or the user is prompted for it.
+// verify step. --existing authorizes the manifest replacement; config.yaml
+// must already exist. onboard.json may supply the app id, or the user is
+// prompted for it.
 func runExisting(ctx context.Context, deps Deps, cp *Checkpoint, cpPath string, flags Flags) error {
 	cfg, err := deps.LoadConfig()
 	if err != nil {
@@ -411,8 +413,7 @@ func lookupUser(ctx context.Context, st *state, answer string) (slackapi.User, e
 }
 
 // writeConfigAndStart checks both tokens against Slack, writes config.yaml
-// with the collected slack keys over any existing file (its agent, retention,
-// and jira blocks survive), then installs the user service or, with
+// with the collected slack keys over any existing file (its agent and retention blocks survive), then installs the user service or, with
 // --no-service, starts the daemon detached.
 func writeConfigAndStart(ctx context.Context, st *state) error {
 	d := st.deps

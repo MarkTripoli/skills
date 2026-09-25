@@ -40,7 +40,7 @@ Passing offline contract no claim runtime ready. Old engine fixture no be Atomic
 
 `npm run test:slack-coordinator` is the offline Slack coordinator gate. It runs the Go race tests, `go vet`, and a temporary binary build in `tools/slack-coordinator/` without Slack credentials; inbound Socket Mode events and connection health are exercised through injected events and a fake Slack HTTP server.
 
-Live Slack delivery, Socket Mode inbound replies, launchd or systemd restart after `kill -9`, and Jira field writes are deferred evidence recorded under `.agents/tasks/i-want-new-skill/evidence/`; they gate nothing and need a Slack workspace, a supervising host, or Jira credentials.
+Live Slack delivery, Socket Mode inbound replies, and launchd or systemd restart after `kill -9` are deferred evidence; they require a Slack workspace or a supervising host.
 
 ## Atomic runtime proof
 

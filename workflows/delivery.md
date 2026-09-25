@@ -67,7 +67,7 @@ Pick sequence below. `auto` pick again after each saved result. Explicit workflo
 | `resolve-reviews` | resolve-pr-reviews | Existing task and PR need review feedback handled |
 | `epic-wave` | Recheck existing epic deps and run ready children | Next wave come after prereq merges |
 
-Run `gather-sources` first when request name outside material. Run `record-evidence` when need narrated video proof. Neither need Atomic.
+Run `gather-sources` first when the request names material outside the repository. Run `record-evidence` for narrated proof of an existing behavior. For authenticated end-to-end work spanning an API and its frontend, use `video-iterative-development`; it proves the real contract and user flow in Chrome and Android. Neither skill needs Atomic.
 
 ## Gates and native controls
 
@@ -169,6 +169,8 @@ Artifact type be template frontmatter `type`. Human gates count only when turned
 | fix-bug | fix | no | Bugfix after reproduction |
 | record-evidence | evidence | no | By hand; narrated video proof |
 | iterate-evidence | evidence-iteration | no | Own authorized capture, inspect, repair loop |
+| video-iterative-development | none | no | By hand; authenticated API and frontend delivery with browser and Android evidence |
+| video-iterative-orchestration | none | no | By hand; dependency-aware implementation orchestration with isolated worktrees and delivery gates |
 | deliver | none | no | Own entry point; optional Atomic handoff |
 | configure-model-routing | none | no | By hand or model-invoked; make and check shared candidate profile |
 | herd-next | none | no | By hand inside Herdr; stage next session |

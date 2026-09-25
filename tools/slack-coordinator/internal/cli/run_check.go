@@ -61,9 +61,19 @@ func checkRun(params coordinator.CheckParams) (coordinator.WriteGate, error) {
 	defer client.Close()
 	var gate coordinator.WriteGate
 	if err := client.Call(ipc.MethodRunCheck, params, &gate); err != nil {
-		return coordinator.WriteGate{}, daemonErr(err)
+		return gateCallError(err)
 	}
 	return gate, nil
+}
+
+// gateCallError preserves daemon refusals but reports a lost IPC response as
+// unavailable in the same JSON shape as a disconnected socket.
+func gateCallError(err error) (coordinator.WriteGate, error) {
+	var rpcErr *ipc.RPCError
+	if errors.As(err, &rpcErr) {
+		return coordinator.WriteGate{}, daemonErr(err)
+	}
+	return coordinator.WriteGate{Kind: coordinator.GateUnavailable, Reason: "daemon unreachable: " + err.Error()}, nil
 }
 
 // gateExit maps the gate kind to the process exit code.

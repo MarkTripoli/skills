@@ -28,7 +28,7 @@ Read `references/pr_description_template.md`. Keep body in template. No changelo
 
 ### 2. Identify or create PR
 
-Discover the pull request and diff with git and `gh` (GitHub) or `glab` (GitLab):
+Discover the pull request and diff with `git` and GitHub CLI (`gh`):
 
 ```bash
 git status --short --branch
@@ -37,11 +37,11 @@ git diff --name-status <base>...HEAD
 git diff <base>...HEAD
 ```
 
-On GitLab, `glab mr view` replaces the `gh pr view` line. `<base>` is the existing pull request's base, else `base:` from `task.md` when present, else the repository default branch (`git symbolic-ref --short refs/remotes/origin/HEAD`).
+`<base>` is the existing pull request's base, else `base:` from `task.md` when present, else the repository default branch (`git symbolic-ref --short refs/remotes/origin/HEAD`).
 
-If no PR exists, inspect branch status and committed changes. Commit and push only when required: code commits stage explicit code paths; uncommitted task artifacts go in their own `docs(task): <artifact type> artifact` commit per the conventions' Commits section. Then create the pull request with `gh pr create --title "<title>"` or `glab mr create --title "<title>"`. With neither CLI, print the branch and base for a manual pull request.
+If no PR exists, inspect branch status and committed changes. Commit and push only when required: code commits stage explicit code paths; uncommitted task artifacts go in their own `docs(task): <artifact type> artifact` commit per the conventions' Commits section. Then create the pull request with `gh pr create --title "<title>"`. If `gh` is unavailable or unauthenticated, report the missing prerequisite; do not claim publication.
 
-The title is a Conventional Commits subject under the conventions' rule: `<type>(<scope>): <description>`, lower-case description, no trailing period, at most 72 characters including the type and scope. Write it for the change as a whole, not the first commit. Before creating or retitling, run `node scripts/check-commits.mjs --title "<title>"` when the repository has that script; otherwise count the characters and match the pattern yourself. A title that fails is shortened or rewritten; it is never sent to the host, because the `Commits` check fails the pull request on it.
+The title is a Conventional Commits subject under the conventions' rule: `<type>(<scope>): <description>`, lower-case description, no trailing period, at most 72 characters including the type and scope. Write it for the change as a whole, not the first commit. Before creating or retitling, run `node scripts/check-commits.mjs --title "<title>"` when the repository has that script; otherwise count the characters and match the pattern yourself. A title that fails is shortened or rewritten; it is never sent to GitHub, because the `Commits` check fails the pull request on it.
 
 ### 3. Gather context
 
@@ -74,11 +74,12 @@ Record the body-only description as the next immutable `pull-request.description
 
 Save the file. Commit it with `git add <path>` as `docs(task): pr-description artifact` and push before publishing. Publish:
 
-1. `gh` on PATH, GitHub PR: `gh pr edit <number> --body-file <path>` (new PR: `gh pr create --base <base> --body-file <path>`).
-2. `glab` on PATH, GitLab MR: `glab mr update <number> --description "$(cat <path>)"` (new MR: `glab mr create --target-branch <base> --description "$(cat <path>)"`).
-3. Otherwise: print the branch, base, and description path for a manual pull request.
+Publish with GitHub CLI:
 
-Confirm URL, title, number, base, head. An existing pull request whose title fails the rule above is retitled with `gh pr edit <number> --title "<title>"` (`glab mr update <number> --title "<title>"`).
+1. Existing PR: `gh pr edit <number> --body-file <path>`.
+2. New PR: `gh pr create --base <base> --body-file <path> --title "<title>"`.
+
+Confirm URL, title, number, base, and head. Retitle an existing PR that fails the rule above with `gh pr edit <number> --title "<title>"`.
 
 ### 6. Report
 
@@ -96,4 +97,4 @@ When `pull-request.description` already has a current iteration and feedback arr
 - Reviewable in one pass.
 - Risk before summaries.
 - No filler, slang, unexplained acronyms.
-- Use `gh` for GitHub remotes and `glab` for GitLab remotes; otherwise print the branch and base for a manual pull request.
+- Use `gh` for GitHub remotes; otherwise report the branch, base, and description path for a manual pull request.

@@ -67,6 +67,16 @@ FROM dm_requests WHERE root_ts = ?`, rootTS).Scan(&r.RootTS, &r.ChannelID, &r.Re
 	return r, true, nil
 }
 
+// HasDMMessage reports whether rootTS already has a message stored at ts.
+func (d *DB) HasDMMessage(ctx context.Context, rootTS, ts string) (bool, error) {
+	var n int
+	if err := d.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM dm_messages WHERE root_ts = ? AND ts = ?`, rootTS, ts).Scan(&n); err != nil {
+		return false, fmt.Errorf("has dm message %s/%s: %w", rootTS, ts, err)
+	}
+	return n > 0, nil
+}
+
 // SetAckTS records the ts of the acknowledgement posted under rootTS.
 func (d *DB) SetAckTS(ctx context.Context, rootTS, ackTS string) error {
 	if _, err := d.sql.ExecContext(ctx, `UPDATE dm_requests SET ack_ts = ? WHERE root_ts = ?`, ackTS, rootTS); err != nil {

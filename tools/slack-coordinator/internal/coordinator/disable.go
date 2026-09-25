@@ -10,6 +10,8 @@ import (
 // check answers slack_disabled. Sibling runs are untouched. The CLI collects
 // the typed confirmation before calling this.
 func (c *Coordinator) DisableSlackForRun(ctx context.Context, runID string) error {
+	c.statusMu.Lock()
+	defer c.statusMu.Unlock()
 	if runID == "" {
 		return errors.New("run_id is required")
 	}

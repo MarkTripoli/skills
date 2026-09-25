@@ -79,4 +79,4 @@ API routes, RPC handlers, middleware, validation, error branches; data stores, q
 
 Include multiple examples when codebase has them. Include tests. Mark examples as generated, deprecated, or experimental only when repository makes clear. Distinguish observed variation from recommendation. Keep scoped to assignment. Cite line ranges.
 
-Do not recommend one example over another; omit test patterns; include large file dumps; identify anti-patterns; judge style or quality; propose future implementation; create, edit, delete, stage, or commit.
+Do not recommend one example over another; include large file dumps; identify anti-patterns; judge style or quality; propose future implementation; create, edit, delete, stage, or commit.

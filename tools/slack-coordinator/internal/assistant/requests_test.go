@@ -62,6 +62,15 @@ func (f *fakeSlack) PostMessage(_ context.Context, channelID, threadTS, text str
 	return fmt.Sprintf("1700000000.%06d", 900000+len(f.posts)), nil
 }
 
+func (f *fakeSlack) PostBlocksMessage(ctx context.Context, channelID, threadTS, fallback string, _ []slack.Block) (string, error) {
+	return f.PostMessage(ctx, channelID, threadTS, fallback)
+}
+
+func (f *fakeSlack) UpdateBlocksMessage(ctx context.Context, channelID, ts, text string, _ []slack.Block) error {
+	_, err := f.UpdateMessage(ctx, channelID, ts, text)
+	return err
+}
+
 func (f *fakeSlack) UpdateMessage(_ context.Context, channelID, ts, text string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -286,7 +295,7 @@ func TestOwnerReplyUnderRequestIsRecordedAsFollowUp(t *testing.T) {
 
 func TestNonOwnerDMIsRefusedOnceThenDropped(t *testing.T) {
 	s, slack, clock := newTestService(t)
-	const refusal = "This assistant only takes instructions from its owner, <@U1>."
+	const refusal = "This assistant only takes instructions from the member named by slack.owner_user_id (<@U1>). That is a member ID, not the person who created the Slack app."
 
 	routeDMEvent(t, s, dm("U2", "1700000000.001000", "", "hello?"))
 	clock.at = clock.at.Add(time.Minute)

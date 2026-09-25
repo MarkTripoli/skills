@@ -17,7 +17,7 @@ const rootIndex = args.indexOf("--root");
 const root = rootIndex === -1 ? repoRoot : path.resolve(args[rootIndex + 1] ?? "");
 const generated = root !== repoRoot;
 
-const EXPECTED_SKILL_COUNT = 48;
+const EXPECTED_SKILL_COUNT = 51;
 const SHARED_LINKS = {
   "shared/WRITING.md": "https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md",
   "shared/CONVENTIONS.md": "https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md",
@@ -325,6 +325,9 @@ for (const name of skillNames) {
 
   for (const match of content.matchAll(/references\/([A-Za-z0-9_.-]+)/g)) {
     const fileName = match[1].replace(/\.+$/, "");
+    const linkStart = content.lastIndexOf("](", match.index);
+    const linkEnd = linkStart === -1 ? -1 : content.indexOf(")", linkStart);
+    if (linkEnd >= match.index && /^https?:\/\//i.test(content.slice(linkStart + 2, linkEnd))) continue;
     const referenced = path.join(skillDirs.get(name), "references", fileName);
     if (!fs.existsSync(referenced)) {
       const line = content.slice(0, match.index).split("\n").length;

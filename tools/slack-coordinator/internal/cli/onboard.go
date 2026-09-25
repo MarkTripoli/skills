@@ -60,8 +60,8 @@ func newOnboard() *cobra.Command {
 embedded manifest with an app configuration token, opens the install page for
 the bot token, opens Basic Information for the app-level token, resolves the
 owner by email or user id, checks both tokens against Slack, writes
-$SLACK_COORDINATOR_HOME/config.yaml (mode 0600, keeping any agent, retention,
-and jira settings already there), installs the launchd or systemd user
+$SLACK_COORDINATOR_HOME/config.yaml (mode 0600, keeping any agent and
+retention settings already there), installs the launchd or systemd user
 service, then has the bot DM the owner and waits up to two minutes for the
 reply. Progress is checkpointed in $SLACK_COORDINATOR_HOME/onboard.json
 (mode 0600) after every step, so an interrupted run resumes where it stopped;

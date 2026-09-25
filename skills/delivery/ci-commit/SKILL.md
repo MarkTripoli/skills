@@ -13,7 +13,7 @@ Create commits for completed work. Every message is a Conventional Commit per th
 
 ### 1. Locate the task
 
-Locate the task and read `task.md`; use its slug and current `index.json` to allocate any receipt. Read only files needed for the work.
+Locate the task directory and read `task.md` per the conventions, creating the task worktree and task record when none matches the request. Use its slug and current `index.json` to allocate any receipt. Read only files needed for the work.
 
 ### 2. Review changes
 

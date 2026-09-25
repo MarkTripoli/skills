@@ -203,7 +203,7 @@ func (s *Server) dispatch(ctx context.Context, req Request) *Response {
 // polls and gate checks do not amplify the daemon log.
 func readOnlyMethod(method string) bool {
 	switch method {
-	case MethodDaemonHealth, MethodRunCheck:
+	case MethodDaemonHealth, MethodRunCheck, MethodRunWait:
 		return true
 	default:
 		return false

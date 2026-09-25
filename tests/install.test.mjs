@@ -36,6 +36,22 @@ function put(file, content) {
   fs.writeFileSync(file, content);
 }
 
+test("skill validator ignores external reference URLs but rejects missing local references", () => {
+  const root = tmpdir("skills-validator-test-");
+  fs.cpSync(path.join(REPO, "skills"), path.join(root, "skills"), { recursive: true });
+  const validator = path.join(REPO, "scripts", "validate.mjs");
+  const validate = () => spawnSync(process.execPath, [validator, "--root", root], { encoding: "utf8" });
+
+  const externalReference = validate();
+  assert.doesNotMatch(externalReference.stderr, /references\/commands\.md does not exist/);
+
+  const skillFile = path.join(root, "skills", "delivery", "agent-slack-control-plane", "SKILL.md");
+  fs.appendFileSync(skillFile, "\n[missing local reference](references/not-present.md)\n");
+  const missingLocalReference = validate();
+  assert.equal(missingLocalReference.status, 1);
+  assert.match(missingLocalReference.stderr, /references\/not-present\.md does not exist/);
+});
+
 test("detectTargets falls back to portable when no runtime binary is on PATH", () => {
   const bin = tmpdir();
   assert.deepEqual(detectTargets({ PATH: bin }), ["portable"]);
@@ -285,4 +301,45 @@ test("selected jev-ui installs as a portable consumer outside the repository", a
   assert.ok(fs.existsSync(path.join(skillDir, "typed-judgment", "SKILL.md")));
   assert.ok(fs.existsSync(path.join(skillDir, "record-evidence", "SKILL.md")));
   assert.equal(fs.existsSync(installed), false);
+});
+for (const project of [false, true]) {
+  test(`selected iterate-evidence preserves dependency ownership in ${project ? "project" : "home"} installs`, () => {
+    const home = tmpdir("iterate-evidence-home-");
+    const cwd = tmpdir("iterate-evidence-project-");
+    const options = { targets: ["oh-my-pi"], skillNames: ["iterate-evidence"], project, cwd, home, env };
+    const skillDir = destinations("oh-my-pi", options).skills;
+    const foreign = path.join(skillDir, "foreign", "sentinel");
+    const task = path.join(cwd, ".agents", "tasks", "existing", "task.md");
+    put(foreign, "unrelated resource\n");
+    put(task, "existing task\n");
+
+    const installed = install(options);
+    assert.ok(fs.existsSync(path.join(skillDir, "iterate-evidence", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(skillDir, "record-evidence", "SKILL.md")));
+    const recorder = fs.readFileSync(path.join(skillDir, "record-evidence", "SKILL.md"));
+    uninstall(installed, home);
+
+    assert.equal(fs.existsSync(path.join(skillDir, "iterate-evidence")), false);
+    assert.deepEqual(fs.readFileSync(path.join(skillDir, "record-evidence", "SKILL.md")), recorder);
+    assert.equal(fs.readFileSync(foreign, "utf8"), "unrelated resource\n");
+    assert.equal(fs.readFileSync(task, "utf8"), "existing task\n");
+  });
+}
+
+test("video skills install by their canonical names without enabling workflow orchestration", () => {
+  const home = tmpdir("video-skills-install-");
+  const skillNames = ["video-iterative-development", "video-iterative-orchestration"];
+  const skillDir = destinations("portable", { home, env }).skills;
+  const foreign = path.join(skillDir, "foreign", "sentinel");
+  put(foreign, "keep unrelated resource\n");
+
+  const planned = install({ targets: ["portable"], skillNames, cwd: home, home, env });
+  assert.deepEqual(planned.names, skillNames);
+  for (const name of skillNames) assert.ok(fs.existsSync(path.join(skillDir, name, "SKILL.md")));
+  assert.equal(fs.existsSync(path.join(home, ".atomic")), false);
+  assert.equal(fs.readFileSync(foreign, "utf8"), "keep unrelated resource\n");
+
+  uninstall(planned, home);
+  for (const name of skillNames) assert.equal(fs.existsSync(path.join(skillDir, name)), false);
+  assert.equal(fs.readFileSync(foreign, "utf8"), "keep unrelated resource\n");
 });

@@ -23,18 +23,24 @@ const noAgentReply = "No agent is configured; set agent.command in config.yaml"
 // arrives with that many running is acknowledged as queued.
 const maxRunningRuns = 3
 
-// newRequest records the owner's top-level DM msg as a request with one queued
-// run, then acknowledges it in the message's thread: an `eyes` reaction plus
-// `Working on it` or `Queued behind <n>`. A redelivered envelope, whose root
-// is already stored, changes nothing and posts nothing. Without a configured
-// agent the DM is refused in its thread and no row is written.
+// newRequest records msg as a request with one queued run, then acknowledges
+// it in the thread: an `eyes` reaction on msg plus `Working on it` or
+// `Queued behind <n>`. The request is keyed by msg's thread_ts when that is
+// set (a channel @mention inside an existing thread) and by msg's own ts
+// otherwise (a top-level DM or a top-level channel @mention). A redelivered
+// envelope, whose root is already stored, changes nothing and posts nothing.
+// Without a configured agent the message is refused in its thread and no row
+// is written.
 func (s *Service) newRequest(ctx context.Context, msg *slackevents.MessageEvent) error {
+	rootTS := msg.TimeStamp
+	if msg.ThreadTimeStamp != "" {
+		rootTS = msg.ThreadTimeStamp
+	}
 	if s.Agent == nil {
-		_, err := s.Slack.PostMessage(ctx, msg.Channel, msg.TimeStamp, noAgentReply)
+		_, err := s.Slack.PostMessage(ctx, msg.Channel, rootTS, noAgentReply)
 		return err
 	}
 	now := stamp(s.Now())
-	rootTS := msg.TimeStamp
 	inserted := false
 	err := s.DB.Transact(ctx, func(tx *db.DB) error {
 		var err error
@@ -42,7 +48,7 @@ func (s *Service) newRequest(ctx context.Context, msg *slackevents.MessageEvent)
 		if err != nil || !inserted {
 			return err
 		}
-		if err := tx.InsertDMMessage(ctx, db.DMMessage{RootTS: rootTS, TS: rootTS, Author: db.AuthorOwner, Text: msg.Text}); err != nil {
+		if err := tx.InsertDMMessage(ctx, db.DMMessage{RootTS: rootTS, TS: msg.TimeStamp, Author: db.AuthorOwner, Text: msg.Text}); err != nil {
 			return err
 		}
 		return tx.InsertAssistantRun(ctx, db.AssistantRun{
@@ -59,7 +65,7 @@ func (s *Service) newRequest(ctx context.Context, msg *slackevents.MessageEvent)
 	// The run is queued whatever Slack does next; the runner must hear of it.
 	defer s.signalWake()
 
-	reacted := s.Slack.AddReaction(ctx, msg.Channel, rootTS, "eyes")
+	reacted := s.Slack.AddReaction(ctx, msg.Channel, msg.TimeStamp, "eyes")
 	ack, err := s.ackText(ctx, now)
 	if err != nil {
 		return errors.Join(reacted, err)

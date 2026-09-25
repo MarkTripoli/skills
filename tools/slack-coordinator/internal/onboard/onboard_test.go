@@ -237,7 +237,7 @@ func tokensStep4() *Checkpoint {
 // state a completed step 6 leaves behind.
 func existingSetup(t *testing.T, s *script) {
 	t.Helper()
-	existing := "agent:\n  command: omp\n  extra_dirs:\n    - /srv/repos\nslack:\n  bot_token: xoxb-old\n  app_token: xapp-old\n  owner_user_id: " + ada.ID + "\n"
+	existing := "agent:\n  command: pi\n  extra_dirs:\n    - /srv/repos\nslack:\n  bot_token: xoxb-old\n  app_token: xapp-old\n  owner_user_id: " + ada.ID + "\n"
 	if err := os.WriteFile(s.configPath, []byte(existing), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -298,6 +298,7 @@ func TestFreshRunCompletesSevenStepsAndInstallsTheService(t *testing.T) {
 	}
 	if got := strings.Join(s.lookupTokens, ","); got != "xoxb-bot" || s.lookupEmails[0] != "ada@example.com" || len(s.infoIDs) != 0 {
 		t.Fatalf("lookupByEmail tokens %v emails %v, users.info ids %v; want one lookup with the bot token", s.lookupTokens, s.lookupEmails, s.infoIDs)
+
 	}
 	if !strings.Contains(strings.Join(s.prompts, "\n"), "Owner: ada (U0000000001). Correct? [Y/n]") {
 		t.Fatalf("prompts %q lack the owner confirmation", s.prompts)
@@ -392,7 +393,7 @@ func TestDecliningTheOwnerReprompts(t *testing.T) {
 
 func TestMidWalkthroughResumeKeepsAnExistingAgentBlock(t *testing.T) {
 	s := newScript(t, ada.ID, "")
-	existing := "agent:\n  command: omp\n  extra_dirs:\n    - /srv/repos\nretention:\n  days: 90\n  consumed_days: 3\nslack:\n  bot_token: xoxb-old\n  app_token: xapp-old\n  owner_user_id: U0LD\n"
+	existing := "agent:\n  command: pi\n  extra_dirs:\n    - /srv/repos\nretention:\n  days: 90\n  consumed_days: 3\nslack:\n  bot_token: xoxb-old\n  app_token: xapp-old\n  owner_user_id: U0LD\n"
 	if err := os.WriteFile(s.configPath, []byte(existing), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +407,7 @@ func TestMidWalkthroughResumeKeepsAnExistingAgentBlock(t *testing.T) {
 	if cfg.Slack.BotToken != "xoxb-bot" || cfg.Slack.AppToken != "xapp-app" || cfg.Slack.OwnerUserID != ada.ID {
 		t.Fatalf("slack = %+v, want the pasted tokens and the resolved owner", cfg.Slack)
 	}
-	if cfg.Agent == nil || cfg.Agent.Command != "omp" || len(cfg.Agent.ExtraDirs) != 1 || cfg.Agent.ExtraDirs[0] != "/srv/repos" {
+	if cfg.Agent == nil || cfg.Agent.Command != "pi" || len(cfg.Agent.ExtraDirs) != 1 || cfg.Agent.ExtraDirs[0] != "/srv/repos" {
 		t.Fatalf("agent = %+v, want the pre-existing block", cfg.Agent)
 	}
 	if cfg.Retention.Days != 90 || cfg.Retention.ConsumedDays != 3 {
@@ -521,7 +522,7 @@ func TestRepairReplacesOneTokenAndRestartsTheDaemon(t *testing.T) {
 	if cfg.Slack.BotToken != "xoxb-new" || cfg.Slack.AppToken != "xapp-old" || cfg.Slack.OwnerUserID != ada.ID {
 		t.Fatalf("slack = %+v, want only the bot token replaced", cfg.Slack)
 	}
-	if cfg.Agent == nil || cfg.Agent.Command != "omp" {
+	if cfg.Agent == nil || cfg.Agent.Command != "pi" {
 		t.Fatalf("agent = %+v, want the pre-existing block", cfg.Agent)
 	}
 	if s.createCalls != 0 || s.restartCalls != 1 || s.installCalls != 0 {
@@ -732,7 +733,7 @@ func TestExistingBotTokenReplacesOnlyBotTokenAndKeepsOtherKeys(t *testing.T) {
 	if cfg.Slack.AppToken != "xapp-old" {
 		t.Fatalf("app_token = %q; want xapp-old (preserved)", cfg.Slack.AppToken)
 	}
-	if cfg.Agent == nil || cfg.Agent.Command != "omp" {
+	if cfg.Agent == nil || cfg.Agent.Command != "pi" || len(cfg.Agent.ExtraDirs) != 1 || cfg.Agent.ExtraDirs[0] != "/srv/repos" {
 		t.Fatalf("agent block not preserved: %+v", cfg.Agent)
 	}
 }

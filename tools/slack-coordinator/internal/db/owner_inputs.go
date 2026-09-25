@@ -51,7 +51,7 @@ VALUES (?, ?, ?, ?)`, in.RunID, in.MessageTS, in.Text, in.ReceivedAt)
 func (d *DB) OldestUnhandledInput(ctx context.Context, runID string) (OwnerInput, bool, error) {
 	in, err := scanOwnerInput(d.sql.QueryRowContext(ctx, `
 SELECT `+ownerInputColumns+` FROM owner_inputs
-WHERE run_id = ? AND handled_at IS NULL
+WHERE run_id = ? AND handled_at IS NULL AND claimed_at IS NULL
 ORDER BY message_ts LIMIT 1`, runID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return OwnerInput{}, false, nil
@@ -67,7 +67,7 @@ ORDER BY message_ts LIMIT 1`, runID))
 func (d *DB) PendingOwnerInput(ctx context.Context, runID, messageTS string) (OwnerInput, error) {
 	in, err := scanOwnerInput(d.sql.QueryRowContext(ctx, `
 SELECT `+ownerInputColumns+` FROM owner_inputs
-WHERE run_id = ? AND message_ts = ? AND handled_at IS NULL`, runID, messageTS))
+WHERE run_id = ? AND message_ts = ? AND handled_at IS NULL AND claimed_at IS NULL`, runID, messageTS))
 	if errors.Is(err, sql.ErrNoRows) {
 		return OwnerInput{}, fmt.Errorf("%w: %s/%s", ErrOwnerInputNotPending, runID, messageTS)
 	}
@@ -81,13 +81,56 @@ WHERE run_id = ? AND message_ts = ? AND handled_at IS NULL`, runID, messageTS))
 // that is missing or already handled fails with ErrOwnerInputNotPending.
 func (d *DB) ResolveOwnerInput(ctx context.Context, runID, messageTS, outcome, handledAt string) error {
 	res, err := d.sql.ExecContext(ctx, `
-UPDATE owner_inputs SET handled_at = ?, outcome = ?
-WHERE run_id = ? AND message_ts = ? AND handled_at IS NULL`, handledAt, outcome, runID, messageTS)
+UPDATE owner_inputs SET handled_at = ?, outcome = ?, claimed_at = NULL
+WHERE run_id = ? AND message_ts = ? AND handled_at IS NULL AND claimed_at IS NOT NULL`, handledAt, outcome, runID, messageTS)
 	if err != nil {
 		return fmt.Errorf("resolve owner input %s/%s: %w", runID, messageTS, err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return fmt.Errorf("%w: %s/%s", ErrOwnerInputNotPending, runID, messageTS)
+	}
+	return nil
+}
+
+// ClaimOwnerInput atomically reserves an unhandled input before posting its answer.
+func (d *DB) ClaimOwnerInput(ctx context.Context, runID, messageTS, claimedAt string) (bool, error) {
+	res, err := d.sql.ExecContext(ctx, `
+UPDATE owner_inputs SET claimed_at = ?
+WHERE run_id = ? AND message_ts = ? AND handled_at IS NULL AND claimed_at IS NULL`,
+		claimedAt, runID, messageTS)
+	if err != nil {
+		return false, fmt.Errorf("claim owner input %s/%s: %w", runID, messageTS, err)
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// ClaimedOwnerInput identifies an unresolved answer whose Slack delivery needs
+// reconciliation. Do not offer later inputs to the agent while one is claimed.
+func (d *DB) ClaimedOwnerInput(ctx context.Context, runID string) (string, error) {
+	var messageTS string
+	err := d.sql.QueryRowContext(ctx, `
+SELECT message_ts FROM owner_inputs
+WHERE run_id = ? AND handled_at IS NULL AND claimed_at IS NOT NULL
+ORDER BY message_ts LIMIT 1`, runID).Scan(&messageTS)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("claimed owner input %s: %w", runID, err)
+	}
+	return messageTS, nil
+}
+
+// ReleaseOwnerInput permits a retry only after Slack explicitly rejected the
+// post. The claim timestamp prevents releasing a different attempt's claim.
+func (d *DB) ReleaseOwnerInput(ctx context.Context, runID, messageTS, claimedAt string) error {
+	_, err := d.sql.ExecContext(ctx, `
+UPDATE owner_inputs SET claimed_at = NULL
+WHERE run_id = ? AND message_ts = ? AND claimed_at = ? AND handled_at IS NULL`,
+		runID, messageTS, claimedAt)
+	if err != nil {
+		return fmt.Errorf("release owner input %s/%s: %w", runID, messageTS, err)
 	}
 	return nil
 }

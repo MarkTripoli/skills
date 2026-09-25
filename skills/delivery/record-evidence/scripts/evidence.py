@@ -16,6 +16,7 @@ import datetime as _dt
 import hashlib
 import json
 import os
+import math
 import re
 import shutil
 import signal
@@ -29,7 +30,7 @@ IS_MAC = sys.platform == "darwin"
 
 MAX_ANNOTATION = 80
 MAX_NARRATION = 280
-DEFAULT_CARD_SECONDS = 4.0
+DEFAULT_CARD_SECONDS = 2.5
 DEFAULT_TOAST_SECONDS = 5.0
 FPS = 30
 PAD_COLOR = "0x101014"
@@ -655,7 +656,7 @@ def judge_tests(events):
 def tally(events, upto=None):
     counts = {"passed": 0, "failed": 0, "untested": 0}
     for ev in events:
-        if ev["type"] == "assertion" and (upto is None or ev["video_t"] <= upto):
+        if ev["type"] == "assertion" and ev.get("overlay", True) and (upto is None or ev["video_t"] <= upto):
             counts[ev["result"]] = counts.get(ev["result"], 0) + 1
     return counts
 
@@ -703,9 +704,10 @@ class OverlayRenderer:
         pts = {0.0, cfg["card"], cfg["card"] + cfg["dur"], self.total}
         for pane in cfg["panes"]:
             for ev in pane["events"]:
-                pts.add(ev["video_t"])
-                if ev["type"] in ("assertion", "setup"):
-                    pts.add(ev["video_t"] + cfg["toast"])
+                if ev.get("overlay", True):
+                    pts.add(ev["video_t"])
+                    if ev["type"] in ("assertion", "setup"):
+                        pts.add(ev["video_t"] + cfg["toast"])
         for ev in cfg["narration"]:
             pts.add(ev["video_t"])
             if ev.get("hold"):
@@ -734,6 +736,8 @@ class OverlayRenderer:
             test_idx, test_msg, toast = 0, None, None
             total_tests = sum(1 for e in pane["events"] if e["type"] == "test_start")
             for ev in pane["events"]:
+                if not ev.get("overlay", True):
+                    continue
                 if ev["video_t"] > t:
                     break
                 if ev["type"] == "test_start":
@@ -741,10 +745,10 @@ class OverlayRenderer:
                     test_msg = ev["message"]
                 elif ev["type"] in ("assertion", "setup"):
                     toast = (ev["type"], ev.get("result") or "setup", ev["message"]) if t < ev["video_t"] + cfg["toast"] else None
-            log = [(e["result"], e["message"]) for e in pane["events"] if e["type"] == "assertion" and e["video_t"] <= t][-8:]
+            log = [(e["result"], e["message"]) for e in pane["events"] if e["type"] == "assertion" and e.get("overlay", True) and e["video_t"] <= t][-8:]
             panes.append({"test": (test_idx, total_tests, test_msg) if test_msg else None, "toast": toast,
                           "tally": tally(pane["events"], t), "log": log,
-                          "seen": any(e["type"] == "assertion" and e["video_t"] <= t for e in pane["events"])})
+                          "seen": any(e["type"] == "assertion" and e.get("overlay", True) and e["video_t"] <= t for e in pane["events"])})
         return {"card": None, "narration": narr, "panes": panes}
 
     def build(self):
@@ -1781,14 +1785,29 @@ def meta_lines(sess):
     return lines
 
 
+def finite_epoch(value):
+    try:
+        epoch = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a finite epoch timestamp") from exc
+    if not math.isfinite(epoch):
+        raise argparse.ArgumentTypeError("must be a finite epoch timestamp")
+    return epoch
+
 def prepare_events(events, offset, dur, card):
-    """Apply the start-latency offset and the title-card shift. Returns new list with video_t."""
+    """Keep source times; map only in-range events to renderable footage positions."""
     out = []
     for ev in events:
-        adjusted = min(max(0.0, ev["t"] - offset), max(0.0, dur - 0.05))
+        raw_position = ev["t"] - offset
+        in_range = 0.0 <= raw_position <= dur
+        adjusted = min(max(0.0, raw_position), max(0.0, dur - 0.05))
         item = dict(ev)
         item["adjusted_t"] = round(adjusted, 3)
         item["video_t"] = round(adjusted + card, 3)
+        if not in_range:
+            item["timing_status"] = "outside_approximate_media_mapping"
+            item["timing_uncertainty"] = "command-boundary marker is approximate; actual first encoded frame time is unknown"
+            item["overlay"] = False
         out.append(item)
     return out
 
@@ -1859,8 +1878,8 @@ def finalize_session(sess, sp, opts, exit_info, warnings, video_override=None, v
     if sess["source"] == "external":
         marker_file = sp["dir"] / "video-started-at"
         started_marker = None
-        if video_started_at:
-            started_marker = float(video_started_at)
+        if video_started_at is not None and video_started_at > 0:
+            started_marker = video_started_at
         elif marker_file.exists():
             try:
                 started_marker = float(marker_file.read_text().strip())
@@ -1982,6 +2001,7 @@ def finalize_session(sess, sp, opts, exit_info, warnings, video_override=None, v
         "ended_at": ended_at,
         "stopped_at": stopped_at,
         "video_started_at": sess["started_at"] + offset,
+        "video_start_reference": ({"epoch": video_started_at, "meaning": "approximate external record-start command boundary; not first encoded frame"} if sess["source"] == "external" and video_started_at is not None else None),
         "wall_seconds": round(wall, 3),
         "raw": {"files": files, "duration": round(dur, 3), "effective_duration": round(effective_dur, 3),
                 "width": probe["width"], "height": probe["height"], "codec": probe["codec"]},
@@ -2039,7 +2059,10 @@ def write_report(path, m, caveats=None):
     lines.append("- Video: `%s` (%sx%s, %s, %.1f MB, %s)" % (
         Path(m["video"]).name, vp.get("width"), vp.get("height"), mmss(vp.get("duration") or 0),
         (vp.get("size") or 0) / 1e6, "verified" if m["verified"] else "NOT VERIFIED"))
-    lines += ["", "## Tests", "", "| Time | Pane | Test | Assertion | Result |", "|---|---|---|---|---|"]
+    reference = m.get("video_start_reference")
+    if reference:
+        lines.append("- Video start timing: approximate record-start command boundary; actual first encoded frame time is unknown.")
+    lines += ["", "## Tests", "", "| Time | Pane | Test | Assertion | Result | Timing |", "|---|---|---|---|---|---|"]
     rows = []
     panes = m["panes"] if m["kind"] == "composite" else [{"label": m.get("label") or "", "events": m["events"]}]
     for pane in panes:
@@ -2047,19 +2070,21 @@ def write_report(path, m, caveats=None):
         for ev in pane["events"]:
             if ev["type"] == "test_start":
                 current = ev["message"]
-                rows.append((ev["video_t"], pane["label"] or "", current, "", "started"))
+                rows.append((ev["video_t"], pane["label"] or "", current, "", "started", ev.get("timing_status", "mapped"), ev.get("t")))
             elif ev["type"] == "assertion":
-                rows.append((ev["video_t"], pane["label"] or "", current, ev["message"], ev["result"]))
+                rows.append((ev["video_t"], pane["label"] or "", current, ev["message"], ev["result"], ev.get("timing_status", "mapped"), ev.get("t")))
             elif ev["type"] == "setup":
-                rows.append((ev["video_t"], pane["label"] or "", current, ev["message"], "setup"))
-    for t, label, test, assertion, result in sorted(rows, key=lambda r: r[0]):
-        lines.append("| %s | %s | %s | %s | %s |" % (mmss(t), label, test, assertion, result))
+                rows.append((ev["video_t"], pane["label"] or "", current, ev["message"], "setup", ev.get("timing_status", "mapped"), ev.get("t")))
+    for t, label, test, assertion, result, timing_status, source_t in sorted(rows, key=lambda r: r[0]):
+        time_label = "source %s" % mmss(source_t) if timing_status != "mapped" and source_t is not None else mmss(t)
+        lines.append("| %s | %s | %s | %s | %s | %s |" % (time_label, label, test, assertion, result, timing_status))
     narration = [e for e in (m["events"] if m["kind"] == "session" else m["narration"]) if e["type"] == "narration"]
     lines += ["", "## Narration", ""]
     if narration:
         lines += ["| Time | Text |", "|---|---|"]
         for ev in narration:
-            lines.append("| %s | %s |" % (mmss(ev["video_t"]), ev["message"]))
+            time_label = "source %s" % mmss(ev["t"]) if ev.get("timing_status") != "mapped" else mmss(ev["video_t"])
+            lines.append("| %s | %s |" % (time_label, ev["message"]))
     else:
         lines.append("None.")
     lines += ["", "## Notes", ""]
@@ -2341,6 +2366,8 @@ def cmd_compose(args):
         for m, delta, label in zip(manifests, deltas, labels):
             for ev in m["events"]:
                 if ev["type"] == "narration":
+                    if not ev.get("overlay", True):
+                        continue
                     item = dict(ev)
                     item["video_t"] = round(ev["adjusted_t"] + delta + card, 3)
                     item["pane"] = label
@@ -2546,8 +2573,8 @@ def build_parser():
     st.add_argument("--video", default=None, help="external source: the recorded browser video to import")
     st.add_argument("--video-offset", type=float, default=0.0, help="external: seconds the video started after `start`")
     st.add_argument("--align", default="start", choices=["start", "end"], help="external: align the video to session start or stop")
-    st.add_argument("--video-started-at", type=float, default=None,
-                    help="external: epoch seconds when the video began (the recording script can also write it to <session>/video-started-at)")
+    st.add_argument("--video-started-at", type=finite_epoch, default=None,
+                    help="external: approximate epoch seconds at the record-start command boundary, not first-frame time")
     st.add_argument("--caveats", default=None, help="text for the Caveats section of report.md")
     st.add_argument("--timeout", type=float, default=90.0, help="seconds to wait for the recorder to flush")
     st.add_argument("--accept-untracked-recorder", action="store_true")

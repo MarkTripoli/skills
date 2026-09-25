@@ -20,7 +20,6 @@ import (
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/coordinator"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/ipc"
-	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/jira"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/paths"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/slackapi"
 )
@@ -86,11 +85,11 @@ type Runtime struct {
 
 // Options tunes a daemon.
 type Options struct {
-	// StatusInterval is the quiet interval after which an active run reposts
-	// its last status. Zero means DefaultStatusInterval.
+	// StatusInterval is retained for older CLI invocations but does not
+	// schedule status posts. Root edits replace periodic thread replies.
 	StatusInterval time.Duration
-	// SchedulerPeriod is how often the daemon looks for due status reposts and
-	// failed posts to retry. Zero means DefaultSchedulerPeriod.
+	// SchedulerPeriod is how often the daemon retries failed root edits.
+	// Zero means DefaultSchedulerPeriod.
 	SchedulerPeriod time.Duration
 	// DispatcherPeriod is how often the daemon looks for queued assistant runs
 	// to spawn, beyond the wake a new request sends. Zero means
@@ -107,7 +106,7 @@ type Options struct {
 	Acker   coordinator.Acker
 }
 
-// DefaultStatusInterval is the quiet interval when Options leaves it unset.
+// DefaultStatusInterval is retained for CLI compatibility; status reposts are disabled.
 const DefaultStatusInterval = time.Hour
 
 // DefaultSchedulerPeriod is how often the daemon ticks the status scheduler
@@ -149,10 +148,6 @@ func Serve(ctx context.Context, p *paths.Paths, cfg *config.Config, opts Options
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	quiet := opts.StatusInterval
-	if quiet <= 0 {
-		quiet = DefaultStatusInterval
-	}
 	period := opts.SchedulerPeriod
 	if period <= 0 {
 		period = DefaultSchedulerPeriod
@@ -169,12 +164,7 @@ func Serve(ctx context.Context, p *paths.Paths, cfg *config.Config, opts Options
 		socketHealth = socket.Health
 		inbound, acker = socket.Inbound(), socket
 	}
-	coord := &coordinator.Coordinator{DB: rt.DB, Slack: rt.Slack, Now: time.Now, OwnerUserID: cfg.Slack.OwnerUserID, Quiet: quiet, Health: socketHealth}
-	if cfg.JiraEnabled() {
-		if coord.Jira, err = jira.New(*cfg.Jira); err != nil {
-			return err
-		}
-	}
+	coord := &coordinator.Coordinator{DB: rt.DB, Slack: rt.Slack, Content: rt.Slack, Now: time.Now, OwnerUserID: cfg.Slack.OwnerUserID, Health: socketHealth}
 	svc := assistant.New(rt.DB, rt.Slack, coord, p, cfg.Slack.OwnerUserID, cfg.Agent, time.Now)
 	svc.Retention = cfg.Retention
 	if cfg.AgentEnabled() {

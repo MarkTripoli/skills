@@ -45,7 +45,7 @@ type RunOutcome struct {
 type ErrBinaryMissing struct{ Name string }
 
 func (e ErrBinaryMissing) Error() string {
-	return fmt.Sprintf("agent binary %q not found on PATH", e.Name)
+	return fmt.Sprintf("agent binary %q not found on PATH; set agent.bin to its absolute path, or rerun `slack-coordinator service install` from a shell where `command -v %s` succeeds", e.Name, e.Name)
 }
 
 // stderrTailLines is how many trailing stderr lines an outcome keeps.
@@ -63,9 +63,15 @@ type runner struct{ adapter Adapter }
 // returns ErrBinaryMissing before touching the file system when PATH lacks
 // the command.
 func (r runner) Start(ctx context.Context, spec RunSpec) (*Handle, error) {
-	bin, err := exec.LookPath(r.adapter.Command())
-	if err != nil {
-		return nil, ErrBinaryMissing{Name: r.adapter.Command()}
+	bin := spec.Bin
+	if bin == "" {
+		var err error
+		bin, err = exec.LookPath(r.adapter.Command())
+		if err != nil {
+			return nil, ErrBinaryMissing{Name: r.adapter.Command()}
+		}
+	} else if _, err := os.Stat(bin); err != nil {
+		return nil, ErrBinaryMissing{Name: spec.Bin}
 	}
 	if err := Create(spec.RunDir); err != nil {
 		return nil, fmt.Errorf("create run dir: %w", err)
@@ -190,7 +196,7 @@ func scrubEnv(env []string) []string {
 	for _, kv := range env {
 		name, _, _ := strings.Cut(kv, "=")
 		switch name {
-		case "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "JIRA_API_TOKEN", "SLACK_COORDINATOR_HOME":
+		case "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_COORDINATOR_HOME":
 			continue
 		}
 		out = append(out, kv)

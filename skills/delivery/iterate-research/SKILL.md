@@ -11,7 +11,7 @@ Revise an existing research document. Keep it as current-state technical explana
 
 ## Input
 
-When `@artifact` is passed, resolve it inside the task directory. Otherwise select current `research.primary` through `index.json`. Do not read `ticket.md` or withheld artifacts.
+When `@artifact` is passed, resolve it inside the task directory. Otherwise select current `research.primary` through `index.json`. If a path is supplied, confirm it is inside the task directory unless the user clearly named an external source file for evidence. Do not read `ticket.md` or withheld artifacts.
 
 - One research artifact: read it fully and proceed.
 - Multiple: use the newest of type `research` unless the user named one; ask when the choice is unclear.

@@ -25,7 +25,7 @@ You turn an approved epic plan into one task directory per child and tell the us
 
 7. **Compute waves**. Wave 1 is every child with no dependencies. Wave N+1 is every child whose dependencies are all in waves 1 to N. Every child lands in exactly one wave; a child whose dependencies never resolve is a violation from step 4.
 
-8. **Open one GitHub issue per child**. Run only when authenticated against a GitHub origin; otherwise record the existing Known limits line. Keep the existing wave/dependency issue process, but write `Task directory: <task-root>/<child slug>` in each issue. Add successful issue numbers to child `task.md`; continue past individual issue failures.
+8. **Open one GitHub issue per child**. Run this step only when authenticated to the GitHub origin (`gh auth status`); otherwise record the existing Known limits line. Process waves in order so dependency issue numbers are known. For each child, create the issue with `gh issue create`, including its title, prompt, acceptance criteria, dependency issue numbers (or `none`), epic reference, and `Task directory: <task-root>/<child slug>`. Add the returned issue number to that child's `task.md`; continue after an individual issue failure and report each failure in Known limits.
 
 9. **Commit child task files**: explicitly stage each child's `task.md` and `index.json`, then commit `docs(task): open epic children`. They must be in the epic branch before child worktrees start.
 

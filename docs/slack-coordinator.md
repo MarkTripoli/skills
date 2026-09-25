@@ -1,6 +1,6 @@
 # Slack coordinator
 
-Slack coordinator posts one Slack thread per run of agent work and lets the run owner steer that run from the thread. It is distributed as the `slack-coordinator` binary, built from `tools/slack-coordinator/`, and installed separately from agent skills. The agent skill lives at `skills/slack-coordinator/`, beside the delivery group. Delivery skills may use it, and none of them require it.
+The `slack-coordinator` daemon owns Slack credentials, its Socket Mode connection, and coordination state. Agents interact with it only through the `slack-coordinator` CLI; they do not read tokens or call Slack APIs directly. The skill lives at `skills/slack-coordinator/` and is explicitly invoked by an orchestrator when coordination is wanted; `deliver` and `describe-pr` do not automatically create Slack threads. GitHub PR and task-index workflows remain independent.
 
 ## Install
 
@@ -44,7 +44,7 @@ Everything the daemon owns lives under `$SLACK_COORDINATOR_HOME` (default `~/.sl
 
 | Path | Role |
 |---|---|
-| `config.yaml` | Bot token, app-level token, owner, and any `agent`, `retention`, or Jira keys. Mode 0600. |
+| `config.yaml` | Bot token, app-level token, owner, and optional `agent` and `retention` settings. Mode 0600. |
 | `state.sqlite` | Runs, standing tasks, and DM threads. |
 | `socket` | Unix socket the CLI uses to reach the daemon. |
 | `daemon.log` | Daemon stdout and stderr, including the supervised process. |
@@ -99,7 +99,7 @@ An agent that gets exit `11` from `run check` waits and retries. It does not ins
 
 ## Assistant DMs
 
-The owner can send these eight commands as a top-level DM:
+The owner can send these commands as a top-level DM:
 
 - `!help` — list commands; other text starts an assistant request.
 - `!status` — show daemon uptime, Socket Mode, run/task counts, agent, and disk use.
@@ -109,8 +109,11 @@ The owner can send these eight commands as a top-level DM:
 - `!pause <id>` — pause a standing task.
 - `!resume <id>` — resume a paused task.
 - `!cancel <id>` — cancel a standing task.
+- `!to <run-id> <message>` — post an owner message in that active run’s thread.
 
 A new request gets an eyes reaction and a threaded `Working on it` acknowledgement, or `Queued behind <n>` when earlier work is ahead. On success, the acknowledgement is edited with the answer when it fits; longer answers edit it to `Done` and post the answer in thread replies. On failure, the acknowledgement becomes `Failed` and a thread reply includes the failure and stderr tail. Owner follow-ups in a request thread are collected for the next run; messages from non-owners receive one refusal and later messages are silently dropped.
+
+For `omp` and `claude` assistant runs, the last recognized model name in the owner’s request selects the model; a later name corrects an earlier one. Recognized names include Sonnet, Haiku, and Opus (including supported version phrases). `omp` uses the corresponding `claude-bridge` model ID and `claude` uses its short alias. `codex` always uses `gpt-6-luna`, regardless of model names in the request.
 
 The embedded agent instructions are [ASSISTANT.md](../tools/slack-coordinator/internal/assistant/skill/ASSISTANT.md).
 
@@ -150,22 +153,27 @@ The agent runs in `<root>/workspace/runs/<id>` with a scrubbed environment; it n
 
 ## Operating model
 
-1. `run start --work --goal --scope [--link]...` posts the root message and prints `{"run_id","channel_id","thread_ts","permalink"}`. One run is one thread.
-2. `run check --run-id <id>` runs immediately before every state-changing action. Its JSON `kind` and exit code decide what the agent does:
+Use the CLI when an orchestrator has explicitly requested Slack coordination for a work run. Start one Slack thread for the run; a private run can use the configured owner’s bot DM:
 
-| Kind | Exit | Meaning |
-|---|---|---|
-| `ready` | `0` | Proceed |
-| `owner_input` | `10` | The owner replied; `input.text` holds the oldest unanswered reply. Act on it, then `run resolve --message-ts <input.message_ts> --outcome applied\|rejected\|answered --reply <s>` and check again |
-| `unavailable` | `11` | Socket Mode is down, a required post failed, or no daemon answered. Pause and retry; never bypass |
-| `slack_disabled` | `12` | An operator broke glass on this run; proceed without further Slack calls |
+```sh
+slack-coordinator run start --work <s> --goal <s> --scope <s> [--link <url>]... [--dm | --channel <C…|#name>] [--repo <path>] [--run-id <id>]
+```
 
-Exit `1` is a refused confirmation, exit `2` a usage, config, or repository error; `run start`, `run event`, and `run finish` exit `11` for the same reasons `run check` does.
+The command prints `{"run_id","channel_id","thread_ts","permalink"}`. Keep the `run_id`: every later command addresses that run. Unless `--channel` is supplied, the channel is selected from the repository root `AGENTS.md`; `--dm` and `--channel` are mutually exclusive.
 
-3. `run event --current [--completed]... [--decision]... [--blocker]... [--next]...` posts a status reply on phase changes and blockers; the daemon reposts the last status after one quiet interval (`daemon start --status-interval`, default one hour) with no newer event.
-4. `run finish --outcome completed|failed|cancelled [--completed]... [--decision]... [--unresolved]... [--evidence]... [--link]...` posts the completion reply and makes the run terminal.
+Before every state-changing action, run `slack-coordinator run check --run-id <id>`. Exit `0` permits the action; exit `10` means handle the oldest owner reply, then use `run resolve --run-id <id> --message-ts <input.message_ts> --outcome applied|rejected|answered --reply <s>` and check again. Exit `11` means pause and retry the check; exit `12` means a local operator disabled Slack for this run, so proceed without further Slack calls. `run wait` can wait briefly for input while idle, but never replaces the check immediately before an action.
 
-Every message renders its fixed fields in order and shows `None` for an empty one; the field tables are in the skill’s [messages reference](../skills/slack-coordinator/references/messages.md).
+Report phase changes and blocker changes with `run event`. Routine changes are coalesced into an edit of the root message no more often than the run’s cadence (three hours by default); unchanged events do nothing. A new blocker and blocker changes update the root immediately. There are no hourly or other periodic reposts. Change the interval for one active run with `run cadence --run-id <id> --every <duration>`; positive whole-second durations such as `15m`, `1h`, or `3h` are accepted. Pending updates are rescheduled relative to the last root edit.
+
+Other supported run operations:
+
+- `run content --run-id <id> [--page <n>]` lists paged channel file metadata, bookmarks, tabs, and canvas ID/permalink. Canvas bodies and folder contents are not exposed by Slack’s documented API.
+- `run list-items --run-id <id> --list-id <F…> [--cursor <cursor>]` reads one page from a List shared in the run channel; use the returned `response_metadata.next_cursor` for the next page.
+- `run upload --run-id <id> --path <file> [--title <title>]` shares a regular, nonempty local file up to 20 MiB in the run thread. The daemon must be able to access the path. Check immediately before upload; the daemon checks again before writing.
+- `run react --run-id <id> --emoji <name>` adds a reaction to the root message.
+- `run finish --run-id <id> --outcome completed|failed|cancelled [--emoji <name|none>] [--completed <s>]... [--decision <s>]... [--unresolved <s>]... [--evidence <s>]... [--link <url>]...` updates the root immediately and makes the run terminal. It adds `white_check_mark`, `x`, or `black_square_for_stop` by default for completed, failed, or cancelled; `--emoji <name|none>` overrides or skips the reaction. A reaction failure does not undo the finished run and can be retried with `run react`.
+
+The fixed fields and rendering for root, event, and completion messages are in the skill’s [messages reference](../skills/slack-coordinator/references/messages.md); command flags, JSON shapes, and exit codes are in the [command reference](../skills/slack-coordinator/references/commands.md).
 
 ## Break glass
 
@@ -173,9 +181,9 @@ Every message renders its fixed fields in order and shows `None` for an empty on
 
 ## Proof boundary
 
-`npm run test:slack-coordinator` runs `go test -race`, `go vet`, and a temporary binary build without Slack credentials. Socket Mode inbound handling and connection health are unit-tested with injected events and an injected health source; the Slack Web API is a fake HTTP server handed to the daemon through the test-only config key `slack.api_url`.
+`npm run test:slack-coordinator` runs `go test -race`, `go vet`, and a temporary binary build without Slack credentials. Socket Mode inbound handling and connection health are unit-tested with injected events and an injected health source; the Slack Web API is represented by a fake HTTP server supplied through the test-only config key `slack.api_url`.
 
-Live Slack delivery, owner replies over a real WebSocket, launchd or systemd restart after the daemon is killed, and Jira field writes are recorded under `.agents/tasks/i-want-new-skill/evidence/` and gate nothing. `run check` is a coordination gate, not a transaction around the action it precedes: an owner reply that arrives after a `ready` answer is seen at the next check.
+Live Slack delivery and owner replies over a real WebSocket, launchd or systemd restart after the daemon is killed, and live validation of run DM, cadence/root edits, channel content and List reads, file upload, reactions, and finish remain deferred evidence; they require a Slack workspace or supervising host. `run check` is a coordination gate, not a transaction around the action it precedes: an owner reply that arrives after a `ready` answer is seen at the next check.
 
 ## Documentation map
 

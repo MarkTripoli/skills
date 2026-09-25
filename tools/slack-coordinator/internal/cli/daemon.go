@@ -17,8 +17,8 @@ import (
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/ipc"
 )
 
-// statusIntervalFlag is the quiet interval after which an active run reposts
-// its last status; daemon start forwards it to the daemon serve child.
+// statusIntervalFlag is accepted and forwarded for compatibility with old daemon commands.
+// Routine status reposts are disabled.
 const statusIntervalFlag = "status-interval"
 
 func newDaemon() *cobra.Command {
@@ -26,7 +26,7 @@ func newDaemon() *cobra.Command {
 	start := &cobra.Command{Use: "start", Short: "Start the daemon in the background", Args: cobra.NoArgs, RunE: startDaemon}
 	serve := &cobra.Command{Use: "serve", Hidden: true, Args: cobra.NoArgs, RunE: serveDaemon}
 	for _, c := range []*cobra.Command{start, serve} {
-		c.Flags().Duration(statusIntervalFlag, daemon.DefaultStatusInterval, "quiet interval after which an active run reposts its last status")
+		c.Flags().Duration(statusIntervalFlag, daemon.DefaultStatusInterval, "deprecated: status now edits the root without periodic reposts")
 	}
 	d.AddCommand(
 		start,
@@ -116,6 +116,10 @@ func waitForDaemon(timeout time.Duration) error {
 }
 
 var waitForDaemonAfterRestart = waitForDaemon
+
+// waitForDaemonReady is how setup and service install wait for the socket.
+// Tests replace it so they do not start a real daemon.
+var waitForDaemonReady = func() error { return waitForDaemon(15 * time.Second) }
 
 // stopDaemon asks the daemon to shut down. An installed service restarts it:
 // stop says so and still sends daemon.shutdown, because the daemon is the
