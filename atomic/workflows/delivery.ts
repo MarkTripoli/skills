@@ -51,7 +51,8 @@ const delivery = workflow({
     if (!runId) throw new Error('Atomic must supply its ctx.runId for durable delivery records');
     const existing = inputs.task_dir ? frontmatter(fs.readFileSync(path.join(path.resolve(cwd, expandPath(inputs.task_dir)), 'task.md'), 'utf8'), 'task.md') : null;
     const routeRequest = existing?.body || inputs.request;
-    const routeWorkflow = existing?.metadata?.workflow || inputs.workflow;
+    const continuation = inputs.task_dir && ['resolve-reviews', 'epic-wave'].includes(inputs.workflow);
+    const routeWorkflow = continuation ? inputs.workflow : existing?.metadata?.workflow || inputs.workflow;
     const adaptive = routeWorkflow === 'auto';
     const skillsDir = resolveSkillsDir(inputs.skills_dir, cwd);
     const route = await ctx.tool('select-delivery-mode', { request: routeRequest, workflow: routeWorkflow, skills_dir: skillsDir }, async () => {
@@ -71,9 +72,10 @@ const delivery = workflow({
     }, { timeoutMs: 90_000 });
     const task = await ctx.tool('open-task-workspace', { inputs: { ...persistedInputs, request: routeRequest, workflow: routeWorkflow }, cwd, mode: route.choice }, async () => {
       const opened = ensureTask(inputs, cwd, runId, route.choice);
-      saveRecord(opened, 'route', route);
-      saveRecord(opened, 'inputs', { ...persistedInputs, request: opened.request, workflow: opened.mode });
-      return opened;
+      const routed = continuation ? { ...opened, mode: route.choice } : opened;
+      saveRecord(routed, 'route', route);
+      saveRecord(routed, 'inputs', { ...persistedInputs, request: routed.request, workflow: routed.mode });
+      return routed;
     }, { timeoutMs: 90_000 });
     const taskInputs = { ...persistedInputs, request: task.request, workflow: task.mode };
     let state = await ctx.tool('observe-initial-artifacts', { task_dir: task.taskDir }, async () => initialState(observeArtifacts(task.taskDir), revision(task.cwd, task.taskRootRelative)));
@@ -140,7 +142,7 @@ const delivery = workflow({
         return selected;
       }, { timeoutMs: 90_000 });
       if (!candidates.includes(decision.choice)) throw new Error(`Unsafe transition: ${decision.choice} was not eligible`);
-      if (decision.choice === 'complete') return finish('completed', 'Implementation, required independent verification, clean code review and pull request description are complete.');
+      if (decision.choice === 'complete') return finish('completed', 'Implementation, required checks and review, current behavior capture, and published pull request description and comment are complete.');
       if (decision.choice === 'blocked') {
         const recovery = recoveryDiagnostic(state);
         if (recovery) return finish('blocked', `Implementation recovery remains unresolved. Receipt ${recovery.receipt.file} (${recovery.receipt.hash}); source ${recovery.source.file} (${recovery.source.hash}). Reason: ${recovery.reason}. Legal next actions are iterate-plan or iterate-implementation; no completion claim is accepted.`);
@@ -182,7 +184,7 @@ const delivery = workflow({
     }
     // Completion is still evaluated after the last allowed stage. Reaching the
     // bound can never turn unfinished implementation or a dirty review green.
-    if (!forced && eligible(state, taskInputs, task.mode, adaptive).includes('complete')) return finish('completed', 'All required delivery evidence is complete.');
+    if (!forced && eligible(state, taskInputs, task.mode, adaptive).includes('complete')) return finish('completed', 'All required delivery evidence, including a current behavior capture and pull request publication, is complete.');
     const recovery = recoveryDiagnostic(state);
     if (recovery) return finish('blocked', `Implementation recovery remains unresolved. Receipt ${recovery.receipt.file} (${recovery.receipt.hash}); source ${recovery.source.file} (${recovery.source.hash}). Reason: ${recovery.reason}. Resume with iterate-plan or iterate-implementation, or stop as blocked.`);
     return finish('blocked', `Reached max_steps=${taskInputs.max_steps} with delivery work remaining. Inspect the last artifact before resuming with an explicit larger bound.`);

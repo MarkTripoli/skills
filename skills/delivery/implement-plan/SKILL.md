@@ -118,4 +118,4 @@ When every phase is complete, automated checks pass, and any phase with `human-g
 1. Save changed task artifacts in the task directory.
 2. Commit all remaining repository work before the PR handoff. Use the `/ci-commit` conventions: inspect the diff, stage explicit code paths, keep task artifacts in their own `docs(task): implementation artifact` commit, and write a validated Conventional Commits message.
 3. Read `references/implementation_final_answer.md`.
-4. Respond with that template only, including the `/describe-pr` block.
+4. Respond with that template only, including the `/verify-implementation` block; review, recording, and PR publication follow independent verification.

@@ -6,14 +6,14 @@ Summary:
 {summary}
 
 Check:
-- <one line per test: result, test name, video timestamp>
+- <one line per test: result, test name, capture timestamp or output line>
 
 Caveats:
 - <one line per item in the report's Caveats section, or "None.">
 
-Posted to: <PR comment link, tracker issue, or "requester only">
+Posted to: <hosted capture URL, PR comment link, tracker issue link or pending publication by describe-pr>
 
-Every test passed or is recorded as untested with its reason; the pull request description can carry this evidence.
+Every test passed or is recorded as untested with its reason; `/describe-pr` publishes the current capture in both the PR description and a separate comment.
 
 The next phase has not started.
 

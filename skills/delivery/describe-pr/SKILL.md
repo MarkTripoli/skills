@@ -7,13 +7,13 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 # Pull Request Description
 
-Create or update PR description. Explain why and how.
+Create or update the PR description only after current, recorded behavior evidence can be published in both the description and a distinct PR comment.
 
 ## Workflow
 
 ### 0. Load context
 
-Locate the task directory and read `task.md` per the conventions before reading other files; list the task directory to find artifacts. When no task directory matches the request, continue without one and use the `pr-<number>` path in step 5.
+Locate the task directory and read `task.md` per the conventions before reading other files; select current artifacts from `index.json` (scan numbered files only for a legacy task without an index). When no task directory matches the request, open one under the resolved task root as in step 5.
 
 Read from this skill directory:
 
@@ -25,6 +25,9 @@ Read from this skill directory:
 ### 1. Read template
 
 Read `references/pr_description_template.md`. Keep body in template. No changelog, verification report, plan appendix, long narrative.
+
+
+The template's `## Evidence` section is required for every delivery PR. Keep its capture and separate comment URLs.
 
 ### 2. Identify or create PR
 
@@ -39,13 +42,13 @@ git diff <base>...HEAD
 
 `<base>` is the existing pull request's base, else `base:` from `task.md` when present, else the repository default branch (`git symbolic-ref --short refs/remotes/origin/HEAD`).
 
-If no PR exists, inspect branch status and committed changes. Commit and push only when required: code commits stage explicit code paths; uncommitted task artifacts go in their own `docs(task): <artifact type> artifact` commit per the conventions' Commits section. Then create the pull request with `gh pr create --title "<title>"`. If `gh` is unavailable or unauthenticated, report the missing prerequisite; do not claim publication.
+If no PR exists, inspect branch status and committed changes. Commit and push only when required: code commits stage explicit code paths; uncommitted task artifacts go in their own `docs(task): <artifact type> artifact` commit per the conventions' Commits section. Require a current `evidence.recording` receipt and hosted capture before making the PR ready for review. If GitHub's PR upload is the only available host, a draft PR may be created solely to host the capture; return to `/record-evidence` to verify the URL and complete its receipt before writing the final description. If `gh` is unavailable or unauthenticated, report the missing prerequisite; do not claim publication.
 
 The title is a Conventional Commits subject under the conventions' rule: `<type>(<scope>): <description>`, lower-case description, no trailing period, at most 72 characters including the type and scope. Write it for the change as a whole, not the first commit. Before creating or retitling, run `node scripts/check-commits.mjs --title "<title>"` when the repository has that script; otherwise count the characters and match the pattern yourself. A title that fails is shortened or rewritten; it is never sent to GitHub, because the `Commits` check fails the pull request on it.
 
 ### 3. Gather context
 
-Read `task.md` or `ticket.md`, explanatory artifacts selected through current index records, and `@file` inputs. Read current `review.verification` and `evidence.recording` when present. An untested verification item is described as untested, never as passing.
+Read `task.md` or `ticket.md`, explanatory artifacts selected through current index records, and `@file` inputs. Require the current `evidence.recording` receipt for this task and read its complete contents, plus current `review.verification` when present. Check the actual hosted video or non-UI capture URL opens to readable recorded behavior, its result is not failed, and every required acceptance behavior has a passing capture. Check its tested code SHA against the current PR head (or branch HEAD before PR creation): artifact-only commits may advance HEAD, but any behavior-changing difference requires `/record-evidence` again before publishing. An absent, inaccessible, failed, untested-required, or stale capture blocks this skill, including oneshot, bugfix, and child PRs. An untested optional verification item is disclosed, never described as passing.
 
 Read full diff plus surrounding code.
 
@@ -60,36 +63,33 @@ Template exactly:
 - `Why the change`: one sentence.
 - `Special things to note`: one to three bullets. `- None.` when no warnings, migrations, constraints, omissions, surprises.
 - `Acceptance criteria` (only when `task.md` lists them): one bullet per criterion in task order, each naming the command, request, or observation that decides it. A criterion this diff does not satisfy is listed with what is missing; never drop one.
-- `Evidence` (only when an `evidence` artifact exists): the result line, one bullet per recorded surface linking its `report.md`, and the video location; a failed test is never described as passing.
+- `Evidence` (required): the recorded result and tested code SHA, one bullet per UI video or non-UI terminal/API/performance/agent capture with its verified hosted URL, plus the URL of a **distinct** PR comment carrying the same capture. A local report path is supplementary, never the publication link.
 - `Change outline`: compact structural view from `references/show-me.md`. Views that help: data shape, endpoint contract, pseudocode, file tree, component tree, call/control/data flow. `diff` for changes, full shape for new. Focus on files, calls, fields, components, boundaries.
 - `Closes #{ISSUE_NUMBER}`, the template's last line: keep it only when `task.md` has `issue: <number>` (an epic child whose issue `start-epic-delivery` opened), filled with that number, so the merge closes the issue; otherwise delete the line and the blank line before it, so the body ends with the Known limits bullet.
 
-Task artifacts are committed on the branch, so the body may link their canonical task-root-relative paths. Link only files that `git ls-files <task-root>/<slug>` lists.
+Task artifacts are committed on the branch, so the body may link their canonical task-root-relative paths when `git ls-files <task-root>/<slug>` lists them; ignored local capture paths are not reviewer-accessible links.
 
 Do not include walkthrough artifacts in the PR body unless asked. When requested, create a separate HTML artifact from `references/pr_walkthrough_example.html`, fill it with real diff nodes, write it under the task directory, and save it.
 
 ### 5. Save and publish
 
-Record the body-only description as the next immutable `pull-request.description` iteration through the conventions' Recording an artifact flow. It has no frontmatter. When no task exists, open one under the resolved task root first.
+Prepare a provisional body in an untracked temporary file outside the task directory and artifact index. Include the verified hosted capture URL and identify the separate evidence comment as pending; this body is only for opening or updating a draft PR, never the final description or a committed task artifact. When no task exists, open one under the resolved task root first. Create the draft PR with `gh pr create --base <base> --body-file <temporary-path> --title "<title>"`, or update an existing PR with `gh pr edit <number> --body-file <temporary-path>`. Preserve all earlier indexed `pull-request.description` iterations when updating a PR.
 
-Save the file. Commit it with `git add <path>` as `docs(task): pr-description artifact` and push before publishing. Publish:
+Post a **separate** PR comment with the hosted capture URL, result, tested code SHA, and current PR head SHA. Use `gh pr comment <number> --body "<text>"` for an already-hosted URL, or the authenticated PR comment box to upload video and verify its hosted URL first. Editing the PR body does not count as a comment. On review updates, edit the prior evidence comment or add a new distinct comment. Obtain and read back its permalink and content, confirming that the comment links to the capture.
 
-Publish with GitHub CLI:
+Only now allocate and record the **one** next indexed `pull-request.description` iteration through the conventions' Recording an artifact flow. Write the final body with both the verified hosted capture URL and evidence-comment permalink in `## Evidence`; the artifact has no frontmatter. Commit its returned canonical path and `index.json` explicitly as `docs(task): pr-description artifact`, push, and publish it with `gh pr edit <number> --body-file <final-path>`. Remove the provisional temporary file; do not index, stage, or commit it. Never rewrite an earlier iteration. If publication fails, repair publication of this recorded final body rather than allocating a duplicate iteration.
 
-1. Existing PR: `gh pr edit <number> --body-file <path>`.
-2. New PR: `gh pr create --base <base> --body-file <path> --title "<title>"`.
-
-Confirm URL, title, number, base, and head. Retitle an existing PR that fails the rule above with `gh pr edit <number> --title "<title>"`.
+Re-fetch the PR and confirm URL, title, number, base, head, and that the published body matches the final indexed artifact and its rendered `## Evidence` section links to both the playable/readable hosted capture and the distinct comment. Confirm again that the comment links to the capture. Retitle an existing PR that fails the title rule with `gh pr edit <number> --title "<title>"`. Mark a draft PR ready only after the checks pass. If upload, comment, link verification, or body matching fails, publication is incomplete; repair it before reporting success.
 
 ### 6. Report
 
-Read and use `references/pr_description_final_answer.md` exactly. Include PR URL, file-change summary, deviation summary or `No plan file found`. Fill `{artifact_link}` with the saved canonical task-root-relative path. Commit that path and `index.json` explicitly as `docs(task): pr-description artifact`.
+Read and use `references/pr_description_final_answer.md` exactly. Include PR URL, file-change summary, deviation summary or `No plan file found`. Fill `{artifact_link}` with the saved canonical task-root-relative path.
 
 The final answer must end with exactly one fenced `text` block. This is a human gate; running the next command records approval.
 
 ## Feedback
 
-When `pull-request.description` already has a current iteration and feedback arrives, use it as input, record the revised body as the next iteration, and publish that new path so the pull request body matches. Never rewrite a recorded iteration. A legacy task without `index.json` follows the conventions' legacy rules.
+When `pull-request.description` already has a current iteration and feedback arrives, use it as input, confirm the current evidence still covers the head, record the revised body as the next iteration, and publish that new path so the pull request body matches. Behavior-changing review feedback requires a new `evidence.recording` iteration and updated hosted capture in both description and separate PR comment first; metadata-only edits may reuse the verified capture. Never rewrite a recorded iteration. A legacy task without `index.json` follows the conventions' legacy rules.
 
 ## Style
 

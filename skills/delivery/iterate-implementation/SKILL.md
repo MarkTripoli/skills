@@ -69,4 +69,4 @@ Read only the feedback the user supplied (message or named file). Work one feedb
 When feedback is addressed and checks ran, commit code with explicit paths and keep task artifacts out of the code commit. Commit the new source iteration, receipt, and `index.json` separately as `docs(task): implementation artifact`. Then choose exactly one handoff:
 
 1. If another numbered phase remains in the selected plan or outline, save any changed task artifact in the task directory, read `references/implementation_phase_final_answer.md`, and point its command back to the same implementation skill. Do not use the pull-request handoff at this boundary.
-2. Only when the completed phase is terminal, record all changed task artifacts, read `references/implementation_final_answer.md`, and respond with that template. The next step is `/describe-pr`.
+2. Only when the completed phase is terminal, record all changed task artifacts, read `references/implementation_final_answer.md`, and respond with that template. The next step is `/verify-implementation`, then review, recording, and PR publication.

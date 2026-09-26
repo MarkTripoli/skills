@@ -8,11 +8,11 @@ Check:
 Known limits:
 - {known_limits}
 
-Every charter step passed against the running application. The pull request description phase has not started.
+Every charter step passed against the running application. The code review phase has not started.
 
 Next action:
 Open a new session in {run_location}, then run:
 
 ```text
-/describe-pr
+/review-code
 ```

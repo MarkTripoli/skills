@@ -26,7 +26,7 @@ An explicitly named workflow or gate policy wins. The helper does not return `pr
 
 | Workflow | Use when | First manual action |
 |---|---|---|
-| `oneshot` | Small change, stated expected behavior, verification available, no design choice. | Implement, verify, and commit the requested change; then `/review-code`. |
+| `oneshot` | Small change, stated expected behavior, verification available. | Implement, verify, and commit the requested change; then `/review-code`, `/record-evidence`, `/describe-pr`. |
 | `bugfix` | Observed behavior differs from expected and needs a reproduction. | `/reproduce-bug` |
 | `lean` | Shape is clear, with several files and an ordering. | `/create-research-questions` |
 | `full` | Competing approaches, cross-module impact, migration, or interface design. | `/create-research-questions` |
@@ -105,7 +105,7 @@ An existing task reuses its directory, branch, and artifacts. For `epic-wave`, r
 
 Before the first manual handoff, route the first phase with the portable helper, for example `printf '%s\n' '{"skillsDir":"<skills-dir>","phase":"<next-skill>","cwd":"<project>"}' | node <skills-dir>/route-model/route-model.mjs --candidates <json-file> --economy <model>`. It uses explicit candidates when supplied, then `SKILLS_MODEL_CANDIDATES_FILE`, then `<project>/.agents/model-candidates.json`. The profile shape is `{economy,candidates,routing?}` and candidates are ordered weakest to strongest. Report `Recommendation only: <model>` because manual copy-paste cannot enforce a model. If no valid profile exists, direct Claude Code, Oh My Pi, Pi, or portable users to `/configure-model-routing`; direct Codex users to `$configure-model-routing`. Then state that no model was enforced.
 
-Reply with `references/deliver_hand_answer.md`. Fill the chain from [workflows/delivery.md](https://github.com/MarkTripoli/skills/blob/main/workflows/delivery.md), the task location from observed state, and `{next_command}` from the table. For `oneshot`, explain that implementation precedes `/review-code`; never claim it has happened. For an epic wave, name the ready children and select one child's first skill for the final fence, with its task directory stated above it. Keep the final manual command fence and fresh-session handoff intact.
+Reply with `references/deliver_hand_answer.md`. Fill the chain from [workflows/delivery.md](https://github.com/MarkTripoli/skills/blob/main/workflows/delivery.md), including `/record-evidence` **after** the review loop and **before** `/describe-pr` in every PR-producing route, including oneshot, bugfix, and each epic child. State that UI work records live video; non-UI work captures the actual CLI terminal session, API/performance probe, or agent transcript. The indexed, revision-bound evidence receipt and verified hosted capture are required before publication; `/describe-pr` puts the capture link in its Evidence section and a distinct PR comment. Review feedback that changes behavior recaptures and updates both. Fill the task location from observed state and `{next_command}` from the table. For `oneshot`, explain that implementation precedes `/review-code`; never claim it has happened. For an epic wave, name the ready children and select one child's first skill for the final fence, with its task directory stated above it. Keep the final manual command fence and fresh-session handoff intact.
 
 ## References
 

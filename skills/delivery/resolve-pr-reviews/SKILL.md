@@ -7,7 +7,7 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 # Resolve Pull Request Reviews
 
-Inspect the current branch's GitHub PR, repair actionable feedback, reply to every handled review thread, and record approval state. External replies and resolutions require the user's action-time confirmation.
+Inspect the current branch's GitHub PR, repair actionable feedback, reply to every handled review thread, and record approval state. External replies and resolutions require the user's action-time confirmation. A behavior-changing review fix or stale evidence requires a subsequent `/record-evidence` stage and then `/describe-pr` to publish the current capture in the PR description and a distinct comment before delivery is complete.
 
 Run in the existing pull request's worktree, with its branch checked out and its committed task directory present. Reuse that branch and merge target; do not create a new task branch for review resolution.
 
@@ -21,7 +21,7 @@ Use GitHub for the origin remote. Verify `gh` is installed and authenticated. Fi
 
 ## Fetch state
 
-Fetch PR metadata, submitted reviews, comments, and status checks with `gh pr view <number> --json url,number,baseRefOid,headRefOid,reviewDecision,reviews,statusCheckRollup,comments`. For review threads, run GitHub GraphQL against `repository.pullRequest(number: <number>).reviewThreads(first: 100)` and follow every `pageInfo.hasNextPage` cursor. A thread is unresolved when `isResolved` is false; preserve its GraphQL thread ID and each comment ID, author, body, path, line, and diff hunk. Do not treat green checks, no comments, or mergeability as an approval. Keep the head SHA on conclusions and ensure required checks refer to the current head. No open review threads plus an approved review decision: save the approved artifact and finish.
+Fetch PR metadata, submitted reviews, comments, and status checks with `gh pr view <number> --json url,number,baseRefOid,headRefOid,reviewDecision,reviews,statusCheckRollup,comments`. For review threads, run GitHub GraphQL against `repository.pullRequest(number: <number>).reviewThreads(first: 100)` and follow every `pageInfo.hasNextPage` cursor. A thread is unresolved when `isResolved` is false; preserve its GraphQL thread ID and each comment ID, author, body, path, line, and diff hunk. Do not treat green checks, no comments, or mergeability as an approval. Keep the head SHA on conclusions and ensure required checks refer to the current head. Even with no open threads and an approved review decision, confirm the current head is covered by the current indexed `evidence.recording` receipt and the hosted capture appears in both description and a distinct comment before saving an approved result.
 
 Get `<owner>` and `<repo>` from `gh repo view --json owner,name`. Fetch a thread page with `gh api graphql -f query='query($owner: String!, $repo: String!, $number: Int!, $after: String) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { reviewThreads(first: 100, after: $after) { nodes { id isResolved isOutdated path line startLine comments(first: 100) { nodes { id author { login } body url diffHunk path line } pageInfo { hasNextPage endCursor } } } pageInfo { hasNextPage endCursor } } } } }' -F owner='<owner>' -F repo='<repo>' -F number='<number>' -F after='<cursor-or-null>'`. Omit `after` on the first request; repeat with each returned `endCursor` until `hasNextPage` is false, including comment pages where needed.
 
@@ -35,15 +35,17 @@ Verify `fix` items against code. Research conventions/sources before `decline`/`
 
 ## Apply
 
-After confirmation, make the smallest root-cause fixes, add regressions, and run the required checks/gates. Commit and push only when authorized, staging explicit code paths and keeping task artifacts out of code commits. Reply to each handled thread with evidence and the verified head SHA using GitHub's `addPullRequestReviewThreadReply` GraphQL mutation; resolve a thread with `resolveReviewThread` only after its reply and action are complete. Use the exact GraphQL thread ID from the fetched thread, and verify each mutation's result before continuing. Never resolve declined, discussed, or clarified feedback without a confirmed disposition.
+After confirmation, make the smallest root-cause fixes, add regressions, and run the required checks/gates. Commit and push only when authorized, staging explicit code paths and keeping task artifacts out of code commits.
+
+After checks, reply to each handled thread with the result and verified head SHA using GitHub's `addPullRequestReviewThreadReply` GraphQL mutation; resolve a thread with `resolveReviewThread` only after its reply and action are complete. Use the exact GraphQL thread ID from the fetched thread, and verify each mutation's result before continuing. Never resolve declined, discussed, or clarified feedback without a confirmed disposition. State when fresh evidence and publication remain pending; do not cite a stale capture as proof of the fix.
 
 ## Save
 
-Fetch state again after push and replies. Record the next immutable `pull-request.review` iteration through the conventions' Recording an artifact flow using the template. Record thread/comment IDs, dispositions, replies, head SHA, tests, review threads, checks, and approval. Commit its canonical path and `index.json` explicitly as `docs(task): pr-review artifact`.
+Fetch state again after push and replies. Record the next immutable `pull-request.review` iteration through the conventions' Recording an artifact flow using the template. Record thread/comment IDs, dispositions, replies, head SHA, tests, review threads, checks, and approval based on the current PR review state. Record the current evidence receipt ID, tested revision, and capture/comment URLs only if verified; otherwise record the stale or missing evidence and required follow-up as a remaining delivery gate, not as a reason to change the PR's approval state. Commit its canonical path and `index.json` explicitly as `docs(task): pr-review artifact`.
 
 ## Next
 
-- Head approved + no open review threads: use `references/pr_review_approved_answer.md`.
-- Else: use `pr_review_pending_answer.md`. Repeated command is human gate; no poll/auto-run.
+- Head approved + no open review threads: use `references/pr_review_approved_answer.md`. If behavior changed or evidence is stale/missing, hand off `/record-evidence` in a fresh manual session, then `/describe-pr` in another fresh session to publish the capture in both the PR description and a distinct comment. The Atomic controller dispatches those later stages automatically; this review stage saves only its review artifact and code changes. If current evidence is already recorded but only publication is missing, hand off `/describe-pr` instead.
+- Otherwise use `pr_review_pending_answer.md`; report any evidence still needing recapture or publication in the review artifact. Another review round is a human gate, not a poll/auto-run.
 
-Use the template only. Fill `{artifact_link}` with the saved canonical task-root-relative path. End with one fenced `text` command. A legacy task without `index.json` follows the conventions' legacy rules.
+Use the template only. Fill `{artifact_link}` with the saved canonical task-root-relative path. In the approved template, fill `{evidence_status}` with either the verified current capture and both published links, or "Evidence publication remains pending; PR approval does not complete delivery." Fill `{next_action}` with `Delivery evidence is complete.` when both links are current; otherwise use the conventions' `Next action:` and `Open a new session in {run_location}, then run:` lines followed by one fenced `text` command for `/record-evidence` (or `/describe-pr` when only publication remains). A legacy task without `index.json` follows the conventions' legacy rules.

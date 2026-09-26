@@ -17,7 +17,7 @@ export const ARTIFACT_SERIES = Object.freeze({
 
 const semanticName = /^[a-z0-9]+(?:-[a-z0-9]+)*$/; const digestPattern = /^[a-f0-9]{64}$/;
 const rootKeys = new Set(['$schema', 'schemaVersion', 'task', 'generation', 'artifactSeries']); const seriesKeys = new Set(['current', 'iterations']);
-const iterationKeys = new Set(['id', 'iteration', 'path', 'sha256', 'type', 'status', 'summary', 'supersedes']); const artifactStatuses = Object.freeze({ reproduction: ['reproduced', 'not-reproduced'], verification: ['passed', 'failed', 'blocked'], 'code-review': ['clean', 'findings', 'blocked'], 'app-test': ['passed', 'failed', 'blocked'], 'pr-review': ['approved', 'pending', 'blocked'], 'evidence-iteration': ['in-progress', 'passed', 'blocked', 'failed'] });
+const iterationKeys = new Set(['id', 'iteration', 'path', 'sha256', 'type', 'status', 'summary', 'supersedes']); const artifactStatuses = Object.freeze({ reproduction: ['reproduced', 'not-reproduced'], verification: ['passed', 'failed', 'blocked'], 'code-review': ['clean', 'findings', 'blocked'], 'app-test': ['passed', 'failed', 'blocked'], 'pr-review': ['approved', 'pending', 'blocked'], evidence: ['passed', 'untested', 'failed', 'blocked'], 'evidence-iteration': ['in-progress', 'passed', 'blocked', 'failed'] });
 
 function object(value, label) { if (value === null || Array.isArray(value) || typeof value !== 'object') throw new Error(`Artifact index ${label} must be an object`); return value; }
 function keys(value, allowed, label) {

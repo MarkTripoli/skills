@@ -3,14 +3,38 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { boundaryState, contextBoundaryAdmission, eligible, gated, initialState, judgment, reconcileRecovery, runSkill, stagePrompt } from '../atomic/lib/controller.mjs';
-import { digest, observeArtifacts, planProgress, readArtifact } from '../atomic/lib/artifacts.mjs';
+import { SKILLS, boundaryState, contextBoundaryAdmission, eligible, gated, initialState, judgment, reconcileRecovery, runSkill, stagePrompt } from '../atomic/lib/controller.mjs';
+import { digest, observeArtifacts, planProgress, readArtifact, requireFresh } from '../atomic/lib/artifacts.mjs';
+import { createArtifactIndex, recordArtifact, reserveArtifactIteration, writeArtifactIndex } from '../atomic/lib/artifact-index.mjs';
 import { ensureTask, revision } from '../atomic/lib/workspace.mjs';
 
 const inputs = { verify: false, app_test: 'none' };
 const state = (latest = {}, proofs = {}) => ({ latest, proofs, revision: 'r1', generation: 0, approvals: {} });
 const artifact = (type, status = null) => ({ type, status, hash: `${type}-hash`, file: `${type}.md`, summary: type });
+const proved = (latest, types, generation = 0, codeRevision = 'r1') => ({
+  ...state(latest, Object.fromEntries(types.map(type => [type, { hash: latest[type].hash, generation, revision: codeRevision }]))),
+  generation, revision: codeRevision,
+});
+const capturedRevision = revision(path.dirname(fileURLToPath(import.meta.url)));
+const capturedArtifact = (status = 'passed', url = 'https://captures.example/test/probe-output.txt') => {
+  const taskDir = fs.mkdtempSync(path.join(os.tmpdir(), 'atomic-evidence-'));
+  const capture = 'evidence/session/probe-output.txt';
+  const report = 'artifacts/evidence/recording/0001.md';
+  fs.mkdirSync(path.join(taskDir, 'evidence', 'session'), { recursive: true });
+  fs.mkdirSync(path.join(taskDir, 'artifacts', 'evidence', 'recording'), { recursive: true });
+  fs.writeFileSync(path.join(taskDir, capture), 'command output: passed\n');
+  const summary = `Captured CLI session: ${url}`;
+  const text = `---\ntype: evidence\nstatus: ${status ?? 'passed'}\nsummary: ${JSON.stringify(summary)}\n---\n# Evidence\n\n## Revision\n\n- commit: ${capturedRevision}\n\n## Sessions\n\n- CLI: ${capture}\n\n## Results\n\n| Test | Result | Capture line |\n|---|---|---|\n| command | ${status ?? 'unknown'} | line 1 |\n\n## Posted to\n\n- PR description: ${url}\n- PR comment: https://github.com/example/repo/pull/42#issuecomment-123\n${status === 'untested' ? '\n## Caveats\n\n- CLI could not run on this platform; capture contains the attempt.\n' : ''}`;
+  const file = path.join(taskDir, report);
+  fs.writeFileSync(file, text);
+  return { ...readArtifact(file), status, path: report };
+};
+const publishedDescription = (url = 'https://captures.example/test/probe-output.txt') => ({
+  ...artifact('pr-description'),
+  text: `## Purpose\n\nShip behavior.\n\n## Evidence\n\n- [Capture](${url}) and [separate PR comment](https://github.com/example/repo/pull/42#issuecomment-123)\n\n## Change outline\n\nUpdated CLI.\n`,
+});
 
 test('fixed modes enforce preparation prerequisites and canonical design artifact types', () => {
   assert.deepEqual(eligible(state(), inputs, 'prd', false), ['create-research']);
@@ -259,4 +283,120 @@ test('PR-only approval gates select the pull request description', () => {
   assert.equal(gated('pr-description', 'pr'), true);
   assert.equal(gated('pr-review', 'pr'), false);
   assert.equal(gated('plan', 'pr'), false);
+});
+
+test('delivery records behavior before description and cannot skip capture when checks are disabled', () => {
+  const reviewed = proved({ implementation: artifact('implementation'), 'code-review': artifact('code-review', 'clean') }, ['code-review']);
+  assert.deepEqual(eligible(reviewed, inputs, 'oneshot', false), ['record-evidence']);
+  const unprovedCapture = { ...reviewed, latest: { ...reviewed.latest, evidence: capturedArtifact(), 'pr-description': publishedDescription() } };
+  assert.deepEqual(eligible(unprovedCapture, inputs, 'oneshot', false), ['record-evidence']);
+  const captured = proved(unprovedCapture.latest, ['code-review', 'evidence']);
+  assert.deepEqual(eligible(captured, inputs, 'oneshot', false), ['describe-pr']);
+  assert.deepEqual(eligible(proved(captured.latest, ['code-review', 'evidence', 'pr-description']), inputs, 'oneshot', false), ['complete']);
+  assert.deepEqual(eligible(proved({ ...reviewed.latest, evidence: capturedArtifact('untested') }, ['code-review', 'evidence']), inputs, 'oneshot', false), ['describe-pr']);
+  const noCaveat = capturedArtifact('untested');
+  noCaveat.text = noCaveat.text.replace(/\n## Caveats\n[\s\S]*$/, '');
+  assert.deepEqual(eligible(proved({ ...reviewed.latest, evidence: noCaveat }, ['code-review', 'evidence']), inputs, 'oneshot', false), ['record-evidence']);
+  const assertionOnly = { ...capturedArtifact(), text: '## Results\n\n- Claimed success.\n' };
+  assert.deepEqual(eligible(proved({ ...reviewed.latest, evidence: assertionOnly }, ['code-review', 'evidence']), inputs, 'oneshot', false), ['record-evidence']);
+  const summaryOnly = capturedArtifact();
+  summaryOnly.text = summaryOnly.text.replace(/## Posted to\n[\s\S]*$/, '');
+  assert.deepEqual(eligible(proved({ ...reviewed.latest, evidence: summaryOnly }, ['code-review', 'evidence']), inputs, 'oneshot', false), ['record-evidence']);
+  const noCapture = capturedArtifact();
+  noCapture.text = noCapture.text.replace('evidence/session/probe-output.txt', 'evidence/session/missing-output.txt');
+  assert.deepEqual(eligible(proved({ ...reviewed.latest, evidence: noCapture }, ['code-review', 'evidence']), inputs, 'oneshot', false), ['record-evidence']);
+});
+
+test('full delivery waits for checks and review, then capture, publication, and completion', () => {
+  const plan = { ...validSource(), text: '# Source\n\n## Phase 1\n- [x] Implement the change\n' };
+  const latest = {
+    plan, implementation: artifact('implementation'), verification: artifact('verification', 'passed'),
+    'app-test': artifact('app-test', 'passed'), 'code-review': artifact('code-review', 'clean'),
+    evidence: capturedArtifact(), 'pr-description': publishedDescription(),
+  };
+  const enabled = { verify: true, app_test: 'web' };
+  for (const [types, next] of [
+    [[], 'verify-implementation'],
+    [['verification'], 'test-app'],
+    [['verification', 'app-test'], 'review-code'],
+    [['verification', 'app-test', 'code-review'], 'record-evidence'],
+    [['verification', 'app-test', 'code-review', 'evidence'], 'describe-pr'],
+    [['verification', 'app-test', 'code-review', 'evidence', 'pr-description'], 'complete'],
+  ]) assert.deepEqual(eligible(proved(latest, types), enabled, 'full', false), [next]);
+  const noComment = { ...latest, 'pr-description': { ...latest['pr-description'], text: latest['pr-description'].text.replace('https://github.com/example/repo/pull/42#issuecomment-123', 'comment pending') } };
+  assert.deepEqual(eligible(proved(noComment, ['verification', 'app-test', 'code-review', 'evidence', 'pr-description']), enabled, 'full', false), ['describe-pr']);
+});
+
+test('failed capture repairs behavior and blocked capture never advances to PR description', () => {
+  const base = { implementation: artifact('implementation'), 'code-review': artifact('code-review', 'clean'), 'pr-description': publishedDescription() };
+  for (const mode of ['oneshot', 'resolve-reviews']) {
+    const latest = mode === 'resolve-reviews' ? { ...base, 'pr-review': artifact('pr-review', 'approved') } : base;
+    const prior = mode === 'resolve-reviews' ? ['pr-review'] : ['code-review'];
+    assert.deepEqual(eligible(proved({ ...latest, evidence: capturedArtifact('failed') }, [...prior, 'evidence', 'pr-description']), inputs, mode, false), ['iterate-implementation']);
+    assert.deepEqual(eligible(proved({ ...latest, evidence: capturedArtifact('blocked') }, [...prior, 'evidence', 'pr-description']), inputs, mode, false), ['blocked']);
+    assert.deepEqual(eligible(proved({ ...latest, evidence: capturedArtifact(null) }, [...prior, 'evidence', 'pr-description']), inputs, mode, false), ['record-evidence']);
+    const failed = proved({ ...latest, evidence: capturedArtifact('failed') }, [...prior, 'evidence']);
+    assert.match(stagePrompt({ skillsDir: '/skills', cwd: '/repo', taskDir: '/repo/.agents/tasks/example' }, 'iterate-implementation', failed, inputs), /Current failed evidence artifact/);
+  }
+});
+
+test('changed review invalidates old evidence and requires fresh capture and description before completion', () => {
+  const latest = { 'pr-review': artifact('pr-review', 'approved'), evidence: capturedArtifact(), 'pr-description': publishedDescription() };
+  const before = proved(latest, ['pr-review', 'evidence', 'pr-description']);
+  assert.deepEqual(eligible(before, inputs, 'resolve-reviews', false), ['complete']);
+  const changed = { ...before, generation: 1, revision: 'r2', proofs: { ...before.proofs, 'pr-review': { hash: latest['pr-review'].hash, generation: 1, revision: 'r2' } } };
+  assert.deepEqual(eligible(changed, inputs, 'resolve-reviews', false), ['record-evidence']);
+  const recaptured = { ...changed, latest: { ...latest, evidence: { ...capturedArtifact('passed', 'https://captures.example/test/new-output.txt'), hash: 'fresh-capture' } }, proofs: { ...changed.proofs, evidence: { hash: 'fresh-capture', generation: 1, revision: 'r2' } } };
+  assert.deepEqual(eligible(recaptured, inputs, 'resolve-reviews', false), ['describe-pr']);
+  const wrongCapture = { ...recaptured, proofs: { ...recaptured.proofs, 'pr-description': { hash: latest['pr-description'].hash, generation: 1, revision: 'r2' } } };
+  assert.deepEqual(eligible(wrongCapture, inputs, 'resolve-reviews', false), ['describe-pr']);
+  const updated = { ...recaptured, latest: { ...recaptured.latest, 'pr-description': { ...publishedDescription('https://captures.example/test/new-output.txt'), hash: 'updated-description' } }, proofs: { ...recaptured.proofs, 'pr-description': { hash: 'updated-description', generation: 1, revision: 'r2' } } };
+  assert.deepEqual(eligible(updated, inputs, 'resolve-reviews', false), ['complete']);
+  assert.deepEqual(eligible({ ...updated, proofs: { ...updated.proofs, evidence: { ...updated.proofs.evidence, hash: 'old-capture' } } }, inputs, 'resolve-reviews', false), ['record-evidence']);
+  assert.deepEqual(eligible({ ...updated, proofs: { ...updated.proofs, evidence: { ...updated.proofs.evidence, generation: 0 } } }, inputs, 'resolve-reviews', false), ['record-evidence']);
+  assert.deepEqual(eligible({ ...updated, revision: 'r3' }, inputs, 'resolve-reviews', false), ['resolve-pr-reviews']);
+  assert.deepEqual(eligible(initialState({ latest: updated.latest }, 'r2'), inputs, 'resolve-reviews', false), ['resolve-pr-reviews']);
+});
+
+test('indexed capture prompt requires evidence.recording and both hosted publication locations', () => {
+  const task = { skillsDir: '/skills', cwd: '/repo', taskDir: '/repo/.agents/tasks/example' };
+  const current = { ...state(), index: createArtifactIndex('example') };
+  const capture = stagePrompt(task, 'record-evidence', current, inputs);
+  assert.equal(SKILLS['record-evidence'], 'evidence');
+  assert.match(capture, /evidence\.recording\.0001 at artifacts\/evidence\/recording\/0001\.md/);
+  assert.match(capture, /executed session, probe output, or transcript/);
+  assert.match(capture, /BOTH the PR description and a separate PR comment/);
+  assert.match(stagePrompt(task, 'describe-pr', current, inputs), /verify both locations/);
+});
+
+test('indexed capture records a fresh evidence.recording iteration and rejects a stale prior receipt', () => {
+  const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'atomic-capture-')), 'capture-task');
+  fs.mkdirSync(dir);
+  const capture = 'evidence/session/probe-output.txt';
+  const receipt = status => `---\ntype: evidence\nstatus: ${status}\nsummary: "CLI output captured at ${capturedRevision}"\n---\n# Evidence\n\n## Revision\n\n- commit: ${capturedRevision}\n\n## Sessions\n\n- CLI: ${capture}\n\n## Results\n\n| Test | Result | Capture line |\n|---|---|---|\n| command | ${status} | line 1 |\n\n## Posted to\n\n- PR description: https://captures.example/test/probe-output.txt\n- PR comment: https://github.com/example/repo/pull/42#issuecomment-123\n`;
+  try {
+    fs.mkdirSync(path.join(dir, 'evidence', 'session'), { recursive: true });
+    fs.writeFileSync(path.join(dir, capture), 'command output: passed\n');
+    writeArtifactIndex(dir, createArtifactIndex('capture-task'));
+    const before = observeArtifacts(dir);
+    const first = reserveArtifactIteration(dir, 'evidence', 'recording');
+    assert.equal(first.id, 'evidence.recording.0001');
+    fs.writeFileSync(path.join(dir, first.writePath), receipt('passed'));
+    recordArtifact(dir, 'evidence', 'recording', 'evidence', first.writePath);
+    const observed = observeArtifacts(dir);
+    assert.equal(requireFresh(before, observed, 'evidence', first).status, 'passed');
+    assert.deepEqual(eligible(proved({ implementation: artifact('implementation'), 'code-review': artifact('code-review', 'clean'), evidence: observed.latest.evidence }, ['code-review', 'evidence']), inputs, 'oneshot', false), ['describe-pr']);
+    const next = reserveArtifactIteration(dir, 'evidence', 'recording');
+    assert.equal(next.id, 'evidence.recording.0002');
+    assert.equal(next.supersedes, first.id);
+    fs.writeFileSync(path.join(dir, next.writePath), receipt('failed'));
+    recordArtifact(dir, 'evidence', 'recording', 'evidence', next.writePath);
+    const failed = observeArtifacts(dir);
+    assert.equal(requireFresh(observed, failed, 'evidence', next).status, 'failed');
+    assert.equal(failed.latest.evidence.id, 'evidence.recording.0002');
+    assert.deepEqual(eligible(proved({ implementation: artifact('implementation'), 'code-review': artifact('code-review', 'clean'), evidence: failed.latest.evidence }, ['code-review', 'evidence']), inputs, 'oneshot', false), ['iterate-implementation']);
+    assert.throws(() => requireFresh(failed, failed, 'evidence', next), /did not create or revise/);
+  } finally {
+    fs.rmSync(path.dirname(dir), { recursive: true, force: true });
+  }
 });

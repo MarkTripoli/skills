@@ -78,18 +78,18 @@ Pick sequence below. `auto` pick again after each saved result. Explicit workflo
 
 | Choice | Chain | Use when |
 |---|---|---|
-| `auto` | Judge next phase at artifact edges, then run it in fresh stage | Evidence should pick research, design, planning |
-| `oneshot` | Small implementation, verify-implementation, review loop, describe-pr | Change fully spelled out |
-| `lean` | create-research-questions → create-research → create-structure-outline → implement-outline → verify-implementation → review loop → describe-pr | Shape known; many files need ordered work |
-| `full` | create-research-questions → create-research → create-design-discussion → create-structure-outline → create-plan → implement-plan → verify-implementation → review loop → describe-pr | Designs fight or modules cross lines |
-| `prd` | create-research → create-prd → create-tdd → create-structure-outline → create-plan → implement-plan → verify-implementation → review loop → describe-pr | Need product and technical design |
-| `bugfix` | reproduce-bug → fix-bug → verify-implementation → review loop → describe-pr | Seen behavior differ from wanted behavior |
-| `epic` | Research → create-epic-plan → start-epic-delivery → ready children | Deliverables merge on own and have deps |
-| `program` | Research → create-prd → create-tdd → create-epic-plan → start-epic-delivery → ready children | Needs span initiative of child pull requests |
-| `resolve-reviews` | resolve-pr-reviews | Existing task and PR need review feedback handled |
-| `epic-wave` | Recheck existing epic deps and run ready children | Next wave come after prereq merges |
+| `auto` | Judge next phase at artifact edges; after review run record-evidence → describe-pr | Evidence should pick research, design, planning |
+| `oneshot` | Small implementation → verify-implementation → review loop → record-evidence → describe-pr | Change fully spelled out |
+| `lean` | create-research-questions → create-research → create-structure-outline → implement-outline → verify-implementation → review loop → record-evidence → describe-pr | Shape known; many files need ordered work |
+| `full` | create-research-questions → create-research → create-design-discussion → create-structure-outline → create-plan → implement-plan → verify-implementation → review loop → record-evidence → describe-pr | Designs fight or modules cross lines |
+| `prd` | create-research → create-prd → create-tdd → create-structure-outline → create-plan → implement-plan → verify-implementation → review loop → record-evidence → describe-pr | Need product and technical design |
+| `bugfix` | reproduce-bug → fix-bug → verify-implementation → review loop → record-evidence → describe-pr | Seen behavior differ from wanted behavior |
+| `epic` | Research → create-epic-plan → start-epic-delivery → ready children, each with record-evidence before its PR description | Deliverables merge on own and have deps |
+| `program` | Research → create-prd → create-tdd → create-epic-plan → start-epic-delivery → ready children, each with record-evidence before its PR description | Needs span initiative of child pull requests |
+| `resolve-reviews` | resolve-pr-reviews → recapture and update description/comment when behavior changes | Existing task and PR need review feedback handled |
+| `epic-wave` | Recheck existing epic deps and run ready children with evidence before each child PR | Next wave come after prereq merges |
 
-Run `gather-sources` first when the request names material outside the repository. Run `record-evidence` for narrated proof of an existing behavior. For authenticated end-to-end work spanning an API and its frontend, use `video-iterative-development`; it proves the real contract and user flow in Chrome and Android. Neither skill needs Atomic.
+Run `gather-sources` first when the request names material outside the repository. Every PR-producing chain runs `record-evidence` after review and before `describe-pr`, independent of `gates`, `verify`, or `app_test`. UI behavior uses actual live video; CLI uses a captured terminal session; API/performance uses captured probe output; agent behavior uses the real tool-call/response transcript. The indexed `evidence.recording` receipt binds the tested code revision and PR head; a failed or missing capture blocks publication. The verified hosted capture goes in both the PR description's Evidence section and a distinct PR comment. Behavior-changing review feedback recaptures and updates both before approval. For authenticated end-to-end work spanning an API and its frontend, `video-iterative-development` can supplement but not replace this receipt and publication gate.
 
 ## Gates and native controls
 
@@ -135,7 +135,7 @@ If implementation step save new report but not move checklist, workflow write do
 
 Code changes need new verify and review. Completion need truthful implementation report to swap out stalled-work report.
 
-Unless `verify=false`, `verify-implementation` run repo checks and promised acceptance items on own. Turned-on `test-app` work real app. Failures go to `iterate-implementation`, then new verify or app-test stage. `review-code` and `fix-code-review` repeat till clean, blocked, or capped by `max_steps`. These checks come before pull request description. See [verification](../docs/verification.md) and [app testing](../docs/app-testing.md).
+Unless `verify=false`, `verify-implementation` runs repo checks and promised acceptance items. Turned-on `test-app` works the real app. Failures go to `iterate-implementation`, then new verify or app-test stage. `review-code` and `fix-code-review` repeat till clean, blocked, or capped by `max_steps`. After review, `record-evidence` captures real behavior at the code revision; missing, failed, or stale captures return to repair/recapture and cannot advance to PR description. These checks come before publication. See [verification](../docs/verification.md) and [app testing](../docs/app-testing.md).
 
 ## Task, artifact, and worktree ownership
 
@@ -189,7 +189,7 @@ Artifact type be template frontmatter `type`. Human gates count only when turned
 | fix-code-review | code-review-fixes | no | Repair review findings |
 | reproduce-bug | reproduction | yes | Bugfix before product edits |
 | fix-bug | fix | no | Bugfix after reproduction |
-| record-evidence | evidence | no | By hand; narrated video proof |
+| record-evidence | evidence | no | Required after review, before every PR description; recapture after behavior-changing reviews |
 | iterate-evidence | evidence-iteration | no | Own authorized capture, inspect, repair loop |
 | video-iterative-development | none | no | By hand; authenticated API and frontend delivery with browser and Android evidence |
 | video-iterative-orchestration | none | no | By hand; dependency-aware implementation orchestration with isolated worktrees and delivery gates |
