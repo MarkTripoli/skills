@@ -1,5 +1,11 @@
 # @marktripoli/skills
 
+## 4.1.1
+
+### Patch Changes
+
+- [#113](https://github.com/MarkTripoli/skills/pull/113) [`7c074a1`](https://github.com/MarkTripoli/skills/commit/7c074a1f4865c06a22294d5428143a57d42685c8) Thanks [@Triippz](https://github.com/Triippz)! - Harden record-evidence and delivery publication so captures stay revision-bound and hosted evidence remains linked through pull requests and release workflows.
+
 ## 4.1.0
 
 ### Minor Changes
