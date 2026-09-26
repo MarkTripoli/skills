@@ -16,7 +16,7 @@ Child workers: call the `task` tool with one item `{ "agent": "agent-<role>", "t
 
 ## Model routing
 
-Run `/configure-model-routing` when no valid profile exists. Standalone Oh My Pi skills may call the shared `route-model` helper through Node; discovery may use the documented public `omp models --json` command, and failed or unavailable discovery falls back to explicit exact candidates. Do not scrape provider-private registries or store credentials.
+Run `/configure-model-routing` when no valid profile exists. Standalone Oh My Pi skills may call the shared `route-model` helper through Node; discovery may use the documented public `omp models --json` command, and failed or unavailable discovery falls back to explicit exact candidates. Do not scrape provider-private registries or store credentials. Explicit `quota_mode=omp` additionally runs `omp usage --json` locally before JEV; provider filtering does not bind accounts, report `fetchedAt` and one account identifier must be fresh and explicit, and the snapshot creates no concurrency reservation. `context_policy=stop-at-60` consumes the managed RPC `get_state` response's `data.contextUsage` plus the current child session identity and stops when either is unavailable. The normal `task` API does not promise that live child metric.
 
 ## Optional Atomic orchestration
 

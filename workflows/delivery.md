@@ -1,6 +1,8 @@
 # Delivery workflow
 
 Atomic run skill for you with optional `delivery` workflow. Each step run one skill in new session, save task doc — call **artifact**. You can run every skill by hand, no Atomic.
+`/deliver` can optionally use **First Sergent** as a chat liaison for a separate delivery backend. On the first non-oneshot start it asks, “Use First Sergent for this delivery?” Answer **no** for the existing manual handoffs or Atomic workflow. A oneshot skips the question by default but accepts an explicit opt-in. This choice does not replace the workflow chains below or turn chat into an approval gate.
+
 
 Pick fixed `workflow` for known sequence, or `workflow=auto` so JEV pick next step. JEV be TypeSafe service that read request and saved docs. Source: `atomic/workflows/delivery.ts` and `atomic/lib/`; skills: `skills/delivery/<name>/`. Portable `route-model` skill own candidate validation and JEV model pick for every harness; Atomic hand off to it.
 
@@ -28,6 +30,20 @@ Start Atomic from target repo. These be **Atomic chat commands**, not shell args
 ```
 
 See [Atomic workflow operations](https://docs.bastani.ai/workflows/operations) and [Atomic authoring](https://docs.bastani.ai/workflows/authoring). Find workflow not prove live delivery run happen.
+## Optional First Sergent at `/deliver`
+
+Choose **yes** at the first non-oneshot `/deliver` prompt, or explicitly request First Sergent for a oneshot. **No** keeps the legacy path. To continue an opted-in manual task, invoke `/deliver` with its existing task directory: `task.md` records `liaison: first-sergent` in frontmatter while retaining the original request body, branch, worktree, and artifacts. The liaison rehydrates from that record rather than opening a duplicate task.
+
+The liaison communicates with a **separate backend**, not a second implementation in the chat session. Manual `agent-first-sergent` is the default opted-in path when a delegated fresh-worker transport is available, including for human review gates. An explicitly selected Atomic backend uses the native `delivery` controller; pass `liaison=first-sergent` so its run inputs record the choice without altering stages. Atomic opens its native graph on launch; return to main chat for liaison messages. Atomic awaiting-input gates do not wake that liaison, so use the manual backend for gated work or initiate `/deliver --run <run-id>` for an exact native status and answer.
+
+On the manual path, `agent-first-sergent` owns phase/session lifecycle, artifact-backed handoffs, review and repair loops, and the task's existing Slack thread. A local `.first-sergent-state.json` beside `task.md` retains effective options, attempt count, pending artifact SHA-256, and approvals across worker replacement; it is private worktree state, not a committed artifact. In-phase questions and action-time confirmations require an addressable child session. Without delegated fresh workers or bidirectional child messaging, use ordinary manual new-session commands instead.
+
+Quota mode is explicit. `quota_mode=omp` runs the native `omp usage --json` snapshot and filters exact candidates before JEV; provider-level filtering does not choose an account. Each matched report must have fresh `fetchedAt` data and one explicit account binding. Stale, unknown, exhausted, mixed-account, missing-provider, and insufficient-headroom results stop instead of falling back. The snapshot is not a concurrency reservation or lock, so concurrent runs re-read at the dispatch boundary or stop. `quota_mode=agent-router` has no safe production caller here: the upstream CLI's real `router run TASK --json --usage --no-enrich` launch does not prove the exact phase prompt, task worktree, and caller account binding, so the selected Herdr path reports externally blocked rather than launching.
+
+When `context_policy=stop-at-60`, a managed transport must expose native `contextUsage={tokens,contextWindow,percent}` and an actual child session identity. A boundary at or above 60% checkpoints and starts a different fresh session; an unavailable metric or identity stops at the boundary. Standard Atomic `ctx.task` exposes no documented live child context monitor, so Atomic blocks before stage dispatch instead of claiming posthoc 60% enforcement. Compaction is not a phase handoff.
+
+Herdr is an optional transport only when explicitly selected and the session is inside Herdr (`HERDR_ENV=1`). Close only panes this delivery created. First Sergent does not require Herdr or invent a tmux adapter. See [setup](../docs/getting-started.md#use-optional-first-sergent) and [context boundaries](../docs/context-management.md#first-sergent-and-fresh-workers).
+
 
 ## Inputs
 
@@ -40,9 +56,15 @@ Use bare `key=value` tokens, not shell `--input` flags. Atomic parse JSON, so `v
 | `skills_dir` | optional string | Complete portable skill root; see install paths above |
 | `workflow` | string, `auto` | `auto`, `oneshot`, `lean`, `full`, `prd`, `bugfix`, `epic`, `program`, `resolve-reviews`, or `epic-wave` |
 | `gates` | string, `all` | `all`, `none`, `plan`, or `pr`; no comma list |
+| `liaison` | string, `none` | `none` or `first-sergent`; records Atomic opt-in for reconnect, leaves phases and gates unchanged |
+| `transport` | string, `native` | `native` or explicit `herdr`; Herdr requires `HERDR_ENV=1` |
+| `quota_mode` | string, `off` | `off`, `omp`, or `agent-router`; portable routing stays unchanged while off |
+| `quota_command` | optional string | OMP executable when `quota_mode=omp`; raw usage stays local |
+| `quota_max_age_ms` | optional number | Maximum age for the OMP `generatedAt` snapshot |
+| `quota_required_headroom` | optional fraction | Minimum remaining quota fraction for each exact candidate |
+| `context_policy` | string, `off` | `off` or `stop-at-60`; missing live child context blocks at the boundary |
 | `model` | string, `openai-codex/gpt-5.6-luna-fast` | Ordinary model; must have for code-writing and unknown phases |
 | `model_routing` | string, `auto` | `auto` ask JEV if eligible non-writing phase need `reasoning_model`; `fixed` pick `model`, no JEV call |
-| `reasoning_model` | string, `openai-codex/gpt-5.6-sol` | Stronger candidate for eligible phases in `model_routing=auto` |
 | `app_test` | string, `none` | `none`, `web`, `ios`, or `android` |
 | `app_target` | optional string | URL, bundle id, package, or app path for UI test |
 | `verify` | boolean, `true` | Run own implementation verify before review |

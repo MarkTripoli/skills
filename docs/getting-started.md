@@ -40,6 +40,18 @@ This does not install worker setup or Atomic workflow resources. Use the reposit
 4. Open new session in checkout and branch named in reply. Run next command.
 
 New task usually get **worktree**: own checkout, own branch. Its `index.json` pick immutable artifact iteration under `artifacts/<kind>/<variant>/`. To change one, use its `iterate-*` skill with your feedback; revision record next iteration, no overwrite history. Use [common sequences](../workflows/delivery.md#workflow-choices-and-manual-chains) as guide, not rule to install every skill.
+## Use optional First Sergent
+
+Start `/deliver <your request>` in the project. On a first non-oneshot delivery, answer “Use First Sergent for this delivery?” with **yes** to have a chat liaison coordinate a separate backend, or **no** to keep the ordinary manual or Atomic path. Oneshot skips the question; explicitly ask for First Sergent if you want it there. Codex uses `$deliver`. Keep using the existing task directory to resume; opt-in manual tasks store `liaison: first-sergent` without replacing the request.
+
+With delegated fresh-worker support, `agent-first-sergent` is the default opted-in backend even when Atomic is installed. It keeps gate hashes and step count in local task-owned state, while artifacts carry phase facts and the original task body stays unchanged. Guided PRD/TDD questions or PR action confirmations need an addressable live child session; without one, the worker stops rather than inventing an answer. Explicit Atomic opt-in launches its native controller with `liaison=first-sergent`. Quota and context controls default to `off` for the opted-in backend unless the user selects a policy; legacy `/deliver` keeps its existing path and does not inherit them.
+
+Set `quota_mode=omp` to use native `omp usage --json` availability and headroom filtering before JEV. Provider filtering does not bind an account; report freshness and one explicit account binding are required, and the snapshot is not a concurrency reservation. `quota_mode=agent-router` has no safe production caller in this repository: the upstream Herdr launch does not prove the exact phase prompt, task worktree, and caller account binding, so the selected path is externally blocked.
+
+Set `context_policy=stop-at-60` only when the selected managed transport exposes live `contextUsage` and a child session identity. At or above 60%, the worker saves its artifact and starts a different fresh session; no metric or identity stops at the boundary. Atomic's documented `ctx.task` API has no live child monitor, so it blocks before stage dispatch. Compaction is not a phase handoff.
+
+See [the First Sergent reference](../workflows/delivery.md#optional-first-sergent-at-deliver) for the state and feedback loop and [context management](context-management.md#first-sergent-and-fresh-workers) for transport limits.
+
 
 ## Inspect and repair recorded behavior
 

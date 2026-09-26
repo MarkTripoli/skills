@@ -152,6 +152,31 @@ test("partial Codex worker changes preserve other skills and worker configuratio
   assert.equal(fs.readFileSync(configFile, "utf8"), 'model = "gpt-5"\n');
 });
 
+test("First Sergent opt-in installs a real worker without Atomic or unrelated worker removal", () => {
+  for (const target of ["claude-code", "codex", "oh-my-pi", "pi", "portable"]) {
+    const home = tmpdir();
+    const skillDir = destinations(target, { home, env }).skills;
+    const existing = install({ targets: [target], skillNames: ["agent-implementer"], cwd: home, home, env });
+    const liaison = install({ targets: [target], skillNames: ["deliver"], cwd: home, home, env });
+    assert.ok(fs.existsSync(path.join(skillDir, "deliver", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(skillDir, "route-model", "route-model.mjs")));
+    assert.ok(fs.existsSync(path.join(skillDir, "typed-judgment", "judge.mjs")));
+    assert.ok(fs.existsSync(path.join(skillDir, "agent-first-sergent", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(skillDir, "agent-first-sergent", "state.mjs")));
+    assert.equal(fs.existsSync(path.join(home, ".atomic")), false);
+    const worker = destinations(target, { home, env }).agents;
+    if (worker) {
+      const ext = target === "codex" ? "toml" : "md";
+      assert.ok(fs.existsSync(path.join(worker, `agent-first-sergent.${ext}`)));
+      assert.ok(fs.existsSync(path.join(worker, `agent-implementer.${ext}`)));
+    }
+    uninstall(liaison, home);
+    assert.ok(fs.existsSync(path.join(skillDir, "agent-implementer", "SKILL.md")));
+    if (worker) assert.ok(fs.existsSync(path.join(worker, `agent-implementer.${target === "codex" ? "toml" : "md"}`)));
+    uninstall(existing, home);
+  }
+});
+
 test("managed config edits preserve surrounding user configuration", () => {
   const original = 'model = "gpt-5"\n';
   const first = updateConfigBlock(original, '[agents.a]\nconfig_file = "./agents/a.toml"\n');
