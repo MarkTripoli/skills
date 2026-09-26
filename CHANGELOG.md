@@ -1,5 +1,19 @@
 # @marktripoli/skills
 
+## 4.1.0
+
+### Minor Changes
+
+- [#112](https://github.com/MarkTripoli/skills/pull/112) [`e36116d`](https://github.com/MarkTripoli/skills/commit/e36116dfb71a1db02eeac5c3930cc5263456f230) Thanks [@Triippz](https://github.com/Triippz)! - Add optional First Sergent quota-aware routing and a fail-closed context boundary. OMP-native usage filtering runs before Jev when explicitly enabled, but does not reserve capacity or select a login; external agent-router launch remains blocked where worktree or account binding cannot be proven. A strict 60% context policy requires a live child metric and stops before Atomic dispatch because that metric is not exposed.
+
+  Add an optional First Sergent choice at `/deliver` start. Opted-in delivery uses a chat liaison with the native Atomic controller or delegated fresh manual workers, while declined and default oneshot requests retain the existing delivery path. Document gate feedback, artifact-backed continuation, model routing, and transport limits.
+
+- [#111](https://github.com/MarkTripoli/skills/pull/111) [`52d7896`](https://github.com/MarkTripoli/skills/commit/52d7896d6ebc3c518622c5f603b12eed69df183c) Thanks [@Triippz](https://github.com/Triippz)! - Add the video-iterative development and orchestration skills plus an agent Slack control-plane skill, and update the personal install and quick-start guides to make them discoverable.
+
+### Patch Changes
+
+- [#109](https://github.com/MarkTripoli/skills/pull/109) [`732c9e1`](https://github.com/MarkTripoli/skills/commit/732c9e14f9760a9c75deb66a924dca1c3b192668) Thanks [@Triippz](https://github.com/Triippz)! - The slack-coordinator skill now lives at `skills/slack-coordinator`, beside the delivery group. Delivery skills may use it, and none of them require it.
+
 ## 4.0.0
 
 ### Major Changes
