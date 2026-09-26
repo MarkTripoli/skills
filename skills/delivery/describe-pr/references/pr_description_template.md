@@ -16,10 +16,10 @@ Omit this section when `task.md` states none.
 
 ## Evidence
 
-Omit this section when the task has no `evidence` artifact.
+Include this section for every delivered change. Block publication until the current revision's recorded evidence is available and posted.
 
-- {Result line from the evidence receipt: tests passed, failed, untested; revision tested.}
-- {One bullet per recorded surface: label, link to its `report.md`, where the video is posted.}
+- {Result line from the current evidence receipt: tests passed, failed, untested; exact revision tested.}
+- {One bullet per captured surface: label, hosted report/capture URL and the separate PR comment URL. UI video must play; CLI/API/agent captures must be readable.}
 
 ## Change outline
 

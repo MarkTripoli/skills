@@ -118,4 +118,4 @@ When all outline phases are complete, automated checks pass, and any phase with 
 1. Save any changed task artifacts in the task directory.
 2. Commit all remaining repository work before the PR handoff. Use the `/ci-commit` conventions: inspect the diff, stage explicit code paths, keep task artifacts in their own `docs(task): implementation artifact` commit, and write a validated Conventional Commits message.
 3. Read `references/implementation_final_answer.md`.
-4. Respond using that template only. Fill `{artifact_link}` with the receipt's canonical task-root-relative path and keep the single fenced `text` command for `/describe-pr` last.
+4. Respond using that template only. Fill `{artifact_link}` with the receipt's canonical task-root-relative path and keep the single fenced `text` command for `/verify-implementation` last.

@@ -76,7 +76,7 @@ Commit its canonical path and `index.json` explicitly as `docs(task): code-revie
 ## Next
 
 - Findings: use `references/code_review_findings_answer.md`, next `/fix-code-review @<artifact>`.
-- Clean: use `code_review_clean_answer.md`, next `/describe-pr`.
+- Clean: use `code_review_clean_answer.md`, next `/record-evidence`.
 - Blocked: use `code_review_blocked_answer.md`, stop until gate runs.
 
 Use template only. Fill `{artifact_link}` with the saved canonical task-root-relative path. End with one fenced `text` command. A legacy task without `index.json` follows the conventions' legacy rules.
