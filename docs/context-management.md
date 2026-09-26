@@ -45,7 +45,14 @@ When a skill needs to explore code, a worker returns a focused report with `path
 
 Research and implementation phases may use roles such as `agent-codebase-locator` and `agent-implementer`. Each worker receives the assignment, reads what it needs, and returns one structured message. The phase verifies any claim it uses. Workers do not write task artifacts; the parent applies their report.
 
-Portable installs run worker roles in the same session and say so in the reply. Agent-specific installs add that agent's worker tools and definitions. Changing `skills_dir` does not change which agent runs Atomic's steps.
+Portable installs perform worker roles in the same session and say so in the reply; that is **not** a fresh worker boundary. Agent-specific installs may expose delegated workers. Changing `skills_dir` does not change which agent runs Atomic's steps.
+## First Sergent and fresh workers
+
+Optional `/deliver` First Sergent keeps a chat liaison separate from its delivery backend. Atomic remains the native controller and starts each phase with fresh context; its graph opens on launch and its awaiting-input gate does not wake the liaison. On a manual path, `agent-first-sergent` owns phase/session transitions only on a host with delegated fresh workers; otherwise follow ordinary manual new-session commands. A nested worker receives the task and selected artifacts, not the liaison conversation. Task-local state records the context checkpoint and the old child session identity; crossing a threshold requires a different observed child session identity, not a flag flip.
+
+When `context_policy=stop-at-60`, a managed Oh My Pi transport may provide live `contextUsage` from its RPC `get_state` response. The accepted fields are `tokens`, `contextWindow`, and `percent`; `percent >= 60` saves the current artifact and starts a child session with a different identity. If the metric or identity is absent, the policy stops. Standard Atomic `ctx.task` exposes no documented live child context monitor, so Atomic blocks before dispatch rather than estimating or claiming universal 60% enforcement.
+
+Atomic gate feedback must answer the exact native pending prompt; intercom steering or liaison chat does not approve a gate. Manual in-phase questions and action-time confirmations need a resumable child session, not an outer artifact gate. Manual Herdr use is possible only on explicit selection inside Herdr (`HERDR_ENV=1`), with cleanup limited to panes this delivery opened. The upstream router's Herdr launch is externally blocked here because no documented result proves prompt, worktree, and account binding.
 
 ## Fresh context per phase
 
@@ -55,10 +62,10 @@ By hand, open a new session yourself:
 
 | Runtime | New session | See context usage | Compaction | Subagents |
 |---|---|---|---|---|
-| Claude Code | `/clear` | `/context` | `/compact`; automatic near the limit | `Task` tool; a subagent cannot talk to you |
-| Codex | `/new` | `/status` (or `/statusline` for a live footer) | `/compact`; automatic near the limit | multi-agent spawn tool; agents cannot talk to you |
-| Oh My Pi | `/new` (or `/clear` to reset in place) | footer shows context % | `/compact`; automatic near the limit | `task` tool; a subagent cannot talk to you |
-| Pi | `/new` | footer shows context % | `/compact`; automatic near the limit | none built in; phases perform worker roles inline |
+| Claude Code | `/clear` | `/context` | `/compact` is not a new phase | `Task` tool; a subagent cannot talk directly to you |
+| Codex | `/new` | `/status` (or `/statusline` for a live footer) | `/compact` is not a new phase | multi-agent spawn tool; agents cannot talk directly to you |
+| Oh My Pi | `/new` (or `/clear` to reset in place) | footer shows context % | `/compact` is not a new phase | `task` tool; a subagent cannot talk directly to you |
+| Pi | `/new` | footer shows context % | `/compact` is not a new phase | none built in; phases perform worker roles inline |
 
 Do not use compaction to move between phases. It keeps a summary; the next phase needs the artifact. Start a new session and run the fenced command when a phase ends.
 
@@ -75,14 +82,7 @@ The collection treats these as warning signs that a session is losing track:
 - summarizes instead of citing `path:line`; or
 - reports usage past half the window before the phase is complete.
 
-The skills use the same signs. On the first sign, save the artifact as it stands, print the handoff fence, and stop. An interactive phase saves after each accepted change and suggests a new session after about ten feedback rounds.
-
-1. Stop giving new instructions in that session.
-2. Confirm the artifact is saved. If the reply is not printed, say: `Save the artifact in its current state and print the final answer from the template.`
-3. Open a new session.
-4. Run the next command, or `/iterate-<phase> @<artifact file>` with the remaining feedback. For Atomic, inspect `/workflow status <run-id>` and use `/workflow resume <run-id>` only when saved durable progress exists. Resuming a retained stage does not replace a fresh boundary between skills.
-
-Never repair a degraded phase with `/compact`.
+When `context_policy=stop-at-60` is enabled, the native live metric and current child identity are the only accepted measurements. The first unavailable metric or identity, or a threshold boundary, saves the artifact and stops; the next worker must report a different session identity. The ordinary policy remains unchanged when the option is off.
 
 ## For skill authors
 

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { boundaryState, eligible, gated, initialState, judgment, reconcileRecovery, runSkill, stagePrompt } from '../atomic/lib/controller.mjs';
+import { boundaryState, contextBoundaryAdmission, eligible, gated, initialState, judgment, reconcileRecovery, runSkill, stagePrompt } from '../atomic/lib/controller.mjs';
 import { digest, observeArtifacts, planProgress, readArtifact } from '../atomic/lib/artifacts.mjs';
 import { ensureTask, revision } from '../atomic/lib/workspace.mjs';
 
@@ -66,6 +66,7 @@ test('native no-progress receipt becomes persisted recovery and only revised sou
   const skillsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'atomic-recovery-skills-'));
   fs.mkdirSync(path.join(skillsDir, 'route-model'), { recursive: true });
   fs.copyFileSync(path.resolve('skills/delivery/route-model/route-model.mjs'), path.join(skillsDir, 'route-model', 'route-model.mjs'));
+  fs.copyFileSync(path.resolve('skills/delivery/route-model/quota.mjs'), path.join(skillsDir, 'route-model', 'quota.mjs'));
   fs.mkdirSync(path.join(skillsDir, 'implement-plan'), { recursive: true });
   fs.writeFileSync(path.join(skillsDir, 'implement-plan', 'SKILL.md'), '# implement-plan\n');
   fs.mkdirSync(taskDir, { recursive: true });
@@ -117,6 +118,7 @@ test('observed checklist progress ignores blocked prose and fresh initial state 
   const skillsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'atomic-progress-skills-'));
   fs.mkdirSync(path.join(skillsDir, 'route-model'), { recursive: true });
   fs.copyFileSync(path.resolve('skills/delivery/route-model/route-model.mjs'), path.join(skillsDir, 'route-model', 'route-model.mjs'));
+  fs.copyFileSync(path.resolve('skills/delivery/route-model/quota.mjs'), path.join(skillsDir, 'route-model', 'quota.mjs'));
   fs.mkdirSync(path.join(skillsDir, 'implement-plan'), { recursive: true });
   fs.writeFileSync(path.join(skillsDir, 'implement-plan', 'SKILL.md'), '# implement-plan\n');
   fs.mkdirSync(taskDir, { recursive: true });
@@ -142,7 +144,32 @@ test('observed checklist progress ignores blocked prose and fresh initial state 
   const fresh = initialState(observeArtifacts(taskDir), revision(repo));
   assert.deepEqual(eligible(fresh, inputs, 'full', false), ['implement-plan']);
   fs.rmSync(skillsDir, { recursive: true, force: true });
-  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+test('Atomic context policy blocks before a stage dispatch without live child telemetry', async () => {
+  const boundary = contextBoundaryAdmission({ context_policy: 'stop-at-60' });
+  assert.equal(boundary.action, 'stop');
+  assert.match(boundary.reason, /no documented live child context telemetry/);
+  assert.equal(contextBoundaryAdmission({ context_policy: 'off' }), null);
+  let taskCalls = 0;
+  let toolCalls = 0;
+  const ctx = {
+    tool: async () => { toolCalls += 1; },
+    task: async () => { taskCalls += 1; },
+  };
+  await assert.rejects(
+    runSkill(
+      ctx,
+      { taskDir: '/unreached', cwd: '/unreached', skillsDir: '/unreached' },
+      state(),
+      { ...inputs, context_policy: 'stop-at-60' },
+      'create-research',
+      1,
+    ),
+    /stage dispatch/,
+  );
+  assert.equal(taskCalls, 0);
+  assert.equal(toolCalls, 0);
 });
 
 function judgmentFixture(response) {

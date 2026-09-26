@@ -85,12 +85,26 @@ test('candidate profiles use explicit, environment, then project precedence', as
 
 test('portable helper keeps economy for mutation and unknown phases without JEV', async () => {
   const dir = fixture('throw new Error("must not call");');
-  for (const phase of ['implement-plan', 'unknown-phase']) {
+  for (const phase of ['implement-plan', 'agent-first-sergent', 'unknown-phase']) {
     const result = await routeModel(dir, { phase, economy: 'cheap', candidates });
     assert.equal(result.model, 'cheap');
     assert.equal(result.source, 'policy');
   }
 });
+test('mutation returns the configured economy even when candidates are ordered differently', async () => {
+  const dir = fixture('throw new Error("must not call");');
+  const result = await routeModel(dir, {
+    phase: 'implement-plan',
+    economy: 'cheap',
+    candidates: [
+      { model: 'strong', cost: 2, description: 'strong capability' },
+      { model: 'cheap', cost: 1, description: 'ordinary capability' },
+    ],
+  });
+  assert.equal(result.model, 'cheap');
+  assert.deepEqual(result.availableCandidates, ['strong', 'cheap']);
+});
+
 
 test('portable helper selects the cheapest adequate exact candidate', async () => {
   const dir = fixture('return { model: { type: "choice", choice: "strong", confidence: .9, probabilities: { cheap: .1, strong: .9 } } };');
@@ -156,4 +170,110 @@ test('portable helper exposes a machine-readable stdin contract', async () => {
   const result = JSON.parse(stdout);
   assert.deepEqual(result.candidates, ['cheap']);
   assert.equal(result.model, 'cheap');
+});
+function quotaSnapshot({ generatedAt = Date.now(), reports = [] } = {}) {
+  return {
+    generatedAt,
+    reports,
+    capacity: Object.fromEntries(reports.map((report) => [report.provider, [{ window: '5h', remainingAccounts: 1 }]])),
+  };
+}
+
+function quotaReport(provider, remainingFraction, status = 'ok', accountId = 'raw-account-secret', fetchedAt = Date.now()) {
+  return {
+    provider,
+    fetchedAt,
+    metadata: { accountId, email: `${accountId}@invalid.test` },
+    limits: [{ status, amount: { remainingFraction }, scope: { provider }, window: { label: '5 Hour' } }],
+  };
+}
+
+test('OMP quota excludes ineligible exact models before Jev and keeps account identifiers local', async () => {
+  const dir = fixture('throw new Error("Jev must not run");');
+  fs.writeFileSync(path.join(dir, 'typed-judgment', 'judge.mjs'), `export let received; export async function systemOne(state, questions){ received = state; return { model: { type: "choice", choice: "provider3/strong", confidence: .9, probabilities: { "provider2/middle": .2, "provider3/strong": .8 } } }; }`);
+  const snapshot = quotaSnapshot({
+    reports: [
+      quotaReport('provider', 0, 'exhausted'),
+      quotaReport('provider2', .8),
+      quotaReport('provider3', .8, 'warning'),
+    ],
+  });
+  const result = await routeModel(dir, {
+    phase: 'create-plan',
+    economy: 'provider/model',
+    candidates: [
+      { model: 'provider/model', cost: 1, description: 'ordinary' },
+      { model: 'provider2/middle', cost: 2, description: 'middle' },
+      { model: 'provider3/strong', cost: 4, description: 'strong' },
+    ],
+    quotaMode: 'omp',
+    quotaSnapshot: snapshot,
+  });
+  assert.equal(result.model, 'provider3/strong');
+  assert.deepEqual(result.availableCandidates, ['provider2/middle', 'provider3/strong']);
+  assert.equal(JSON.stringify(result).includes('raw-account-secret'), false);
+  const helper = await import(`${pathToFileURL(path.join(dir, 'typed-judgment', 'judge.mjs')).href}`);
+  assert.deepEqual(helper.received.candidates.map((candidate) => candidate.model), ['provider2/middle', 'provider3/strong']);
+});
+
+test('OMP quota never substitutes a stronger model for a mutation phase', async () => {
+  const dir = fixture('throw new Error("Jev must not run");');
+  await assert.rejects(routeModel(dir, {
+    phase: 'implement-plan',
+    economy: 'provider/model',
+    candidates: [
+      { model: 'provider/model', cost: 1, description: 'ordinary' },
+      { model: 'provider2/middle', cost: 2, description: 'middle' },
+    ],
+    quotaMode: 'omp',
+    quotaSnapshot: quotaSnapshot({
+      reports: [quotaReport('provider', 0, 'exhausted'), quotaReport('provider2', .8)],
+    }),
+  }), /unavailable under the active quota policy/);
+});
+
+test('OMP quota stops on stale snapshots and unknown provider headroom', async () => {
+  const dir = fixture('throw new Error("Jev must not run");');
+  const candidate = [{ model: 'provider/model', cost: 1, description: 'ordinary' }];
+  await assert.rejects(routeModel(dir, {
+    phase: 'create-plan',
+    economy: 'provider/model',
+    candidates: candidate,
+    quotaMode: 'omp',
+    quotaSnapshot: quotaSnapshot({ generatedAt: Date.now() - 10 * 60 * 1000, reports: [quotaReport('provider', .8)] }),
+  }), /stale-usage/);
+  await assert.rejects(routeModel(dir, {
+    phase: 'create-plan',
+    economy: 'provider/model',
+    candidates: candidate,
+    quotaMode: 'omp',
+    quotaSnapshot: quotaSnapshot({ reports: [{ provider: 'provider', fetchedAt: Date.now(), metadata: { accountId: 'account' }, limits: [{ status: 'ok', amount: {}, scope: { provider: 'provider' } }] }] }),
+  }), /unknown-headroom/);
+});
+test('OMP quota rejects zero warning headroom, stale reports, and unknown account binding', async () => {
+  const dir = fixture('throw new Error("Jev must not run");');
+  const candidate = [{ model: 'provider/model', cost: 1, description: 'ordinary' }];
+  const route = (report) => routeModel(dir, {
+    phase: 'create-plan',
+    economy: 'provider/model',
+    candidates: candidate,
+    quotaMode: 'omp',
+    quotaSnapshot: quotaSnapshot({ reports: [report] }),
+  });
+  await assert.rejects(route(quotaReport('provider', 0, 'warning')), /quota-exhausted/);
+  await assert.rejects(route(quotaReport('provider', .8, 'ok', 'account', Date.now() - 10 * 60 * 1000)), /stale-report/);
+  await assert.rejects(route(quotaReport('provider', .8, 'ok', null)), /unknown-account-binding/);
+});
+test('OMP quota ignores unrelated model-scoped meters while applying provider headroom', async () => {
+  const dir = fixture('throw new Error("Jev must not run");');
+  const report = quotaReport('provider', .8);
+  report.limits.unshift({ status: 'exhausted', amount: { remainingFraction: 0 }, scope: { provider: 'provider', model: 'provider/other' } });
+  const result = await routeModel(dir, {
+    phase: 'create-plan',
+    economy: 'provider/model',
+    candidates: [{ model: 'provider/model', cost: 1, description: 'ordinary' }],
+    quotaMode: 'omp',
+    quotaSnapshot: quotaSnapshot({ reports: [report] }),
+  });
+  assert.equal(result.model, 'provider/model');
 });

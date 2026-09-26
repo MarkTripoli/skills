@@ -32,6 +32,19 @@ export async function selectStageModel(skillsDir, options = {}) {
     routing: options.modelRouting ?? 'auto',
     choiceAliases: { economy: model, reasoning },
     requireJev: true,
+    ...(options.quotaMode && options.quotaMode !== 'off'
+      ? {
+          quotaMode: options.quotaMode,
+          quotaSnapshot: options.quotaSnapshot,
+          quotaCommand: options.quotaCommand,
+          cwd: options.cwd,
+          env: options.env,
+          quota: {
+            maxAgeMs: options.quotaMaxAgeMs,
+            requiredHeadroom: options.quotaRequiredHeadroom,
+          },
+        }
+      : {}),
   });
   const { expectedLosses, requestedModel, availableCandidates, profileSource, ...selection } = result;
   const aliases = { [model]: 'economy', [reasoning]: 'reasoning' };

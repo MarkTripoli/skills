@@ -2,7 +2,7 @@ import { workflow } from '@bastani/atomic/workflows';
 import { Type } from 'typebox';
 import { observeArtifacts, frontmatter, planProgress } from '../lib/artifacts.mjs';
 import { ensureTask, revision, saveRecord, childrenFor, childWave, prepareChild, expandPath } from '../lib/workspace.mjs';
-import { MODES, SKILLS, judgment, eligible, initialState, runSkill, artifactGate, boundaryState, recoveryDiagnostic, reconcileRecovery } from '../lib/controller.mjs';
+import { MODES, SKILLS, judgment, eligible, initialState, runSkill, artifactGate, boundaryState, recoveryDiagnostic, reconcileRecovery, contextBoundaryAdmission } from '../lib/controller.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolveSkillsDir } from '../lib/skill-storage.mjs';
@@ -18,6 +18,13 @@ const delivery = workflow({
     skills_dir: Type.Optional(Type.String({ description: 'Installed skill directory; defaults to ~/.agents/skills.' })),
     workflow: choices(['auto', ...MODES], 'auto'),
     gates: choices(['all', 'none', 'plan', 'pr'], 'all'),
+    liaison: choices(['none', 'first-sergent'], 'none'),
+    transport: choices(['native', 'herdr'], 'native'),
+    quota_mode: choices(['off', 'omp', 'agent-router'], 'off'),
+    quota_command: Type.Optional(Type.String({ minLength: 1, description: 'OMP executable used when quota_mode=omp.' })),
+    quota_max_age_ms: Type.Optional(Type.Number({ minimum: 0, description: 'Maximum age of an OMP usage snapshot.' })),
+    quota_required_headroom: Type.Optional(Type.Number({ minimum: 0, maximum: 1, description: 'Minimum remaining fraction required for every candidate.' })),
+    context_policy: choices(['off', 'stop-at-60'], 'off'),
     model: Type.String({ minLength: 1, default: 'openai-codex/gpt-5.6-luna-fast', description: 'Ordinary economical stage model; mandatory for every code-writing and unknown phase.' }),
     model_routing: choices(['auto', 'fixed'], 'auto'),
     reasoning_model: Type.String({ minLength: 1, default: 'openai-codex/gpt-5.6-sol', description: 'Stronger reasoning model available to JEV for allowed non-code phases.' }),
@@ -83,6 +90,11 @@ const delivery = workflow({
       if (status === 'blocked') return ctx.exit({ status: 'blocked', reason: summary, outputs: result });
       return result;
     };
+    if (taskInputs.quota_mode === 'agent-router') {
+      if (taskInputs.transport !== 'herdr') return finish('blocked', 'agent-router quota requires explicit transport=herdr; native Atomic transport has no external-router reservation path.');
+      if (process.env.HERDR_ENV !== '1') return finish('blocked', 'agent-router quota requires HERDR_ENV=1; no Herdr pane was controlled.');
+      return finish('blocked', 'agent-router is not dispatched: the current CLI owns reservation only inside `router run TASK --json --usage --no-enrich`, but it cannot bind the caller-selected account or guarantee the existing task worktree. No dry-run reservation or alternate fallback was used.');
+    }
 
     // Each loop creates new tracked work. Neither a repair nor a feedback round
     // reopens an ancestor, so replay preserves one acyclic stage sequence.
@@ -136,6 +148,8 @@ const delivery = workflow({
         const missingReceipt = source && !state.latest.implementation && planProgress(source.text).complete;
         return finish('blocked', missingReceipt ? `Implementation source ${source.file} is complete but has no implementation receipt; missing receipt evidence cannot be recovered by decreasing checkboxes. Resume with genuine validation evidence or inspect the task.` : `Required evidence is not ready: ${Object.values(state.latest).filter(artifact => ['blocked', 'failed', 'not-reproduced', 'pending'].includes(artifact.status)).map(artifact => `${artifact.file}: ${artifact.status}`).join('; ') || 'unmet task prerequisites'}. Correct the prerequisite and resume the native stage or rerun with this task_dir.`);
       }
+      const contextBoundary = contextBoundaryAdmission(taskInputs);
+      if (contextBoundary) return finish('blocked', `Context policy stopped before stage dispatch: ${contextBoundary.reason}. Atomic has no documented live child context monitor; resume with a managed transport that exposes one or leave context_policy=off.`);
 
       if (decision.choice === 'children') {
         const children = await ctx.tool(`${steps}-read-epic-children`, { task_dir: task.taskDir }, async () => childrenFor(task));

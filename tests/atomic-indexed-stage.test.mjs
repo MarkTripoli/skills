@@ -18,6 +18,7 @@ function fixture(t, indexed) {
   fs.writeFileSync(path.join(skillsDir, 'create-research', 'SKILL.md'), '# create-research\n');
   fs.mkdirSync(path.join(skillsDir, 'route-model'), { recursive: true });
   fs.copyFileSync(path.resolve('skills/delivery/route-model/route-model.mjs'), path.join(skillsDir, 'route-model', 'route-model.mjs'));
+  fs.copyFileSync(path.resolve('skills/delivery/route-model/quota.mjs'), path.join(skillsDir, 'route-model', 'quota.mjs'));
   fs.mkdirSync(taskDir);
   fs.writeFileSync(path.join(taskDir, 'task.md'), 'Research indexed stages.\n');
   if (indexed) initTaskArtifacts(taskDir);

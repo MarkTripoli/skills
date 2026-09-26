@@ -87,6 +87,14 @@ Atomic install `workflows/skills-delivery/` and brother `skills-delivery.mjs` un
 ```
 
 Run each in **new session**, in checkout + branch named by last reply. Use its real file name, not these example. Codex use `$skill-name`. To change doc, use its `iterate-*` skill with feedback.
+## `/deliver` with optional First Sergent
+
+```text
+/deliver Add a diagnostic --verbose flag across the CLI
+```
+
+First non-oneshot start: answer “Use First Sergent for this delivery?” **yes** for a separate backend and chat liaison; **no** keeps the existing manual/Atomic path. Oneshot defaults to no question; explicitly request First Sergent to opt in. Codex: `$deliver`. Resume with the observed task worktree/directory, not a new request. The default opted-in backend needs delegated fresh workers; in-phase questions need an addressable child. Explicit Atomic opt-in opens its graph and records `liaison=first-sergent`; return to chat. Its awaiting-input gate does not wake the liaison, so use manual worker gates or initiate `/deliver --run <run-id>` to relay the exact pending answer. Headless Atomic needs `gates=none`. Opted-in quota/context controls default to `off` and honor explicit user policies; legacy `/deliver` does not inherit them. OMP provider filtering requires fresh reports and one account binding but creates no concurrency reservation. The upstream Herdr router has no safe production caller here, so `agent-router` is externally blocked. Atomic `stop-at-60` blocks before dispatch because documented `ctx.task` has no live child context monitor.
+
 
 ## Atomic launch
 

@@ -22,7 +22,7 @@ A valid override is a relative POSIX path: no absolute or drive-letter form, no 
 
 ## task.md
 
-`task.md` is the required request record in every task directory; a new task also carries a valid empty `index.json`, initialized at creation (see Artifacts). Frontmatter keys: `slug`, `title`, `workflow`, `created` (ISO date); epic children also carry `parent`, `base`, and `depends_on`. Optional keys: `issue` (the GitHub issue number a child task tracks, written by `start-epic-delivery` and closed by its pull request) and `routed_by` with `route_confidence` (the workflow the `deliver` skill chose and how sure the judgment was). The body is the user's request verbatim.
+`task.md` is the required request record in every task directory; a new task also carries a valid empty `index.json`, initialized at creation (see Artifacts). Frontmatter keys: `slug`, `title`, `workflow`, `created` (ISO date); epic children also carry `parent`, `base`, and `depends_on`. Optional keys: `issue` (the GitHub issue number a child task tracks, written by `start-epic-delivery` and closed by its pull request), `routed_by` with `route_confidence` (the workflow the `deliver` skill chose and how sure the judgment was), and `liaison: first-sergent` for manual First Sergent opt-in. The body is the user's request verbatim.
 
 `workflow` records the delivery chain: `full`, `lean`, `prd`, `oneshot`, `bugfix`, `epic`, or `program`; the default is `full`. `resolve-reviews` and `epic-wave` are continuation routes over existing tasks, not new task kinds. The chains are in [workflows/delivery.md](../workflows/delivery.md).
 
@@ -234,13 +234,14 @@ Validate the subject before committing: it must match `^(feat|fix|refactor|perf|
 
 For a role `agent-<role>`, start a worker whose first instruction is to read and follow the installed `agent-<role>` skill's `SKILL.md` (in a checkout of the collection, `skills/delivery/agent-<role>/SKILL.md`), give it the assignment text, wait for it, and read its final message. Verify its claims against the repository before using them.
 
-The runtime section in an installed skill names the exact mechanism. When no subagent mechanism exists, perform the role inline and say so in the reply.
+The runtime section in an installed skill names the exact mechanism. When no subagent mechanism exists, ordinary phase worker roles run inline and say so; `agent-first-sergent` is the exception because its opted-in contract requires separately delegated fresh phases. Without that transport, keep the existing manual handoff instead of calling an inline role a liaison.
 
 ## Phase isolation and context budget
 
 A phase skill reads only `task.md` and its selected artifacts. It never relies on earlier conversation. Every newly dispatched phase gets a fresh context: an Atomic native stage with `context: "fresh"`, or a new manual session. Resuming an interrupted active Atomic stage may restore that stage's own saved session; this does not carry its conversation into a different phase.
 
 The artifact is the memory between phases; the conversation is not. Everything the next phase needs is in the task directory before the reply is printed. A compaction summary is not a substitute: it drops the exact file paths, checks, and limits the artifact keeps.
+An opted-in manual First Sergent is a child-worker role, not a phase skill. It dispatches each phase in a fresh agent session and reads its saved artifact; when a gate needs human input it returns only the decision and evidence to the chat liaison. Task-local `.first-sergent-state.json` keeps exact artifact-hash approvals, pending feedback and cumulative steps across worker replacement; the original request stays in `task.md`. Interactive in-phase questions need the same addressable child session, not a new artifact gate. This role never carries its own conversation into a phase or compacts an active phase. Atomic's existing controller serves as a separate orchestrator for an explicitly selected Atomic run; its native pending gate does not wake the liaison, and native Atomic prompts, not chat text, authorize gates. The ordinary manual handoff stays available when this mode is off.
 
 Read budget for one phase, in this order: `task.md` frontmatter and body; the primary artifacts selected through the index's current records, completely; `summary` only from other index records; repository files through child workers where the skill provides them, and directly only the files the phase must edit or cite. Never paste a worker's full message into an artifact or reply; extract facts with `path:line` pointers.
 

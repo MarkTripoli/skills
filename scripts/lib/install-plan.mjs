@@ -7,7 +7,7 @@ import { scanSkills } from './layout.mjs';
 
 const TARGETS = [...RUNTIMES, 'portable'];
 const TARGET_LABEL = { 'claude-code': 'Claude Code', codex: 'Codex', 'oh-my-pi': 'Oh My Pi', pi: 'Pi', portable: 'Portable' };
-const SKILL_DEPENDENCIES = { 'jev-ui': ['typed-judgment', 'record-evidence'], 'iterate-evidence': ['record-evidence'] };
+const SKILL_DEPENDENCIES = { deliver: ['agent-first-sergent'], 'agent-first-sergent': ['route-model', 'typed-judgment'], 'jev-ui': ['typed-judgment', 'record-evidence'], 'iterate-evidence': ['record-evidence'] };
 const BINARY = { 'claude-code': 'claude', codex: 'codex', 'oh-my-pi': 'omp', pi: 'pi' };
 
 function dependencyClosure(names) {

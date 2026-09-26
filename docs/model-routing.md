@@ -44,7 +44,16 @@ Candidates are ordered weakest to strongest; costs are independent and may vary 
 
 Implementation, mutation, tool-oriented, and unknown phases always use `economy` without JEV. Eligible non-mutating phases use JEV only when more than one candidate is supplied. The helper combines JEV adequacy probabilities with normalized candidate cost and an under-provision penalty, selecting the candidate with the lowest expected loss. A standalone portable call falls back to `economy` with `source: "fallback"` and a `reason` when the sibling typed-judgment helper or JEV service is unavailable. Atomic passes `requireJev` and fails closed instead of falling back.
 
+## Quota-aware routing
+
+Quota mode is opt-in so portable routing keeps its existing economy behavior by default. With `quota_mode=omp`, the helper reads `omp usage --json`, validates the snapshot and each matched report's `fetchedAt`, provider capacity, account cardinality, status, and `amount.remainingFraction`, then filters exact candidates before Jev. Provider filtering means only the provider named by a candidate's model is evaluated; it does not select or switch accounts.
+
+The safe policy is fail closed: stale or malformed snapshots or reports, unknown headroom, zero or exhausted limits, unknown account binding, no matching provider account, multiple matching accounts, exhausted provider capacity, and insufficient remaining headroom exclude a candidate. An empty eligible set or a fixed economy model excluded by quota is an error. Account binding requires one explicit report account identifier; it is evidence that the usage report is attributable, not a concurrency reservation. The snapshot creates no reservation or lock, so concurrent native runs can race after filtering; re-read at the dispatch boundary or stop.
+
+`quota_mode=agent-router` is not a route-only reservation mode and has no safe production caller in this repository. The current upstream router exposes only a real `router run TASK --json --usage --no-enrich` launch; its output does not prove the exact phase prompt, existing task worktree, and caller-selected account binding required here. Atomic and manual First Sergent therefore report this Herdr path as externally blocked; they never use dry-run or an unbound fallback.
+
 Atomic adapts its existing `model`, `reasoning_model`, and `available_models` inputs into this contract. Omitted availability preserves the Luna-fast economy and Sol escalation compatibility path. Explicit candidate objects are preferred for portable callers because they carry the cost and capability data required for multi-model routing.
+An opted-in manual First Sergent first routes the orchestrator worker itself on the economical candidate, then uses this same helper before every phase: code-writing and other mutating phases stay on economy; eligible reasoning phases may select a stronger configured candidate. Its chat liaison is not a phase model router, and a recommendation without a native model argument does not enforce either worker's model. Atomic First Sergent uses the existing delivery controller's routing and recorded model attempts, not a parallel route or fallback. See [First Sergent delivery](../workflows/delivery.md#optional-first-sergent-at-deliver).
 
 ## Candidate discovery
 

@@ -138,15 +138,26 @@ function makeRecovery(skill, source, before, after, receipt, codeRevision) {
 function validProof(state, type, status) { return currentProof(state, type) && (!status || state.latest[type].status === status); }
 
 export function initialState(observation, codeRevision) { return { ...observation, revision: codeRevision, generation: 0, proofs: {}, approvals: {} }; }
+export function contextBoundaryAdmission(inputs = {}) {
+  if (inputs.context_policy !== 'stop-at-60') return null;
+  return {
+    action: 'stop',
+    status: 'unknown',
+    reason: 'Atomic WorkflowContext exposes no documented live child context telemetry; stage dispatch is blocked before ctx.task',
+  };
+}
+
 export async function runSkill(ctx, task, state, inputs, skill, step, feedback = '') {
+  const contextBoundary = contextBoundaryAdmission(inputs);
+  if (contextBoundary) throw new Error(contextBoundary.reason);
   const name = `${String(step).padStart(3, '0')}-${skill}`;
   const installedSkill = skill === 'implement-task' && fs.existsSync(path.join(task.skillsDir, skill, 'SKILL.md')) ? skill : skill === 'implement-task' ? 'iterate-implementation' : skill;
   const prompt = stagePrompt(task, skill, state, inputs, feedback);
   if (!fs.existsSync(path.join(task.skillsDir, installedSkill, 'SKILL.md'))) throw new Error(`Missing installed skill ${installedSkill} in ${task.skillsDir}`);
   const taskRequest = fs.readFileSync(path.join(task.taskDir, 'task.md'), 'utf8');
   const artifactSummaries = Object.values(state.latest).map(({ file, type, summary, status }) => ({ file, type, summary, status }));
-  const selection = await ctx.tool(`${name}-select-model`, { skill, request: taskRequest, artifacts: artifactSummaries, model: inputs.model, model_routing: inputs.model_routing, reasoning_model: inputs.reasoning_model, available_models: inputs.available_models, model_candidates: inputs.model_candidates }, async () => {
-    const choice = await selectStageModel(task.skillsDir, { skill, request: taskRequest, artifacts: artifactSummaries, model: inputs.model, modelRouting: inputs.model_routing, reasoningModel: inputs.reasoning_model, availableModels: inputs.available_models, modelCandidates: inputs.model_candidates });
+  const selection = await ctx.tool(`${name}-select-model`, { skill, request: taskRequest, artifacts: artifactSummaries, model: inputs.model, model_routing: inputs.model_routing, reasoning_model: inputs.reasoning_model, available_models: inputs.available_models, model_candidates: inputs.model_candidates, quota_mode: inputs.quota_mode }, async () => {
+    const choice = await selectStageModel(task.skillsDir, { skill, request: taskRequest, artifacts: artifactSummaries, model: inputs.model, modelRouting: inputs.model_routing, reasoningModel: inputs.reasoning_model, availableModels: inputs.available_models, modelCandidates: inputs.model_candidates, quotaMode: inputs.quota_mode, quotaSnapshot: inputs.quota_snapshot, quotaCommand: inputs.quota_command, quotaMaxAgeMs: inputs.quota_max_age_ms, quotaRequiredHeadroom: inputs.quota_required_headroom, cwd: task.cwd, env: process.env });
     saveRecord(task, `${name}-model`, choice);
     return choice;
   }, { timeoutMs: 90_000 });
@@ -155,7 +166,7 @@ export async function runSkill(ctx, task, state, inputs, skill, step, feedback =
     model: selection.model,
     maxOutput: { bytes: 16_384, lines: 160 },
   });
-  return ctx.tool(`${name}-observe`, { task_dir: task.taskDir, skill }, async () => {
+  return ctx.tool(`${name}-observe`, { task_dir: task.taskDir, skill, context_policy: inputs.context_policy ?? 'off' }, async () => {
     const after = observeArtifacts(task.taskDir);
     const artifact = requireFresh(state, after, SKILLS[skill], expectedArtifactIteration(state, SKILLS[skill]));
     const codeRevision = revision(task.cwd, task.taskRootRelative);
