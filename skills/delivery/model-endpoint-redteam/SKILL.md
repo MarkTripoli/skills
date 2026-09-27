@@ -20,16 +20,14 @@ Create a local JSON artifact outside the repository and task artifacts:
 Then use:
 
 ```sh
-node <installed-skills-dir>/model-endpoint-redteam/scripts/probe.mjs --url https://203.0.113.9/v1/chat/completions --authorization /secure/local/authorization.json --dry-run
+node <installed-skills-dir>/model-endpoint-redteam/scripts/probe.mjs --url https://203.0.113.9/v1/chat/completions --dry-run
 ```
 
-Remove `--dry-run` only after confirming the locally supplied attestation. Live runs require the artifact to match the exact URL origin and path, include a nonempty operator, and be current. Live hostname targets are refused because this dependency-free CLI cannot pin `fetch` to the address it resolves; only IP-literal URLs are accepted. This avoids DNS rebinding but does not prove control of the IP address. Do not pass credentials to the CLI.
+The CLI defaults to dry-run, including when called through the module API without `live: true`. Live execution requires explicit `--live` (or `live: true` through the module API) and the local authorization artifact bound to the exact URL origin/path, operator, and current time. Authorization expiry and identity are rechecked immediately before every request. Live hostname targets are refused because this dependency-free CLI cannot pin `fetch` to a resolved address; only IP-literal URLs are accepted. This avoids DNS rebinding but does not prove IP ownership. Do not pass credentials to the CLI.
 
-The CLI supports `--probes recon,schema,sensitivity,boundary,evasion,validation,extraction`, `--assessment <assessment.json>`, `--resume <progress.json>`, `--audit <audit.jsonl>`, `--max-attempts N`, `--retries N`, `--timeout-ms N`, and `--rate-ms N`. Resume state must be a report emitted by this CLI, bound to the same endpoint, authorized path, operator digest, and selected probe set. Every completed probe must contain matching response and assessment digests, scope, and probe identity; mismatches are refused. Prior attempts count against the new total attempt ceiling, and over-budget state is refused. An audit-write failure stops execution.
+The CLI supports probe selection, `--audit <audit.jsonl>`, `--max-attempts N`, `--retries N`, `--timeout-ms N`, and `--rate-ms N`. `--rate-ms` must be positive; live requests are paced at least 100 ms apart using a monotonic clock. Resume and preloaded assessment inputs are not supported. Each fetch attempt has an append-only `attempt-start` event before the request and `attempt-result` event after it, bound by unique run and attempt IDs. Any audit write failure stops execution.
 
-Each assessment entry is `{ "outcome": "pass" | "fail", "basis": "brief human assessment", "evidence_sha256": "sha256:<observed response digest>", "authorized_scope": "<exact origin and path>" }`, keyed by probe name. The digest and scope must match the actual response and current authorization; prewritten or unbound assessment remains `received_unassessed`. A probe becomes complete only when a response was received and its bound assessment says pass; fail remains failed. Without assessment, a response is `received_unassessed` and report status stays incomplete. The assessment is an operator assertion, not an independently verified model judgment. Assessment basis is represented in the report only by SHA-256 digest.
-
-Audit and report records omit request payloads, credentials, and raw model responses. Evidence contains response digest, HTTP status, and response class. Missing or incomplete probes make the report incomplete. Do not claim a probe passed merely because an HTTP response arrived.
+Each response is recorded as `received_unassessed` with a response digest only; even a successful HTTP status never becomes a security pass in this CLI. Reports contain no request payloads, credentials, or raw model responses. Report status stays `incomplete` unless a request fails, in which case it is `failed`. Assess results separately from observed evidence; this CLI does not accept prewritten assessments or produce `complete`.
 
 ## Publication
 
