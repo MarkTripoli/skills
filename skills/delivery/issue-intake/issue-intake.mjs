@@ -56,7 +56,8 @@ function withClaimLock(file, staleMs, operation) {
       let stale = false;
       try {
         const current = JSON.parse(fs.readFileSync(owner, 'utf8'));
-        try { process.kill(current.pid, 0); } catch (probe) { stale = ['ESRCH', 'EINVAL', 'ERR_OUT_OF_RANGE'].includes(probe.code); }
+        if (!Number.isSafeInteger(current.pid) || current.pid <= 0 || current.pid > 0x7fffffff) stale = true;
+        else try { process.kill(current.pid, 0); } catch (probe) { stale = ['ESRCH', 'EINVAL', 'ERR_OUT_OF_RANGE'].includes(probe.code); }
       } catch (readError) {
         if (readError.code === 'ENOENT' || readError instanceof SyntaxError) stale = Date.now() - fs.statSync(lock).mtimeMs >= staleMs;
         else throw readError;
