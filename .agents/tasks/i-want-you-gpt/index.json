@@ -2,7 +2,7 @@
   "$schema": "skills.task-index/v1",
   "schemaVersion": 1,
   "task": "i-want-you-gpt",
-  "generation": 6,
+  "generation": 7,
   "artifactSeries": {
     "research.sources": {
       "current": "research.sources.0001",
@@ -75,7 +75,7 @@
       ]
     },
     "review.code": {
-      "current": "review.code.0001",
+      "current": "review.code.0002",
       "iterations": [
         {
           "id": "review.code.0001",
@@ -85,6 +85,16 @@
           "type": "code-review",
           "status": "clean",
           "summary": "Independent full-diff review and correction re-reviews found no remaining actionable major defect at public source commit 6ade855b."
+        },
+        {
+          "id": "review.code.0002",
+          "iteration": 2,
+          "path": "artifacts/review/code/0002.md",
+          "supersedes": "review.code.0001",
+          "sha256": "85009d23a4d63f9f2831a6b5b480205b8c35ceaf7594363730017cc55a5e39a4",
+          "type": "code-review",
+          "status": "clean",
+          "summary": "Clean full-diff source review at 6ade855b plus direct review of the subsequent evidence hygiene and immutable receipt at 4159c094."
         }
       ]
     }
