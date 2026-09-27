@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import net from 'node:net';
 import {randomUUID, createHash} from 'node:crypto';
 import {performance} from 'node:perf_hooks';
@@ -16,13 +17,14 @@ export const PROBES = {
 };
 const MIN_RATE_MS=100;
 export const MAX_RESPONSE_BYTES=64*1024;
+export const DEFAULT_AUDIT_FILE=path.join(os.homedir(),'.local','state','model-endpoint-redteam','audit.jsonl');
 const safe = value => String(value ?? '').replace(/[\r\n\t]/g, ' ').slice(0, 200);
 const hash = value => `sha256:${createHash('sha256').update(value).digest('hex')}`;
 const help = 'Usage: probe.mjs --url URL [--dry-run | --live --authorization FILE] [--probes names] [--audit FILE] [--max-attempts N] [--retries N] [--timeout-ms N] [--rate-ms N]';
 function parse(argv) {
   const live=argv.includes('--live'), dry=argv.includes('--dry-run');
   if(live&&dry)throw Error('Choose either --live or --dry-run');
-  const out={probes:Object.keys(PROBES),live,dryRun:!live,retries:0,maxAttempts:7,timeoutMs:5000,rateMs:1000,audit:'model-endpoint-redteam.audit.jsonl'};
+  const out={probes:Object.keys(PROBES),live,dryRun:!live,retries:0,maxAttempts:7,timeoutMs:5000,rateMs:1000,audit:DEFAULT_AUDIT_FILE};
   const keys={'--url':'url','--authorization':'authorization','--probes':'probes','--audit':'audit','--max-attempts':'maxAttempts','--retries':'retries','--timeout-ms':'timeoutMs','--rate-ms':'rateMs'};
   for(let i=0;i<argv.length;i++){const a=argv[i];if(a==='--live'||a==='--dry-run')continue;if(a==='--help')out.help=true;else if(keys[a]){if(!argv[i+1])throw Error(`Missing value for ${a}`);const k=keys[a],v=argv[++i];out[k]=k==='probes'?v.split(','):['maxAttempts','retries','timeoutMs','rateMs'].includes(k)?Number(v):v;}else throw Error(`Unknown option ${a}`);}
   return out;
@@ -43,19 +45,53 @@ function validate(o) {
 function readAuthorization(options,now=new Date()) {
   let record;try{record=JSON.parse(fs.readFileSync(options.authorization,'utf8'));}catch{throw Error('Authorization artifact unavailable or invalid');}
   const url=new URL(options.url),scope=`${url.origin}${url.pathname}`;
-  if(record.schema_version!==1||record.origin!==url.origin||record.path!==url.pathname||typeof record.operator!=='string'||!record.operator.trim()||record.operator.length>200||typeof record.authorized_at!=='string'||typeof record.expires!=='string'||!Number.isFinite(Date.parse(record.authorized_at))||!Number.isFinite(Date.parse(record.expires))||Date.parse(record.authorized_at)>now.getTime()||Date.parse(record.expires)<=now.getTime())throw Error('Authorization artifact does not bind a current operator attestation to this exact origin and path');
-  return {operatorDigest:hash(record.operator),scope};
+  const authorizedAt=Date.parse(record.authorized_at),expiresAt=Date.parse(record.expires);
+  if(record.schema_version!==1||record.origin!==url.origin||record.path!==url.pathname||typeof record.operator!=='string'||!record.operator.trim()||record.operator.length>200||typeof record.authorized_at!=='string'||typeof record.expires!=='string'||!Number.isFinite(authorizedAt)||!Number.isFinite(expiresAt)||authorizedAt>now.getTime()||expiresAt<=now.getTime())throw Error('Authorization artifact does not bind a current operator attestation to this exact origin and path');
+  return {operatorDigest:hash(record.operator),scope,authorizedAt,expiresAt,grantDigest:hash(JSON.stringify(record))};
+}
+function ensurePrivateDirectory(directory){
+  const uid=typeof process.getuid==='function'?process.getuid():null;
+  if(uid===null)throw Error('Audit ownership checks are unavailable');
+  const absolute=path.resolve(directory);
+  let existing=absolute;
+  while(true){
+    try{const stat=fs.lstatSync(existing);if(stat.isDirectory()&&!stat.isSymbolicLink())break;existing=path.dirname(existing);}
+    catch(error){if(error.code!=='ENOENT')throw error;const parent=path.dirname(existing);if(parent===existing)throw error;existing=parent;}
+  }
+  const resolved=fs.realpathSync(existing);
+  const verifyChain=target=>{
+    const root=path.parse(target).root;let current=root;
+    for(const part of path.relative(root,target).split(path.sep).filter(Boolean)){
+      current=path.join(current,part);
+      const stat=fs.lstatSync(current);
+      if(stat.isSymbolicLink()||!stat.isDirectory()||(stat.uid!==uid&&stat.uid!==0)||(stat.mode&0o022)!==0)throw Error('Audit parent directory is unsafe');
+    }
+  };
+  verifyChain(resolved);
+  let current=resolved;
+  for(const part of path.relative(existing,absolute).split(path.sep).filter(Boolean)){
+    current=path.join(current,part);
+    try{fs.mkdirSync(current,{mode:0o700});}catch(error){if(error.code!=='EEXIST')throw error;}
+    verifyChain(current);
+    const stat=fs.lstatSync(current);
+    if(stat.uid!==uid||(stat.mode&0o777)!==0o700)throw Error('Audit directory must be owned by the operator with mode 0700');
+  }
+  const stat=fs.lstatSync(current);
+  if(stat.uid!==uid||(stat.mode&0o777)!==0o700)throw Error('Audit directory must be owned by the operator with mode 0700');
+  return current;
 }
 export function appendAudit(file,record){
   if(!file)throw Error('Audit path required');
+  const absolute=path.resolve(file),directory=ensurePrivateDirectory(path.dirname(absolute)),safeFile=path.join(directory,path.basename(absolute));
   const noFollow=fs.constants.O_NOFOLLOW;
   if(typeof noFollow!=='number')throw Error('Audit symlink protection is unavailable');
   const common=fs.constants.O_WRONLY|fs.constants.O_APPEND|noFollow;
   let fd;
   try{
-    try{fd=fs.openSync(file,common|fs.constants.O_CREAT|fs.constants.O_EXCL,0o600);}
-    catch(error){if(error.code!=='EEXIST')throw error;fd=fs.openSync(file,common);}
-    if(!fs.fstatSync(fd).isFile())throw Error('Audit target is not a regular file');
+    try{fd=fs.openSync(safeFile,common|fs.constants.O_CREAT|fs.constants.O_EXCL,0o600);}
+    catch(error){if(error.code!=='EEXIST')throw error;fd=fs.openSync(safeFile,common);}
+    const stat=fs.fstatSync(fd),uid=process.getuid();
+    if(!stat.isFile()||stat.uid!==uid||(stat.mode&0o777)!==0o600||stat.nlink!==1)throw Error('Audit target must be an operator-owned mode-0600 regular file with one link');
     fs.writeFileSync(fd,`${JSON.stringify(record)}\n`,{encoding:'utf8'});
   }finally{if(fd!==undefined)fs.closeSync(fd);}
 }
@@ -83,6 +119,7 @@ export async function run(options,{fetchImpl=fetch,sleep=ms=>new Promise(r=>setT
   const endpoint=new URL(options.url).origin;
   let attestation={operatorDigest:null,scope:null};
   if(live)attestation=readAuthorization(options,now());
+  const auditPath=options.audit??DEFAULT_AUDIT_FILE;
   const outcomes=[];let attempts=0,failedAttempts=0,lastAttemptAt=null;
   for(const name of options.probes){
     const result={name,probe_sha256:hash(PROBES[name]),status:live?'incomplete':'planned',assessment_status:live?'incomplete':null,attempts:0,failed_attempts:0};outcomes.push(result);
@@ -92,11 +129,13 @@ export async function run(options,{fetchImpl=fetch,sleep=ms=>new Promise(r=>setT
       const attemptNumber=attempts+1,attemptId=`${runId}:${attemptNumber}`;
       if(lastAttemptAt!==null){const waitMs=Math.max(MIN_RATE_MS,options.rateMs)-(monotonicNow()-lastAttemptAt);if(waitMs>0)await sleep(waitMs);}
       attempts++;result.attempts++;
-      try{audit(options.audit,{event:'attempt-start',run_id:runId,attempt_id:attemptId,attempt:attemptNumber,probe:name,origin:endpoint,operator_sha256:attestation.operatorDigest,at:now().toISOString()});}catch{throw Error('Audit write failed before request; execution stopped');}
+      try{audit(auditPath,{event:'attempt-start',run_id:runId,attempt_id:attemptId,attempt:attemptNumber,probe:name,origin:endpoint,operator_sha256:attestation.operatorDigest,authorization_grant_sha256:attestation.grantDigest,at:now().toISOString()});}catch{throw Error('Audit write failed before request; execution stopped');}
       let attemptStatus='failed',fatalAuthorization=false,attemptFailed=false;
       try{
-        const current=readAuthorization(options,now());
-        if(current.scope!==attestation.scope||current.operatorDigest!==attestation.operatorDigest)throw Error('authorization changed');
+        const checkedAt=now();
+        if(checkedAt.getTime()>=attestation.expiresAt)throw Error('original authorization expired');
+        const current=readAuthorization(options,checkedAt);
+        if(current.scope!==attestation.scope||current.operatorDigest!==attestation.operatorDigest||current.authorizedAt!==attestation.authorizedAt||current.expiresAt!==attestation.expiresAt||current.grantDigest!==attestation.grantDigest)throw Error('authorization changed');
       }catch{fatalAuthorization=true;result.error='Authorization expired or changed';}
       if(!fatalAuthorization){
         try{
@@ -109,7 +148,7 @@ export async function run(options,{fetchImpl=fetch,sleep=ms=>new Promise(r=>setT
         }catch{result.status='failed';result.error='Request failed';attemptFailed=true;}
       }
       if(attemptFailed){failedAttempts++;result.failed_attempts++;}
-      try{audit(options.audit,{event:'attempt-result',run_id:runId,attempt_id:attemptId,attempt:attemptNumber,probe:name,status:attemptStatus,at:now().toISOString()});}catch{throw Error('Audit write failed after request; execution stopped');}
+      try{audit(auditPath,{event:'attempt-result',run_id:runId,attempt_id:attemptId,attempt:attemptNumber,probe:name,status:attemptStatus,authorization_grant_sha256:attestation.grantDigest,at:now().toISOString()});}catch{throw Error('Audit write failed after request; execution stopped');}
       lastAttemptAt=monotonicNow();
       if(fatalAuthorization)throw Error('Authorization expired or changed; execution stopped');
       if(result.status==='received_unassessed')break;
@@ -117,8 +156,8 @@ export async function run(options,{fetchImpl=fetch,sleep=ms=>new Promise(r=>setT
     }
   }
   const status=!live?'planned':failedAttempts?'failed':'incomplete';
-  const report={schema_version:1,status,run_id:runId,endpoint,authorized_scope_sha256:attestation.scope?hash(attestation.scope):null,operator_sha256:attestation.operatorDigest,authorization:{operator_attestation:live,independently_verified:false},selected_probes:options.probes,probes:outcomes,attempts,failed_attempts:failedAttempts};
-  if(live){try{audit(options.audit,{event:'report',run_id:runId,status:report.status,at:now().toISOString()});}catch{throw Error('Audit write failed; report not finalized');}}
+  const report={schema_version:1,status,run_id:runId,endpoint,authorized_scope_sha256:attestation.scope?hash(attestation.scope):null,operator_sha256:attestation.operatorDigest,authorization_grant_sha256:attestation.grantDigest,authorization:{operator_attestation:live,independently_verified:false},selected_probes:options.probes,probes:outcomes,attempts,failed_attempts:failedAttempts};
+  if(live){try{audit(auditPath,{event:'report',run_id:runId,status:report.status,at:now().toISOString()});}catch{throw Error('Audit write failed; report not finalized');}}
   return report;
 }
 if(import.meta.url===new URL(`file://${process.argv[1]}`).href){try{const options=parse(process.argv.slice(2));if(options.help)console.log(help);else{validate(options);const report=await run(options);console.log(JSON.stringify(report));if(options.live&&report.status!=='complete')process.exitCode=1;}}catch(error){console.error(JSON.stringify({status:'refused',reason:safe(error.message)}));process.exitCode=1;}}

@@ -3,7 +3,7 @@ import test from 'node:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {run, appendAudit, MAX_RESPONSE_BYTES} from '../skills/delivery/model-endpoint-redteam/scripts/probe.mjs';
+import {run, appendAudit, MAX_RESPONSE_BYTES, DEFAULT_AUDIT_FILE} from '../skills/delivery/model-endpoint-redteam/scripts/probe.mjs';
 
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'model-redteam-'));
 const authFile=path.join(root,'authorization.json');
@@ -84,4 +84,34 @@ test('report and audit redact authorization path',async()=>{
  assert.equal(result.authorized_scope_sha256.startsWith('sha256:'),true);
  assert.equal(JSON.stringify({result,audits}).includes(privatePath),false);
  writeAuthorization('2099-01-01T00:00:00Z');
+});
+
+test('default audit path is absolute and outside the current checkout',()=>{
+ assert.equal(path.isAbsolute(DEFAULT_AUDIT_FILE),true);
+ assert.equal(path.dirname(DEFAULT_AUDIT_FILE),path.join(os.homedir(),'.local','state','model-endpoint-redteam'));
+ assert.notEqual(path.dirname(DEFAULT_AUDIT_FILE),process.cwd());
+});
+
+test('audit rejects unsafe existing files and symlinked parents',()=>{
+ const readable=path.join(root,'readable-audit.jsonl');fs.writeFileSync(readable,'preserve\n');fs.chmodSync(readable,0o644);
+ assert.throws(()=>appendAudit(readable,{event:'attempt-start'}));assert.equal(fs.readFileSync(readable,'utf8'),'preserve\n');
+ const targetDir=path.join(root,'target-dir'),parentLink=path.join(root,'parent-link');
+ fs.mkdirSync(targetDir,{mode:0o700});fs.symlinkSync(targetDir,parentLink);
+ assert.throws(()=>appendAudit(path.join(parentLink,'audit.jsonl'),{event:'attempt-start'}));
+});
+
+test('authorization expiry extension cannot replace the original grant',async()=>{
+ writeAuthorization('2099-01-01T00:00:00Z');
+ let fetchCalls=0;
+ const audit=(_file,event)=>{if(event.event==='attempt-result'&&event.attempt===1)writeAuthorization('2100-01-01T00:00:00Z');};
+ await assert.rejects(run(liveOptions({probes:['recon']}),{audit,sleep:async()=>{},monotonicNow:()=>0,fetchImpl:async()=>{fetchCalls++;throw Error('synthetic retry');}}),/Authorization expired or changed/);
+ assert.equal(fetchCalls,1);
+ writeAuthorization('2099-01-01T00:00:00Z');
+});
+
+test('private regular audit file appends complete records',()=>{
+ const directory=path.join(root,'private-audit');fs.mkdirSync(directory,{mode:0o700});
+ const file=path.join(directory,'events.jsonl');appendAudit(file,{event:'attempt-start'});appendAudit(file,{event:'attempt-result'});
+ assert.equal(fs.statSync(file).mode&0o777,0o600);
+ assert.deepEqual(fs.readFileSync(file,'utf8').trim().split('\n').map(line=>JSON.parse(line).event),['attempt-start','attempt-result']);
 });
