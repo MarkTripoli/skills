@@ -90,17 +90,74 @@ function joinedFixture(t) {
   return { root, task, children, records };
 }
 
-test('squash-equivalent child commits join only when source and indexed proof match the parent', t => {
-  const {root, task, children, records} = joinedFixture(t);
+test('squash-equivalent child commits join when source and proof match a parent integration point', t => {
+  const { root, task, children, records } = joinedFixture(t);
   git(root, 'cherry-pick', 'api');
   git(root, 'cherry-pick', 'ui');
   assert.equal(joinChildren(task, children, records).complete, true);
-  fs.writeFileSync(path.join(root, 'src', 'ui.js'), 'export const ui = false;\n');
+});
+
+test('an integrated child stays complete after a dependent child changes its source file', t => {
+  const { root, task, children, records } = joinedFixture(t);
+  git(root, 'cherry-pick', 'api');
+  const baseHead = git(root, 'rev-parse', 'HEAD');
+  const uiWorktree = path.join(root, 'worktree-ui');
+  git(uiWorktree, 'rebase', 'main');
+  fs.writeFileSync(path.join(uiWorktree, 'src', 'api.js'), 'export const api = "extended by ui";\n');
+  git(uiWorktree, 'add', 'src/api.js');
+  git(uiWorktree, 'commit', '-m', 'Extend API for UI');
+  const childDir = records.get('ui').childDir;
+  const observation = observeArtifacts(childDir);
+  const codeRevision = revision(uiWorktree, '.agents/tasks');
+  const completion = childCompletionSnapshot({
+    ...observation, revision: codeRevision, generation: 1, approvals: {},
+    proofs: Object.fromEntries(['code-review', 'evidence', 'pr-description'].map(type => [
+      type, { hash: observation.latest[type].hash, revision: codeRevision, generation: 1 },
+    ])),
+  }, { cwd: uiWorktree, taskDir: childDir }, 'none');
+  records.set('ui', { ...records.get('ui'), baseHead, result: { status: 'completed', outputs: { status: 'completed', completion } } });
+  git(root, 'cherry-pick', git(uiWorktree, 'rev-parse', 'HEAD^'));
+  git(root, 'cherry-pick', 'ui');
+
+  const joined = joinChildren(task, children, records);
+  assert.equal(joined.complete, true);
+  assert.deepEqual(joined.children.map(outcome => outcome.complete), [true, true]);
+  assert.equal(git(root, 'show', 'HEAD:src/api.js'), 'export const api = "extended by ui";');
+});
+
+test('matching parent source without merged child proof cannot spoof integration', t => {
+  const { root, task, children, records } = joinedFixture(t);
+  git(root, 'cherry-pick', 'api');
+  fs.copyFileSync(path.join(root, 'worktree-ui', 'src', 'ui.js'), path.join(root, 'src', 'ui.js'));
   git(root, 'add', 'src/ui.js');
-  git(root, 'commit', '-m', 'Change merged UI behavior');
-  const stale = joinChildren(task, children, records);
-  assert.equal(stale.complete, false);
-  assert.match(stale.children[1].reasons.join(' '), /source differs from the completed child/);
+  git(root, 'commit', '-m', 'Copy UI source without its completion');
+  const joined = joinChildren(task, children, records);
+  assert.deepEqual(joined.children.map(outcome => outcome.complete), [true, false]);
+  assert.match(joined.children[1].reasons.join(' '), /no integration point/);
+});
+
+test('changed child branch cannot reuse its earlier completion', t => {
+  const { root, task, children, records } = joinedFixture(t);
+  git(root, 'cherry-pick', 'api');
+  git(root, 'cherry-pick', 'ui');
+  const uiWorktree = path.join(root, 'worktree-ui');
+  fs.writeFileSync(path.join(uiWorktree, 'src', 'ui.js'), 'export const ui = false;\n');
+  git(uiWorktree, 'add', 'src/ui.js');
+  git(uiWorktree, 'commit', '-m', 'Change UI after completion');
+  const joined = joinChildren(task, children, records);
+  assert.equal(joined.complete, false);
+  assert.match(joined.children[1].reasons.join(' '), /child code revision differs from completed run/);
+});
+
+test('historical integration does not excuse missing current committed completion evidence', t => {
+  const { root, task, children, records } = joinedFixture(t);
+  git(root, 'cherry-pick', 'api');
+  git(root, 'cherry-pick', 'ui');
+  git(root, 'rm', '.agents/tasks/ui/pr-description.md');
+  git(root, 'commit', '-m', 'Remove UI completion evidence');
+  const joined = joinChildren(task, children, records);
+  assert.equal(joined.complete, false);
+  assert.match(joined.children[1].reasons.join(' '), /lacks committed completion evidence|artifact is missing or stale/);
 });
 
 test('a missing child fork revision cannot certify a squash merge', t => {

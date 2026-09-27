@@ -76,6 +76,16 @@ export function run({cwd = process.cwd(), spawn = spawnSync} = {}) {
   } catch {
     return {schema_version: 1, repository: null, revision: null, scanner: 'semgrep', tool: {name: 'semgrep', version: null, status: 'unavailable', exit_code: null}, secret_coverage: 'incomplete', secret_tool: {name: 'gitleaks', version: null, status: 'unavailable', exit_code: null}, coverage: 'incomplete', findings: [], error: 'repository identity unavailable'};
   }
+  // Scanners read the checkout, not a snapshot of HEAD. Never bind mutable source to the commit.
+  let treeStatus;
+  try {
+    treeStatus = git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd);
+  } catch {
+    treeStatus = null;
+  }
+  if (treeStatus === null || treeStatus.length > 0) {
+    return {schema_version: 1, repository, revision, scanner: 'semgrep', tool: {name: 'semgrep', version: null, status: 'unavailable', exit_code: null}, secret_coverage: 'incomplete', secret_tool: {name: 'gitleaks', version: null, status: 'unavailable', exit_code: null}, coverage: 'incomplete', findings: [], error: treeStatus === null ? 'working tree cleanliness unavailable; scanners not run' : 'working tree has uncommitted files; scanners not run'};
+  }
   const version = spawn('semgrep', ['--version'], {cwd, encoding: 'utf8', timeout: 15000});
   const semgrepVersion = version.status === 0 ? version.stdout.trim() : null;
   const secretVersionResult = spawn('gitleaks', ['version'], {cwd, encoding: 'utf8', timeout: 15000});

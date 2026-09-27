@@ -12,7 +12,7 @@ function run(bin, args, cwd, env = process.env) {
   if (result.status !== 0) throw new Error(result.stderr || `${bin} failed`);
   return result.stdout.trim();
 }
-function fixture() {
+function fixture({legacy = false} = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'publication-proof-'));
   dirs.push(root);
   const repo = path.join(root, 'repo');
@@ -26,15 +26,20 @@ function fixture() {
   const taskDir = path.join(repo, '.agents', 'tasks', 'proof-check');
   fs.mkdirSync(taskDir, { recursive: true });
   fs.writeFileSync(path.join(taskDir, 'task.md'), '---\nslug: proof-check\ntitle: Proof check\nworkflow: full\ncreated: 2026-09-27\n---\n');
-  initTaskArtifacts(taskDir);
+  if (!legacy) initTaskArtifacts(taskDir);
   const bin = path.join(root, 'bin');
   fs.mkdirSync(bin);
   const gh = path.join(bin, 'gh');
-  fs.writeFileSync(gh, `#!/bin/sh\ncase "$1 $2" in\n  "pr view") printf '%s' "$GH_PR_JSON" ;;\n  "repo view") printf '%s' '{"nameWithOwner":"owner/repo"}' ;;\n  "api repos/owner/repo/issues/7/comments") printf '%s' "$GH_COMMENTS_JSON" ;;\n  *) exit 2 ;;\nesac\n`);
+  fs.writeFileSync(gh, `#!/bin/sh\ncase "$1 $2" in\n  "pr view") printf '%s' "$GH_PR_JSON" ;;\n  "repo view") printf '%s' '{"nameWithOwner":"owner/repo"}' ;;\n  "api repos/owner/repo/issues/comments/123") printf '%s' "$GH_COMMENT_JSON" ;;\n  "api repos/owner/repo/issues/7/comments") printf '%s' '[]' ;;\n  *) exit 2 ;;\nesac\n`);
   fs.chmodSync(gh, 0o755);
   return { root, repo, taskDir, bin };
 }
 function addArtifact(taskDir, type, text) {
+  if (!fs.existsSync(path.join(taskDir, 'index.json'))) {
+    const iteration = fs.readdirSync(taskDir).filter(name => /^\d{2,}-/.test(name)).length + 1;
+    fs.writeFileSync(path.join(taskDir, type === 'pr-description' ? 'pr-description.md' : `${String(iteration).padStart(2, '0')}-${type}-proof.md`), text);
+    return;
+  }
   const [kind, variant] = ARTIFACT_SERIES[type];
   const allocation = reserveArtifactIteration(taskDir, kind, variant);
   fs.writeFileSync(path.join(taskDir, allocation.writePath), text);
@@ -43,18 +48,18 @@ function addArtifact(taskDir, type, text) {
 function addEvidence(taskDir, testedSha, {captureUrl = 'describe-pr pending', commentUrl = 'describe-pr pending'} = {}) {
   addArtifact(taskDir, 'evidence', `---\ntype: evidence\nstatus: passed\nsummary: Captured behavior\n---\n\n## Revision\n\n- commit: ${testedSha}\n\n## Sessions\n\n- CLI: transcript\n\n## Results\n\n| Test | Result | Capture timestamp or line |\n|---|---|---|\n| behavior | passed | line 1 |\n\n## Caveats\n\n- None.\n\n## Posted to\n\n- PR description: ${captureUrl}\n- PR comment: ${commentUrl}\n`);
 }
-function proofCommand({ repo, taskDir, bin, extra = [], prHead, draft = false, prBody = '', comments = [], fetchStub = null }) {
+function proofCommand({ repo, taskDir, bin, extra = [], prHead, tested, baseHead = tested ?? prHead, baseBranch = 'main', draft = false, prBody = '', comments = [], fetchStub = null }) {
   const script = new URL('../shared/publication-proof.mjs', import.meta.url).pathname;
   const output = run(process.execPath, [...(fetchStub ? ['--import', fetchStub] : []), script, taskDir, repo, '7', ...extra], repo, {
     ...process.env,
     PATH: `${bin}:${process.env.PATH}`,
-    GH_PR_JSON: JSON.stringify({ url: 'https://github.com/owner/repo/pull/7', number: 7, headRefOid: prHead, isDraft: draft, body: prBody }),
-    GH_COMMENTS_JSON: JSON.stringify(comments),
+    GH_PR_JSON: JSON.stringify({ url: 'https://github.com/owner/repo/pull/7', number: 7, headRefOid: prHead, baseRefName: baseBranch, baseRefOid: baseHead, isDraft: draft, body: prBody }),
+    GH_COMMENT_JSON: JSON.stringify(comments[0] ?? null),
   });
   return JSON.parse(output);
 }
-function completeProofFixture({reviewLater = false} = {}) {
-  const data = fixture();
+function completeProofFixture({reviewLater = false, legacy = false} = {}) {
+  const data = fixture({legacy});
   const tested = run('git', ['rev-parse', 'HEAD'], data.repo);
   const captureUrl = 'https://captures.example.test/proof.mp4';
   const commentUrl = 'https://github.com/owner/repo/pull/7#issuecomment-123';
@@ -65,16 +70,18 @@ function completeProofFixture({reviewLater = false} = {}) {
   }
   const reviewed = run('git', ['rev-parse', 'HEAD'], data.repo);
   addEvidence(data.taskDir, tested, {captureUrl, commentUrl});
-  addArtifact(data.taskDir, 'code-review', `---\ntype: code-review\nstatus: clean\nsummary: No required findings\nhead_sha: ${reviewed}\n---\n\n## Critical and Required Findings\n\nNone.\n`);
+  addArtifact(data.taskDir, 'code-review', `---\ntype: code-review\nstatus: clean\nsummary: No required findings\nbase_branch: main\nbase_sha: ${tested}\nhead_sha: ${reviewed}\n---\n\n## Critical and Required Findings\n\nNone.\n`);
   addArtifact(data.taskDir, 'verification', `---\ntype: verification\nstatus: passed\nsummary: Build passed\nrevision: ${reviewed}\n---\n\n## Items\n\n| Id | Verdict |\n|---|---|\n| A1 | pass |\n`);
   const prBody = `## Purpose\n\nPublish tested behavior.\n\n## Evidence\n\n- ${captureUrl}\n- ${commentUrl}\n\n## Change outline\n\nSource is unchanged.\n`;
   addArtifact(data.taskDir, 'pr-description', prBody);
-  run('git', ['add', '.agents/tasks/proof-check/index.json', '.agents/tasks/proof-check/artifacts'], data.repo);
-  run('git', ['commit', '-qm', 'docs(task): indexed proof artifacts'], data.repo);
+  if (!legacy) {
+    run('git', ['add', '.agents/tasks/proof-check/index.json', '.agents/tasks/proof-check/artifacts'], data.repo);
+    run('git', ['commit', '-qm', 'docs(task): indexed proof artifacts'], data.repo);
+  }
   const head = run('git', ['rev-parse', 'HEAD'], data.repo);
   const fetchStub = path.join(data.root, 'fetch-stub.mjs');
-  fs.writeFileSync(fetchStub, 'globalThis.fetch = async () => ({status: 200, ok: true});\n');
-  const comment = {html_url: commentUrl, body: `passed ${captureUrl} tested ${tested} head ${head}`};
+  fs.writeFileSync(fetchStub, 'globalThis.fetch = async () => ({status: 200, ok: true, url: "https://captures.example.test/proof.mp4"});\n');
+  const comment = {id: 123, html_url: commentUrl, body: `passed ${captureUrl} tested ${tested} head ${head}`};
   return {...data, tested, head, prBody, comment, fetchStub};
 }
 
@@ -143,6 +150,49 @@ test('current clean proof passes after indexed artifacts and requires a final-he
   const passed = proofCommand({...data, prHead: data.head, comments: [data.comment]});
   assert.deepEqual({status: passed.status, allowed: passed.allowed, ready: passed.ready}, {status: 'pass', allowed: true, ready: true});
   assert.equal(passed.tested, data.tested);
+});
+
+test('retargeting an unchanged PR head invalidates review of the old base and diff', () => {
+  const data = completeProofFixture();
+  const retargeted = proofCommand({...data, prHead: data.head, baseBranch: 'release', comments: [data.comment]});
+  assert.deepEqual({status: retargeted.status, ready: retargeted.ready}, {status: 'incomplete', ready: false});
+  const movedBase = proofCommand({...data, prHead: data.head, baseHead: data.head, comments: [data.comment]});
+  assert.deepEqual({status: movedBase.status, ready: movedBase.ready}, {status: 'incomplete', ready: false});
+});
+
+test('the referenced issue comment is fetched by ID, not from the first comments page', () => {
+  const data = completeProofFixture();
+  const found = proofCommand({...data, prHead: data.head, comments: [data.comment]});
+  assert.equal(found.status, 'pass');
+  const other = proofCommand({...data, prHead: data.head, comments: [{...data.comment, id: 999}]});
+  assert.equal(other.status, 'incomplete');
+  assert.equal(other.ready, false);
+});
+
+test('legacy task without index can publish only when HEAD equals the tested revision', () => {
+  const data = completeProofFixture({legacy: true});
+  const current = proofCommand({...data, prHead: data.head, comments: [data.comment]});
+  assert.deepEqual({status: current.status, ready: current.ready}, {status: 'pass', ready: true});
+  run('git', ['add', '.agents/tasks/proof-check'], data.repo);
+  run('git', ['commit', '-qm', 'docs(task): legacy proof artifacts'], data.repo);
+  const advanced = run('git', ['rev-parse', 'HEAD'], data.repo);
+  const stale = proofCommand({...data, prHead: advanced, comments: [data.comment]});
+  assert.deepEqual({status: stale.status, ready: stale.ready}, {status: 'stale', ready: false});
+  assert.match(stale.reason, /indexed artifact-only proof/);
+});
+
+test('legacy selection uses the latest numbered review instead of an older clean one', () => {
+  const data = completeProofFixture({legacy: true});
+  addArtifact(data.taskDir, 'code-review', '---\ntype: code-review\nstatus: findings\nsummary: New required finding\n---\n\n## Critical and Required Findings\n\n### CR-001: Missing proof\n');
+  const result = proofCommand({...data, prHead: data.head, comments: [data.comment]});
+  assert.deepEqual({status: result.status, ready: result.ready}, {status: 'incomplete', ready: false});
+});
+
+test('a successful redirect to an authentication page is not a readable hosted capture', () => {
+  const data = completeProofFixture();
+  fs.writeFileSync(data.fetchStub, 'globalThis.fetch = async () => ({status: 200, ok: true, redirected: true, url: "https://captures.example.test/users/sign_in"});\n');
+  const result = proofCommand({...data, prHead: data.head, comments: [data.comment]});
+  assert.deepEqual({status: result.status, ready: result.ready}, {status: 'incomplete', ready: false});
 });
 
 test('review and verification remain current across indexed artifact-only revision movement', () => {

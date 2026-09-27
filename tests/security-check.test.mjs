@@ -120,3 +120,28 @@ test('missing or failed Gitleaks marks secret coverage incomplete without raw di
     fs.rmSync(root, {recursive: true, force: true});
   }
 });
+
+test('uncommitted tracked or untracked source cannot produce HEAD-bound complete findings', () => {
+  for (const change of ['modified', 'staged', 'untracked']) {
+    const {root, revision} = repository();
+    try {
+      const source = change === 'untracked' ? 'new-secret.js' : 'seeded-secret.js';
+      fs.writeFileSync(path.join(root, source), `const apiKey = '${syntheticToken}';\n`);
+      if (change === 'staged') execFileSync('git', ['add', source], {cwd: root});
+      const report = run({cwd: root, spawn: () => {
+        assert.fail('scanner must not run against uncommitted source');
+      }});
+      assert.equal(report.repository, 'https://example.test/owner/project');
+      assert.equal(report.revision, revision);
+      assert.equal(report.coverage, 'incomplete');
+      assert.equal(report.secret_coverage, 'incomplete');
+      assert.equal(report.tool.status, 'unavailable');
+      assert.equal(report.secret_tool.status, 'unavailable');
+      assert.deepEqual(report.findings, []);
+      assert.match(report.error, /working tree.*scanners not run/);
+      assert.ok(!JSON.stringify(report).includes(syntheticToken));
+    } finally {
+      fs.rmSync(root, {recursive: true, force: true});
+    }
+  }
+});

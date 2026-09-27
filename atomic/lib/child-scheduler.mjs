@@ -70,14 +70,34 @@ export function latestChildRecord(task, slug) {
   return files.length ? JSON.parse(fs.readFileSync(files[0], 'utf8')) : null;
 }
 
-function sourceMatchesParent(task, childCwd, baseHead, childHead, parentHead) {
+function sourceMatchesParent(task, childCwd, baseHead, childHead, parentHead, childDir, relativeDir, artifacts) {
   if (!baseHead || git(childCwd, ['merge-base', '--is-ancestor', baseHead, childHead], true) === null ||
       git(task.cwd, ['merge-base', '--is-ancestor', baseHead, parentHead], true) === null) return false;
+  // A merge preserves ancestry even when a later child edits the same source.
+  if (git(task.cwd, ['merge-base', '--is-ancestor', childHead, parentHead], true) !== null) return true;
   const changed = git(childCwd, ['diff', '--no-renames', '--name-only', '-z', baseHead, childHead], true, true);
   if (changed === null) return false;
   const taskPrefix = `${task.taskRootRelative.replace(/\/+$/, '')}/`;
-  return changed.split('\0').filter(file => file && !file.startsWith(taskPrefix)).every(file =>
-    git(childCwd, ['show', `${childHead}:${file}`], true, true) === git(task.cwd, ['show', `${parentHead}:${file}`], true, true));
+  const source = changed.split('\0').filter(file => file && !file.startsWith(taskPrefix))
+    .map(file => [file, git(childCwd, ['show', `${childHead}:${file}`], true, true)]);
+  const indexFile = path.join(childDir, 'index.json');
+  const index = fs.existsSync(indexFile) ? fs.readFileSync(indexFile, 'utf8') : null;
+  const proof = Object.values(artifacts).map(saved => {
+    if (!saved || typeof saved.path !== 'string' || saved.path.startsWith('/') || saved.path.split('/').includes('..')) return null;
+    return [`${relativeDir}/${saved.path}`, saved.hash];
+  });
+  if (proof.includes(null)) return false;
+  // Squash/cherry-pick integration has no child ancestry. Find a parent
+  // first-parent point after the fork containing both the child's source and
+  // its committed proof, before later children may legitimately change files.
+  const history = git(task.cwd, ['rev-list', '--first-parent', '--ancestry-path', `${baseHead}..${parentHead}`], true);
+  return Boolean(history && history.split('\n').some(commit =>
+    source.every(([file, blob]) => blob === git(task.cwd, ['show', `${commit}:${file}`], true, true)) &&
+    proof.every(([file, hash]) => {
+      const text = git(task.cwd, ['show', `${commit}:${file}`], true, true);
+      return text !== null && digest(text) === hash;
+    }) &&
+    (index === null || git(task.cwd, ['show', `${commit}:${relativeDir}/index.json`], true, true) === index)));
 }
 
 function inspectChild(task, child, record) {
@@ -133,17 +153,17 @@ function inspectChild(task, child, record) {
     return reasons;
   }
   const parentHead = git(task.cwd, ['rev-parse', 'HEAD']);
-  if (!sourceMatchesParent(task, childCwd, record.baseHead, branchHead, parentHead)) {
-    reasons.push('parent source differs from the completed child');
-    return reasons;
-  }
-  // Squash/cherry-pick merges do not retain child ancestry; exact changed
-  // source blobs plus committed artifact/PR evidence establish the merge.
   const relativeDir = path.relative(task.cwd, child.taskDir).split(path.sep).join('/');
   if (relativeDir === '..' || relativeDir.startsWith('../') || path.isAbsolute(relativeDir)) {
     reasons.push('child task is outside the parent repository');
     return reasons;
   }
+  if (!sourceMatchesParent(task, childCwd, record.baseHead, branchHead, parentHead, childDir, relativeDir, artifacts)) {
+    reasons.push('parent has no integration point for the completed child source and proof');
+    return reasons;
+  }
+  // Committed child evidence is rechecked at HEAD even if later children
+  // changed source after this child's merge point.
   try {
     if (!committedChildCompletion(task.cwd, child, git)) reasons.push('merged child lacks committed completion evidence');
   } catch (error) {

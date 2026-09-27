@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { currentArtifact, readArtifactIndex, readArtifactScalars } from './task-artifacts.mjs';
+import { currentArtifact, indexFileExists, parseArtifactText, readArtifactIndex, readArtifactScalars } from './task-artifacts.mjs';
 import { decidePublicationProof } from './publication-proof-policy.mjs';
 
 function command(bin, args, cwd, { trim = true } = {}) {
@@ -26,13 +26,25 @@ function firstUrl(text, prefix) {
   const line = new RegExp(`^-\\s*${prefix}:\\s*(.*)$`, 'mi').exec(text)?.[1] ?? '';
   return /https:\/\/[^\s\])>]+/i.exec(line)?.[0] ?? '';
 }
-function currentRecord(taskDir, type) {
-  readArtifactIndex(taskDir);
-  const record = currentArtifact(taskDir, type);
-  if (!record) return null;
-  const file = path.join(taskDir, record.path);
-  const parsed = readArtifactScalars(file, type);
-  return { ...record, file, text: parsed.text, status: parsed.status };
+function currentRecord(taskDir, type, index) {
+  if (index) {
+    const record = currentArtifact(taskDir, type);
+    if (!record) return null;
+    const file = path.join(taskDir, record.path);
+    const parsed = readArtifactScalars(file, type);
+    return { ...record, file, text: parsed.text, status: parsed.status };
+  }
+  const files = fs.readdirSync(taskDir).filter(name => /^\d{2,}-[a-z0-9-]+\.md$/.test(name) || name === 'pr-description.md')
+    .sort((a, b) => Number.parseInt(a) - Number.parseInt(b) || a.localeCompare(b));
+  let latest = null;
+  for (const name of files) {
+    const file = path.join(taskDir, name);
+    if (fs.lstatSync(file).isSymbolicLink()) throw new Error(`${file}: artifact symlinks are not accepted`);
+    const text = fs.readFileSync(file, 'utf8');
+    const parsed = parseArtifactText(text, name === 'pr-description.md' ? 'pr-description' : field(text, 'type'), file);
+    if (parsed.type === type) latest = { file, text: parsed.text, status: parsed.status };
+  }
+  return latest;
 }
 function hosted(url) {
   return /^https:\/\//i.test(url) && !/\s/.test(url);
@@ -42,7 +54,7 @@ async function readable(url) {
   try {
     let response = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(10000) });
     if (response.status === 405 || response.status === 501) response = await fetch(url, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(10000) });
-    return response.ok;
+    return response.ok && !/(?:^|\/)(?:login|sign[_-]?in)(?:\/|$)/i.test(new URL(response.url || url).pathname);
   } catch { return false; }
 }
 function commitExists(repo, value) {
@@ -65,17 +77,17 @@ function onlyIndexedArtifacts(repo, taskDir, taskRoot, testedSha, headSha, index
   });
 }
 function sameCodeRevision(repo, task, root, index, left, right) {
-  return Boolean(left && right && (left === right ||
-    onlyIndexedArtifacts(repo, task, root, left, right, index) ||
-    onlyIndexedArtifacts(repo, task, root, right, left, index)));
+  return Boolean(left && right && (left === right || (index &&
+    (onlyIndexedArtifacts(repo, task, root, left, right, index) ||
+      onlyIndexedArtifacts(repo, task, root, right, left, index)))));
 }
 async function inspect({ taskDir, repo, prNumber, draftHostCapture = false, override = '' }) {
   const task = path.resolve(taskDir); const root = path.dirname(task);
-  const index = readArtifactIndex(task);
-  const evidence = currentRecord(task, 'evidence');
-  const review = currentRecord(task, 'code-review');
-  const verification = currentRecord(task, 'verification');
-  const description = currentRecord(task, 'pr-description');
+  const index = indexFileExists(path.join(task, 'index.json')) ? readArtifactIndex(task) : null;
+  const evidence = currentRecord(task, 'evidence', index);
+  const review = currentRecord(task, 'code-review', index);
+  const verification = currentRecord(task, 'verification', index);
+  const description = currentRecord(task, 'pr-description', index);
   const headSha = command('git', ['rev-parse', 'HEAD'], repo);
   const testedSha = evidence ? commitExists(repo, field(evidence.text, 'commit')) : '';
   const reviewSha = review ? commitExists(repo, field(review.text, 'head_sha')) : '';
@@ -83,20 +95,27 @@ async function inspect({ taskDir, repo, prNumber, draftHostCapture = false, over
   const verificationRequired = Boolean(verification) || /verification\s*:\s*required|verification is required|required verification/i.test(taskText);
   const capture = section(evidence?.text ?? '', 'Posted to');
   const captureUrl = firstUrl(capture, 'PR description');
-  const pr = JSON.parse(command('gh', ['pr', 'view', String(prNumber), '--json', 'url,number,headRefOid,isDraft,body'], repo));
+  const pr = JSON.parse(command('gh', ['pr', 'view', String(prNumber), '--json', 'url,number,headRefOid,baseRefName,baseRefOid,isDraft,body'], repo));
   const owner = JSON.parse(command('gh', ['repo', 'view', '--json', 'nameWithOwner'], repo)).nameWithOwner;
-  const comments = JSON.parse(command('gh', ['api', `repos/${owner}/issues/${prNumber}/comments`], repo));
   const commentUrl = firstUrl(capture, 'PR comment');
-  const comment = comments.find(item => item.html_url === commentUrl);
+  const commentId = new RegExp(`^https://github\\.com/${owner.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/pull/${prNumber}#issuecomment-(\\d+)$`).exec(commentUrl)?.[1];
+  const comment = commentId ? JSON.parse(command('gh', ['api', `repos/${owner}/issues/comments/${commentId}`], repo)) : null;
   const commentText = comment?.body ?? '';
-  const artifactOnly = Boolean(testedSha) && pr.headRefOid === headSha && onlyIndexedArtifacts(repo, task, root, testedSha, headSha, index);
+  const hostedBase = commitExists(repo, pr.baseRefOid);
+  const mergeBase = hostedBase && pr.headRefOid === headSha ? command('git', ['merge-base', hostedBase, headSha], repo) : '';
+  const artifactOnly = Boolean(testedSha) && pr.headRefOid === headSha &&
+    (testedSha === headSha || Boolean(index && onlyIndexedArtifacts(repo, task, root, testedSha, headSha, index)));
   const reviewCurrent = Boolean(review?.status === 'clean' &&
+    pr.baseRefName && mergeBase && field(review.text, 'base_branch') === pr.baseRefName &&
+    commitExists(repo, field(review.text, 'base_sha')) === mergeBase &&
     sameCodeRevision(repo, task, root, index, reviewSha, testedSha));
   const verificationCurrent = Boolean(verification?.status === 'passed' &&
     sameCodeRevision(repo, task, root, index, commitExists(repo, field(verification.text, 'revision')), testedSha));
   const captureCurrent = Boolean(testedSha && artifactOnly && evidence?.status === 'passed');
   const captureHosted = await readable(captureUrl);
-  const commentVerified = Boolean(comment && hosted(commentUrl) && commentUrl !== captureUrl && commentText.includes(captureUrl) && /\bpassed\b/i.test(commentText) && commentText.includes(testedSha) && commentText.includes(pr.headRefOid));
+  const commentVerified = Boolean(comment && String(comment.id) === commentId && comment.html_url === commentUrl &&
+    commentUrl !== captureUrl && commentText.includes(captureUrl) && /\bpassed\b/i.test(commentText) &&
+    commentText.includes(testedSha) && commentText.includes(pr.headRefOid));
   const bodyText = description?.text ?? '';
   const bodyPublished = Boolean(description && pr.body === bodyText && bodyText.includes(captureUrl) && bodyText.includes(commentUrl));
   const proof = {
@@ -108,7 +127,7 @@ async function inspect({ taskDir, repo, prNumber, draftHostCapture = false, over
     finalBodyPublished: bodyPublished, finalBodyVerified: bodyPublished, bypass: Boolean(override),
   };
   const decision = decidePublicationProof(proof);
-  let reason = decision.status === 'pass' ? 'all current publication proof is verified' : decision.status === 'stale' ? 'tested proof does not cover the substantive code at HEAD' : draftHostCapture ? (pr.isDraft ? 'draft is permitted only to host capture; ready publication is not authorized' : 'capture-hosting mode requires an existing draft PR') : override ? `audited override requested: ${override}; mandatory proof remains incomplete` : 'required current proof or hosted publication read-back is missing';
+  let reason = decision.status === 'pass' ? 'all current publication proof is verified' : decision.status === 'stale' ? (index ? 'tested proof does not cover the substantive code at HEAD' : 'HEAD advanced without indexed artifact-only proof') : draftHostCapture ? (pr.isDraft ? 'draft is permitted only to host capture; ready publication is not authorized' : 'capture-hosting mode requires an existing draft PR') : override ? `audited override requested: ${override}; mandatory proof remains incomplete` : 'required current proof or hosted publication read-back is missing';
   if (override) reason = `audited override requested: ${override}; decision remains ${decision.status}`;
   return { ...decision, reason, head: headSha, tested: testedSha || null, pullRequest: pr.url, override: override || null };
 }
