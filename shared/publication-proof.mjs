@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -41,8 +42,16 @@ function evidenceFields(text) {
   const recordings = new Map();
   const captures = new Map();
   for (const [key, value] of fields) {
-    if (key === 'recording' || key.startsWith('recording ')) recordings.set(key === 'recording' ? 'primary' : key.slice(10), value);
-    if (key === 'capture' || key.startsWith('capture ')) captures.set(key === 'capture' ? 'primary' : key.slice(8), value);
+    if (key === 'recording' || key.startsWith('recording ')) {
+      const label = key === 'recording' ? 'primary' : key.slice(10);
+      if (recordings.has(label)) valid = false;
+      recordings.set(label, value);
+    }
+    if (key === 'capture' || key.startsWith('capture ')) {
+      const label = key === 'capture' ? 'primary' : key.slice(8);
+      if (captures.has(label)) valid = false;
+      captures.set(label, value);
+    }
   }
   if (!recordings.size || recordings.size !== captures.size || [...recordings].some(([label, type]) => !RECORDINGS.has(type) || !captures.has(label))) valid = false;
   for (const url of captures.values()) if (!captureDestination(url)) valid = false;
@@ -98,50 +107,137 @@ function captureDestination(value) {
     return githubAttachment || gitlabUpload || gistRaw || githubMedia ? url : null;
   } catch { return null; }
 }
+// Full hosted objects only: a prefix cannot establish a final exit or contain a playable frame.
+const TEXT_LIMIT = 8 * 1024 * 1024;
+const VIDEO_LIMIT = 128 * 1024 * 1024;
+function firstOutputLine(text, start, echoed = '') {
+  while (start < text.length) {
+    const end = text.indexOf('\n', start);
+    const line = text.slice(start, end < 0 ? undefined : end).trim();
+    if (line && line !== echoed && line !== `$ ${echoed}` &&
+      !/^Script (?:started|done) on\b/i.test(line) && !/^[#$>%]\s+\S/.test(line)) return line;
+    if (end < 0) break;
+    start = end + 1;
+  }
+  return '';
+}
 function recordedText(text, sha, recording) {
   if (!text || /^\s*<(?:!doctype html|html)/i.test(text)) return false;
   const revision = /(?:^|\n)\s*(?:source sha|tested sha|tested revision|commit sha|revision)\s*:\s*([a-f0-9]{40})\b/im.exec(text)?.[1];
   const invocationPattern = recording === 'api-probe'
     ? /(?:^|\n)\s*(?:request|command|invocation|curl|focused command)\s*:\s*([^\r\n]+)/im
     : /(?:^|\n)\s*(?:focused command|command|tool invocation|invocation|request)\s*:\s*([^\r\n]+)/im;
-  const invocation = invocationPattern.exec(text)?.[1]?.trim();
-  const observed = /(?:^|\n)\s*(?:stdout|test output|observed output|response(?: body)?|result output|tool output)(?::[ \t]*([^\r\n]+)|\r?\n([^\r\n]+))/im.exec(text);
-  const output = (observed?.[1] ?? observed?.[2])?.trim();
+  const scriptStart = /(?:^|\n)Script started on [^\n]+/im.exec(text);
+  const prompt = /(?:^|\n)[ \t]*\$[ \t]+([^\r\n]+)/m.exec(text);
+  const scripted = scriptStart && /\[COMMAND="([^"]+)"\]/i.exec(scriptStart[0])?.[1]?.trim();
+  const invocation = invocationPattern.exec(text)?.[1]?.trim() ??
+    (scriptStart && (scripted || prompt?.[1])?.trim());
+  if (scriptStart && !scripted) {
+    const commands = [...text.matchAll(/(?:^|\n)[ \t]*\$[ \t]+([^\r\n]+)/g)];
+    const commandIndex = commands.findIndex(match => match[1].trim() === invocation);
+    const probe = commands[commandIndex + 1];
+    if (commandIndex < 0 || !probe ||
+      !/^printf\s+['"]exit=%s\\n['"]\s+["']?\$\?["']?$/.test(probe[1].trim())) return false;
+    const observedLines = text.slice(commands[commandIndex].index + commands[commandIndex][0].length, probe.index)
+      .split(/\r?\n/).map(line => line.trim());
+    const output = observedLines.find(line => line && !/^(?:exit(?: status| code)?|status|outcome)\s*:/i.test(line));
+    const exit = /^\r?\n[ \t]*exit=(\d+)[ \t]*(?:\r?\n|$)/.exec(text.slice(probe.index + probe[0].length))?.[1];
+    return revision?.toLowerCase() === sha.toLowerCase() &&
+      Boolean(invocation && !PLACEHOLDER.test(invocation) && /(?:\s+\S+|\w+\([^)]*\))/.test(invocation)) &&
+      Boolean(output && !PLACEHOLDER.test(output)) && exit === '0';
+  }
+  const observed = /(?:^|\n)\s*(?:stdout|test output|observed output|response(?: body)?|result output|tool output)(?:[ \t]*:[ \t]*|[ \t]*\r?\n)([^\r\n]*)/im.exec(text);
+  const output = observed?.[1]?.trim() || (observed && firstOutputLine(text, observed.index + observed[0].length));
+  const scriptOutput = !observed && scriptStart &&
+    firstOutputLine(text, scriptStart.index + scriptStart[0].length, invocation);
+  // A preliminary success cannot override a later failed command or script trailer.
+  const completionPattern = /(?:^|\n)\s*(?:exit (?:status|code)|status(?: code)?|outcome)\s*:\s*([^\r\n]+)|(?:^|\n)Script done on [^\n]*\[COMMAND_EXIT_CODE="?([0-9]+)"?\]/gim;
+  let completion = false;
+  for (const match of text.matchAll(completionPattern)) {
+    completion = match[2] ? match[2] === '0' : /^(?:0\b|2\d\d\b|passed\b|success\b)/i.test(match[1].trim());
+  }
+  const actualOutput = output || scriptOutput;
   return revision?.toLowerCase() === sha.toLowerCase() &&
-    Boolean(invocation && !PLACEHOLDER.test(invocation) && /(?:\s+\S+|\w+\([^)]*\))/.test(invocation) &&
+    Boolean(invocation && (!scripted || invocation === scripted) && !PLACEHOLDER.test(invocation) && /(?:\s+\S+|\w+\([^)]*\))/.test(invocation) &&
       !/^(?:passed|success|recorded proof)$/i.test(invocation)) &&
-    /(?:^|\n)\s*(?:exit (?:status|code)|status(?: code)?|outcome)\s*:\s*(?:0\b|2\d\d\b|passed\b|success\b)/im.test(text) &&
-    Boolean(output && output.length >= 8 && !PLACEHOLDER.test(output) &&
-      !/^(?:passed|success|recorded proof|no errors)$/i.test(output));
+    completion && Boolean(actualOutput && !PLACEHOLDER.test(actualOutput) &&
+      !/^(?:passed|success|recorded proof|no errors|stderr\b|exit (?:status|code)\s*:|status(?: code)?\s*:|outcome\s*:|script done on\b)/i.test(actualOutput));
 }
 async function captureBytes(response, limit) {
-  if (!response.body) return null;
+  const length = response.headers.get('content-length');
+  if (!response.body || (length && (!/^\d+$/.test(length) || Number(length) > limit))) {
+    await response.body?.cancel();
+    return null;
+  }
   const reader = response.body.getReader();
   const chunks = [];
   let size = 0;
   try {
-    while (size < limit) {
+    while (true) {
       const { value, done } = await reader.read();
       if (done) break;
       if (!value?.length) continue;
-      chunks.push(value.subarray(0, limit - size));
+      if (size + value.length > limit) return null;
+      chunks.push(value);
       size += value.length;
     }
-    if (!size) return null;
-    const bytes = new Uint8Array(Math.min(size, limit));
-    let offset = 0;
-    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
-    return bytes;
+    return size ? Buffer.concat(chunks, size) : null;
   } finally { await reader.cancel(); }
 }
-async function readable(value, recording, sha) {
+async function decodableVideo(response, taskRoot) {
+  let dir;
+  let fd;
+  let reader;
+  try {
+    const length = response.headers.get('content-length');
+    if (!response.body || (length && (!/^\d+$/.test(length) || Number(length) > VIDEO_LIMIT))) {
+      await response.body?.cancel();
+      return false;
+    }
+    const scratch = fs.realpathSync(os.tmpdir());
+    const root = fs.realpathSync(taskRoot);
+    if (scratch === root || scratch.startsWith(`${root}${path.sep}`)) return false;
+    dir = fs.mkdtempSync(path.join(scratch, 'publication-video-'));
+    const file = path.join(dir, 'capture');
+    fd = fs.openSync(file, 'w', 0o600);
+    reader = response.body.getReader();
+    let size = 0;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value?.length) continue;
+      if (size + value.length > VIDEO_LIMIT) return false;
+      for (let offset = 0; offset < value.length;) offset += fs.writeSync(fd, value, offset, value.length - offset);
+      size += value.length;
+    }
+    if (!size) return false;
+    fs.closeSync(fd);
+    fd = undefined;
+    const probe = spawnSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0',
+      '-show_entries', 'stream=width,height', '-of', 'json', file],
+    { encoding: 'utf8', timeout: 20000, maxBuffer: 1024 * 1024 });
+    if (probe.error || probe.status !== 0) return false;
+    const stream = JSON.parse(probe.stdout).streams?.[0];
+    if (!Number.isInteger(stream?.width) || !Number.isInteger(stream?.height) ||
+      stream.width < 1 || stream.height < 1 || stream.width * stream.height > 7680 * 4320) return false;
+    const decoded = spawnSync('ffmpeg', ['-v', 'error', '-i', file, '-map', '0:v:0',
+      '-frames:v', '1', '-f', 'framecrc', 'pipe:1'],
+    { encoding: 'utf8', timeout: 20000, maxBuffer: 1024 * 1024 });
+    return !decoded.error && decoded.status === 0 && /^\s*0,\s*-?\d+,\s*-?\d+,\s*\d+,\s*[1-9]\d*,\s*0x[0-9a-f]+\s*$/im.test(decoded.stdout);
+  } catch { return false; }
+  finally {
+    if (reader) try { await reader.cancel(); } catch { /* Preserve fail-closed result and still delete scratch. */ }
+    try { if (fd !== undefined) fs.closeSync(fd); }
+    finally { if (dir) fs.rmSync(dir, { recursive: true, force: true }); }
+  }
+}
+async function readable(value, recording, sha, taskRoot) {
   let url = captureDestination(value);
   if (!url) return false;
   const video = recording === 'ui-video';
-  const limit = 65536;
   try {
     for (let hop = 0; hop < 6; hop++) {
-      const response = await fetch(url, { method: 'GET', redirect: 'manual', headers: { Range: `bytes=0-${limit - 1}` }, signal: AbortSignal.timeout(10000) });
+      const response = await fetch(url, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(30000) });
       if (response.url && response.url !== url.href) {
         await response.body?.cancel();
         return false;
@@ -154,7 +250,7 @@ async function readable(value, recording, sha) {
         if (!url) return false;
         continue;
       }
-      if (!response.ok || /(?:^|\/)(?:login|sign[_-]?in)(?:\/|$)/i.test(url.pathname)) {
+      if (response.status !== 200 || /(?:^|\/)(?:login|sign[_-]?in)(?:\/|$)/i.test(url.pathname)) {
         await response.body?.cancel();
         return false;
       }
@@ -165,34 +261,9 @@ async function readable(value, recording, sha) {
         ? ['video/mp4', 'video/webm', 'video/quicktime', 'video/ogg', 'video/x-matroska', 'application/octet-stream'].includes(type)
         : (type === 'text/plain' && textHost) || type === 'application/octet-stream';
       if (!validType) { await response.body?.cancel(); return false; }
-      const bytes = await captureBytes(response, limit);
+      if (video) return decodableVideo(response, taskRoot);
+      const bytes = await captureBytes(response, TEXT_LIMIT);
       if (!bytes) return false;
-      if (video) {
-        if (bytes.length < 1024) return false;
-        const mp4 = type === 'video/mp4' || type === 'video/quicktime' || type === 'application/octet-stream';
-        if (mp4 && bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70) {
-          const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-          let offset = view.getUint32(0);
-          if (offset < 16 || offset + 8 > bytes.length) return false;
-          for (let boxes = 0; boxes < 16 && offset + 8 <= bytes.length; boxes++) {
-            const size = view.getUint32(offset);
-            const marker = new TextDecoder('ascii').decode(bytes.subarray(offset + 4, offset + 8));
-            if (size < 8) break;
-            if (marker === 'mdat' || marker === 'moov') return true;
-            if (!['free', 'skip', 'wide'].includes(marker)) break;
-            offset += size;
-          }
-        }
-        if ((type === 'video/webm' || type === 'application/octet-stream') &&
-          bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) {
-          const prefix = bytes.subarray(0, 256);
-          return new TextDecoder('latin1').decode(prefix).includes('webm') &&
-            prefix.some((byte, index) => byte === 0x18 && prefix[index + 1] === 0x53 &&
-              prefix[index + 2] === 0x80 && prefix[index + 3] === 0x67);
-        }
-        return type === 'video/ogg' && bytes[0] === 0x4f && bytes[1] === 0x67 &&
-          bytes[2] === 0x67 && bytes[3] === 0x53;
-      }
       return recordedText(new TextDecoder('utf-8', { fatal: true }).decode(bytes), sha, recording);
     }
   } catch { return false; }
@@ -277,7 +348,7 @@ export async function inspect({ taskDir, repo, prNumber, draftHostCapture = fals
     sameCodeRevision(repo, task, root, index, commitExists(repo, field(verification.text, 'revision')), testedSha));
   const captureCurrent = Boolean(testedSha && artifactOnly && hostedResult);
   const captureHosted = Boolean(hostedResult && (await Promise.all([...bodyFields.recordings].map(([label, recording]) =>
-    readable(bodyFields.captures.get(label), recording, testedSha)))).every(Boolean));
+    readable(bodyFields.captures.get(label), recording, testedSha, root)))).every(Boolean));
   const commentVerified = Boolean(comment && String(comment.id) === commentId && comment.html_url === hostedCommentUrl &&
     [...bodyFields.captures.values()].every(url => hostedCommentUrl !== url) && hostedResult);
   const bodyPublished = Boolean(hostedCommentUrl && bodyFields.captures.size && commentVerified);

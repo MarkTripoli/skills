@@ -3,14 +3,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { ARTIFACT_SERIES, initTaskArtifacts, recordArtifact, reserveArtifactIteration } from '../shared/task-artifacts.mjs';
 
 const dirs = [];
-const videoResponse = `new Response(Buffer.concat([
-  Buffer.from([0,0,0,16,102,116,121,112,105,115,111,109,0,0,0,0]),
-  Buffer.from([0,0,8,8,109,100,97,116]), Buffer.alloc(2048)
-]), { headers: { "content-type": "video/mp4" } })`;
+// Small, real one-frame MPEG-4 and Matroska captures; decoder shims recognize their
+// exact bytes so this suite runs without locally installed ffmpeg/ffprobe.
+const mp4 = Buffer.from('AAAAIGZ0eXBpc29tAAACAGlzb21pc282aXNvMm1wNDEAAAMtbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAAAAAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAi90cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAABAAAAAQAAAAAAHLbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAABAAAAAAABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABdm1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAATZzdGJsAAAA6nN0c2QAAAAAAAAAAQAAANptcDR2AAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAABAAEABIAAAASAAAAAAAAAABE0xhdmM2Mi4yOC4xMDIgbXBlZzQAAAAAAAAAAAAAAAAAGP//AAAAYGVzZHMAAAAAA4CAgE8AAQAEgICAQSARAAAAAAMNQAADDUAFgICALwAAAbABAAABtYkTAAABAAAAASAAxI2IAA0AhAIUYwAAAbJMYXZjNjIuMjguMTAyBoCAgAECAAAAEHBhc3AAAAABAAAAAQAAABRidHJ0AAAAAAADDUAAAw1AAAAAEHN0dHMAAAAAAAAAAAAAABBzdHNjAAAAAAAAAAAAAAAUc3RzegAAAAAAAAAAAAAAAAAAABBzdGNvAAAAAAAAAAAAAAAobXZleAAAACB0cmV4AAAAAAAAAAEAAAABAAAAAAAAAAAAAAAAAAAAYnVkdGEAAABabWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAbWRpcmFwcGwAAAAAAAAAAAAAAAAtaWxzdAAAACWpdG9vAAAAHWRhdGEAAAABAAAAAExhdmY2Mi4xMi4xMDIAAABwbW9vZgAAABBtZmhkAAAAAAAAAAEAAABYdHJhZgAAACR0ZmhkAAAAOQAAAAEAAAAAAAADTQAAQAAAAAAUAQEAAAAAABR0ZmR0AQAAAAAAAAAAAAAAAAAAGHRydW4AAAAFAAAAAQAAAHgCAAAAAAAAHG1kYXQAAAGzABAHAAABthYFGCobYHgFrwAAAENtZnJhAAAAK3RmcmEBAAAAAAAAAQAAAAAAAAABAAAAAAAAAAAAAAAAAAADTQEBAQAAABBtZnJvAAAAAAAAAEM=', 'base64');
+const mkv = Buffer.from('GkXfo6NChoEBQveBAULygQRC84EIQoKIbWF0cm9za2FCh4EEQoWBAhhTgGcB/////////xFNm3Sxv4Sh5vHkTbuLU6uEFUmpZlOsgaFNu4tTq4QWVK5rU6yB5k27jFOrhBJUw2dTrIIBduwBAAAAAAAAYgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFUmpZsC/hGG5Gnwq17GDD0JATYCNTGF2ZjYyLjEyLjEwMldBjUxhdmY2Mi4xMi4xMDJzpJDGhn2Yp3/aSWWrZBzMqZjoFlSua0CKv4Rr0tPVrgEAAAAAAAB714EBc8WI1FycTJ87EZGcgQAitZyDdW5kiIEAho9WX01QRUc0L0lTTy9BU1CDgQEj44OEO5rKAOCQsIEQuoEQmoECVbCEVbmBAWOirwAAAbABAAABtYkTAAABAAAAASAAxI2IAA0AhAIUYwAAAbJMYXZjNjIuMjguMTAyElTDZ92/hILNX0pzc6BjwIBnyJpFo4dFTkNPREVSRIeNTGF2ZjYyLjEyLjEwMnNzsWPAi2PFiNRcnEyfOxGRZ8igRaOHRU5DT0RFUkSHk0xhdmM2Mi4yOC4xMDIgbXBlZzQfQ7Z1o7+E54K9E+eBAKOYgQAAgAAAAbMAEAcAAAG2FgUYKhtgeAWv', 'base64');
+const videoResponse = `new Response(Buffer.from("${mp4.toString('base64')}", "base64"), { headers: { "content-type": "video/mp4" } })`;
+const mkvResponse = `new Response(Buffer.from("${mkv.toString('base64')}", "base64"), { headers: { "content-type": "video/x-matroska" } })`;
 function run(bin, args, cwd, env = process.env) {
   const result = spawnSync(bin, args, { cwd, env, encoding: 'utf8' });
   if (result.status !== 0) throw new Error(result.stderr || `${bin} failed`);
@@ -35,6 +38,19 @@ function fixture({ legacy = false } = {}) {
   fs.mkdirSync(bin);
   fs.writeFileSync(path.join(bin, 'gh'), `#!/bin/sh\ncase "$1 $2" in\n  "pr view") printf '%s' "$GH_PR_JSON" ;;\n  "repo view") printf '%s' '{"nameWithOwner":"owner/repo"}' ;;\n  "api repos/owner/repo/issues/comments/123") printf '%s' "$GH_COMMENT_JSON" ;;\n  *) exit 2 ;;\nesac\n`);
   fs.chmodSync(path.join(bin, 'gh'), 0o755);
+  const digests = [mp4, mkv].map(bytes => createHash('sha256').update(bytes).digest('hex'));
+  const decoder = `#!${process.execPath}
+const fs = require('node:fs');
+const crypto = require('node:crypto');
+const file = process.argv[1].endsWith('ffprobe') ? process.argv.at(-1) : process.argv[process.argv.indexOf('-i') + 1];
+if (process.env.DECODER_DISABLED || !file || !${JSON.stringify(digests)}.includes(crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'))) process.exit(2);
+if (process.env.MEDIA_LOG) fs.appendFileSync(process.env.MEDIA_LOG, file + '\\n');
+if (process.argv[1].endsWith('ffprobe')) process.stdout.write('{"streams":[{"width":16,"height":16}]}\\n');
+else process.stdout.write(process.env.FRAME_MISSING ? '# framecrc\\n' : '# framecrc\\n0, 0, 0, 1, 384, 0x01234567\\n');
+`;
+  for (const name of ['ffprobe', 'ffmpeg']) {
+    fs.writeFileSync(path.join(bin, name), decoder, { mode: 0o755 });
+  }
   const fetchStub = path.join(root, 'fetch-stub.mjs');
   fs.writeFileSync(fetchStub, `globalThis.fetch = async () => ${videoResponse};\n`);
   return { root, repo, taskDir, bin, fetchStub };
@@ -58,7 +74,7 @@ const table = `| Test | Result | Capture | Cue |
 | Browser playback and assertion | passed | primary | 00:12 asserted player state |`;
 const body = (tested, head, capture = captureUrl, result = 'passed', recording = 'ui-video') => `## Purpose\n\nPublish the feature for reviewers.\n\n## Special things to note\n\n- No unusual migration.\n\n## Evidence\n\n${fields(tested, head, capture, result, recording)}\n- comment: ${commentUrl}\n\n### Recorded tests\n\n${recording === 'ui-video' ? table : table.replace('Browser playback and assertion | passed | primary | 00:12 asserted player state', 'Focused command returned expected output | passed | primary | output line 4: expected identifier')}\n\n## Change outline\n\n- Source is unchanged.\n\n## Human Review\n\n### Review targets\n\n- Check the observable behavior.\n\n### Verify\n\n- [ ] Confirm hosted capture and review.\n\n### Known limits\n\n- None.\n`;
 const comment = (tested, head, capture = captureUrl, result = 'passed', recording = 'ui-video') => ({ id: 123, html_url: commentUrl, body: fields(tested, head, capture, result, recording) });
-function proofCommand({ repo, taskDir, bin, fetchStub, extra = [], prHead, tested, baseHead = tested ?? prHead, baseBranch = 'main', draft = false, prBody = '', posted = null }) {
+function proofCommand({ repo, taskDir, bin, fetchStub, extra = [], prHead, tested, baseHead = tested ?? prHead, baseBranch = 'main', draft = false, prBody = '', posted = null, decoderDisabled = false, frameMissing = false, mediaLog = '' }) {
   const script = new URL('../shared/publication-proof.mjs', import.meta.url).pathname;
   return JSON.parse(run(process.execPath, ['--import', fetchStub, script, taskDir, repo, '7', ...extra], repo, {
     ...process.env,
@@ -66,6 +82,9 @@ function proofCommand({ repo, taskDir, bin, fetchStub, extra = [], prHead, teste
     GH_PR_JSON: JSON.stringify({ url: 'https://github.com/owner/repo/pull/7', number: 7, headRefOid: prHead, baseRefName: baseBranch, baseRefOid: baseHead, isDraft: draft, body: prBody }),
     GH_COMMENT_JSON: JSON.stringify(posted),
     GH_TESTED_SHA: tested ?? prHead,
+    DECODER_DISABLED: decoderDisabled ? '1' : '',
+    FRAME_MISSING: frameMissing ? '1' : '',
+    MEDIA_LOG: mediaLog,
   }));
 }
 function completed({ legacy = false, reviewLater = false } = {}) {
@@ -139,6 +158,114 @@ test('direct raw gist transcript and actual video bytes are accepted, but screen
   assert.equal(proofCommand(data).status, 'incomplete');
   fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => ${videoResponse.replace('video/mp4', 'application/octet-stream')};\n`);
   assert.equal(proofCommand(data).status, 'pass');
+});
+
+test('unlabeled and explicitly primary fields cannot collide and skip the UI capture', () => {
+  const data = completed();
+  const gist = 'https://gist.githubusercontent.com/owner/abcdef/raw/123456/proof.txt';
+  const transcript = `Source SHA: ${data.tested}\nFocused command: node --test tests/api.test.mjs\nSTDOUT:\nexpected identifier\nExit status: 0\n`;
+  const explicit = (value) => value.replace('- recording:', '- recording primary:').replace('- capture:', '- capture primary:');
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => ${videoResponse};\n`);
+  assert.equal(proofCommand({ ...data, prBody: explicit(data.prBody), posted: { ...data.posted, body: explicit(data.posted.body) } }).status, 'pass');
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async (url) => String(url).includes('/raw/') ?
+    new Response(${JSON.stringify(transcript)}, { headers: { 'content-type': 'text/plain' } }) :
+    new Response('unrecorded UI', { headers: { 'content-type': 'video/mp4' } });\n`);
+  const collision = `\n- recording primary: cli-terminal\n- capture primary: ${gist}`;
+  const prBody = data.prBody.replace(`- capture: ${captureUrl}`, `- capture: ${captureUrl}${collision}`);
+  const posted = { ...data.posted, body: data.posted.body + collision };
+  assert.equal(proofCommand({ ...data, prBody, posted }).status, 'incomplete');
+  assert.equal(proofCommand({ ...data, prBody, posted: data.posted }).status, 'incomplete');
+  assert.equal(proofCommand({ ...data, posted }).status, 'incomplete');
+  for (const extra of [`- recording primary: ui-video`, `- capture primary: ${captureUrl}`]) {
+    assert.equal(proofCommand({ ...data, prBody: `${data.prBody}\n${extra}` }).status, 'incomplete', extra);
+  }
+});
+
+test('authentic short API responses and multiline terminal stdout count as observed output', () => {
+  const data = completed();
+  const gist = 'https://gist.githubusercontent.com/owner/abcdef/raw/123456/proof.txt';
+  for (const response of ['OK', '[]', 'true']) {
+    const transcript = `Source SHA: ${data.tested}\nRequest: GET /api/items\nStatus: 200\nResponse body: ${response}\n`;
+    fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(transcript)}, { headers: { 'content-type': 'text/plain' } });\n`);
+    assert.equal(proofCommand({ ...data, prBody: body(data.tested, data.head, gist, 'passed', 'api-probe'), posted: comment(data.tested, data.head, gist, 'passed', 'api-probe') }).status, 'pass', response);
+  }
+  for (const stdout of ['STDOUT:\nexpected API identifier\nmore details', 'STDOUT\nexpected API identifier']) {
+    const transcript = `Source SHA: ${data.tested}\nFocused command: node --test tests/api.test.mjs\n${stdout}\nExit status: 0\n`;
+    fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(transcript)}, { headers: { 'content-type': 'text/plain' } });\n`);
+    assert.equal(proofCommand({ ...data, prBody: body(data.tested, data.head, gist, 'passed', 'cli-terminal'), posted: comment(data.tested, data.head, gist, 'passed', 'cli-terminal') }).status, 'pass');
+  }
+  const missingOutput = `Source SHA: ${data.tested}\nFocused command: node --test tests/api.test.mjs\nSTDOUT:\nExit status: 0\n`;
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(missingOutput)}, { headers: { 'content-type': 'text/plain' } });\n`);
+  assert.equal(proofCommand({ ...data, prBody: body(data.tested, data.head, gist, 'passed', 'cli-terminal'), posted: comment(data.tested, data.head, gist, 'passed', 'cli-terminal') }).status, 'incomplete');
+});
+
+test('complete transcripts beyond 64 KiB require their final successful exit and fit the documented cap', () => {
+  const data = completed();
+  const gist = 'https://gist.githubusercontent.com/owner/abcdef/raw/123456/proof.txt';
+  const cli = { ...data, prBody: body(data.tested, data.head, gist, 'passed', 'cli-terminal'), posted: comment(data.tested, data.head, gist, 'passed', 'cli-terminal') };
+  const prefix = `Source SHA: ${data.tested}\nFocused command: node --test tests/api.test.mjs\nSTDOUT:\nobserved result\n`;
+  const transcript = `${prefix}${'worktree event\n'.repeat(6000)}Exit status: 0\n`;
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(transcript)}, { headers: { 'content-type': 'text/plain' } });\n`);
+  assert.equal(proofCommand(cli).status, 'pass');
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(`Exit status: 0\n${prefix}${'worktree event\n'.repeat(6000)}Exit status: 1\n`)}, { headers: { 'content-type': 'text/plain' } });\n`);
+  assert.equal(proofCommand(cli).status, 'incomplete', 'an earlier success cannot hide a final failed exit');
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(transcript.slice(0, 65536))}, { headers: { 'content-type': 'text/plain' } });\n`);
+  assert.equal(proofCommand(cli).status, 'incomplete');
+  const script = `Source SHA: ${data.tested}\nScript started on 2026-09-27 [COMMAND="node --test tests/api.test.mjs"]\nobserved result\n${'line of output\n'.repeat(6000)}Script done on 2026-09-27 [COMMAND_EXIT_CODE="0"]\n`;
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(script)}, { headers: { 'content-type': 'text/plain' } });\n`);
+  assert.equal(proofCommand(cli).status, 'pass');
+  const interactive = `Source SHA: ${data.tested}\nScript started on 2026-09-27\n$ node --test tests/api.test.mjs\n\nobserved result\n$ printf 'exit=%s\\n' "$?"\nexit=0\n$ exit\nScript done on 2026-09-27 [COMMAND_EXIT_CODE="0"]\n`;
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(interactive)}, { headers: { 'content-type': 'text/plain' } });\n`);
+  assert.equal(proofCommand(cli).status, 'pass', 'interactive script requires immediate tested-command status');
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(interactive.replace(/\$ printf[^\n]*\nexit=0\n/, ''))}, { headers: { 'content-type': 'text/plain' } });\n`);
+  assert.equal(proofCommand(cli).status, 'incomplete', 'shell exit zero cannot replace command status');
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(interactive.replace('exit=0', 'exit=1'))}, { headers: { 'content-type': 'text/plain' } });\n`);
+  assert.equal(proofCommand(cli).status, 'incomplete', 'failed command cannot be hidden by successful shell exit');
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(interactive.replace('observed result\n', ''))}, { headers: { 'content-type': 'text/plain' } });\n`);
+  assert.equal(proofCommand(cli).status, 'incomplete', 'prompt and status alone are not observed command output');
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(interactive.replace('observed result\n', "observed result\n$ printf 'unrelated\\n'\nunrelated\n"))}, { headers: { 'content-type': 'text/plain' } });\n`);
+  assert.equal(proofCommand(cli).status, 'incomplete', 'intervening shell command invalidates tested-command exit binding');
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(script.replace('observed result\n', '').replaceAll('line of output\n', ''))}, { headers: { 'content-type': 'text/plain' } });\n`);
+  assert.equal(proofCommand(cli).status, 'incomplete', 'a script trailer without observed output is not proof');
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(script.replace('COMMAND_EXIT_CODE="0"', 'COMMAND_EXIT_CODE="1"'))}, { headers: { 'content-type': 'text/plain' } });\n`);
+  assert.equal(proofCommand(cli).status, 'incomplete');
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(new ReadableStream({
+    start(controller) { controller.enqueue(new TextEncoder().encode(${JSON.stringify(prefix)})); for (let i = 0; i < 129; i++) controller.enqueue(new Uint8Array(65536).fill(32)); controller.enqueue(new TextEncoder().encode('Exit status: 0\\n')); controller.close(); }
+  }), { headers: { 'content-type': 'text/plain' } });\n`);
+  assert.equal(proofCommand(cli).status, 'incomplete', 'streamed output over 8 MiB must fail rather than use its prefix');
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(transcript)}, { status: 206, headers: { 'content-type': 'text/plain' } });\n`);
+  assert.equal(proofCommand(cli).status, 'incomplete', 'partial HTTP response cannot establish complete proof');
+});
+
+test('only fully retrieved and decodable video frames count, including Matroska', () => {
+  const data = completed();
+  const mediaLog = path.join(data.root, 'decoder-inputs.log');
+  assert.equal(proofCommand({ ...data, mediaLog }).status, 'pass');
+  const paths = fs.readFileSync(mediaLog, 'utf8').trim().split('\n');
+  assert.equal(paths.length, 2, 'both video stream and actual frame were checked');
+  for (const file of paths) {
+    assert.equal(file.startsWith(`${path.dirname(data.taskDir)}${path.sep}`), false, 'temporary media stays outside the task root');
+    assert.equal(fs.existsSync(file), false, 'temporary media is removed after inspection');
+  }
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(new ReadableStream({
+    start(controller) { const bytes = Buffer.from("${mp4.toString('base64')}", "base64"); controller.enqueue(bytes.subarray(0, 128)); controller.enqueue(bytes.subarray(128)); controller.close(); }
+  }), { headers: { 'content-type': 'video/mp4' } });\n`);
+  assert.equal(proofCommand(data).status, 'pass', 'all chunks must reach the decoder');
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => ${mkvResponse};\n`);
+  assert.equal(proofCommand(data).status, 'pass');
+  assert.equal(proofCommand({ ...data, decoderDisabled: true }).status, 'incomplete', 'unavailable video decoder fails closed');
+  assert.equal(proofCommand({ ...data, frameMissing: true }).status, 'incomplete', 'metadata without a decoded frame cannot count');
+  fs.writeFileSync(data.fetchStub, 'globalThis.fetch = async () => new Response(Buffer.concat([Buffer.from([0,0,0,16,102,116,121,112,105,115,111,109,0,0,0,0,0,0,8,8,109,100,97,116]), Buffer.alloc(2048)]), { headers: { "content-type": "video/mp4" } });\n');
+  assert.equal(proofCommand(data).status, 'incomplete', 'ftyp + mdat + zeros is not a frame');
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(Buffer.from("${mp4.subarray(0, 600).toString('base64')}", "base64"), { headers: { "content-type": "video/mp4" } });\n`);
+  assert.equal(proofCommand(data).status, 'incomplete', 'truncated media is not complete');
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(Buffer.from("${mp4.toString('base64')}", "base64"), { headers: { 'content-type': 'video/mp4', 'content-length': '134217729' } });\n`);
+  assert.equal(proofCommand(data).status, 'incomplete', 'oversize advertised videos cannot be ingested');
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(Buffer.from("${mp4.toString('base64')}", "base64"), { status: 206, headers: { 'content-type': 'video/mp4' } });\n`);
+  assert.equal(proofCommand(data).status, 'incomplete', 'a video range is not a full hosted object');
+  const gist = 'https://gist.githubusercontent.com/owner/abcdef/raw/123456/proof.txt';
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(`Source SHA: ${data.tested}\nFocused command: node --test tests/api.test.mjs\nSTDOUT: OK\nExit status: 0\n`)}, { headers: { 'content-type': 'text/plain' } });\n`);
+  assert.equal(proofCommand({ ...data, decoderDisabled: true, prBody: body(data.tested, data.head, gist, 'passed', 'cli-terminal'), posted: comment(data.tested, data.head, gist, 'passed', 'cli-terminal') }).status, 'pass', 'text proof needs no video tools');
 });
 
 test('claimed proof without an actual recording cannot ready the PR', () => {
