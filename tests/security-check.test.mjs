@@ -140,7 +140,7 @@ test('quoted Git paths still route non-ASCII Dockerfiles through Hadolint', () =
       return scanners({gitleaks: []})(tool, argv, options);
     }});
     assert.equal(report.lanes.hadolint.coverage, 'complete');
-    assert.ok(args.includes(relative));
+    assert.ok(args.includes(`./${relative}`));
   } finally {
     fs.rmSync(root, {recursive: true, force: true});
   }
@@ -161,7 +161,29 @@ test('Hadolint receives tracked files ending in .Dockerfile', () => {
       return scanners({gitleaks:[]})(tool,args,options);
     }});
     assert.equal(report.lanes.hadolint.coverage,'complete');
-    assert.ok(invocation.args.includes(file));
+    assert.ok(invocation.args.includes(`./${file}`));
+    assert.equal(invocation.contents,'FROM scratch\n');
+  } finally {
+    fs.rmSync(root,{recursive:true,force:true});
+  }
+});
+
+test('Hadolint passes option-like tracked Dockerfiles as path arguments', () => {
+  const {root} = repository();
+  try {
+    const file='--trusted-registry=evil.Dockerfile';
+    fs.writeFileSync(path.join(root,file),'FROM scratch\n');
+    execFileSync('git',['add',file],{cwd:root});
+    execFileSync('git',['commit','-qm','option-like Dockerfile fixture'],{cwd:root});
+    let invocation;
+    const report=run({cwd:root,spawn:(tool,args,options)=>{
+      if (tool==='hadolint' && args[0]!=='--version') {
+        invocation={args,contents:fs.readFileSync(path.join(options.cwd,file),'utf8')};
+      }
+      return scanners({gitleaks:[]})(tool,args,options);
+    }});
+    assert.equal(report.lanes.hadolint.coverage,'complete');
+    assert.ok(invocation.args.includes(`./${file}`));
     assert.equal(invocation.contents,'FROM scratch\n');
   } finally {
     fs.rmSync(root,{recursive:true,force:true});

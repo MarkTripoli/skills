@@ -7,14 +7,15 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
+const offlineGitEnv = {...process.env,GIT_NO_LAZY_FETCH:'1',GIT_TERMINAL_PROMPT:'0'};
 function git(args, cwd) {
-  return execFileSync('git', args, {cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']}).trim();
+  return execFileSync('git', args, {cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env:offlineGitEnv, timeout:30000, maxBuffer:32*1024*1024}).trim();
 }
 const MAX_SNAPSHOT_BYTES = 256 * 1024 * 1024;
 const MAX_BLOB_BYTES = 16 * 1024 * 1024;
 const MAX_TREE_ENTRIES = 50000;
 function treeEntries(root,revision) {
-  const output = new TextDecoder('utf-8',{fatal:true}).decode(execFileSync('git',['ls-tree','-r','-z',revision],{cwd:root,stdio:['ignore','pipe','ignore'],maxBuffer:32*1024*1024}));
+  const output = new TextDecoder('utf-8',{fatal:true}).decode(execFileSync('git',['ls-tree','-r','-z',revision],{cwd:root,stdio:['ignore','pipe','ignore'],env:offlineGitEnv,timeout:30000,maxBuffer:32*1024*1024}));
   const names = new Map(), files = new Set(), directories = new Set();
   return output.split('\0').filter(Boolean).map(entry => {
     const tab = entry.indexOf('\t');
@@ -84,7 +85,7 @@ function headSnapshot(root,revision) {
     let totalBytes=0;
     const chunk = Buffer.allocUnsafe(64 * 1024);
     for (const {file,oid,mode} of entries) {
-      const bytes=execFileSync('git',['cat-file','blob',oid],{cwd:root,stdio:['ignore','pipe','ignore'],maxBuffer:MAX_BLOB_BYTES+1});
+      const bytes=execFileSync('git',['cat-file','blob',oid],{cwd:root,stdio:['ignore','pipe','ignore'],env:offlineGitEnv,timeout:30000,maxBuffer:MAX_BLOB_BYTES+1});
       totalBytes+=bytes.length;
       if (bytes.length>MAX_BLOB_BYTES || totalBytes>MAX_SNAPSHOT_BYTES) throw Error('HEAD snapshot exceeds size limit');
       const target=path.join(checkout,...file.split('/'));
@@ -253,7 +254,7 @@ export function run({cwd = process.cwd(), spawn = spawnSync} = {}) {
         lanes[key]=lane({name:bin,scanner:key,version,result:{status:0,stdout:'[]'},parse,root:snapshot.checkout,revision,repository});
         continue;
       }
-      args=[...scanArgs,...dockerfiles];
+      args=[...scanArgs,...dockerfiles.map(file=>`./${file}`)];
     }
     const result=spawn(bin,args,{cwd:key==='gitleaks'?cwd:snapshot.checkout,encoding:'utf8',maxBuffer:32*1024*1024,timeout:300000});
     lanes[key]=lane({name:bin,scanner:key,version,result,parse,root:key==='gitleaks'?cwd:snapshot.checkout,revision,repository,allowFindingExit:key==='actionlint'});
