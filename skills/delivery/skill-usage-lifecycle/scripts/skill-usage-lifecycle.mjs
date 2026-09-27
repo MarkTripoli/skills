@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const SUPPORTED_SOURCES = new Set(["claude-code", "codex", "oh-my-pi", "pi"]);
 
@@ -57,4 +56,11 @@ function main(argv) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) process.exitCode = main(process.argv.slice(2));
+if (process.argv[1]) {
+  try {
+    const invoked = fs.realpathSync(fileURLToPath(import.meta.url)) === fs.realpathSync(process.argv[1]);
+    if (invoked) process.exitCode = main(process.argv.slice(2));
+  } catch {
+    // Importing the module or an unresolved argv path must not execute the CLI.
+  }
+}
