@@ -7,7 +7,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
-const offlineGitEnv = {...process.env,GIT_NO_LAZY_FETCH:'1',GIT_TERMINAL_PROMPT:'0'};
+const offlineGitEnv = {...process.env,GIT_NO_LAZY_FETCH:'1',GIT_NO_REPLACE_OBJECTS:'1',GIT_TERMINAL_PROMPT:'0'};
 function git(args, cwd) {
   return execFileSync('git', args, {cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env:offlineGitEnv, timeout:30000, maxBuffer:32*1024*1024}).trim();
 }
@@ -236,7 +236,7 @@ export function run({cwd = process.cwd(), spawn = spawnSync} = {}) {
   ];
   const lanes={};
   for (const [key,bin,versionArgs,scanArgs,parse] of specs) {
-    const v=spawn(bin,versionArgs,{cwd:key==='gitleaks'?cwd:snapshot.checkout,encoding:'utf8',timeout:15000});
+    const v=spawn(bin,versionArgs,{cwd:key==='gitleaks'?cwd:snapshot.checkout,encoding:'utf8',timeout:15000,env:offlineGitEnv});
     const version=v.status===0 ? String(v.stdout??'').trim() : null;
     if (!version) { lanes[key]=v.error?.code === 'ENOENT' ? unavailable(bin,v.status) : {tool:{name:bin,version:null,status:'failed',exit_code:v.status??null},coverage:'incomplete',findings:[]}; continue; }
     let args=scanArgs;
@@ -256,7 +256,7 @@ export function run({cwd = process.cwd(), spawn = spawnSync} = {}) {
       }
       args=[...scanArgs,...dockerfiles.map(file=>`./${file}`)];
     }
-    const result=spawn(bin,args,{cwd:key==='gitleaks'?cwd:snapshot.checkout,encoding:'utf8',maxBuffer:32*1024*1024,timeout:300000});
+    const result=spawn(bin,args,{cwd:key==='gitleaks'?cwd:snapshot.checkout,encoding:'utf8',maxBuffer:32*1024*1024,timeout:300000,env:offlineGitEnv});
     lanes[key]=lane({name:bin,scanner:key,version,result,parse,root:key==='gitleaks'?cwd:snapshot.checkout,revision,repository,allowFindingExit:key==='actionlint'});
   }
   const legacy=lanes.semgrep, secrets=lanes.gitleaks;

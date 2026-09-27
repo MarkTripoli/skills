@@ -369,3 +369,32 @@ test('Git archive attributes cannot omit or rewrite committed scanner source', (
     }
   }
 });
+
+test('replacement refs cannot change scanned HEAD and Gitleaks cannot fetch history', () => {
+  const {root,revision}=repository();
+  try {
+    const original=fs.readFileSync(path.join(root,'seeded-secret.js'),'utf8');
+    fs.writeFileSync(path.join(root,'seeded-secret.js'),'const replacementTree = true;\n');
+    execFileSync('git',['add','seeded-secret.js'],{cwd:root});
+    execFileSync('git',['commit','-qm','replacement tree'],{cwd:root});
+    const replacement=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim();
+    execFileSync('git',['reset','--hard',revision],{cwd:root});
+    execFileSync('git',['replace',revision,replacement],{cwd:root});
+    const gitleaksEnvironments=[];
+    const report=run({cwd:root,spawn:(tool,args,options)=>{
+      if (tool==='gitleaks') gitleaksEnvironments.push(options.env);
+      else assert.equal(fs.readFileSync(path.join(options.cwd,'seeded-secret.js'),'utf8'),original);
+      return scanners({gitleaks:[]})(tool,args,options);
+    }});
+    assert.equal(report.revision,revision);
+    assert.equal(report.coverage,'complete');
+    assert.equal(gitleaksEnvironments.length,2);
+    for (const env of gitleaksEnvironments) {
+      assert.equal(env.GIT_NO_LAZY_FETCH,'1');
+      assert.equal(env.GIT_NO_REPLACE_OBJECTS,'1');
+      assert.equal(env.GIT_TERMINAL_PROMPT,'0');
+    }
+  } finally {
+    fs.rmSync(root,{recursive:true,force:true});
+  }
+});
