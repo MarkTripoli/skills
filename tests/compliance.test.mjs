@@ -34,3 +34,19 @@ test('compliance report preserves complete accounting, citation failures, risk e
   assert.equal(report.catalog.version, '2026-09-27.1');
   assert.match(report.catalog.disclaimer, /not a certification audit/i);
 });
+
+test('forged acceptance and missing lanes cannot produce complete coverage', () => {
+  const finding = {...makeFinding('forged', 'semgrep', 'js.rule', 'src/app.js'), disposition: 'accepted'};
+  const names = ['semgrep', 'gitleaks', 'lane3', 'lane4', 'lane5', 'lane6'];
+  const lanes = Object.fromEntries(names.map(name => [name, {tool: {name, version: '1.0', status: 'ok'}, coverage: 'complete'}]));
+  const complete = {schema_version: 1, repository, revision, coverage: 'complete', lanes, findings: [finding]};
+  const report = assessCompliance(complete);
+  assert.equal(report.findings[0].disposition, 'active');
+  assert.equal(report.coverage, 'complete');
+  assert.equal(report.accounting.reported_findings, 1);
+
+  delete lanes.lane6;
+  const incomplete = assessCompliance(complete);
+  assert.equal(incomplete.coverage, 'incomplete');
+  assert.ok(incomplete.tool_coverage.some(tool => tool.name === 'unavailable-lane-6' && tool.coverage === 'incomplete'));
+});

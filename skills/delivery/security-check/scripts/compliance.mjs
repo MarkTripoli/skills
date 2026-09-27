@@ -10,6 +10,23 @@ export const CONTROL_CATALOG = {
   ],
 };
 
+const EXPECTED_LANE_COUNT = 6;
+
+function laneTools(scan) {
+  const lanes = scan.lanes && typeof scan.lanes === 'object' && !Array.isArray(scan.lanes) ? scan.lanes : {};
+  const names = Object.keys(lanes);
+  const tools = names.map(name => {
+    const lane = lanes[name];
+    const tool = lane?.tool ?? lane;
+    const status = tool?.status ?? 'unavailable';
+    return {name, version: tool?.version ?? null, status, coverage: status === 'ok' && lane?.coverage !== 'incomplete' ? 'complete' : 'incomplete'};
+  });
+  for (let index = names.length; index < EXPECTED_LANE_COUNT; index += 1) {
+    tools.push({name: `unavailable-lane-${index + 1}`, version: null, status: 'unavailable', coverage: 'incomplete'});
+  }
+  return tools;
+}
+
 function hasCitation(finding, scan) {
   return finding && finding.repository === scan.repository && finding.revision === scan.revision &&
     typeof finding.rule_id === 'string' && finding.rule_id.length > 0 &&
@@ -33,7 +50,6 @@ export function assessCompliance(scan, {risks = [], now = new Date(), catalog = 
     const control = catalog.controls.find(item => item.scanner === finding?.scanner && typeof item.rule_prefix === 'string' && finding.rule_id?.startsWith(item.rule_prefix));
     let disposition = 'unknown';
     if (suppressedIds.has(finding?.finding_id)) disposition = 'suppressed';
-    else if (cited && finding?.disposition === 'accepted') disposition = 'accepted';
     else if (cited && control) disposition = 'active';
     return {
       finding_id: finding?.finding_id ?? null,
@@ -43,7 +59,7 @@ export function assessCompliance(scan, {risks = [], now = new Date(), catalog = 
       disposition,
     };
   });
-  const tools = [scan.tool, scan.secret_tool].filter(Boolean).map(tool => ({name: tool.name, version: tool.version ?? null, status: tool.status, coverage: tool.status === 'ok' ? 'complete' : 'incomplete'}));
+  const tools = laneTools(scan);
   for (const finding of scan.findings) {
     if (!tools.some(tool => tool.name === finding?.scanner)) tools.push({name: finding?.scanner ?? 'unknown', version: null, status: 'unknown', coverage: 'unavailable'});
   }
@@ -56,6 +72,6 @@ export function assessCompliance(scan, {risks = [], now = new Date(), catalog = 
     tool_coverage: tools,
     findings,
     accounting: {input_findings: scan.findings.length, reported_findings: findings.length, dispositions: counts},
-    coverage: accepted.coverage === 'complete' && tools.every(tool => tool.coverage === 'complete') && findings.every(item => item.citation_status === 'complete') ? 'complete' : 'incomplete',
+    coverage: scan.coverage === 'complete' && Object.keys(scan.lanes ?? {}).length === EXPECTED_LANE_COUNT && accepted.coverage === 'complete' && tools.every(tool => tool.coverage === 'complete') && findings.every(item => item.citation_status === 'complete') ? 'complete' : 'incomplete',
   };
 }
