@@ -142,14 +142,21 @@ function recordedText(text, sha, recording) {
       .split(/\r?\n/).map(line => line.trim());
     const output = observedLines.find(line => line && !/^(?:exit(?: status| code)?|status|outcome)\s*:/i.test(line));
     const exit = /^\r?\n[ \t]*exit=(\d+)[ \t]*(?:\r?\n|$)/.exec(text.slice(probe.index + probe[0].length))?.[1];
+    const trailer = [...text.matchAll(/(?:^|\n)Script done on [^\n]*\[COMMAND_EXIT_CODE="?([0-9]+)"?\]/gim)];
     return revision?.toLowerCase() === sha.toLowerCase() &&
       Boolean(invocation && !PLACEHOLDER.test(invocation) && /(?:\s+\S+|\w+\([^)]*\))/.test(invocation)) &&
-      Boolean(output && !PLACEHOLDER.test(output)) && exit === '0';
+      Boolean(output && !PLACEHOLDER.test(output)) && exit === '0' &&
+      commands.slice(commandIndex + 2).every(match => match[1].trim() === 'exit') &&
+      (trailer.length === 0 || (trailer.length === 1 && trailer[0][1] === '0'));
   }
   const observed = /(?:^|\n)\s*(?:stdout|test output|observed output|response(?: body)?|result output|tool output)(?:[ \t]*:[ \t]*|[ \t]*\r?\n)([^\r\n]*)/im.exec(text);
   const output = observed?.[1]?.trim() || (observed && firstOutputLine(text, observed.index + observed[0].length));
   const scriptOutput = !observed && scriptStart &&
     firstOutputLine(text, scriptStart.index + scriptStart[0].length, invocation);
+  if (scripted) {
+    const exits = [...text.matchAll(/(?:^|\n)Script done on [^\n]*\[COMMAND_EXIT_CODE="?([0-9]+)"?\]/gim)];
+    if (exits.length !== 1 || exits[0][1] !== '0') return false;
+  }
   // A preliminary success cannot override a later failed command or script trailer.
   const completionPattern = /(?:^|\n)\s*(?:exit (?:status|code)|status(?: code)?|outcome)\s*:\s*([^\r\n]+)|(?:^|\n)Script done on [^\n]*\[COMMAND_EXIT_CODE="?([0-9]+)"?\]/gim;
   let completion = false;

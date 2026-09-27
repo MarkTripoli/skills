@@ -221,14 +221,21 @@ test('complete transcripts beyond 64 KiB require their final successful exit and
   assert.equal(proofCommand(cli).status, 'incomplete', 'shell exit zero cannot replace command status');
   fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(interactive.replace('exit=0', 'exit=1'))}, { headers: { 'content-type': 'text/plain' } });\n`);
   assert.equal(proofCommand(cli).status, 'incomplete', 'failed command cannot be hidden by successful shell exit');
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(interactive.replace('COMMAND_EXIT_CODE="0"', 'COMMAND_EXIT_CODE="1"'))}, { headers: { 'content-type': 'text/plain' } });\n`);
+  assert.equal(proofCommand(cli).status, 'incomplete', 'a failed interactive session cannot masquerade as successful proof');
   fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(interactive.replace('observed result\n', ''))}, { headers: { 'content-type': 'text/plain' } });\n`);
   assert.equal(proofCommand(cli).status, 'incomplete', 'prompt and status alone are not observed command output');
   fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(interactive.replace('observed result\n', "observed result\n$ printf 'unrelated\\n'\nunrelated\n"))}, { headers: { 'content-type': 'text/plain' } });\n`);
   assert.equal(proofCommand(cli).status, 'incomplete', 'intervening shell command invalidates tested-command exit binding');
+  const repeated = interactive.replace('$ exit\n', `$ node --test tests/api.test.mjs\nfailed observed result\n$ printf 'exit=%s\\n' "$?"\nexit=1\n$ exit\n`);
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(repeated)}, { headers: { 'content-type': 'text/plain' } });\n`);
+  assert.equal(proofCommand(cli).status, 'incomplete', 'a later failed required command invalidates interactive proof');
   fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(script.replace('observed result\n', '').replaceAll('line of output\n', ''))}, { headers: { 'content-type': 'text/plain' } });\n`);
   assert.equal(proofCommand(cli).status, 'incomplete', 'a script trailer without observed output is not proof');
   fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(script.replace('COMMAND_EXIT_CODE="0"', 'COMMAND_EXIT_CODE="1"'))}, { headers: { 'content-type': 'text/plain' } });\n`);
   assert.equal(proofCommand(cli).status, 'incomplete');
+  fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(`${script.replace('COMMAND_EXIT_CODE="0"', 'COMMAND_EXIT_CODE="1"')}Exit status: 0\n`)}, { headers: { 'content-type': 'text/plain' } });\n`);
+  assert.equal(proofCommand(cli).status, 'incomplete', 'later generic success cannot override failed bound script');
   fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(new ReadableStream({
     start(controller) { controller.enqueue(new TextEncoder().encode(${JSON.stringify(prefix)})); for (let i = 0; i < 129; i++) controller.enqueue(new Uint8Array(65536).fill(32)); controller.enqueue(new TextEncoder().encode('Exit status: 0\\n')); controller.close(); }
   }), { headers: { 'content-type': 'text/plain' } });\n`);
