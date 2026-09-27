@@ -4,7 +4,7 @@ import {assessCompliance} from '../skills/delivery/security-check/scripts/compli
 
 const repository = 'https://example.test/acme/project';
 const revision = 'a'.repeat(40);
-const makeFinding = (id, scanner, rule_id, path) => ({finding_id: id, repository, revision, scanner, rule_id, path, line: 1, severity: 'LOW'});
+const makeFinding = (id, scanner, rule_id, path) => ({schema_version: 1, finding_id: id, repository, revision, rule_id, path, line: 1, severity: 'LOW', scanner, message: 'Normalized fixture finding', evidence_ref: 'sha256:fixture'});
 
 test('compliance report preserves complete accounting, citation failures, risk expiry, and unknown tools', () => {
   const findings = [
