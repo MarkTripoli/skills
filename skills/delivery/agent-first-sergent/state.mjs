@@ -67,10 +67,20 @@ export function checkpointContext(taskDir, usage) {
   const state = inspect(root);
   if (!state) throw new Error('Initialize the task before recording context');
   if ((state.options.context_policy ?? 'off') !== 'stop-at-60') return state;
-  const boundary = evaluateContextBoundary(usage);
+  const expectedSessionId = state.context_boundary?.action === 'awaiting-checkpoint'
+    ? state.context_boundary.sessionId
+    : null;
   const sessionId = typeof usage?.sessionId === 'string' && usage.sessionId.trim() ? usage.sessionId.trim() : null;
+  if (expectedSessionId && sessionId !== expectedSessionId) {
+    state.context_boundary = {
+      action: 'stop', status: 'unknown', sessionId: sessionId ?? expectedSessionId,
+      reason: 'live context metric does not match the fresh child session identity',
+    };
+    return save(root, state);
+  }
+  const boundary = evaluateContextBoundary(usage);
   state.context_boundary = { ...boundary, sessionId };
-  if (boundary.action === 'fresh-session' && !sessionId) {
+  if (!sessionId) {
     state.context_boundary = { ...state.context_boundary, action: 'stop', status: 'unknown', reason: 'live child session identity unavailable' };
   }
   return save(root, state);
@@ -90,11 +100,11 @@ export function startFreshSession(taskDir, sessionId) {
     throw new Error('Fresh session identity must differ from the exhausted child session');
   }
   state.context_boundary = {
-    ...state.context_boundary,
-    action: 'continue',
-    resumed: true,
+    action: 'awaiting-checkpoint',
+    status: 'unknown',
     previousSessionId: state.context_boundary.sessionId,
     sessionId: nextSessionId,
+    reason: 'fresh child requires its own live context metric before dispatch',
   };
   return save(root, state);
 }
@@ -115,6 +125,14 @@ export function begin(taskDir, skill) {
   if (state.steps >= state.options.max_steps) throw new Error(`Reached max_steps=${state.options.max_steps}`);
   state.steps += 1;
   state.last_skill = skill;
+  if ((state.options.context_policy ?? 'off') === 'stop-at-60') {
+    state.context_boundary = {
+      action: 'recheck-required',
+      status: 'unknown',
+      sessionId: state.context_boundary.sessionId,
+      reason: 'a new live context metric is required before the next dispatch',
+    };
+  }
   return save(root, state);
 }
 

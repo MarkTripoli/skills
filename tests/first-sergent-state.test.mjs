@@ -133,24 +133,28 @@ test('context policy requires a live metric and child identity before every disp
   assert.throws(() => begin(dir, 'create-plan'), /live context metric and child session identity/);
   checkpointContext(dir, { sessionId: 'current-session', contextUsage: { tokens: 20, contextWindow: 100, percent: 20 } });
   begin(dir, 'create-plan');
-  assert.equal(inspect(dir).steps, 1);
+  assert.throws(() => begin(dir, 'verify-implementation'), /live context metric and child session identity/);
+  checkpointContext(dir, { sessionId: 'current-session', contextUsage: { tokens: 25, contextWindow: 100, percent: 25 } });
+  begin(dir, 'verify-implementation');
+  assert.equal(inspect(dir).steps, 2);
 });
 
-test('context policy stops at the live 60 percent boundary and starts a fresh session', (t) => {
+test('context threshold requires the fresh child live metric before dispatch', (t) => {
   const { dir } = fixture(t);
   initialize(dir, { ...options, context_policy: 'stop-at-60' });
-  assert.equal(evaluateContextBoundary({ contextUsage: { tokens: 59, contextWindow: 100, percent: 59 } }).action, 'continue');
-  assert.equal(evaluateContextBoundary({ type: 'response', command: 'get_state', success: true, data: { contextUsage: { tokens: 60, contextWindow: 100, percent: 60 } } }).action, 'fresh-session');
   checkpointContext(dir, { sessionId: 'old-session', contextUsage: { tokens: 60, contextWindow: 100, percent: 60 } });
   assert.equal(inspect(dir).context_boundary.action, 'fresh-session');
-  assert.equal(inspect(dir).context_boundary.sessionId, 'old-session');
   assert.throws(() => begin(dir, 'create-plan'));
-  assert.equal(inspect(dir).steps, 0);
   startFreshSession(dir, 'new-session');
-  assert.equal(inspect(dir).context_boundary.previousSessionId, 'old-session');
-  assert.equal(inspect(dir).context_boundary.sessionId, 'new-session');
+  assert.equal(inspect(dir).context_boundary.action, 'awaiting-checkpoint');
+  assert.throws(() => begin(dir, 'create-plan'));
+  checkpointContext(dir, { sessionId: 'old-session', contextUsage: { tokens: 30, contextWindow: 100, percent: 30 } });
+  assert.equal(inspect(dir).context_boundary.action, 'stop');
+  assert.throws(() => begin(dir, 'create-plan'));
+  checkpointContext(dir, { sessionId: 'new-session', contextUsage: { tokens: 30, contextWindow: 100, percent: 30 } });
   begin(dir, 'create-plan');
   assert.equal(inspect(dir).steps, 1);
+  assert.equal(inspect(dir).context_boundary.sessionId, 'new-session');
 });
 test('context threshold without a child identity remains blocked', (t) => {
   const { dir } = fixture(t);
