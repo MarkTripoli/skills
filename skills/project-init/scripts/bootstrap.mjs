@@ -4,23 +4,53 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+const NODE_MARKERS = [".nvmrc", ".node-version"];
+const LOCKFILES = [
+  ["pnpm-lock.yaml", "pnpm"],
+  ["yarn.lock", "yarn"],
+  ["package-lock.json", "npm"],
+  ["npm-shrinkwrap.json", "npm"],
+];
+const PYTHON_MARKERS = ["pyproject.toml", "uv.lock", "poetry.lock", "Pipfile", "Pipfile.lock"];
+
 export function detectProject(root) {
   const has = (name) => fs.existsSync(path.join(root, name));
-  const nodeSignals = [has("package.json"), has("pnpm-lock.yaml"), has("yarn.lock"), has("package-lock.json"), has("npm-shrinkwrap.json"), has(".nvmrc"), has(".node-version")];
-  const pythonSignals = [has("pyproject.toml"), has("uv.lock"), has("poetry.lock"), has("Pipfile"), has("Pipfile.lock")];
-  const node = nodeSignals.some(Boolean);
-  const python = pythonSignals.some(Boolean);
-  if (node && python) return { status: "unsupported", reason: "Mixed Node and Python project signals are unsupported." };
-  if (python) return { status: "unsupported", reason: "Python project bootstrap is unsupported." };
-  if (has("package.json")) {
-    const manager = has("pnpm-lock.yaml") ? "pnpm" : has("yarn.lock") ? "yarn" : has("package-lock.json") || has("npm-shrinkwrap.json") ? "npm" : "unknown";
-    return { status: "detected", stack: "node", manager, manifest: "package.json" };
+  const nodeMarkers = NODE_MARKERS.filter(has);
+  const lockfiles = LOCKFILES.filter(([file]) => has(file));
+  const pythonMarkers = PYTHON_MARKERS.filter(has);
+  const hasManifest = has("package.json");
+  if (pythonMarkers.length && (nodeMarkers.length || lockfiles.length || hasManifest)) {
+    return { status: "unsupported", reason: "Mixed Node and Python project signals are unsupported." };
   }
-  if (node) return { status: "detected", stack: "node", manager: "npm", manifest: "package.json" };
+  if (nodeMarkers.length > 1) return { status: "unsupported", reason: "Multiple Node version markers are ambiguous." };
+  if (lockfiles.length > 1) return { status: "unsupported", reason: "Conflicting or multiple package-manager lockfiles are unsupported." };
+  if (hasManifest) {
+    return { status: "detected", stack: "node", manager: lockfiles[0]?.[1] ?? "unknown", manifest: "package.json" };
+  }
+  if (nodeMarkers.length && !lockfiles.length) {
+    return { status: "detected", stack: "node", manager: "npm", manifest: "package.json" };
+  }
+  if (lockfiles.length) return { status: "unsupported", reason: "A lockfile without package.json is unsupported." };
   return { status: "unsupported", reason: "No supported Node project signals detected." };
 }
 
+function assertNoSymlinkComponents(root) {
+  const resolved = path.resolve(root);
+  const { root: volume } = path.parse(resolved);
+  let current = volume;
+  for (const component of resolved.slice(volume.length).split(path.sep).filter(Boolean)) {
+    current = path.join(current, component);
+    const stat = fs.lstatSync(current);
+    if (!stat.isSymbolicLink()) continue;
+    const real = fs.realpathSync(current);
+    const knownDarwinAlias = process.platform === "darwin" &&
+      ((current === "/tmp" && real === "/private/tmp") || (current === "/var" && real === "/private/var"));
+    if (!knownDarwinAlias) throw new Error("Target path contains a symlink; refusing to write.");
+  }
+}
+
 function normalizeProject(root) {
+  assertNoSymlinkComponents(root);
   const requested = path.resolve(root);
   const parent = fs.realpathSync(path.dirname(requested));
   return path.join(parent, path.basename(requested));
@@ -33,6 +63,7 @@ export function createPlan(root) {
   return {
     version: 1,
     mode: canCreate ? "supported" : detection.status === "detected" ? "supported" : "unsupported",
+    outcome: "planned",
     project,
     detected: detection.status === "detected" ? [{ stack: detection.stack, manager: detection.manager, manifest: detection.manifest }] : [],
     actions: canCreate ? [{ type: "create-file", path: "package.json", contents: '{\n  "private": true\n}\n' }] : [],
@@ -51,17 +82,19 @@ export function applyPlan(root, plan) {
     throw new Error("No applicable bootstrap action.");
   }
   const targetInfo = fs.lstatSync(requested);
-  if (targetInfo.isSymbolicLink() || !targetInfo.isDirectory()) {
-    throw new Error("Target must be a real directory; refusing to write.");
+  if (!targetInfo.isDirectory()) throw new Error("Target must be a directory; refusing to write.");
+  const current = createPlan(requested);
+  if (current.mode !== "supported" || JSON.stringify(current.actions) !== JSON.stringify(plan.actions)) {
+    throw new Error("Bootstrap plan is stale; refusing to write.");
   }
-  const action = plan.actions[0];
-  const target = path.join(requested, action.path);
+  const target = path.join(requested, "package.json");
   const fd = fs.openSync(target, "wx", 0o644);
   try {
-    fs.writeFileSync(fd, action.contents, "utf8");
+    fs.writeFileSync(fd, plan.actions[0].contents, "utf8");
   } finally {
     fs.closeSync(fd);
   }
+  return { ...plan, outcome: "applied" };
 }
 
 function cli(argv) {
@@ -77,10 +110,11 @@ function cli(argv) {
     else throw new Error(`Unknown argument: ${argv[i]}`);
   }
   if (apply !== approve) throw new Error("--apply and --approve must be supplied together.");
-  const plan = createPlan(target);
-  if (apply && plan.actions.length) applyPlan(target, plan);
-  process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
-  if (plan.mode === "unsupported") process.exitCode = 2;
+  let result = createPlan(target);
+  if (apply && result.actions.length) result = applyPlan(target, result);
+  else if (apply && result.mode === "supported") result = { ...result, outcome: "unchanged" };
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  if (result.mode === "unsupported") process.exitCode = 2;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
