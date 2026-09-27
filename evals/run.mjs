@@ -1,21 +1,3 @@
-#!/usr/bin/env node
-// Runs the skills against a live model, one fresh `omp -p` session per phase, and grades what each
-// phase left behind: the artifact, its frontmatter, the facts that had to travel from the sources,
-// the commit, and the handoff fence naming the next skill. Nothing here is mocked; a run costs
-// model time and needs `omp` on PATH with a configured provider, so it is `npm run evals`, not `npm test`.
-//
-// Usage: node evals/run.mjs [scenario ...] [--keep] [--model <model>] [--max-time <minutes>]
-//        node evals/run.mjs [scenario ...] --grade <run dir>
-//   scenario   names under evals/scenarios/ (default: all)
-//   --keep     keep every scenario's temporary repository (failed ones are kept regardless)
-//   --model    pass an explicit model selector through to each spawned `omp` session
-//   --grade    no model: re-grade the recordings of an earlier run (`evals/results/<stamp>` or `latest`)
-//              with the current checks; git-state checks are skipped, everything else runs.
-//
-// Output: evals/results/<stamp>/<scenario>/<n>-<skill>/{prompt.md,answer.md,stderr.log,task/},
-// evals/results/<stamp>/<scenario>/report.json (written as each scenario ends),
-// evals/results/<stamp>/summary.json, and `evals/results/latest` pointing at the newest run.
-// Recordings are never deleted by a later run. Exit 1 when any phase fails.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -34,6 +16,49 @@ const fixturesDir = path.join(here, "fixtures");
 const guidanceFiles = ["WRITING.md", "CONVENTIONS.md"];
 
 const args = process.argv.slice(2);
+if (args[0] === "--compare") {
+  if (args.length !== 3) {
+    console.error("usage: node evals/run.mjs --compare <solo-run> <delivery-run>");
+    process.exit(2);
+  }
+  const read = (value) => {
+    const dir = path.resolve(value === "latest" ? path.join(resultsRoot, value) : value);
+    try {
+      return {
+        ...JSON.parse(fs.readFileSync(path.join(dir, "comparison-run.json"), "utf8")),
+        rawOutput: path.relative(repoRoot, dir),
+      };
+    } catch {
+      return null;
+    }
+  };
+  const fields = (run) => ({
+    acceptance: run?.ok === true ? "passed" : run?.ok === false ? "failed" : "incomplete",
+    model: run?.model ?? "unknown",
+    wallTimeSeconds: Number.isFinite(run?.wallTimeSeconds) ? run.wallTimeSeconds : "unknown",
+    spend: Number.isFinite(run?.spend?.amount) && run.spend.amount >= 0 && run.spend.basis
+      ? { amount: run.spend.amount, currency: run.spend.currency ?? "USD", basis: run.spend.basis }
+      : "unknown",
+    fixtureRevision: run?.fixtureRevision ?? "unknown",
+    rawOutput: run?.rawOutput ?? "unknown",
+  });
+  const solo = fields(read(args[1]));
+  const delivery = fields(read(args[2]));
+  const fixtureMatched = solo.fixtureRevision !== "unknown" && solo.fixtureRevision === delivery.fixtureRevision;
+  const modelMatched = solo.model !== "unknown" && solo.model === delivery.model;
+  const spendComparable = fixtureMatched && modelMatched && solo.acceptance === "passed" && delivery.acceptance === "passed" &&
+    solo.spend !== "unknown" && delivery.spend !== "unknown" &&
+    solo.spend.currency === delivery.spend.currency && solo.spend.basis === delivery.spend.basis;
+  console.log(JSON.stringify({
+    solo, delivery,
+    fixtureMatched, modelMatched,
+    spendComparable,
+    spendAdvantage: spendComparable
+      ? solo.spend.amount < delivery.spend.amount ? "solo" : delivery.spend.amount < solo.spend.amount ? "delivery" : "tie"
+      : "unknown",
+  }, null, 2));
+  process.exit(0);
+}
 const keep = args.includes("--keep");
 const flagValue = (flag) => {
   const i = args.indexOf(flag);
@@ -178,7 +203,6 @@ function headArtifactCommitProblems(ctx) {
 }
 
 // Checks every phase must pass before its own: one text handoff fence naming the next skill,
-// the artifact with its type and summary, no template placeholder left anywhere in it (frontmatter
 // included), its commit carrying that file, a repository that is otherwise untouched (no code,
 // config, or stray file written or committed by a phase that only writes an artifact), and earlier
 // artifacts and `task.md` unchanged. Git-state checks need the live repository and are skipped when
@@ -249,7 +273,7 @@ async function runScenario(scenario, runDir, dist) {
   // The commit before any phase ran: everything a phase changes outside `.agents/` is measured from here.
   const fixtureSha = git(repo, "rev-parse", "HEAD");
   const resultDir = path.join(runDir, scenario.name);
-  const result = { name: scenario.name, repo, phases: [], ok: true };
+  const result = { name: scenario.name, repo, phases: [], ok: true, model: model ?? "omp-default", fixtureRevision: fixtureSha, wallTimeSeconds: 0 };
 
   for (const [index, phase] of scenario.phases.entries()) {
     const label = `${index + 1}-${phase.skill}`;
@@ -280,6 +304,7 @@ async function runScenario(scenario, runDir, dist) {
       artifacts: artifacts(taskDir),
     };
     const problems = grade(phase, ctx, code);
+    result.wallTimeSeconds += seconds;
     result.phases.push({ phase: label, seconds, ok: problems.length === 0, problems });
     report(scenario.name, label, seconds, problems);
     if (problems.length) {
@@ -291,6 +316,8 @@ async function runScenario(scenario, runDir, dist) {
     fs.rmSync(repo, { recursive: true, force: true });
     result.repo = null;
   } else console.log(`[${scenario.name}] repository kept at ${repo}`);
+  result.rawOutput = path.relative(repoRoot, resultDir);
+  fs.writeFileSync(path.join(resultDir, "comparison-run.json"), JSON.stringify(result, null, 2));
   fs.writeFileSync(path.join(resultDir, "report.json"), JSON.stringify(result, null, 2));
   return result;
 }
