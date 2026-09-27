@@ -1,12 +1,12 @@
 import { workflow } from '@bastani/atomic/workflows';
 import { Type } from 'typebox';
 import { observeArtifacts, frontmatter, planProgress } from '../lib/artifacts.mjs';
-import { ensureTask, revision, saveRecord, childrenFor, childWave, prepareChild, expandPath } from '../lib/workspace.mjs';
+import { ensureTask, revision, saveRecord, childrenFor, childWave, prepareChild, expandPath, git } from '../lib/workspace.mjs';
 import { MODES, SKILLS, judgment, eligible, initialState, runSkill, artifactGate, boundaryState, recoveryDiagnostic, reconcileRecovery, contextBoundaryAdmission } from '../lib/controller.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolveSkillsDir } from '../lib/skill-storage.mjs';
-import { childBatches } from '../lib/child-scheduler.mjs';
+import { childBatches, childCompletionSnapshot, childJoinSummary, joinChildren } from '../lib/child-scheduler.mjs';
 
 const choices = (values: string[], fallback: string) => Type.Union(values.map(value => Type.Literal(value)), { default: fallback });
 const delivery = workflow({
@@ -41,6 +41,7 @@ const delivery = workflow({
   outputs: {
     status: Type.String(), summary: Type.String(), task_dir: Type.String(), branch: Type.String(),
     steps: Type.Integer(), children: Type.Array(Type.String()),
+    completion: Type.Optional(Type.Any()),
   },
   run: async (ctx) => {
     const inputs = ctx.inputs;
@@ -86,7 +87,8 @@ const delivery = workflow({
     const launched: string[] = [];
     const finish = async (status: string, summary: string) => {
       const result = await ctx.tool(`finish-${status}`, { task_dir: task.taskDir, status, summary, steps, children: launched }, async () => {
-        const output = { status, summary, task_dir: task.taskDir, branch: task.branch || '', steps, children: launched };
+        const output = { status, summary, task_dir: task.taskDir, branch: task.branch || '', steps, children: launched,
+          ...(status === 'completed' ? { completion: childCompletionSnapshot(state, task, taskInputs.gates) } : {}) };
         saveRecord(task, 'result', output);
         return output;
       });
@@ -156,27 +158,47 @@ const delivery = workflow({
 
       if (decision.choice === 'children') {
         const children = await ctx.tool(`${steps}-read-epic-children`, { task_dir: task.taskDir }, async () => childrenFor(task));
-        const wave = await ctx.tool(`${steps}-observe-child-wave`, { task_dir: task.taskDir, children }, async () => childWave(task, children));
-        if (!wave.ready.length) return finish(wave.done.length === children.length ? 'completed' : 'blocked', wave.done.length === children.length ? 'All epic children are delivered and merged into the epic branch.' : `No dependency-ready children. Existing child runs: ${wave.started.join(', ') || 'none'}; waiting dependencies: ${wave.blocked.join(', ') || 'none'}. Finish and merge child pull requests, then run delivery with workflow=epic-wave and this task_dir.`);
-        // Batching is deliberately scheduler-only: the public workflow remains
-        // serial until concurrent epic outcomes have an explicit parent protocol.
-        const batches = childBatches(wave.ready, children, 1);
+        const wave = await ctx.tool(`${steps}-observe-child-wave`, { task_dir: task.taskDir, children }, async () => {
+          try { return { ...childWave(task, children), error: null as string | null }; }
+          catch (error) { return { done: [], started: [], ready: [], blocked: [], error: String(error instanceof Error ? error.message : error) }; }
+        });
+        if (wave.error) return finish('blocked', `Child wave inspection failed; ${children.map(child => `${child.slug}: unverified (${wave.error})`).join(' | ')}. No dependent child was dispatched.`);
+        // A prior run's committed PR description alone is insufficient: the
+        // native child result, current approvals/artifacts, and actual branch
+        // ancestry must all still agree before a dependent child can start.
+        const prior = children.filter(child => wave.done.includes(child.slug) || wave.started.includes(child.slug));
+        if (prior.length) {
+          const join = joinChildren(task, prior);
+          if (!join.complete) return finish('blocked', `Child wave incomplete. ${childJoinSummary(join)}. No dependent child was dispatched.`);
+        }
+        if (!wave.ready.length) {
+          if (wave.done.length === children.length) return finish('completed', `All epic children have current native completion proof and are merged: ${childJoinSummary(joinChildren(task, children))}.`);
+          return finish('blocked', `Child wave incomplete. ${children.map(child => `${child.slug}: ${wave.blocked.includes(child.slug) ? 'waiting for merged dependencies' : 'not dependency-ready'}`).join(' | ')}. No dependent child was dispatched.`);
+        }
+        // The production limit remains one. A fixture may exercise the
+        // scheduler with two isolated child worktrees, but no live matched
+        // spend evidence currently authorizes a public concurrency option.
+        const batches = childBatches(wave.ready, children);
         for (const batch of batches) {
-          const results = await Promise.all(batch.map(async slug => {
+          const settled = await Promise.allSettled(batch.map(async slug => {
             const child = children.find(item => item.slug === slug);
+            launched.push(slug);
+            const baseHead = await ctx.tool(`${steps}-child-base-${slug}`, {task_dir: task.taskDir, child: slug}, async () => git(task.cwd, ['rev-parse', 'HEAD']));
             const childDir = await ctx.tool(`${steps}-open-child-${slug}`, { task_dir: task.taskDir, child }, async () => prepareChild(task, child), { timeoutMs: 90_000 });
             const result = await ctx.workflow(delivery, {
               stageName: `${steps}-child-${slug}`,
               inputs: { ...taskInputs, request: child.request, workflow: child.workflow, task_dir: childDir, skills_dir: task.skillsDir, branch: child.slug, base: task.branch, gates: 'none' },
             });
-            launched.push(slug);
-            await ctx.tool(`${steps}-record-child-${slug}`, { task_dir: task.taskDir, child: slug, result }, async () => { saveRecord(task, `child-${slug}`, result); return { saved: true }; });
-            return { slug, result };
+            const record = { childDir, baseHead, result };
+            await ctx.tool(`${steps}-record-child-${slug}`, { task_dir: task.taskDir, child: slug, result }, async () => { saveRecord(task, `child-${slug}`, record); return { saved: true }; });
+            return record;
           }));
-          const incomplete = results.find(({ result }) => result.status !== 'completed' || result.exited || result.outputs?.status !== 'completed');
-          if (incomplete) return finish('blocked', `Child ${incomplete.slug} did not complete; inspect its native child run before starting dependent work.`);
+          const records = new Map(batch.map((slug, index) => [slug, settled[index].status === 'fulfilled'
+            ? settled[index].value : { error: String(settled[index].reason) }]));
+          const join = joinChildren(task, children.filter(child => batch.includes(child.slug)), records);
+          if (!join.complete) return finish('blocked', `Child wave incomplete. ${childJoinSummary(join)}. No remaining sibling or dependent child was dispatched. Resume with workflow=epic-wave after proof and merge are current.`);
         }
-        return finish('blocked', `Delivered child wave: ${launched.join(', ')}. Child PRs still require merge into ${task.branch}; use workflow=epic-wave afterward. Parent completion never substitutes for merged dependency evidence.`);
+        return finish('blocked', `Child wave join was current at inspection, but the epic must be re-observed before completion or dependent dispatch. ${childJoinSummary(joinChildren(task, children.filter(child => launched.includes(child.slug))))}. Resume with workflow=epic-wave.`);
       }
 
       const skill = decision.choice;
