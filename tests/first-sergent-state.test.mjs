@@ -125,6 +125,17 @@ test('gate cannot read outside the task directory', (t) => {
   assert.throws(() => gate(dir, external), /Artifact must be inside/);
 });
 
+test('context policy requires a live metric and child identity before every dispatch', (t) => {
+  const { dir } = fixture(t);
+  initialize(dir, { ...options, context_policy: 'stop-at-60' });
+  assert.throws(() => begin(dir, 'create-plan'), /live context metric and child session identity/);
+  checkpointContext(dir, { contextUsage: { tokens: 20, contextWindow: 100, percent: 20 } });
+  assert.throws(() => begin(dir, 'create-plan'), /live context metric and child session identity/);
+  checkpointContext(dir, { sessionId: 'current-session', contextUsage: { tokens: 20, contextWindow: 100, percent: 20 } });
+  begin(dir, 'create-plan');
+  assert.equal(inspect(dir).steps, 1);
+});
+
 test('context policy stops at the live 60 percent boundary and starts a fresh session', (t) => {
   const { dir } = fixture(t);
   initialize(dir, { ...options, context_policy: 'stop-at-60' });

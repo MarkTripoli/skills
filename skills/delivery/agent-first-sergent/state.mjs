@@ -104,6 +104,10 @@ export function begin(taskDir, skill) {
   const state = inspect(root);
   if (!state) throw new Error('Initialize the task before dispatch');
   if (state.stopped) throw new Error('Human stopped this delivery');
+  if ((state.options.context_policy ?? 'off') === 'stop-at-60'
+    && (state.context_boundary?.action !== 'continue' || !state.context_boundary.sessionId)) {
+    throw new Error('A live context metric and child session identity are required before dispatch');
+  }
   if (state.context_boundary && state.context_boundary.action !== 'continue') throw new Error('Start a fresh session at the saved context boundary before dispatch');
   if (state.pending) throw new Error('Resolve the pending human gate before dispatch');
   if (state.phase) throw new Error('Resume the addressable phase before dispatching another');
