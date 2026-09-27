@@ -1,0 +1,12 @@
+{
+  "coverage": { "complete": false, "days": 60 },
+  "inventory": [
+    { "name": "unknown-skill", "version": "1.0.0" },
+    { "name": "stale-skill", "version": "2.0.0" },
+    { "name": "pinned-skill", "version": "3.0.0", "pinned": true }
+  ],
+  "events": [
+    { "source": "unknown-runtime", "consent": true, "name": "stale-skill", "version": "2.0.0", "outcome": "success" },
+    { "source": "codex", "consent": false, "name": "stale-skill", "version": "2.0.0", "outcome": "success" }
+  ]
+}

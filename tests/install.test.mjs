@@ -1,3 +1,4 @@
+import { buildReport } from "../scripts/skill-usage-lifecycle.mjs";
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -35,6 +36,16 @@ function put(file, content) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, content);
 }
+
+test("usage lifecycle distinguishes unknown telemetry and protects pinned skills", () => {
+  const fixture = JSON.parse(fs.readFileSync(path.join(REPO, "tests/fixtures/skill-usage-lifecycle.json"), "utf8"));
+  const unknown = buildReport(fixture);
+  assert.equal(unknown.coverage.sufficient, false);
+  assert.deepEqual(unknown.suggestions.map(({ status }) => status), ["unknown", "unknown", "pinned"]);
+
+  const stale = buildReport({ ...fixture, coverage: { complete: true, days: 30 } });
+  assert.deepEqual(stale.suggestions.map(({ status }) => status), ["stale-candidate", "stale-candidate", "pinned"]);
+});
 
 test("skill validator ignores external reference URLs but rejects missing local references", () => {
   const root = tmpdir("skills-validator-test-");
