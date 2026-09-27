@@ -2,7 +2,7 @@
   "$schema": "skills.task-index/v1",
   "schemaVersion": 1,
   "task": "i-want-you-gpt",
-  "generation": 5,
+  "generation": 6,
   "artifactSeries": {
     "research.sources": {
       "current": "research.sources.0001",
@@ -71,6 +71,20 @@
           "type": "epic-delivery",
           "status": null,
           "summary": "Thirteen public child tasks and GitHub issues were created from the approved epic plan. Four independent wave-one children can start in fresh worktrees. Later waves wait for their dependency pull requests to merge; five Adyton companion changes need a separate epic in that repository."
+        }
+      ]
+    },
+    "review.code": {
+      "current": "review.code.0001",
+      "iterations": [
+        {
+          "id": "review.code.0001",
+          "iteration": 1,
+          "path": "artifacts/review/code/0001.md",
+          "sha256": "a67f70e27779cab3e0cc16278f9646fbc28f8af799068d204aba4b43c109ab30",
+          "type": "code-review",
+          "status": "clean",
+          "summary": "Independent full-diff review and correction re-reviews found no remaining actionable major defect at public source commit 6ade855b."
         }
       ]
     }
