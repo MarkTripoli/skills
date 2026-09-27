@@ -10,8 +10,7 @@
   },
   "license": "MIT",
   "bin": {
-    "skills-install": "scripts/install.mjs",
-    "skill-usage-lifecycle": "scripts/skill-usage-lifecycle.mjs"
+    "skills-install": "scripts/install.mjs"
   },
   "engines": {
     "node": ">=20.12.0"

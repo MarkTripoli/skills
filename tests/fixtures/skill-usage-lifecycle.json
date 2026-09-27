@@ -1,5 +1,11 @@
 {
-  "coverage": { "complete": false, "days": 60 },
+  "coverage": {
+    "complete": true,
+    "source": "unknown-runtime",
+    "consent": false,
+    "observedFrom": "2026-01-01T00:00:00Z",
+    "observedThrough": "2026-03-02T00:00:00Z"
+  },
   "inventory": [
     { "name": "unknown-skill", "version": "1.0.0" },
     { "name": "stale-skill", "version": "2.0.0" },

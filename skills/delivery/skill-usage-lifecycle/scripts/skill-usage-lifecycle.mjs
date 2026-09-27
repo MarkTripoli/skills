@@ -10,7 +10,16 @@ export function buildReport(input) {
     throw new Error("input must contain inventory and events arrays");
   }
   const coverage = input.coverage;
-  const sufficient = coverage?.complete === true && Number.isFinite(coverage.days) && coverage.days >= 30;
+  const from = Date.parse(coverage?.observedFrom);
+  const through = Date.parse(coverage?.observedThrough);
+  const days = Number.isFinite(from) && Number.isFinite(through) && through >= from
+    ? (through - from) / 86_400_000
+    : null;
+  const sufficient = coverage?.complete === true
+    && coverage?.consent === true
+    && SUPPORTED_SOURCES.has(coverage?.source)
+    && days !== null
+    && days >= 30;
   const usage = new Set();
   for (const event of input.events) {
     if (event?.consent !== true || !SUPPORTED_SOURCES.has(event.source)) continue;
@@ -18,7 +27,7 @@ export function buildReport(input) {
     usage.add(`${event.name}\0${event.version}`);
   }
   return {
-    coverage: { sufficient, days: Number.isFinite(coverage?.days) ? coverage.days : null },
+    coverage: { sufficient, source: SUPPORTED_SOURCES.has(coverage?.source) ? coverage.source : null, days },
     suggestions: input.inventory.map((item) => {
       const observed = usage.has(`${item.name}\0${item.version}`);
       let status = "unknown";

@@ -1,4 +1,4 @@
-import { buildReport } from "../scripts/skill-usage-lifecycle.mjs";
+import { buildReport } from "../skills/delivery/skill-usage-lifecycle/scripts/skill-usage-lifecycle.mjs";
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -37,14 +37,35 @@ function put(file, content) {
   fs.writeFileSync(file, content);
 }
 
-test("usage lifecycle distinguishes unknown telemetry and protects pinned skills", () => {
+test("usage lifecycle requires consented supported coverage and preserves unknown telemetry", () => {
   const fixture = JSON.parse(fs.readFileSync(path.join(REPO, "tests/fixtures/skill-usage-lifecycle.json"), "utf8"));
   const unknown = buildReport(fixture);
   assert.equal(unknown.coverage.sufficient, false);
   assert.deepEqual(unknown.suggestions.map(({ status }) => status), ["unknown", "unknown", "pinned"]);
 
-  const stale = buildReport({ ...fixture, coverage: { complete: true, days: 30 } });
+  const stale = buildReport({
+    ...fixture,
+    coverage: {
+      complete: true,
+      source: "codex",
+      consent: true,
+      observedFrom: "2026-01-01T00:00:00Z",
+      observedThrough: "2026-02-01T00:00:00Z",
+    },
+  });
   assert.deepEqual(stale.suggestions.map(({ status }) => status), ["stale-candidate", "stale-candidate", "pinned"]);
+});
+
+test("installed usage lifecycle skill includes a runnable report executable", () => {
+  const home = tmpdir("skills-lifecycle-install-");
+  const planned = install({ targets: ["portable"], skillNames: ["skill-usage-lifecycle"], project: true, cwd: home, home, env });
+  const destination = planned.steps.find((step) => step.kind === "skills").to;
+  const executable = path.join(destination, "skill-usage-lifecycle", "scripts", "skill-usage-lifecycle.mjs");
+  assert.ok(fs.existsSync(executable));
+  const result = spawnSync(process.execPath, [executable, path.join(REPO, "tests/fixtures/skill-usage-lifecycle.json")], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout).suggestions.map(({ status }) => status), ["unknown", "unknown", "pinned"]);
+  uninstall(planned, home);
 });
 
 test("skill validator ignores external reference URLs but rejects missing local references", () => {
