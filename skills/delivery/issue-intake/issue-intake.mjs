@@ -56,7 +56,7 @@ function withClaimLock(file, staleMs, operation) {
       let stale = false;
       try {
         const current = JSON.parse(fs.readFileSync(owner, 'utf8'));
-        try { process.kill(current.pid, 0); } catch (probe) { stale = probe.code === 'ESRCH'; }
+        try { process.kill(current.pid, 0); } catch (probe) { stale = ['ESRCH', 'EINVAL', 'ERR_OUT_OF_RANGE'].includes(probe.code); }
       } catch (readError) {
         if (readError.code === 'ENOENT' || readError instanceof SyntaxError) stale = Date.now() - fs.statSync(lock).mtimeMs >= staleMs;
         else throw readError;
@@ -136,13 +136,15 @@ function intakeLocked(options) {
     if (relatedPrs.length) { outcomes.push({ issue: issue.number, status: 'existing-pr', prs: relatedPrs }); continue; }
     const tasks = taskMatches(taskRoot, issue.number);
     if (tasks.length) { outcomes.push({ issue: issue.number, status: 'duplicate-task', tasks }); continue; }
-    const idempotencyKey = crypto.createHash('sha256').update(key).digest('hex');
+    const idempotencyKey = claim?.idempotencyKey ?? crypto.createHash('sha256').update(key).digest('hex');
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(idempotencyKey)) throw new Error(`invalid idempotency key for ${key}`);
     const receipt = path.join(path.dirname(stateFile), 'issue-intake-receipts', `${idempotencyKey}.json`);
+    if (claim?.receipt && path.resolve(claim.receipt) !== receipt) throw new Error(`claim receipt path mismatch for ${key}`);
     if (claim?.status === 'complete') { outcomes.push({ issue: issue.number, status: 'complete', receipt }); continue; }
     if (claim?.status === 'dispatching' || claim?.status === 'handoff-unknown' || fs.existsSync(receipt)) {
       let prior;
       try { prior = JSON.parse(fs.readFileSync(receipt, 'utf8')); } catch {}
-      if (prior?.idempotencyKey === idempotencyKey && prior.status === 'accepted') {
+      if (prior?.idempotencyKey === idempotencyKey && prior.repo?.toLowerCase() === repo.toLowerCase() && prior.issue === issue.number && prior.status === 'accepted') {
         const completed = { ...(claim ?? {}), key, repo, issue: issue.number, status: 'complete', idempotencyKey, receipt, ownerPid: null, updatedAt: clock() };
         state.claims = state.claims.filter(item => item.key !== key).concat(completed);
         saveState(stateFile, state);

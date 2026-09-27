@@ -136,7 +136,7 @@ test('accepted durable receipt repairs completion after state-write crash', t =>
   const id = 'stable-id';
   const receipt = path.join(f.root, 'issue-intake-receipts', `${id}.json`);
   fs.mkdirSync(path.dirname(receipt));
-  fs.writeFileSync(receipt, JSON.stringify({ idempotencyKey: id, status: 'accepted' }));
+  fs.writeFileSync(receipt, JSON.stringify({ idempotencyKey: id, repo: 'acme/app', issue: 7, status: 'accepted' }));
   fs.writeFileSync(f.stateFile, JSON.stringify(stateWith([{ key: 'acme/app#7', repo: 'acme/app', issue: 7, status: 'dispatching', idempotencyKey: id, receipt }])));
   const result = f.runHandoff();
   assert.equal(JSON.parse(result.stdout)[0].status, 'handed-off-recovered');
