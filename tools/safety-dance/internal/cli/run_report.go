@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/MarkTripoli/skills/tools/safety-dance/internal/paths"
 	"github.com/spf13/cobra"
 )
 
