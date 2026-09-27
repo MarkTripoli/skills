@@ -2,7 +2,10 @@ package steps
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"runtime"
@@ -21,6 +24,12 @@ type repoConfigKey struct{}
 type configKey struct{}
 type databaseKey struct{}
 type scmKey struct{}
+type typedAgentFactoryKey struct{}
+type typedAgentFactory func(types.AgentName, *config.Config) (agent.Agent, error)
+
+func withTypedAgentFactory(ctx context.Context, factory typedAgentFactory) context.Context {
+	return context.WithValue(ctx, typedAgentFactoryKey{}, factory)
+}
 type evidenceDirKey struct{}
 
 func WithSCM(ctx context.Context, host scm.Host) context.Context {
@@ -160,7 +169,13 @@ func Typed(ctx context.Context, name string) error {
 	}
 	var lastErr error
 	for _, candidate := range candidates {
-		a, err := agent.NewWithOptions(candidate, roleCfg.AgentPathFor(candidate), roleCfg.AgentArgsFor(candidate), agent.Options{ACPRegistryOverrides: roleCfg.ACPRegistryOverrides, DisableProjectSettings: roleCfg.DisableProjectSettings, Profile: roleCfg.AgentProfileFor(candidate)})
+		var a agent.Agent
+		var err error
+		if factory, ok := ctx.Value(typedAgentFactoryKey{}).(typedAgentFactory); ok {
+			a, err = factory(candidate, roleCfg)
+		} else {
+			a, err = agent.NewWithOptions(candidate, roleCfg.AgentPathFor(candidate), roleCfg.AgentArgsFor(candidate), agent.Options{ACPRegistryOverrides: roleCfg.ACPRegistryOverrides, DisableProjectSettings: roleCfg.DisableProjectSettings, Profile: roleCfg.AgentProfileFor(candidate)})
+		}
 		if err != nil {
 			lastErr = err
 			continue
@@ -172,7 +187,13 @@ func Typed(ctx context.Context, name string) error {
 				continue
 			}
 		}
-		res, runErr := a.Run(ctx, agent.RunOpts{CWD: worktree(ctx), Purpose: name, Env: []string{"SD_PARENT_RUN_ID=" + runID(ctx)}, Prompt: fmt.Sprintf("Run the typed %s validation for this checkout and return verdict, findings, and evidence.", name), JSONSchema: json.RawMessage(`{"type":"object","required":["verdict","findings","evidence"],"properties":{"verdict":{"type":"string","enum":["pass","fail","blocked"]},"findings":{"type":"array"},"evidence":{"type":"array","items":{"type":"string"}}}}`)})
+		opts := agent.RunOpts{CWD: worktree(ctx), Purpose: name, Env: []string{"SD_PARENT_RUN_ID=" + runID(ctx)}, Prompt: fmt.Sprintf("Run the typed %s validation for this checkout and return verdict, findings, and evidence.", name), JSONSchema: json.RawMessage(`{"type":"object","required":["verdict","findings","evidence"],"properties":{"verdict":{"type":"string","enum":["pass","fail","blocked"]},"findings":{"type":"array"},"evidence":{"type":"array","items":{"type":"string"}}}}`)}
+		opts.OnAttempt = func(attempt agent.Attempt) {
+			if database := dbValue(ctx); database != nil {
+				_ = persistAgentAttempt(database, runID(ctx), name, attempt)
+			}
+		}
+		res, runErr := a.Run(ctx, opts)
 		_ = a.Close()
 		if runErr != nil {
 			lastErr = runErr
@@ -201,6 +222,86 @@ func Typed(ctx context.Context, name string) error {
 		return nil
 	}
 	return fmt.Errorf("%s: typed validation failed: %w", name, lastErr)
+}
+
+func persistAgentAttempt(database *db.DB, runID, stepName string, attempt agent.Attempt) error {
+	inv := db.AgentInvocation{
+		RunID: runID, StepName: stepName, Purpose: stepName, Agent: attempt.Agent,
+		StartedAt: attempt.StartedAt.UnixMilli(), CompletedAt: attempt.CompletedAt.UnixMilli(),
+		DurationMS: attempt.CompletedAt.Sub(attempt.StartedAt).Milliseconds(),
+		ExitStatus: "ok",
+	}
+	if inv.DurationMS < 0 { inv.DurationMS = 0 }
+	sessionID := ""
+	if attempt.Result != nil {
+		inv.Model = attempt.Result.Model
+		if attempt.Result.ModelProvider != "" { provider := attempt.Result.ModelProvider; inv.ModelProvider = &provider }
+		sessionID = attempt.Result.SessionID
+	}
+	switch {
+	case attempt.SessionFallback:
+		inv.SessionMode = db.InvocationModeFallback
+		reason := db.FallbackReasonOther
+		inv.FallbackReason = &reason
+	case attempt.Session != nil && attempt.Result != nil && attempt.Result.Resumed:
+		inv.SessionMode = db.InvocationModeResumed
+	case sessionID != "":
+		inv.SessionMode = db.InvocationModeStarted
+	default:
+		inv.SessionMode = db.InvocationModeCold
+	}
+	if sessionID == "" && attempt.Session != nil { sessionID = attempt.Session.ID }
+	if sessionID != "" {
+		digest := sha256.Sum256([]byte(sessionID))
+		inv.SessionKey = hex.EncodeToString(digest[:12])
+	}
+	if attempt.Err != nil {
+		inv.ExitStatus = "error"
+		inv.FailureCategory = "other"
+		if errors.Is(attempt.Err, context.Canceled) || errors.Is(attempt.Err, context.DeadlineExceeded) {
+			inv.ExitStatus, inv.FailureCategory = "cancelled", "cancelled"
+		} else if agent.IsStructuredOutputRejected(attempt.Err) {
+			inv.FailureCategory = "parse"
+		}
+	}
+	if attempt.Result != nil {
+		result := attempt.Result
+		usage := result.Usage
+		if result.UsageReported || usage.Reported {
+			input, output, cache := usage.InputTokens, usage.OutputTokens, usage.CacheReadTokens
+			inv.InputTokens, inv.OutputTokens, inv.CacheReadTokens = &input, &output, &cache
+			deltaInput, deltaOutput, deltaCache := input, output, cache
+			if result.SessionUsageCumulative && inv.SessionKey != "" {
+				priorIn, priorOut, priorCache, found := database.LatestSessionCumulative(runID, inv.SessionKey)
+				if found {
+					deltaInput = agent.PerRoundTokens(input, priorIn, true)
+					deltaOutput = agent.PerRoundTokens(output, priorOut, true)
+					deltaCache = agent.PerRoundTokens(cache, priorCache, true)
+				}
+			}
+			inv.DeltaInputTokens, inv.DeltaOutputTokens, inv.DeltaCacheReadTokens = &deltaInput, &deltaOutput, &deltaCache
+			fresh := agent.FreshInputTokens(input, cache)
+			inv.FreshInputTokens = &fresh
+			if usage.ReasoningReported { reasoning := usage.ReasoningTokens; inv.ReasoningTokens = &reasoning }
+			if result.CacheCreationReported || usage.CacheCreationReported {
+				cacheCreation := usage.CacheCreationTokens
+				inv.CacheCreationTokens = &cacheCreation
+			}
+		}
+		if result.Metrics != nil {
+			metrics := result.Metrics
+			wait := metrics.SubprocessWaitMS
+			roundtrips, tools := metrics.ModelRoundtrips, metrics.ToolCalls
+			waitCalls, testLintCalls, editCalls := metrics.ToolCategories.Wait, metrics.ToolCategories.TestLint, metrics.ToolCategories.Edit
+			readCalls, gitCalls, otherCalls := metrics.ToolCategories.Read, metrics.ToolCategories.Git, metrics.ToolCategories.Other
+			inv.SubprocessWaitMS = &wait
+			inv.ModelRoundtrips, inv.ToolCalls = &roundtrips, &tools
+			inv.ToolWaitCalls, inv.ToolTestLintCalls, inv.ToolEditCalls = &waitCalls, &testLintCalls, &editCalls
+			inv.ToolReadCalls, inv.ToolGitCalls, inv.ToolOtherCalls = &readCalls, &gitCalls, &otherCalls
+		}
+	}
+	if _, err := database.InsertAgentInvocation(inv); err != nil { return fmt.Errorf("persist agent invocation: %w", err) }
+	return nil
 }
 
 // Validate runs an explicitly configured repository check in the owned worktree.

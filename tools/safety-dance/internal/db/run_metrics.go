@@ -29,8 +29,8 @@ type RunTokenTotals struct {
 	CacheReadReported int `json:"cache_read_reported_invocations"`
 }
 
-// GetRunMetrics projects one exact run ID. Nullable counters preserve the
-// difference between missing and observed zero; cost is never estimated.
+// GetRunMetrics projects one exact run ID. Nullable counters preserve missing
+// versus observed zero. Resumed sessions use per-round deltas, never cumulatives.
 func (d *DB) GetRunMetrics(runID string) (*RunMetrics, error) {
 	run, err := d.GetRun(runID)
 	if err != nil || run == nil {
@@ -67,12 +67,21 @@ func (d *DB) GetRunMetrics(runID string) (*RunMetrics, error) {
 	out.Tokens.Invocations = len(invocations)
 	var input, output, cache int
 	for _, inv := range invocations {
-		if inv.InputTokens != nil { input += *inv.InputTokens; out.Tokens.InputReported++ }
-		if inv.OutputTokens != nil { output += *inv.OutputTokens; out.Tokens.OutputReported++ }
-		if inv.CacheReadTokens != nil { cache += *inv.CacheReadTokens; out.Tokens.CacheReadReported++ }
+		in, inKnown := reportToken(inv.InputTokens, inv.DeltaInputTokens, inv.SessionMode == InvocationModeResumed)
+		outTokens, outKnown := reportToken(inv.OutputTokens, inv.DeltaOutputTokens, inv.SessionMode == InvocationModeResumed)
+		cacheTokens, cacheKnown := reportToken(inv.CacheReadTokens, inv.DeltaCacheReadTokens, inv.SessionMode == InvocationModeResumed)
+		if inKnown { input += in; out.Tokens.InputReported++ }
+		if outKnown { output += outTokens; out.Tokens.OutputReported++ }
+		if cacheKnown { cache += cacheTokens; out.Tokens.CacheReadReported++ }
 	}
 	if out.Tokens.InputReported > 0 { out.Tokens.Input = &input }
 	if out.Tokens.OutputReported > 0 { out.Tokens.Output = &output }
 	if out.Tokens.CacheReadReported > 0 { out.Tokens.CacheRead = &cache }
 	return out, nil
+}
+
+func reportToken(raw, delta *int, resumed bool) (int, bool) {
+	if delta != nil { return *delta, true }
+	if resumed || raw == nil { return 0, false }
+	return *raw, true
 }

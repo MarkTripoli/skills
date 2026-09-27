@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
+	"time"
+	"path/filepath"
 	"testing"
+
 
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/config"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/types"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/agent"
+	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
 )
 
 func TestValidateRunsConfiguredStageCommand(t *testing.T) {
@@ -69,5 +73,40 @@ func TestTypedEvidenceUsesCanonicalFindingsEnvelope(t *testing.T) {
 	}
 	if parsed.Verdict != "fail" || len(parsed.Items) != 1 || len(evidence.Evidence) != 1 {
 		t.Fatalf("unexpected evidence: %#v", evidence)
+	}
+}
+type recordingTestAgent struct{}
+
+func (recordingTestAgent) Name() string { return "codex" }
+func (recordingTestAgent) Close() error { return nil }
+func (recordingTestAgent) Run(_ context.Context, opts agent.RunOpts) (*agent.Result, error) {
+	now := time.Now()
+	result := &agent.Result{
+		Output: json.RawMessage(`{"verdict":"pass","findings":[],"evidence":["reviewed"]}`),
+		Model: "model-under-test", UsageReported: true,
+		Usage: agent.TokenUsage{InputTokens: 12, OutputTokens: 5, CacheReadTokens: 2, Reported: true},
+	}
+	opts.OnAttempt(agent.Attempt{Agent: "codex", Result: result, StartedAt: now, CompletedAt: now.Add(time.Millisecond)})
+	return result, nil
+}
+
+func TestTypedPersistsProductionAgentAttemptForRunReport(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil { t.Fatal(err) }
+	defer d.Close()
+	if _, err := d.InsertRepoWithID("repo", "/checkout", "upstream", "main"); err != nil { t.Fatal(err) }
+	run, err := d.InsertRun("repo", "main", "head", "base")
+	if err != nil { t.Fatal(err) }
+	cfg := &config.Config{Agent: types.AgentName("codex")}
+	ctx := WithRun(WithConfig(WithWorktree(context.Background(), t.TempDir()), cfg), d, run.ID)
+	ctx = withTypedAgentFactory(ctx, func(types.AgentName, *config.Config) (agent.Agent, error) { return recordingTestAgent{}, nil })
+	if err := Typed(ctx, "review"); err != nil { t.Fatal(err) }
+	report, err := d.GetRunMetrics(run.ID)
+	if err != nil { t.Fatal(err) }
+	if len(report.Invocations) != 1 || report.Invocations[0].RunID != run.ID || report.Invocations[0].Model != "model-under-test" {
+		t.Fatalf("production typed path did not persist invocation: %+v", report.Invocations)
+	}
+	if report.Tokens.Input == nil || *report.Tokens.Input != 12 || report.Tokens.Output == nil || *report.Tokens.Output != 5 {
+		t.Fatalf("production usage missing from report: %+v", report.Tokens)
 	}
 }
