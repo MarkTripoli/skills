@@ -18,7 +18,7 @@ function dependencyClosure(names) {
 }
 
 export function parseArgs(argv) {
-  const out = { targets: [], skillNames: [], project: false, dryRun: false, yes: false, atomic: false, uninstall: false, list: false, help: false, errors: [] };
+  const out = { targets: [], skillNames: [], project: false, dryRun: false, yes: false, atomic: false, ompPublicationHook: false, uninstall: false, list: false, help: false, errors: [] };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--project') out.project = true;
@@ -26,6 +26,7 @@ export function parseArgs(argv) {
     else if (arg === '--dry-run') out.dryRun = true;
     else if (arg === '--yes' || arg === '-y') out.yes = true;
     else if (arg === '--atomic') out.atomic = true;
+    else if (arg === '--omp-publication-hook') out.ompPublicationHook = true;
     else if (arg === '--uninstall') out.uninstall = true;
     else if (arg === '--list') out.list = true;
     else if (arg === '--help' || arg === '-h') out.help = true;
@@ -107,6 +108,7 @@ export function plan(options) {
   const requestedNames = resolveSkillNames(options.skillNames ?? [], skills);
   const names = dependencyClosure(requestedNames);
   if (atomic && names.length !== allNames.length) throw new Error("--atomic requires all skills; remove --skill selections or pass --skill '*' (omit --atomic for independent skills)");
+  if (options.ompPublicationHook && !targets.includes('oh-my-pi')) throw new Error('--omp-publication-hook requires the oh-my-pi target');
   const allWorkerNames = allNames.filter(name => name.startsWith('agent-'));
   const workerNames = names.filter(name => name.startsWith('agent-'));
   const steps = []; const notes = []; const skillDirsClaimed = new Map();
@@ -122,6 +124,12 @@ export function plan(options) {
     else if (target === 'codex' && project && workerNames.length) notes.push('codex: worker definitions and their config.toml block are user-level; run without --project to install them');
     if (dest.config && workerNames.length) steps.push({ target, kind: 'config', to: dest.config, names: workerNames, complete: workerNames.length === allWorkerNames.length });
   }
+  if (options.ompPublicationHook) {
+    const base = project ? path.join(cwd, '.omp', 'hooks') : path.join(home, '.omp', 'agent', 'hooks');
+    steps.push({ target: 'oh-my-pi', kind: 'publication-hook', to: path.join(base, 'skills-publication') });
+  } else if (targets.includes('oh-my-pi')) {
+    notes.push('Oh My Pi publication guard is optional: pass --omp-publication-hook, then launch with --hook=<installed-path> and SKILLS_PUBLICATION_TASK_DIR=<absolute-task-dir>');
+  }
   if (atomic) steps.push({ target: 'atomic', kind: 'workflow', to: atomicDestination({ project, cwd, home, env }) });
   if (!atomic && targets.includes('codex') && !project && (targets.includes('pi') || targets.includes('oh-my-pi'))) notes.push('Pi and Oh My Pi also read ~/.agents/skills, where the Codex copy lives; their own skill directories are installed too, so a skill may appear twice by name in those runtimes');
   return { steps, notes, names, requestedNames };
@@ -133,6 +141,7 @@ export function describe(step, home) {
     case 'skills': return `${step.target}: ${step.names.length} skills (${step.from}) -> ${short(step.to, home)}/<name>/`;
     case 'agents': return `${step.target}: ${step.names.length} worker definitions -> ${short(step.to, home)}/agent-*.${step.format}`;
     case 'config': return `${step.target}: [agents.*] block -> ${short(step.to, home)}`;
+    case 'publication-hook': return `oh-my-pi: optional Bash publication guard -> ${short(path.join(step.to, 'hooks', 'omp-publication.mjs'), home)} (register with omp --hook=<installed-path>; set SKILLS_PUBLICATION_TASK_DIR per task; direct shell and Codex are not guarded)`;
     case 'workflow': return `atomic: delivery workflow -> ${short(step.to, home)}/ and ${short(path.join(path.dirname(step.to), 'skills-delivery.mjs'), home)}`;
     default: return JSON.stringify(step);
   }
