@@ -28,3 +28,22 @@ test("comparison leaves acceptance incomplete and spend unknown without matched 
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("spend advantage requires matching model and passing runs", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "delivery-comparison-spend-"));
+  try {
+    const solo = path.join(dir, "solo");
+    const delivery = path.join(dir, "delivery");
+    fs.mkdirSync(solo);
+    fs.mkdirSync(delivery);
+    const record = { ok: true, model: "model-a", fixtureRevision: "seed-1", wallTimeSeconds: 12, spend: { amount: 2, currency: "USD", basis: "observed" } };
+    fs.writeFileSync(path.join(solo, "comparison-run.json"), JSON.stringify(record));
+    const compare = () => JSON.parse(spawnSync(process.execPath, [runner.pathname, "--compare", solo, delivery], { encoding: "utf8" }).stdout);
+    fs.writeFileSync(path.join(delivery, "comparison-run.json"), JSON.stringify({ ...record, model: "model-b", spend: { ...record.spend, amount: 3 } }));
+    assert.equal(compare().spendAdvantage, "unknown");
+    fs.writeFileSync(path.join(delivery, "comparison-run.json"), JSON.stringify({ ...record, spend: { ...record.spend, amount: 3 } }));
+    assert.equal(compare().spendAdvantage, "solo");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

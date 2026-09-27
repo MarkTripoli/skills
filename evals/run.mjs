@@ -36,7 +36,7 @@ if (args[0] === "--compare") {
     acceptance: run?.ok === true ? "passed" : run?.ok === false ? "failed" : "incomplete",
     model: run?.model ?? "unknown",
     wallTimeSeconds: Number.isFinite(run?.wallTimeSeconds) ? run.wallTimeSeconds : "unknown",
-    spend: run?.spend?.amount !== undefined && run?.spend?.basis
+    spend: Number.isFinite(run?.spend?.amount) && run.spend.amount >= 0 && run.spend.basis
       ? { amount: run.spend.amount, currency: run.spend.currency ?? "USD", basis: run.spend.basis }
       : "unknown",
     fixtureRevision: run?.fixtureRevision ?? "unknown",
@@ -44,11 +44,14 @@ if (args[0] === "--compare") {
   });
   const solo = fields(read(args[1]));
   const delivery = fields(read(args[2]));
-  const spendComparable = solo.spend !== "unknown" && delivery.spend !== "unknown" &&
+  const fixtureMatched = solo.fixtureRevision !== "unknown" && solo.fixtureRevision === delivery.fixtureRevision;
+  const modelMatched = solo.model !== "unknown" && solo.model === delivery.model;
+  const spendComparable = fixtureMatched && modelMatched && solo.acceptance === "passed" && delivery.acceptance === "passed" &&
+    solo.spend !== "unknown" && delivery.spend !== "unknown" &&
     solo.spend.currency === delivery.spend.currency && solo.spend.basis === delivery.spend.basis;
   console.log(JSON.stringify({
     solo, delivery,
-    fixtureMatched: solo.fixtureRevision !== "unknown" && solo.fixtureRevision === delivery.fixtureRevision,
+    fixtureMatched, modelMatched,
     spendComparable,
     spendAdvantage: spendComparable
       ? solo.spend.amount < delivery.spend.amount ? "solo" : delivery.spend.amount < solo.spend.amount ? "delivery" : "tie"
