@@ -6,6 +6,7 @@ import { MODES, SKILLS, judgment, eligible, initialState, runSkill, artifactGate
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolveSkillsDir } from '../lib/skill-storage.mjs';
+import { childBatches } from '../lib/child-scheduler.mjs';
 
 const choices = (values: string[], fallback: string) => Type.Union(values.map(value => Type.Literal(value)), { default: fallback });
 const delivery = workflow({
@@ -157,18 +158,23 @@ const delivery = workflow({
         const children = await ctx.tool(`${steps}-read-epic-children`, { task_dir: task.taskDir }, async () => childrenFor(task));
         const wave = await ctx.tool(`${steps}-observe-child-wave`, { task_dir: task.taskDir, children }, async () => childWave(task, children));
         if (!wave.ready.length) return finish(wave.done.length === children.length ? 'completed' : 'blocked', wave.done.length === children.length ? 'All epic children are delivered and merged into the epic branch.' : `No dependency-ready children. Existing child runs: ${wave.started.join(', ') || 'none'}; waiting dependencies: ${wave.blocked.join(', ') || 'none'}. Finish and merge child pull requests, then run delivery with workflow=epic-wave and this task_dir.`);
-        // Serial native child boundaries avoid shared-frontier races and keep
-        // each child isolated in its own persistent branch/worktree.
-        for (const slug of wave.ready) {
-          const child = children.find(item => item.slug === slug);
-          const childDir = await ctx.tool(`${steps}-open-child-${slug}`, { task_dir: task.taskDir, child }, async () => prepareChild(task, child), { timeoutMs: 90_000 });
-          const result = await ctx.workflow(delivery, {
-            stageName: `${steps}-child-${slug}`,
-            inputs: { ...taskInputs, request: child.request, workflow: child.workflow, task_dir: childDir, skills_dir: task.skillsDir, branch: child.slug, base: task.branch, gates: 'none' },
-          });
-          launched.push(slug);
-          await ctx.tool(`${steps}-record-child-${slug}`, { task_dir: task.taskDir, child: slug, result }, async () => { saveRecord(task, `child-${slug}`, result); return { saved: true }; });
-          if (result.status !== 'completed' || result.exited || result.outputs?.status !== 'completed') return finish('blocked', `Child ${slug} did not complete; inspect its native child run before starting dependent work.`);
+        // Batching is deliberately scheduler-only: the public workflow remains
+        // serial until concurrent epic outcomes have an explicit parent protocol.
+        const batches = childBatches(wave.ready, children, 1);
+        for (const batch of batches) {
+          const results = await Promise.all(batch.map(async slug => {
+            const child = children.find(item => item.slug === slug);
+            const childDir = await ctx.tool(`${steps}-open-child-${slug}`, { task_dir: task.taskDir, child }, async () => prepareChild(task, child), { timeoutMs: 90_000 });
+            const result = await ctx.workflow(delivery, {
+              stageName: `${steps}-child-${slug}`,
+              inputs: { ...taskInputs, request: child.request, workflow: child.workflow, task_dir: childDir, skills_dir: task.skillsDir, branch: child.slug, base: task.branch, gates: 'none' },
+            });
+            launched.push(slug);
+            await ctx.tool(`${steps}-record-child-${slug}`, { task_dir: task.taskDir, child: slug, result }, async () => { saveRecord(task, `child-${slug}`, result); return { saved: true }; });
+            return { slug, result };
+          }));
+          const incomplete = results.find(({ result }) => result.status !== 'completed' || result.exited || result.outputs?.status !== 'completed');
+          if (incomplete) return finish('blocked', `Child ${incomplete.slug} did not complete; inspect its native child run before starting dependent work.`);
         }
         return finish('blocked', `Delivered child wave: ${launched.join(', ')}. Child PRs still require merge into ${task.branch}; use workflow=epic-wave afterward. Parent completion never substitutes for merged dependency evidence.`);
       }

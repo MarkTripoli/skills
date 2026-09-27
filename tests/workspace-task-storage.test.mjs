@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { childrenFor, childWave, ensureTask, prepareChild, revision } from '../atomic/lib/workspace.mjs';
+import { childBatches } from '../atomic/lib/child-scheduler.mjs';
 import { initTaskArtifacts, recordArtifact, reserveArtifactIteration } from '../shared/task-artifacts.mjs';
 
 function runGit(cwd, args, optional = false) {
@@ -29,8 +30,8 @@ function repository(t) {
   return root;
 }
 
-function taskDocument({ slug, workflow = 'oneshot', parent = null, request = 'Task request' }) {
-  return `---\nslug: ${JSON.stringify(slug)}\nworkflow: ${JSON.stringify(workflow)}\n${parent ? `parent: ${JSON.stringify(parent)}\n` : ''}---\n${request}\n`;
+function taskDocument({ slug, workflow = 'oneshot', parent = null, request = 'Task request', write_paths = null }) {
+  return `---\nslug: ${JSON.stringify(slug)}\nworkflow: ${JSON.stringify(workflow)}\n${parent ? `parent: ${JSON.stringify(parent)}\n` : ''}${write_paths ? `write_paths: ${JSON.stringify(write_paths)}\n` : ''}---\n${request}\n`;
 }
 
 test('explicit task_dir bypasses repository task-root discovery and reports its effective root', t => {
@@ -93,6 +94,27 @@ test('prepareChild mirrors the parent effective root and childrenFor keeps sibli
   assert.equal(prepared, path.join(os.homedir(), '.agents', 'worktrees', path.basename(parent.cwd), child.slug, 'delivery', 'tasks', child.slug));
   assert.equal(fs.existsSync(path.join(prepared, 'task.md')), true);
   assert.equal(fs.existsSync(path.join(prepared, 'index.json')), false);
+});
+
+test('independent ready children materialize separate owned worktrees with fixture concurrency two', t => {
+  const root = repository(t);
+  const parent = ensureTask({ request: 'Deliver independent children' }, root, `parallel-epic-${Date.now()}`, 'epic');
+  for (const [slug, write_paths] of [['api-child', ['src/api']], ['ui-child', ['src/ui']]]) {
+    const dir = path.join(parent.taskRoot, slug);
+    fs.mkdirSync(dir, {recursive: true});
+    fs.writeFileSync(path.join(dir, 'task.md'), taskDocument({slug, parent: parent.slug, write_paths}));
+  }
+  const children = childrenFor(parent);
+  const wave = childWave(parent, children);
+  assert.deepEqual(wave.ready, ['api-child', 'ui-child']);
+  const [batch] = childBatches(wave.ready, children, 2);
+  assert.equal(batch.length, 2);
+  const childTaskDirs = batch.map(slug => prepareChild(parent, children.find(child => child.slug === slug)));
+  assert.notEqual(path.dirname(path.dirname(childTaskDirs[0])), path.dirname(path.dirname(childTaskDirs[1])));
+  for (const [index, slug] of batch.entries()) {
+    assert.equal(fs.existsSync(path.join(childTaskDirs[index], 'task.md')), true);
+    assert.equal(runGit(childTaskDirs[index], ['branch', '--show-current']), slug);
+  }
 });
 
 test('prepareChild initializes an empty index only when the source child is indexed', t => {

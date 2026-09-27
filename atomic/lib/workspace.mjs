@@ -154,7 +154,7 @@ export function childrenFor(task) {
     if (!fs.existsSync(file)) continue;
     const { metadata, body } = frontmatter(fs.readFileSync(file, 'utf8'), file);
     if (metadata.parent !== task.slug) continue;
-    children.push({ slug: metadata.slug, workflow: metadata.workflow, depends_on: metadata.depends_on ?? [], request: body, taskDir: dir });
+    children.push({ slug: metadata.slug, workflow: metadata.workflow, depends_on: metadata.depends_on ?? [], write_paths: metadata.write_paths, request: body, taskDir: dir });
   }
   return validateChildren(children);
 }
