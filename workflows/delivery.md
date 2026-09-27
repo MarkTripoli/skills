@@ -212,6 +212,7 @@ Artifact type be template frontmatter `type` for local planning, review, and ver
 | show-me | show-me | no | By hand; visual explanation |
 | safety-dance | none | no | By hand |
 | slack-coordinator | none | no | By hand; one Slack thread per run |
+| issue-intake | none | no | Explicit opt-in read-only GitHub issue triage; serial existing delivery handoff |
 
 ## Running skills by hand
 
