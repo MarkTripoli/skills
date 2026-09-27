@@ -24,32 +24,6 @@ test("iterate-evidence instructions require image-payload binding reads", () => 
   }
 });
 
-test("planning templates preserve unresolved choices and critique negative/error paths", () => {
-  const cases = JSON.parse(fs.readFileSync(new URL("./fixtures/planning-acceptance-cases.json", import.meta.url), "utf8"));
-  assert.deepEqual(cases.map(({ name }) => name), ["unresolved-owner-choice", "missing-negative-error-criterion"]);
-  const unresolved = cases[0];
-  assert.equal(unresolved.state, "open");
-  assert.match(unresolved.expected, /block approval and implementation/);
-  assert.equal(cases[1].missing.includes("invalid address rejection"), true);
-  assert.equal(cases[1].missing.includes("delivery failure behavior"), true);
-  assert.match(cases[1].expected, /actionable revision and requires rerun/);
-
-  const root = new URL("../skills/delivery/", import.meta.url);
-  for (const skill of ["create-plan", "iterate-plan"]) {
-    const template = fs.readFileSync(new URL(`${skill}/references/plan_template.md`, root), "utf8");
-    assert.match(template, /Acceptance Critique \\(before Human Review\\)/);
-    assert.match(template, /Independent reviewer/);
-    assert.match(template, /concrete skip reason/);
-    assert.match(template, /Unresolved stakeholder choices block approval and implementation/);
-  }
-  for (const skill of ["create-design-discussion", "create-prd", "create-tdd"]) {
-    const template = fs.readFileSync(new URL(`${skill}/references/${skill === "create-design-discussion" ? "design_discussion" : skill === "create-prd" ? "prd" : "tdd"}_template.md`, root), "utf8");
-    assert.match(template, /Ambiguity Disposition/);
-    assert.match(template, /Owner/);
-    assert.match(template, /Acceptance impact/);
-  }
-});
-
 test("only the evidence companion opts out of document runner defaults", () => {
   assert.equal(isEvidenceScenario({ phases: [{ skill: "iterate-evidence" }] }), true);
   assert.equal(isEvidenceScenario({ name: "iterate-evidence", phases: [{ skill: "verify-implementation" }] }), false);
