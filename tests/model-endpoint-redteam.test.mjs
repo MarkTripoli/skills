@@ -36,7 +36,7 @@ test('successful response remains unassessed and incomplete',async()=>{
 test('each retry has a start/result audit pair and minimum pacing',async()=>{
  let calls=0,tick=0;const audits=[],waits=[];
  const result=await run(liveOptions({probes:['recon']}),{audit:(_file,event)=>audits.push(event),sleep:async ms=>waits.push(ms),monotonicNow:()=>{tick+=10;return tick;},fetchImpl:async()=>{calls++;if(calls===1)throw Error('fixture transport failure');return goodResponse();},runId:'fixed-id'});
- assert.equal(calls,2);assert.equal(result.attempts,2);assert.equal(result.status,'incomplete');
+ assert.equal(calls,2);assert.equal(result.attempts,2);assert.equal(result.status,'failed');assert.equal(result.failed_attempts,1);assert.equal(result.probes[0].status,'received_unassessed');assert.equal(result.probes[0].assessment_status,'incomplete');assert.equal(result.probes[0].recovered_after_failure,true);assert.equal(result.probes[0].error,undefined);
  assert.deepEqual(audits.filter(e=>e.event.startsWith('attempt-')).map(e=>e.event),['attempt-start','attempt-result','attempt-start','attempt-result']);
  assert.equal(new Set(audits.filter(e=>e.event==='attempt-start').map(e=>e.attempt_id)).size,2);assert.deepEqual(waits,[90]);
 });

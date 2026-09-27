@@ -27,7 +27,7 @@ The CLI defaults to dry-run, including when called through the module API withou
 
 The CLI supports probe selection, `--audit <audit.jsonl>`, `--max-attempts N`, `--retries N`, `--timeout-ms N`, and `--rate-ms N`. `--rate-ms` must be positive; live requests are paced at least 100 ms apart using a monotonic clock. Resume and preloaded assessment inputs are not supported. Each fetch attempt has an append-only `attempt-start` event before the request and `attempt-result` event after it, bound by unique run and attempt IDs. Any audit write failure stops execution.
 
-Each response is recorded as `received_unassessed` with a response digest only; even a successful HTTP status never becomes a security pass in this CLI. Reports contain no request payloads, credentials, or raw model responses. Report status stays `incomplete` unless a request fails, in which case it is `failed`. Assess results separately from observed evidence; this CLI does not accept prewritten assessments or produce `complete`.
+Each response is recorded as `received_unassessed` with a response digest only; even a successful HTTP status never becomes a security pass in this CLI. Reports contain no request payloads, credentials, or raw model responses. Report status stays `incomplete` unless any attempt fails, in which case it is `failed`; recovered probes retain `failed_attempts` and `recovered_after_failure` without a stale error. Assess results separately from observed evidence; this CLI does not accept prewritten assessments or produce `complete`.
 
 ## Publication
 

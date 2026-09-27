@@ -52,9 +52,9 @@ export async function run(options,{fetchImpl=fetch,sleep=ms=>new Promise(r=>setT
   const endpoint=new URL(options.url).origin;
   let attestation={operatorDigest:null,scope:null};
   if(live)attestation=readAuthorization(options,now());
-  const outcomes=[];let attempts=0,lastAttemptAt=null;
+  const outcomes=[];let attempts=0,failedAttempts=0,lastAttemptAt=null;
   for(const name of options.probes){
-    const result={name,probe_sha256:hash(PROBES[name]),status:live?'incomplete':'planned',attempts:0};outcomes.push(result);
+    const result={name,probe_sha256:hash(PROBES[name]),status:live?'incomplete':'planned',assessment_status:live?'incomplete':null,attempts:0,failed_attempts:0};outcomes.push(result);
     if(!live)continue;
     for(let retry=0;retry<=options.retries;retry++){
       if(attempts>=options.maxAttempts)break;
@@ -62,7 +62,7 @@ export async function run(options,{fetchImpl=fetch,sleep=ms=>new Promise(r=>setT
       if(lastAttemptAt!==null){const waitMs=Math.max(MIN_RATE_MS,options.rateMs)-(monotonicNow()-lastAttemptAt);if(waitMs>0)await sleep(waitMs);}
       attempts++;result.attempts++;
       try{audit(options.audit,{event:'attempt-start',run_id:runId,attempt_id:attemptId,attempt:attemptNumber,probe:name,origin:endpoint,operator_sha256:attestation.operatorDigest,at:now().toISOString()});}catch{throw Error('Audit write failed before request; execution stopped');}
-      let attemptStatus='failed',fatalAuthorization=false;
+      let attemptStatus='failed',fatalAuthorization=false,attemptFailed=false;
       try{
         const current=readAuthorization(options,now());
         if(current.scope!==attestation.scope||current.operatorDigest!==attestation.operatorDigest)throw Error('authorization changed');
@@ -74,9 +74,10 @@ export async function run(options,{fetchImpl=fetch,sleep=ms=>new Promise(r=>setT
           try{response=await fetchImpl(options.url,{method:'POST',redirect:'manual',signal:controller.signal,headers:{'content-type':'application/json'},body:JSON.stringify({probe:name,input:PROBES[name]})});if(response.status>=300&&response.status<400)throw Error('redirect refused');body=await response.json();}finally{clearTimeout(timer);}
           result.evidence={response_sha256:hash(JSON.stringify(body)),response_class:response.ok?'received':'http-error'};
           result.http_status=response.status;
-          if(response.ok){result.status='received_unassessed';attemptStatus='received_unassessed';}else{result.status='failed';result.error='Endpoint returned non-success HTTP status';}
-        }catch{result.status='failed';result.error='Request failed';}
+          if(response.ok){result.status='received_unassessed';result.assessment_status='incomplete';attemptStatus='received_unassessed';if(result.failed_attempts){result.recovered_after_failure=true;delete result.error;}}else{result.status='failed';result.error='Endpoint returned non-success HTTP status';attemptFailed=true;}
+        }catch{result.status='failed';result.error='Request failed';attemptFailed=true;}
       }
+      if(attemptFailed){failedAttempts++;result.failed_attempts++;}
       try{audit(options.audit,{event:'attempt-result',run_id:runId,attempt_id:attemptId,attempt:attemptNumber,probe:name,status:attemptStatus,at:now().toISOString()});}catch{throw Error('Audit write failed after request; execution stopped');}
       lastAttemptAt=monotonicNow();
       if(fatalAuthorization)throw Error('Authorization expired or changed; execution stopped');
@@ -84,9 +85,8 @@ export async function run(options,{fetchImpl=fetch,sleep=ms=>new Promise(r=>setT
       if(retry<options.retries)continue;
     }
   }
-  const statuses=outcomes.map(item=>item.status);
-  const status=!live?'planned':statuses.some(item=>item==='failed')?'failed':'incomplete';
-  const report={schema_version:1,status,run_id:runId,endpoint,authorized_scope:attestation.scope,operator_sha256:attestation.operatorDigest,authorization:{operator_attestation:live,independently_verified:false},selected_probes:options.probes,probes:outcomes,attempts};
+  const status=!live?'planned':failedAttempts?'failed':'incomplete';
+  const report={schema_version:1,status,run_id:runId,endpoint,authorized_scope:attestation.scope,operator_sha256:attestation.operatorDigest,authorization:{operator_attestation:live,independently_verified:false},selected_probes:options.probes,probes:outcomes,attempts,failed_attempts:failedAttempts};
   if(live){try{audit(options.audit,{event:'report',run_id:runId,status:report.status,at:now().toISOString()});}catch{throw Error('Audit write failed; report not finalized');}}
   return report;
 }
