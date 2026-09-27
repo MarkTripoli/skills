@@ -88,6 +88,12 @@ export function analyze(inputs) {
   }
   const evidence = [];
   for (const repo of repositories) {
+    let status;
+    try { status = git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], repo.root); } catch { status = null; }
+    if (status === null || status.length) {
+      skipped.push({name: repo.name, coverage: 'incomplete', reason: status === null ? 'working-tree-status-unavailable' : 'working-tree-dirty'});
+      continue;
+    }
     const walked = walk(repo.root), edges = codeEdges(repo, walked.files);
     for (const edge of edges) evidence.push({...edge, origin: repo.origin, head: repo.head});
     if (walked.incomplete) skipped.push({name: repo.name, coverage: 'incomplete'});

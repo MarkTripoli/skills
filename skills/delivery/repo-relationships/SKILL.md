@@ -17,7 +17,7 @@ node <installed-skills-dir>/repo-relationships/scripts/analyze.mjs \
   --repo billing=/path/to/billing
 ```
 
-Each root must be a Git checkout with an `origin` and resolvable `HEAD`. Names are unique safe labels supplied by the operator. Output is one JSON report. Exit 2 indicates invalid arguments; skipped roots and traversal problems remain explicit in JSON coverage. Analysis accepts 2–32 roots. Traversal is bounded to 2,000 files, 256 KiB per file, and 16 MiB total per root; symlinks, hidden entries, and common dependency/build directories are not traversed.
+Each root must be a Git checkout with an `origin`, resolvable `HEAD`, and clean working tree; dirty or unreadable roots are skipped and mark coverage incomplete so mutable files are never attributed to a commit. Names are unique safe labels supplied by the operator. Output is one JSON report. Exit 2 indicates invalid arguments; skipped roots and traversal problems remain explicit in JSON coverage. Analysis accepts 2–32 roots. Traversal is bounded to 2,000 files, 256 KiB per file, and 16 MiB total per root; symlinks, hidden entries, and common dependency/build directories are not traversed.
 
 ## Evidence contract
 
