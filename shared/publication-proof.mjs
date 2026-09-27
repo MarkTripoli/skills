@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { currentArtifact, indexFileExists, parseArtifactText, readArtifactIndex, readArtifactScalars } from './task-artifacts.mjs';
 import { decidePublicationProof } from './publication-proof-policy.mjs';
@@ -81,26 +82,32 @@ function sameCodeRevision(repo, task, root, index, left, right) {
     (onlyIndexedArtifacts(repo, task, root, left, right, index) ||
       onlyIndexedArtifacts(repo, task, root, right, left, index)))));
 }
-async function inspect({ taskDir, repo, prNumber, draftHostCapture = false, override = '' }) {
+export async function inspect({ taskDir, repo, prNumber, draftHostCapture = false, override = '' }) {
   const task = path.resolve(taskDir); const root = path.dirname(task);
   const index = indexFileExists(path.join(task, 'index.json')) ? readArtifactIndex(task) : null;
-  const evidence = currentRecord(task, 'evidence', index);
   const review = currentRecord(task, 'code-review', index);
   const verification = currentRecord(task, 'verification', index);
   const description = currentRecord(task, 'pr-description', index);
   const headSha = command('git', ['rev-parse', 'HEAD'], repo);
-  const testedSha = evidence ? commitExists(repo, field(evidence.text, 'commit')) : '';
-  const reviewSha = review ? commitExists(repo, field(review.text, 'head_sha')) : '';
   const taskText = fs.readFileSync(path.join(task, 'task.md'), 'utf8');
   const verificationRequired = Boolean(verification) || /verification\s*:\s*required|verification is required|required verification/i.test(taskText);
-  const capture = section(evidence?.text ?? '', 'Posted to');
-  const captureUrl = firstUrl(capture, 'PR description');
   const pr = JSON.parse(command('gh', ['pr', 'view', String(prNumber), '--json', 'url,number,headRefOid,baseRefName,baseRefOid,isDraft,body'], repo));
   const owner = JSON.parse(command('gh', ['repo', 'view', '--json', 'nameWithOwner'], repo)).nameWithOwner;
-  const commentUrl = firstUrl(capture, 'PR comment');
-  const commentId = new RegExp(`^https://github\\.com/${owner.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/pull/${prNumber}#issuecomment-(\\d+)$`).exec(commentUrl)?.[1];
+  const bodyText = pr.body ?? '';
+  const evidence = section(bodyText, 'Evidence');
+  const captureUrl = firstUrl(evidence, 'capture');
+  const hostedCommentUrl = firstUrl(evidence, 'comment');
+  const ownerPattern = owner.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const commentId = new RegExp(`^https://github\\.com/${ownerPattern}/pull/${prNumber}#issuecomment-(\\d+)$`).exec(hostedCommentUrl)?.[1];
   const comment = commentId ? JSON.parse(command('gh', ['api', `repos/${owner}/issues/comments/${commentId}`], repo)) : null;
   const commentText = comment?.body ?? '';
+  const testedSha = commitExists(repo, field(evidence, 'tested'));
+  const hostedResult = field(evidence, 'result').toLowerCase() === 'passed' &&
+    field(commentText, 'result').toLowerCase() === 'passed' &&
+    commitExists(repo, field(commentText, 'tested')) === testedSha &&
+    commitExists(repo, field(evidence, 'current head')) === pr.headRefOid &&
+    commitExists(repo, field(commentText, 'current head')) === pr.headRefOid;
+  const reviewSha = review ? commitExists(repo, field(review.text, 'head_sha')) : '';
   const hostedBase = commitExists(repo, pr.baseRefOid);
   const mergeBase = hostedBase && pr.headRefOid === headSha ? command('git', ['merge-base', hostedBase, headSha], repo) : '';
   const artifactOnly = Boolean(testedSha) && pr.headRefOid === headSha &&
@@ -111,25 +118,27 @@ async function inspect({ taskDir, repo, prNumber, draftHostCapture = false, over
     sameCodeRevision(repo, task, root, index, reviewSha, testedSha));
   const verificationCurrent = Boolean(verification?.status === 'passed' &&
     sameCodeRevision(repo, task, root, index, commitExists(repo, field(verification.text, 'revision')), testedSha));
-  const captureCurrent = Boolean(testedSha && artifactOnly && evidence?.status === 'passed');
+  const captureCurrent = Boolean(testedSha && artifactOnly && hostedResult);
   const captureHosted = await readable(captureUrl);
-  const commentVerified = Boolean(comment && String(comment.id) === commentId && comment.html_url === commentUrl &&
-    commentUrl !== captureUrl && commentText.includes(captureUrl) && /\bpassed\b/i.test(commentText) &&
+  const commentVerified = Boolean(comment && String(comment.id) === commentId && comment.html_url === hostedCommentUrl &&
+    hostedCommentUrl !== captureUrl && commentText.includes(captureUrl) &&
     commentText.includes(testedSha) && commentText.includes(pr.headRefOid));
-  const bodyText = description?.text ?? '';
-  const bodyPublished = Boolean(description && pr.body === bodyText && bodyText.includes(captureUrl) && bodyText.includes(commentUrl));
+  const bodyPublished = Boolean(captureUrl && hostedCommentUrl && evidence.includes(captureUrl) && evidence.includes(hostedCommentUrl));
   const proof = {
     mode: draftHostCapture ? 'draft-host-capture' : 'ready', captureUploadMissing: draftHostCapture && Boolean(pr.isDraft && !captureUrl),
     head: headSha, tested: testedSha, artifactOnlyAdvancement: artifactOnly, indexedArtifactsOnly: artifactOnly,
     substantiveChanged: Boolean(testedSha && !artifactOnly), reviewRequired: true, review: review?.status, reviewCurrent,
-    verificationRequired, verification: verification?.status, verificationCurrent, capture: evidence?.status,
-    captureCurrent, captureHosted, commentVerified, commentDistinct: Boolean(comment && commentUrl !== captureUrl),
+    verificationRequired, verification: verification?.status, verificationCurrent, capture: hostedResult ? 'passed' : '',
+    captureCurrent, captureHosted, commentVerified, commentDistinct: Boolean(comment && hostedCommentUrl !== captureUrl),
     finalBodyPublished: bodyPublished, finalBodyVerified: bodyPublished, bypass: Boolean(override),
   };
   const decision = decidePublicationProof(proof);
-  let reason = decision.status === 'pass' ? 'all current publication proof is verified' : decision.status === 'stale' ? (index ? 'tested proof does not cover the substantive code at HEAD' : 'HEAD advanced without indexed artifact-only proof') : draftHostCapture ? (pr.isDraft ? 'draft is permitted only to host capture; ready publication is not authorized' : 'capture-hosting mode requires an existing draft PR') : override ? `audited override requested: ${override}; mandatory proof remains incomplete` : 'required current proof or hosted publication read-back is missing';
+  let reason = decision.status === 'pass' ? 'all current publication proof is verified' : decision.status === 'stale' ? 'tested proof does not cover the substantive code at HEAD' : draftHostCapture ? (pr.isDraft ? 'draft is permitted only to host capture; ready publication is not authorized' : 'capture-hosting mode requires an existing draft PR') : override ? `audited override requested: ${override}; mandatory proof remains incomplete` : 'required current hosted proof or publication read-back is missing';
   if (override) reason = `audited override requested: ${override}; decision remains ${decision.status}`;
-  return { ...decision, reason, head: headSha, tested: testedSha || null, pullRequest: pr.url, override: override || null };
+  return { ...decision, reason, head: headSha, tested: testedSha || null, pullRequest: pr.url, override: override || null,
+    captureCurrent, captureHosted, commentVerified, reviewCurrent, verificationRequired, verificationCurrent, bodyPublished,
+    descriptionCurrent: Boolean(bodyPublished && section(bodyText, 'Purpose') && section(bodyText, 'Change outline')),
+    descriptionHash: createHash('sha256').update(bodyText).digest('hex') };
 }
 
 function usage() {

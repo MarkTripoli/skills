@@ -16,10 +16,13 @@ Omit this section when `task.md` states none.
 
 ## Evidence
 
-Include this section for every delivered change. Block publication until the current revision's recorded evidence is available and posted.
+The PR description and a distinct PR comment are the only durable evidence records. Require a readable hosted capture and matching revision-bound fields:
 
-- {Result line from the current evidence receipt: tests passed, failed, untested; exact revision tested.}
-- {One bullet per captured surface: label, hosted report/capture URL and the separate PR comment URL. UI video must play; CLI/API/agent captures must be readable.}
+- result: passed
+- tested: {FULL_TESTED_CODE_SHA}
+- current head: {FULL_PR_HEAD_SHA}
+- capture: {DIRECT_HOSTED_CAPTURE_URL}
+- comment: {DISTINCT_PR_COMMENT_URL}
 
 ## Change outline
 

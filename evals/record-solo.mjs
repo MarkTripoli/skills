@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-
+import { metricsForOutput } from "./metrics.mjs";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const value = (flag) => {
@@ -49,7 +49,7 @@ const prompt = [
 ].join("\n");
 fs.writeFileSync(path.join(output, "prompt.md"), prompt);
 const started = Date.now();
-const child = spawn("omp", ["-p", "--auto-approve", "--no-session", "--no-skills", "--no-extensions", "--no-rules", `--max-time=${maxMinutes}m`, "--model", model, prompt], {
+const child = spawn("omp", ["-p", "--auto-approve", "--no-session", "--mode", "json", "--no-skills", "--no-extensions", "--no-rules", `--max-time=${maxMinutes}m`, "--model", model, prompt], {
   cwd: repository, stdio: ["ignore", "pipe", "pipe"], detached: true,
 });
 let stdout = "";
@@ -65,23 +65,24 @@ const exitCode = await new Promise((resolve) => {
   child.on("close", resolve);
 });
 clearTimeout(timer);
-fs.writeFileSync(path.join(output, "answer.md"), stdout);
-fs.writeFileSync(path.join(output, "stderr.log"), stderr);
+const wallMs = Date.now() - started;
+const metrics = metricsForOutput(stdout, wallMs);
+fs.writeFileSync(path.join(output, "answer.md"), metrics.answer ?? "");
 let runtime = null;
 try { runtime = fs.readFileSync(path.join(repository, "dist", "runtime.txt"), "utf8").trim(); }
 catch { /* A missing build output fails acceptance below. */ }
 const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repository, encoding: "utf8" }).trim();
 const changed = execFileSync("git", ["diff", "--name-only", revision], { cwd: repository, encoding: "utf8" }).trim();
 const ok = exitCode === 0 && runtime === "built for node" &&
-  /npm run build -- RUNTIME=node/.test(stdout) && head === revision && !changed;
+  /npm run build -- RUNTIME=node/.test(metrics.answer ?? "") && head === revision && !changed;
 const result = {
   name: fixture.id, ok, model, fixtureRevision: revision,
-  wallTimeSeconds: Math.round((Date.now() - started) / 1000),
+  wallTimeSeconds: Math.round(wallMs / 1000), metrics,
   repo: repository, rawOutput: output,
   problems: [
     ...(exitCode === 0 ? [] : [`omp exited ${exitCode}`]),
     ...(runtime === "built for node" ? [] : [`build output was ${JSON.stringify(runtime)}`]),
-    ...(/npm run build -- RUNTIME=node/.test(stdout) ? [] : ["answer omitted required build command"]),
+    ...(/npm run build -- RUNTIME=node/.test(metrics.answer ?? "") ? [] : ["answer omitted required build command"]),
     ...(head === revision && !changed ? [] : ["solo run changed tracked source or committed a new revision"]),
   ],
 };

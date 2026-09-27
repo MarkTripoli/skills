@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { digest, observeArtifacts } from './artifacts.mjs';
-import { committedChildCompletion, hostedChildCompletion, hostedChildPRs, hostedChildPublication } from './child-evidence.mjs';
+import { observeArtifacts } from './artifacts.mjs';
+import { hostedChildCompletion, hostedChildPRs, hostedChildPublication } from './child-evidence.mjs';
 import { gated } from './controller.mjs';
 import { git, revision } from './workspace.mjs';
 
@@ -56,6 +56,7 @@ export function childCompletionSnapshot(state, task, gates) {
     ])),
     proofs: state.proofs,
     approvals: state.approvals,
+    hosted: state.hosted?.ready ? { pullRequest: state.hosted.pullRequest, head: state.hosted.head, tested: state.hosted.tested } : null,
   };
 }
 
@@ -70,35 +71,6 @@ export function latestChildRecord(task, slug) {
   return files.length ? JSON.parse(fs.readFileSync(files[0], 'utf8')) : null;
 }
 
-function sourceMatchesParent(task, childCwd, baseHead, childHead, parentHead, childDir, relativeDir, artifacts) {
-  if (!baseHead || git(childCwd, ['merge-base', '--is-ancestor', baseHead, childHead], true) === null ||
-      git(task.cwd, ['merge-base', '--is-ancestor', baseHead, parentHead], true) === null) return false;
-  // A merge preserves ancestry even when a later child edits the same source.
-  if (git(task.cwd, ['merge-base', '--is-ancestor', childHead, parentHead], true) !== null) return true;
-  const changed = git(childCwd, ['diff', '--no-renames', '--name-only', '-z', baseHead, childHead], true, true);
-  if (changed === null) return false;
-  const taskPrefix = `${task.taskRootRelative.replace(/\/+$/, '')}/`;
-  const source = changed.split('\0').filter(file => file && !file.startsWith(taskPrefix))
-    .map(file => [file, git(childCwd, ['show', `${childHead}:${file}`], true, true)]);
-  const indexFile = path.join(childDir, 'index.json');
-  const index = fs.existsSync(indexFile) ? fs.readFileSync(indexFile, 'utf8') : null;
-  const proof = Object.values(artifacts).map(saved => {
-    if (!saved || typeof saved.path !== 'string' || saved.path.startsWith('/') || saved.path.split('/').includes('..')) return null;
-    return [`${relativeDir}/${saved.path}`, saved.hash];
-  });
-  if (proof.includes(null)) return false;
-  // Squash/cherry-pick integration has no child ancestry. Find a parent
-  // first-parent point after the fork containing both the child's source and
-  // its committed proof, before later children may legitimately change files.
-  const history = git(task.cwd, ['rev-list', '--first-parent', '--ancestry-path', `${baseHead}..${parentHead}`], true);
-  return Boolean(history && history.split('\n').some(commit =>
-    source.every(([file, blob]) => blob === git(task.cwd, ['show', `${commit}:${file}`], true, true)) &&
-    proof.every(([file, hash]) => {
-      const text = git(task.cwd, ['show', `${commit}:${file}`], true, true);
-      return text !== null && digest(text) === hash;
-    }) &&
-    (index === null || git(task.cwd, ['show', `${commit}:${relativeDir}/index.json`], true, true) === index)));
-}
 
 function inspectChild(task, child, record, hostedRows) {
   const reasons = [];
@@ -136,12 +108,9 @@ function inspectChild(task, child, record, hostedRows) {
     if (!current || !saved || current.hash !== saved.hash || relative !== saved.path) reasons.push(`${type} artifact is stale or missing`);
     if (gated(type, proof.gates) && proof.approvals?.[type] !== saved.hash) reasons.push(`${type} approval is missing or stale`);
   }
-  for (const type of ['code-review', 'evidence', 'pr-description']) {
-    const saved = artifacts[type];
-    const current = proof.proofs?.[type];
-    if (!saved || !current || current.hash !== saved.hash || current.revision !== proof.revision || current.generation !== proof.generation) {
-      reasons.push(`${type} completion proof is missing or stale`);
-    }
+  if (!proof.hosted || proof.hosted.head !== proof.head || !proof.hosted.tested ||
+      !/^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+$/.test(proof.hosted.pullRequest ?? '')) {
+    reasons.push('native completion lacks current hosted PR proof');
   }
   for (const type of ['verification', 'app-test']) {
     if (!artifacts[type]) continue;
@@ -152,39 +121,19 @@ function inspectChild(task, child, record, hostedRows) {
     reasons.push('native child record lacks its fork revision');
     return reasons;
   }
-  const parentHead = git(task.cwd, ['rev-parse', 'HEAD']);
-  const relativeDir = path.relative(task.cwd, child.taskDir).split(path.sep).join('/');
-  if (relativeDir === '..' || relativeDir.startsWith('../') || path.isAbsolute(relativeDir)) {
-    reasons.push('child task is outside the parent repository');
+  if (git(childCwd, ['merge-base', '--is-ancestor', record.baseHead, branchHead], true) === null ||
+      git(task.cwd, ['merge-base', '--is-ancestor', record.baseHead, 'HEAD'], true) === null) {
+    reasons.push('child fork is not an ancestor of its branch and parent');
     return reasons;
   }
-  let committed = false;
-  try { committed = committedChildCompletion(task.cwd, child, git); }
-  catch (error) { return [...reasons, `merged child completion evidence is invalid: ${error.message}`]; }
-  if (committed) {
-    if (!sourceMatchesParent(task, childCwd, record.baseHead, branchHead, parentHead, childDir, relativeDir, artifacts)) {
-      reasons.push('parent has no integration point for the completed child source and proof');
-    }
-    const indexPath = `${relativeDir}/index.json`;
-    const childIndex = path.join(childDir, 'index.json');
-    if (fs.existsSync(childIndex) && git(task.cwd, ['show', `HEAD:${indexPath}`], true, true) !== fs.readFileSync(childIndex, 'utf8')) {
-      reasons.push('merged artifact index differs from the completed child');
-    }
-    for (const [type, saved] of Object.entries(artifacts)) {
-      if (!saved || typeof saved.path !== 'string' || saved.path.startsWith('/') || saved.path.split('/').includes('..')) {
-        reasons.push(`${type} proof path is invalid`);
-        continue;
-      }
-      const text = git(task.cwd, ['show', `HEAD:${relativeDir}/${saved.path}`], true, true);
-      if (text === null || digest(text) !== saved.hash) reasons.push(`${type} artifact is missing or stale in the merged parent`);
-    }
-  } else {
-    const pr = hostedChildCompletion(task.cwd, child, task.branch, git, branchHead, hostedRows());
-    if (!pr) reasons.push('child has no merged PR with hosted completion proof');
-    else {
-      try { hostedChildPublication(childCwd, childDir, pr.number); }
-      catch (error) { reasons.push(error.message); }
-    }
+  const pr = hostedChildCompletion(task.cwd, child, task.branch, git, branchHead, hostedRows());
+  if (!pr) reasons.push('child has no merged PR with hosted completion proof');
+  else {
+    try {
+      const published = hostedChildPublication(childCwd, childDir, pr.number);
+      if (proof.hosted?.pullRequest !== pr.url || proof.hosted?.tested !== published.tested ||
+          proof.hosted?.head !== published.head) reasons.push('native child completion differs from merged hosted PR proof');
+    } catch (error) { reasons.push(error.message); }
   }
   return reasons;
 }

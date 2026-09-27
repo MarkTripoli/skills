@@ -6,10 +6,10 @@ import { spawn, execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { subjectProblems } from "../scripts/check-commits.mjs";
 import { gradeEvidenceScenario, isEvidenceScenario, snapshotEvidenceSources } from "./iterate-evidence.mjs";
-import { artifacts, failures, handoff, newest, placeholders } from "./lib.mjs";
-import { recordSecurityAssessment } from "./security-assessment.mjs";
+import { metricsForOutput } from "./metrics.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+
 const repoRoot = path.resolve(here, "..");
 const resultsRoot = path.join(here, "results");
 const scenariosDir = path.join(here, "scenarios");
@@ -36,9 +36,11 @@ if (args[0] === "--compare") {
   const fields = (run) => ({
     acceptance: run?.ok === true ? "passed" : run?.ok === false ? "failed" : "incomplete",
     model: run?.model ?? "unknown",
+    actualModel: run?.metrics?.coverage?.models?.length === 1 ? run.metrics.coverage.models[0] : "unknown",
     wallTimeSeconds: Number.isFinite(run?.wallTimeSeconds) ? run.wallTimeSeconds : "unknown",
-    spend: Number.isFinite(run?.spend?.amount) && run.spend.amount >= 0 && run.spend.basis
-      ? { amount: run.spend.amount, currency: run.spend.currency ?? "USD", basis: run.spend.basis }
+    spend: Number.isFinite(run?.metrics?.cost?.total) && run.metrics.cost_basis === "provider_reported_usd" &&
+      run.metrics.coverage?.complete === true
+      ? { amount: run.metrics.cost.total, currency: "USD", basis: run.metrics.cost_basis, source: run.metrics.cost_source }
       : "unknown",
     fixtureRevision: run?.fixtureRevision ?? "unknown",
     rawOutput: run?.rawOutput ?? "unknown",
@@ -46,14 +48,13 @@ if (args[0] === "--compare") {
   const solo = fields(read(args[1]));
   const delivery = fields(read(args[2]));
   const fixtureMatched = solo.fixtureRevision !== "unknown" && solo.fixtureRevision === delivery.fixtureRevision;
-  const modelMatched = solo.model !== "unknown" && solo.model === delivery.model;
+  const modelMatched = solo.model !== "unknown" && solo.model === delivery.model &&
+    solo.actualModel !== "unknown" && solo.actualModel === delivery.actualModel;
   const spendComparable = fixtureMatched && modelMatched && solo.acceptance === "passed" && delivery.acceptance === "passed" &&
     solo.spend !== "unknown" && delivery.spend !== "unknown" &&
     solo.spend.currency === delivery.spend.currency && solo.spend.basis === delivery.spend.basis;
   console.log(JSON.stringify({
-    solo, delivery,
-    fixtureMatched, modelMatched,
-    spendComparable,
+    solo, delivery, fixtureMatched, modelMatched, spendComparable,
     spendAdvantage: spendComparable
       ? solo.spend.amount < delivery.spend.amount ? "solo" : delivery.spend.amount < solo.spend.amount ? "delivery" : "tie"
       : "unknown",
@@ -165,26 +166,18 @@ function phasePrompt(skillsDir, phase, taskRel) {
 
 function runOmp(prompt, cwd) {
   return new Promise((resolve) => {
-    // Its own process group, so a kill on timeout reaches the child workers omp spawned.
-    const ompArgs = ["-p", "--auto-approve", "--no-session", `--max-time=${maxMinutes}m`];
+    const ompArgs = ["-p", "--auto-approve", "--no-session", "--mode", "json", `--max-time=${maxMinutes}m`];
     if (model !== null) ompArgs.push("--model", model);
     ompArgs.push(prompt);
     const child = spawn("omp", ompArgs, {
-      cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
-      detached: true,
+      cwd, stdio: ["ignore", "pipe", "pipe"], env: process.env, detached: true,
     });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d) => (stdout += d));
     child.stderr.on("data", (d) => (stderr += d));
     const timer = setTimeout(() => {
-      try {
-        process.kill(-child.pid, "SIGKILL");
-      } catch {
-        child.kill("SIGKILL");
-      }
+      try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }
     }, (maxMinutes + 1) * 60 * 1000);
     child.on("close", (code) => {
       clearTimeout(timer);
@@ -289,7 +282,7 @@ async function runScenario(scenario, runDir, dist) {
   // The commit before any phase ran: everything a phase changes outside `.agents/` is measured from here.
   const fixtureSha = git(repo, "rev-parse", "HEAD");
   const resultDir = path.join(runDir, scenario.name);
-  const result = { name: scenario.name, repo, phases: [], ok: true, model: model ?? "omp-default", fixtureRevision: fixtureSha, wallTimeSeconds: 0 };
+  const result = { name: scenario.name, repo, phases: [], ok: true, model: model ?? "omp-default", fixtureRevision: fixtureSha, wallTimeSeconds: 0, metrics: { wall_ms: 0, tokens: {}, cost: null, cost_basis: null, cost_source: null, coverage: { complete: true, usage_events: 0, cost_events: 0, models: [] } } };
 
   for (const [index, phase] of scenario.phases.entries()) {
     const label = `${index + 1}-${phase.skill}`;
@@ -302,31 +295,28 @@ async function runScenario(scenario, runDir, dist) {
     const started = Date.now();
     console.log(`[${scenario.name}] ${label}: started`);
     const { code, stdout, stderr } = await runOmp(prompt, repo);
-    const seconds = Math.round((Date.now() - started) / 1000);
-    fs.writeFileSync(path.join(out, "answer.md"), stdout);
+    const wallMs = Date.now() - started;
+    const metrics = metricsForOutput(stdout, wallMs);
+    const answer = metrics.answer ?? "";
+    fs.writeFileSync(path.join(out, "answer.md"), answer);
     fs.writeFileSync(path.join(out, "stderr.log"), stderr);
     if (fs.existsSync(taskDir)) fs.cpSync(taskDir, path.join(out, "task"), { recursive: true });
-
-    const ctx = {
-      live: true,
-      repo,
-      codeRoot: repo,
-      taskDir,
-      fixtureSha,
-      before,
-      template,
-      answer: stdout,
-      artifact: newest(taskDir, phase.artifactType),
-      artifacts: artifacts(taskDir),
-    };
+    const ctx = { live: true, repo, codeRoot: repo, taskDir, fixtureSha, before, template, answer, artifact: newest(taskDir, phase.artifactType), artifacts: artifacts(taskDir) };
     const problems = grade(phase, ctx, code);
-    result.wallTimeSeconds += seconds;
-    result.phases.push({ phase: label, seconds, ok: problems.length === 0, problems });
-    report(scenario.name, label, seconds, problems);
-    if (problems.length) {
-      result.ok = false;
-      break;
-    }
+    result.wallTimeSeconds += Math.round(wallMs / 1000);
+    const aggregate = result.metrics;
+    aggregate.wall_ms += wallMs;
+    for (const key of ["input", "output", "cacheRead", "cacheWrite"]) if (metrics.tokens?.[key] !== null && metrics.tokens?.[key] !== undefined) aggregate.tokens[key] = (aggregate.tokens[key] ?? 0) + metrics.tokens[key];
+    if (metrics.cost) { aggregate.cost ??= { total: 0 }; aggregate.cost.total += metrics.cost.total; }
+    aggregate.cost_basis = metrics.cost_basis;
+    aggregate.cost_source = metrics.cost_source;
+    aggregate.coverage.complete &&= metrics.coverage.complete;
+    aggregate.coverage.usage_events += metrics.coverage.usage_events;
+    aggregate.coverage.cost_events += metrics.coverage.cost_events;
+    aggregate.coverage.models = [...new Set([...aggregate.coverage.models, ...metrics.coverage.models])];
+    result.phases.push({ phase: label, wall_ms: wallMs, tokens: metrics.tokens, cost: metrics.cost, coverage: metrics.coverage, ok: problems.length === 0, problems });
+    report(scenario.name, label, Math.round(wallMs / 1000), problems);
+    if (problems.length) { result.ok = false; break; }
   }
   if (result.ok && !keep) {
     fs.rmSync(repo, { recursive: true, force: true });

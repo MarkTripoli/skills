@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { resolveSkillsDir } from '../lib/skill-storage.mjs';
 import { childBatches, childCompletionSnapshot, childJoinSummary, joinChildren } from '../lib/child-scheduler.mjs';
+import { hostedProof } from '../lib/hosted-proof.mjs';
 
 const choices = (values: string[], fallback: string) => Type.Union(values.map(value => Type.Literal(value)), { default: fallback });
 const delivery = workflow({
@@ -41,7 +42,7 @@ const delivery = workflow({
   outputs: {
     status: Type.String(), summary: Type.String(), task_dir: Type.String(), branch: Type.String(),
     steps: Type.Integer(), children: Type.Array(Type.String()),
-    completion: Type.Optional(Type.Any()),
+    completion: Type.Optional(Type.Any()), metrics: Type.Optional(Type.Any()),
   },
   run: async (ctx) => {
     const inputs = ctx.inputs;
@@ -51,6 +52,7 @@ const delivery = workflow({
     const cwd = ctx.cwd || process.cwd();
     const runId = ctx.runId;
     if (!runId) throw new Error('Atomic must supply its ctx.runId for durable delivery records');
+    const started = await ctx.tool('run-start', { run_id: runId }, async () => ({ at: Date.now() }));
     const existing = inputs.task_dir ? frontmatter(fs.readFileSync(path.join(path.resolve(cwd, expandPath(inputs.task_dir)), 'task.md'), 'utf8'), 'task.md') : null;
     const routeRequest = existing?.body || inputs.request;
     const continuation = inputs.task_dir && ['resolve-reviews', 'epic-wave'].includes(inputs.workflow);
@@ -87,7 +89,11 @@ const delivery = workflow({
     const launched: string[] = [];
     const finish = async (status: string, summary: string) => {
       const result = await ctx.tool(`finish-${status}`, { task_dir: task.taskDir, status, summary, steps, children: launched }, async () => {
+        const ended = Date.now();
         const output = { status, summary, task_dir: task.taskDir, branch: task.branch || '', steps, children: launched,
+          metrics: { started_at: new Date(started.at).toISOString(), ended_at: new Date(ended).toISOString(),
+            wall_ms: ended - started.at, tokens: null, cost_usd: null, source: 'atomic-run-clock',
+            usage_source: null },
           ...(status === 'completed' ? { completion: childCompletionSnapshot(state, task, taskInputs.gates) } : {}) };
         saveRecord(task, 'result', output);
         return output;
@@ -109,7 +115,7 @@ const delivery = workflow({
       // arguments; native replay can then reach the same frontier after a process restart.
       const boundary = await ctx.tool(`${steps}-refresh-boundary`, { task_dir: task.taskDir }, async () => {
         const boundaryObservation = observeArtifacts(task.taskDir);
-        return { ...boundaryObservation, revision: revision(task.cwd, task.taskRootRelative) };
+        return { ...boundaryObservation, revision: revision(task.cwd, task.taskRootRelative), hosted: await hostedProof(task) };
       });
       const hashes = state.hashes || {};
       const observedHashes = boundary.hashes || {};
@@ -121,7 +127,7 @@ const delivery = workflow({
       // Reused artifacts still need the selected human approval policy. Approvals
       // are tied to content hashes, not an artifact filename or a claimed status.
       if (!forced) {
-        for (const type of ['sources', 'research-questions', 'research', 'design-discussion', 'design-prd', 'design-tdd', 'structure-outline', 'plan', 'epic-plan', 'reproduction']) {
+        for (const type of ['sources', 'research-questions', 'research', 'design-discussion', 'design-prd', 'design-tdd', 'structure-outline', 'plan', 'epic-plan', 'reproduction', 'pr-description']) {
           const gate = await artifactGate(ctx, task, taskInputs, state, type, `boundary-${steps}`);
           state = gate.state;
           if (gate.stopped) return finish('blocked', `Human stopped at ${type}; retained task and worktree are unchanged.`);

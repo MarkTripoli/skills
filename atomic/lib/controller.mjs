@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { observeArtifacts, planProgress, requireFresh, section } from './artifacts.mjs';
+import { observeArtifacts, planProgress, requireFresh } from './artifacts.mjs';
 import { revision, saveRecord } from './workspace.mjs';
 import { selectStageModel } from './models.mjs';
+import { currentHostedCapture, hostedProof } from './hosted-proof.mjs';
 import {
   SKILLS, activeRecovery, currentProof, expectedArtifactIteration, inspectSource,
   primarySource, reconcileRecovery, recoveryDiagnostic, stagePrompt,
@@ -58,14 +59,12 @@ export function eligible(state, inputs, mode, adaptive) {
   const a = state.latest;
   if (mode === 'epic-wave') return ['children'];
   if (mode === 'resolve-reviews') {
-    if (currentProof(state, 'evidence') && a.evidence.status === 'blocked') return ['blocked'];
-    if (currentProof(state, 'evidence') && a.evidence.status === 'failed') return ['iterate-implementation'];
-    const review = a['pr-review'];
     if (!currentProof(state, 'pr-review')) return ['resolve-pr-reviews'];
-    if (review.status !== 'approved') return ['blocked'];
-    if (!validEvidence(state)) return ['record-evidence'];
-    if (!validDescription(state)) return ['describe-pr'];
-    return ['complete'];
+    if (a['pr-review'].status !== 'approved') return ['blocked'];
+    if (!validProof(state, 'code-review', 'clean')) return ['review-code'];
+    if (!currentHostedCapture(state.hosted)) return ['record-evidence'];
+    if (!state.hosted.descriptionCurrent) return ['describe-pr'];
+    return [state.hosted.ready ? 'complete' : 'blocked'];
   }
   if (recoveryDiagnostic(state)) return recoveryChoices.slice();
 
@@ -124,13 +123,9 @@ export function eligible(state, inputs, mode, adaptive) {
     if (currentProof(state, 'code-review') && a['code-review'].status === 'findings') return ['fix-code-review'];
     return ['review-code'];
   }
-  if (!validEvidence(state)) {
-    if (currentProof(state, 'evidence') && a.evidence.status === 'blocked') return ['blocked'];
-    if (currentProof(state, 'evidence') && a.evidence.status === 'failed') return ['iterate-implementation'];
-    return ['record-evidence'];
-  }
-  if (!validDescription(state)) return ['describe-pr'];
-  return ['complete'];
+  if (!currentHostedCapture(state.hosted)) return ['record-evidence'];
+  if (!state.hosted.descriptionCurrent) return ['describe-pr'];
+  return [state.hosted.ready ? 'complete' : 'blocked'];
 }
 function hasPrimaryArtifact(latest, type) { return Boolean(latest[type]); }
 function makeRecovery(skill, source, before, after, receipt, codeRevision) {
@@ -145,51 +140,7 @@ function makeRecovery(skill, source, before, after, receipt, codeRevision) {
   };
 }
 function validProof(state, type, status) { return currentProof(state, type) && (!status || state.latest[type].status === status); }
-function hostedUrls(text) {
-  return [...String(text || '').matchAll(/https:\/\/[^\s<>)\]`"']+/g)].map(match => match[0].replace(/[.,;]+$/, ''));
-}
-function evidenceCaptureUrl(artifact) {
-  const posted = section(artifact.text || '', 'Posted to');
-  const description = posted.split('\n').find(line => /^-\s*PR description:\s*/i.test(line));
-  return hostedUrls(description).find(url => !/^https:\/\/github\.com\/[^/]+\/[^/]+\/(?:pull|issues)\/\d+(?:#issuecomment-\d+)?$/.test(url));
-}
-function hasLocalCapture(artifact) {
-  const taskDir = artifact.path ? path.resolve(path.dirname(artifact.file), '../../..') : path.dirname(artifact.file);
-  const evidenceDir = path.join(taskDir, 'evidence');
-  if (!fs.existsSync(evidenceDir)) return false;
-  const root = fs.realpathSync(evidenceDir);
-  for (const match of section(artifact.text || '', 'Sessions').matchAll(/(?:^|[\s`(])(?:\.\/)?(evidence\/[a-zA-Z0-9._/-]+)/gm)) {
-    const relative = match[1].replace(/[.,;]+$/, '');
-    if (path.basename(relative) === 'report.md') continue;
-    const file = path.resolve(taskDir, relative);
-    if (!fs.existsSync(file)) continue;
-    const actual = fs.realpathSync(file);
-    if (actual.startsWith(`${root}${path.sep}`) && fs.statSync(actual).isFile()) return true;
-  }
-  return false;
-}
-function validDescription(state) {
-  if (!validProof(state, 'pr-description') || !validEvidence(state)) return false;
-  const urls = hostedUrls(section(state.latest['pr-description'].text || '', 'Evidence'));
-  const comment = urls.find(url => /^https:\/\/github\.com\/[^/]+\/[^/]+\/(?:pull|issues)\/\d+#issuecomment-\d+$/.test(url));
-  const captureUrl = evidenceCaptureUrl(state.latest.evidence);
-  return Boolean(comment && captureUrl && comment !== captureUrl && urls.includes(captureUrl));
-}
-function validEvidence(state) {
-  const artifact = state.latest.evidence;
-  if (!currentProof(state, 'evidence') || !['passed', 'untested'].includes(artifact.status)) return false;
-  const results = section(artifact.text || '', 'Results');
-  const rows = [...results.matchAll(/^\|[^|\n]+\|\s*(passed|untested)\s*\|[^|\n]+\|/gim)];
-  const caveats = section(artifact.text || '', 'Caveats');
-  return Boolean(
-    section(artifact.text || '', 'Sessions')
-    && /^-\s*commit:\s*[a-f0-9]{7,64}\s*$/im.test(section(artifact.text || '', 'Revision'))
-    && rows.some(row => row[1].toLowerCase() === artifact.status)
-    && (artifact.status !== 'untested' || Boolean(caveats) && !/^(?:[-*]\s*)?(?:none\.?|n\/a|not applicable)$/i.test(caveats))
-    && evidenceCaptureUrl(artifact)
-    && hasLocalCapture(artifact)
-  );
-}
+// Evidence lives on the PR. Local task artifacts cannot authorize this transition.
 
 export function initialState(observation, codeRevision) { return { ...observation, revision: codeRevision, generation: 0, proofs: {}, approvals: {} }; }
 export function contextBoundaryAdmission(inputs = {}) {
@@ -222,9 +173,18 @@ export async function runSkill(ctx, task, state, inputs, skill, step, feedback =
   });
   return ctx.tool(`${name}-observe`, { task_dir: task.taskDir, skill, context_policy: inputs.context_policy ?? 'off' }, async () => {
     const after = observeArtifacts(task.taskDir);
-    const artifact = requireFresh(state, after, SKILLS[skill], expectedArtifactIteration(state, SKILLS[skill]));
+    const hostedStage = skill === 'record-evidence' || skill === 'describe-pr';
+    const artifact = hostedStage ? null : requireFresh(state, after, SKILLS[skill], expectedArtifactIteration(state, SKILLS[skill]));
     const codeRevision = revision(task.cwd, task.taskRootRelative);
     if (!mutations.has(skill) && state.revision !== codeRevision) throw new Error(`${skill} changed implementation files; its independent observation is invalid`);
+    if (hostedStage) {
+      const hosted = await hostedProof(task);
+      if (!currentHostedCapture(hosted) || (skill === 'describe-pr' && !hosted.descriptionCurrent)) {
+        throw new Error(`${skill} did not publish current, readable capture and revision-bound PR description/comment proof`);
+      }
+      saveRecord(task, name, { skill, revision: codeRevision, hosted: true, model: result.model ?? selection.model });
+      return { ...state, ...after, revision: codeRevision, hosted };
+    }
     let recovery = null;
     if (['implement-plan', 'implement-outline'].includes(skill)) {
       const oldSource = state.latest.plan || state.latest['structure-outline'];
@@ -245,7 +205,9 @@ export async function runSkill(ctx, task, state, inputs, skill, step, feedback =
 }
 
 export async function artifactGate(ctx, task, inputs, state, type, step) {
-  const artifact = state.latest[type];
+  const artifact = type === 'pr-description' && currentHostedCapture(state.hosted) && state.hosted.descriptionCurrent
+    ? { file: state.hosted.pullRequest, hash: state.hosted.descriptionHash, summary: 'Hosted pull request body and evidence' }
+    : type === 'pr-description' ? null : state.latest[type];
   if (!artifact || !gated(type, inputs.gates) || state.approvals[type] === artifact.hash) return { state, feedback: null, skill: null, stopped: false };
   if (!ctx.ui || typeof ctx.ui.select !== 'function') throw new Error('Human gates require Atomic native UI; rerun with gates=none for headless delivery');
   const response = await ctx.ui.select(`Review ${artifact.file}\n${artifact.summary}\nApprove this artifact, request changes, or stop?`, ['approve', 'revise', 'stop']);

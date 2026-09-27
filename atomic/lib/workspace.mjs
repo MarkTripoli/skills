@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { digest, frontmatter, validateChildren } from './artifacts.mjs';
 import { initTaskArtifacts, readArtifactIndex } from './artifact-index.mjs';
 import { DEFAULT_TASK_ROOT, normalizeTaskRoot, resolveTaskRoot } from './task-storage.mjs';
-import { committedChildCompletion, hostedChildCompletion, hostedChildPRs } from './child-evidence.mjs';
+import { hostedChildCompletion, hostedChildPRs } from './child-evidence.mjs';
 import { taskRootAtBase } from './workspace-base.mjs';
 import { expandPath, resolveSkillsDir } from './skill-storage.mjs';
 
@@ -166,9 +166,8 @@ export function childWave(task, children, mergedPRs = null) {
   const blocked = [];
   let hosted = mergedPRs;
   for (const child of children) {
-    if (committedChildCompletion(task.cwd, child, git) ||
-        hostedChildCompletion(task.cwd, child, task.branch, git, null,
-          hosted ??= hostedChildPRs(task.cwd, task.branch))) {
+    if (hostedChildCompletion(task.cwd, child, task.branch, git, null,
+      hosted ??= hostedChildPRs(task.cwd, task.branch))) {
       done.push(child.slug);
       continue;
     }
