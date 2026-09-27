@@ -2,7 +2,7 @@
   "$schema": "skills.task-index/v1",
   "schemaVersion": 1,
   "task": "i-want-you-gpt",
-  "generation": 3,
+  "generation": 4,
   "artifactSeries": {
     "research.sources": {
       "current": "research.sources.0001",
@@ -43,6 +43,20 @@
           "type": "research",
           "status": null,
           "summary": "The upstream dev-team combines Claude-specific workflow instructions, a narrower Python dispatcher, project-local hook state and paid opt-in evaluations; security-assessment combines deterministic scanner adapters with agent judgment and report generation. Public skills already implement portable phase skills, artifact-bound approvals, verification, review and evidence, while Adyton additionally documents paired-repository Jira delivery. The notable current-state distinctions are hook enforcement scope, deep tool-first security assessment, cross-repository task contracts, and the different task-artifact formats in the two local collections."
+        }
+      ]
+    },
+    "planning.epic": {
+      "current": "planning.epic.0001",
+      "iterations": [
+        {
+          "id": "planning.epic.0001",
+          "iteration": 1,
+          "path": "artifacts/planning/epic/0001.md",
+          "sha256": "d854cfd6404b07de1524c40831eb5d0d9321d20409b29f3fe22cf3f182bab20e",
+          "type": "epic-plan",
+          "status": null,
+          "summary": "This epic proposes thirteen public-skills children and five Adyton companion changes, ordered behind human review. It adds measured outcomes, opt-in tool-first security, portable publication proof, runtime capability checks, and bounded orchestration without replacing existing delivery or storage formats. The public epic creates only public-repository children; a separate Adyton epic must be opened in its own repository after approval."
         }
       ]
     }
