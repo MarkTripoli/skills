@@ -2,7 +2,7 @@
   "$schema": "skills.task-index/v1",
   "schemaVersion": 1,
   "task": "i-want-you-gpt",
-  "generation": 7,
+  "generation": 8,
   "artifactSeries": {
     "research.sources": {
       "current": "research.sources.0001",
@@ -95,6 +95,20 @@
           "type": "code-review",
           "status": "clean",
           "summary": "Clean full-diff source review at 6ade855b plus direct review of the subsequent evidence hygiene and immutable receipt at 4159c094."
+        }
+      ]
+    },
+    "evidence.recording": {
+      "current": "evidence.recording.0001",
+      "iterations": [
+        {
+          "id": "evidence.recording.0001",
+          "iteration": 1,
+          "path": "artifacts/evidence/recording/0001.md",
+          "sha256": "7de9b1f9db1a6b6d913f0ceb8ab45d1893324b8f84891ae9fa22c9230a0aa163",
+          "type": "evidence",
+          "status": "passed",
+          "summary": "Fifteen focused cases and live draft/ready publication probes passed at 591c40eb; scanner coverage was correctly reported incomplete, not clean. Original CLI output is anonymously readable at the hosted capture and linked in PR #141's distinct evidence comment."
         }
       ]
     }
