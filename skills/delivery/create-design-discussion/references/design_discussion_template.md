@@ -43,6 +43,14 @@ sha: [current commit]
 
 Recommendation: [recommended option and why the research or product pattern supports it]
 
+### Ambiguity Disposition
+
+| Consequential ambiguity | Disposition (source-backed inference or stakeholder choice) | Owner | Source / rationale | Acceptance impact | State |
+|---|---|---|---|---|---|
+| [Question] | [Inference / stakeholder choice] | [Named owner] | [Citation or rationale] | [Criteria affected] | [Open / resolved] |
+
+Unresolved stakeholder choices remain open; they are neither agreed criteria nor authority to implement.
+
 ### Resolved Design Questions
 
 #### [Resolved decision title]

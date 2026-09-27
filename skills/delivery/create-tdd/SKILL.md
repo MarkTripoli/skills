@@ -19,6 +19,7 @@ Run as interview: System Design (behavior across components), then Program Desig
 - Rework affected sections; do not append notes. The TDD reads as a cohesive design, not a running list of answers.
 - Use diagrams, signatures, endpoint shapes, file trees, call trees, or pseudocode when they clarify the decision.
 - Use the smallest useful set of representations.
+- **Disposition and authority**: For every consequential ambiguity, record whether resolution is a source-backed inference or stakeholder choice, name the owner, and state acceptance impact. Cite sources for inferences; an unresolved stakeholder choice remains open, is not an agreed criterion, and blocks approval/handoff and implementation. Do not convert inferred architecture into stakeholder agreement.
 - If engineering constraints alter scope or UX, make that explicit and revise the PRD or mockups when they exist.
 
 ## References

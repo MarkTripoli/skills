@@ -43,6 +43,7 @@ If user asks to keep working through questions: read TDD fully, identify unresol
 4. **Start child research when needed**: Start a child worker for role `agent-codebase-locator` (files/tests), `agent-codebase-analyzer` (behavior), `agent-codebase-pattern-finder` (precedents), or `agent-web-search-researcher` (external docs) with the assignment (see the conventions' Child workers section) when a missing fact would change artifact; wait for it; read its final message. Use only findings you have read from the worker's final message. If child/direct read discovers current-state facts missing/stale in completed research, fold into research artifact before finalizing TDD.
 
 5. **Create the revision**: Copy current TDD to the next `design.tdd` iteration and update that new file; never edit a recorded iteration. Preserve frontmatter/sections and rewrite `### Execution DAG` from current `orchestration.execution`. A legacy task without `index.json` follows the conventions' in-place rule.
+- Preserve ambiguity disposition: label each consequential item as source-backed inference or stakeholder choice, name its owner and acceptance impact, cite inference sources, and keep unresolved choices open and non-authoritative.
 
 6. **Update PRD or mockups if technical findings affect product behavior**: If decision changes UX/scope/availability/states/permissions/workflow, update product artifact when present.
 

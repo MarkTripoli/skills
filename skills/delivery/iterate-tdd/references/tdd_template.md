@@ -58,6 +58,14 @@ entrypoint
 
 [Intentional technical non-goals. Omit this section when there are none.]
 
+### Ambiguity Disposition
+
+| Consequential ambiguity | Disposition (source-backed inference or stakeholder choice) | Owner | Source / rationale | Acceptance impact | State |
+|---|---|---|---|---|---|
+| [Question] | [Inference / stakeholder choice] | [Named owner] | [Citation or rationale] | [Criteria affected] | [Open / resolved] |
+
+Unresolved stakeholder choices remain open; they are neither agreed criteria nor authority to implement.
+
 ### Local Patterns
 
 [Relevant repository examples, cited with paths and compact excerpts.]

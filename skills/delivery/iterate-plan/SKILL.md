@@ -39,6 +39,8 @@ Revise an existing implementation plan. Check feedback before applying it, prese
     - Keep deferred human evidence as plain bullets with pointers, never checkboxes; remove filler.
    - Maintain phase sections with success criteria.
 
+- Preserve ambiguity disposition: label each consequential item as source-backed inference or stakeholder choice, name its owner and acceptance impact, cite inference sources, and keep unresolved choices open and non-authoritative.
+- Before the existing human gate, obtain an independent acceptance-focused critique of consequential plans. Record skipped-lens reasons and actionable findings with criterion/phase, revision, and rerun requirement; revise and rerun after actionable changes.
 6. Record the next iteration through the conventions' Recording an artifact flow and respond following `references/plan_final_answer.md` exactly; fill `{artifact_link}` and `{artifact_file}` with the saved canonical task-root-relative path (the template carries the `@`), and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. Add no prose before or after the template. Commit the canonical path and `index.json` explicitly as `docs(task): plan artifact`.
 
 ## Plan Guidelines

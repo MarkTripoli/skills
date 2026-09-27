@@ -48,6 +48,14 @@ sha: [current commit]
 
 [Explain what the mockup demonstrates.]
 
+### Ambiguity Disposition
+
+| Consequential ambiguity | Disposition (source-backed inference or stakeholder choice) | Owner | Source / rationale | Acceptance impact | State |
+|---|---|---|---|---|---|
+| [Question] | [Inference / stakeholder choice] | [Named owner] | [Citation or rationale] | [Criteria affected] | [Open / resolved] |
+
+Unresolved stakeholder choices remain open; they are neither agreed criteria nor authority to implement.
+
 ### Out of Scope
 
 - [Behavior explicitly not included]

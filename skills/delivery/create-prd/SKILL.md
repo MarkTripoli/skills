@@ -21,6 +21,7 @@ Run as a guided conversation. Settle foundation (problem, success signal), then 
 - Keep readable as product spec. Headers state takeaway, short paragraphs, visuals near explanatory text.
 - Stay in product space: user flows, behavior, permissions, states, constraints, success criteria. Defer implementation mechanics to TDD.
 - Record each behavior in Solution Details as one obligation with an observable outcome, per the [slicing guide](https://github.com/MarkTripoli/skills/blob/main/shared/SLICING.md), which a checkout has at `shared/SLICING.md`. A behavior carrying "and also" is two behaviors; a vague term ("fast", "secure", "works correctly") is a decision nobody made yet, so ask the question that settles it.
+- **Disposition and authority**: For every consequential ambiguity, record whether its resolution is a source-backed inference or stakeholder choice, name the owner, and state acceptance impact. Cite sources for inferences. An unresolved stakeholder choice stays open, is not an agreed criterion, and blocks approval/handoff and implementation; continue the one-question interview for that decision.
 - If codebase reality or product behavior is unclear, verify before presenting options.
 
 ## References

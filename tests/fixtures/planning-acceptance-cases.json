@@ -1,0 +1,19 @@
+[
+  {
+    "name": "unresolved-owner-choice",
+    "criterion": "A project owner chooses whether deleted records are recoverable.",
+    "disposition": "stakeholder choice",
+    "owner": "product owner",
+    "state": "open",
+    "expected": "block approval and implementation; do not treat as agreed acceptance criterion"
+  },
+  {
+    "name": "missing-negative-error-criterion",
+    "criterion": "Submitting a valid address sends a confirmation.",
+    "disposition": "source-backed inference",
+    "owner": "plan author",
+    "state": "resolved",
+    "missing": ["invalid address rejection", "delivery failure behavior"],
+    "expected": "independent acceptance critique raises actionable revision and requires rerun"
+  }
+]

@@ -75,6 +75,29 @@ Omit this section when the phase has none.
 
 [Repeat this structure.]
 
+
+## Ambiguity Disposition
+
+| Consequential ambiguity | Disposition (source-backed inference or stakeholder choice) | Owner | Source / rationale | Acceptance impact | State |
+|---|---|---|---|---|---|
+| [Question] | [Inference / stakeholder choice] | [Named owner] | [Citation or rationale] | [Criteria affected] | [Open / resolved] |
+
+Unresolved stakeholder choices are not agreed criteria and cannot authorize implementation.
+
+## Acceptance Critique (before Human Review)
+
+Independent reviewer: [role/name, independent of plan author]
+
+| Acceptance criterion / phase | Challenge and observed gap | Actionable revision | Rerun required? |
+|---|---|---|---|
+| [Criterion] | [Test missing negative/error/boundary/failure outcomes as relevant] | [Specific change or `None`] | [Yes/No] |
+
+| Lens | Applied or skipped | Evidence / concrete skip reason |
+|---|---|---|
+| Acceptance | Applied | [Coverage of observable outcomes and unmet criteria] |
+| [Other relevant lens] | [Applied / skipped] | [Finding or why irrelevant] |
+
+Resolve actionable findings and rerun the critique before the existing human gate. Unresolved stakeholder choices block approval and implementation.
 ## Human Review
 
 ### Review targets

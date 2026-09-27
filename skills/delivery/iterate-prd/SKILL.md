@@ -42,6 +42,7 @@ If user wants to keep resolving choices: read PRD fully, identify sparse or unre
 4. **Start child research when needed**: Start a child worker for role `agent-codebase-locator` (finds files/tests), `agent-codebase-analyzer` (explains behavior), `agent-codebase-pattern-finder` (finds precedents), or `agent-web-search-researcher` (checks external docs) with the assignment (see the conventions' Child workers section) when a missing fact would change the artifact; wait for it; read its final message. Use only findings you have read from the worker's final message. If a child or direct read discovers current-state facts missing or stale in completed research, fold those into the research artifact before finalizing the PRD.
 
 5. **Update PRD**: Copy current PRD to the next `design.prd` iteration and update that new file; never edit a recorded iteration. Preserve frontmatter/sections and weave resolved decisions into narrative. A legacy task without `index.json` follows the conventions' in-place rule.
+- Preserve ambiguity disposition: label each consequential item as source-backed inference or stakeholder choice, name its owner and acceptance impact, cite inference sources, and keep unresolved choices open and non-authoritative.
 
 6. **Update mockups when feedback changes visuals**: Edit existing `mockup-<description>.html` files in the task directory when they represent same decision. Create new only when feedback introduces distinct UI choice. Link each mockup from the artifact with a relative Markdown link.
 
