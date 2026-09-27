@@ -76,6 +76,7 @@ test('rejects duplicate roots and symlinks escaping a selected repository', t =>
   const outside = path.join(root, 'outside.env');
   fs.writeFileSync(outside, 'TOKEN=outside\n');
   fs.symlinkSync(outside, path.join(a, '.env.external'));
+  execFileSync('git', ['-C', a, 'add', '-f', '.env.external']);
   const b = repo(root, 'two', {'.env': 'TOKEN=not-reported-alone\n'});
   assert.throws(() => correlate([a, b]), /unsafe path/);
 });
