@@ -100,8 +100,14 @@ test('issue lookup recognizes only task frontmatter, not body text', t => {
   const task = path.join(dir, 'task.md');
   fs.writeFileSync(task, '---\nslug: body-only\n---\nRequest mentions issue: 7\n');
   assert.equal(JSON.parse(f.runCli().stdout)[0].status, 'eligible');
-  fs.writeFileSync(task, '---\nslug: body-only\nrepository: acme/app\nissue: 7\n---\nBody.\n');
+  fs.writeFileSync(task, '---\nslug: body-only\nrepository: acme/app # canonical repository\nissue: 7\n---\nBody.\n');
   assert.equal(JSON.parse(f.runCli().stdout)[0].status, 'duplicate-task');
+  const execute = f.runHandoff();
+  assert.equal(JSON.parse(execute.stdout)[0].status, 'duplicate-task');
+  assert.equal(fs.existsSync(execute.log), false);
+  fs.writeFileSync(task, '---\nslug: body-only\nrepository: "acme/#app" # quoted hash is data\nissue: 7\n---\nBody.\n');
+  assert.equal(JSON.parse(f.runCli().stdout)[0].status, 'eligible');
+  assert.equal(JSON.parse(f.runCli(['--repo=acme/#app']).stdout)[0].status, 'duplicate-task');
 });
 test('shared task roots and PR bodies stay scoped to canonical repository identity', t => {
   const externalPrs = [{ number: 4, title: 'External references', body: 'other/repo#7 and https://github.com/other/repo/issues/7', url: '' }];

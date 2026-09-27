@@ -18,6 +18,30 @@ function eligible(issue, labels) {
   return issue.state === 'OPEN' && labels.every(label => issue.labels?.some(item => item.name === label));
 }
 function claimKey(repo, number) { return `${repo.toLowerCase()}#${number}`; }
+function yamlScalar(raw) {
+  const value = raw.trim();
+  if (value.startsWith("'")) {
+    for (let i = 1; i < value.length; i++) {
+      if (value[i] !== "'") continue;
+      if (value[i + 1] === "'") { i++; continue; }
+      if (!/^(?:\s+#.*)?\s*$/.test(value.slice(i + 1))) return null;
+      return value.slice(1, i).replace(/''/g, "'");
+    }
+    return null;
+  }
+  if (value.startsWith('"')) {
+    let escaped = false;
+    for (let i = 1; i < value.length; i++) {
+      if (escaped) { escaped = false; continue; }
+      if (value[i] === '\\') { escaped = true; continue; }
+      if (value[i] !== '"') continue;
+      if (!/^(?:\s+#.*)?\s*$/.test(value.slice(i + 1))) return null;
+      try { return JSON.parse(value.slice(0, i + 1)); } catch { return null; }
+    }
+    return null;
+  }
+  return value.replace(/\s+#.*$/, '').trim();
+}
 function taskMatches(root, repo, number) {
   if (!fs.existsSync(root)) return [];
   return fs.readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory()).flatMap(entry => {
@@ -27,7 +51,8 @@ function taskMatches(root, repo, number) {
     const frontmatter = text.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1];
     if (!frontmatter) return [];
     const issueMatches = new RegExp(`^issue:\\s*["']?${number}["']?\\s*$`, 'm').test(frontmatter);
-    const taskRepo = frontmatter.match(/^repository:\s*["']?([^"'\r\n]+?)["']?\s*$/m)?.[1];
+    const rawRepo = frontmatter.match(/^repository:\s*(.*)$/m)?.[1];
+    const taskRepo = rawRepo === undefined ? null : yamlScalar(rawRepo);
     return issueMatches && taskRepo?.toLowerCase() === repo.toLowerCase() ? [path.join(root, entry.name)] : [];
   });
 }
