@@ -9,11 +9,11 @@ export function buildReport(input) {
     throw new Error("input must contain inventory and events arrays");
   }
   const coverage = input.coverage;
+  const now = Date.now();
   const from = Date.parse(coverage?.observedFrom);
   const through = Date.parse(coverage?.observedThrough);
-  const days = Number.isFinite(from) && Number.isFinite(through) && through >= from
-    ? (through - from) / 86_400_000
-    : null;
+  const validInterval = Number.isFinite(from) && Number.isFinite(through) && from <= through && from <= now && through <= now;
+  const days = validInterval ? (through - from) / 86_400_000 : null;
   const sufficient = coverage?.complete === true
     && coverage?.consent === true
     && SUPPORTED_SOURCES.has(coverage?.source)

@@ -54,6 +54,19 @@ test("usage lifecycle requires consented supported coverage and preserves unknow
     },
   });
   assert.deepEqual(stale.suggestions.map(({ status }) => status), ["stale-candidate", "stale-candidate", "pinned"]);
+
+  const future = buildReport({
+    ...fixture,
+    coverage: {
+      complete: true,
+      source: "codex",
+      consent: true,
+      observedFrom: "2999-01-01T00:00:00Z",
+      observedThrough: "2999-02-01T00:00:00Z",
+    },
+  });
+  assert.equal(future.coverage.sufficient, false);
+  assert.deepEqual(future.suggestions.map(({ status }) => status), ["unknown", "unknown", "pinned"]);
 });
 
 test("installed usage lifecycle skill includes a runnable report executable", () => {
