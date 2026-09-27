@@ -2,7 +2,7 @@
   "$schema": "skills.task-index/v1",
   "schemaVersion": 1,
   "task": "i-want-you-gpt",
-  "generation": 1,
+  "generation": 2,
   "artifactSeries": {
     "research.sources": {
       "current": "research.sources.0001",
@@ -15,6 +15,20 @@
           "type": "sources",
           "status": null,
           "summary": "The external source is bdfinst/agentic-dev-team at commit 842286b, including the dev-team and security-assessment plugins. The comparison also uses the local public skills checkout at 13cb428 and Adyton skills checkout at 49b171b. Their READMEs identify the stated workflows, installation boundaries, and tool dependencies; code-level claims require separate research."
+        }
+      ]
+    },
+    "research.questions": {
+      "current": "research.questions.0001",
+      "iterations": [
+        {
+          "id": "research.questions.0001",
+          "iteration": 1,
+          "path": "artifacts/research/questions/0001.md",
+          "sha256": "6b5d00d75386871ebc2475660cfbebb308e67f53197f935c89a27b910c9bef89",
+          "type": "research-questions",
+          "status": null,
+          "summary": "Seven neutral questions cover the upstream development and security plugins, the public and Adyton collections, hooks, evaluations, and cross-agent/project boundaries. The research phase should distinguish executable behavior, prompt contracts, fixture evidence, and observed live outcomes at pinned revisions."
         }
       ]
     }
