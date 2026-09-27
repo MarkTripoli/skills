@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import {run} from '../skills/delivery/security-check/scripts/security-check.mjs';
+import {run, sourceMatchesRevision} from '../skills/delivery/security-check/scripts/security-check.mjs';
 
 const syntheticToken = `ghp_${['A1b2C3d4E5f6G7h8', 'I9j0K1l2M3n4O5p6Q7r8'].join('').slice(0, 36)}`;
 
@@ -90,7 +90,9 @@ test('a valid actionlint finding is coverage, not a scanner failure', () => {
     assert.equal(report.lanes.actionlint.coverage, 'complete');
     assert.equal(report.coverage, 'complete');
     assert.equal(report.findings.find(item => item.scanner === 'actionlint').line, 3);
-    assert.equal(run({cwd: root, spawn: scan(1, '[]')}).lanes.actionlint.coverage, 'incomplete');
+    assert.equal(run({cwd: root, spawn: scan(0, '')}).lanes.actionlint.coverage, 'complete');
+    assert.equal(run({cwd: root, spawn: scan(0, '{invalid json')}).lanes.actionlint.coverage, 'incomplete');
+    assert.equal(run({cwd: root, spawn: scan(1, '')}).lanes.actionlint.coverage, 'incomplete');
   } finally {
     fs.rmSync(root, {recursive: true, force: true});
   }
@@ -327,13 +329,14 @@ test('missing or failed Gitleaks marks secret coverage incomplete without raw di
 });
 
 test('uncommitted tracked, staged and untracked source cannot enter HEAD-bound scans', () => {
-  for (const change of ['modified', 'staged', 'untracked']) {
+  for (const change of ['modified', 'staged', 'untracked', 'staged-addition']) {
     const {root, revision} = repository();
     const committed = fs.readFileSync(path.join(root, 'seeded-secret.js'), 'utf8');
     try {
-      const source = change === 'untracked' ? 'new-secret.js' : 'seeded-secret.js';
+      const source = change === 'untracked' ? 'new-secret.js' : change === 'staged-addition' ? 'staged-new.js' : 'seeded-secret.js';
       fs.writeFileSync(path.join(root, source), 'const changed = true;\n');
-      if (change === 'staged') execFileSync('git', ['add', source], {cwd: root});
+      if (change === 'staged' || change === 'staged-addition') execFileSync('git', ['add', source], {cwd: root});
+      assert.equal(sourceMatchesRevision(root,revision),false);
       const report = run({cwd: root, spawn: (tool, args, options) => {
         if (tool !== 'gitleaks') {
           assert.equal(fs.readFileSync(path.join(options.cwd, 'seeded-secret.js'), 'utf8'), committed);

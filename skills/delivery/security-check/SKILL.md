@@ -31,7 +31,7 @@ Each lane reports its own version, status, exit code, coverage, and findings. Mi
 
 ## Assess findings on request
 
-Keep scanner JSON in an ignored task artifact or outside the checkout; incomplete scanner coverage is not clean. Assessment requires tracked source bytes and executable bits to match the recorded `HEAD` and no nonignored untracked files. It checks before prompt generation, before review, and after review without checkout hooks or Git clean filters.
+Keep scanner JSON in an ignored task artifact or outside the checkout; incomplete scanner coverage is not clean. Assessment requires the index to match `HEAD`, tracked source bytes and executable bits to match `HEAD`, and no nonignored untracked files. It checks before prompt generation, before review, and after review without checkout hooks or Git clean filters.
 
 Generate reviewer prompts with `node <installed-skills-dir>/security-check/scripts/assess.mjs --scan <scan.json> --root <repository-path> --prompts`. Dispatch one focused security-reviewer worker per high-severity finding using that prompt. Review only immutable Git objects at the recorded revision; if revision-bound evidence is unavailable, reply `uncertain`.
 

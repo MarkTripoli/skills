@@ -69,7 +69,9 @@ function matchesBlob(file,oid,mode,algorithm,chunk) {
 }
 export function sourceMatchesRevision(root,revision) {
   try {
-    if (git(['rev-parse','HEAD'],root) !== revision || git(['ls-files','--others','--exclude-standard','-z'],root)) return false;
+    if (git(['rev-parse','HEAD'],root) !== revision ||
+        git(['ls-files','--others','--exclude-standard','-z'],root) ||
+        git(['diff','--cached','--quiet','HEAD','--'],root)) return false;
     const entries = treeEntries(root,revision);
     const algorithm = objectFormat(root), chunk = Buffer.allocUnsafe(64 * 1024);
     return entries.every(({file,oid,mode}) => matchesBlob(path.join(root,file),oid,mode,algorithm,chunk));
@@ -257,6 +259,7 @@ export function run({cwd = process.cwd(), spawn = spawnSync} = {}) {
       args=[...scanArgs,...dockerfiles.map(file=>`./${file}`)];
     }
     const result=spawn(bin,args,{cwd:key==='gitleaks'?cwd:snapshot.checkout,encoding:'utf8',maxBuffer:32*1024*1024,timeout:300000,env:offlineGitEnv});
+    if (key==='actionlint' && result.status===0 && (result.stdout==='' || result.stdout==null)) result.stdout='[]';
     lanes[key]=lane({name:bin,scanner:key,version,result,parse,root:key==='gitleaks'?cwd:snapshot.checkout,revision,repository,allowFindingExit:key==='actionlint'});
   }
   const legacy=lanes.semgrep, secrets=lanes.gitleaks;
