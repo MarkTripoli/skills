@@ -23,7 +23,7 @@ function git(args, cwd, input) {
     GIT_CONFIG_KEY_1: 'core.untrackedCache', GIT_CONFIG_VALUE_1: 'false',
     GIT_CONFIG_KEY_2: 'core.splitIndex', GIT_CONFIG_VALUE_2: 'false',
   });
-  return execFileSync('git', args, {cwd, env, input, encoding: input === undefined ? 'utf8' : 'buffer', maxBuffer: MAX_GIT_OUTPUT, stdio: input === undefined ? ['ignore', 'pipe', 'ignore'] : ['pipe', 'pipe', 'ignore']});
+  return execFileSync('git', args, {cwd, env, input, encoding: input === undefined ? 'utf8' : undefined, maxBuffer: MAX_GIT_OUTPUT, stdio: input === undefined ? ['ignore', 'pipe', 'ignore'] : ['pipe', 'pipe', 'ignore']});
 }
 const safeOrigin = origin => {
   if (origin.length > 512) return null;
