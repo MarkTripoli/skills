@@ -35,6 +35,10 @@ async function main(args) {
   const remote = execFileSync('git', ['config', '--get', 'remote.origin.url'], {cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']}).trim();
   const scan = JSON.parse(fs.readFileSync(options['--scan'], 'utf8'));
   if (scan.revision !== revision || scan.repository !== canonicalRepository(remote)) throw new Error('scan belongs to another repository or revision');
+  if (scan.schema_version !== 1 || !Array.isArray(scan.findings) ||
+      applyAcceptedRisks(scan.findings, [], {repository: scan.repository}).coverage !== 'complete') {
+    throw new Error('scan findings are not normalized');
+  }
   if (promptsOnly) {
     const prompts = [];
     await reviewHighRisk(scan.findings, {reviewer: async ({finding, prompt}) => {

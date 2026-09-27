@@ -44,6 +44,12 @@ test('review prompts and assessment bind exact current repository and source lin
   const rejected = spawnSync(process.execPath, [cli, '--scan', scanFile, '--root', root, '--reviews', reviewsFile], {encoding: 'utf8'});
   assert.equal(rejected.status, 0);
   assert.equal(JSON.parse(rejected.stdout).dispositions[0].reachability, 'uncertain');
+  scan.findings[0].path = '../outside.js';
+  fs.writeFileSync(scanFile, JSON.stringify(scan));
+  const malformed = spawnSync(process.execPath, [cli, '--scan', scanFile, '--root', root, '--prompts'], {encoding: 'utf8'});
+  assert.equal(malformed.status, 1);
+  assert.equal(JSON.parse(malformed.stdout).status, 'incomplete');
+  scan.findings[0].path = 'src/handler.js';
   scan.revision = '0'.repeat(40);
   fs.writeFileSync(scanFile, JSON.stringify(scan));
   const stale = spawnSync(process.execPath, [cli, '--scan', scanFile, '--root', root], {encoding: 'utf8'});
