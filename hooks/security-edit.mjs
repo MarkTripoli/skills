@@ -15,7 +15,9 @@ const localFile = value => {
   catch { return false; }
 };
 const EDIT_TOOLS = new Set(['write', 'edit']);
+const MAX_SNAPSHOT_BYTES = 5 * 1024 * 1024;
 const inside = (root, file) => file !== root && !path.relative(root, file).startsWith(`..${path.sep}`) && path.relative(root, file) !== '..' && !path.isAbsolute(path.relative(root, file));
+const isEnvironmentFile = file => /(^|\/)\.env(?:\.|$)/i.test(file);
 
 function successfulResult(event) {
   return event?.isError === false;
@@ -80,6 +82,18 @@ function fileNames(event) {
   return [...names].filter(name => name && name !== '/dev/null');
 }
 
+function authorizedRelative(root, lexical) {
+  let ancestor = path.dirname(lexical);
+  let relative = null;
+  while (true) {
+    try {
+      if (fs.realpathSync(ancestor) === root) relative = path.relative(ancestor, lexical).split(path.sep).join('/');
+    } catch {}
+    const parent = path.dirname(ancestor);
+    if (parent === ancestor) return relative;
+    ancestor = parent;
+  }
+}
 function savedFile(root, name) {
   const lexical = path.resolve(root, name);
   let real;
@@ -89,13 +103,44 @@ function savedFile(root, name) {
     return { reason: 'changed file is missing after tool completion' };
   }
   if (!inside(root, real)) return { reason: 'changed file resolves outside the repository' };
-  try { if (!fs.statSync(real).isFile()) return { reason: 'changed path is not a regular file' }; }
+  let parent;
+  try { parent = fs.realpathSync(path.dirname(lexical)); }
   catch { return { reason: 'changed file is unavailable after tool completion' }; }
-  const relative = path.relative(root, real).split(path.sep).join('/');
-  if (/(^|\/)\.env(?:\.|$)/i.test(relative)) return { path: relative, reason: 'environment files are not scanned' };
-  try { fs.readFileSync(real); }
-  catch { return { path: relative, reason: 'changed file cannot be read' }; }
-  return { path: real, relative };
+  if (parent !== root && !inside(root, parent)) return { reason: 'changed path is outside the repository' };
+  const relative = authorizedRelative(root, lexical);
+  if (!relative) return { reason: 'changed path is outside the repository' };
+  const targetRelative = path.relative(root, real).split(path.sep).join('/');
+  if (isEnvironmentFile(relative) || isEnvironmentFile(targetRelative)) return { path: relative, relative, reason: 'environment files are not scanned' };
+  let fd;
+  try {
+    fd = fs.openSync(real, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    const before = fs.fstatSync(fd, { bigint: true });
+    if (!before.isFile()) return { relative, reason: 'changed path is not a regular file' };
+    if (before.size > BigInt(MAX_SNAPSHOT_BYTES)) return { relative, reason: 'changed file exceeds the 5 MiB scan snapshot limit' };
+    const bytes = Buffer.alloc(Number(before.size));
+    let offset = 0;
+    while (offset < bytes.length) {
+      const count = fs.readSync(fd, bytes, offset, bytes.length - offset, offset);
+      if (!count) break;
+      offset += count;
+    }
+    const extra = Buffer.alloc(1);
+    const after = fs.fstatSync(fd, { bigint: true });
+    const currentPath = fs.realpathSync(real);
+    if (!inside(root, currentPath)) return { relative, reason: 'changed file resolves outside the repository' };
+    const current = fs.statSync(currentPath, { bigint: true });
+    if (offset !== bytes.length || fs.readSync(fd, extra, 0, 1, bytes.length) !== 0
+      || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size
+      || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs
+      || before.dev !== current.dev || before.ino !== current.ino) {
+      return { relative, reason: 'changed file changed while preparing its scan snapshot' };
+    }
+    return { path: real, relative, bytes };
+  } catch {
+    return { relative, reason: 'changed file cannot be read' };
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
 }
 
 function invoke(run, bin, args, cwd) {
@@ -135,31 +180,45 @@ function parseSemgrep(stdout, file) {
 }
 
 function scanFile(file, { cwd, env, run }) {
-  const lanes = [];
-  if (/(^|\/)dockerfile(?:\..*)?$/i.test(file.relative)) {
-    lanes.push(lane('hadolint', 'hadolint', ['--format', 'json'], file.path, cwd, run, parseHadolint));
+  let snapshotDirectory;
+  let snapshot;
+  try {
+    snapshotDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'skills-security-snapshot-'));
+    snapshot = path.join(snapshotDirectory, path.basename(file.relative));
+    fs.writeFileSync(snapshot, file.bytes, { flag: 'wx', mode: 0o400 });
+  } catch {
+    if (snapshotDirectory) fs.rmSync(snapshotDirectory, { recursive: true, force: true });
+    return { file: file.relative, coverage: 'incomplete', lanes: [incomplete('dispatch', 'validated file snapshot unavailable')] };
   }
-  if (/^\.github\/workflows\/[^/]+\.ya?ml$/i.test(file.relative)) {
-    lanes.push(lane('actionlint', 'actionlint', ['-format', '{{json .}}'], file.path, cwd, run, parseActionlint));
+  try {
+    const lanes = [];
+    if (/(^|\/)dockerfile(?:\..*)?$/i.test(file.relative)) {
+      lanes.push(lane('hadolint', 'hadolint', ['--format', 'json'], snapshot, cwd, run, parseHadolint));
+    }
+    if (/^\.github\/workflows\/[^/]+\.ya?ml$/i.test(file.relative)) {
+      lanes.push(lane('actionlint', 'actionlint', ['-format', '{{json .}}'], snapshot, cwd, run, parseActionlint));
+    }
+    const rules = env.SKILLS_SECURITY_SEMGREP_RULES;
+    if (rules && localPath(rules)) {
+      lanes.push(lane('semgrep', 'semgrep', ['scan', '--json', '--config', rules, '--metrics=off', '--disable-version-check'], snapshot, cwd, run, parseSemgrep));
+    } else {
+      lanes.push(incomplete('semgrep', rules ? 'configured local rules path unavailable' : 'local rules not configured; no registry fetch attempted'));
+    }
+    const cache = env.TRIVY_CACHE_DIR || path.join(os.homedir(), '.cache', 'trivy');
+    const db = path.join(path.resolve(cache), 'db', 'trivy.db');
+    if (localFile(db)) {
+      lanes.push(lane('trivy_fs', 'trivy', ['fs', '--format', 'json', '--scanners', 'vuln', '--skip-db-update', '--skip-java-db-update', '--skip-vex-repo-update', '--offline-scan', '--disable-telemetry', '--skip-version-check'], snapshot, cwd, run, stdout => {
+        const report = JSON.parse(stdout);
+        if (!Array.isArray(report.Results)) throw new Error('invalid output');
+        return report.Results.flatMap(result => (result.Vulnerabilities || []).map(v => safeFinding('trivy_fs', snapshot, v.LineNumber, v.VulnerabilityID, v.Severity)));
+      }));
+    } else lanes.push(incomplete('trivy_fs', 'local vulnerability database unavailable; no download attempted'));
+    lanes.push(incomplete('trivy_config', 'local Trivy checks bundle not verified; scanner not run'));
+    for (const item of lanes) for (const finding of item.findings) finding.path = file.relative;
+    return { file: file.relative, coverage: lanes.every(item => item.coverage === 'complete') ? 'complete' : 'incomplete', lanes };
+  } finally {
+    fs.rmSync(snapshotDirectory, { recursive: true, force: true });
   }
-  const rules = env.SKILLS_SECURITY_SEMGREP_RULES;
-  if (rules && localPath(rules)) {
-    lanes.push(lane('semgrep', 'semgrep', ['scan', '--json', '--config', rules, '--metrics=off', '--disable-version-check'], file.path, cwd, run, parseSemgrep));
-  } else {
-    lanes.push(incomplete('semgrep', rules ? 'configured local rules path unavailable' : 'local rules not configured; no registry fetch attempted'));
-  }
-  const cache = env.TRIVY_CACHE_DIR || path.join(os.homedir(), '.cache', 'trivy');
-  const db = path.join(path.resolve(cache), 'db', 'trivy.db');
-  if (localFile(db)) {
-    lanes.push(lane('trivy_fs', 'trivy', ['fs', '--format', 'json', '--scanners', 'vuln', '--skip-db-update', '--skip-java-db-update', '--skip-vex-repo-update', '--offline-scan', '--disable-telemetry', '--skip-version-check'], file.path, cwd, run, stdout => {
-      const report = JSON.parse(stdout);
-      if (!Array.isArray(report.Results)) throw new Error('invalid output');
-      return report.Results.flatMap(result => (result.Vulnerabilities || []).map(v => safeFinding('trivy_fs', file.path, v.LineNumber, v.VulnerabilityID, v.Severity)));
-    }));
-  } else lanes.push(incomplete('trivy_fs', 'local vulnerability database unavailable; no download attempted'));
-  lanes.push(incomplete('trivy_config', 'local Trivy checks bundle not verified; scanner not run'));
-  for (const item of lanes) for (const finding of item.findings) finding.path = file.relative;
-  return { file: file.relative, coverage: lanes.every(item => item.coverage === 'complete') ? 'complete' : 'incomplete', lanes };
 }
 
 export function inspectEditedFile(event, { cwd = process.cwd(), env = process.env, run = spawnSync } = {}) {

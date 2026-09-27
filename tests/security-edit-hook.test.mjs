@@ -26,7 +26,8 @@ test('successful write result scans saved Dockerfile bytes and reports advisory 
     calls.push({ bin, args });
     assert.equal(options.cwd, fs.realpathSync(cwd));
     if (args[0] === '--version') return { status: 0, stdout: 'hadolint 2.12.0' };
-    assert.equal(args.at(-1), fs.realpathSync(target));
+    assert.notEqual(args.at(-1), fs.realpathSync(target));
+    assert.equal(path.basename(args.at(-1)), 'Dockerfile');
     assert.equal(fs.readFileSync(args.at(-1), 'utf8'), 'FROM saved-content\n');
     return { status: 0, stdout: JSON.stringify([{ line: 1, code: 'DL3006', level: 'warning', message: 'source prose is never reported' }]) };
   };
@@ -40,6 +41,8 @@ test('successful write result scans saved Dockerfile bytes and reports advisory 
   assert.match(report.results[0].lanes.find(item => item.tool === 'trivy_fs').reason, /no download/);
   assert.deepEqual(calls.map(({ bin, args }) => [bin, args[0]]), [['hadolint', '--version'], ['hadolint', '--format']]);
   assert.equal(JSON.stringify(report).includes('source prose is never reported'), false);
+  const snapshot = calls.find(item => item.args[0] === '--format').args.at(-1);
+  assert.equal(fs.existsSync(snapshot), false);
 });
 
 test('successful multi-file hashline edit scans saved files and follows MV destination', t => {
@@ -74,13 +77,15 @@ test('successful multi-file hashline edit scans saved files and follows MV desti
   ].join('\n');
   const report = inspectEditedFile({ toolName: 'edit', input: { patch }, details: {}, content: [{ type: 'text', text: content }], isError: false }, { cwd, env: offlineEnv(cwd), run });
   assert.deepEqual(report.results.map(item => item.file).sort(), ['.github/workflows/build.yaml', 'Dockerfile.production']);
-  assert.deepEqual(seen.map(item => item.target).sort(), [docker, workflow].map(file => fs.realpathSync(file)).sort());
+  assert.deepEqual(seen.map(item => path.basename(item.target)).sort(), ['build.yaml', 'Dockerfile.production']);
+  assert.notDeepEqual(seen.map(item => item.target).sort(), [docker, workflow].map(file => fs.realpathSync(file)).sort());
   assert.deepEqual(seen.map(item => item.contents).sort(), ['FROM saved image\n', 'name: saved workflow\n'].sort());
 });
 
 test('absolute alias paths resolve inside the canonical repository root', t => {
   const cwd = workspace(t);
-  const target = file(cwd, 'Dockerfile', 'FROM saved via alias\n');
+  const target = file(cwd, 'cfg/image.txt', 'FROM saved via alias\n');
+  fs.symlinkSync(target, path.join(cwd, 'Dockerfile'));
   const canonicalRoot = fs.realpathSync(cwd);
   let aliasRoot;
   if (process.platform === 'darwin' && canonicalRoot.startsWith('/private/')) {
@@ -95,7 +100,8 @@ test('absolute alias paths resolve inside the canonical repository root', t => {
   const run = (bin, args) => {
     calls.push({ bin, args });
     if (args[0] === '--version') return { status: 0, stdout: 'hadolint local' };
-    assert.equal(args.at(-1), fs.realpathSync(target));
+    assert.notEqual(args.at(-1), fs.realpathSync(target));
+    assert.equal(path.basename(args.at(-1)), 'Dockerfile');
     assert.equal(fs.readFileSync(args.at(-1), 'utf8'), 'FROM saved via alias\n');
     return { status: 0, stdout: '[]' };
   };
@@ -107,7 +113,71 @@ test('absolute alias paths resolve inside the canonical repository root', t => {
     isError: false,
   }, { cwd, env: offlineEnv(cwd), run });
   assert.equal(report.results[0].file, 'Dockerfile');
+  const snapshot = calls.find(item => item.args[0] === '--format').args.at(-1);
+  assert.equal(fs.existsSync(snapshot), false);
   assert.deepEqual(calls.map(item => item.args[0]), ['--version', '--format']);
+});
+
+test('scanner reads a bounded snapshot after an in-root symlink changes', t => {
+  const cwd = workspace(t);
+  const target = file(cwd, 'cfg/image.txt', 'FROM saved repository bytes\n');
+  const alias = path.join(cwd, 'Dockerfile');
+  fs.symlinkSync(target, alias);
+  const outside = file(path.dirname(cwd), `${path.basename(cwd)}-outside-image`, 'FROM outside bytes\n');
+  t.after(() => fs.rmSync(outside, { force: true }));
+  let snapshot;
+  const run = (bin, args) => {
+    if (args[0] === '--version') {
+      fs.unlinkSync(alias);
+      fs.symlinkSync(outside, alias);
+      return { status: 0, stdout: 'hadolint local' };
+    }
+    snapshot = args.at(-1);
+    assert.notEqual(snapshot, alias);
+    assert.equal(path.basename(snapshot), 'Dockerfile');
+    assert.equal(fs.readFileSync(snapshot, 'utf8'), 'FROM saved repository bytes\n');
+    return { status: 0, stdout: '[]' };
+  };
+  const report = inspectEditedFile({
+    toolName: 'write', input: { path: 'Dockerfile' }, details: {},
+    content: 'Wrote file: Dockerfile', isError: false,
+  }, { cwd, env: offlineEnv(cwd), run });
+  assert.equal(report.results[0].file, 'Dockerfile');
+  assert.equal(fs.readFileSync(outside, 'utf8'), 'FROM outside bytes\n');
+  assert.equal(fs.existsSync(snapshot), false);
+});
+
+test('environment files are excluded through either original or resolved aliases', t => {
+  const cwd = workspace(t);
+  const secret = file(cwd, '.env', 'SECRET=not-scanned\n');
+  const safe = file(cwd, 'cfg/image.txt', 'FROM safe image\n');
+  fs.symlinkSync(secret, path.join(cwd, 'Dockerfile'));
+  fs.symlinkSync(safe, path.join(cwd, '.env.local'));
+  let calls = 0;
+  const run = () => { calls += 1; throw new Error('environment file must not be scanned'); };
+  const inspect = name => inspectEditedFile({
+    toolName: 'write', input: { path: name }, details: {}, content: 'Wrote file', isError: false,
+  }, { cwd, env: offlineEnv(cwd), run });
+  const targetIsEnvironment = inspect('Dockerfile');
+  const aliasIsEnvironment = inspect('.env.local');
+  assert.match(targetIsEnvironment.lanes[0].reason, /environment files are not scanned/);
+  assert.match(aliasIsEnvironment.lanes[0].reason, /environment files are not scanned/);
+  assert.equal(calls, 0);
+});
+
+test('files above the scan snapshot bound are not read by scanners', t => {
+  const cwd = workspace(t);
+  const target = path.join(cwd, 'Dockerfile');
+  fs.mkdirSync(cwd, { recursive: true });
+  const fd = fs.openSync(target, 'w');
+  fs.ftruncateSync(fd, 5 * 1024 * 1024 + 1);
+  fs.closeSync(fd);
+  let calls = 0;
+  const report = inspectEditedFile({
+    toolName: 'write', input: { path: 'Dockerfile' }, details: {}, content: 'Wrote file', isError: false,
+  }, { cwd, env: offlineEnv(cwd), run() { calls += 1; throw new Error('oversized file must not be scanned'); } });
+  assert.match(report.lanes[0].reason, /5 MiB scan snapshot limit/);
+  assert.equal(calls, 0);
 });
 
 test('failed completion and symlink escape never scan outside saved repository content', t => {
@@ -132,8 +202,8 @@ test('Semgrep requires an explicit local rules path and sees completed workflow 
   const run = (bin, args) => {
     calls.push({ bin, args });
     if (args[0] === '--version') return { status: 0, stdout: `${bin} local` };
-    assert.equal(args.at(-1), fs.realpathSync(target));
-    assert.equal(fs.readFileSync(target, 'utf8'), 'name: saved workflow\n');
+    assert.notEqual(args.at(-1), fs.realpathSync(target));
+    assert.equal(fs.readFileSync(args.at(-1), 'utf8'), 'name: saved workflow\n');
     if (bin === 'semgrep') return { status: 0, stdout: JSON.stringify({ results: [], errors: [] }) };
     if (bin === 'actionlint') return { status: 0, stdout: '' };
     assert.fail(`unexpected scanner ${bin}`);
