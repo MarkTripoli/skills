@@ -1,4 +1,3 @@
-// Policy-only decision for normalized observations. No publication workflow calls this yet.
 const blocked = (status) => ({ allowed: false, ready: false, status });
 
 export function decidePublicationProof(proof) {
@@ -6,6 +5,7 @@ export function decidePublicationProof(proof) {
     return { allowed: proof.captureUploadMissing === true, ready: false, status: "incomplete" };
   }
   if (proof.bypass) return blocked("incomplete");
+  if (!proof.head || !proof.tested) return blocked("incomplete");
   if (proof.substantiveChanged) return blocked("stale");
   if (proof.head !== proof.tested && (!proof.artifactOnlyAdvancement || !proof.indexedArtifactsOnly)) {
     return blocked("stale");

@@ -13,6 +13,7 @@ const current = {
 const cases = [
   ['draft may host missing capture but never become ready', { ...current, mode: 'draft-host-capture', captureUploadMissing: true }, { allowed: true, ready: false, status: 'incomplete' }],
   ['indexed artifact-only HEAD advancement reuses tested-code proof', current, { allowed: true, ready: true, status: 'pass' }],
+  ['missing tested revision is incomplete, not stale', { ...current, tested: '', artifactOnlyAdvancement: false }, { allowed: false, ready: false, status: 'incomplete' }],
   ['substantive change after tested code is stale', { ...current, substantiveChanged: true }, { allowed: false, ready: false, status: 'stale' }],
   ['non-indexed advancement is not within the evidence exception', { ...current, artifactOnlyAdvancement: true, indexedArtifactsOnly: false }, { allowed: false, ready: false, status: 'stale' }],
   ['unclean required review blocks readiness', { ...current, review: 'changes-requested' }, { allowed: false, ready: false, status: 'incomplete' }],
