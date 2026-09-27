@@ -20,8 +20,14 @@ export function detectProject(root) {
   return { status: "unsupported", reason: "No supported Node project signals detected." };
 }
 
+function normalizeProject(root) {
+  const requested = path.resolve(root);
+  const parent = fs.realpathSync(path.dirname(requested));
+  return path.join(parent, path.basename(requested));
+}
+
 export function createPlan(root) {
-  const project = path.resolve(root);
+  const project = normalizeProject(root);
   const detection = detectProject(project);
   const canCreate = detection.status === "detected" && detection.stack === "node" && !fs.existsSync(path.join(project, "package.json"));
   return {
@@ -39,15 +45,17 @@ export function createPlan(root) {
 }
 
 export function applyPlan(root, plan) {
-  if (plan.project !== path.resolve(root) || plan.mode !== "supported" || plan.actions.length !== 1 ||
+  const requested = normalizeProject(root);
+  if (plan.project !== requested || plan.mode !== "supported" || plan.actions.length !== 1 ||
       plan.actions[0].path !== "package.json" || plan.actions[0].contents !== '{\n  "private": true\n}\n') {
     throw new Error("No applicable bootstrap action.");
   }
-  const requested = path.resolve(root);
-  const real = fs.realpathSync(requested);
-  if (requested !== real) throw new Error("Target directory resolves through a symlink; refusing to write.");
+  const targetInfo = fs.lstatSync(requested);
+  if (targetInfo.isSymbolicLink() || !targetInfo.isDirectory()) {
+    throw new Error("Target must be a real directory; refusing to write.");
+  }
   const action = plan.actions[0];
-  const target = path.join(real, action.path);
+  const target = path.join(requested, action.path);
   const fd = fs.openSync(target, "wx", 0o644);
   try {
     fs.writeFileSync(fd, action.contents, "utf8");
