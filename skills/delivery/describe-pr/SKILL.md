@@ -77,8 +77,24 @@ Prepare a provisional body in an untracked temporary file outside the task direc
 
 Post a **separate** PR comment with the hosted capture URL, result, tested code SHA, and current PR head SHA. Use `gh pr comment <number> --body "<text>"` for an already-hosted URL, or the authenticated PR comment box to upload video and verify its hosted URL first. Editing the PR body does not count as a comment. On review updates, edit the prior evidence comment or add a new distinct comment. Obtain and read back its permalink and content, confirming that the comment links to the capture.
 
-Only now allocate and record the **one** next indexed `pull-request.description` iteration through the conventions' Recording an artifact flow. Write the final body with both the verified hosted capture URL and evidence-comment permalink in `## Evidence`; the artifact has no frontmatter. Commit its returned canonical path and `index.json` explicitly as `docs(task): pr-description artifact`, push, and publish it with `gh pr edit <number> --body-file <final-path>`. Remove the provisional temporary file; do not index, stage, or commit it. Never rewrite an earlier iteration. If publication fails, repair publication of this recorded final body rather than allocating a duplicate iteration.
+Only now allocate and record the **one** next indexed `pull-request.description` iteration through the conventions' Recording an artifact flow. Write the final body with both the verified hosted capture URL and evidence-comment permalink in `## Evidence`; the artifact has no frontmatter. Commit its returned canonical path and `index.json` explicitly as `docs(task): pr-description artifact`, then push. Re-fetch the resulting PR head SHA and edit the **same** evidence comment to name that final head SHA alongside the tested code SHA and capture URL; read the comment back before publishing the body with `gh pr edit <number> --body-file <final-path>`. This comment edit does not create a Git commit and preserves the artifact's recorded permalink. Remove the provisional temporary file; do not index, stage, or commit it. Never rewrite an earlier iteration. If publication fails, repair publication of this recorded final body rather than allocating a duplicate iteration.
 
+
+Before changing a draft to ready, run the collection's proof command from the repository root:
+
+```bash
+node shared/publication-proof.mjs <task-dir> <repo-root> <pr-number>
+```
+
+Use the actual task directory, repository root, and PR number. The command validates current indexed artifact records, compares the receipt and clean review revisions with Git HEAD, checks that any advancement contains only indexed task artifacts, and reads the hosted PR, comment, and published body through `gh`. It prints JSON with `status`, `reason`, and `ready`; mark ready only for `status: "pass"` and `ready: true`. `stale` requires fresh evidence/review for the changed code; `incomplete` requires repairing missing proof and rerunning the command. An explicit `--override "<reason>"` records the requested reason in output but can never produce pass or authorize ready.
+
+When a draft exists solely to host a capture that has not yet been uploaded, the provisional check is:
+
+```bash
+node shared/publication-proof.mjs <task-dir> <repo-root> <pr-number> --draft-host-capture
+```
+
+This may return `allowed: true` with `ready: false` and `status: "incomplete"` only for an existing draft PR. It does not authorize final body publication or ready status. After uploading and verifying the capture, complete the ordinary comment/body ordering above and run the final decision again.
 Re-fetch the PR and confirm URL, title, number, base, head, and that the published body matches the final indexed artifact and its rendered `## Evidence` section links to both the playable/readable hosted capture and the distinct comment. Confirm again that the comment links to the capture. Retitle an existing PR that fails the title rule with `gh pr edit <number> --title "<title>"`. Mark a draft PR ready only after the checks pass. If upload, comment, link verification, or body matching fails, publication is incomplete; repair it before reporting success.
 
 ### 6. Report
