@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {reviewHighRisk, renderSecurityReport} from '../skills/delivery/security-check/scripts/reachability.mjs';
 
 const high = (finding_id, severity = 'ERROR', extra = {}) => ({
@@ -50,6 +53,8 @@ test('review failures and unsupported conclusions become uncertain', async () =>
 test('renders scanner coverage and separates active, accepted, unreachable, and uncertain findings', () => {
   const findings = [high('reachable'), high('unreachable'), high('accepted'), high('unknown'), high('warning', 'WARNING')];
   const report = renderSecurityReport({
+    repository: 'https://example.test/owner/repo',
+    revision: 'a'.repeat(40),
     scanner: 'semgrep',
     coverage: 'incomplete',
     tool: {name: 'semgrep', status: 'failed', version: '1.168.0'},
@@ -61,6 +66,7 @@ test('renders scanner coverage and separates active, accepted, unreachable, and 
     {finding_id: 'unknown', ...cited('uncertain')},
   ]);
   assert.match(report, /Scanner coverage: semgrep incomplete; tool status failed/);
+  assert.match(report, /Repository: https:\/\/example\.test\/owner\/repo; revision: a{40}/);
   assert.match(report, /Active findings \(2\)/);
   assert.match(report, /Secret coverage: unknown/);
   assert.match(report, /Accepted-risk coverage: complete/);
@@ -79,4 +85,28 @@ test('bounds disposition evidence and report listing', async () => {
   const report = renderSecurityReport({findings: Array.from({length: 102}, (_, index) => high(`finding-${index}`, 'WARNING'))}, {}, []);
   assert.match(report, /Active findings \(102\)/);
   assert.match(report, /2 additional findings omitted/);
+});
+
+test('source-root citations must name current in-repository lines', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reachability-source-'));
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  fs.mkdirSync(path.join(root, 'src'));
+  fs.writeFileSync(path.join(root, 'src', 'live.js'), 'one\ntwo\nthree\n');
+  const finding = high('current', 'HIGH', {path: 'src/live.js', line: 2});
+  const valid = await reviewHighRisk([finding], {sourceRoot: root, reviewer: async () => ({
+    reachability: 'reachable', source_references: [{path: 'src/live.js', start_line: 1, end_line: 2}], reachability_basis: 'input reaches sink',
+  })});
+  assert.equal(valid[0].reachability, 'reachable');
+  const invalid = await reviewHighRisk([finding], {sourceRoot: root, reviewer: async () => ({
+    reachability: 'reachable', source_references: [{path: 'src/live.js', start_line: 4, end_line: 8}], reachability_basis: 'invented lines',
+  })});
+  assert.equal(invalid[0].reachability, 'uncertain');
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'reachability-outside-'));
+  t.after(() => fs.rmSync(outside, {recursive: true, force: true}));
+  fs.writeFileSync(path.join(outside, 'outside.js'), 'outside source\n');
+  fs.symlinkSync(path.join(outside, 'outside.js'), path.join(root, 'src', 'outside.js'));
+  const escaped = await reviewHighRisk([finding], {sourceRoot: root, reviewer: async () => ({
+    reachability: 'unreachable', source_references: [{path: 'src/outside.js', start_line: 1, end_line: 1}], reachability_basis: 'escaped source',
+  })});
+  assert.equal(escaped[0].reachability, 'uncertain');
 });

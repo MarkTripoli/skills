@@ -1,0 +1,13 @@
+{
+  "fixture_version": 1,
+  "repository": "https://example.test/owner/security-fixture",
+  "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "now": "2026-09-27T00:00:00.000Z",
+  "secret_parts": ["ghp_", "A1b2C3d4E5f6G7h8", "I9j0K1l2M3n4O5p6Q7"],
+  "expected": [
+    {"scanner": "semgrep", "rule_id": "js.command-injection", "path": "src/handler.js", "line": 4, "group": "active", "reachability": "reachable"},
+    {"scanner": "gitleaks", "rule_id": "github-pat", "path": "src/keys.js", "line": 2, "group": "uncertain", "reachability": "uncertain"},
+    {"scanner": "semgrep", "rule_id": "js.accepted-risk", "path": "src/legacy.js", "line": 8, "group": "suppressed", "reachability": "reachable", "accepted_risk": {"reason": "Reviewed legacy exception", "expires": "2030-01-01"}},
+    {"scanner": "semgrep", "rule_id": "js.expired-risk", "path": "src/expired.js", "line": 5, "group": "active", "reachability": "reachable", "expired_risk": {"expires": "2020-01-01"}}
+  ]
+}

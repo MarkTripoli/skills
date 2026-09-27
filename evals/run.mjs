@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { subjectProblems } from "../scripts/check-commits.mjs";
 import { gradeEvidenceScenario, isEvidenceScenario, snapshotEvidenceSources } from "./iterate-evidence.mjs";
 import { artifacts, failures, handoff, newest, placeholders } from "./lib.mjs";
+import { recordSecurityAssessment } from "./security-assessment.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..");
@@ -58,6 +59,21 @@ if (args[0] === "--compare") {
       : "unknown",
   }, null, 2));
   process.exit(0);
+}
+if (args[0] === "--grade-security") {
+  if (args.length !== 2 || !args[1] || args[1].startsWith("--")) {
+    console.error("usage: node evals/run.mjs --grade-security <normalized-assessment.json>");
+    process.exit(2);
+  }
+  try {
+    const fixture = path.join(fixturesDir, "security-check", "ground-truth.json");
+    const {dir, grade} = recordSecurityAssessment(args[1], fixture, resultsRoot);
+    console.log(JSON.stringify({...grade, result_dir: dir}, null, 2));
+    process.exit(grade.status === "passed" ? 0 : 1);
+  } catch {
+    console.error("security assessment or fixture is invalid");
+    process.exit(2);
+  }
 }
 const keep = args.includes("--keep");
 const flagValue = (flag) => {
