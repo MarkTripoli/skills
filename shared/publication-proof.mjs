@@ -149,7 +149,7 @@ function recordedText(text, sha, recording) {
       commands.slice(commandIndex + 2).every(match => match[1].trim() === 'exit') &&
       (trailer.length === 0 || (trailer.length === 1 && trailer[0][1] === '0'));
   }
-  const observed = /(?:^|\n)\s*(?:stdout|test output|observed output|response(?: body)?|result output|tool output)(?:[ \t]*:[ \t]*|[ \t]*\r?\n)([^\r\n]*)/im.exec(text);
+  const observed = /(?:^|\n)\s*(?:(?:node[ \t]+)?stdout|test output|observed output|response(?: body)?|result output|tool output)(?:[ \t]*:[ \t]*|[ \t]*\r?\n)([^\r\n]*)/im.exec(text);
   const output = observed?.[1]?.trim() || (observed && firstOutputLine(text, observed.index + observed[0].length));
   const scriptOutput = !observed && scriptStart &&
     firstOutputLine(text, scriptStart.index + scriptStart[0].length, invocation);

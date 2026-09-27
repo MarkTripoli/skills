@@ -189,7 +189,7 @@ test('authentic short API responses and multiline terminal stdout count as obser
     fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(transcript)}, { headers: { 'content-type': 'text/plain' } });\n`);
     assert.equal(proofCommand({ ...data, prBody: body(data.tested, data.head, gist, 'passed', 'api-probe'), posted: comment(data.tested, data.head, gist, 'passed', 'api-probe') }).status, 'pass', response);
   }
-  for (const stdout of ['STDOUT:\nexpected API identifier\nmore details', 'STDOUT\nexpected API identifier']) {
+  for (const stdout of ['STDOUT:\nexpected API identifier\nmore details', 'STDOUT\nexpected API identifier', 'NODE STDOUT\nexpected API identifier']) {
     const transcript = `Source SHA: ${data.tested}\nFocused command: node --test tests/api.test.mjs\n${stdout}\nExit status: 0\n`;
     fs.writeFileSync(data.fetchStub, `globalThis.fetch = async () => new Response(${JSON.stringify(transcript)}, { headers: { 'content-type': 'text/plain' } });\n`);
     assert.equal(proofCommand({ ...data, prBody: body(data.tested, data.head, gist, 'passed', 'cli-terminal'), posted: comment(data.tested, data.head, gist, 'passed', 'cli-terminal') }).status, 'pass');
