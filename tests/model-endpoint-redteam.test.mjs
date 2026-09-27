@@ -115,3 +115,12 @@ test('private regular audit file appends complete records',()=>{
  assert.equal(fs.statSync(file).mode&0o777,0o600);
  assert.deepEqual(fs.readFileSync(file,'utf8').trim().split('\n').map(line=>JSON.parse(line).event),['attempt-start','attempt-result']);
 });
+
+test('attempt-start is durably synced before fake fetch',async()=>{
+ const auditFile=path.join(root,'new-audit-parent','private','events.jsonl'),synced=[];
+ const originalFsync=fs.fsyncSync;
+ fs.fsyncSync=fd=>{synced.push(fs.fstatSync(fd).isDirectory()?'directory':'file');return originalFsync(fd);};
+ try{
+  await run(liveOptions({probes:['recon'],audit:auditFile}),{sleep:async()=>{},monotonicNow:()=>0,fetchImpl:async()=>{assert.ok(synced.includes('file'));assert.ok(synced.includes('directory'));return goodResponse();}});
+ }finally{fs.fsyncSync=originalFsync;}
+});

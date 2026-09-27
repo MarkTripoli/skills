@@ -49,6 +49,10 @@ function readAuthorization(options,now=new Date()) {
   if(record.schema_version!==1||record.origin!==url.origin||record.path!==url.pathname||typeof record.operator!=='string'||!record.operator.trim()||record.operator.length>200||typeof record.authorized_at!=='string'||typeof record.expires!=='string'||!Number.isFinite(authorizedAt)||!Number.isFinite(expiresAt)||authorizedAt>now.getTime()||expiresAt<=now.getTime())throw Error('Authorization artifact does not bind a current operator attestation to this exact origin and path');
   return {operatorDigest:hash(record.operator),scope,authorizedAt,expiresAt,grantDigest:hash(JSON.stringify(record))};
 }
+function syncDirectory(directory){
+  const fd=fs.openSync(directory,fs.constants.O_RDONLY);
+  try{fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+}
 function ensurePrivateDirectory(directory){
   const uid=typeof process.getuid==='function'?process.getuid():null;
   if(uid===null)throw Error('Audit ownership checks are unavailable');
@@ -71,8 +75,11 @@ function ensurePrivateDirectory(directory){
   let current=resolved;
   for(const part of path.relative(existing,absolute).split(path.sep).filter(Boolean)){
     current=path.join(current,part);
-    try{fs.mkdirSync(current,{mode:0o700});}catch(error){if(error.code!=='EEXIST')throw error;}
-    verifyChain(current);
+    try{
+      fs.mkdirSync(current,{mode:0o700});
+      const parentFd=fs.openSync(path.dirname(current),fs.constants.O_RDONLY);
+      try{fs.fsyncSync(parentFd);}finally{fs.closeSync(parentFd);}
+    }catch(error){if(error.code!=='EEXIST')throw error;}
     const stat=fs.lstatSync(current);
     if(stat.uid!==uid||(stat.mode&0o777)!==0o700)throw Error('Audit directory must be owned by the operator with mode 0700');
   }
@@ -86,13 +93,15 @@ export function appendAudit(file,record){
   const noFollow=fs.constants.O_NOFOLLOW;
   if(typeof noFollow!=='number')throw Error('Audit symlink protection is unavailable');
   const common=fs.constants.O_WRONLY|fs.constants.O_APPEND|noFollow;
-  let fd;
+  let fd,fdWasCreated=false;
   try{
-    try{fd=fs.openSync(safeFile,common|fs.constants.O_CREAT|fs.constants.O_EXCL,0o600);}
+    try{fd=fs.openSync(safeFile,common|fs.constants.O_CREAT|fs.constants.O_EXCL,0o600);fdWasCreated=true;}
     catch(error){if(error.code!=='EEXIST')throw error;fd=fs.openSync(safeFile,common);}
     const stat=fs.fstatSync(fd),uid=process.getuid();
     if(!stat.isFile()||stat.uid!==uid||(stat.mode&0o777)!==0o600||stat.nlink!==1)throw Error('Audit target must be an operator-owned mode-0600 regular file with one link');
     fs.writeFileSync(fd,`${JSON.stringify(record)}\n`,{encoding:'utf8'});
+    fs.fsyncSync(fd);
+    if(fdWasCreated)syncDirectory(directory);
   }finally{if(fd!==undefined)fs.closeSync(fd);}
 }
 async function readBoundedResponse(response){
