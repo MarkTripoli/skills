@@ -5,7 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {analyze} from '../skills/delivery/repo-relationships/scripts/analyze.mjs';
+import {fileURLToPath} from 'node:url';
 
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 function fixture() {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'repo-relationships-'));
   const create = (name, files) => {
@@ -155,5 +157,26 @@ test('retains valid package citations and marks multi-document and malformed YAM
     assert.equal(report.evidence.filter(edge => edge.kind === 'kubernetes-declaration' && edge.repo === 'consumer').length, 2);
     assert.equal(report.coverage, 'incomplete');
     assert.deepEqual(report.skipped_roots.map(root => root.name), ['consumer']);
+  } finally { fs.rmSync(base, {recursive: true, force: true}); }
+});
+
+test('installed skill parses YAML without resolving a parent node_modules', () => {
+  const {base, create} = fixture();
+  try {
+    const skill = path.join(base, 'installed', 'repo-relationships');
+    fs.cpSync(path.join(projectRoot, 'skills/delivery/repo-relationships'), skill, {recursive: true});
+    const publisher = create('publisher', {
+      'src/events.js': "import { connect } from 'nats';\nconst nc = await connect();\nnc.publish('install.ready', value);\n",
+      'deploy/service.yaml': 'apiVersion: v1\nkind: Service\nmetadata:\n  name: consumer-service\nspec:\n  selector:\n    app: consumer\n',
+    });
+    const subscriber = create('subscriber', {
+      'src/events.js': "import { connect } from 'nats';\nconst nc = await connect();\nnc.subscribe('install.ready', handler);\n",
+      'deploy/workload.yaml': 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: consumer\nspec:\n  template:\n    metadata:\n      labels:\n        app: consumer\n',
+    });
+    assert.equal(fs.existsSync(path.join(base, 'node_modules')), false);
+    const output = execFileSync(process.execPath, [path.join(skill, 'scripts/analyze.mjs'), '--repo', `publisher=${publisher}`, '--repo', `subscriber=${subscriber}`], {cwd: base, encoding: 'utf8'});
+    const report = JSON.parse(output);
+    assert.ok(report.relationships.some(edge => edge.kind === 'nats-subject' && edge.classification === 'candidate'));
+    assert.ok(report.relationships.some(edge => edge.kind === 'kubernetes-selector-match'));
   } finally { fs.rmSync(base, {recursive: true, force: true}); }
 });

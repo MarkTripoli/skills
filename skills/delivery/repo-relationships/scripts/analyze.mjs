@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
-import {parseAllDocuments} from 'yaml';
+import {parseAllDocuments} from './yaml-parser.mjs';
 
 const MAX_FILES = 2000;
 const MAX_FILE_BYTES = 256 * 1024;

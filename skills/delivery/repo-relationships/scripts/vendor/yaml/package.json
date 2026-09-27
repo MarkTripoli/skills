@@ -1,0 +1,8 @@
+{
+  "name": "@skills-vendored/yaml",
+  "version": "2.9.0",
+  "type": "module",
+  "private": true,
+  "license": "ISC",
+  "source": "yaml@2.9.0 browser/dist"
+}
