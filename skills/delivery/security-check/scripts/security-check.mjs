@@ -19,7 +19,7 @@ export function canonicalRepository(remote) {
   if (!pathname || pathname === '/') throw new Error('origin repository path is missing');
   return `https://${url.hostname.toLowerCase()}${url.port ? `:${url.port}` : ''}${pathname}`;
 }
-export function normalize({root, revision, repository, semgrepVersion, result}) {
+function normalizeSemgrep({root, revision, repository, semgrepVersion, result}) {
   const findings = [];
   let valid = true;
   try {
@@ -31,15 +31,40 @@ export function normalize({root, revision, repository, semgrepVersion, result}) 
       const line = item.start?.line;
       const ruleId = item.check_id;
       if (!pathName || pathName === '..' || pathName.startsWith('../') || !Number.isSafeInteger(line) || line < 1 || typeof ruleId !== 'string') { valid = false; continue; }
-      const message = String(item.extra?.message ?? '');
+      // Scanner-provided prose may quote source text, including credentials.
+      const message = 'Finding reported by Semgrep';
       const severity = String(item.extra?.severity ?? 'UNKNOWN').toUpperCase();
       const findingId = hash([repository, revision, 'semgrep', ruleId, pathName, line].join('\0'));
-      findings.push({schema_version: 1, finding_id: findingId, repository, revision, rule_id: ruleId, path: pathName, line, severity, scanner: 'semgrep', message, evidence_ref: `sha256:${hash([ruleId, pathName, line, message].join('\0'))}`});
+      findings.push({schema_version: 1, finding_id: findingId, repository, revision, rule_id: ruleId, path: pathName, line, severity, scanner: 'semgrep', message, evidence_ref: `sha256:${hash([ruleId, pathName, line].join('\0'))}`});
     }
   } catch { valid = false; }
   findings.sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line || a.rule_id.localeCompare(b.rule_id));
   const successful = result.status === 0 && valid;
-  return {schema_version: 1, repository, revision, scanner: 'semgrep', tool: {name: 'semgrep', version: semgrepVersion ?? null, status: successful ? 'ok' : 'failed', exit_code: result.status ?? null}, coverage: successful ? 'complete' : 'incomplete', findings};
+  return {tool: {name: 'semgrep', version: semgrepVersion ?? null, status: successful ? 'ok' : 'failed', exit_code: result.status ?? null}, coverage: successful ? 'complete' : 'incomplete', findings};
+}
+function normalizeGitleaks({root, revision, repository, version, result}) {
+  const findings = [];
+  let valid = true;
+  try {
+    const report = JSON.parse(result.stdout);
+    if (!Array.isArray(report)) throw new Error('Gitleaks JSON has no findings array');
+    for (const item of report) {
+      const pathName = path.relative(root, path.resolve(root, item.File)).split(path.sep).join('/');
+      const line = item.StartLine;
+      const ruleId = item.RuleID;
+      if (!pathName || pathName === '..' || pathName.startsWith('../') || !Number.isSafeInteger(line) || line < 1 || typeof ruleId !== 'string' || !ruleId) { valid = false; continue; }
+      // Secret-bearing fields from Gitleaks are intentionally never copied into this report.
+      const message = 'Secret detected by Gitleaks';
+      const findingId = hash([repository, revision, 'gitleaks', ruleId, pathName, line].join('\0'));
+      findings.push({schema_version: 1, finding_id: findingId, repository, revision, rule_id: ruleId, path: pathName, line, severity: 'HIGH', scanner: 'gitleaks', message, evidence_ref: `sha256:${hash(['gitleaks', ruleId, pathName, line].join('\0'))}`});
+    }
+  } catch { valid = false; }
+  findings.sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line || a.rule_id.localeCompare(b.rule_id));
+  const successful = result.status === 0 && valid;
+  return {tool: {name: 'gitleaks', version: version ?? null, status: successful ? 'ok' : 'failed', exit_code: result.status ?? null}, coverage: successful ? 'complete' : 'incomplete', findings};
+}
+export function normalize({root, revision, repository, semgrepVersion, result}) {
+  return normalizeSemgrep({root, revision, repository, semgrepVersion, result});
 }
 export function run({cwd = process.cwd(), spawn = spawnSync} = {}) {
   let repository, revision;
@@ -48,20 +73,39 @@ export function run({cwd = process.cwd(), spawn = spawnSync} = {}) {
     const remote = git(['config', '--get', 'remote.origin.url'], cwd);
     repository = canonicalRepository(remote);
     if (!repository) throw new Error('empty origin repository URL');
-  } catch (error) {
-    return {schema_version: 1, repository: null, revision: null, scanner: 'semgrep', tool: {name: 'semgrep', version: null, status: 'unavailable', exit_code: null}, coverage: 'incomplete', findings: [], error: `repository identity unavailable: ${error.message}`};
+  } catch {
+    return {schema_version: 1, repository: null, revision: null, scanner: 'semgrep', tool: {name: 'semgrep', version: null, status: 'unavailable', exit_code: null}, secret_coverage: 'incomplete', secret_tool: {name: 'gitleaks', version: null, status: 'unavailable', exit_code: null}, coverage: 'incomplete', findings: [], error: 'repository identity unavailable'};
   }
   const version = spawn('semgrep', ['--version'], {cwd, encoding: 'utf8', timeout: 15000});
   const semgrepVersion = version.status === 0 ? version.stdout.trim() : null;
-  if (semgrepVersion === null) return {schema_version: 1, repository, revision, scanner: 'semgrep', tool: {name: 'semgrep', version: null, status: 'unavailable', exit_code: version.status ?? null}, coverage: 'incomplete', findings: [], error: version.error?.message ?? 'Semgrep unavailable'};
-  const result = spawn('semgrep', ['scan', '--json', '--config', 'p/default', '--metrics=off', '--disable-version-check', '.'], {cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, timeout: 300000});
-  const report = normalize({root: cwd, revision, repository, semgrepVersion, result});
-  if (result.error) report.error = result.error.message;
-  else if (result.status !== 0) report.error = `Semgrep exited with status ${result.status}`;
-  else if (report.coverage === 'incomplete') report.error = 'Semgrep returned an invalid or partial JSON report';
+  const secretVersionResult = spawn('gitleaks', ['version'], {cwd, encoding: 'utf8', timeout: 15000});
+  const gitleaksVersion = secretVersionResult.status === 0 ? String(secretVersionResult.stdout ?? '').trim() : null;
+  let semgrep;
+  if (semgrepVersion === null) {
+    semgrep = {tool: {name: 'semgrep', version: null, status: 'unavailable', exit_code: version.status ?? null}, coverage: 'incomplete', findings: [], error: 'Semgrep unavailable'};
+  } else {
+    const result = spawn('semgrep', ['scan', '--json', '--config', 'p/default', '--metrics=off', '--disable-version-check', '.'], {cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, timeout: 300000});
+    semgrep = normalizeSemgrep({root: cwd, revision, repository, semgrepVersion, result});
+    if (result.error) semgrep.error = 'Semgrep execution failed';
+    else if (result.status !== 0) semgrep.error = `Semgrep exited with status ${result.status}`;
+    else if (semgrep.coverage === 'incomplete') semgrep.error = 'Semgrep returned an invalid or partial JSON report';
+  }
+  let secrets;
+  if (gitleaksVersion === null) {
+    secrets = {tool: {name: 'gitleaks', version: null, status: 'unavailable', exit_code: secretVersionResult.status ?? null}, coverage: 'incomplete', findings: [], error: 'Gitleaks unavailable'};
+  } else {
+    const result = spawn('gitleaks', ['git', '--report-format', 'json', '--report-path', '/dev/stdout', '--redact=100', '--exit-code', '0', '--no-banner', '.'], {cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, timeout: 300000});
+    secrets = normalizeGitleaks({root: cwd, revision, repository, version: gitleaksVersion, result});
+    if (result.error) secrets.error = 'Gitleaks execution failed';
+    else if (result.status !== 0) secrets.error = `Gitleaks exited with status ${result.status}`;
+    else if (secrets.coverage === 'incomplete') secrets.error = 'Gitleaks returned an invalid JSON report';
+  }
+  const findings = [...semgrep.findings, ...secrets.findings].sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line || a.rule_id.localeCompare(b.rule_id) || a.scanner.localeCompare(b.scanner));
+  const report = {schema_version: 1, repository, revision, scanner: 'semgrep', tool: semgrep.tool, secret_coverage: secrets.coverage, secret_tool: secrets.tool, coverage: semgrep.coverage === 'complete' && secrets.coverage === 'complete' ? 'complete' : 'incomplete', findings};
+  if (semgrep.error || secrets.error) report.error = [semgrep.error, secrets.error].filter(Boolean).join('; ');
   return report;
 }
-function help() { console.log('Usage: node security-check.mjs [--root PATH]\nRun opt-in Semgrep scan; emits one JSON report to stdout. Exit 0 only when coverage is complete, 1 when incomplete, 2 for usage errors. Requires a git checkout with origin remote and Semgrep on PATH.'); }
+function help() { console.log('Usage: node security-check.mjs [--root PATH]\nRun opt-in Semgrep and Gitleaks scans; emits one JSON report to stdout. Exit 0 only when coverage is complete, 1 when incomplete, 2 for usage errors. Requires a git checkout with origin remote, Semgrep and Gitleaks on PATH.'); }
 const invoked = (() => {
   try { return process.argv[1] && fs.realpathSync(fileURLToPath(import.meta.url)) === fs.realpathSync(process.argv[1]); }
   catch { return false; }
