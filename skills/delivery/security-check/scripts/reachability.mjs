@@ -5,6 +5,12 @@ const HIGH_SEVERITIES = new Set(['ERROR', 'HIGH', 'CRITICAL']);
 const MAX_REFERENCES = 8;
 const MAX_BASIS_LENGTH = 600;
 const MAX_REPORT_FINDINGS = 100;
+const SAFE_BASES = {
+  reachable: 'Reviewer classified the finding as reachable from cited source lines; this is a static assessment.',
+  unreachable: 'Reviewer classified the finding as unreachable from cited source lines; this is a static assessment.',
+  uncertain: 'Reviewer could not establish reachability from the available source evidence.',
+};
+const HISTORICAL_SECRET_BASIS = 'Gitleaks scans Git history; a current-code citation cannot clear a historical secret without an accepted risk.';
 
 function highSeverity(finding) {
   return HIGH_SEVERITIES.has(String(finding?.severity ?? '').toUpperCase());
@@ -74,7 +80,7 @@ export async function reviewHighRisk(findings, {reviewer, sourceRoot} = {}) {
         finding_id: finding.finding_id,
         reachability,
         source_references: references,
-        reachability_basis: basis.slice(0, MAX_BASIS_LENGTH),
+        reachability_basis: SAFE_BASES[reachability],
       });
     } catch {
       dispositions.push(uncertain(finding, 'Reviewer unavailable or failed; reachability could not be established.', checkedRoot));
@@ -113,15 +119,19 @@ export function renderSecurityReport(scan, acceptedRiskAssessment, dispositions)
   const uncertainFindings = [];
   for (const finding of scan.findings) {
     const disposition = byId.get(finding.finding_id);
-    const item = {...finding, source_references: disposition?.source_references ?? findingReference(finding), reachability_basis: disposition?.reachability_basis};
+    const item = {...finding, source_references: disposition?.source_references ?? findingReference(finding),
+      reachability_basis: SAFE_BASES[disposition?.reachability]};
     if (accepted.has(finding.finding_id)) {
       const risk = accepted.get(finding.finding_id);
       const reason = typeof risk?.reason === 'string' ? risk.reason.replace(/\s+/g, ' ').slice(0, MAX_BASIS_LENGTH) : 'reason unavailable';
       const expires = typeof risk?.expires === 'string' ? risk.expires : 'expiry unavailable';
       item.reachability_basis = `Accepted risk: ${reason}; expires ${expires}.`;
       suppressed.push(item);
-    } else if (disposition?.reachability === 'unreachable') {
+    } else if (disposition?.reachability === 'unreachable' && finding.scanner !== 'gitleaks') {
       suppressed.push(item);
+    } else if (disposition?.reachability === 'unreachable' && finding.scanner === 'gitleaks') {
+      item.reachability_basis = HISTORICAL_SECRET_BASIS;
+      uncertainFindings.push(item);
     } else if (disposition?.reachability === 'uncertain' || (highSeverity(finding) && !disposition)) {
       item.reachability_basis = item.reachability_basis || 'No validated reachability disposition is available.';
       uncertainFindings.push(item);

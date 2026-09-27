@@ -110,3 +110,53 @@ test('source-root citations must name current in-repository lines', async t => {
   })});
   assert.equal(escaped[0].reachability, 'uncertain');
 });
+
+test('reviewer-quoted credentials never enter dispositions or reports', async () => {
+  const secret = 'SYNTHETIC_CREDENTIAL_DO_NOT_REPORT_42';
+  const finding = high('quoted-secret');
+  const reply = {...cited('reachable'), reachability_basis: `The credential is ${secret} in the cited source.`};
+  const [disposition] = await reviewHighRisk([finding], {reviewer: async () => reply});
+  assert.equal(disposition.reachability, 'reachable');
+  assert.deepEqual(disposition.source_references, reply.source_references);
+  assert.doesNotMatch(JSON.stringify(disposition), /SYNTHETIC_CREDENTIAL_DO_NOT_REPORT_42/);
+  const scan = {findings: [finding]};
+  const report = renderSecurityReport(scan, {}, [disposition]);
+  const externalReport = renderSecurityReport(scan, {}, [{finding_id: finding.finding_id, ...reply}]);
+  assert.match(report, /Active findings \(1\)/);
+  assert.match(externalReport, /Active findings \(1\)/);
+  assert.match(externalReport, /vulnerable\.js:3-4/);
+  assert.doesNotMatch(report, /SYNTHETIC_CREDENTIAL_DO_NOT_REPORT_42/);
+  assert.doesNotMatch(externalReport, /SYNTHETIC_CREDENTIAL_DO_NOT_REPORT_42/);
+});
+
+test('current replacement cannot suppress a historical Gitleaks secret without accepted risk', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reachability-history-'));
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  fs.mkdirSync(path.join(root, 'src'));
+  const file = path.join(root, 'src', 'replaced.js');
+  const secret = 'SYNTHETIC_HISTORICAL_SECRET_DO_NOT_REPORT_42';
+  fs.writeFileSync(file, `export const credential = "${secret}";\n`);
+  fs.writeFileSync(file, 'export const status = "credential removed";\n');
+  const finding = high('historical', 'HIGH', {
+    scanner: 'gitleaks', path: 'src/replaced.js', line: 1, message: 'Secret detected by Gitleaks',
+  });
+  const [disposition] = await reviewHighRisk([finding], {sourceRoot: root, reviewer: async () => ({
+    reachability: 'unreachable',
+    source_references: [{path: 'src/replaced.js', start_line: 1, end_line: 1}],
+    reachability_basis: `Current file no longer contains ${secret}.`,
+  })});
+  assert.equal(disposition.reachability, 'unreachable');
+  assert.deepEqual(disposition.source_references, [{path: 'src/replaced.js', start_line: 1, end_line: 1}]);
+  const scan = {findings: [finding]};
+  const report = renderSecurityReport(scan, {}, [disposition]);
+  assert.match(report, /Suppressed findings \(0\)/);
+  assert.match(report, /Uncertain findings \(1\)/);
+  assert.match(report, /replaced\.js:1/);
+  assert.doesNotMatch(JSON.stringify({disposition, report}), /SYNTHETIC_HISTORICAL_SECRET_DO_NOT_REPORT_42/);
+  const accepted = renderSecurityReport(scan, {suppressed: [{
+    finding_id: 'historical', accepted_risk: {reason: 'Reviewed historical exposure', expires: '2027-01-01'},
+  }]}, [disposition]);
+  assert.match(accepted, /Suppressed findings \(1\)/);
+  assert.match(accepted, /Uncertain findings \(0\)/);
+  assert.doesNotMatch(accepted, /SYNTHETIC_HISTORICAL_SECRET_DO_NOT_REPORT_42/);
+});
