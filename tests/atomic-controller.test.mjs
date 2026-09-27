@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { SKILLS, artifactGate, boundaryState, contextBoundaryAdmission, eligible, gated, initialState, judgment, reconcileRecovery, runSkill, stagePrompt } from '../atomic/lib/controller.mjs';
 import { admitPlanWaves } from '../atomic/lib/plan-waves.mjs';
+import { digest, observeArtifacts, planProgress, readArtifact } from '../atomic/lib/artifacts.mjs';
 import { ensureTask, revision } from '../atomic/lib/workspace.mjs';
 
 const inputs = { verify: false, app_test: 'none' };
