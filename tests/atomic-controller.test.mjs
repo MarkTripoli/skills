@@ -16,16 +16,16 @@ const proved = (latest, types, generation = 0, codeRevision = 'r1') => ({
   generation, revision: codeRevision,
 });
 
-test('plan-wave admission orders independent declared tasks and refuses unsafe graphs or scope', () => {
-  const plan = (rows) => `# Plan\n\n${rows.map(([id, deps, files]) =>
-    `### Task: ${id}\nDepends on: ${deps}\nFiles: ${files}\n`).join('\n')}`;
-  assert.deepEqual(admitPlanWaves(plan([
-    ['alpha', '-', 'src/a.ts'], ['beta', '-', 'src/b.ts'], ['gamma', 'alpha,beta', 'src/c.ts'],
-  ])), { ok: true, waves: [['alpha', 'beta'], ['gamma']] });
-  assert.match(admitPlanWaves(plan([['alpha', 'beta', 'src/a'], ['beta', 'alpha', 'src/b']])).error, /cycle/);
-  assert.match(admitPlanWaves(plan([['alpha', 'missing', 'src/a']])).error, /unknown task/);
-  assert.match(admitPlanWaves(plan([['alpha', '-', 'src/shared'], ['beta', '-', 'src/shared/file']])).error, /overlapping declared file scope/);
-  assert.match(admitPlanWaves('# Plan\n\n### Task: alpha\nDepends on: -\n').error, /unknown dependency or file ownership/);
+test('plan-wave admission accepts numbered template phases and refuses unsafe dependencies or scope', () => {
+  const phase = (number, dependency, file) =>
+    `## Phase ${number}: Work ${number}\n\n**Depends on**: ${dependency}\n\n#### 1.1 Edit\n**File**: \`${file}\`\n**Changes**: Update it.\n`;
+  const plan = `${phase(1, '-', 'src/a.ts')}\n${phase(2, '-', 'src/b.ts')}\n${phase(3, 'Phase 1, 2', 'src/c.ts')}`;
+  assert.deepEqual(admitPlanWaves(plan), { ok: true, waves: [['1', '2'], ['3']] });
+  assert.match(admitPlanWaves(`## Phase 1: First\n\n**File**: \`src/a.ts\``).error, /Depends on/);
+  assert.match(admitPlanWaves(`${phase(1, 'Phase 2', 'src/a.ts')}\n${phase(2, 'Phase 1', 'src/b.ts')}`).error, /cycle/);
+  assert.match(admitPlanWaves(`${phase(1, '-', 'src/a.ts')}\n${phase(2, 'Phase 9', 'src/b.ts')}`).error, /unknown phase/);
+  assert.match(admitPlanWaves(`${phase(1, '-', 'src/shared')}\n${phase(2, '-', 'src/shared/child')}`).error, /overlapping declared file scope/);
+  assert.match(admitPlanWaves(`${phase(1, '-', '../outside.ts')}`).error, /unsafe or ambiguous/);
 });
 test('fixed modes enforce preparation prerequisites and canonical design artifact types', () => {
   assert.deepEqual(eligible(state(), inputs, 'prd', false), ['create-research']);
