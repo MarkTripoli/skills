@@ -80,6 +80,7 @@ test('rejects duplicate roots and symlinks escaping a selected repository', t =>
   fs.writeFileSync(outside, 'TOKEN=outside\n');
   fs.symlinkSync(outside, path.join(a, '.env.external'));
   execFileSync('git', ['-C', a, 'add', '-f', '.env.external']);
+  execFileSync('git', ['-C', a, 'commit', '-qm', 'symlink fixture']);
   const b = repo(root, 'two', {'.env': 'TOKEN=not-reported-alone\n'});
   assert.throws(() => correlate([a, b]), /unsafe path/);
 });
@@ -94,29 +95,73 @@ test('rejects repository subdirectories and linked worktrees as separate selecti
   assert.throws(() => correlate([a, linked]), /shared repository identity/);
 });
 
-test('rejects an ignored file changed to an outside symlink during descriptor read', t => {
+test('uses the pinned root descriptor when the selected path is rebound during ignored-file open', t => {
   const root = temp(t);
   const a = repo(root, 'one', {'.env': 'TOKEN=ordinary-fixture\n'});
-  const b = repo(root, 'two', {'.env': 'TOKEN=other-fixture\n'});
+  const b = repo(root, 'two', {'.env': 'TOKEN=outside-race-value\n'});
   const target = path.join(a, '.env.ignored');
+  const outside = path.join(root, 'outside-repository');
+  const held = path.join(root, 'held-repository');
+  fs.mkdirSync(outside);
   fs.writeFileSync(path.join(a, '.gitignore'), '.env.ignored\n');
-  fs.writeFileSync(target, 'TOKEN=ephemeral-fixture\n');
-  const outside = path.join(root, 'outside.env');
-  fs.writeFileSync(outside, 'TOKEN=outside-fixture\n');
-  const originalRead = fs.readFileSync;
+  fs.writeFileSync(target, 'TOKEN=inside-root-value\n');
+  fs.writeFileSync(path.join(outside, '.env.ignored'), 'TOKEN=outside-race-value\n');
+  const originalOpen = fs.openSync;
   let swapped = false;
-  fs.readFileSync = function(file, ...args) {
-    if (typeof file === 'number' && !swapped) {
+  fs.openSync = function(file, ...args) {
+    if (typeof file === 'string' && file.endsWith('/.env.ignored') && file.startsWith('/dev/fd/') && !swapped) {
       swapped = true;
-      fs.unlinkSync(target);
-      fs.symlinkSync(outside, target);
+      fs.renameSync(a, held);
+      fs.symlinkSync(outside, a);
+      try { return originalOpen.call(this, file, ...args); }
+      finally {
+        fs.unlinkSync(a);
+        fs.renameSync(held, a);
+      }
     }
-    return originalRead.call(this, file, ...args);
+    return originalOpen.call(this, file, ...args);
   };
   try {
-    assert.throws(() => correlate([a, b], {includeIgnored: true, ownerAuthorized: true}), /unsafe path/);
+    const report = correlate([a, b], {includeIgnored: true, ownerAuthorized: true});
+    assert.deepEqual(report.findings, []);
   } finally {
-    fs.readFileSync = originalRead;
+    fs.openSync = originalOpen;
+  }
+  assert.equal(swapped, true);
+});
+
+test('fails closed for nested ignored environment files', t => {
+  const root = temp(t);
+  const a = repo(root, 'one', {'.env': 'TOKEN=one\n'});
+  const b = repo(root, 'two', {'.env': 'TOKEN=two\n'});
+  fs.mkdirSync(path.join(a, 'nested'));
+  fs.writeFileSync(path.join(a, '.gitignore'), 'nested/\n');
+  fs.writeFileSync(path.join(a, 'nested', '.env.secret'), 'TOKEN=nested-value\n');
+  assert.throws(() => correlate([a, b], {includeIgnored: true, ownerAuthorized: true}), /unsafe path/);
+});
+
+test('fails before reading when a selected root is rebound during selection', t => {
+  const root = temp(t);
+  const a = repo(root, 'one', {'.env': 'TOKEN=original-root-value\n'});
+  const b = repo(root, 'two', {'.env': 'TOKEN=second-repo-value\n'});
+  const replacement = repo(root, 'replacement', {'.env': 'TOKEN=outside-root-value\n'});
+  const moved = path.join(root, 'original-root-moved');
+  const originalRealpath = fs.realpathSync;
+  let swapped = false;
+  fs.realpathSync = function(file, ...args) {
+    if (!swapped && path.resolve(String(file)) === b) {
+      swapped = true;
+      fs.renameSync(a, moved);
+      fs.symlinkSync(replacement, a);
+    }
+    return originalRealpath.call(this, file, ...args);
+  };
+  try {
+    assert.throws(() => correlate([a, b]), /repository root changed/);
+  } finally {
+    fs.realpathSync = originalRealpath;
+    if (fs.lstatSync(a).isSymbolicLink()) fs.unlinkSync(a);
+    fs.renameSync(moved, a);
   }
   assert.equal(swapped, true);
 });
