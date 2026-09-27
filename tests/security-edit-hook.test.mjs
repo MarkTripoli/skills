@@ -77,7 +77,7 @@ test('successful multi-file hashline edit scans saved files and follows MV desti
   ].join('\n');
   const report = inspectEditedFile({ toolName: 'edit', input: { patch }, details: {}, content: [{ type: 'text', text: content }], isError: false }, { cwd, env: offlineEnv(cwd), run });
   assert.deepEqual(report.results.map(item => item.file).sort(), ['.github/workflows/build.yaml', 'Dockerfile.production']);
-  assert.deepEqual(seen.map(item => path.basename(item.target)).sort(), ['build.yaml', 'Dockerfile.production']);
+  assert.deepEqual(seen.map(item => path.basename(item.target)).sort(), ['Dockerfile.production', 'build.yaml'].sort());
   assert.notDeepEqual(seen.map(item => item.target).sort(), [docker, workflow].map(file => fs.realpathSync(file)).sort());
   assert.deepEqual(seen.map(item => item.contents).sort(), ['FROM saved image\n', 'name: saved workflow\n'].sort());
 });
