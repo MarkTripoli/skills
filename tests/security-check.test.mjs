@@ -37,7 +37,7 @@ test('reports independent offline lanes, findings, unavailable tools, and malfor
   const {root} = repository();
   try {
     const spawn = (tool, args, options) => {
-      if (tool === 'actionlint') return {status: null, error: new Error('ENOENT')};
+      if (tool === 'actionlint') return {status: null, error: Object.assign(new Error('ENOENT'), {code: 'ENOENT'})};
       if (tool === 'hadolint' && args[0] !== '--version') return {status: 0, stdout: '{broken'};
       if (tool === 'trivy' && args[0] === 'config') return {status: 0, stdout: JSON.stringify({Results:[{Target:'Dockerfile',Misconfigurations:[{ID:'AVD-DS-0001',Severity:'HIGH',Code:{Lines:[{Number:4}]}}]}]})};
       return scanners({gitleaks:[]})(tool,args,options);
@@ -53,6 +53,58 @@ test('reports independent offline lanes, findings, unavailable tools, and malfor
     assert.equal(report.findings.find(x=>x.rule_id==='AVD-DS-0001').line,4);
   } finally {
     fs.rmSync(root,{recursive:true,force:true});
+  }
+});
+
+test('a valid actionlint finding is coverage, not a scanner failure', () => {
+  const {root} = repository();
+  try {
+    fs.mkdirSync(path.join(root, '.github/workflows'), {recursive: true});
+    fs.writeFileSync(path.join(root, '.github/workflows/check.yml'), 'on: push\njobs:\n  build:\n    steps:\n      - run: echo hello\n');
+    execFileSync('git', ['add', '.github/workflows/check.yml'], {cwd: root});
+    execFileSync('git', ['commit', '-qm', 'workflow fixture'], {cwd: root});
+    const scan = (status, stdout) => (tool, args, options) =>
+      tool === 'actionlint' && args[0] !== '--version'
+        ? {status, stdout}
+        : scanners({gitleaks: []})(tool, args, options);
+    const finding = {kind: 'syntax-check', filepath: '.github/workflows/check.yml', line: 3};
+    const report = run({cwd: root, spawn: scan(1, JSON.stringify([finding]))});
+    assert.equal(report.lanes.actionlint.coverage, 'complete');
+    assert.equal(report.coverage, 'complete');
+    assert.equal(report.findings.find(item => item.scanner === 'actionlint').line, 3);
+    assert.equal(run({cwd: root, spawn: scan(1, '[]')}).lanes.actionlint.coverage, 'incomplete');
+  } finally {
+    fs.rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('offline scanner flags and file-only vulnerabilities preserve honest location coverage', () => {
+  const {root} = repository();
+  const calls = [];
+  try {
+    const spawn = (tool, args, options) => {
+      calls.push({tool, args});
+      if (tool === 'trivy' && args[0] === 'fs') {
+        return {status: 0, stdout: JSON.stringify({Results: [{Target: 'Dockerfile', Vulnerabilities: [{VulnerabilityID: 'CVE-2026-1234', Severity: 'HIGH'}]}]})};
+      }
+      if (tool === 'hadolint' && args[0] !== '--version') {
+        return {status: 0, stdout: JSON.stringify([{code: 'DL3007', file: 'Dockerfile', line: 1, level: 'warning'}])};
+      }
+      return scanners({gitleaks: []})(tool, args, options);
+    };
+    const report = run({cwd: root, spawn});
+    assert.equal(report.lanes.trivy_fs.coverage, 'incomplete');
+    assert.equal(report.lanes.trivy_fs.tool.status, 'ok');
+    assert.equal(report.file_findings[0].rule_id, 'CVE-2026-1234');
+    assert.equal(report.file_findings[0].path, 'Dockerfile');
+    assert.ok(!report.findings.some(item => item.rule_id === 'CVE-2026-1234'));
+    assert.equal(report.lanes.hadolint.coverage, 'complete');
+    assert.equal(report.findings.find(item => item.rule_id === 'DL3007').line, 1);
+    assert.ok(calls.find(call => call.tool === 'hadolint' && call.args[0] === '--format').args.includes('--no-fail'));
+    assert.ok(!calls.find(call => call.tool === 'trivy' && call.args[0] === 'config').args.includes('--offline-scan'));
+    assert.ok(calls.find(call => call.tool === 'trivy' && call.args[0] === 'fs').args.includes('--scanners'));
+  } finally {
+    fs.rmSync(root, {recursive: true, force: true});
   }
 });
 
@@ -100,7 +152,7 @@ test('missing or failed Gitleaks marks secret coverage incomplete without raw di
   const secret = syntheticToken;
   try {
     const missing = run({cwd: root, spawn: (tool, args) => {
-      if (tool === 'gitleaks') return {status: null, error: new Error(`ENOENT ${secret}`), stderr: secret};
+      if (tool === 'gitleaks') return {status: null, error: Object.assign(new Error(`ENOENT ${secret}`), {code: 'ENOENT'}), stderr: secret};
       return scanners({gitleaks: []})(tool, args);
     }});
     assert.equal(missing.secret_coverage, 'incomplete');
@@ -120,7 +172,7 @@ test('missing or failed Gitleaks marks secret coverage incomplete without raw di
     assert.equal(semgrepFailure.coverage, 'incomplete');
     assert.equal(semgrepFailure.secret_coverage, 'complete');
     const semgrepMissing = run({cwd: root, spawn: (tool, args) => {
-      if (tool === 'semgrep') return {status: null, error: new Error('ENOENT')};
+      if (tool === 'semgrep') return {status: null, error: Object.assign(new Error('ENOENT'), {code: 'ENOENT'})};
       return scanners({gitleaks: []})(tool, args);
     }});
     assert.equal(semgrepMissing.coverage, 'incomplete');

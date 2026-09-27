@@ -1,6 +1,6 @@
 ---
 name: security-check
-description: Run explicit Semgrep and Gitleaks security scans and report versioned, provenance-bound findings; incomplete coverage never counts as clean.
+description: Run explicit Semgrep, Gitleaks, Trivy, Hadolint, and actionlint scans with source-bound coverage; missing tools or unlocated findings remain incomplete.
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
@@ -36,6 +36,8 @@ The deterministic fixture grader is opt-in: `node evals/run.mjs --grade-security
 ## Report contract
 
 Report schema version is 1. Top-level fields include `schema_version`, `repository`, `revision`, `scanner`, `tool`, `secret_coverage`, `secret_tool`, `lanes`, `coverage`, and `findings`. `repository` is the normalized origin URL; `revision` is the checked-out Git `HEAD` commit. Each `lanes` entry (`semgrep`, `gitleaks`, `trivy_config`, `trivy_fs`, `hadolint`, `actionlint`) contains `tool` (`name`, `version`, `status`, `exit_code`), `coverage`, and lane findings. `status` is `ok`, `failed`, or `unavailable`; missing executables have null versions and are unavailable. `secret_coverage` and `secret_tool` remain the historical Gitleaks fields. Aggregate `coverage` is complete only when every lane's command succeeds and its JSON is structurally valid.
+
+Trivy results without a source line are retained in optional `file_findings` with repository, revision, scanner, rule, safe path, and severity. Their lane and aggregate coverage remain `incomplete`; the runner never fabricates line 1 as a source citation. These file-level observations require independent location evidence before line-based reachability or accepted-risk disposition.
 
 Each finding has exactly these versioned fields: `schema_version`, `finding_id`, `repository`, `revision`, `rule_id`, `path`, `line`, `severity`, `scanner`, `message`, and `evidence_ref`. IDs are stable SHA-256 identifiers derived from repository, revision, scanner, rule, path, and line. Evidence references are SHA-256 digests of finding metadata; they do not contain source excerpts or secret material. Secret messages are fixed generic text, and scanner-provided message text is never copied into findings. Paths are repository-relative. Findings are sorted by path, line, rule ID, and scanner.
 
