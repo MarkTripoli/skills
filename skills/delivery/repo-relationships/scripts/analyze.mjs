@@ -14,6 +14,8 @@ const safeOrigin = origin => {
   try { const url = new URL(origin.replace(/^git@([^:]+):/, 'ssh://git@$1/')); url.username = ''; url.password = ''; url.search = ''; url.hash = ''; return `${url.protocol}//${url.host}${url.pathname.replace(/\.git$/, '')}`; } catch { return null; }
 };
 const rel = (root, file) => path.relative(root, file).split(path.sep).join('/');
+const safeLabel = value => typeof value === 'string' && value.length <= 120 && /^[A-Za-z0-9@][A-Za-z0-9@._/-]*$/.test(value) && !/(?:password|passwd|secret|token|credential|api[_-]?key)/i.test(value);
+const safeSubject = value => typeof value === 'string' && value.length <= 200 && /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*(?:\.\*|\.>)?$/.test(value) && !/(?:password|passwd|secret|token|credential|api[_-]?key|gh[pousr]_|sk-)/i.test(value);
 function repoIdentity(name, root) {
   const real = fs.realpathSync(root);
   if (!fs.statSync(real).isDirectory()) throw new Error('not a directory');
@@ -24,7 +26,8 @@ function repoIdentity(name, root) {
 }
 function walk(root) {
   const files = []; let bytes = 0; let incomplete = false;
-  function visit(dir) {
+  function visit(dir, depth = 0) {
+    if (depth > 32) { incomplete = true; return; }
     let entries;
     try { entries = fs.readdirSync(dir, {withFileTypes: true}); } catch { incomplete = true; return; }
     for (const entry of entries) {
@@ -32,7 +35,7 @@ function walk(root) {
       if (entry.name.startsWith('.') || skip.has(entry.name)) continue;
       const file = path.join(dir, entry.name);
       if (entry.isSymbolicLink()) continue;
-      if (entry.isDirectory()) visit(file);
+      if (entry.isDirectory()) visit(file, depth + 1);
       else if (entry.isFile() && /\.(?:mjs|cjs|js|ts|tsx|jsx|yaml|yml|json)$/.test(entry.name)) {
         try { const stat = fs.statSync(file); if (stat.size > MAX_FILE_BYTES || bytes + stat.size > MAX_TOTAL_BYTES) { incomplete = true; continue; } files.push({path: rel(root, file), text: fs.readFileSync(file, 'utf8')}); bytes += stat.size; } catch { incomplete = true; }
       }
@@ -45,13 +48,13 @@ function codeEdges(repo, files) {
   const edges = [];
   for (const file of files) {
     for (const match of file.text.matchAll(/\.(publish|subscribe)\s*\(\s*(['"`])([A-Za-z0-9_$.*>-]{1,200})\2/g)) {
-      edges.push({kind: match[1] === 'publish' ? 'nats-publish' : 'nats-subscribe', repo: repo.name, subject: match[3], source: {path: file.path, line: lineAt(file.text, match.index)}});
+      if (safeSubject(match[3])) edges.push({kind: match[1] === 'publish' ? 'nats-publish' : 'nats-subscribe', repo: repo.name, subject: match[3], source: {path: file.path, line: lineAt(file.text, match.index)}});
     }
     if (file.path.endsWith('package.json')) {
       try {
         const data = JSON.parse(file.text), deps = {...data.dependencies, ...data.devDependencies, ...data.optionalDependencies, ...data.peerDependencies};
-        if (typeof data.name === 'string') edges.push({kind: 'package-identity', repo: repo.name, package: data.name, source: {path: file.path, line: lineAt(file.text, file.text.indexOf(JSON.stringify(data.name)))}});
-        for (const dependency of Object.keys(deps ?? {})) edges.push({kind: 'package-dependency', repo: repo.name, package: dependency, source: {path: file.path, line: lineAt(file.text, file.text.indexOf(JSON.stringify(dependency)))}});
+        if (typeof data.name === 'string' && safeLabel(data.name)) edges.push({kind: 'package-identity', repo: repo.name, package: data.name, source: {path: file.path, line: lineAt(file.text, file.text.indexOf(JSON.stringify(data.name)))}});
+        for (const dependency of Object.keys(deps ?? {})) if (safeLabel(dependency)) edges.push({kind: 'package-dependency', repo: repo.name, package: dependency, source: {path: file.path, line: lineAt(file.text, file.text.indexOf(JSON.stringify(dependency)))}});
       } catch { /* malformed manifests reduce evidence, not output safety */ }
     }
     if (/\.(yaml|yml)$/.test(file.path)) {
@@ -63,8 +66,12 @@ function codeEdges(repo, files) {
         if (!resource || typeof resource !== 'object') continue;
         const kind = resource.kind, spec = resource.spec;
         if (!['Service', 'Deployment', 'StatefulSet', 'DaemonSet', 'Pod'].includes(kind) || !spec) continue;
-        const needle = `kind: ${kind}`; const index = file.text.indexOf(needle);
-        edges.push({kind: 'kubernetes-declaration', repo: repo.name, resource_kind: kind, name: String(resource.metadata?.name ?? 'unnamed').slice(0, 120), selector: kind === 'Service' ? (spec.selector ?? {}) : (spec.template?.metadata?.labels ?? resource.metadata?.labels ?? {}), source: {path: file.path, line: lineAt(file.text, Math.max(index, 0))}});
+        const name = String(resource.metadata?.name ?? 'unnamed');
+        const selector = kind === 'Service' ? (spec.selector ?? {}) : (spec.template?.metadata?.labels ?? resource.metadata?.labels ?? {});
+        if (!safeLabel(name) || !selector || typeof selector !== 'object' || Array.isArray(selector) ||
+            Object.entries(selector).some(([key, value]) => !safeLabel(key) || !safeLabel(String(value)))) continue;
+        const index = file.text.indexOf(`kind: ${kind}`);
+        edges.push({kind: 'kubernetes-declaration', repo: repo.name, resource_kind: kind, name, selector, source: {path: file.path, line: lineAt(file.text, Math.max(index, 0))}});
       }
     }
   }
