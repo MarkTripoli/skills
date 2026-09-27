@@ -25,6 +25,12 @@ When `task.md` lists acceptance criteria, decide each one against the diff and t
 
 Before allocating a new review, when `review.code` has a current iteration, read only that iteration's `### CR-...` heading lines. Record each in `## Previous Round` as `fixed`, `still open`, or `declined`, decided from the current diff and current `review.fixes` evidence, never from the prior reviewer's reasoning. Raise still-open entries again with new identifiers.
 
+## Independent review coverage
+
+Before deciding status, classify the diff's consequence from affected behavior, data, security, compatibility, and blast radius; do not use line counts or a raw coverage percentage. A consequential diff requires a genuinely independent reviewer lens, dispatched through the available worker mechanism with an assignment scoped to distinct risks and relevant acceptance criteria. Read that worker's completed report and validate that it names the pinned diff/acceptance scope, examined its assigned risks, and supports each finding with concrete evidence; reconcile its findings with this review. A planned, failed, missing, or scope-incomplete dispatch is not independent coverage and cannot support `clean`.
+
+A low-risk diff may skip dispatch only when the review artifact records the concrete reason the change is low risk and why an independent lens would not improve coverage. Do not label self-review, author claims, or an unavailable worker as an independent lens. If a consequential diff cannot get validated independent coverage, record the gap as a major finding or mark the review blocked when dispatch itself is externally unavailable; never certify clean.
+
 ## Review
 
 Trace behavior through callers/tests. Evaluate every applicable axis:
@@ -36,6 +42,10 @@ Trace behavior through callers/tests. Evaluate every applicable axis:
 5. **Performance:** N+1, unbounded queries/loops, blocking async, unnecessary renders, missing pagination, hot-path allocations.
 
 Interfaces: accessibility, keyboard/pointer, responsive, manual/screenshot evidence.
+
+## Acceptance oracle and test quality
+
+For each acceptance criterion, identify the observable outcome and the test or observation that exercises it. Inspect tests for a real assertion about that outcome, a path that reaches the behavior, and an oracle independent of the implementation's own output. Flag circular oracles that derive expected values from the same code/result under test, tests with no meaningful assertion, and checks whose setup never reaches the claimed path. A green command with such checks is not acceptance proof: distinguish “tests passed” from “acceptance verified” in the artifact and keep the criterion unproven. Judge the test's semantics and reachability, not assertion counts, coverage percentages, or brittle text matching.
 
 ## Health and severity
 

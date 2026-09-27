@@ -17,6 +17,14 @@ target: [merge target branch]
 - Coverage: [`<n>` acceptance items; `<k>` claimed by a receipt, `<n - k>` claimed by none]
 - Graded by: [typed-judgment helper (`grade-steps --kind command`), or own judgment because the helper was unavailable; model `<model>`, tokens `<n>` in / `<m>` out, or `unavailable`]
 
+
+## Independent Review Provenance
+
+- review artifact/report and reviewer identity:
+- pinned scope and acceptance criteria covered:
+- validated concrete findings or coverage gaps:
+- hosted publication proof and human approval: separate; not established by verification
+
 ## Items
 
 | Id | Item | Decided by | Expected | Observed | Verdict | Confidence | Severity |
