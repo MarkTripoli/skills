@@ -71,14 +71,25 @@ export function checkpointContext(taskDir, usage) {
     ? state.context_boundary.sessionId
     : null;
   const sessionId = typeof usage?.sessionId === 'string' && usage.sessionId.trim() ? usage.sessionId.trim() : null;
+  const boundary = evaluateContextBoundary(usage);
+  if (expectedSessionId && boundary.status === 'unknown') {
+    state.context_boundary = {
+      action: 'awaiting-checkpoint', status: 'unknown',
+      previousSessionId: state.context_boundary.previousSessionId,
+      sessionId: expectedSessionId,
+      reason: boundary.reason,
+    };
+    return save(root, state);
+  }
   if (expectedSessionId && sessionId !== expectedSessionId) {
     state.context_boundary = {
-      action: 'stop', status: 'unknown', sessionId: sessionId ?? expectedSessionId,
+      action: 'awaiting-checkpoint', status: 'unknown',
+      previousSessionId: state.context_boundary.previousSessionId,
+      sessionId: expectedSessionId,
       reason: 'live context metric does not match the fresh child session identity',
     };
     return save(root, state);
   }
-  const boundary = evaluateContextBoundary(usage);
   state.context_boundary = { ...boundary, sessionId };
   if (!sessionId) {
     state.context_boundary = { ...state.context_boundary, action: 'stop', status: 'unknown', reason: 'live child session identity unavailable' };

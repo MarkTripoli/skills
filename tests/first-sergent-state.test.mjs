@@ -149,7 +149,12 @@ test('context threshold requires the fresh child live metric before dispatch', (
   assert.equal(inspect(dir).context_boundary.action, 'awaiting-checkpoint');
   assert.throws(() => begin(dir, 'create-plan'));
   checkpointContext(dir, { sessionId: 'old-session', contextUsage: { tokens: 30, contextWindow: 100, percent: 30 } });
-  assert.equal(inspect(dir).context_boundary.action, 'stop');
+  assert.equal(inspect(dir).context_boundary.action, 'awaiting-checkpoint');
+  assert.equal(inspect(dir).context_boundary.sessionId, 'new-session');
+  assert.throws(() => begin(dir, 'create-plan'));
+  checkpointContext(dir, { sessionId: 'old-session', contextUsage: { tokens: 30, contextWindow: 100, percent: 30 } });
+  assert.equal(inspect(dir).context_boundary.action, 'awaiting-checkpoint');
+  assert.equal(inspect(dir).context_boundary.sessionId, 'new-session');
   assert.throws(() => begin(dir, 'create-plan'));
   checkpointContext(dir, { sessionId: 'new-session', contextUsage: { tokens: 30, contextWindow: 100, percent: 30 } });
   begin(dir, 'create-plan');
