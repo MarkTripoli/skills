@@ -168,9 +168,9 @@ test('context threshold without a child identity remains blocked', (t) => {
 test('context policy stops when the managed transport exposes no live metric', (t) => {
   const { dir } = fixture(t);
   initialize(dir, { ...options, context_policy: 'stop-at-60' });
-  checkpointContext(dir, {});
-  assert.equal(inspect(dir).context_boundary.reason, 'live context metric unavailable');
-  assert.throws(() => startFreshSession(dir), /threshold context boundary/);
+  checkpointContext(dir, { sessionId: 'current-session' });
+  assert.equal(inspect(dir).context_boundary.action, 'stop');
+  assert.throws(() => startFreshSession(dir, 'new-session'));
   assert.throws(() => begin(dir, 'create-plan'));
   assert.equal(inspect(dir).steps, 0);
 });
