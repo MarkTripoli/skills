@@ -87,7 +87,7 @@ test('schema-one claims fail closed instead of guessing repository ownership', t
 test('exact PR reference blocks task recovery; nearby issue number does not match', t => {
   const f = setup(t, [issue], [{ number: 8, title: 'Other', body: 'Fixes #70', url: '' }, { number: 9, title: 'Fix', body: 'Fixes #7', url: '' }]);
   fs.mkdirSync(path.join(f.taskRoot, 'existing'));
-  fs.writeFileSync(path.join(f.taskRoot, 'existing', 'task.md'), '---\nissue: 7\n---\n');
+  fs.writeFileSync(path.join(f.taskRoot, 'existing', 'task.md'), '---\nrepository: acme/app\nissue: 7\n---\n');
   const result = f.runCli(['--execute', '--handoff=unused']);
   assert.equal(result.status, 0);
   assert.equal(JSON.parse(result.stdout)[0].status, 'existing-pr');
@@ -100,8 +100,32 @@ test('issue lookup recognizes only task frontmatter, not body text', t => {
   const task = path.join(dir, 'task.md');
   fs.writeFileSync(task, '---\nslug: body-only\n---\nRequest mentions issue: 7\n');
   assert.equal(JSON.parse(f.runCli().stdout)[0].status, 'eligible');
-  fs.writeFileSync(task, '---\nslug: body-only\nissue: 7\n---\nBody.\n');
+  fs.writeFileSync(task, '---\nslug: body-only\nrepository: acme/app\nissue: 7\n---\nBody.\n');
   assert.equal(JSON.parse(f.runCli().stdout)[0].status, 'duplicate-task');
+});
+test('shared task roots and PR bodies stay scoped to canonical repository identity', t => {
+  const externalPrs = [{ number: 4, title: 'External references', body: 'other/repo#7 and https://github.com/other/repo/issues/7', url: '' }];
+  const f = setup(t, [issue], externalPrs);
+  const dir = path.join(f.taskRoot, 'other-repo-task'); fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, 'task.md'), '---\nrepository: other/repo\nissue: 7\n---\n');
+  assert.equal(JSON.parse(f.runCli().stdout)[0].status, 'eligible');
+
+  const targetPrs = [{ number: 5, title: 'Target reference', body: 'See acme/app#7', url: '' }];
+  const target = setup(t, [issue], targetPrs);
+  assert.equal(JSON.parse(target.runCli().stdout)[0].status, 'existing-pr');
+});
+
+test('missing and invalid issue numbers fail before dispatch', t => {
+  for (const number of [undefined, 0, -3, 1.5, '7']) {
+    const row = { ...issue };
+    if (number === undefined) delete row.number; else row.number = number;
+    const f = setup(t, [row]);
+    const result = f.runHandoff();
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /invalid positive issue number/);
+    assert.equal(fs.existsSync(f.stateFile), false);
+    assert.deepEqual(fs.readdirSync(f.taskRoot), []);
+  }
 });
 
 test('successful handoff stores repository-scoped receipt without creating task on checkout', t => {
@@ -141,6 +165,27 @@ test('accepted durable receipt repairs completion after state-write crash', t =>
   const result = f.runHandoff();
   assert.equal(JSON.parse(result.stdout)[0].status, 'handed-off-recovered');
   assert.equal(fs.existsSync(result.log), false);
+});
+
+test('simultaneous stale-lock contenders cannot replace the new live owner lock', async t => {
+  const f = setup(t);
+  const lock = `${f.stateFile}.lock`; fs.mkdirSync(lock);
+  fs.writeFileSync(path.join(lock, 'owner.json'), JSON.stringify({ pid: Number.MAX_SAFE_INTEGER, token: 'dead-owner' }));
+  const handoff = path.join(f.root, 'slow-handoff');
+  const count = path.join(f.root, 'handoff-count');
+  fs.writeFileSync(handoff, '#!/bin/sh\nprintf x >> \"$HANDOFF_COUNT\"\nsleep 1\n');
+  fs.chmodSync(handoff, 0o755);
+  const args = [cliPath, '--repo=acme/app', `--task-root=${f.taskRoot}`, `--state=${f.stateFile}`, '--execute', `--handoff=${handoff}`];
+  const env = { ...f.env, HANDOFF_COUNT: count };
+  const launch = () => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, args, { env, stdio: 'ignore' });
+    child.once('error', reject);
+    child.once('close', code => resolve(code));
+  });
+  const codes = await Promise.all([launch(), launch()]);
+  assert(codes.includes(0));
+  assert(codes.every(code => code === 0 || code === 1));
+  assert.equal(fs.readFileSync(count, 'utf8'), 'x');
 });
 
 test('concurrent execution blocks even after lease age when owner process lives', t => {
