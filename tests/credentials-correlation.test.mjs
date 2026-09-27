@@ -22,6 +22,9 @@ function repo(root, name, files) {
 function requireGit(dir) {
   execFileSync('git', ['init', '-q', dir]);
   execFileSync('git', ['-C', dir, 'add', '-f', '.env*']);
+  execFileSync('git', ['-C', dir, 'config', 'user.email', 'fixture@example.invalid']);
+  execFileSync('git', ['-C', dir, 'config', 'user.name', 'Credential Fixture']);
+  execFileSync('git', ['-C', dir, 'commit', '-qm', 'fixture']);
 }
 function temp(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'credential-correlation-'));
@@ -79,4 +82,41 @@ test('rejects duplicate roots and symlinks escaping a selected repository', t =>
   execFileSync('git', ['-C', a, 'add', '-f', '.env.external']);
   const b = repo(root, 'two', {'.env': 'TOKEN=not-reported-alone\n'});
   assert.throws(() => correlate([a, b]), /unsafe path/);
+});
+
+test('rejects repository subdirectories and linked worktrees as separate selections', t => {
+  const root = temp(t);
+  const a = repo(root, 'one', {'.env': 'TOKEN=worktree-fixture\n', 'nested/.env': 'TOKEN=nested-fixture\n'});
+  const b = repo(root, 'two', {'.env': 'TOKEN=other-fixture\n'});
+  assert.throws(() => correlate([path.join(a, 'nested'), b]), /not the repository root/);
+  const linked = path.join(root, 'one-linked');
+  execFileSync('git', ['-C', a, 'worktree', 'add', '--detach', linked, 'HEAD']);
+  assert.throws(() => correlate([a, linked]), /shared repository identity/);
+});
+
+test('rejects an ignored file changed to an outside symlink during descriptor read', t => {
+  const root = temp(t);
+  const a = repo(root, 'one', {'.env': 'TOKEN=ordinary-fixture\n'});
+  const b = repo(root, 'two', {'.env': 'TOKEN=other-fixture\n'});
+  const target = path.join(a, '.env.ignored');
+  fs.writeFileSync(path.join(a, '.gitignore'), '.env.ignored\n');
+  fs.writeFileSync(target, 'TOKEN=ephemeral-fixture\n');
+  const outside = path.join(root, 'outside.env');
+  fs.writeFileSync(outside, 'TOKEN=outside-fixture\n');
+  const originalRead = fs.readFileSync;
+  let swapped = false;
+  fs.readFileSync = function(file, ...args) {
+    if (typeof file === 'number' && !swapped) {
+      swapped = true;
+      fs.unlinkSync(target);
+      fs.symlinkSync(outside, target);
+    }
+    return originalRead.call(this, file, ...args);
+  };
+  try {
+    assert.throws(() => correlate([a, b], {includeIgnored: true, ownerAuthorized: true}), /unsafe path/);
+  } finally {
+    fs.readFileSync = originalRead;
+  }
+  assert.equal(swapped, true);
 });
