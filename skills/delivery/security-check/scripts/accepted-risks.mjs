@@ -1,14 +1,4 @@
-const canonicalRepository = value => {
-  if (typeof value !== 'string' || !value.trim()) throw new Error('repository must be a non-empty URL');
-  const remote = value.trim().replace(/^git@([^:]+):/, 'ssh://git@$1/');
-  const url = new URL(remote);
-  if (!['https:', 'http:', 'ssh:', 'git:'].includes(url.protocol) || !url.hostname) {
-    throw new Error('unsupported repository URL');
-  }
-  const pathname = url.pathname.replace(/\/+$/, '').replace(/\.git$/, '');
-  if (!pathname || pathname === '/') throw new Error('repository path is missing');
-  return `https://${url.hostname.toLowerCase()}${url.port ? `:${url.port}` : ''}${pathname}`;
-};
+import {canonicalRepository} from './security-check.mjs';
 
 function validPath(value, {glob = false} = {}) {
   if (typeof value !== 'string' || value.length === 0 || value.startsWith('/') || value.includes('\\')) return false;
@@ -37,9 +27,16 @@ function globExpression(pattern) {
 }
 
 function expirationTime(value) {
-  if (typeof value !== 'string' || !value.trim()) throw new Error('expires must be an ISO date or timestamp');
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))?$/.test(value)) {
+    throw new Error('expires must be an ISO date or timestamp');
+  }
   const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) throw new Error('expires must be a valid ISO date or timestamp');
+  const [year, month, day] = value.slice(0, 10).split('-').map(Number);
+  const calendarDay = new Date(Date.UTC(year, month - 1, day));
+  if (!Number.isFinite(parsed) || calendarDay.getUTCFullYear() !== year ||
+      calendarDay.getUTCMonth() + 1 !== month || calendarDay.getUTCDate() !== day) {
+    throw new Error('expires must be a valid ISO date or timestamp');
+  }
   return parsed;
 }
 
@@ -68,7 +65,12 @@ function compileEntry(entry, index) {
 
 function canonicalFinding(finding, index, errors) {
   if (!finding || typeof finding !== 'object' || Array.isArray(finding) || finding.schema_version !== 1 ||
-      typeof finding.rule_id !== 'string' || typeof finding.path !== 'string' || !validPath(finding.path) ||
+      typeof finding.finding_id !== 'string' || !finding.finding_id ||
+      typeof finding.revision !== 'string' || !finding.revision ||
+      typeof finding.rule_id !== 'string' || !finding.rule_id ||
+      typeof finding.path !== 'string' || !validPath(finding.path) || !Number.isSafeInteger(finding.line) || finding.line < 1 ||
+      typeof finding.severity !== 'string' || typeof finding.scanner !== 'string' ||
+      typeof finding.message !== 'string' || typeof finding.evidence_ref !== 'string' ||
       typeof finding.repository !== 'string') {
     errors.push(`findings[${index}] is not a normalized schema_version 1 finding`);
     return null;

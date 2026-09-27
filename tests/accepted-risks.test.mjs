@@ -48,6 +48,20 @@ test('suppresses exact current matches with an audit record and leaves expired o
   assert.match(invalid.errors[0], /reason is required/);
 });
 
+test('invalid calendar dates and malformed findings cannot become accepted coverage', () => {
+  const invalidDate = applyAcceptedRisks([finding()], [accepted({expires: '2026-02-30'})], {repository, now: '2026-01-01T00:00:00Z'});
+  assert.equal(invalidDate.coverage, 'incomplete');
+  assert.equal(invalidDate.active.length, 1);
+  assert.equal(invalidDate.suppressed.length, 0);
+  const malformed = applyAcceptedRisks([{...finding(), revision: undefined}], [accepted()], {repository, now: '2026-09-27T00:00:00Z'});
+  assert.equal(malformed.coverage, 'incomplete');
+  assert.equal(malformed.active.length, 1);
+  assert.equal(malformed.suppressed.length, 0);
+  const offset = applyAcceptedRisks([finding()], [accepted({expires: '2026-10-01T01:00:00+02:00'})], {repository, now: '2026-09-27T00:00:00Z'});
+  assert.equal(offset.coverage, 'complete');
+  assert.equal(offset.suppressed.length, 1);
+});
+
 test('requires explicit anchored glob scope for broader paths', () => {
   const implicit = applyAcceptedRisks([finding('src/deep/auth.js')], [accepted({path: 'src/**/*.js'})], {repository, now: '2026-09-27T00:00:00Z'});
   assert.equal(implicit.coverage, 'incomplete');
