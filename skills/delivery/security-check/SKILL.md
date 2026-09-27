@@ -23,7 +23,7 @@ Or select a checkout explicitly:
 node <installed-skills-dir>/security-check/scripts/security-check.mjs --root <repository-path>
 ```
 
-The selected directory must be a Git checkout with an `origin` remote. Semgrep must be installed and available as `semgrep` on `PATH`. The adapter invokes `semgrep scan --json --config auto --no-git-ignore .`; Semgrep may need network access to resolve `auto` rules. It prints one JSON report to stdout and exits 0 only for complete coverage, 1 for incomplete coverage, and 2 for invalid arguments. Never infer cleanliness from a missing report, nonzero exit, or tool failure.
+The selected directory must be a Git checkout with an `origin` remote. Semgrep must be installed and available as `semgrep` on `PATH`. The adapter invokes `semgrep scan --json --config p/default --metrics=off --disable-version-check .` from that checkout, respecting normal Git ignore rules. Semgrep needs network access to download the default community rules; telemetry is disabled and the adapter does not upload source. It prints one JSON report to stdout and exits 0 only for complete coverage, 1 for incomplete coverage, and 2 for invalid arguments. Never infer cleanliness from a missing report, nonzero exit, or tool failure.
 
 ## Report contract
 
