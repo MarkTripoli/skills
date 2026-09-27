@@ -95,7 +95,7 @@ test('rejects repository subdirectories and linked worktrees as separate selecti
   assert.throws(() => correlate([a, linked]), /shared repository identity/);
 });
 
-test('uses the pinned root descriptor when the selected path is rebound during ignored-file open', t => {
+test('fails closed when selected root is rebound during ignored-file open', t => {
   const root = temp(t);
   const a = repo(root, 'one', {'.env': 'TOKEN=ordinary-fixture\n'});
   const b = repo(root, 'two', {'.env': 'TOKEN=outside-race-value\n'});
@@ -109,7 +109,7 @@ test('uses the pinned root descriptor when the selected path is rebound during i
   const originalOpen = fs.openSync;
   let swapped = false;
   fs.openSync = function(file, ...args) {
-    if (typeof file === 'string' && file.endsWith('/.env.ignored') && file.startsWith('/dev/fd/') && !swapped) {
+    if (file === target && !swapped) {
       swapped = true;
       fs.renameSync(a, held);
       fs.symlinkSync(outside, a);
@@ -122,8 +122,7 @@ test('uses the pinned root descriptor when the selected path is rebound during i
     return originalOpen.call(this, file, ...args);
   };
   try {
-    const report = correlate([a, b], {includeIgnored: true, ownerAuthorized: true});
-    assert.deepEqual(report.findings, []);
+    assert.throws(() => correlate([a, b], {includeIgnored: true, ownerAuthorized: true}), /unsafe path/);
   } finally {
     fs.openSync = originalOpen;
   }

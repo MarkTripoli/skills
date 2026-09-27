@@ -44,11 +44,20 @@ function parseEnv(text) {
   }
   return entries;
 }
-function safeIgnoredBytes(rootFd, name) {
+function safeIgnoredBytes(root, name) {
   if (name.includes('/') || name.includes('\\') || name === '.' || name === '..') throw new Error('unsafe path');
-  const fd = fs.openSync(`/dev/fd/${rootFd}/${name}`, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  assertRoot(root);
+  const absolute = path.join(root.path, name);
+  const before = fs.lstatSync(absolute);
+  if (before.isSymbolicLink() || !before.isFile()) throw new Error('unsafe path');
+  if (typeof fs.constants.O_NOFOLLOW !== 'number') throw new Error('safe ignored reads unavailable');
+  const fd = fs.openSync(absolute, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   try {
-    if (!fs.fstatSync(fd).isFile()) throw new Error('unsafe path');
+    const opened = fs.fstatSync(fd);
+    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino) throw new Error('unsafe path');
+    assertRoot(root);
+    const rootDescriptor = fs.fstatSync(root.fd);
+    if (rootDescriptor.dev !== root.stat.dev || rootDescriptor.ino !== root.stat.ino) throw new Error('repository root changed');
     return fs.readFileSync(fd, 'utf8');
   } finally { fs.closeSync(fd); }
 }
@@ -80,7 +89,7 @@ function inputFiles(root, includeIgnored) {
     assertRoot(root);
     for (const name of ignored) {
       if (!envFile(path.posix.basename(name))) continue;
-      const bytes = safeIgnoredBytes(root.fd, name);
+      const bytes = safeIgnoredBytes(root, name);
       if (bytes !== null) files.push({name, bytes});
     }
   }

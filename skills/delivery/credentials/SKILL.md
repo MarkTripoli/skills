@@ -13,7 +13,7 @@ This opt-in local CLI compares environment-file values across at least two expli
 node <installed-skills-dir>/credentials/scripts/correlate.mjs --repo <repo-one> --repo <repo-two>
 ```
 
-Ignored env files are excluded unless the operator separately requests `--include-ignored` and affirms owner authorization with `--owner-authorized`. Tracked symlinks are rejected. Opted-in ignored files are opened relative to a pinned repository-root descriptor without following a final symlink. Nested ignored env paths fail closed; only top-level ignored env files are supported. Select only repositories you are authorized to inspect.
+Ignored env files are excluded unless the operator separately requests `--include-ignored` and affirms owner authorization with `--owner-authorized`. Tracked symlinks are rejected. Opted-in ignored files are limited to top-level env files; nested paths fail closed. The portable pathname fallback checks root and file device/inode identity before and after opening with no-follow semantics, and rejects detected rebinding. These checks cannot eliminate every concurrent cross-process pathname race; use ignored-file mode only on a trusted local checkout under owner control.
 
 Output is JSON with schema version 1. Each finding contains a random per-run `group_id` and `locations`; each location identifies the selected repository by its zero-based `repo_index`, a safe repository-relative path, and line number. Credential values are never emitted or separately hashed. Internal Git object IDs are used only for integrity checks and are not returned. Scanner diagnostics/source text are not forwarded. Group IDs are intentionally not stable across runs.
 
