@@ -144,7 +144,8 @@ test('context policy stops at the live 60 percent boundary and starts a fresh se
   checkpointContext(dir, { sessionId: 'old-session', contextUsage: { tokens: 60, contextWindow: 100, percent: 60 } });
   assert.equal(inspect(dir).context_boundary.action, 'fresh-session');
   assert.equal(inspect(dir).context_boundary.sessionId, 'old-session');
-  assert.throws(() => begin(dir, 'create-plan'), /fresh session/);
+  assert.throws(() => begin(dir, 'create-plan'));
+  assert.equal(inspect(dir).steps, 0);
   startFreshSession(dir, 'new-session');
   assert.equal(inspect(dir).context_boundary.previousSessionId, 'old-session');
   assert.equal(inspect(dir).context_boundary.sessionId, 'new-session');
@@ -166,5 +167,6 @@ test('context policy stops when the managed transport exposes no live metric', (
   checkpointContext(dir, {});
   assert.equal(inspect(dir).context_boundary.reason, 'live context metric unavailable');
   assert.throws(() => startFreshSession(dir), /threshold context boundary/);
-  assert.throws(() => begin(dir, 'create-plan'), /fresh session/);
+  assert.throws(() => begin(dir, 'create-plan'));
+  assert.equal(inspect(dir).steps, 0);
 });
