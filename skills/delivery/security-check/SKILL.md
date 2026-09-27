@@ -23,9 +23,9 @@ Or select a checkout explicitly:
 node <installed-skills-dir>/security-check/scripts/security-check.mjs --root <repository-path>
 ```
 
-Select a Git checkout with an `origin` remote. The runner builds a temporary tree from committed `HEAD`, verifies every blob and executable bit, and fails closed on symlinks, submodules, omitted files, or export substitutions. Uncommitted, untracked, and ignored files are not scanned by filesystem lanes.
+Select a Git checkout with an `origin` remote. The runner materializes a temporary tree directly from committed `HEAD` blobs and modes, verifies each blob, and bypasses checkout and archive filters. It fails closed on symlinks, submodules, unsafe paths, or snapshot limits. Uncommitted, untracked, and ignored files are not scanned by filesystem lanes.
 
-Installed Semgrep, Trivy config/fs, Hadolint, and actionlint scan that tree; historical Gitleaks scans the exact captured commit in the original checkout with redaction. Semgrep's `p/default` may download rules when the operator explicitly requests this skill; Trivy disables updates and requires local rules and databases. The runner does not install tools or upload source.
+Installed Semgrep, Trivy config/fs, Hadolint, and actionlint scan that tree; Hadolint covers tracked `Dockerfile`, `Dockerfile.*`, and `*.Dockerfile` paths. Historical Gitleaks scans the exact captured commit in the original checkout with redaction. Semgrep's `p/default` may download rules when the operator explicitly requests this skill; Trivy disables updates and requires local rules and databases. The runner does not install tools or upload source.
 
 Each lane reports its own version, status, exit code, coverage, and findings. Missing tools, failed runs, or invalid/partial JSON make that lane incomplete; aggregate coverage is complete only when all six lanes complete. The runner prints one JSON report and exits 0 only for complete coverage.
 

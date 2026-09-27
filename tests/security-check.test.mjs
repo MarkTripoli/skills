@@ -146,6 +146,28 @@ test('quoted Git paths still route non-ASCII Dockerfiles through Hadolint', () =
   }
 });
 
+test('Hadolint receives tracked files ending in .Dockerfile', () => {
+  const {root} = repository();
+  try {
+    const file='api.Dockerfile';
+    fs.writeFileSync(path.join(root,file),'FROM scratch\n');
+    execFileSync('git',['add',file],{cwd:root});
+    execFileSync('git',['commit','-qm','Dockerfile suffix fixture'],{cwd:root});
+    let invocation;
+    const report=run({cwd:root,spawn:(tool,args,options)=>{
+      if (tool==='hadolint' && args[0]!=='--version') {
+        invocation={args,contents:fs.readFileSync(path.join(options.cwd,file),'utf8')};
+      }
+      return scanners({gitleaks:[]})(tool,args,options);
+    }});
+    assert.equal(report.lanes.hadolint.coverage,'complete');
+    assert.ok(invocation.args.includes(file));
+    assert.equal(invocation.contents,'FROM scratch\n');
+  } finally {
+    fs.rmSync(root,{recursive:true,force:true});
+  }
+});
+
 test('committed HEAD snapshot excludes ignored workflows and refuses remote Trivy targets', () => {
   const {root} = repository();
   try {
@@ -307,7 +329,7 @@ test('uncommitted tracked, staged and untracked source cannot enter HEAD-bound s
   }
 });
 
-test('Git archive omissions and content substitutions cannot masquerade as committed blobs', () => {
+test('Git archive attributes cannot omit or rewrite committed scanner source', () => {
   for (const [attribute, content] of [['export-ignore', 'plain\n'], ['export-subst', '$Format:%H$\n']]) {
     const {root} = repository();
     try {
@@ -315,9 +337,11 @@ test('Git archive omissions and content substitutions cannot masquerade as commi
       fs.writeFileSync(path.join(root, 'attribute.txt'), content);
       execFileSync('git', ['add', '.gitattributes', 'attribute.txt'], {cwd: root});
       execFileSync('git', ['commit', '-qm', 'archive attribute fixture'], {cwd: root});
-      const report = run({cwd: root, spawn: () => assert.fail('scanners must not run on rewritten HEAD blobs')});
-      assert.equal(report.coverage, 'incomplete');
-      assert.match(report.error, /HEAD snapshot unavailable/);
+      const report = run({cwd: root, spawn: (tool, args, options) => {
+        if (tool !== 'gitleaks') assert.equal(fs.readFileSync(path.join(options.cwd, 'attribute.txt'), 'utf8'), content);
+        return scanners({gitleaks: []})(tool,args,options);
+      }});
+      assert.equal(report.coverage, 'complete');
     } finally {
       fs.rmSync(root, {recursive: true, force: true});
     }

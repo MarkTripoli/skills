@@ -10,14 +10,39 @@ const hash = value => createHash('sha256').update(value).digest('hex');
 function git(args, cwd) {
   return execFileSync('git', args, {cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']}).trim();
 }
+const MAX_SNAPSHOT_BYTES = 256 * 1024 * 1024;
+const MAX_BLOB_BYTES = 16 * 1024 * 1024;
+const MAX_TREE_ENTRIES = 50000;
 function treeEntries(root,revision) {
-  return git(['ls-tree','-r','-z',revision],root).split('\0').filter(Boolean).map(entry => {
+  const output = new TextDecoder('utf-8',{fatal:true}).decode(execFileSync('git',['ls-tree','-r','-z',revision],{cwd:root,stdio:['ignore','pipe','ignore'],maxBuffer:32*1024*1024}));
+  const names = new Map(), files = new Set(), directories = new Set();
+  return output.split('\0').filter(Boolean).map(entry => {
     const tab = entry.indexOf('\t');
+    if (tab < 0) throw Error('invalid Git tree entry');
     const [mode,type,oid] = entry.slice(0,tab).split(' ');
-    if (tab < 0 || !/^(?:100644|100755)$/.test(mode) || type !== 'blob' || !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(oid)) {
+    const file=entry.slice(tab+1);
+    const parts=file.split('/');
+    if (!/^(?:100644|100755)$/.test(mode) || type !== 'blob' || !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(oid) ||
+        !file || file.startsWith('/') || file.includes('\\') || /[\0-\x1f\x7f]/.test(file) ||
+        parts.some(part=>!part || part==='.' || part==='..' || /[ .]$/.test(part))) {
       throw Error('unsupported tracked entry');
     }
-    return {file:entry.slice(tab+1),oid,mode};
+    let prefix='';
+    for (let index=0;index<parts.length;index++) {
+      prefix=prefix ? `${prefix}/${parts[index]}` : parts[index];
+      const key=prefix.normalize('NFC').toLowerCase();
+      const existing=names.get(key);
+      if (existing !== undefined && existing !== prefix) throw Error('case-colliding tracked paths');
+      if (index < parts.length-1) {
+        if (files.has(key)) throw Error('file and directory path collision');
+        directories.add(key);
+      } else {
+        if (files.has(key) || directories.has(key)) throw Error('duplicate or conflicting tracked path');
+        files.add(key);
+      }
+    }
+    if (files.size > MAX_TREE_ENTRIES) throw Error('tracked tree exceeds snapshot limit');
+    return {file,oid,mode};
   });
 }
 function objectFormat(root) {
@@ -54,17 +79,19 @@ function headSnapshot(root,revision) {
   const algorithm = objectFormat(root);
   const temp = fs.mkdtempSync(path.join(os.tmpdir(),'security-check-head-'));
   const checkout = path.join(temp,'checkout');
-  const archive = path.join(temp,'head.tar');
   try {
     fs.mkdirSync(checkout);
-    const exported = spawnSync('git',['archive','--format=tar',`--output=${archive}`,revision],{cwd:root,encoding:'utf8',timeout:30000});
-    if (exported.error || exported.status !== 0) throw Error('HEAD archive unavailable');
-    const extracted = spawnSync('tar',['-xf',archive,'-C',checkout],{encoding:'utf8',timeout:30000});
-    if (extracted.error || extracted.status !== 0) throw Error('HEAD archive extraction failed');
-    fs.rmSync(archive);
+    let totalBytes=0;
     const chunk = Buffer.allocUnsafe(64 * 1024);
     for (const {file,oid,mode} of entries) {
-      if (!matchesBlob(path.join(checkout,file),oid,mode,algorithm,chunk)) throw Error('HEAD archive blob differs from committed source');
+      const bytes=execFileSync('git',['cat-file','blob',oid],{cwd:root,stdio:['ignore','pipe','ignore'],maxBuffer:MAX_BLOB_BYTES+1});
+      totalBytes+=bytes.length;
+      if (bytes.length>MAX_BLOB_BYTES || totalBytes>MAX_SNAPSHOT_BYTES) throw Error('HEAD snapshot exceeds size limit');
+      const target=path.join(checkout,...file.split('/'));
+      fs.mkdirSync(path.dirname(target),{recursive:true});
+      fs.writeFileSync(target,bytes,{flag:'wx',mode:mode==='100755'?0o755:0o644});
+      fs.chmodSync(target,mode==='100755'?0o755:0o644);
+      if (!matchesBlob(target,oid,mode,algorithm,chunk)) throw Error('HEAD blob verification failed');
     }
     return {checkout,files:entries.map(entry => entry.file),dispose:() => fs.rmSync(temp,{recursive:true,force:true})};
   } catch (error) {
@@ -221,7 +248,7 @@ export function run({cwd = process.cwd(), spawn = spawnSync} = {}) {
       args=[...scanArgs,...workflows];
     }
     if (key === 'hadolint') {
-      const dockerfiles=snapshot.files.filter(file=>/(^|\/)Dockerfile(?:\..*)?$/.test(file));
+      const dockerfiles=snapshot.files.filter(file=>/(^|\/)(?:Dockerfile(?:\..*)?|[^/]+\.Dockerfile)$/.test(file));
       if (dockerfiles.length === 0) {
         lanes[key]=lane({name:bin,scanner:key,version,result:{status:0,stdout:'[]'},parse,root:snapshot.checkout,revision,repository});
         continue;
