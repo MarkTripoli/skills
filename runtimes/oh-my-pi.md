@@ -14,6 +14,16 @@ Child workers: call the `task` tool with one item `{ "agent": "agent-<role>", "t
 3. Workers: `cp dist/oh-my-pi/agents/*.md ~/.omp/agent/agents/` for every project, or `cp dist/oh-my-pi/agents/*.md <repo>/.omp/agents/` for one project. Project agents win over user agents with the same name.
 4. Start a new session; `/agents` lists the workers and `/` lists the skills.
 
+## Optional publication guard
+
+Install with `npx github:MarkTripoli/skills oh-my-pi --omp-publication-hook` (add `--project` for a project-local copy). The installer prints the exact hook path; registration is explicit per launch:
+
+```sh
+SKILLS_PUBLICATION_TASK_DIR=/absolute/path/to/task omp --hook=/absolute/path/to/skills-publication/hooks/omp-publication.mjs
+```
+
+For that task, the hook intercepts Oh My Pi `bash` tool calls: it permits a draft PR creation only to host capture, denies ready PR creation before a hosted draft, and runs the shared publication-proof CLI before making an existing draft ready. Missing or stale proof denies the intercepted command. It does not protect commands run outside Oh My Pi, other tool surfaces, or Codex; a successful `omp` process exit is not proof of publication readiness. Without both registration and the task-directory environment variable, this guard does not enforce publication.
+
 ## Model routing
 
 Run `/configure-model-routing` when no valid profile exists. Standalone Oh My Pi skills may call the shared `route-model` helper through Node; discovery may use the documented public `omp models --json` command, and failed or unavailable discovery falls back to explicit exact candidates. Do not scrape provider-private registries or store credentials. Explicit `quota_mode=omp` additionally runs `omp usage --json` locally before JEV; provider filtering does not bind accounts, report `fetchedAt` and one account identifier must be fresh and explicit, and the snapshot creates no concurrency reservation. `context_policy=stop-at-60` consumes the managed RPC `get_state` response's `data.contextUsage` plus the current child session identity and stops when either is unavailable. The normal `task` API does not promise that live child metric.

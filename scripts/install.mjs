@@ -10,6 +10,7 @@
 //   --yes          skip menus and confirmation; use detected runtimes and every skill when unspecified
 //   --atomic       also install the Atomic workflow and the full canonical skill collection
 //   --uninstall    remove what an earlier install put in place (same targets, skills, and scope)
+//   --omp-publication-hook  install optional Oh My Pi Bash guard; register it with omp --hook=<installed-path>
 //   --list         print the skills in the collection and stop
 // Exit 0 on success, 1 on error, 2 on usage error, cancellation, or declined confirmation.
 
@@ -28,7 +29,7 @@ export { apply, atomicDestination, buildTrees, destinations, detectTargets, pars
 async function main(argv) {
   const args = parseArgs(argv);
   const version = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8")).version;
-  const usage = "usage: npx github:MarkTripoli/skills [claude-code|codex|oh-my-pi|pi|portable|all ...] [--skill <name> ...] [--project] [--dry-run] [--yes] [--atomic] [--uninstall] [--list]";
+  const usage = "usage: npx github:MarkTripoli/skills [claude-code|codex|oh-my-pi|pi|portable|all ...] [--skill <name> ...] [--project] [--dry-run] [--yes] [--atomic] [--omp-publication-hook] [--uninstall] [--list]";
   if (args.help) {
     console.log(usage);
     return 0;
@@ -63,7 +64,7 @@ async function main(argv) {
   const { targets, skillNames } = selection;
   let planned;
   try {
-    planned = plan({ targets, skillNames, project: args.project, atomic: args.atomic, cwd, home, env: process.env });
+    planned = plan({ targets, skillNames, project: args.project, atomic: args.atomic, ompPublicationHook: args.ompPublicationHook, cwd, home, env: process.env });
   } catch (error) {
     console.error(error.message);
     return 2;
