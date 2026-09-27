@@ -24,6 +24,14 @@ SKILLS_PUBLICATION_TASK_DIR=/absolute/path/to/task omp --hook=/absolute/path/to/
 
 For that task, the hook intercepts Oh My Pi `bash` tool calls: it permits a draft PR creation only to host capture, denies ready PR creation before a hosted draft, and runs the shared publication-proof CLI before making an existing draft ready. Missing or stale proof denies the intercepted command. It does not protect commands run outside Oh My Pi, other tool surfaces, or Codex; a successful `omp` process exit is not proof of publication readiness. Without both registration and the task-directory environment variable, this guard does not enforce publication.
 
+## Edit-time security advisory
+
+Installing `oh-my-pi` also installs `hooks/security-edit.mjs` under the printed `skills-security` path. Register it with `omp --hook=<installed-path>`; OMP currently provides the verified `tool_call` callback used by this adapter. It inspects `write` and `edit` events only when the callback includes the changed file path and full proposed contents. Reports are advisory and never block an edit.
+
+Hadolint scans edited Dockerfiles and actionlint scans edited `.github/workflows/*.yml` or `.yaml` files. Semgrep runs only when `SKILLS_SECURITY_SEMGREP_RULES` names an existing absolute local rules path; it never uses registry presets. Trivy filesystem scanning requires an existing local database and uses offline/update-disabled flags. Trivy config coverage currently remains incomplete because no local checks-bundle contract is verified. Missing tools, rules, caches, unsupported callbacks, and invalid coverage are reported as incomplete. Findings omit source excerpts and scanner diagnostics.
+
+This adapter does not cover Codex: its hooks are stable, but the edited-file callback payload is unverified in this repository. It also does not intercept shell-based edits or claim that unscanned files are clean. The `model-endpoint-redteam` executable independently requires a current local authorization artifact for live probes; edit-time hooks are not its authorization boundary.
+
 ## Model routing
 
 Run `/configure-model-routing` when no valid profile exists. Standalone Oh My Pi skills may call the shared `route-model` helper through Node; discovery may use the documented public `omp models --json` command, and failed or unavailable discovery falls back to explicit exact candidates. Do not scrape provider-private registries or store credentials. Explicit `quota_mode=omp` additionally runs `omp usage --json` locally before JEV; provider filtering does not bind accounts, report `fetchedAt` and one account identifier must be fresh and explicit, and the snapshot creates no concurrency reservation. `context_policy=stop-at-60` consumes the managed RPC `get_state` response's `data.contextUsage` plus the current child session identity and stops when either is unavailable. The normal `task` API does not promise that live child metric.

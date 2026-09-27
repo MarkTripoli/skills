@@ -130,6 +130,13 @@ export function plan(options) {
   } else if (targets.includes('oh-my-pi')) {
     notes.push('Oh My Pi publication guard is optional: pass --omp-publication-hook, then launch with --hook=<installed-path> and SKILLS_PUBLICATION_TASK_DIR=<absolute-task-dir>');
   }
+  if (targets.includes('oh-my-pi')) {
+    const base = project ? path.join(cwd, '.omp', 'hooks') : path.join(home, '.omp', 'agent', 'hooks');
+    steps.push({ target: 'oh-my-pi', kind: 'security-edit-hook', to: path.join(base, 'skills-security') });
+    notes.push('Edit-time advisory hook is installed for Oh My Pi; register the printed path with omp --hook=<path>. Codex exposes stable hooks, but its edit callback payload is unverified here, so no Codex adapter is installed. Portable and other targets have no verified edit-hook adapter.');
+  } else if (targets.includes('codex')) {
+    notes.push('Codex stable hooks are available, but the edit callback payload is unverified here; no Codex advisory adapter is installed.');
+  }
   if (atomic) steps.push({ target: 'atomic', kind: 'workflow', to: atomicDestination({ project, cwd, home, env }) });
   if (!atomic && targets.includes('codex') && !project && (targets.includes('pi') || targets.includes('oh-my-pi'))) notes.push('Pi and Oh My Pi also read ~/.agents/skills, where the Codex copy lives; their own skill directories are installed too, so a skill may appear twice by name in those runtimes');
   return { steps, notes, names, requestedNames };
@@ -142,6 +149,7 @@ export function describe(step, home) {
     case 'agents': return `${step.target}: ${step.names.length} worker definitions -> ${short(step.to, home)}/agent-*.${step.format}`;
     case 'config': return `${step.target}: [agents.*] block -> ${short(step.to, home)}`;
     case 'publication-hook': return `oh-my-pi: optional Bash publication guard -> ${short(path.join(step.to, 'hooks', 'omp-publication.mjs'), home)} (register with omp --hook=<installed-path>; set SKILLS_PUBLICATION_TASK_DIR per task; direct shell and Codex are not guarded)`;
+    case 'security-edit-hook': return `oh-my-pi: local edit-time advisory -> ${short(path.join(step.to, 'hooks', 'security-edit.mjs'), home)} (register with omp --hook=<installed-path>; no edit blocking)`;
     case 'workflow': return `atomic: delivery workflow -> ${short(step.to, home)}/ and ${short(path.join(path.dirname(step.to), 'skills-delivery.mjs'), home)}`;
     default: return JSON.stringify(step);
   }

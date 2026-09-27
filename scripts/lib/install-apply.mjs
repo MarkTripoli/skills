@@ -9,6 +9,7 @@ const MARK_BEGIN = '# >>> MarkTripoli/skills workers (managed by the installer; 
 const MARK_END = '# <<< MarkTripoli/skills workers';
 const noDsStore = src => path.basename(src) !== '.DS_Store';
 const publicationFiles = ['hooks/omp-publication.mjs', 'shared/publication-command.mjs', 'shared/publication-proof.mjs', 'shared/publication-proof-policy.mjs', 'shared/task-artifacts.mjs', 'shared/task-root.mjs'];
+const securityHookFiles = ['hooks/security-edit.mjs'];
 
 function copyDir(from, to) {
   fs.rmSync(to, { recursive: true, force: true });
@@ -64,6 +65,21 @@ export function apply(planned, { built, uninstall, home }) {
         const updated = step.complete !== false ? updateConfigBlock(existing, uninstall ? null : block) : selectedConfigBlock(existing, block, step.names, uninstall);
         if (uninstall && updated.trim() === '') fs.rmSync(step.to, { force: true }); else { fs.mkdirSync(path.dirname(step.to), { recursive: true }); fs.writeFileSync(step.to, updated); }
         done.push(`${uninstall ? 'updated selected workers in' : 'updated the workers block in'} ${short(step.to, home)}`); break;
+      }
+      case 'security-edit-hook': {
+        for (const name of securityHookFiles) {
+          const to = path.join(step.to, name);
+          if (uninstall) fs.rmSync(to, { force: true });
+          else { fs.mkdirSync(path.dirname(to), { recursive: true }); fs.copyFileSync(path.join(repoRoot, name), to); }
+        }
+        if (uninstall) {
+          for (const dir of ['hooks', '']) {
+            const target = path.join(step.to, dir);
+            if (fs.existsSync(target) && fs.readdirSync(target).length === 0) fs.rmdirSync(target);
+          }
+        }
+        done.push(`${uninstall ? 'removed' : 'installed'} Oh My Pi edit-time security advisory ${short(path.join(step.to, 'hooks', 'security-edit.mjs'), home)}; register with omp --hook=<installed-path>`);
+        break;
       }
       case 'publication-hook': {
         for (const name of publicationFiles) {

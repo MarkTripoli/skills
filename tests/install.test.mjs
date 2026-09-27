@@ -382,7 +382,9 @@ test("optional OMP publication hook installs a self-contained guarded entry only
   assert.throws(() => plan({ targets: ["codex"], ompPublicationHook: true, cwd: project, home, env }), /requires the oh-my-pi target/);
   const ordinary = plan({ targets: ["oh-my-pi"], skillNames: ["show-me"], cwd: project, home, env });
   assert.equal(ordinary.steps.some(step => step.kind === "publication-hook"), false);
+  assert.ok(ordinary.steps.some(step => step.kind === "security-edit-hook"));
   assert.match(ordinary.notes.join("\\n"), /optional.*--omp-publication-hook/);
+  assert.match(ordinary.notes.join("\\n"), /Codex.*payload is unverified/);
 
   for (const projectScope of [false, true]) {
     const options = { targets: ["oh-my-pi"], skillNames: ["show-me"], ompPublicationHook: true, project: projectScope, cwd: project, home, env };
@@ -395,10 +397,14 @@ test("optional OMP publication hook installs a self-contained guarded entry only
     assert.ok(fs.existsSync(path.join(step.to, "shared", "publication-command.mjs")));
     assert.ok(fs.existsSync(path.join(step.to, "shared", "publication-proof.mjs")));
     assert.ok(fs.existsSync(path.join(step.to, "shared", "task-artifacts.mjs")));
+    const securityStep = planned.steps.find(item => item.kind === "security-edit-hook");
+    const securityEntry = path.join(securityStep.to, "hooks", "security-edit.mjs");
+    assert.ok(fs.existsSync(securityEntry));
     const foreign = path.join(step.to, "foreign");
     put(foreign, "keep\\n");
     uninstall(planned, home);
     assert.equal(fs.existsSync(entry), false);
+    assert.equal(fs.existsSync(securityEntry), false);
     assert.equal(fs.readFileSync(foreign, "utf8"), "keep\\n");
   }
 });
