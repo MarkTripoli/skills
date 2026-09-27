@@ -105,11 +105,12 @@ test('fails closed when selected root is rebound during ignored-file open', t =>
   fs.mkdirSync(outside);
   fs.writeFileSync(path.join(a, '.gitignore'), '.env.ignored\n');
   fs.writeFileSync(target, 'TOKEN=inside-root-value\n');
+  const canonicalTarget = fs.realpathSync(target);
   fs.writeFileSync(path.join(outside, '.env.ignored'), 'TOKEN=outside-race-value\n');
   const originalOpen = fs.openSync;
   let swapped = false;
   fs.openSync = function(file, ...args) {
-    if (file === target && !swapped) {
+    if (file === canonicalTarget && !swapped) {
       swapped = true;
       fs.renameSync(a, held);
       fs.symlinkSync(outside, a);
