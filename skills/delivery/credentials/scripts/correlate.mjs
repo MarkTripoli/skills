@@ -15,6 +15,13 @@ function git(args, cwd, binary = false) {
 function gitAt(common, args, binary = false) {
   return git(['--git-dir', common, ...args], undefined, binary);
 }
+function assertRootPath(root) {
+  const current = fs.lstatSync(root.path);
+  const held = fs.fstatSync(root.fd);
+  if (current.isSymbolicLink() || !current.isDirectory() || current.dev !== root.stat.dev || current.ino !== root.stat.ino || held.dev !== root.stat.dev || held.ino !== root.stat.ino) {
+    throw new Error('repository root changed');
+  }
+}
 function gitFromRoot(root, args) {
   assertRootPath(root);
   const env = {...process.env, GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1'};
