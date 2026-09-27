@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import {parseAllDocuments} from './yaml-parser.mjs';
 
 const MAX_FILES = 2000;
@@ -328,6 +329,8 @@ function main(argv) {
   }
   process.stdout.write(`${JSON.stringify(analyze(inputs), null, 2)}\n`);
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) {
+let invoked = false;
+try { invoked = Boolean(process.argv[1]) && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url)); } catch { /* imported module or unresolved entry path */ }
+if (invoked) {
   try { main(process.argv.slice(2)); } catch (error) { console.error(error.message); process.exitCode = 2; }
 }
