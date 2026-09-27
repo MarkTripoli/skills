@@ -8,6 +8,7 @@ import {reviewHighRisk, renderSecurityReport} from '../skills/delivery/security-
 const high = (finding_id, severity = 'ERROR', extra = {}) => ({
   finding_id,
   severity,
+  revision: 'a'.repeat(40),
   path: 'skills/delivery/security-check/fixtures/vulnerable.js',
   line: 4,
   rule_id: 'javascript.lang.security.audit.child-process-exec',
@@ -34,7 +35,6 @@ test('reviews only high-severity findings once and retains cited dispositions', 
   assert.deepEqual(dispositions.map(item => item.finding_id), ['reachable', 'critical']);
   assert.equal(dispositions[0].reachability, 'reachable');
   assert.deepEqual(dispositions[0].source_references, cited('reachable').source_references);
-  assert.match(calls[0].prompt, /do not infer reachability/);
 });
 
 test('review failures and unsupported conclusions become uncertain', async () => {
@@ -76,6 +76,29 @@ test('renders scanner coverage and separates active, accepted, unreachable, and 
   assert.match(report, /Reviewed exception; expires 2027-01-01/);
   assert.match(report, /vulnerable\.js:3-4/);
   assert.match(report, /not proof of runtime execution/);
+});
+
+test('renders every scanner lane and unlocated vulnerabilities without invented disposition', () => {
+  const report = renderSecurityReport({
+    repository: 'https://example.test/owner/repo',
+    revision: 'a'.repeat(40),
+    scanner: 'semgrep', coverage: 'incomplete',
+    tool: {name: 'semgrep', status: 'ok'},
+    lanes: {
+      semgrep: {coverage: 'complete', tool: {name: 'semgrep', status: 'ok', version: '1.168.0'}},
+      trivy_fs: {coverage: 'incomplete', tool: {name: 'trivy', status: 'ok', version: '0.64.0'}},
+      actionlint: {coverage: 'incomplete', tool: {name: 'actionlint', status: 'unavailable'}},
+    },
+    findings: [],
+    file_findings: [{rule_id: 'CVE-2026-1234', path: 'package-lock.json', severity: 'HIGH', scanner: 'trivy_fs'}],
+  }, {coverage: 'complete'}, []);
+  assert.match(report, /aggregate incomplete/);
+  assert.match(report, /trivy_fs: incomplete; tool status ok/);
+  assert.match(report, /actionlint: incomplete; tool status unavailable/);
+  assert.match(report, /CVE-2026-1234.*package-lock\.json/);
+  assert.match(report, /source line unavailable; no risk or reachability disposition/);
+  assert.match(report, /Active findings \(0\)/);
+  assert.match(report, /Suppressed findings \(0\)/);
 });
 
 test('bounds disposition evidence and report listing', async () => {

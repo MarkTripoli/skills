@@ -5,6 +5,7 @@ import {createHash} from 'node:crypto';
 const key = finding => [finding.scanner, finding.rule_id, finding.path, finding.line].join('\0');
 const high = finding => ['ERROR', 'HIGH', 'CRITICAL'].includes(String(finding.severity).toUpperCase());
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
+const SCANNER_LANES = ['semgrep','gitleaks','trivy_config','trivy_fs','hadolint','actionlint'];
 
 /** Structural fixture grade; it is not a measured live recall or cost benchmark. */
 export function gradeSecurityAssessment(fixture, assessment) {
@@ -24,6 +25,16 @@ export function gradeSecurityAssessment(fixture, assessment) {
   const reportIssue = message => { problems.push(message); reportProblems.push(message); };
   if (scan.schema_version !== 1 || scan.repository !== fixture.repository || scan.revision !== fixture.revision) problems.push('scanner schema or repository/revision provenance mismatch');
   if (scan.coverage !== 'complete' || scan.secret_coverage !== 'complete') problems.push('scanner or secret coverage incomplete');
+  const hasLanes = scan.lanes !== undefined;
+  const lanes = hasLanes && scan.lanes && typeof scan.lanes === 'object' && !Array.isArray(scan.lanes) ? scan.lanes : {};
+  if (hasLanes) {
+    for (const name of SCANNER_LANES) {
+      const lane = lanes[name];
+      if (lane?.coverage !== 'complete' || lane.tool?.status !== 'ok' || typeof lane.tool?.version !== 'string' || !lane.tool.version.trim()) {
+        reportIssue(`${name} scanner lane coverage, status, or version incomplete`);
+      }
+    }
+  }
   for (const tool of [scan.tool, scan.secret_tool]) {
     if (tool?.status !== 'ok' || typeof tool.version !== 'string' || !tool.version.trim()) reportIssue(`${tool?.name ?? 'unknown'} tool status/version missing`);
   }
@@ -58,13 +69,20 @@ export function gradeSecurityAssessment(fixture, assessment) {
   if (extra.length) problems.push(`${extra.length} extra finding(s) emitted`);
   const reportFields = [
     `Repository: ${fixture.repository}; revision: ${fixture.revision}`,
-    `Scanner coverage: ${scan.scanner} ${scan.coverage}; tool status ${scan.tool?.status}`,
+    hasLanes ? `Scanner coverage: aggregate ${scan.coverage}.` :
+      `Scanner coverage: ${scan.scanner} ${scan.coverage}; tool status ${scan.tool?.status}`,
+    ...(hasLanes ? SCANNER_LANES.map(name =>
+      `Scanner lane ${name}: ${lanes[name]?.coverage ?? 'unknown'}; tool status ${lanes[name]?.tool?.status ?? 'unknown'}`) : []),
     `Secret coverage: ${scan.secret_coverage}; tool status ${scan.secret_tool?.status}`,
     `Accepted-risk coverage: ${risk.coverage}`,
     ...Object.entries(groupCounts).map(([group, count]) => `${group[0].toUpperCase()}${group.slice(1)} findings (${count})`),
     'Limits:',
   ];
-  if (reportFields.some(field => !report.includes(field)) || !report.includes(scan.tool?.version ?? '\u0000') || !report.includes(scan.secret_tool?.version ?? '\u0000')) reportIssue('operator report omits coverage, tool version, provenance, group, or limits');
+  if (reportFields.some(field => !report.includes(field)) || !report.includes(scan.tool?.version ?? '\u0000') ||
+      !report.includes(scan.secret_tool?.version ?? '\u0000') ||
+      (hasLanes && SCANNER_LANES.some(name => !report.includes(lanes[name]?.tool?.version ?? '\u0000')))) {
+    reportIssue('operator report omits coverage, tool version, provenance, group, or limits');
+  }
   const forbidden = Array.isArray(fixture.secret_parts) ? fixture.secret_parts.join('') : '';
   const redactionPassed = Boolean(forbidden) && !JSON.stringify(assessment).includes(forbidden);
   if (!redactionPassed) reportIssue('secret value present in assessment or redaction fixture unavailable');
