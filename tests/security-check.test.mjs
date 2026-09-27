@@ -6,6 +6,8 @@ import path from 'node:path';
 import test from 'node:test';
 import {run} from '../skills/delivery/security-check/scripts/security-check.mjs';
 
+const syntheticToken = `ghp_${['A1b2C3d4E5f6G7h8', 'I9j0K1l2M3n4O5p6Q7r8'].join('').slice(0, 36)}`;
+
 function repository() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'security-check-'));
   const git = (...args) => execFileSync('git', args, {cwd: root, encoding: 'utf8'}).trim();
@@ -13,13 +15,13 @@ function repository() {
   git('config', 'user.email', 'fixture@example.test');
   git('config', 'user.name', 'Fixture');
   git('remote', 'add', 'origin', 'https://account:secret-token@example.test/owner/project.git');
-  fs.copyFileSync(new URL('./fixtures/security-check/seeded-secret.js', import.meta.url), path.join(root, 'seeded-secret.js'));
+  fs.writeFileSync(path.join(root, 'seeded-secret.js'), `// Generated only inside an isolated temporary repository.\nconst apiKey = '${syntheticToken}';\n`);
   git('add', 'seeded-secret.js');
   git('commit', '-qm', 'fixture');
   return {root, revision: git('rev-parse', 'HEAD')};
 }
 
-function scanners({secret = 'fixture-not-a-real-credential-83d19c', semgrep = {results: [], errors: []}, gitleaks = [{RuleID: 'generic-api-key', File: 'seeded-secret.js', StartLine: 2, Secret: secret, Match: `apiKey = '${secret}'`}]} = {}) {
+function scanners({secret = syntheticToken, semgrep = {results: [], errors: []}, gitleaks = [{RuleID: 'github-pat', File: 'seeded-secret.js', StartLine: 2, Secret: secret, Match: `apiKey = '${secret}'`}]} = {}) {
   return (tool, args) => {
     if (tool === 'semgrep') return args[0] === '--version'
       ? {status: 0, stdout: '1.168.0'}
@@ -33,7 +35,7 @@ function scanners({secret = 'fixture-not-a-real-credential-83d19c', semgrep = {r
 
 test('reports repository-bound secret findings without exposing secret data', () => {
   const {root, revision} = repository();
-  const secret = 'fixture-not-a-real-credential-83d19c';
+  const secret = syntheticToken;
   try {
     const spawn = scanners({
       secret,
@@ -54,7 +56,8 @@ test('reports repository-bound secret findings without exposing secret data', ()
     assert.equal(secretFinding.line, 2);
     assert.equal(secretFinding.message, 'Secret detected by Gitleaks');
     assert.match(secretFinding.evidence_ref, /^sha256:[a-f0-9]{64}$/);
-    assert.doesNotMatch(JSON.stringify(report), /fixture-not-a-real-credential|secret-token|account/);
+    assert.ok(!JSON.stringify(report).includes(secret));
+    assert.doesNotMatch(JSON.stringify(report), /secret-token|account/);
     const gitleaksInvocation = [];
     run({cwd: root, spawn: (tool, args, options) => {
       gitleaksInvocation.push({tool, args, options});
@@ -71,7 +74,7 @@ test('reports repository-bound secret findings without exposing secret data', ()
 
 test('missing or failed Gitleaks marks secret coverage incomplete without raw diagnostics', () => {
   const {root} = repository();
-  const secret = 'fixture-not-a-real-credential-83d19c';
+  const secret = syntheticToken;
   try {
     const missing = run({cwd: root, spawn: (tool, args) => {
       if (tool === 'gitleaks') return {status: null, error: new Error(`ENOENT ${secret}`), stderr: secret};
@@ -79,14 +82,14 @@ test('missing or failed Gitleaks marks secret coverage incomplete without raw di
     }});
     assert.equal(missing.secret_coverage, 'incomplete');
     assert.equal(missing.secret_tool.status, 'unavailable');
-    assert.doesNotMatch(JSON.stringify(missing), /fixture-not-a-real-credential/);
+    assert.ok(!JSON.stringify(missing).includes(secret));
     const failed = run({cwd: root, spawn: (tool, args) => {
       if (tool === 'gitleaks' && args[0] === 'git') return {status: 2, stdout: `[{"Secret":"${secret}"}]`, stderr: secret};
       return scanners({gitleaks: []})(tool, args);
     }});
     assert.equal(failed.secret_coverage, 'incomplete');
     assert.equal(failed.secret_tool.status, 'failed');
-    assert.doesNotMatch(JSON.stringify(failed), /fixture-not-a-real-credential/);
+    assert.ok(!JSON.stringify(failed).includes(secret));
     const semgrepFailure = run({cwd: root, spawn: (tool, args) => {
       if (tool === 'semgrep' && args[0] !== '--version') return {status: 2, stdout: JSON.stringify({results: []}), stderr: secret};
       return scanners({gitleaks: []})(tool, args);
@@ -111,7 +114,7 @@ test('missing or failed Gitleaks marks secret coverage incomplete without raw di
       assert.equal(report.coverage, 'incomplete');
       assert.equal(report.tool.status, 'failed');
       assert.match(report.error, /Semgrep/);
-      assert.doesNotMatch(JSON.stringify(report), /fixture-not-a-real-credential/);
+      assert.ok(!JSON.stringify(report).includes(secret));
     }
   } finally {
     fs.rmSync(root, {recursive: true, force: true});
