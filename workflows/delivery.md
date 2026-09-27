@@ -186,6 +186,7 @@ Artifact type be template frontmatter `type`. Human gates count only when turned
 | implement-outline | implementation | yes | One outline step per stage |
 | iterate-implementation | implementation | yes | Implementation feedback and repairs |
 | review-code | code-review | no | Review loop |
+| security-check | none | no | By hand on explicit request; opt-in Semgrep scan |
 | fix-code-review | code-review-fixes | no | Repair review findings |
 | reproduce-bug | reproduction | yes | Bugfix before product edits |
 | fix-bug | fix | no | Bugfix after reproduction |
