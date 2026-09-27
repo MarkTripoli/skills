@@ -8,8 +8,8 @@ const makeFinding = (id, scanner, rule_id, path) => ({finding_id: id, repository
 
 test('compliance report preserves complete accounting, citation failures, risk expiry, and unknown tools', () => {
   const findings = [
-    makeFinding('missing-citation', 'semgrep', 'js.rule', 'src/missing.js'),
-    makeFinding('expired-risk', 'semgrep', 'js.rule', 'src/expired.js'),
+    makeFinding('missing-citation', 'semgrep', 'javascript.example', 'src/missing.js'),
+    makeFinding('expired-risk', 'semgrep', 'javascript.example', 'src/expired.js'),
     makeFinding('unknown-tool', 'future-scanner', 'new-rule', 'src/new.js'),
     makeFinding('active', 'gitleaks', 'generic-api-key', 'config/example'),
   ];
@@ -21,7 +21,7 @@ test('compliance report preserves complete accounting, citation failures, risk e
   };
   const report = assessCompliance(scan, {
     now: new Date('2026-09-27T00:00:00Z'),
-    risks: [{repository, rule_id: 'js.rule', path: 'src/expired.js', reason: 'temporary', expires: '2026-09-26'}],
+    risks: [{repository, rule_id: 'javascript.example', path: 'src/expired.js', reason: 'temporary', expires: '2026-09-26'}, {repository, rule_id: 'javascript.example', path: 'src/missing.js', reason: 'must not override citation mismatch', expires: '2026-10-01'}],
   });
   assert.equal(report.coverage, 'incomplete');
   assert.deepEqual(report.findings.map(item => item.finding_id), findings.map(item => item.finding_id));
@@ -31,22 +31,28 @@ test('compliance report preserves complete accounting, citation failures, risk e
   assert.ok(report.tool_coverage.some(tool => tool.name === 'future-scanner' && tool.status === 'unknown'));
   assert.equal(report.accounting.input_findings, 4);
   assert.equal(report.accounting.reported_findings, 4);
-  assert.equal(report.catalog.version, '2026-09-27.1');
+  assert.equal(report.catalog.version, '2026-09-27.2');
   assert.match(report.catalog.disclaimer, /not a certification audit/i);
 });
 
 test('forged acceptance and missing lanes cannot produce complete coverage', () => {
-  const finding = {...makeFinding('forged', 'semgrep', 'js.rule', 'src/app.js'), disposition: 'accepted'};
-  const names = ['semgrep', 'gitleaks', 'lane3', 'lane4', 'lane5', 'lane6'];
+  const finding = {...makeFinding('forged', 'semgrep', 'javascript.lang.security.audit.child-process-exec', 'src/app.js'), disposition: 'accepted'};
+  const names = ['semgrep', 'gitleaks', 'trivy_config', 'trivy_fs', 'hadolint', 'actionlint'];
   const lanes = Object.fromEntries(names.map(name => [name, {tool: {name, version: '1.0', status: 'ok'}, coverage: 'complete'}]));
-  const complete = {schema_version: 1, repository, revision, coverage: 'complete', lanes, findings: [finding]};
+  const complete = {schema_version: 1, repository, revision, coverage: 'complete', secret_coverage: 'complete', lanes, findings: [finding]};
   const report = assessCompliance(complete);
-  assert.equal(report.findings[0].disposition, 'active');
+  assert.equal(report.findings[0].control_id, 'SEC-CODE-REVIEW');
   assert.equal(report.coverage, 'complete');
   assert.equal(report.accounting.reported_findings, 1);
 
-  delete lanes.lane6;
-  const incomplete = assessCompliance(complete);
-  assert.equal(incomplete.coverage, 'incomplete');
-  assert.ok(incomplete.tool_coverage.some(tool => tool.name === 'unavailable-lane-6' && tool.coverage === 'incomplete'));
+  delete lanes.trivy_fs;
+  const missingLane = assessCompliance(complete);
+  assert.equal(missingLane.coverage, 'incomplete');
+  assert.ok(missingLane.tool_coverage.some(tool => tool.name === 'trivy_fs' && tool.status === 'unavailable'));
+
+  lanes.trivy_fs = {tool: {name: 'trivy_fs', version: '1.0', status: 'ok'}};
+  assert.equal(assessCompliance(complete).coverage, 'incomplete');
+  lanes.trivy_fs.coverage = 'complete';
+  lanes.unexpected = {tool: {name: 'unexpected', status: 'ok'}, coverage: 'complete'};
+  assert.equal(assessCompliance(complete).coverage, 'incomplete');
 });

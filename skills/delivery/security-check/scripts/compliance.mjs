@@ -2,27 +2,26 @@ import {applyAcceptedRisks} from './accepted-risks.mjs';
 
 export const CONTROL_CATALOG = {
   schema_version: 1,
-  catalog_version: '2026-09-27.1',
+  catalog_version: '2026-09-27.2',
   disclaimer: 'Control mapping is triage context, not a certification audit.',
   controls: [
-    {id: 'SEC-CODE-REVIEW', title: 'Review static-analysis findings', scanner: 'semgrep', rule_prefix: 'js.'},
+    {id: 'SEC-CODE-REVIEW', title: 'Review static-analysis findings', scanner: 'semgrep', rule_prefix: 'javascript.'},
     {id: 'SEC-SECRET-EXPOSURE', title: 'Review detected secret exposure', scanner: 'gitleaks', rule_prefix: ''},
   ],
 };
 
-const EXPECTED_LANE_COUNT = 6;
+const EXPECTED_LANES = ['semgrep', 'gitleaks', 'trivy_config', 'trivy_fs', 'hadolint', 'actionlint'];
 
 function laneTools(scan) {
   const lanes = scan.lanes && typeof scan.lanes === 'object' && !Array.isArray(scan.lanes) ? scan.lanes : {};
-  const names = Object.keys(lanes);
-  const tools = names.map(name => {
-    const lane = lanes[name];
+  const tools = Object.entries(lanes).map(([name, lane]) => {
     const tool = lane?.tool ?? lane;
     const status = tool?.status ?? 'unavailable';
-    return {name, version: tool?.version ?? null, status, coverage: status === 'ok' && lane?.coverage !== 'incomplete' ? 'complete' : 'incomplete'};
+    const known = EXPECTED_LANES.includes(name);
+    return {name, version: tool?.version ?? null, status: known ? status : 'unknown', coverage: known && status === 'ok' && lane?.coverage === 'complete' ? 'complete' : 'incomplete'};
   });
-  for (let index = names.length; index < EXPECTED_LANE_COUNT; index += 1) {
-    tools.push({name: `unavailable-lane-${index + 1}`, version: null, status: 'unavailable', coverage: 'incomplete'});
+  for (const name of EXPECTED_LANES) {
+    if (!Object.hasOwn(lanes, name)) tools.push({name, version: null, status: 'unavailable', coverage: 'incomplete'});
   }
   return tools;
 }
@@ -49,7 +48,7 @@ export function assessCompliance(scan, {risks = [], now = new Date(), catalog = 
     const cited = hasCitation(finding, scan);
     const control = catalog.controls.find(item => item.scanner === finding?.scanner && typeof item.rule_prefix === 'string' && finding.rule_id?.startsWith(item.rule_prefix));
     let disposition = 'unknown';
-    if (suppressedIds.has(finding?.finding_id)) disposition = 'suppressed';
+    if (cited && suppressedIds.has(finding?.finding_id)) disposition = 'suppressed';
     else if (cited && control) disposition = 'active';
     return {
       finding_id: finding?.finding_id ?? null,
@@ -72,6 +71,6 @@ export function assessCompliance(scan, {risks = [], now = new Date(), catalog = 
     tool_coverage: tools,
     findings,
     accounting: {input_findings: scan.findings.length, reported_findings: findings.length, dispositions: counts},
-    coverage: scan.coverage === 'complete' && Object.keys(scan.lanes ?? {}).length === EXPECTED_LANE_COUNT && accepted.coverage === 'complete' && tools.every(tool => tool.coverage === 'complete') && findings.every(item => item.citation_status === 'complete') ? 'complete' : 'incomplete',
+    coverage: scan.coverage === 'complete' && scan.secret_coverage === 'complete' && Object.keys(scan.lanes ?? {}).length === EXPECTED_LANES.length && EXPECTED_LANES.every(name => tools.some(tool => tool.name === name && tool.coverage === 'complete' && tool.status === 'ok')) && accepted.coverage === 'complete' && tools.every(tool => tool.coverage === 'complete') && findings.every(item => item.citation_status === 'complete') ? 'complete' : 'incomplete',
   };
 }
