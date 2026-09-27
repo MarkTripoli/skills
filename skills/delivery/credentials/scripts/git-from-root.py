@@ -22,7 +22,8 @@ def main():
         os.fchdir(4)
         os.environ["GIT_DIR"] = "."
         os.environ["GIT_COMMON_DIR"] = "."
-        os.environ["GIT_WORK_TREE"] = ".."
+        fd_root = "/proc/self/fd" if sys.platform.startswith("linux") else "/dev/fd"
+        os.environ["GIT_WORK_TREE"] = os.path.join(fd_root, "3")
         os.environ["GIT_NO_LAZY_FETCH"] = "1"
         os.environ["GIT_NO_REPLACE_OBJECTS"] = "1"
         os.execvp("git", ["git", *sys.argv[1:]])
