@@ -14,54 +14,58 @@ const localFile = value => {
   try { return typeof value === 'string' && path.isAbsolute(value) && fs.statSync(value).isFile(); }
   catch { return false; }
 };
-const EDIT_TOOLS = new Set(['write', 'edit', 'patch', 'apply_patch']);
+const EDIT_TOOLS = new Set(['write', 'edit']);
 const inside = (root, file) => file !== root && !path.relative(root, file).startsWith(`..${path.sep}`) && path.relative(root, file) !== '..' && !path.isAbsolute(path.relative(root, file));
 
 function successfulResult(event) {
-  const result = event?.result ?? event?.toolResult ?? event?.tool_result ?? event?.output;
-  const flag = event?.isError ?? event?.is_error ?? result?.isError ?? result?.is_error;
-  if (flag === false || event?.success === true || event?.status === 'success' || result?.status === 'success') return true;
-  return false;
+  return event?.isError === false;
+}
+
+function addPatchPaths(text, names) {
+  if (typeof text !== 'string') return;
+  for (const line of text.split(/\r?\n/)) {
+    const file = /^\*\*\* (?:Update|Add|Delete) File: (.+)$/.exec(line);
+    if (file) names.add(file[1]);
+    const moved = /^\*\*\* Move to: (.+)$/.exec(line);
+    if (moved) names.add(moved[1]);
+    const gitPath = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
+    if (gitPath) names.add(gitPath[2]);
+    const added = /^\+\+\+ b\/(.+)$/.exec(line);
+    if (added) names.add(added[1]);
+    const outputPath = /^(?:created|wrote|updated|edited|patched)(?:\s+file)?(?:\s+at)?\s*[:=-]\s*(.+)$/i.exec(line.trim());
+    if (outputPath) names.add(outputPath[1].replace(/^['\"`]|['\"`]$/g, ''));
+  }
+}
+
+function addStructuredPaths(value, names, depth = 0) {
+  if (depth > 5 || value == null) return;
+  if (Array.isArray(value)) {
+    for (const item of value) addStructuredPaths(item, names, depth + 1);
+    return;
+  }
+  if (typeof value !== 'object') return;
+  for (const [key, item] of Object.entries(value)) {
+    if (['path', 'filePath', 'file_path', 'filename', 'file'].includes(key) && typeof item === 'string') names.add(item);
+    else if (['files', 'paths', 'changedFiles', 'changedPaths', 'modifiedFiles', 'affectedFiles', 'edits', 'operations', 'changes', 'patch', 'diff', 'text', 'content', 'details', 'items', 'results', 'file'].includes(key)) {
+      if (typeof item === 'string') addPatchPaths(item, names);
+      else addStructuredPaths(item, names, depth + 1);
+    }
+  }
 }
 
 function fileNames(event) {
   const names = new Set();
   const input = event?.input ?? {};
-  for (const name of event?.changedPaths ?? []) if (typeof name === 'string') names.add(name);
   if (EDIT_TOOLS.has(event?.toolName)) {
     for (const key of ['path', 'filePath', 'file_path', 'filename']) if (typeof input[key] === 'string') names.add(input[key]);
+    for (const key of ['patch', 'diff', 'changes']) addPatchPaths(input[key], names);
+    for (const key of ['files', 'paths', 'edits', 'operations']) addStructuredPaths(input[key], names);
   }
-  for (const value of [event?.result, event?.toolResult, event?.tool_result, event?.output]) {
-    for (const key of ['path', 'filePath', 'file_path', 'filename']) if (typeof value?.[key] === 'string') names.add(value[key]);
+  for (const value of [event?.details, event?.content]) {
+    if (typeof value === 'string') addPatchPaths(value, names);
+    else addStructuredPaths(value, names);
   }
-  for (const value of [input.files, input.paths, input.edits, input.operations, input.changes, event?.result?.files, event?.toolResult?.files, event?.tool_result?.files, event?.output?.files]) {
-    if (!Array.isArray(value)) continue;
-    for (const item of value) {
-      const name = typeof item === 'string' ? item : item?.path ?? item?.filePath ?? item?.file_path;
-      if (typeof name === 'string') names.add(name);
-    }
-  }
-  const patches = [input.patch, input.diff, input.changes, event?.result?.patch, event?.toolResult?.patch, event?.tool_result?.patch, event?.output?.patch].filter(value => typeof value === 'string');
-  for (const patch of patches) {
-    let previousPath = null;
-    for (const line of patch.split(/\r?\n/)) {
-      const file = /^\*\*\* (Update|Add|Delete) File: (.+)$/.exec(line);
-      if (file) {
-        previousPath = file[1] === 'Update' ? file[2] : null;
-        names.add(file[2]);
-      }
-      const moved = /^\*\*\* Move to: (.+)$/.exec(line);
-      if (moved) {
-        if (previousPath) names.delete(previousPath);
-        names.add(moved[1]);
-        previousPath = null;
-      }
-      const gitPath = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
-      if (gitPath) names.add(gitPath[2]);
-      const added = /^\+\+\+ b\/(.+)$/.exec(line);
-      if (added) names.add(added[1]);
-    }
-  }
+  addStructuredPaths(event?.details?.files, names);
   return [...names].filter(name => name && name !== '/dev/null');
 }
 
@@ -146,10 +150,11 @@ function scanFile(file, { cwd, env, run }) {
 }
 
 export function inspectEditedFile(event, { cwd = process.cwd(), env = process.env, run = spawnSync } = {}) {
-  if (!successfulResult(event)) return { coverage: 'incomplete', results: [], lanes: [incomplete('dispatch', 'tool did not report successful completion')] };
+  if (!EDIT_TOOLS.has(event?.toolName)) return { coverage: 'incomplete', results: [], lanes: [incomplete('dispatch', 'unsupported edit tool')] };
+  if (!successfulResult(event)) return { coverage: 'incomplete', results: [], lanes: [incomplete('dispatch', 'tool_result did not report successful completion')] };
   const root = fs.realpathSync(cwd);
   const paths = fileNames(event);
-  if (!paths.length) return { coverage: 'incomplete', results: [], lanes: [incomplete('dispatch', 'completed tool result contained no changed file paths')] };
+  if (!paths.length) return { coverage: 'incomplete', results: [], lanes: [incomplete('dispatch', 'successful tool_result contained no changed file paths')] };
   const results = [];
   const failed = [];
   for (const name of paths) {
@@ -162,24 +167,11 @@ export function inspectEditedFile(event, { cwd = process.cwd(), env = process.en
   return { coverage, results, lanes: failed };
 }
 export default function securityEditHook(pi, options = {}) {
-  const pending = new Map();
-  const editable = EDIT_TOOLS;
-  pi.on('tool_call', event => {
-    if (!event?.toolCallId) return;
+  pi.on('tool_result', event => {
     const paths = fileNames(event);
-    if (paths.length) pending.set(event.toolCallId, { toolName: event.toolName, paths });
-  });
-  pi.on('tool_execution_end', event => {
-    const previous = pending.get(event?.toolCallId);
-    pending.delete(event?.toolCallId);
-    const completed = {
-      ...event,
-      toolName: event?.toolName ?? previous?.toolName,
-      changedPaths: [...new Set([...(previous?.paths ?? []), ...fileNames(event)])],
-    };
-    if (!completed.changedPaths.length && !editable.has(completed.toolName)) return;
+    if (!EDIT_TOOLS.has(event?.toolName) && !paths.length) return;
     let result;
-    try { result = inspectEditedFile(completed, options); }
+    try { result = inspectEditedFile(event, options); }
     catch { result = { coverage: 'incomplete', results: [], lanes: [incomplete('dispatch', 'post-edit advisory scan could not run')] }; }
     process.stderr.write(`[security advisory] ${JSON.stringify(result)}\n`);
   });
