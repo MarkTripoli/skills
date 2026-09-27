@@ -36,12 +36,12 @@ PRD can start from detailed ticket, research, design discussion, gathered source
 
 ## Converting an existing product document
 
-When the request asks to convert, import, adopt, or port an existing PRD, product spec, or brief, and the current `research.sources` artifact (or a file the user names) holds it, skip the interview and write the PRD in one pass:
+When the request asks to convert, import, adopt, or port an existing PRD, product spec, or brief, and the current `research.sources` artifact (or a file the user names) holds it, map the source in one pass; skip rediscovery of stated facts, not resolution of consequential gaps:
 
 1. Map the source onto the template: its problem statement and user impact become Problem to Solve; its goals, metrics, or success criteria become Success Measures; its chosen approach becomes Proposed Solution; rejected options become Alternative Solutions Considered; each requirement, user story, flow, or acceptance criterion becomes one Solution Details obligation with an observable outcome; its non-goals become Out of Scope. Beside each mapped statement cite the source as the sources artifact records it: location and pointer.
-2. A template section the source does not cover reads `Not stated in <source title>.` followed by the closest fact the source gives, never an invented one. Each such section, and each source statement too vague to be one obligation, becomes one `### Known limits` item and one `### Verify` box naming the decision the reader must make.
-3. Do not ask questions during the conversion. Do not write mockups; link the source's own visuals by location when it has them. Do not reconcile the source with the codebase; that is the TDD's work.
-4. Wrap up per Step 6: save, commit, and reply with `references/prd_final_answer.md`, whose `Check:` and `Known limits:` lines carry the blanks the reader fills before the TDD.
+2. A template section the source does not cover reads `Not stated in <source title>.` followed by the closest fact the source gives, never an invented one. Add the gap to `### Known limits` and `### Verify`, and add it to `### Ambiguity Disposition` with owner and acceptance impact.
+3. Do not reconcile the source with the codebase; that is the TDD's work. Link source visuals by location; do not create mockups for a conversion.
+4. Before approval, resolve every consequential stakeholder choice through the normal one-question-at-a-time interview. An unresolved choice remains open and cannot become an agreed criterion or authorize TDD; ask its named owner the next decision question and wait. Do not use the final answer template or hand off to `/create-tdd` until all such choices are resolved and the solution review gate is approved. Source omissions that do not affect acceptance may remain documented as known limits.
 
 Outside this case, a sources artifact that holds a product document is an input to the interview: draft Problem to Solve, the success signal, and each Solution Details behavior from its excerpts, quoting the source and its pointer beside each, and confirm or amend each drafted decision one question at a time instead of rediscovering it.
 

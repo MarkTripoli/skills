@@ -49,6 +49,35 @@ test("source repairs remain allowed but receipt/source commits cannot be mixed",
   assert.ok(evidencePathProblems(base, [repaired], [{ sha: "mixed", subject: "docs(task): evidence", paths: ["app.js", receipt] }], task).length > 0);
 });
 
+test("planning handoffs route unresolved owner choices back to decisions", () => {
+  const read = (file) => fs.readFileSync(new URL(file, import.meta.url), "utf8");
+  const implement = read("../skills/delivery/implement-plan/SKILL.md");
+  assert.ok(implement.includes("do not select or start a phase, even if its checkboxes are incomplete"));
+  assert.ok(implement.includes("hand off to `/iterate-plan @<plan>`"));
+
+  for (const file of [
+    "../skills/delivery/create-plan/references/plan_final_answer.md",
+    "../skills/delivery/iterate-plan/references/plan_final_answer.md",
+  ]) {
+    const answer = read(file);
+    assert.ok(answer.includes("If any consequential owner choice is unresolved"));
+    assert.ok(answer.includes("do not offer `/implement-plan`"));
+    assert.ok(answer.includes("/iterate-plan @{artifact_file}"));
+  }
+
+  for (const [skill, handoff, approval] of [
+    ["create-prd", "/create-tdd", "solution review gate"],
+    ["create-tdd", "/create-plan", "both design review gates"],
+  ]) {
+    const instructions = read(`../skills/delivery/${skill}/SKILL.md`);
+    const answer = read(`../skills/delivery/${skill}/references/${skill === "create-prd" ? "prd" : "tdd"}_final_answer.md`);
+    assert.ok(instructions.includes(`Do not hand off to \`${handoff}\` while any such choice remains open`));
+    assert.ok(answer.includes(`do not offer approval or \`${handoff}\``));
+    assert.ok(answer.includes(`only when all consequential stakeholder choices are resolved and ${approval} is approved`));
+  }
+
+});
+
 test("a forbidden write reverted before the final state is still retained at a tool boundary", () => {
   const altered = { boundary: "tool_execution_end", files: { ...base.files, "spec.md": { sha256: "weakened" } } };
   assert.ok(evidencePathProblems(base, [altered, base], [], task).some((problem) => problem.includes("spec.md")));

@@ -16,9 +16,9 @@ Coordinate the current approved `planning.plan` artifact in the configured task 
 - Locate the task directory and read `task.md` per the conventions, including the create-when-missing rule.
 - If the user supplied a specific plan path or `@file`, use that file.
 - Otherwise use current `planning.plan` from `index.json`.
-- Read the selected plan completely. Work from the implementation overview, shared constraints, the first incomplete phase, and that phase's acceptance checks. Completed or later phase bodies matter only when the current phase depends on them. Read `task.md` or `ticket.md` again only when needed for ticket identity, deferred evidence pointers, or acceptance language.
+- Read the selected plan completely. Work from the implementation overview, shared constraints, the first incomplete phase, and that phase's acceptance checks. Read `## Ambiguity Disposition` and `## Acceptance Critique` before selecting work.
+- **Authorization gate**: Implementation is authorized only when every consequential stakeholder choice is resolved by its named owner and the independent acceptance critique has no unresolved actionable finding. If any choice is open or ownerless, do not select or start a phase, even if its checkboxes are incomplete. Report the unresolved choice, its owner, acceptance impact, and hand off to `/iterate-plan @<plan>` for resolution. If the critique has an actionable finding, hand off to `/iterate-plan @<plan>` to revise and rerun it. Resume implementation only from the revised approved plan.
 - The current phase is the first phase whose checkboxes are not all checked. The receipt you write at the end of the phase is the review artifact for that phase.
-- If no plan is found, ask for the plan path and stop.
 
 ### 2. Start the implementer child worker
 
