@@ -39,7 +39,7 @@ test('reports independent offline lanes, findings, unavailable tools, and malfor
     const spawn = (tool, args, options) => {
       if (tool === 'actionlint') return {status: null, error: Object.assign(new Error('ENOENT'), {code: 'ENOENT'})};
       if (tool === 'hadolint' && args[0] !== '--version') return {status: 0, stdout: '{broken'};
-      if (tool === 'trivy' && args[0] === 'config') return {status: 0, stdout: JSON.stringify({Results:[{Target:'Dockerfile',Misconfigurations:[{ID:'AVD-DS-0001',Severity:'HIGH',Code:{Lines:[{Number:4}]}}]}]})};
+      if (tool === 'trivy' && args[0] === 'config') return {status: 0, stdout: JSON.stringify({Results:[{Target:'Dockerfile',Misconfigurations:[{ID:'AVD-DS-0001',Severity:'HIGH',CauseMetadata:{StartLine:1}}]}]})};
       return scanners({gitleaks:[]})(tool,args,options);
     };
     const report = run({cwd:root,spawn});
@@ -50,9 +50,27 @@ test('reports independent offline lanes, findings, unavailable tools, and malfor
     assert.equal(report.lanes.hadolint.tool.status,'failed');
     assert.equal(report.lanes.semgrep.coverage,'complete');
     assert.equal(report.findings.find(x=>x.rule_id==='AVD-DS-0001').path,'Dockerfile');
-    assert.equal(report.findings.find(x=>x.rule_id==='AVD-DS-0001').line,4);
+    assert.equal(report.findings.find(x=>x.rule_id==='AVD-DS-0001').line,1);
   } finally {
     fs.rmSync(root,{recursive:true,force:true});
+  }
+});
+
+test('out-of-range Trivy locations stay visible without an invented HEAD citation', () => {
+  const {root} = repository();
+  try {
+    const report = run({cwd: root, spawn: (tool, args, options) => {
+      if (tool === 'trivy' && args[0] === 'config') {
+        return {status: 0, stdout: JSON.stringify({Results: [{Target: 'Dockerfile',
+          Misconfigurations: [{ID: 'AVD-BAD-LINE', Severity: 'HIGH', CauseMetadata: {StartLine: 4}}]}]})};
+      }
+      return scanners({gitleaks: []})(tool, args, options);
+    }});
+    assert.equal(report.lanes.trivy_config.coverage, 'incomplete');
+    assert.equal(report.file_findings[0].rule_id, 'AVD-BAD-LINE');
+    assert.ok(!report.findings.some(finding => finding.rule_id === 'AVD-BAD-LINE'));
+  } finally {
+    fs.rmSync(root, {recursive: true, force: true});
   }
 });
 
@@ -108,6 +126,67 @@ test('offline scanner flags and file-only vulnerabilities preserve honest locati
   }
 });
 
+test('quoted Git paths still route non-ASCII Dockerfiles through Hadolint', () => {
+  const {root} = repository();
+  try {
+    const relative = 'café/Dockerfile';
+    fs.mkdirSync(path.join(root, 'café'));
+    fs.writeFileSync(path.join(root, relative), 'FROM scratch\n');
+    execFileSync('git', ['add', relative], {cwd: root});
+    execFileSync('git', ['commit', '-qm', 'unicode Dockerfile fixture'], {cwd: root});
+    let args;
+    const report = run({cwd: root, spawn: (tool, argv, options) => {
+      if (tool === 'hadolint' && argv[0] !== '--version') args = argv;
+      return scanners({gitleaks: []})(tool, argv, options);
+    }});
+    assert.equal(report.lanes.hadolint.coverage, 'complete');
+    assert.ok(args.includes(relative));
+  } finally {
+    fs.rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('committed HEAD snapshot excludes ignored workflows and refuses remote Trivy targets', () => {
+  const {root} = repository();
+  try {
+    fs.writeFileSync(path.join(root, '.gitignore'), '.github/workflows/\n');
+    execFileSync('git', ['add', '.gitignore'], {cwd: root});
+    execFileSync('git', ['commit', '-qm', 'ignore workflows'], {cwd: root});
+    fs.mkdirSync(path.join(root, '.github/workflows'), {recursive: true});
+    fs.writeFileSync(path.join(root, '.github/workflows/ignored.yml'), 'invalid: [\n');
+    let actionlintScans = 0;
+    const report = run({cwd: root, spawn: (tool, args, options) => {
+      if (tool !== 'gitleaks') assert.equal(fs.existsSync(path.join(options.cwd, '.github/workflows/ignored.yml')), false);
+      if (tool === 'actionlint' && args[0] !== '--version') actionlintScans++;
+      if (tool === 'trivy' && args[0] === 'config') {
+        return {status: 0, stdout: JSON.stringify({Results: [{Target: 'git::https:/example.test/module/main.tf',
+          Misconfigurations: [{ID: 'AVD-REMOTE', Severity: 'HIGH', CauseMetadata: {StartLine: 8}}]}]})};
+      }
+      return scanners({gitleaks: []})(tool, args, options);
+    }});
+    assert.equal(actionlintScans, 0);
+    assert.equal(report.lanes.actionlint.coverage, 'complete');
+    assert.equal(report.lanes.trivy_config.coverage, 'incomplete');
+    assert.ok(!report.findings.some(finding => finding.rule_id === 'AVD-REMOTE'));
+  } finally {
+    fs.rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('tracked symlinks fail closed before any filesystem scanner can follow them', () => {
+  const {root} = repository();
+  try {
+    fs.symlinkSync('/tmp/outside-scan-target', path.join(root, 'Dockerfile.link'));
+    execFileSync('git', ['add', 'Dockerfile.link'], {cwd: root});
+    execFileSync('git', ['commit', '-qm', 'tracked symlink'], {cwd: root});
+    const report = run({cwd: root, spawn: () => assert.fail('scanners must not read through tracked symlinks')});
+    assert.equal(report.coverage, 'incomplete');
+    assert.match(report.error, /unsafe tracked entries/);
+  } finally {
+    fs.rmSync(root, {recursive: true, force: true});
+  }
+});
+
 test('reports repository-bound secret findings without exposing secret data', () => {
   const {root, revision} = repository();
   const secret = syntheticToken;
@@ -134,14 +213,21 @@ test('reports repository-bound secret findings without exposing secret data', ()
     assert.ok(!JSON.stringify(report).includes(secret));
     assert.doesNotMatch(JSON.stringify(report), /secret-token|account/);
     const gitleaksInvocation = [];
+    const observedHeads = [];
     run({cwd: root, spawn: (tool, args, options) => {
       gitleaksInvocation.push({tool, args, options});
+      if (tool === 'gitleaks' && args[0] === 'git') {
+        assert.equal(options.cwd, root);
+        observedHeads.push(execFileSync('git', ['rev-parse', 'HEAD'], {cwd: options.cwd, encoding: 'utf8'}).trim());
+      }
       return spawn(tool, args, options);
     }});
     const scan = gitleaksInvocation.find(call => call.tool === 'gitleaks' && call.args[0] === 'git');
     assert.ok(scan.args.includes('--redact=100'));
     assert.ok(scan.args.includes('--report-format') && scan.args.includes('json'));
-    assert.equal(scan.options.cwd, root);
+    assert.ok(scan.args.includes('--log-opts') && scan.args.includes(revision));
+    assert.deepEqual(observedHeads, [revision]);
+    assert.equal(fs.existsSync(scan.options.cwd), true);
   } finally {
     fs.rmSync(root, {recursive: true, force: true});
   }
@@ -196,25 +282,42 @@ test('missing or failed Gitleaks marks secret coverage incomplete without raw di
   }
 });
 
-test('uncommitted tracked or untracked source cannot produce HEAD-bound complete findings', () => {
+test('uncommitted tracked, staged and untracked source cannot enter HEAD-bound scans', () => {
   for (const change of ['modified', 'staged', 'untracked']) {
     const {root, revision} = repository();
+    const committed = fs.readFileSync(path.join(root, 'seeded-secret.js'), 'utf8');
     try {
       const source = change === 'untracked' ? 'new-secret.js' : 'seeded-secret.js';
-      fs.writeFileSync(path.join(root, source), `const apiKey = '${syntheticToken}';\n`);
+      fs.writeFileSync(path.join(root, source), 'const changed = true;\n');
       if (change === 'staged') execFileSync('git', ['add', source], {cwd: root});
-      const report = run({cwd: root, spawn: () => {
-        assert.fail('scanner must not run against uncommitted source');
+      const report = run({cwd: root, spawn: (tool, args, options) => {
+        if (tool !== 'gitleaks') {
+          assert.equal(fs.readFileSync(path.join(options.cwd, 'seeded-secret.js'), 'utf8'), committed);
+          assert.equal(fs.existsSync(path.join(options.cwd, 'new-secret.js')), false);
+        }
+        return scanners({gitleaks: []})(tool, args, options);
       }});
       assert.equal(report.repository, 'https://example.test/owner/project');
       assert.equal(report.revision, revision);
-      assert.equal(report.coverage, 'incomplete');
-      assert.equal(report.secret_coverage, 'incomplete');
-      assert.equal(report.tool.status, 'unavailable');
-      assert.equal(report.secret_tool.status, 'unavailable');
+      assert.equal(report.coverage, 'complete');
       assert.deepEqual(report.findings, []);
-      assert.match(report.error, /working tree.*scanners not run/);
-      assert.ok(!JSON.stringify(report).includes(syntheticToken));
+    } finally {
+      fs.rmSync(root, {recursive: true, force: true});
+    }
+  }
+});
+
+test('Git archive omissions and content substitutions cannot masquerade as committed blobs', () => {
+  for (const [attribute, content] of [['export-ignore', 'plain\n'], ['export-subst', '$Format:%H$\n']]) {
+    const {root} = repository();
+    try {
+      fs.writeFileSync(path.join(root, '.gitattributes'), `attribute.txt ${attribute}\n`);
+      fs.writeFileSync(path.join(root, 'attribute.txt'), content);
+      execFileSync('git', ['add', '.gitattributes', 'attribute.txt'], {cwd: root});
+      execFileSync('git', ['commit', '-qm', 'archive attribute fixture'], {cwd: root});
+      const report = run({cwd: root, spawn: () => assert.fail('scanners must not run on rewritten HEAD blobs')});
+      assert.equal(report.coverage, 'incomplete');
+      assert.match(report.error, /HEAD snapshot unavailable/);
     } finally {
       fs.rmSync(root, {recursive: true, force: true});
     }
