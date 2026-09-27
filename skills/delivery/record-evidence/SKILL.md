@@ -14,16 +14,16 @@ For UI work, record the live session as video with the steps below. For non-UI w
 ## Inputs
 
 - **Test targets** (required): behaviors or flows to verify, phrased as testable statements.
-- **Surface**: UI screen/device/browser, CLI terminal, API/performance probe, or agent session. Select what exposes the changed behavior; mixed changes may need several captures.
-- **PR / issue** (optional): where to post. A task PR must eventually include the hosted capture in both its description and a distinct comment, even when the PR does not exist yet at recording time.
+- **Surfaces**: UI screen/device/browser, CLI terminal, API/performance probe, or agent session. Derive all required surfaces from changed behavior and acceptance criteria, not source file extensions. Record at least one authentic capture per required surface; compose related UI devices into a single inspectable video when appropriate.
+- **PR / issue** (optional outside a task): a task PR ultimately needs every hosted capture in its full description and a distinct same-PR comment. A standalone recording needs no PR; a supplied tracker issue receives a link to the already hosted capture.
 
 ## Where evidence lives
 
-Capture into temporary scratch storage outside the configured task root and never commit or index the capture, report, receipt, or `index.json`. The durable review evidence is the hosted capture plus its PR description and distinct PR comment; local task metadata may point to those hosted URLs but is not evidence.
+Capture into temporary scratch storage outside the configured task root; never save or upload the recording, report, receipt, description, frames, or raw transcript from `.agent/tasks/` or `.agents/tasks/`. The durable review evidence is each directly hosted recording plus concise per-test observations in the full PR description and separate PR comment. A standalone request has its hosted recording and answer without a fabricated PR/comment.
 
-UI recorder sessions produce `evidence.mp4`, `report.md`, `manifest.json`, `capture/`, `frames/`, and `events.jsonl` in scratch storage. Non-UI sessions keep the original captured transcript or probe output, invocation, environment, exit status, and a `report.md` there until the hosted capture is verified.
+UI recorder sessions produce `evidence.mp4`, `report.md`, `manifest.json`, `capture/`, `frames/`, and `events.jsonl` in scratch storage. Non-UI sessions keep the original captured transcript or probe output, invocation, environment, exit status, and a scratch report until hosted inspection succeeds.
 
-Hosted proof MUST bind the tested code SHA, result, capture URL, and current PR head in both the PR body and the separate comment. Missing, stale, unreadable, or mismatched hosted proof blocks publication.
+For a task PR, the full body and separate comment bind `- result: passed`, tested full SHA, current-head full SHA and each `recording` type/`capture` URL pair. The body also has a `### Recorded tests` table (`| Test | Result | Capture | Cue |`), with one substantive passed row per capture (`primary` for a sole unlabeled pair), timestamps or output-line cues, and honest caveats. A failed or required-untested test blocks passed publication. Missing, stale, unreadable or mismatched proof blocks readiness.
 
 
 ## The recorder
@@ -133,11 +133,11 @@ Panes align by wall clock (a pane that started later shows a dark hold first); `
 
 ### 7. Record and publish the evidence
 
-- UI `report.md` records result, revision, environment, capture details, per-test timestamps, narration, and caveats. For non-UI work, make the same report point to the original terminal transcript, probe output, or agent-session export and the command/tool invocation and exit status.
-- Upload the actual video or non-UI capture to a durable reviewer-accessible location for a task PR. For GitHub attachment, use an authenticated browser's PR editor/comment upload; `gh pr comment` cannot attach a local video. Another host is acceptable if reviewers can open the URL. If only GitHub PR uploads are available and no PR exists, create a draft PR with committed code as an upload container, following the conventional title/base rules in `/describe-pr`; keep it draft until the hosted proof is verified.
-- Publish the hosted capture URL, result, tested code SHA, and current PR head in the PR description and a distinct PR comment. Read both back and verify the capture URL is accessible; a local path or ignored file is insufficient.
-- Compare the current PR head with the tested revision. Artifact-only commits may advance the head; if behavior-changing code differs, recapture against the new revision. A failed assertion, capture/upload failure, inaccessible hosted URL, or stale code revision blocks publication; repair and recapture, not a prose claim.
-- Send the report and hosted capture to the requester.
+- Inspect the scratch report for tested SHA, environment, exact invocation/interaction, per-test results and timestamp/output-line cue, caveats, and original capture filename. The report is scratch for drafting, not a published artifact or proof by itself.
+- Upload the actual video or original terminal/API/agent transcript for **each required surface** to a supported direct host: GitHub user-attachments (via authenticated PR editor/comment upload) or a raw gist. `gh pr comment` cannot attach a local video. Open the hosted object and inspect its bytes/content: UI must play as live video, not a screenshot; text must preserve the original invocation, tested SHA, successful exit/status/outcome, and observed output. A URL, MIME header, HTML page, screenshot, or self-declared result alone is insufficient. Other hosts require explicit gate support; tell the requester rather than claim readiness.
+- For a task PR, publish matching result, tested/current-head SHAs, and every recording/capture pair in a **separate PR comment and full PR body**. Use `- recording: <type>`/`- capture: <URL>` for one surface; for mixed surfaces use paired `- recording <label>: <type>`/`- capture <label>: <URL>` with distinct lowercase-hyphenated labels. Include the same direct URLs/types in both locations, a `- comment: <permalink on this PR>` in the body, and the Recorded tests table with passing row per label (`primary` for unlabeled). `/describe-pr` completes the full body and readback; a pending comment is only for a draft. Read back the exact comment and final body; never treat a wrong-PR permalink as proof.
+- If the PR does not yet exist and only an attachment can host the capture, create a draft PR as an upload container following `/describe-pr`. Compare head to tested revision; only metadata-only movement can retain the capture, and behavior changes require recapture. Any failed assertion, upload/inspection failure, or missing required capture blocks ready publication and `/describe-pr`.
+- If a tracker issue was supplied, post the **already hosted** direct capture links and brief observed results there, then read the issue comment back. Do not upload task data. For a standalone request without a PR, host and inspect the captures, send URLs/results directly to the requester, attach the hosted URLs to a supplied issue if any, and finish without inventing a PR description or comment.
 
 ## No computer-use tools? Drive another way
 
@@ -153,7 +153,7 @@ The recording rule holds unchanged; only the input mechanism differs.
 Headless emulators and simulators can still record video; browsers record through Playwright (`external`). If no video path can capture a changed UI, report the missing recorder or access permission and block PR publication until it is available. Screenshots may supplement but cannot replace the live video. CLI, API, performance, and agent-session work instead use their original terminal output, measured probe, or transcript from step 4.
 
 
-For a bug fix, keep the pre-fix failure and post-fix success together in the evidence report. A UI recording may use `pair` for labeled before/after frames; a CLI/API fix uses captured failing and passing runs. Bind the post-fix result to the tested revision.
+For a bug fix, retain actual pre-fix failure and post-fix success in scratch for inspection and include both observations in hosted proof; when the before/after material cannot fit the selected recording, host an additional authentic capture. A UI pair of frames may supplement but never replace live video; CLI/API fixes need original failing/passing runs. Bind post-fix success to tested SHA.
 
 ## Guardrails
 
@@ -172,10 +172,8 @@ For a bug fix, keep the pre-fix failure and post-fix success together in the evi
 
 ## Final response
 
-Choose the template by situation and use it only:
+Choose the situation's template; list **all** hosted capture URLs, tested SHA, current head if a PR exists, each test's result and cue, caveats, and issue/comment links only when those exist. Scratch reports are inspected and removed after hosted readback, never cited as links.
 
-- In a task, every required test passed and capture/revision/host checks passed: `references/evidence_final_answer.md`, which hands off to `/describe-pr`.
-- In a task, a test failed or capture/revision/host verification failed: use `references/evidence_failed_answer.md` when a plan exists, or state the precise blocker and repair path for a oneshot/bugfix; do not hand off to `/describe-pr`.
-- No task: `references/evidence_standalone_answer.md`, which ends with the recording's state and attachment action because no delivery step follows.
-
-The final answer links only to the hosted capture and PR comment. Temporary scratch reports are inspected before upload and deleted after hosted readback; no task-local evidence receipt is created.
+- Task success with every required behavior passed and hosted captures inspected: `references/evidence_final_answer.md`; hand off to `/describe-pr` after publication/readback (or state that the draft awaits final publication by `/describe-pr`).
+- Task failure or capture/revision/host blocker: `references/evidence_failed_answer.md` when a plan exists, with `/iterate-implementation` next for implementation failure; for oneshot/bugfix, report the exact blocker and repair command/phase without handing off to `/describe-pr`.
+- Standalone without a task or PR: `references/evidence_standalone_answer.md`; host and return the capture/results and optional issue comment, with no fabricated PR/comment and no next phase.

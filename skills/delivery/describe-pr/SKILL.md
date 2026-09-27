@@ -24,10 +24,9 @@ Read from this skill directory:
 
 ### 1. Read template
 
-Read `references/pr_description_template.md`. Keep body in template. No changelog, verification report, plan appendix, long narrative.
+Read `references/pr_description_template.md`. Keep the full body: Purpose, optional task acceptance criteria, Special things to note, Evidence with Recorded tests, Change outline, and Human Review (Review targets, Verify, Known limits). Never publish a provisional/minimal body as final. No changelog, local verification report, plan appendix, or long narrative.
 
-
-The template's `## Evidence` section is required for every delivery PR. Keep its capture and separate comment URLs.
+The Evidence section is required for every delivery PR: one real hosted recording per required surface, exact tested/head revisions, per-test result and cue, a distinct comment permalink on this PR. A direct URL and a claimed MIME or `passed` result are not proof.
 
 ### 2. Identify or create PR
 
@@ -48,7 +47,7 @@ The title is a Conventional Commits subject under the conventions' rule: `<type>
 
 ### 3. Gather context
 
-Read `task.md` or `ticket.md`, explanatory metadata selected through current index records, and `@file` inputs. Require current hosted proof and read current `review.verification` when present. Check the actual hosted video or non-UI capture URL opens to readable recorded behavior, its result is not failed, and every required acceptance behavior has a passing capture. Check its tested code SHA and current PR head binding before publication.
+Read `task.md` or `ticket.md`, explanatory metadata selected through current index records, and `@file` inputs. Require current hosted proof and read current `review.verification` when present. Enumerate required UI, CLI, API, and agent surfaces from the task and change, not file extensions. Inspect every capture at its direct supported host: a GitHub user-attachment or raw gist, with actual video bytes and playback for UI, or original invocation, tested SHA, successful exit/status/outcome, and observed output for text. A PNG, HTML page, self-reported prose, or URL/MIME alone does not prove a recording. Require a substantive passing Recorded tests row with timestamp/output-line cue for each surface and passing rows for every required behavior. A failed or required-untested target blocks `result: passed`. Confirm tested code SHA and current PR head; behavior-changing differences require recapture.
 
 Read full diff plus surrounding code.
 
@@ -60,24 +59,25 @@ Verify important child worker claims against the diff.
 
 Template exactly:
 
-- `Why the change`: one sentence.
+- `Purpose`: one sentence.
 - `Special things to note`: one to three bullets. `- None.` when no warnings, migrations, constraints, omissions, surprises.
 - `Acceptance criteria` (only when `task.md` lists them): one bullet per criterion in task order, each naming the command, request, or observation that decides it. A criterion this diff does not satisfy is listed with what is missing; never drop one.
-- `Evidence` (required): explicit `- result: passed`, `- tested: <full code SHA>`, `- current head: <full PR head SHA>`, `- capture: <direct hosted URL>`, and `- comment: <distinct PR comment permalink>` fields. Name tested behaviors and caveats here; never link a local report or task file as evidence.
+- `Evidence`: exact `- result: passed`, `- tested: <full code SHA>`, `- current head: <full PR head SHA>`, `- recording: <ui-video|cli-terminal|api-probe|agent-session>`, `- capture: <direct URL>`, `- comment: <distinct permalink on this PR>`. For mixed surfaces use matching `- recording <label>: <type>` and `- capture <label>: <URL>` pairs, with distinct lowercase-hyphenated labels. The separate PR comment repeats tested/head SHA and each recording/capture pair exactly. Include `### Recorded tests` with `| Test | Result | Capture | Cue |`, a substantive `passed` row per pair (`primary` for unlabeled) and a timestamp or output-line cue. Show caveats and nonpassing results honestly; never label the whole result passed with a failed or required-untested target.
 - `Change outline`: compact structural view from `references/show-me.md`. Views that help: data shape, endpoint contract, pseudocode, file tree, component tree, call/control/data flow. `diff` for changes, full shape for new. Focus on files, calls, fields, components, boundaries.
+- `Human Review`: keep `### Review targets`, `### Verify`, and `### Known limits` with concrete review and approval checks; human approval remains separate from recording proof.
 - `Closes #{ISSUE_NUMBER}`, the template's last line: keep it only when `task.md` has `issue: <number>` (an epic child whose issue `start-epic-delivery` opened), filled with that number, so the merge closes the issue; otherwise delete the line and the blank line before it, so the body ends with the Known limits bullet.
 
-Task artifacts and capture files are local and ignored, so the PR body must not link to their repository-relative paths. Link the hosted capture and distinct evidence comment; put the concise reviewable behavior and limits in the body itself.
+Task metadata and review/verification artifacts may remain local, but the PR body must not link their repository-relative paths as proof. Recording, report, receipt, and PR-description files never belong under `.agent/tasks/` or `.agents/tasks/`. Put reviewable observations and limits in the body itself.
 
-Do not include walkthrough artifacts in the PR body unless asked. When requested, create a separate HTML artifact from `references/pr_walkthrough_example.html`, fill it with real diff nodes, write it under the task directory, and save it.
+Do not include walkthrough artifacts in the PR body unless asked. When requested, create a separate HTML walkthrough from `references/pr_walkthrough_example.html` with real diff nodes outside the task root, and publish only its approved hosted link.
 
 ### 5. Save and publish
 
-Prepare a provisional body in a temporary file outside the task directory. Include the hosted capture URL and mark the separate evidence comment pending; this body opens or updates a draft PR only. When no task exists, open one under the resolved task root first. Create the draft PR with `gh pr create --draft --base <base> --body-file <temporary-path> --title "<title>"`, or update an existing PR with `gh pr edit <number> --body-file <temporary-path>`. Never save the body in task artifacts.
+Prepare a provisional body in a temporary file outside the task directory. A pending comment is allowed only in a draft PR while hosting a missing capture; never call it final. When no task exists, open one under the resolved task root for metadata only. Create the draft PR with `gh pr create --draft --base <base> --body-file <temporary-path> --title "<title>"`, or update an existing draft with `gh pr edit <number> --body-file <temporary-path>`.
 
-Post a **separate** PR comment with `- result: passed`, `- tested: <SHA>`, `- current head: <SHA>`, and `- capture: <hosted URL>`. Use `gh pr comment <number> --body-file <temporary-path>` for an already-hosted URL, or the authenticated PR comment box to upload video and verify its hosted URL first. Editing the PR body does not count as a comment. On review updates, edit the prior evidence comment or add a distinct replacement. Obtain its permalink and read back the exact comment by ID.
+For every required surface, host the actual recording at a supported direct destination and inspect its content as in step 3. Post a **separate** PR comment repeating `- result: passed`, full tested and current-head SHAs and every recording/capture pair exactly. Use `gh pr comment <number> --body-file <temporary-path>` for already-hosted captures, or the authenticated PR comment box to upload and verify a user attachment first. Editing the PR body does not count as a comment. On updates, edit the previous evidence comment or post a replacement explicitly superseding it; obtain the exact permalink on this PR and read back that comment by ID.
 
-Add the verified comment permalink and explicit fields under `## Evidence` in the final body, update the PR from the temporary file, and read back both hosted locations. Confirm the head and tested revisions, result and capture URL agree. Remove the temporary file and scratch capture after verified hosting. Never upload or commit files from `.agent/tasks/` or `.agents/tasks/`. If publication fails, leave the PR draft and report incomplete.
+Insert the verified comment permalink in the final body, publish the complete template with every capture and Recorded tests row, then re-fetch the whole body and separate comment. Compare revisions, types, URLs, per-test results/cues and required sections; verify every capture is still the original recording. Remove temporary descriptions and scratch after successful hosting/readback. Never upload or commit task-root data. If publication fails, leave the PR draft and report incomplete.
 
 
 Before changing a draft to ready, run the collection's proof command from the repository root:
@@ -86,7 +86,7 @@ Before changing a draft to ready, run the collection's proof command from the re
 node shared/publication-proof.mjs <task-dir> <repo-root> <pr-number>
 ```
 
-The command validates current local review and optional verification metadata against the hosted PR head, base, capture, explicit tested/result/head fields, and specific separate comment. It does not read or require any local evidence or PR-description receipt. `stale` requires new review/capture after code changes; `incomplete` requires repairing missing hosted proof.
+The command validates local review and optional verification metadata against hosted PR head/base, full body, specific same-PR comment, every declared capture's actual bytes/content and recorded tests. It does not read or require a local evidence or PR-description receipt. `stale` requires new review/capture after behavior changes; `incomplete` requires repairing missing hosted proof.
 
 The Claude plugin offers an optional Bash `PreToolUse` guard when `SKILLS_PUBLICATION_TASK_DIR` names this task directory: direct `gh`/`./gh pr create --draft` can host capture but cannot pass final proof, and `gh pr ready [number]` requires the shared decision above. Direct shell calls outside Claude, unsupported tools/runtimes, and out-of-band GitHub publication are not guarded; perform this skill's proof and read-back steps regardless of hook registration. Unsupported targeted Bash PR syntax is denied in the selected task.
 
@@ -97,7 +97,7 @@ node shared/publication-proof.mjs <task-dir> <repo-root> <pr-number> --draft-hos
 ```
 
 This may return `allowed: true` with `ready: false` and `status: "incomplete"` only for an existing draft PR. It does not authorize final body publication or ready status. After uploading and verifying the capture, complete the ordinary comment/body ordering above and run the final decision again.
-Re-fetch the PR and confirm URL, title, number, base, head, and the published `## Evidence` fields and separate comment. Retitle an existing PR that fails the title rule with `gh pr edit <number> --title "<title>"`. Mark a draft PR ready only after the proof command passes. If upload, comment, link verification, or body readback fails, publication is incomplete.
+Re-fetch the PR and confirm URL, title, number, base, head, complete hosted template, every recording/capture pair, Recorded tests rows, and same-PR comment. Retitle an existing PR that fails the title rule with `gh pr edit <number> --title "<title>"`. Mark a draft PR ready only after the proof command passes. If upload, comment, link verification, capture inspection, or final-body readback fails, publication is incomplete.
 
 ### 6. Report
 
@@ -107,7 +107,7 @@ The final answer must end with exactly one fenced `text` block. This is a human 
 
 ## Feedback
 
-When feedback arrives, read the live PR body, confirm the hosted proof still covers the head, and publish the revised body directly. Behavior-changing review feedback requires recapture and updated hosted capture in both description and separate PR comment first. Do not save an evidence or description iteration under the task root.
+When feedback arrives, read the live PR body, confirm every hosted recording still covers its required surface at the current head, and publish a complete revised body directly. Behavior-changing feedback requires recapture and updating every affected recording/capture pair and the distinct PR comment first. Never save an evidence or description iteration under the task root.
 
 ## Style
 
@@ -115,4 +115,4 @@ When feedback arrives, read the live PR body, confirm the hosted proof still cov
 - Reviewable in one pass.
 - Risk before summaries.
 - No filler, slang, unexplained acronyms.
-- Use `gh` for GitHub remotes; otherwise report the branch, base, and description path for a manual pull request.
+- For unsupported Git remotes or evidence hosts, explain that this gate supports only GitHub user-attachments and raw gists; arrange explicit support before claiming ready publication. Never report an arbitrary HTTPS URL as gate-approved.

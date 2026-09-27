@@ -273,11 +273,15 @@ test('PR-only human approval follows the hosted body hash, never an ignored task
     const hosted = { captureCurrent: true, captureHosted: true, commentVerified: true,
       reviewCurrent: true, verificationRequired: false, descriptionCurrent: true,
       pullRequest: 'https://github.com/example/repo/pull/1', descriptionHash: 'new-body' };
-    const current = { ...state({ 'pr-description': artifact('pr-description') }), hosted };
+    const current = described(state({ 'pr-description': artifact('pr-description') }), hosted);
     const ctx = { ui: { select: async () => 'approve' }, tool: async (_name, _args, callback) => callback() };
     const approved = await artifactGate(ctx, task, inputs, current, 'pr-description', 'gate');
     assert.equal(approved.state.approvals['pr-description'], 'new-body');
-    const revised = { ...approved.state, hosted: { ...hosted, descriptionHash: 'revised-body' } };
+    const revisedBody = { ...hosted, descriptionHash: 'revised-body' };
+    const pending = { ...approved.state, hosted: revisedBody };
+    assert.deepEqual(eligible(pending, inputs, 'oneshot', false), ['implement-task']);
+    assert.equal((await artifactGate(ctx, task, inputs, pending, 'pr-description', 'gate-before-describe')).state, pending);
+    const revised = described(approved.state, revisedBody);
     const stopped = await artifactGate({ ...ctx, ui: { select: async () => 'stop' } },
       task, inputs, revised, 'pr-description', 'gate-revised');
     assert.equal(stopped.stopped, true);
@@ -288,7 +292,12 @@ test('PR-only human approval follows the hosted body hash, never an ignored task
 });
 
 const hosted = { captureCurrent: true, captureHosted: true, commentVerified: true, reviewCurrent: true,
-  verificationRequired: false, verificationCurrent: false, descriptionCurrent: false, ready: false };
+  verificationRequired: false, verificationCurrent: false, descriptionCurrent: false, descriptionHash: 'body-v1', ready: false };
+const described = (current, proof = current.hosted) => ({
+  ...current, hosted: proof, proofs: { ...current.proofs, 'hosted-description': {
+    hash: proof.descriptionHash, revision: current.revision, generation: current.generation,
+  } },
+});
 
 test('publication transitions require current hosted capture regardless of ignored task artifacts', () => {
   const reviewed = proved({ implementation: artifact('implementation'), 'code-review': artifact('code-review', 'clean') }, ['code-review']);
@@ -296,12 +305,17 @@ test('publication transitions require current hosted capture regardless of ignor
   const ignoredReceipt = { ...reviewed, latest: { ...reviewed.latest, evidence: artifact('evidence', 'passed'), 'pr-description': artifact('pr-description') } };
   assert.deepEqual(eligible(ignoredReceipt, inputs, 'oneshot', false), ['record-evidence']);
   assert.deepEqual(eligible({ ...reviewed, hosted }, inputs, 'oneshot', false), ['describe-pr']);
-  assert.deepEqual(eligible({ ...reviewed, hosted: { ...hosted, descriptionCurrent: true, ready: true } }, inputs, 'oneshot', false), ['complete']);
+  assert.deepEqual(eligible({ ...reviewed, hosted: { ...hosted, descriptionCurrent: true, ready: true } }, inputs, 'oneshot', false), ['describe-pr']);
+  assert.deepEqual(eligible(described(reviewed, { ...hosted, descriptionCurrent: true, ready: true }), inputs, 'oneshot', false), ['complete']);
+  const recaptured = described(reviewed, { ...hosted, descriptionCurrent: true, ready: true });
+  recaptured.hosted = { ...recaptured.hosted, descriptionHash: 'body-v2' };
+  assert.deepEqual(eligible(recaptured, inputs, 'oneshot', false), ['describe-pr'],
+    'updating Evidence on an older full PR body cannot skip the describe-pr phase');
   for (const invalid of [{ ...hosted, captureHosted: false }, { ...hosted, commentVerified: false },
     { ...hosted, captureCurrent: false }, { ...hosted, reviewCurrent: false }]) {
     assert.deepEqual(eligible({ ...reviewed, hosted: invalid }, inputs, 'oneshot', false), ['record-evidence']);
   }
-  assert.deepEqual(eligible({ ...reviewed, hosted: { ...hosted, descriptionCurrent: true } }, inputs, 'oneshot', false), ['blocked']);
+  assert.deepEqual(eligible(described(reviewed, { ...hosted, descriptionCurrent: true }), inputs, 'oneshot', false), ['blocked']);
 });
 
 test('verification and app test precede hosted capture; required verification is checked at publication', () => {
@@ -320,7 +334,7 @@ test('verification and app test precede hosted capture; required verification is
 
 test('review changes require clean review and new hosted proof before completion', () => {
   const latest = { 'pr-review': artifact('pr-review', 'approved'), 'code-review': artifact('code-review', 'clean') };
-  const current = { ...proved(latest, ['pr-review', 'code-review']), hosted: { ...hosted, descriptionCurrent: true, ready: true } };
+  const current = described(proved(latest, ['pr-review', 'code-review']), { ...hosted, descriptionCurrent: true, ready: true });
   assert.deepEqual(eligible(current, inputs, 'resolve-reviews', false), ['complete']);
   const changed = { ...current, generation: 1, revision: 'r2', proofs: {
     ...current.proofs, 'pr-review': { hash: latest['pr-review'].hash, generation: 1, revision: 'r2' },
@@ -331,6 +345,7 @@ test('review changes require clean review and new hosted proof before completion
   } }, hosted: null };
   assert.deepEqual(eligible(reviewed, inputs, 'resolve-reviews', false), ['record-evidence']);
   assert.deepEqual(eligible({ ...reviewed, hosted }, inputs, 'resolve-reviews', false), ['describe-pr']);
+  assert.deepEqual(eligible(described(reviewed, { ...hosted, descriptionCurrent: true, ready: true }), inputs, 'resolve-reviews', false), ['complete']);
   assert.deepEqual(eligible(initialState({ latest }, 'r2'), inputs, 'resolve-reviews', false), ['resolve-pr-reviews']);
 });
 

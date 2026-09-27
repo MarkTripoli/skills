@@ -1,21 +1,16 @@
-Artifact saved: {artifact_link}
+Hosted recordings: {one direct capture URL and recording type per required surface}
+Tested revision: {full_tested_sha} | {Current PR head: full_head_sha when a PR exists; otherwise "PR not created"}
 
-Report: {report_link}
-
-Summary:
-{summary}
-
+Result: passed
 Check:
-- <one line per test: result, test name, capture timestamp or output line>
+- {For every target: passed, test name, capture label or primary, timestamp/output line}
 
 Caveats:
-- <one line per item in the report's Caveats section, or "None.">
+- {Actual caveat or None.}
 
-Posted to: <hosted capture URL, PR comment link, tracker issue link or pending publication by describe-pr>
+Posted to: {Actual PR URL if one exists; distinct evidence-comment permalink only if posted and read back. Otherwise state "PR/comment pending /describe-pr". Add a supplied issue permalink only after readback.}
 
-Every test passed or is recorded as untested with its reason; `/describe-pr` publishes the current capture in both the PR description and a separate comment.
-
-The next phase has not started.
+All required tests passed on actual hosted captures. The next phase has not started.
 
 Next action:
 Open a new session in {run_location}, then run:

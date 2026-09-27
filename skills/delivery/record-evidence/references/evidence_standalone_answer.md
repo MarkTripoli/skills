@@ -1,14 +1,15 @@
-Evidence saved: {report_link}
+Hosted recordings: {one actual direct capture URL and type per required surface}
+Tested revision: {full_tested_sha or explicit standalone run identity}
 
 Summary:
-{summary}
+{observed behavior and result; never infer passing from a link alone}
 
 Check:
-- <one line per test: result, test name, video timestamp>
+- {For every target: passed/failed/untested, test name, capture label, video timestamp or output line}
 
 Caveats:
-- <one line per item in the report's Caveats section, or "None.">
+- {Actual caveat or None.}
 
-Posted to: <PR comment link, tracker issue, or "requester only">
+Posted to: {Supplied tracker issue comment permalink after readback, or "Requester only"}
 
-Attach the video wherever the work is tracked. No further action is scheduled.
+No PR was requested or created; no PR description/comment link or next phase is implied.

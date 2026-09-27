@@ -63,7 +63,7 @@ export function eligible(state, inputs, mode, adaptive) {
     if (a['pr-review'].status !== 'approved') return ['blocked'];
     if (!validProof(state, 'code-review', 'clean')) return ['review-code'];
     if (!currentHostedCapture(state.hosted)) return ['record-evidence'];
-    if (!state.hosted.descriptionCurrent) return ['describe-pr'];
+    if (!currentHostedDescription(state)) return ['describe-pr'];
     return [state.hosted.ready ? 'complete' : 'blocked'];
   }
   if (recoveryDiagnostic(state)) return recoveryChoices.slice();
@@ -124,7 +124,7 @@ export function eligible(state, inputs, mode, adaptive) {
     return ['review-code'];
   }
   if (!currentHostedCapture(state.hosted)) return ['record-evidence'];
-  if (!state.hosted.descriptionCurrent) return ['describe-pr'];
+  if (!currentHostedDescription(state)) return ['describe-pr'];
   return [state.hosted.ready ? 'complete' : 'blocked'];
 }
 function hasPrimaryArtifact(latest, type) { return Boolean(latest[type]); }
@@ -140,6 +140,12 @@ function makeRecovery(skill, source, before, after, receipt, codeRevision) {
   };
 }
 function validProof(state, type, status) { return currentProof(state, type) && (!status || state.latest[type].status === status); }
+function currentHostedDescription(state) {
+  const proof = state.proofs?.['hosted-description'];
+  return Boolean(state.hosted?.descriptionCurrent && proof &&
+    proof.hash === state.hosted.descriptionHash &&
+    proof.revision === state.revision && proof.generation === state.generation);
+}
 // Evidence lives on the PR. Local task artifacts cannot authorize this transition.
 
 export function initialState(observation, codeRevision) { return { ...observation, revision: codeRevision, generation: 0, proofs: {}, approvals: {} }; }
@@ -182,8 +188,14 @@ export async function runSkill(ctx, task, state, inputs, skill, step, feedback =
       if (!currentHostedCapture(hosted) || (skill === 'describe-pr' && !hosted.descriptionCurrent)) {
         throw new Error(`${skill} did not publish current, readable capture and revision-bound PR description/comment proof`);
       }
+      const proofs = { ...state.proofs };
+      if (skill === 'describe-pr') proofs['hosted-description'] = {
+        hash: hosted.descriptionHash, revision: codeRevision, generation: state.generation,
+        session: result.sessionId || name,
+      };
+      else delete proofs['hosted-description'];
       saveRecord(task, name, { skill, revision: codeRevision, hosted: true, model: result.model ?? selection.model });
-      return { ...state, ...after, revision: codeRevision, hosted };
+      return { ...state, ...after, revision: codeRevision, hosted, proofs };
     }
     let recovery = null;
     if (['implement-plan', 'implement-outline'].includes(skill)) {
@@ -205,7 +217,7 @@ export async function runSkill(ctx, task, state, inputs, skill, step, feedback =
 }
 
 export async function artifactGate(ctx, task, inputs, state, type, step) {
-  const artifact = type === 'pr-description' && currentHostedCapture(state.hosted) && state.hosted.descriptionCurrent
+  const artifact = type === 'pr-description' && currentHostedCapture(state.hosted) && currentHostedDescription(state)
     ? { file: state.hosted.pullRequest, hash: state.hosted.descriptionHash, summary: 'Hosted pull request body and evidence' }
     : type === 'pr-description' ? null : state.latest[type];
   if (!artifact || !gated(type, inputs.gates) || state.approvals[type] === artifact.hash) return { state, feedback: null, skill: null, stopped: false };

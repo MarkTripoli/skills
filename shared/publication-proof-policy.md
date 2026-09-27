@@ -1,37 +1,31 @@
-# Publication proof policy map
+# Publication proof policy
 
-Scope: document the existing `describe-pr` publication sequence and Atomic proof observations for the next child that implements a gate. This map is policy and fixture guidance only; it introduces no runtime gate and changes no existing behavior.
+The delivery recording is mandatory for every PR, including oneshot, bugfix, Atomic and epic-child deliveries. Record one authentic hosted capture per required behavior surface before ready publication. Derive surfaces from the task's acceptance criteria and actual behavior, not file extensions. UI requires playable live-session video; still images only supplement it. CLI, API/performance and agent work require the original command/request/tool invocation, tested full SHA, successful exit/status/outcome and observed output in the hosted transcript. A readable URL, MIME header, screenshot, HTML landing page or self-reported result does not establish proof.
 
-## Evidence model
+## Storage and supported hosts
 
-The current `describe-pr` path requires a current `evidence.recording` receipt, readable hosted capture, and any current `review.verification` artifact when present. The receipt identifies its tested code commit. Indexed task artifacts may be committed after that tested commit without invalidating the capture; a behavior-changing difference does invalidate it and requires fresh evidence. This exception is narrow: only indexed task-artifact commits qualify. Any substantive source or other unindexed change is outside the exception.
+Keep recordings, raw output, reports, receipts, and description drafts in temporary scratch **outside** `.agent/tasks/` and `.agents/tasks/`; never upload task-root data. The final durable proof is the directly inspected hosted recording plus the full PR description and a distinct, verified comment on that same PR. The public gate supports direct GitHub user-attachments and raw gists, including original text attachments; other hosts need explicit support before a delivery can claim gate approval. The standalone recording path hosts the capture and reports its URL/results without inventing a PR or comment. When a tracker issue is supplied, link the already-hosted capture in an issue comment and read it back.
 
-Atomic's observed proof checks are narrower and should not be treated as the future publication decision itself: it requires current proof for evidence and PR description, an evidence status of `passed` or `untested` represented in Results, nonempty Sessions, a commit in Revision, a hosted PR-description capture URL, local capture evidence, and for `untested`, a nonempty substantive Caveats section. A valid description includes both the same hosted capture URL and a distinct GitHub issue-comment permalink in its Evidence section. Atomic does not establish the comprehensive base/head/substantive-diff policy described for the next child.
+## Hosted Evidence contract
 
-## Decision table
+Use exact fields in the final `## Evidence` section:
 
-| Situation | Draft may host capture? | Ready publication | Required interpretation |
-|---|---:|---:|---|
-| Capture upload is the only missing prerequisite; PR is draft solely to host it | Yes | No | Draft hosting is provisional. Return to evidence recording, verify the hosted URL, and complete the receipt; draft existence is not proof and cannot authorize ready status. |
-| Tested code commit is behind HEAD only by indexed task-artifact commits | Yes | Eligible, subject to every other row | Reuse evidence for the tested code revision. Confirm artifact-only advancement; do not generalize this exception to arbitrary docs/source changes. |
-| Source or other substantive change differs from tested/reviewed revision | Yes, as a draft if needed for capture | No; stale | Re-record evidence and obtain review for the changed code before final publication. |
-| Review artifact is current and clean | Yes | Eligible, subject to remaining proof | Clean review is necessary where review is required; absent, stale, or non-clean review cannot be promoted to clean by capture evidence. |
-| Verification is required by task/policy | Yes | Only with current passing verification | Missing, stale, or failed required verification blocks ready publication. When verification is not required, do not invent a new mandatory verification step. |
-| Capture result is `passed` | Yes | Eligible, subject to remaining proof | Capture must be current for tested code and hosted/readable; evidence and review constraints still apply. |
-| Capture result is `untested` | Yes | Not sufficient by itself | Preserve the explicit caveat. Atomic accepts an untested evidence artifact only with substantive caveats; this is not a passing verification or a basis to claim tested acceptance. A future gate must not silently convert untested into passed. |
-| Hosted capture exists but evidence comment absent or not distinct | Yes | No | Publish a separate comment containing capture URL, result, tested code SHA, and current PR head SHA; verify its permalink and content before final body. |
-| Evidence comment verified; final indexed description not yet recorded/published | Yes | No | Ordering: provisional draft body → separate evidence comment and read-back → record one final indexed description with capture and comment URLs → commit artifact/index → publish that exact body → re-fetch and verify body, URLs, and comment → mark ready. |
-| Explicit bypass/override requested | Draft only, if capture hosting needed | Never pass through bypass | This enabler defines no bypass mechanism. A later gate may report an audited override as incomplete/overridden, but it must not claim pass or relax mandatory proof. |
+- result: passed
+- tested: <full tested code SHA>
+- current head: <full PR head SHA>
+- recording: <ui-video|cli-terminal|api-probe|agent-session>
+- capture: <direct hosted URL>
+- comment: <specific permalink on this PR>
 
-## Transition boundaries
+For mixed surfaces, replace the single recording/capture pair with paired `- recording <label>: <type>` and `- capture <label>: <URL>` fields, one distinct lowercase-hyphenated label per capture. The separate comment repeats result, tested/head SHAs, and **every** recording/capture pair with identical values. A same-PR permalink is necessary; another PR's comment is not proof. Each declared capture must actually contain the appropriate recording.
 
-1. Draft creation or edit can host the capture only; provisional body and pending comment are not final proof.
-2. Evidence is reusable across HEAD movement only when every intervening commit is an indexed task artifact and tested code remains unchanged.
-3. Clean review and passing proof bind to the substantive code being published. Any substantive difference after review/capture is stale, not a soft warning.
-4. Verification is conditional on an explicit requirement. If required, it must be current and passing.
-5. `untested` remains visibly untested with concrete caveats; it never means successful verification.
-6. Final readiness follows verified hosted capture, distinct read-back comment, immutable indexed final body containing both links, and publication/read-back equality. No bypass changes this order or makes incomplete evidence complete.
+The Evidence section has `### Recorded tests` and the columns `| Test | Result | Capture | Cue |`. At least one substantive `passed` row per capture label (`primary` for an unlabeled pair) gives an actual video timestamp or output-line cue; every required acceptance test must pass. Report failures and untested targets with reasons, but any failed or required-untested target blocks `result: passed` and ready status. Add caveats and tested environment/revision details to the body, not a local report link. The **complete** final PR template includes Purpose, optional task Acceptance criteria, Special things to note, Evidence, Change outline, and Human Review with Review targets, Verify, and Known limits. A provisional draft Evidence section is not a final description.
 
-## Runnable fixtures
+## Publication decision
 
-`node --test tests/publication-proof-policy.test.mjs` exercises the table against `shared/publication-proof-policy.mjs`, a policy-only decision over normalized proof observations. Nothing calls this function from a publication workflow yet. The next child must derive currentness, indexed-artifact-only advancement, distinct hosted comment and final body read-back from actual Git and hosted records; caller-supplied booleans alone are not proof.
+1. A draft PR may be created only to host a missing attachment. Upload to the supported host, inspect the real content, and bind observations to the tested full SHA. Draft existence, an assertion, or a link alone cannot pass.
+2. Any behavior-changing difference between tested code and publication head requires fresh recording and review. Metadata-only commits may advance HEAD only after checking the intervening diff; they never excuse a substantive source change. Optional verification remains conditional on task/policy requirements, but mandatory recording is never waived. A clean current review is still required where the workflow calls for it.
+3. Publish a **separate** evidence comment on this PR, read it back by ID and obtain its exact permalink; then publish the complete final body with that permalink. Read back full body, exact revision/type/URL pairs, per-test observations, and same-PR comment. Failed publication stays draft.
+4. Run the publication proof gate. Ready status requires the current passing recording(s), matching hosted records and full template, current clean review and required verification, and an applicable current-head check. If any target is failed or required-but-untested, missing, stale, unsupported, or unreadable, stay draft and report the blocker. Explicit bypass requests cannot be reported as passed.
+
+On review feedback that changes behavior, repeat recording and refresh every affected hosted capture, comment and final description. Approval alone does not replace recorded evidence or the human review gate.

@@ -23,9 +23,47 @@ function section(text, heading) {
   const end = lines.findIndex((line, i) => i > start && /^## /.test(line));
   return lines.slice(start + 1, end < 0 ? undefined : end).join('\n').trim();
 }
-function firstUrl(text, prefix) {
-  const line = new RegExp(`^-\\s*${prefix}:\\s*(.*)$`, 'mi').exec(text)?.[1] ?? '';
-  return /https:\/\/[^\s\])>]+/i.exec(line)?.[0] ?? '';
+const RECORDINGS = new Set(['ui-video', 'cli-terminal', 'api-probe', 'agent-session']);
+const PLACEHOLDER = /(?:\{[A-Z][A-Z0-9_ ]+\}|^\s*<[^>]+>\s*$|\b(?:todo|tbd|placeholder|not recorded|example only)\b)/im;
+function evidenceFields(text) {
+  const fields = new Map();
+  let valid = true;
+  for (const line of text.split(/\r?\n/)) {
+    const match = /^-\s*(result|tested|current head|recording(?: [a-z0-9]+(?:-[a-z0-9]+)*)?|capture(?: [a-z0-9]+(?:-[a-z0-9]+)*)?|comment):\s*(.*?)\s*$/i.exec(line);
+    if (!match) {
+      if (/^-\s*(?:recording|capture)\b/i.test(line)) valid = false;
+      continue;
+    }
+    const key = match[1].toLowerCase();
+    if (fields.has(key) || !match[2] || PLACEHOLDER.test(match[2])) valid = false;
+    fields.set(key, match[2]);
+  }
+  const recordings = new Map();
+  const captures = new Map();
+  for (const [key, value] of fields) {
+    if (key === 'recording' || key.startsWith('recording ')) recordings.set(key === 'recording' ? 'primary' : key.slice(10), value);
+    if (key === 'capture' || key.startsWith('capture ')) captures.set(key === 'capture' ? 'primary' : key.slice(8), value);
+  }
+  if (!recordings.size || recordings.size !== captures.size || [...recordings].some(([label, type]) => !RECORDINGS.has(type) || !captures.has(label))) valid = false;
+  for (const url of captures.values()) if (!captureDestination(url)) valid = false;
+  return { fields, recordings, captures, valid };
+}
+function recordedTests(evidence, captures) {
+  const table = /^### Recorded tests[ \t]*\r?\n([\s\S]*?)(?=^#{2,3}[ \t]|$(?![\s\S]))/m.exec(evidence)?.[1] ?? '';
+  const lines = table.trim().split('\n').map(line => line.trim());
+  if (lines[0] !== '| Test | Result | Capture | Cue |' || !/^\|\s*:?-+:?\s*\|\s*:?-+:?\s*\|\s*:?-+:?\s*\|\s*:?-+:?\s*\|$/.test(lines[1] ?? '')) return false;
+  const covered = new Set();
+  for (const line of lines.slice(2).filter(Boolean)) {
+    if (!line.startsWith('|')) return false;
+    const cells = line.split('|').slice(1, -1).map(cell => cell.trim());
+    if (cells.length !== 4 || cells.some(cell => !cell || PLACEHOLDER.test(cell))) return false;
+    const [name, result, label, cue] = cells;
+    if (result.toLowerCase() !== 'passed' || !captures.has(label) ||
+      !/(?:\b\d{1,2}:\d{2}(?::\d{2})?\b|\b(?:output\s+)?line\s*#?\d+\b|\bL\d+\b)/i.test(cue) ||
+      !/\w{3,}/.test(name)) return false;
+    covered.add(label);
+  }
+  return covered.size === captures.size;
 }
 function currentRecord(taskDir, type, index) {
   if (index) {
@@ -60,12 +98,50 @@ function captureDestination(value) {
     return githubAttachment || gitlabUpload || gistRaw || githubMedia ? url : null;
   } catch { return null; }
 }
-async function readable(value) {
+function recordedText(text, sha, recording) {
+  if (!text || /^\s*<(?:!doctype html|html)/i.test(text)) return false;
+  const revision = /(?:^|\n)\s*(?:source sha|tested sha|tested revision|commit sha|revision)\s*:\s*([a-f0-9]{40})\b/im.exec(text)?.[1];
+  const invocationPattern = recording === 'api-probe'
+    ? /(?:^|\n)\s*(?:request|command|invocation|curl|focused command)\s*:\s*([^\r\n]+)/im
+    : /(?:^|\n)\s*(?:focused command|command|tool invocation|invocation|request)\s*:\s*([^\r\n]+)/im;
+  const invocation = invocationPattern.exec(text)?.[1]?.trim();
+  const observed = /(?:^|\n)\s*(?:stdout|test output|observed output|response(?: body)?|result output|tool output)(?::[ \t]*([^\r\n]+)|\r?\n([^\r\n]+))/im.exec(text);
+  const output = (observed?.[1] ?? observed?.[2])?.trim();
+  return revision?.toLowerCase() === sha.toLowerCase() &&
+    Boolean(invocation && !PLACEHOLDER.test(invocation) && /(?:\s+\S+|\w+\([^)]*\))/.test(invocation) &&
+      !/^(?:passed|success|recorded proof)$/i.test(invocation)) &&
+    /(?:^|\n)\s*(?:exit (?:status|code)|status(?: code)?|outcome)\s*:\s*(?:0\b|2\d\d\b|passed\b|success\b)/im.test(text) &&
+    Boolean(output && output.length >= 8 && !PLACEHOLDER.test(output) &&
+      !/^(?:passed|success|recorded proof|no errors)$/i.test(output));
+}
+async function captureBytes(response, limit) {
+  if (!response.body) return null;
+  const reader = response.body.getReader();
+  const chunks = [];
+  let size = 0;
+  try {
+    while (size < limit) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value?.length) continue;
+      chunks.push(value.subarray(0, limit - size));
+      size += value.length;
+    }
+    if (!size) return null;
+    const bytes = new Uint8Array(Math.min(size, limit));
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+    return bytes;
+  } finally { await reader.cancel(); }
+}
+async function readable(value, recording, sha) {
   let url = captureDestination(value);
   if (!url) return false;
+  const video = recording === 'ui-video';
+  const limit = 65536;
   try {
     for (let hop = 0; hop < 6; hop++) {
-      const response = await fetch(url, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(10000) });
+      const response = await fetch(url, { method: 'GET', redirect: 'manual', headers: { Range: `bytes=0-${limit - 1}` }, signal: AbortSignal.timeout(10000) });
       if (response.url && response.url !== url.href) {
         await response.body?.cancel();
         return false;
@@ -83,30 +159,41 @@ async function readable(value) {
         return false;
       }
       const type = response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase();
-      if (!(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif',
-        'video/mp4', 'video/webm', 'video/quicktime', 'video/ogg', 'video/x-matroska'].includes(type) ||
-        (type === 'text/plain' && url.hostname === 'gist.githubusercontent.com' && url.pathname.includes('/raw')) ||
-        type === 'application/octet-stream')) {
-        await response.body?.cancel();
-        return false;
-      }
-      if (!response.body) return false;
-      const reader = response.body.getReader();
-      try {
-        const { value: bytes, done } = await reader.read();
-        if (done || !bytes?.length) return false;
-        const prefix = new TextDecoder().decode(bytes.subarray(0, 32)).trimStart().toLowerCase();
-        if (prefix.startsWith('<!doctype html') || prefix.startsWith('<html')) return false;
-        if (type === 'application/octet-stream') {
-          const media = bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 ||
-            bytes[0] === 0xff && bytes[1] === 0xd8 ||
-            bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 ||
-            bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3 ||
-            bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70;
-          if (!media) return false;
+      const textHost = url.hostname === 'gist.githubusercontent.com' && url.pathname.includes('/raw') ||
+        url.hostname === 'github.com' && url.pathname.startsWith('/user-attachments/assets/');
+      const validType = video
+        ? ['video/mp4', 'video/webm', 'video/quicktime', 'video/ogg', 'video/x-matroska', 'application/octet-stream'].includes(type)
+        : (type === 'text/plain' && textHost) || type === 'application/octet-stream';
+      if (!validType) { await response.body?.cancel(); return false; }
+      const bytes = await captureBytes(response, limit);
+      if (!bytes) return false;
+      if (video) {
+        if (bytes.length < 1024) return false;
+        const mp4 = type === 'video/mp4' || type === 'video/quicktime' || type === 'application/octet-stream';
+        if (mp4 && bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70) {
+          const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+          let offset = view.getUint32(0);
+          if (offset < 16 || offset + 8 > bytes.length) return false;
+          for (let boxes = 0; boxes < 16 && offset + 8 <= bytes.length; boxes++) {
+            const size = view.getUint32(offset);
+            const marker = new TextDecoder('ascii').decode(bytes.subarray(offset + 4, offset + 8));
+            if (size < 8) break;
+            if (marker === 'mdat' || marker === 'moov') return true;
+            if (!['free', 'skip', 'wide'].includes(marker)) break;
+            offset += size;
+          }
         }
-        return true;
-      } finally { await reader.cancel(); }
+        if ((type === 'video/webm' || type === 'application/octet-stream') &&
+          bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) {
+          const prefix = bytes.subarray(0, 256);
+          return new TextDecoder('latin1').decode(prefix).includes('webm') &&
+            prefix.some((byte, index) => byte === 0x18 && prefix[index + 1] === 0x53 &&
+              prefix[index + 2] === 0x80 && prefix[index + 3] === 0x67);
+        }
+        return type === 'video/ogg' && bytes[0] === 0x4f && bytes[1] === 0x67 &&
+          bytes[2] === 0x67 && bytes[3] === 0x53;
+      }
+      return recordedText(new TextDecoder('utf-8', { fatal: true }).decode(bytes), sha, recording);
     }
   } catch { return false; }
   return false;
@@ -135,12 +222,24 @@ function sameCodeRevision(repo, task, root, index, left, right) {
     (onlyIndexedArtifacts(repo, task, root, left, right, index) ||
       onlyIndexedArtifacts(repo, task, root, right, left, index)))));
 }
+function completeDescription(body) {
+  const meaningful = value => Boolean(value && !PLACEHOLDER.test(value) && /[a-z]{3,}/i.test(value));
+  const purpose = section(body, 'Purpose');
+  const special = section(body, 'Special things to note');
+  const outline = section(body, 'Change outline');
+  const human = section(body, 'Human Review');
+  const criteria = section(body, 'Acceptance criteria');
+  return meaningful(purpose) && meaningful(special) && meaningful(outline) &&
+    meaningful(human) && (!/^## Acceptance criteria\s*$/im.test(body) || meaningful(criteria)) &&
+    /### Review targets\s*\n[\s\S]*?-\s+\S/im.test(human) &&
+    /### Verify\s*\n[\s\S]*?-\s*\[[ x]\]\s+\S/im.test(human) &&
+    /### Known limits\s*\n[\s\S]*?-\s+\S/im.test(human);
+}
 export async function inspect({ taskDir, repo, prNumber, draftHostCapture = false, override = '' }) {
   const task = path.resolve(taskDir); const root = path.dirname(task);
   const index = indexFileExists(path.join(task, 'index.json')) ? readArtifactIndex(task) : null;
   const review = currentRecord(task, 'code-review', index);
   const verification = currentRecord(task, 'verification', index);
-  const description = currentRecord(task, 'pr-description', index);
   const headSha = command('git', ['rev-parse', 'HEAD'], repo);
   const taskText = fs.readFileSync(path.join(task, 'task.md'), 'utf8');
   const verificationRequired = Boolean(verification) || /verification\s*:\s*required|verification is required|required verification/i.test(taskText);
@@ -148,18 +247,23 @@ export async function inspect({ taskDir, repo, prNumber, draftHostCapture = fals
   const owner = JSON.parse(command('gh', ['repo', 'view', '--json', 'nameWithOwner'], repo)).nameWithOwner;
   const bodyText = pr.body ?? '';
   const evidence = section(bodyText, 'Evidence');
-  const captureUrl = firstUrl(evidence, 'capture');
-  const hostedCommentUrl = firstUrl(evidence, 'comment');
+  const bodyFields = evidenceFields(evidence);
+  const hostedCommentUrl = bodyFields.fields.get('comment') ?? '';
   const ownerPattern = owner.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const commentId = new RegExp(`^https://github\\.com/${ownerPattern}/pull/${prNumber}#issuecomment-(\\d+)$`).exec(hostedCommentUrl)?.[1];
   const comment = commentId ? JSON.parse(command('gh', ['api', `repos/${owner}/issues/comments/${commentId}`], repo)) : null;
-  const commentText = comment?.body ?? '';
-  const testedSha = commitExists(repo, field(evidence, 'tested'));
-  const hostedResult = field(evidence, 'result').toLowerCase() === 'passed' &&
-    field(commentText, 'result').toLowerCase() === 'passed' &&
-    commitExists(repo, field(commentText, 'tested')) === testedSha &&
-    commitExists(repo, field(evidence, 'current head')) === pr.headRefOid &&
-    commitExists(repo, field(commentText, 'current head')) === pr.headRefOid;
+  const commentFields = evidenceFields(comment?.body ?? '');
+  const rawTested = bodyFields.fields.get('tested') ?? '';
+  const testedSha = /^[0-9a-f]{40}$/i.test(rawTested) ? commitExists(repo, rawTested) : '';
+  const hostedResult = Boolean(testedSha && bodyFields.valid && commentFields.valid &&
+    bodyFields.fields.get('result') === 'passed' && commentFields.fields.get('result') === 'passed' &&
+    bodyFields.fields.get('tested') === testedSha && commentFields.fields.get('tested') === testedSha &&
+    bodyFields.fields.get('current head') === pr.headRefOid &&
+    commentFields.fields.get('current head') === pr.headRefOid &&
+    [...bodyFields.recordings].every(([label, type]) =>
+      commentFields.recordings.get(label) === type && commentFields.captures.get(label) === bodyFields.captures.get(label)) &&
+    bodyFields.recordings.size === commentFields.recordings.size &&
+    recordedTests(evidence, bodyFields.captures));
   const reviewSha = review ? commitExists(repo, field(review.text, 'head_sha')) : '';
   const hostedBase = commitExists(repo, pr.baseRefOid);
   const mergeBase = hostedBase && pr.headRefOid === headSha ? command('git', ['merge-base', hostedBase, headSha], repo) : '';
@@ -172,25 +276,26 @@ export async function inspect({ taskDir, repo, prNumber, draftHostCapture = fals
   const verificationCurrent = Boolean(verification?.status === 'passed' &&
     sameCodeRevision(repo, task, root, index, commitExists(repo, field(verification.text, 'revision')), testedSha));
   const captureCurrent = Boolean(testedSha && artifactOnly && hostedResult);
-  const captureHosted = await readable(captureUrl);
+  const captureHosted = Boolean(hostedResult && (await Promise.all([...bodyFields.recordings].map(([label, recording]) =>
+    readable(bodyFields.captures.get(label), recording, testedSha)))).every(Boolean));
   const commentVerified = Boolean(comment && String(comment.id) === commentId && comment.html_url === hostedCommentUrl &&
-    hostedCommentUrl !== captureUrl && field(commentText, 'capture') === captureUrl &&
-    commentText.includes(testedSha) && commentText.includes(pr.headRefOid));
-  const bodyPublished = Boolean(captureUrl && hostedCommentUrl && evidence.includes(captureUrl) && evidence.includes(hostedCommentUrl));
+    [...bodyFields.captures.values()].every(url => hostedCommentUrl !== url) && hostedResult);
+  const bodyPublished = Boolean(hostedCommentUrl && bodyFields.captures.size && commentVerified);
+  const descriptionCurrent = Boolean(bodyPublished && completeDescription(bodyText));
   const proof = {
-    mode: draftHostCapture ? 'draft-host-capture' : 'ready', captureUploadMissing: draftHostCapture && Boolean(pr.isDraft && !captureUrl),
+    mode: draftHostCapture ? 'draft-host-capture' : 'ready', captureUploadMissing: draftHostCapture && Boolean(pr.isDraft && !bodyFields.captures.size),
     head: headSha, tested: testedSha, artifactOnlyAdvancement: artifactOnly, indexedArtifactsOnly: artifactOnly,
     substantiveChanged: Boolean(testedSha && !artifactOnly), reviewRequired: true, review: review?.status, reviewCurrent,
     verificationRequired, verification: verification?.status, verificationCurrent, capture: hostedResult ? 'passed' : '',
-    captureCurrent, captureHosted, commentVerified, commentDistinct: Boolean(comment && hostedCommentUrl !== captureUrl),
-    finalBodyPublished: bodyPublished, finalBodyVerified: bodyPublished, bypass: Boolean(override),
+    captureCurrent, captureHosted, commentVerified, commentDistinct: Boolean(comment && commentVerified),
+    finalBodyPublished: bodyPublished, finalBodyVerified: descriptionCurrent, bypass: Boolean(override),
   };
   const decision = decidePublicationProof(proof);
   let reason = decision.status === 'pass' ? 'all current publication proof is verified' : decision.status === 'stale' ? 'tested proof does not cover the substantive code at HEAD' : draftHostCapture ? (pr.isDraft ? 'draft is permitted only to host capture; ready publication is not authorized' : 'capture-hosting mode requires an existing draft PR') : override ? `audited override requested: ${override}; mandatory proof remains incomplete` : 'required current hosted proof or publication read-back is missing';
   if (override) reason = `audited override requested: ${override}; decision remains ${decision.status}`;
   return { ...decision, reason, head: headSha, tested: testedSha || null, pullRequest: pr.url, override: override || null,
     captureCurrent, captureHosted, commentVerified, reviewCurrent, verificationRequired, verificationCurrent, bodyPublished,
-    descriptionCurrent: Boolean(bodyPublished && section(bodyText, 'Purpose') && section(bodyText, 'Change outline')),
+    descriptionCurrent,
     descriptionHash: createHash('sha256').update(bodyText).digest('hex') };
 }
 

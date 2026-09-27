@@ -75,7 +75,7 @@ test('ignored child task proof joins only through its merged PR and hosted evide
   const head = git(worktree, 'rev-parse', 'HEAD');
   const captureUrl = 'https://gist.githubusercontent.com/owner/0123456789abcdef0123456789abcdef/raw/1234567890abcdef0123456789abcdef01234567/api.txt';
   const commentUrl = 'https://github.com/owner/repo/pull/7#issuecomment-123';
-  const body = `## Purpose\n\nPublish API behavior.\n\n## Evidence\n\n- result: passed\n- tested: ${head}\n- current head: ${head}\n- capture: ${captureUrl}\n- comment: ${commentUrl}\n\n## Change outline\n\n- Implement API.\n`;
+  const body = `## Purpose\n\nPublish API behavior.\n\n## Special things to note\n\n- None.\n\n## Evidence\n\n- result: passed\n- tested: ${head}\n- current head: ${head}\n- recording: api-probe\n- capture: ${captureUrl}\n- comment: ${commentUrl}\n\n### Recorded tests\n\n| Test | Result | Capture | Cue |\n|---|---|---|---|\n| API request returns expected result | passed | primary | output line 4: observed API result |\n\n## Change outline\n\n- Implement API.\n\n## Human Review\n\n### Review targets\n\n- Inspect API behavior.\n\n### Verify\n\n- [ ] Confirm API result.\n\n### Known limits\n\n- None.\n`;
   const addProof = (type, text) => {
     const allocation = reserveArtifactIteration(childDir, 'review', 'code');
     const file = path.join(childDir, allocation.writePath);
@@ -109,7 +109,7 @@ test('ignored child task proof joins only through its merged PR and hosted evide
   fs.writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\ncase "$1 $2" in\n  "pr list") printf %s "$GH_LIST_JSON" ;;\n  "pr view") printf %s "$GH_PR_JSON" ;;\n  "repo view") printf %s \'{"nameWithOwner":"owner/repo"}\' ;;\n  "api repos/owner/repo/issues/comments/123") printf %s "$GH_COMMENT_JSON" ;;\n  *) exit 2 ;;\nesac\n');
   fs.chmodSync(path.join(bin, 'gh'), 0o755);
   const fetchStub = path.join(root, 'fetch-stub.mjs');
-  fs.writeFileSync(fetchStub, `globalThis.fetch = async () => ({ ok: true, status: 200, url: '${captureUrl}', headers: new Headers({ 'content-type': 'text/plain' }), body: new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('observed API result')); controller.close(); } }) });\n`);
+  fs.writeFileSync(fetchStub, `globalThis.fetch = async () => ({ ok: true, status: 200, url: '${captureUrl}', headers: new Headers({ 'content-type': 'text/plain' }), body: new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('Source SHA: ${head}\\nRequest: GET /api/items\\nStatus: 200\\nResponse body: observed API result')); controller.close(); } }) });\n`);
   const keys = ['PATH', 'NODE_OPTIONS', 'GH_LIST_JSON', 'GH_PR_JSON', 'GH_COMMENT_JSON'];
   const original = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   t.after(() => { for (const key of keys) if (original[key] === undefined) delete process.env[key]; else process.env[key] = original[key]; });
@@ -119,7 +119,7 @@ test('ignored child task proof joins only through its merged PR and hosted evide
   process.env.GH_PR_JSON = JSON.stringify({ url: pr.url, number: 7, headRefOid: head,
     baseRefName: 'epic', baseRefOid: baseHead, isDraft: false, body });
   process.env.GH_COMMENT_JSON = JSON.stringify({ id: 123, html_url: commentUrl,
-    body: `- result: passed\n- tested: ${head}\n- current head: ${head}\n- capture: ${captureUrl}` });
+    body: `- result: passed\n- tested: ${head}\n- current head: ${head}\n- recording: api-probe\n- capture: ${captureUrl}` });
   assert.deepEqual(childWave(task, [api]).done, ['api']);
   assert.equal(joinChildren(task, [api], new Map([['api', record]])).complete, true);
   process.env.GH_COMMENT_JSON = JSON.stringify({ id: 123, html_url: commentUrl, body: 'Missing capture' });
