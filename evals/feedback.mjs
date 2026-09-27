@@ -51,6 +51,7 @@ export function auditEvalPair(beforeInput, afterInput, { minimumSamples = 10 } =
     before.cost.currency === after.cost.currency && before.cost.basis === after.cost.basis;
   return {
     qualityClaimsAllowed,
+    claimsAllowed: qualityClaimsAllowed,
     savingsClaimsAllowed,
     problems,
     matched: comparable ? Object.fromEntries([...JOIN_FIELDS.map((field) => [field, before[field]]), ["beforeEvidenceRef", before.evidenceRef], ["afterEvidenceRef", after.evidenceRef]]) : null,

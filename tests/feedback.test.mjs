@@ -5,8 +5,8 @@ import { auditEvalPair, decideFeedback } from "../evals/feedback.mjs";
 const manifest = (overrides = {}) => ({
   ok: true,
   model: "provider/model-a",
-  actualModel: "provider/model-a",
   fixtureRevision: "abc123",
+  rawOutput: "evals/results/run/solo",
   sampleCount: 20,
   metrics: {
     cost: { total: 0.42 },
@@ -23,7 +23,7 @@ const approval = { decision: "approved", actor: "reviewer", at: "2026-09-27T12:0
 test("recorded comparison manifests reject fixture revision and model mismatch", () => {
   assert.ok(auditEvalPair(manifest(), manifest({ fixtureRevision: "def456" })).problems.includes("fixtureVersion mismatch"));
   assert.ok(auditEvalPair(manifest(), manifest({ model: "provider/other" })).problems.includes("model mismatch"));
-  assert.ok(auditEvalPair(manifest(), manifest({ actualModel: "provider/other" })).problems.includes("actualModel mismatch"));
+  assert.ok(auditEvalPair(manifest(), manifest({ metrics: { ...manifest().metrics, coverage: { ...manifest().metrics.coverage, models: ["provider/other"] } } })).problems.includes("actualModel mismatch"));
 });
 test("failed recorded runs cannot support feedback claims", () => {
   const audit = auditEvalPair(manifest({ ok: false }), manifest());
