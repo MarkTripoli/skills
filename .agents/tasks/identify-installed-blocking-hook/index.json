@@ -1,0 +1,7 @@
+{
+  "$schema": "skills.task-index/v1",
+  "schemaVersion": 1,
+  "task": "identify-installed-blocking-hook",
+  "generation": 0,
+  "artifactSeries": {}
+}
