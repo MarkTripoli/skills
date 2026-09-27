@@ -6,6 +6,8 @@ import path from 'node:path';
 import test from 'node:test';
 import {run} from '../skills/delivery/security-check/scripts/security-check.mjs';
 
+const syntheticToken = `ghp_${['A1b2C3d4E5f6G7h8', 'I9j0K1l2M3n4O5p6Q7r8'].join('').slice(0, 36)}`;
+
 function repository() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'security-check-'));
   const git = (...args) => execFileSync('git', args, {cwd: root, encoding: 'utf8'}).trim();
@@ -13,49 +15,106 @@ function repository() {
   git('config', 'user.email', 'fixture@example.test');
   git('config', 'user.name', 'Fixture');
   git('remote', 'add', 'origin', 'https://account:secret-token@example.test/owner/project.git');
-  fs.writeFileSync(path.join(root, 'fixture.js'), 'export const fixture = true;\n');
-  git('add', 'fixture.js');
+  fs.writeFileSync(path.join(root, 'seeded-secret.js'), `// Generated only inside an isolated temporary repository.\nconst apiKey = '${syntheticToken}';\n`);
+  git('add', 'seeded-secret.js');
   git('commit', '-qm', 'fixture');
   return {root, revision: git('rev-parse', 'HEAD')};
 }
 
-test('reports revision-bound findings without exposing origin credentials', () => {
-  const {root, revision} = repository();
-  try {
-    const spawn = (_tool, args) => args[0] === '--version'
+function scanners({secret = syntheticToken, semgrep = {results: [], errors: []}, gitleaks = [{RuleID: 'github-pat', File: 'seeded-secret.js', StartLine: 2, Secret: secret, Match: `apiKey = '${secret}'`}]} = {}) {
+  return (tool, args) => {
+    if (tool === 'semgrep') return args[0] === '--version'
       ? {status: 0, stdout: '1.168.0'}
-      : {status: 0, stdout: JSON.stringify({results: [{path: 'fixture.js', start: {line: 1}, check_id: 'javascript.example', extra: {severity: 'ERROR', message: 'Unsafe call'}}], errors: []})};
+      : {status: 0, stdout: JSON.stringify(semgrep), stderr: secret};
+    if (tool === 'gitleaks') return args[0] === 'version'
+      ? {status: 0, stdout: '8.24.0'}
+      : {status: 0, stdout: JSON.stringify(gitleaks), stderr: secret};
+    throw new Error(`unexpected scanner: ${tool}`);
+  };
+}
+
+test('reports repository-bound secret findings without exposing secret data', () => {
+  const {root, revision} = repository();
+  const secret = syntheticToken;
+  try {
+    const spawn = scanners({
+      secret,
+      semgrep: {results: [{path: 'seeded-secret.js', start: {line: 2}, check_id: 'javascript.example', extra: {severity: 'ERROR', message: `Found ${secret}`} }], errors: []},
+    });
     const report = run({cwd: root, spawn});
     assert.equal(report.coverage, 'complete');
-    assert.equal(report.tool.version, '1.168.0');
+    assert.equal(report.secret_coverage, 'complete');
+    assert.equal(report.secret_tool.version, '8.24.0');
     assert.equal(report.repository, 'https://example.test/owner/project');
     assert.equal(report.revision, revision);
-    assert.equal(report.findings.length, 1);
-    assert.deepEqual(Object.keys(report.findings[0]), ['schema_version', 'finding_id', 'repository', 'revision', 'rule_id', 'path', 'line', 'severity', 'scanner', 'message', 'evidence_ref']);
-    assert.equal(report.findings[0].path, 'fixture.js');
-    assert.equal(report.findings[0].line, 1);
-    assert.match(report.findings[0].evidence_ref, /^sha256:[a-f0-9]{64}$/);
+    assert.equal(report.findings.length, 2);
+    const secretFinding = report.findings.find(finding => finding.scanner === 'gitleaks');
+    assert.deepEqual(Object.keys(secretFinding), ['schema_version', 'finding_id', 'repository', 'revision', 'rule_id', 'path', 'line', 'severity', 'scanner', 'message', 'evidence_ref']);
+    assert.equal(secretFinding.repository, report.repository);
+    assert.equal(secretFinding.revision, revision);
+    assert.equal(secretFinding.path, 'seeded-secret.js');
+    assert.equal(secretFinding.line, 2);
+    assert.equal(secretFinding.message, 'Secret detected by Gitleaks');
+    assert.match(secretFinding.evidence_ref, /^sha256:[a-f0-9]{64}$/);
+    assert.ok(!JSON.stringify(report).includes(secret));
     assert.doesNotMatch(JSON.stringify(report), /secret-token|account/);
+    const gitleaksInvocation = [];
+    run({cwd: root, spawn: (tool, args, options) => {
+      gitleaksInvocation.push({tool, args, options});
+      return spawn(tool, args, options);
+    }});
+    const scan = gitleaksInvocation.find(call => call.tool === 'gitleaks' && call.args[0] === 'git');
+    assert.ok(scan.args.includes('--redact=100'));
+    assert.ok(scan.args.includes('--report-format') && scan.args.includes('json'));
+    assert.equal(scan.options.cwd, root);
   } finally {
     fs.rmSync(root, {recursive: true, force: true});
   }
 });
 
-test('missing tools, failed scans and partial Semgrep reports never count as clean', () => {
+test('missing or failed Gitleaks marks secret coverage incomplete without raw diagnostics', () => {
   const {root} = repository();
+  const secret = syntheticToken;
   try {
-    const missing = run({cwd: root, spawn: () => ({status: null, error: new Error('ENOENT')})});
-    assert.equal(missing.coverage, 'incomplete');
-    assert.equal(missing.tool.status, 'unavailable');
+    const missing = run({cwd: root, spawn: (tool, args) => {
+      if (tool === 'gitleaks') return {status: null, error: new Error(`ENOENT ${secret}`), stderr: secret};
+      return scanners({gitleaks: []})(tool, args);
+    }});
+    assert.equal(missing.secret_coverage, 'incomplete');
+    assert.equal(missing.secret_tool.status, 'unavailable');
+    assert.ok(!JSON.stringify(missing).includes(secret));
+    const failed = run({cwd: root, spawn: (tool, args) => {
+      if (tool === 'gitleaks' && args[0] === 'git') return {status: 2, stdout: `[{"Secret":"${secret}"}]`, stderr: secret};
+      return scanners({gitleaks: []})(tool, args);
+    }});
+    assert.equal(failed.secret_coverage, 'incomplete');
+    assert.equal(failed.secret_tool.status, 'failed');
+    assert.ok(!JSON.stringify(failed).includes(secret));
+    const semgrepFailure = run({cwd: root, spawn: (tool, args) => {
+      if (tool === 'semgrep' && args[0] !== '--version') return {status: 2, stdout: JSON.stringify({results: []}), stderr: secret};
+      return scanners({gitleaks: []})(tool, args);
+    }});
+    assert.equal(semgrepFailure.coverage, 'incomplete');
+    assert.equal(semgrepFailure.secret_coverage, 'complete');
+    const semgrepMissing = run({cwd: root, spawn: (tool, args) => {
+      if (tool === 'semgrep') return {status: null, error: new Error('ENOENT')};
+      return scanners({gitleaks: []})(tool, args);
+    }});
+    assert.equal(semgrepMissing.coverage, 'incomplete');
+    assert.equal(semgrepMissing.tool.status, 'unavailable');
     for (const result of [
-      {status: 2, stdout: JSON.stringify({results: []})},
+      {status: 2, stdout: JSON.stringify({results: []}), stderr: secret},
       {status: 0, stdout: JSON.stringify({results: [], errors: [{type: 'PartialParsing'}]})},
       {status: 0, stdout: '{invalid json'},
     ]) {
-      const report = run({cwd: root, spawn: (_tool, args) => args[0] === '--version' ? {status: 0, stdout: '1.168.0'} : result});
+      const report = run({cwd: root, spawn: (tool, args) => {
+        if (tool === 'semgrep' && args[0] !== '--version') return result;
+        return scanners({gitleaks: []})(tool, args);
+      }});
       assert.equal(report.coverage, 'incomplete');
       assert.equal(report.tool.status, 'failed');
       assert.match(report.error, /Semgrep/);
+      assert.ok(!JSON.stringify(report).includes(secret));
     }
   } finally {
     fs.rmSync(root, {recursive: true, force: true});
