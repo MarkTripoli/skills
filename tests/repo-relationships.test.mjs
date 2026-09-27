@@ -22,17 +22,118 @@ function fixture() {
 test('matches literal cross-repository NATS subject and excludes unmatched subscription', () => {
   const {base, create} = fixture();
   try {
-    const publisher = create('publisher', {'src/events.js': "client.publish('orders.created', payload);\nclient.publish('orders.deleted', payload);\n"});
-    const subscriber = create('subscriber', {'src/handlers.js': "client.subscribe('orders.created', handler);\nclient.subscribe('billing.paid', handler);\n"});
-    const report = analyze([{name: 'publisher', root: publisher}, {name: 'subscriber', root: subscriber}]);
+    const publisher = create('publisher', {
+      '.gitignore': 'ignored.js\n',
+      'src/events.js': "import { connect } from 'nats';\nconst client = await connect();\n// client.publish('comment.fake', payload);\nclient.publish('orders.created', payload);\nclient.publish('orders.deleted', payload);\nconst example = \"client.publish('string.fake', payload)\";\nother.publish('orders.created', payload);\n",
+    });
+    const subscriber = create('subscriber', {'src/handlers.js': "import { connect } from 'nats';\nconst client = await connect();\n// client.subscribe('comment.fake', handler);\nclient.subscribe('orders.created', handler);\nclient.subscribe('billing.paid', handler);\n"});
+    const impostor = create('impostor', {'src/fake.js': "other.publish('orders.created', payload);\n"});
+    const marker = path.join(base, 'fsmonitor-ran');
+    execFileSync('git', ['config', 'core.fsmonitor', `!touch ${marker}`], {cwd: publisher, stdio: 'ignore'});
+    const indexPath = path.join(publisher, '.git', 'index');
+    const indexBefore = fs.readFileSync(indexPath);
+    fs.writeFileSync(path.join(publisher, 'src/events.js'), "import { connect } from 'nats';\nconst client = await connect();\nclient.publish('orders.wrong-working-copy', payload);\n");
+    fs.writeFileSync(path.join(publisher, 'ignored.js'), "import { connect } from 'nats';\nconst client = await connect();\nclient.publish('orders.created', payload);\n");
+    const report = analyze([{name: 'publisher', root: publisher}, {name: 'subscriber', root: subscriber}, {name: 'impostor', root: impostor}]);
     assert.equal(report.coverage, 'complete');
-    assert.equal(report.repositories.length, 2);
+    assert.equal(report.repositories.length, 3);
     assert.equal(report.relationships.filter(edge => edge.kind === 'nats-subject').length, 1);
     const edge = report.relationships.find(item => item.kind === 'nats-subject');
-    assert.equal(edge.subject, 'orders.created');
-    assert.equal(edge.from.source.line, 1);
-    assert.equal(edge.to.source.line, 1);
+    assert.equal(edge.from.source.line, 4);
+    assert.equal(edge.to.source.line, 4);
+    assert.equal(report.evidence.filter(item => item.kind.startsWith('nats-')).length, 4);
+    assert.equal(edge.classification, 'candidate');
+    assert.deepEqual(fs.readFileSync(indexPath), indexBefore);
+    assert.equal(fs.existsSync(marker), false);
+    assert.equal(report.evidence.some(item => item.source.path === 'ignored.js'), false);
     assert.equal(report.repositories.some(repo => JSON.stringify(repo).includes('token')), false);
+  } finally { fs.rmSync(base, {recursive: true, force: true}); }
+});
+
+test('rejects ambiguous package citations, fake manifest names, and duplicate YAML keys', () => {
+  const {base, create} = fixture();
+  try {
+    const app = create('app', {
+      'package.json': '{\n  "name": "wrong",\n  "name": "ambiguous",\n  "dependencies": { "pkg": "1", "pkg": "2" }\n}\n',
+      'fakepackage.json': '{\n  "name": "fake"\n}\n',
+      'broken/duplicate.yaml': 'apiVersion: apps/v1\nkind: Deployment\nkind: Service\nmetadata:\n  name: duplicated\nspec:\n  selector:\n    app: duplicated\n',
+    });
+    const client = create('client', {'package.json': '{\n  "name": "client",\n  "dependencies": { "ambiguous": "1", "fake": "1" }\n}\n'});
+    const report = analyze([{name: 'app', root: app}, {name: 'client', root: client}]);
+    assert.equal(report.coverage, 'incomplete');
+    assert.equal(report.evidence.some(edge => edge.kind === 'package-identity' && edge.repo === 'app'), false);
+    assert.equal(report.evidence.some(edge => edge.kind === 'package-dependency' && edge.repo === 'app'), false);
+    assert.equal(report.evidence.some(edge => edge.kind === 'kubernetes-declaration' && edge.repo === 'app'), false);
+    assert.equal(report.relationships.some(edge => edge.kind === 'package-dependency-match'), false);
+    assert.ok(report.skipped_roots.some(root => root.name === 'app'));
+  } finally { fs.rmSync(base, {recursive: true, force: true}); }
+});
+
+test('rejects subdirectory roots and duplicate Git common directories', () => {
+  const {base, create} = fixture();
+  try {
+    const first = create('first', {'src/code.js': 'export const value = 1;\n'});
+    const second = create('second', {'src/code.js': 'export const value = 2;\n'});
+    const nested = analyze([{name: 'nested', root: path.join(first, 'src')}, {name: 'second', root: second}]);
+    assert.ok(nested.skipped_roots.some(root => root.name === 'nested'));
+    const linked = path.join(base, 'linked');
+    execFileSync('git', ['worktree', 'add', '--detach', linked, 'HEAD'], {cwd: first, stdio: 'ignore'});
+    const duplicate = analyze([{name: 'first', root: first}, {name: 'linked', root: linked}]);
+    assert.deepEqual(duplicate.skipped_roots.map(root => root.reason), ['duplicate-git-common-dir', 'duplicate-git-common-dir']);
+    assert.equal(duplicate.evidence.length, 0);
+    execFileSync('git', ['worktree', 'remove', '--force', linked], {cwd: first, stdio: 'ignore'});
+  } finally { fs.rmSync(base, {recursive: true, force: true}); }
+});
+
+test('ignores Git replace refs when binding sources to reported HEAD', () => {
+  const {base, create} = fixture();
+  try {
+    const publisher = create('publisher', {'src/events.js': "import { connect } from 'nats';\nconst nc = await connect();\nnc.publish('original.subject', value);\n"});
+    const subscriber = create('subscriber', {'src/events.js': "import { connect } from 'nats';\nconst nc = await connect();\nnc.subscribe('original.subject', handler);\n"});
+    const git = (...args) => execFileSync('git', args, {cwd: publisher, encoding: 'utf8'}).trim();
+    const original = git('rev-parse', 'HEAD');
+    fs.writeFileSync(path.join(publisher, 'src/events.js'), "import { connect } from 'nats';\nconst nc = await connect();\nnc.publish('replacement.subject', value);\n");
+    git('add', 'src/events.js');
+    const tree = git('write-tree');
+    const replacement = git('commit-tree', tree, '-m', 'replacement tree');
+    git('replace', original, replacement);
+    const report = analyze([{name: 'publisher', root: publisher}, {name: 'subscriber', root: subscriber}]);
+    assert.equal(report.repositories.find(repo => repo.name === 'publisher').head, original);
+    assert.equal(report.relationships.some(edge => edge.kind === 'nats-subject' && edge.subject === 'original.subject'), true);
+    assert.equal(report.relationships.some(edge => edge.kind === 'nats-subject' && edge.subject === 'replacement.subject'), false);
+  } finally { fs.rmSync(base, {recursive: true, force: true}); }
+});
+
+test('bounds relationship expansion and reports incomplete coverage', () => {
+  const {base, create} = fixture();
+  try {
+    const publisherSource = "import { connect } from 'nats';\nconst nc = await connect();\n" +
+      Array.from({length: 80}, () => "nc.publish('common.subject', value);\n").join('');
+    const subscriberSource = "import { connect } from 'nats';\nconst nc = await connect();\n" +
+      Array.from({length: 70}, () => "nc.subscribe('common.subject', handler);\n").join('');
+    const publisher = create('publisher', {'src/pub.js': publisherSource});
+    const subscriber = create('subscriber', {'src/sub.js': subscriberSource});
+    const report = analyze([{name: 'publisher', root: publisher}, {name: 'subscriber', root: subscriber}]);
+    assert.equal(report.relationships.length, 5000);
+    assert.equal(report.coverage, 'incomplete');
+    assert.ok(report.skipped_roots.every(root => root.reason === 'relationship-limit'));
+  } finally { fs.rmSync(base, {recursive: true, force: true}); }
+});
+
+test('caps collected evidence before cross-repository expansion', () => {
+  const {base, create} = fixture();
+  try {
+    const publishes = "import { connect } from 'nats';\nconst nc = await connect();\n" +
+      Array.from({length: 5001}, () => "nc.publish('bounded.subject', value);\n").join('');
+    const subscribes = "import { connect } from 'nats';\nconst nc = await connect();\n" +
+      Array.from({length: 5001}, () => "nc.subscribe('bounded.subject', handler);\n").join('');
+    const publisher = create('publisher', {'src/pub.js': publishes});
+    const subscriber = create('subscriber', {'src/sub.js': subscribes});
+    const report = analyze([{name: 'publisher', root: publisher}, {name: 'subscriber', root: subscriber}]);
+    assert.equal(report.evidence.length, 10000);
+    assert.equal(report.coverage, 'incomplete');
+    assert.ok(report.skipped_roots.some(root => root.reason === 'evidence-limit'));
+    assert.ok(report.relationships.length <= 5000);
   } finally { fs.rmSync(base, {recursive: true, force: true}); }
 });
 
