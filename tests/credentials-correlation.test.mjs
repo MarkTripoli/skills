@@ -160,8 +160,8 @@ test('fails before reading when a selected root is rebound during selection', t 
     assert.throws(() => correlate([a, b]), /repository root changed/);
   } finally {
     fs.realpathSync = originalRealpath;
-    if (fs.lstatSync(a).isSymbolicLink()) fs.unlinkSync(a);
-    fs.renameSync(moved, a);
+    if (fs.existsSync(a) && fs.lstatSync(a).isSymbolicLink()) fs.unlinkSync(a);
+    if (fs.existsSync(moved)) fs.renameSync(moved, a);
   }
   assert.equal(swapped, true);
 });
