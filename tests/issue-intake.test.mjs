@@ -1,3 +1,50 @@
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const cliPath = fileURLToPath(new URL('../skills/delivery/issue-intake/issue-intake.mjs', import.meta.url));
+
+function cliFixture(t, issueRows, prRows = []) {
+  const fixture = setup(t);
+  const gh = path.join(fixture.root, 'gh-mock.mjs');
+  fs.writeFileSync(gh, `#!/usr/bin/env node\nconst args = process.argv.slice(2); process.stdout.write(JSON.stringify(args[0] === 'issue' ? ${JSON.stringify(issueRows)} : ${JSON.stringify(prRows)}));\n`);
+  fs.chmodSync(gh, 0o755);
+  fixture.runCli = (extra = []) => spawnSync(process.execPath, [cliPath, `--repo=acme/app`, `--task-root=${fixture.taskRoot}`, `--state=${fixture.stateFile}`, ...extra], { encoding: 'utf8', env: { ...process.env, GH_BIN: gh } });
+  return fixture;
+}
+
+test('mocked gh CLI boundary returns duplicate, empty, stale, and restart outcomes', t => {
+  const issue = { number: 7, title: 'Fix the widget', body: 'Request body', state: 'OPEN', labels: [], url: 'https://github.com/acme/app/issues/7' };
+  const duplicate = cliFixture(t, [issue], [{ number: 9 }]);
+  const duplicateResult = duplicate.runCli();
+  assert.equal(duplicateResult.status, 0);
+  assert.equal(JSON.parse(duplicateResult.stdout)[0].status, 'duplicate');
+
+  const empty = cliFixture(t, []);
+  const emptyResult = empty.runCli();
+  assert.equal(emptyResult.status, 0);
+  assert.deepEqual(JSON.parse(emptyResult.stdout), []);
+
+  const stale = cliFixture(t, [issue]);
+  fs.writeFileSync(stale.stateFile, JSON.stringify({ schema: 1, claims: [{ issue: 7, status: 'claimed', task: 'old-task', updatedAt: 1 }] }));
+  const staleResult = stale.runCli(['--state=' + stale.stateFile]);
+  assert.equal(JSON.parse(staleResult.stdout)[0].status, 'recoverable');
+
+  const resumed = cliFixture(t, [issue]);
+  const task = path.join(resumed.taskRoot, 'fix-the-widget-7');
+  const handoff = path.join(resumed.root, 'handoff');
+  fs.writeFileSync(handoff, '#!/bin/sh\nexit 1\n');
+  fs.chmodSync(handoff, 0o755);
+  const interrupted = resumed.runCli(['--execute', `--handoff=${handoff}`]);
+  assert.equal(JSON.parse(interrupted.stdout)[0].status, 'interrupted');
+  const state = JSON.parse(fs.readFileSync(resumed.stateFile, 'utf8'));
+  state.claims[0].updatedAt = 1;
+  fs.writeFileSync(resumed.stateFile, JSON.stringify(state));
+  fs.writeFileSync(handoff, '#!/bin/sh\nexit 0\n');
+  const resumedResult = resumed.runCli(['--execute', `--handoff=${handoff}`]);
+  assert.equal(resumedResult.status, 0);
+  assert.equal(JSON.parse(resumedResult.stdout)[0].status, 'handed-off');
+  assert.deepEqual(fs.readdirSync(resumed.taskRoot), ['fix-the-widget-7']);
+});
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
