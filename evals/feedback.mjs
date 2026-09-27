@@ -44,11 +44,11 @@ export function auditEvalPair(beforeInput, afterInput, { minimumSamples = 10 } =
     if (before.sampleCount < minimumSamples || after.sampleCount < minimumSamples) problems.push(`sample count below minimum ${minimumSamples}`);
   }
   const comparable = problems.length === 0;
-  const qualityClaimsAllowed = comparable && before.sampleCount >= minimumSamples && after.sampleCount >= minimumSamples;
+  const qualityClaimsAllowed = Boolean(comparable && before?.sampleCount >= minimumSamples && after?.sampleCount >= minimumSamples);
   const costEvidenceValid = (run) => run?.cost && Number.isFinite(run.cost.amount) && run.cost.amount >= 0 &&
     run.cost.currency === "USD" && positiveInteger(run.costEvents) && run.cost.basis === "provider_billed_usd" && typeof run.cost.source === "string" && run.cost.source.trim();
-  const savingsClaimsAllowed = qualityClaimsAllowed && costEvidenceValid(before) && costEvidenceValid(after) &&
-    before.cost.currency === after.cost.currency && before.cost.basis === after.cost.basis;
+  const savingsClaimsAllowed = Boolean(qualityClaimsAllowed && costEvidenceValid(before) && costEvidenceValid(after) &&
+    before.cost.currency === after.cost.currency && before.cost.basis === after.cost.basis);
   return {
     qualityClaimsAllowed,
     claimsAllowed: qualityClaimsAllowed,

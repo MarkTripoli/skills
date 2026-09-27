@@ -28,6 +28,7 @@ test("recorded comparison manifests reject fixture revision and model mismatch",
 test("failed recorded runs cannot support feedback claims", () => {
   const audit = auditEvalPair(manifest({ ok: false }), manifest());
   assert.equal(audit.joinable, false);
+  assert.equal(audit.claimsAllowed, false);
   assert.ok(audit.problems.includes("before: recorded eval did not pass"));
 });
 
@@ -35,6 +36,8 @@ test("partial and unknown usage coverage cannot join", () => {
   for (const coverage of [{ complete: false, usage_events: 20, models: ["provider/model-a"] }, { usage_events: 20, models: ["provider/model-a"] }]) {
     const audit = auditEvalPair(manifest(), manifest({ metrics: { ...manifest().metrics, coverage } }));
     assert.equal(audit.joinable, false);
+    assert.equal(audit.claimsAllowed, false);
+    assert.equal(typeof audit.savingsClaimsAllowed, "boolean");
     assert.equal(audit.qualityClaimsAllowed, false);
   }
 });
