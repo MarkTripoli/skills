@@ -113,6 +113,12 @@ test("Atomic is opt-in and rejects partial skill selection before writing", () =
   const full = plan({ ...parseArgs(["pi", "--atomic", "--skill", "*"]), home, cwd: home, env });
   assert.equal(full.steps.find((step) => step.kind === "workflow").to, path.join(home, ".atomic", "agent", "workflows", "skills-delivery"));
   assert.equal(full.steps.find((step) => step.target === "portable").to, path.join(home, ".agents", "skills"));
+  const installed = install({ ...parseArgs(["pi", "--atomic", "--skill", "*"]), home, cwd: home, env });
+  const workflow = installed.steps.find(step => step.kind === "workflow").to;
+  for (const helper of ["publication-proof.mjs", "publication-proof-policy.mjs", "task-artifacts.mjs", "task-root.mjs"]) {
+    assert.ok(fs.existsSync(path.join(workflow, "shared", helper)));
+  }
+  uninstall(installed, home);
 });
 
 test("a selected skill installs and uninstalls independently in every target", () => {

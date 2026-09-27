@@ -163,9 +163,9 @@ const delivery = workflow({
           catch (error) { return { done: [], started: [], ready: [], blocked: [], error: String(error instanceof Error ? error.message : error) }; }
         });
         if (wave.error) return finish('blocked', `Child wave inspection failed; ${children.map(child => `${child.slug}: unverified (${wave.error})`).join(' | ')}. No dependent child was dispatched.`);
-        // A prior run's committed PR description alone is insufficient: the
-        // native child result, current approvals/artifacts, and actual branch
-        // ancestry must all still agree before a dependent child can start.
+        // A prior PR body alone is insufficient: native completion, current
+        // local approvals, and the merged PR's hosted proof must all agree
+        // before a dependent child can start.
         const prior = children.filter(child => wave.done.includes(child.slug) || wave.started.includes(child.slug));
         if (prior.length) {
           const join = joinChildren(task, prior);

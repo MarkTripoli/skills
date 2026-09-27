@@ -105,7 +105,7 @@ test('independent ready children materialize separate owned worktrees with fixtu
     fs.writeFileSync(path.join(dir, 'task.md'), taskDocument({slug, parent: parent.slug, write_paths}));
   }
   const children = childrenFor(parent);
-  const wave = childWave(parent, children);
+  const wave = childWave(parent, children, []);
   assert.deepEqual(wave.ready, ['api-child', 'ui-child']);
   const [batch] = childBatches(wave.ready, children, 2);
   assert.equal(batch.length, 2);

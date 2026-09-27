@@ -85,7 +85,7 @@ export function apply(planned, { built, uninstall, home }) {
         else {
           copyDir(path.join(repoRoot, 'atomic'), step.to);
           fs.mkdirSync(path.join(step.to, 'shared'), { recursive: true });
-          for (const name of ['task-artifacts.mjs', 'task-root.mjs']) fs.copyFileSync(path.join(repoRoot, 'shared', name), path.join(step.to, 'shared', name));
+          for (const name of ['task-artifacts.mjs', 'task-root.mjs', 'publication-proof.mjs', 'publication-proof-policy.mjs']) fs.copyFileSync(path.join(repoRoot, 'shared', name), path.join(step.to, 'shared', name));
           const yamlRoot = path.dirname(fileURLToPath(import.meta.resolve('yaml/package.json')));
           copyDir(yamlRoot, path.join(step.to, 'node_modules', 'yaml'));
           fs.writeFileSync(entry, "export { default } from './skills-delivery/workflows/delivery.ts';\n");

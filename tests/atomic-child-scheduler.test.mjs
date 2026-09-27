@@ -6,7 +6,8 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { childBatches, childCompletionSnapshot, childJoinSummary, joinChildren } from '../atomic/lib/child-scheduler.mjs';
 import { observeArtifacts } from '../atomic/lib/artifacts.mjs';
-import { revision, saveRecord } from '../atomic/lib/workspace.mjs';
+import { childWave, revision, saveRecord } from '../atomic/lib/workspace.mjs';
+import { initTaskArtifacts, readArtifactIndex, recordArtifact, reserveArtifactIteration } from '../shared/task-artifacts.mjs';
 
 const child = (slug, write_paths, depends_on = []) => ({ slug, write_paths, depends_on });
 
@@ -133,7 +134,6 @@ test('matching parent source without merged child proof cannot spoof integration
   git(root, 'commit', '-m', 'Copy UI source without its completion');
   const joined = joinChildren(task, children, records);
   assert.deepEqual(joined.children.map(outcome => outcome.complete), [true, false]);
-  assert.match(joined.children[1].reasons.join(' '), /no integration point/);
 });
 
 test('changed child branch cannot reuse its earlier completion', t => {
@@ -157,7 +157,6 @@ test('historical integration does not excuse missing current committed completio
   git(root, 'commit', '-m', 'Remove UI completion evidence');
   const joined = joinChildren(task, children, records);
   assert.equal(joined.complete, false);
-  assert.match(joined.children[1].reasons.join(' '), /lacks committed completion evidence|artifact is missing or stale/);
 });
 
 test('a missing child fork revision cannot certify a squash merge', t => {
@@ -212,4 +211,88 @@ test('stale child artifact or approval hash blocks join despite committed merge'
 test('without comparable live spend provenance production scheduling stays at one', () => {
   const children = [child('api', ['src/api']), child('ui', ['src/ui'])];
   assert.deepEqual(childBatches(['api', 'ui'], children), [['api'], ['ui']]);
+});
+
+test('ignored child task proof joins only through its merged PR and hosted evidence', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hosted-child-join-'));
+  const worktree = path.join(root, 'child-worktree');
+  git(root, 'init', '-b', 'epic');
+  git(root, 'config', 'user.email', 'test@example.invalid');
+  git(root, 'config', 'user.name', 'Hosted Child Test');
+  fs.writeFileSync(path.join(root, '.gitignore'), '/.agents/tasks/\n');
+  fs.writeFileSync(path.join(root, 'source.txt'), 'base\n');
+  git(root, 'add', '.gitignore', 'source.txt');
+  git(root, 'commit', '-m', 'Create epic');
+  const baseHead = git(root, 'rev-parse', 'HEAD');
+  git(root, 'worktree', 'add', '-b', 'api', worktree, 'epic');
+  t.after(() => {
+    git(root, 'worktree', 'remove', '--force', worktree);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const childDir = path.join(worktree, '.agents', 'tasks', 'api');
+  fs.mkdirSync(childDir, { recursive: true });
+  fs.writeFileSync(path.join(childDir, 'task.md'), '---\nslug: api\nworkflow: full\n---\n');
+  initTaskArtifacts(childDir);
+  fs.mkdirSync(path.join(worktree, 'src'));
+  fs.writeFileSync(path.join(worktree, 'src', 'api.js'), 'export const api = true;\n');
+  git(worktree, 'add', 'src/api.js');
+  git(worktree, 'commit', '-m', 'Implement API');
+  const head = git(worktree, 'rev-parse', 'HEAD');
+  const captureUrl = 'https://captures.example.test/api.txt';
+  const commentUrl = 'https://github.com/owner/repo/pull/7#issuecomment-123';
+  const body = `## Purpose\n\nPublish API behavior.\n\n## Evidence\n\n- ${captureUrl}\n- ${commentUrl}\n\n## Change outline\n\n- Implement API.\n`;
+  const addProof = (type, text) => {
+    const allocation = reserveArtifactIteration(childDir, {
+      'code-review': 'review', evidence: 'evidence', 'pr-description': 'pull-request',
+    }[type], {
+      'code-review': 'code', evidence: 'recording', 'pr-description': 'description',
+    }[type]);
+    const file = path.join(childDir, allocation.writePath);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, text);
+    recordArtifact(childDir, allocation.kind, allocation.variant, type, allocation.writePath);
+  };
+  addProof('code-review', `---\ntype: code-review\nstatus: clean\nsummary: Clean review\nbase_branch: epic\nbase_sha: ${baseHead}\nhead_sha: ${head}\n---\n\n## Critical and Required Findings\n\nNone.\n`);
+  addProof('evidence', `---\ntype: evidence\nstatus: passed\nsummary: API captured\n---\n\n## Revision\n\n- commit: ${head}\n\n## Posted to\n\n- PR description: ${captureUrl}\n- PR comment: ${commentUrl}\n`);
+  addProof('pr-description', body);
+  const observation = observeArtifacts(childDir);
+  const codeRevision = revision(worktree, '.agents/tasks');
+  const proof = childCompletionSnapshot({
+    ...observation, revision: codeRevision, generation: readArtifactIndex(childDir).generation, approvals: {},
+    proofs: Object.fromEntries(['code-review', 'evidence', 'pr-description'].map(type => [
+      type, { hash: observation.latest[type].hash, revision: codeRevision, generation: readArtifactIndex(childDir).generation },
+    ])),
+  }, { cwd: worktree, taskDir: childDir }, 'none');
+  const record = { childDir, baseHead, result: { status: 'completed', outputs: { status: 'completed', completion: proof } } };
+  const parentDir = path.join(root, '.agents', 'tasks', 'epic');
+  fs.mkdirSync(parentDir, { recursive: true });
+  fs.writeFileSync(path.join(parentDir, 'task.md'), 'Epic\n');
+  const task = { cwd: root, branch: 'epic', taskDir: parentDir, taskRootRelative: '.agents/tasks', runId: 'hosted-join' };
+  const api = { slug: 'api', taskDir: path.join(root, '.agents', 'tasks', 'api'), depends_on: [], write_paths: ['src/api.js'] };
+  assert.equal(git(root, 'ls-files', '.agents/tasks'), '');
+  git(root, 'merge', '--no-ff', '-m', 'Merge API', 'api');
+  const merged = git(root, 'rev-parse', 'HEAD');
+  const pr = { number: 7, headRefName: 'api', headRefOid: head, baseRefName: 'epic',
+    mergeCommit: { oid: merged }, mergedAt: '2026-09-27T00:00:00Z', url: 'https://github.com/owner/repo/pull/7' };
+  const bin = path.join(root, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\ncase "$1 $2" in\n  "pr list") printf %s "$GH_LIST_JSON" ;;\n  "pr view") printf %s "$GH_PR_JSON" ;;\n  "repo view") printf %s \'{"nameWithOwner":"owner/repo"}\' ;;\n  "api repos/owner/repo/issues/comments/123") printf %s "$GH_COMMENT_JSON" ;;\n  *) exit 2 ;;\nesac\n');
+  fs.chmodSync(path.join(bin, 'gh'), 0o755);
+  const fetchStub = path.join(root, 'fetch-stub.mjs');
+  fs.writeFileSync(fetchStub, `globalThis.fetch = async () => ({ ok: true, url: '${captureUrl}' });\n`);
+  const keys = ['PATH', 'NODE_OPTIONS', 'GH_LIST_JSON', 'GH_PR_JSON', 'GH_COMMENT_JSON'];
+  const original = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  t.after(() => { for (const key of keys) if (original[key] === undefined) delete process.env[key]; else process.env[key] = original[key]; });
+  process.env.PATH = `${bin}:${process.env.PATH}`;
+  process.env.NODE_OPTIONS = `--import=${fetchStub}`;
+  process.env.GH_LIST_JSON = JSON.stringify([pr]);
+  process.env.GH_PR_JSON = JSON.stringify({ url: pr.url, number: 7, headRefOid: head,
+    baseRefName: 'epic', baseRefOid: baseHead, isDraft: false, body });
+  process.env.GH_COMMENT_JSON = JSON.stringify({ id: 123, html_url: commentUrl,
+    body: `passed ${captureUrl} tested ${head} head ${head}` });
+  assert.deepEqual(childWave(task, [api]).done, ['api']);
+  assert.equal(joinChildren(task, [api], new Map([['api', record]])).complete, true);
+  process.env.GH_COMMENT_JSON = JSON.stringify({ id: 123, html_url: commentUrl, body: 'Missing capture' });
+  assert.equal(joinChildren(task, [api], new Map([['api', record]])).complete, false);
+  assert.throws(() => childWave(task, [api], [{ ...pr, mergeCommit: { oid: baseHead } }]), /no matching source/);
 });

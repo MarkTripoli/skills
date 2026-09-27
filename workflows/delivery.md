@@ -149,7 +149,7 @@ Atomic own run state. User own task branches, artifacts, worktrees. Pausing, qui
 
 An **epic** split work into child tasks that each merge apart. Each child need `workflow`, `depends_on`, acceptance criteria, prompt. `start-epic-delivery` make their task dirs and GitHub issues when access there. See [task-sizing rules](../shared/SLICING.md).
 
-Ready children run in separate worktrees. Prereq branches must have merged; pull request description be no proof. Workflow not merge pull requests. Merge them apart, then run `workflow=epic-wave` with same epic `task_dir`.
+Ready children run in separate worktrees. A dependency is complete only after its PR targeting the epic branch has merged, its merge commit is present in the parent, and the local native completion agrees with the PR's reviewed head, hosted capture, distinct evidence comment, and final body. A PR description alone is not proof. Task files stay ignored; keep the child worktree and its local receipts until the epic joins. The workflow does not merge PRs: merge them separately, then run `workflow=epic-wave` with the same epic `task_dir`.
 
 ```text
 /workflow delivery request="Build usage billing" workflow=program branch=epic-billing gates=plan

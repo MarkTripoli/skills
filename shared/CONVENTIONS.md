@@ -209,6 +209,8 @@ Pull request target resolution is the existing pull request base, then `task.md`
 
 Task directories and indexed artifacts are ignored local state shared by phases in the same task worktree. Never stage or commit task-root files, including `task.md`, `index.json`, and artifact iterations. This local-only rule supersedes older skill-specific instructions to commit task artifacts. Code commits stage explicit source paths and never include task files; never `git add -A` or `git add .` for code. A fresh clone cannot resume a task from Git alone; keep the task worktree until the review is finished or explicitly transfer its task directory.
 
+Epic child completion is published in the merged child PR, not in task-file commits. Keep the child worktree's local receipts for the native join; the PR must target the epic branch and expose a readable capture, a distinct evidence comment, and the final body at the reviewed head. Preserve older Git-tracked task archives in existing history; do not add new task records.
+
 Every commit message follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
 
 ```text

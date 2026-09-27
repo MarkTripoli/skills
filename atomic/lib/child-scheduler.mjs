@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { digest, observeArtifacts } from './artifacts.mjs';
-import { committedChildCompletion } from './child-evidence.mjs';
+import { committedChildCompletion, hostedChildCompletion, hostedChildPRs, hostedChildPublication } from './child-evidence.mjs';
 import { gated } from './controller.mjs';
 import { git, revision } from './workspace.mjs';
 
@@ -100,7 +100,7 @@ function sourceMatchesParent(task, childCwd, baseHead, childHead, parentHead, ch
     (index === null || git(task.cwd, ['show', `${commit}:${relativeDir}/index.json`], true, true) === index)));
 }
 
-function inspectChild(task, child, record) {
+function inspectChild(task, child, record, hostedRows) {
   const reasons = [];
   const result = record?.result;
   const output = result?.outputs;
@@ -158,39 +158,45 @@ function inspectChild(task, child, record) {
     reasons.push('child task is outside the parent repository');
     return reasons;
   }
-  if (!sourceMatchesParent(task, childCwd, record.baseHead, branchHead, parentHead, childDir, relativeDir, artifacts)) {
-    reasons.push('parent has no integration point for the completed child source and proof');
-    return reasons;
-  }
-  // Committed child evidence is rechecked at HEAD even if later children
-  // changed source after this child's merge point.
-  try {
-    if (!committedChildCompletion(task.cwd, child, git)) reasons.push('merged child lacks committed completion evidence');
-  } catch (error) {
-    reasons.push(`merged child completion evidence is invalid: ${error.message}`);
-  }
-  const indexPath = `${relativeDir}/index.json`;
-  const childIndex = path.join(childDir, 'index.json');
-  if (fs.existsSync(childIndex) && git(task.cwd, ['show', `HEAD:${indexPath}`], true, true) !== fs.readFileSync(childIndex, 'utf8')) {
-    reasons.push('merged artifact index differs from the completed child');
-  }
-  for (const [type, saved] of Object.entries(artifacts)) {
-    if (!saved || typeof saved.path !== 'string' || saved.path.startsWith('/') || saved.path.split('/').includes('..')) {
-      reasons.push(`${type} proof path is invalid`);
-      continue;
+  let committed = false;
+  try { committed = committedChildCompletion(task.cwd, child, git); }
+  catch (error) { return [...reasons, `merged child completion evidence is invalid: ${error.message}`]; }
+  if (committed) {
+    if (!sourceMatchesParent(task, childCwd, record.baseHead, branchHead, parentHead, childDir, relativeDir, artifacts)) {
+      reasons.push('parent has no integration point for the completed child source and proof');
     }
-    const text = git(task.cwd, ['show', `HEAD:${relativeDir}/${saved.path}`], true, true);
-    if (text === null || digest(text) !== saved.hash) reasons.push(`${type} artifact is missing or stale in the merged parent`);
+    const indexPath = `${relativeDir}/index.json`;
+    const childIndex = path.join(childDir, 'index.json');
+    if (fs.existsSync(childIndex) && git(task.cwd, ['show', `HEAD:${indexPath}`], true, true) !== fs.readFileSync(childIndex, 'utf8')) {
+      reasons.push('merged artifact index differs from the completed child');
+    }
+    for (const [type, saved] of Object.entries(artifacts)) {
+      if (!saved || typeof saved.path !== 'string' || saved.path.startsWith('/') || saved.path.split('/').includes('..')) {
+        reasons.push(`${type} proof path is invalid`);
+        continue;
+      }
+      const text = git(task.cwd, ['show', `HEAD:${relativeDir}/${saved.path}`], true, true);
+      if (text === null || digest(text) !== saved.hash) reasons.push(`${type} artifact is missing or stale in the merged parent`);
+    }
+  } else {
+    const pr = hostedChildCompletion(task.cwd, child, task.branch, git, branchHead, hostedRows());
+    if (!pr) reasons.push('child has no merged PR with hosted completion proof');
+    else {
+      try { hostedChildPublication(childCwd, childDir, pr.number); }
+      catch (error) { reasons.push(error.message); }
+    }
   }
   return reasons;
 }
 
 export function joinChildren(task, children, records) {
+  let hosted = null;
+  const hostedRows = () => hosted ??= hostedChildPRs(task.cwd, task.branch);
   const outcomes = children.map(child => {
     let reasons;
     try {
       const record = records?.get(child.slug) ?? latestChildRecord(task, child.slug);
-      reasons = inspectChild(task, child, record);
+      reasons = inspectChild(task, child, record, hostedRows);
     } catch (error) { reasons = [`child evidence inspection failed: ${error.message}`]; }
     return { slug: child.slug, complete: reasons.length === 0, reasons };
   });
