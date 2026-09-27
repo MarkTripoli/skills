@@ -65,7 +65,7 @@ async function main(argv) {
   const { targets, skillNames } = selection;
   let planned;
   try {
-    planned = plan({ targets, skillNames, project: args.project, atomic: args.atomic, ompPublicationHook: args.ompPublicationHook, cwd, home, env: process.env });
+    planned = plan({ targets, skillNames, project: args.project, atomic: args.atomic, uninstall: args.uninstall, ompPublicationHook: args.ompPublicationHook, cwd, home, env: process.env });
   } catch (error) {
     console.error(error.message);
     return 2;

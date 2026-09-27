@@ -357,6 +357,28 @@ for (const project of [false, true]) {
   });
 }
 
+test("partial Oh My Pi uninstall preserves shared security hook until full target removal", () => {
+  const home = tmpdir("omp-partial-uninstall-home-");
+  const cwd = tmpdir("omp-partial-uninstall-project-");
+  const options = { targets: ["oh-my-pi"], skillNames: ["show-me", "record-evidence"], cwd, home, env };
+  const skillDir = destinations("oh-my-pi", options).skills;
+  const securityHook = path.join(home, ".omp", "agent", "hooks", "skills-security", "hooks", "security-edit.mjs");
+  install(options);
+  assert.ok(fs.existsSync(securityHook));
+
+  const partial = plan({ ...options, skillNames: ["show-me"], uninstall: true });
+  assert.equal(partial.steps.some(step => step.kind === "security-edit-hook"), false);
+  apply(partial, { built: new Map(), uninstall: true, home });
+  assert.equal(fs.existsSync(path.join(skillDir, "show-me")), false);
+  assert.ok(fs.existsSync(path.join(skillDir, "record-evidence", "SKILL.md")));
+  assert.ok(fs.existsSync(securityHook));
+
+  const full = plan({ ...options, skillNames: [], uninstall: true });
+  assert.ok(full.steps.some(step => step.kind === "security-edit-hook"));
+  apply(full, { built: new Map(), uninstall: true, home });
+  assert.equal(fs.existsSync(securityHook), false);
+});
+
 test("video skills install by their canonical names without enabling workflow orchestration", () => {
   const home = tmpdir("video-skills-install-");
   const skillNames = ["video-iterative-development", "video-iterative-orchestration"];

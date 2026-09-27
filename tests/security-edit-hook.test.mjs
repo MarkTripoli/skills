@@ -78,6 +78,38 @@ test('successful multi-file hashline edit scans saved files and follows MV desti
   assert.deepEqual(seen.map(item => item.contents).sort(), ['FROM saved image\n', 'name: saved workflow\n'].sort());
 });
 
+test('absolute alias paths resolve inside the canonical repository root', t => {
+  const cwd = workspace(t);
+  const target = file(cwd, 'Dockerfile', 'FROM saved via alias\n');
+  const canonicalRoot = fs.realpathSync(cwd);
+  let aliasRoot;
+  if (process.platform === 'darwin' && canonicalRoot.startsWith('/private/')) {
+    aliasRoot = canonicalRoot.slice('/private'.length);
+  } else {
+    aliasRoot = path.join(path.dirname(cwd), `${path.basename(cwd)}-alias`);
+    fs.symlinkSync(canonicalRoot, aliasRoot, 'dir');
+    t.after(() => fs.rmSync(aliasRoot, { force: true }));
+  }
+  assert.equal(fs.realpathSync(aliasRoot), canonicalRoot);
+  const calls = [];
+  const run = (bin, args) => {
+    calls.push({ bin, args });
+    if (args[0] === '--version') return { status: 0, stdout: 'hadolint local' };
+    assert.equal(args.at(-1), fs.realpathSync(target));
+    assert.equal(fs.readFileSync(args.at(-1), 'utf8'), 'FROM saved via alias\n');
+    return { status: 0, stdout: '[]' };
+  };
+  const report = inspectEditedFile({
+    toolName: 'write',
+    input: { path: path.join(aliasRoot, 'Dockerfile') },
+    details: {},
+    content: 'Wrote file',
+    isError: false,
+  }, { cwd, env: offlineEnv(cwd), run });
+  assert.equal(report.results[0].file, 'Dockerfile');
+  assert.deepEqual(calls.map(item => item.args[0]), ['--version', '--format']);
+});
+
 test('failed completion and symlink escape never scan outside saved repository content', t => {
   const cwd = workspace(t);
   const outside = file(path.dirname(cwd), `${path.basename(cwd)}-outside-Dockerfile`, 'FROM outside\n');

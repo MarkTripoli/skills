@@ -102,7 +102,7 @@ export function atomicDestination({ project, cwd = process.cwd(), home = os.home
   return project ? path.join(cwd, '.atomic', 'workflows', 'skills-delivery') : path.resolve(agentDir, 'workflows', 'skills-delivery');
 }
 export function plan(options) {
-  const { targets, project = false, atomic = false, cwd = process.cwd(), home = os.homedir(), env = process.env } = options;
+  const { targets, project = false, atomic = false, uninstall = false, cwd = process.cwd(), home = os.homedir(), env = process.env } = options;
   const { skills } = scanSkills(path.join(repoRoot, 'skills'));
   const allNames = skills.map(skill => skill.name);
   const requestedNames = resolveSkillNames(options.skillNames ?? [], skills);
@@ -130,7 +130,7 @@ export function plan(options) {
   } else if (targets.includes('oh-my-pi')) {
     notes.push('Oh My Pi publication guard is optional: pass --omp-publication-hook, then launch with --hook=<installed-path> and SKILLS_PUBLICATION_TASK_DIR=<absolute-task-dir>');
   }
-  if (targets.includes('oh-my-pi')) {
+  if (targets.includes('oh-my-pi') && (!uninstall || requestedNames.length === allNames.length)) {
     const base = project ? path.join(cwd, '.omp', 'hooks') : path.join(home, '.omp', 'agent', 'hooks');
     steps.push({ target: 'oh-my-pi', kind: 'security-edit-hook', to: path.join(base, 'skills-security') });
     notes.push('Edit-time advisory hook is installed for Oh My Pi; register the printed path with omp --hook=<path>. Codex exposes stable hooks, but its edit callback payload is unverified here, so no Codex adapter is installed. Portable and other targets have no verified edit-hook adapter.');

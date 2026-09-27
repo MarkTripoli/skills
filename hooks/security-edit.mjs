@@ -82,10 +82,12 @@ function fileNames(event) {
 
 function savedFile(root, name) {
   const lexical = path.resolve(root, name);
-  if (!inside(root, lexical)) return { reason: 'changed path is outside the repository' };
   let real;
   try { real = fs.realpathSync(lexical); }
-  catch { return { reason: 'changed file is missing after tool completion' }; }
+  catch {
+    if (!inside(root, lexical)) return { reason: 'changed path is outside the repository' };
+    return { reason: 'changed file is missing after tool completion' };
+  }
   if (!inside(root, real)) return { reason: 'changed file resolves outside the repository' };
   try { if (!fs.statSync(real).isFile()) return { reason: 'changed path is not a regular file' }; }
   catch { return { reason: 'changed file is unavailable after tool completion' }; }
