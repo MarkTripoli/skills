@@ -2,7 +2,7 @@
   "$schema": "skills.task-index/v1",
   "schemaVersion": 1,
   "task": "i-want-you-gpt",
-  "generation": 4,
+  "generation": 5,
   "artifactSeries": {
     "research.sources": {
       "current": "research.sources.0001",
@@ -57,6 +57,20 @@
           "type": "epic-plan",
           "status": null,
           "summary": "This epic proposes thirteen public-skills children and five Adyton companion changes, ordered behind human review. It adds measured outcomes, opt-in tool-first security, portable publication proof, runtime capability checks, and bounded orchestration without replacing existing delivery or storage formats. The public epic creates only public-repository children; a separate Adyton epic must be opened in its own repository after approval."
+        }
+      ]
+    },
+    "delivery.epic": {
+      "current": "delivery.epic.0001",
+      "iterations": [
+        {
+          "id": "delivery.epic.0001",
+          "iteration": 1,
+          "path": "artifacts/delivery/epic/0001.md",
+          "sha256": "e7f0f8deae92d7280fc8fd2bacc5afc41ed21b821d1f9ebb35391c14e88a897d",
+          "type": "epic-delivery",
+          "status": null,
+          "summary": "Thirteen public child tasks and GitHub issues were created from the approved epic plan. Four independent wave-one children can start in fresh worktrees. Later waves wait for their dependency pull requests to merge; five Adyton companion changes need a separate epic in that repository."
         }
       ]
     }
