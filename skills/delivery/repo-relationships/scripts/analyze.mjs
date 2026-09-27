@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
-import {parseDocument} from 'yaml';
+import {parseAllDocuments} from 'yaml';
 
 const MAX_FILES = 2000;
 const MAX_FILE_BYTES = 256 * 1024;
@@ -44,38 +44,85 @@ function walk(root) {
   visit(root); return {files, incomplete};
 }
 function lineAt(text, index) { return text.slice(0, index).split('\n').length; }
+function propertyLine(text, property, parentProperty = null) {
+  const stack = [];
+  for (let index = 0; index < text.length;) {
+    const char = text[index];
+    if (char === '"') {
+      const start = index++;
+      while (index < text.length) {
+        if (text[index] === '\\') { index += 2; continue; }
+        if (text[index++] === '"') break;
+      }
+      const end = index, token = text.slice(start, end);
+      let next = end;
+      while (/\s/.test(text[next] ?? '')) next++;
+      const frame = stack.at(-1);
+      if (text[next] === ':' && frame?.type === '{') {
+        try {
+          const key = JSON.parse(token);
+          if (key === property && frame.owner === parentProperty) return lineAt(text, start);
+          frame.pending = key;
+        } catch { return null; }
+      }
+      continue;
+    }
+    if (char === '{' || char === '[') {
+      const parent = stack.at(-1), owner = parent?.type === '{' ? parent.pending : null;
+      if (parent?.type === '{') parent.pending = null;
+      stack.push({type: char === '{' ? '{' : '[', owner, pending: null});
+    } else if (char === '}' || char === ']') stack.pop();
+    else if (char === ',' && stack.at(-1)?.type === '{') stack.at(-1).pending = null;
+    index++;
+  }
+  return null;
+}
 function codeEdges(repo, files) {
   const edges = [];
+  let incomplete = false;
   for (const file of files) {
     for (const match of file.text.matchAll(/\.(publish|subscribe)\s*\(\s*(['"`])([A-Za-z0-9_$.*>-]{1,200})\2/g)) {
       if (safeSubject(match[3])) edges.push({kind: match[1] === 'publish' ? 'nats-publish' : 'nats-subscribe', repo: repo.name, subject: match[3], source: {path: file.path, line: lineAt(file.text, match.index)}});
     }
     if (file.path.endsWith('package.json')) {
       try {
-        const data = JSON.parse(file.text), deps = {...data.dependencies, ...data.devDependencies, ...data.optionalDependencies, ...data.peerDependencies};
-        if (typeof data.name === 'string' && safeLabel(data.name)) edges.push({kind: 'package-identity', repo: repo.name, package: data.name, source: {path: file.path, line: lineAt(file.text, file.text.indexOf(JSON.stringify(data.name)))}});
-        for (const dependency of Object.keys(deps ?? {})) if (safeLabel(dependency)) edges.push({kind: 'package-dependency', repo: repo.name, package: dependency, source: {path: file.path, line: lineAt(file.text, file.text.indexOf(JSON.stringify(dependency)))}});
-      } catch { /* malformed manifests reduce evidence, not output safety */ }
+        const data = JSON.parse(file.text), sections = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
+        if (typeof data.name === 'string' && safeLabel(data.name)) {
+          const line = propertyLine(file.text, 'name');
+          if (line === null) incomplete = true;
+          else edges.push({kind: 'package-identity', repo: repo.name, package: data.name, source: {path: file.path, line}});
+        }
+        for (const section of sections) for (const dependency of Object.keys(data[section] ?? {})) {
+          if (!safeLabel(dependency)) continue;
+          const line = propertyLine(file.text, dependency, section);
+          if (line === null) incomplete = true;
+          else edges.push({kind: 'package-dependency', repo: repo.name, package: dependency, source: {path: file.path, line}});
+        }
+      } catch { incomplete = true; }
     }
     if (/\.(yaml|yml)$/.test(file.path)) {
-      const doc = parseDocument(file.text, {uniqueKeys: false});
-      if (doc.errors.length) continue;
-      const obj = doc.toJS();
-      const resources = Array.isArray(obj) ? obj : [obj];
-      for (const resource of resources) {
-        if (!resource || typeof resource !== 'object') continue;
-        const kind = resource.kind, spec = resource.spec;
-        if (!['Service', 'Deployment', 'StatefulSet', 'DaemonSet', 'Pod'].includes(kind) || !spec) continue;
-        const name = String(resource.metadata?.name ?? 'unnamed');
-        const selector = kind === 'Service' ? (spec.selector ?? {}) : (spec.template?.metadata?.labels ?? resource.metadata?.labels ?? {});
-        if (!safeLabel(name) || !selector || typeof selector !== 'object' || Array.isArray(selector) ||
-            Object.entries(selector).some(([key, value]) => !safeLabel(key) || !safeLabel(String(value)))) continue;
-        const index = file.text.indexOf(`kind: ${kind}`);
-        edges.push({kind: 'kubernetes-declaration', repo: repo.name, resource_kind: kind, name, selector, source: {path: file.path, line: lineAt(file.text, Math.max(index, 0))}});
+      let docs;
+      try { docs = parseAllDocuments(file.text, {uniqueKeys: false}); } catch { incomplete = true; continue; }
+      if (docs.length > 1) incomplete = true;
+      for (const doc of docs) {
+        if (doc.errors.length) { incomplete = true; continue; }
+        try {
+          const resource = doc.toJS();
+          if (!resource || typeof resource !== 'object' || Array.isArray(resource)) { incomplete = true; continue; }
+          const kind = resource.kind, spec = resource.spec;
+          if (!['Service', 'Deployment', 'StatefulSet', 'DaemonSet', 'Pod'].includes(kind) || !spec) { incomplete = true; continue; }
+          const name = String(resource.metadata?.name ?? 'unnamed');
+          const selector = kind === 'Service' ? (spec.selector ?? {}) : (spec.template?.metadata?.labels ?? resource.metadata?.labels ?? {});
+          if (!safeLabel(name) || !selector || typeof selector !== 'object' || Array.isArray(selector) ||
+              Object.entries(selector).some(([key, value]) => !safeLabel(key) || !safeLabel(String(value)))) { incomplete = true; continue; }
+          const kindNode = doc.get('kind', true);
+          if (!kindNode?.range) { incomplete = true; continue; }
+          edges.push({kind: 'kubernetes-declaration', repo: repo.name, resource_kind: kind, name, selector, source: {path: file.path, line: lineAt(file.text, kindNode.range[0])}});
+        } catch { incomplete = true; }
       }
     }
   }
-  return edges;
+  return {edges, incomplete};
 }
 export function analyze(inputs) {
   const repositories = [], skipped = [];
@@ -94,9 +141,9 @@ export function analyze(inputs) {
       skipped.push({name: repo.name, coverage: 'incomplete', reason: status === null ? 'working-tree-status-unavailable' : 'working-tree-dirty'});
       continue;
     }
-    const walked = walk(repo.root), edges = codeEdges(repo, walked.files);
-    for (const edge of edges) evidence.push({...edge, origin: repo.origin, head: repo.head});
-    if (walked.incomplete) skipped.push({name: repo.name, coverage: 'incomplete'});
+    const walked = walk(repo.root), analysis = codeEdges(repo, walked.files);
+    for (const edge of analysis.edges) evidence.push({...edge, origin: repo.origin, head: repo.head});
+    if (walked.incomplete || analysis.incomplete) skipped.push({name: repo.name, coverage: 'incomplete', reason: analysis.incomplete ? 'source-not-fully-analyzable' : 'traversal-incomplete'});
   }
   const relations = [];
   for (const pub of evidence.filter(edge => edge.kind === 'nats-publish')) for (const sub of evidence.filter(edge => edge.kind === 'nats-subscribe' && edge.subject === pub.subject && edge.repo !== pub.repo)) relations.push({kind: 'nats-subject', subject: pub.subject, from: pub, to: sub});

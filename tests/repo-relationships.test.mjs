@@ -35,3 +35,24 @@ test('matches literal cross-repository NATS subject and excludes unmatched subsc
     assert.equal(report.repositories.some(repo => JSON.stringify(repo).includes('token')), false);
   } finally { fs.rmSync(base, {recursive: true, force: true}); }
 });
+
+test('retains valid package citations and marks multi-document and malformed YAML incomplete', () => {
+  const {base, create} = fixture();
+  try {
+    const consumer = create('consumer', {
+      'package.json': '{\n  "name": "consumer",\n  "scripts": {\n    "@scope/shared": "not a dependency"\n  },\n  "dependencies": {\n    "@scope/shared": "1.0.0"\n  }\n}\n',
+      'deployments/workloads.yaml': '---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: first\nspec:\n  template:\n    metadata:\n      labels:\n        app: shared\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: second\nspec:\n  template:\n    metadata:\n      labels:\n        app: shared\n',
+      'deployments/broken.yaml': 'kind: [\n',
+    });
+    const provider = create('provider', {'package.json': '{\n  "name": "@scope/shared",\n  "version": "1.0.0"\n}\n'});
+    const report = analyze([{name: 'consumer', root: consumer}, {name: 'provider', root: provider}]);
+    const packageEdge = report.relationships.find(edge => edge.kind === 'package-dependency-match');
+    assert.ok(packageEdge);
+    assert.equal(packageEdge.from.source.line, 7);
+    assert.equal(packageEdge.to.source.line, 2);
+    assert.equal(fs.readFileSync(path.join(consumer, packageEdge.from.source.path), 'utf8').split('\n')[6].trimStart(), '"@scope/shared": "1.0.0"');
+    assert.equal(report.evidence.filter(edge => edge.kind === 'kubernetes-declaration' && edge.repo === 'consumer').length, 2);
+    assert.equal(report.coverage, 'incomplete');
+    assert.deepEqual(report.skipped_roots.map(root => root.name), ['consumer']);
+  } finally { fs.rmSync(base, {recursive: true, force: true}); }
+});
