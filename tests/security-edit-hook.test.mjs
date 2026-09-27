@@ -3,86 +3,135 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { inspectEditedFile } from '../hooks/security-edit.mjs';
+import securityEditHook, { inspectEditedFile } from '../hooks/security-edit.mjs';
 
 function workspace(t) {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'security-edit-hook-'));
   t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
   return cwd;
 }
+function file(root, name, contents) {
+  const target = path.join(root, name);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, contents);
+  return target;
+}
+const offlineEnv = cwd => ({ TRIVY_CACHE_DIR: path.join(cwd, 'no-local-trivy-cache') });
 
-const dockerEdit = { toolName: 'write', input: { path: 'Dockerfile', content: 'FROM scratch\n' } };
-
-test('default edit hook reports local advisory and incomplete lanes without registry or cache access', t => {
+test('successful write result scans saved Dockerfile bytes and reports advisory coverage', t => {
   const cwd = workspace(t);
+  const target = file(cwd, 'Dockerfile', 'FROM saved-content\n');
   const calls = [];
   const run = (bin, args, options) => {
-    calls.push({ bin, args, options });
+    calls.push({ bin, args });
     assert.equal(options.cwd, cwd);
     if (args[0] === '--version') return { status: 0, stdout: 'hadolint 2.12.0' };
-    assert.equal(fs.readFileSync(args.at(-1), 'utf8'), 'FROM scratch\n');
-    if (bin !== 'hadolint') assert.fail(`unexpected scanner ${bin}`);
-    return { status: 0, stdout: JSON.stringify([{ line: 1, code: 'DL3006', level: 'warning', message: 'do not expose source prose' }]) };
+    assert.equal(args.at(-1), target);
+    assert.equal(fs.readFileSync(args.at(-1), 'utf8'), 'FROM saved-content\n');
+    return { status: 0, stdout: JSON.stringify([{ line: 1, code: 'DL3006', level: 'warning', message: 'source prose is never reported' }]) };
   };
-  const report = inspectEditedFile(dockerEdit, { cwd, env: {}, run });
-  assert.equal(report.supported, true);
+  const report = inspectEditedFile({ toolName: 'write', input: { path: 'Dockerfile' }, result: { isError: false } }, { cwd, env: offlineEnv(cwd), run });
   assert.equal(report.coverage, 'incomplete');
-  assert.deepEqual(report.lanes.find(item => item.tool === 'hadolint').findings, [
+  assert.equal(report.results[0].file, 'Dockerfile');
+  assert.deepEqual(report.results[0].lanes.find(item => item.tool === 'hadolint').findings, [
     { tool: 'hadolint', path: 'Dockerfile', line: 1, rule: 'DL3006', severity: 'WARNING' },
   ]);
-  assert.match(report.lanes.find(item => item.tool === 'semgrep').reason, /no registry fetch/);
-  assert.match(report.lanes.find(item => item.tool === 'trivy_fs').reason, /no download/);
+  assert.match(report.results[0].lanes.find(item => item.tool === 'semgrep').reason, /no registry fetch/);
+  assert.match(report.results[0].lanes.find(item => item.tool === 'trivy_fs').reason, /no download/);
   assert.deepEqual(calls.map(({ bin, args }) => [bin, args[0]]), [['hadolint', '--version'], ['hadolint', '--format']]);
-  assert.equal(JSON.stringify(report).includes('do not expose source prose'), false);
+  assert.equal(JSON.stringify(report).includes('source prose is never reported'), false);
 });
 
-test('missing scanner remains visible as incomplete without blocking the edit', t => {
+test('successful multi-file patch scans saved Dockerfile and workflow paths', t => {
   const cwd = workspace(t);
-  const report = inspectEditedFile(dockerEdit, {
-    cwd,
-    env: {},
-    run(bin) {
-      assert.equal(bin, 'hadolint');
-      return { error: Object.assign(new Error('not installed'), { code: 'ENOENT' }), status: null, stdout: '' };
-    },
-  });
-  const hadolint = report.lanes.find(item => item.tool === 'hadolint');
-  assert.equal(hadolint.coverage, 'incomplete');
-  assert.equal(hadolint.reason, 'tool unavailable');
-  assert.equal(report.supported, true);
-  assert.equal(report.coverage, 'incomplete');
+  const docker = file(cwd, 'Dockerfile', 'FROM saved image\n');
+  const workflow = file(cwd, '.github/workflows/build.yaml', 'name: saved workflow\n');
+  const seen = [];
+  const run = (bin, args) => {
+    if (args[0] === '--version') return { status: 0, stdout: `${bin} local` };
+    const target = args.at(-1);
+    seen.push({ bin, target, contents: fs.readFileSync(target, 'utf8') });
+    if (bin === 'hadolint') return { status: 0, stdout: '[]' };
+    if (bin === 'actionlint') return { status: 0, stdout: '' };
+    assert.fail(`unexpected scanner ${bin}`);
+  };
+  const patch = [
+    '*** Begin Patch',
+    '*** Update File: Dockerfile',
+    '@@',
+    '*** Update File: .github/workflows/build.yaml',
+    '@@',
+    '*** End Patch',
+  ].join('\n');
+  const report = inspectEditedFile({ toolName: 'apply_patch', input: { patch }, result: { isError: false } }, { cwd, env: offlineEnv(cwd), run });
+  assert.deepEqual(report.results.map(item => item.file).sort(), ['.github/workflows/build.yaml', 'Dockerfile']);
+  assert.deepEqual(seen.map(item => item.target).sort(), [docker, workflow].sort());
+  assert.deepEqual(seen.map(item => item.contents).sort(), ['FROM saved image\n', 'name: saved workflow\n'].sort());
 });
 
-test('Semgrep runs only with an explicit existing local rules path', t => {
+test('failed completion and symlink escape never scan outside saved repository content', t => {
   const cwd = workspace(t);
-  const rules = path.join(cwd, 'rules.yml');
-  fs.writeFileSync(rules, 'rules: []\n');
+  const outside = file(path.dirname(cwd), `${path.basename(cwd)}-outside-Dockerfile`, 'FROM outside\n');
+  t.after(() => fs.rmSync(outside, { force: true }));
+  fs.symlinkSync(outside, path.join(cwd, 'Dockerfile'));
+  let calls = 0;
+  const run = () => { calls += 1; throw new Error('scanner must not run'); };
+  const failed = inspectEditedFile({ toolName: 'write', input: { path: 'Dockerfile' }, result: { isError: true } }, { cwd, env: offlineEnv(cwd), run });
+  assert.match(failed.lanes[0].reason, /successful completion/);
+  const escaped = inspectEditedFile({ toolName: 'write', input: { path: 'Dockerfile' }, result: { isError: false } }, { cwd, env: offlineEnv(cwd), run });
+  assert.match(escaped.lanes[0].reason, /outside the repository/);
+  assert.equal(calls, 0);
+});
+
+test('Semgrep requires an explicit local rules path and sees completed workflow bytes', t => {
+  const cwd = workspace(t);
+  const target = file(cwd, '.github/workflows/build.yaml', 'name: saved workflow\n');
+  const rules = file(cwd, 'rules.yml', 'rules: []\n');
   const calls = [];
   const run = (bin, args) => {
     calls.push({ bin, args });
     if (args[0] === '--version') return { status: 0, stdout: `${bin} local` };
+    assert.equal(args.at(-1), target);
+    assert.equal(fs.readFileSync(target, 'utf8'), 'name: saved workflow\n');
     if (bin === 'semgrep') return { status: 0, stdout: JSON.stringify({ results: [], errors: [] }) };
     if (bin === 'actionlint') return { status: 0, stdout: '' };
-    return { status: 0, stdout: '[]' };
+    assert.fail(`unexpected scanner ${bin}`);
   };
-  const report = inspectEditedFile({ toolName: 'edit', input: { file_path: '.github/workflows/build.yaml', newText: 'name: build\n' } }, {
-    cwd,
-    env: { SKILLS_SECURITY_SEMGREP_RULES: rules },
-    run,
+  const report = inspectEditedFile({ toolName: 'edit', input: { filePath: '.github/workflows/build.yaml' }, result: { isError: false } }, {
+    cwd, env: { ...offlineEnv(cwd), SKILLS_SECURITY_SEMGREP_RULES: rules }, run,
   });
-  const semgrep = report.lanes.find(item => item.tool === 'semgrep');
+  const semgrep = report.results[0].lanes.find(item => item.tool === 'semgrep');
   assert.equal(semgrep.coverage, 'complete');
   const invocation = calls.find(call => call.bin === 'semgrep' && call.args[0] === 'scan');
-  assert.ok(invocation);
   assert.ok(invocation.args.includes(rules));
   assert.equal(invocation.args.includes('p/default'), false);
-  assert.ok(report.lanes.some(item => item.tool === 'actionlint'));
 });
 
-test('unsupported callbacks and missing changed content are explicit and non-blocking', t => {
+test('OMP callback correlates edit metadata and scans the saved post-edit file', () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'security-edit-hook-callback-'));
+  const handlers = new Map();
+  let output = '';
+  const originalWrite = process.stderr.write;
+  try {
+    securityEditHook({ on(event, handler) { handlers.set(event, handler); } }, {
+      cwd, env: offlineEnv(cwd), run() { assert.fail('unsupported file type must not invoke scanners'); },
+    });
+    assert.ok(handlers.has('tool_call'));
+    assert.ok(handlers.has('tool_execution_end'));
+    handlers.get('tool_call')({ toolCallId: 'edit-1', toolName: 'edit', input: { path: 'notes.txt' } });
+    file(cwd, 'notes.txt', 'saved only after the tool call\\n');
+    process.stderr.write = chunk => { output += String(chunk); return true; };
+    handlers.get('tool_execution_end')({ toolCallId: 'edit-1', toolName: 'edit', isError: false });
+    assert.match(output, /"file":"notes.txt"/);
+    assert.equal(output.includes('saved only after'), false);
+  } finally {
+    process.stderr.write = originalWrite;
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('successful edit result without a changed path is incomplete', t => {
   const cwd = workspace(t);
-  assert.equal(inspectEditedFile({ toolName: 'bash', input: {} }, { cwd }).supported, false);
-  const missing = inspectEditedFile({ toolName: 'write', input: { path: 'Dockerfile' } }, { cwd });
-  assert.equal(missing.supported, true);
-  assert.match(missing.lanes[0].reason, /content unavailable/);
+  const missing = inspectEditedFile({ toolName: 'edit', input: {}, result: { isError: false } }, { cwd, env: offlineEnv(cwd) });
+  assert.match(missing.lanes[0].reason, /no changed file paths/);
 });

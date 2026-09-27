@@ -26,7 +26,7 @@ For that task, the hook intercepts Oh My Pi `bash` tool calls: it permits a draf
 
 ## Edit-time security advisory
 
-Installing `oh-my-pi` also installs `hooks/security-edit.mjs` under the printed `skills-security` path. Register it with `omp --hook=<installed-path>`; OMP currently provides the verified `tool_call` callback used by this adapter. It inspects `write` and `edit` events only when the callback includes the changed file path and full proposed contents. Reports are advisory and never block an edit.
+Installing `oh-my-pi` also installs `hooks/security-edit.mjs` under the printed `skills-security` path. Register it with `omp --hook=<installed-path>`. The hook captures candidate paths from OMP's `tool_call` metadata, then scans only after the observed `tool_execution_end` event explicitly marks success (`isError: false` or an equivalent success status). It supports write/edit paths and multi-file patch markers, then resolves and reads saved files inside the repository; absent success, path, or saved content is reported incomplete. Findings are advisory and never block edits.
 
 Hadolint scans edited Dockerfiles and actionlint scans edited `.github/workflows/*.yml` or `.yaml` files. Semgrep runs only when `SKILLS_SECURITY_SEMGREP_RULES` names an existing absolute local rules path; it never uses registry presets. Trivy filesystem scanning requires an existing local database and uses offline/update-disabled flags. Trivy config coverage currently remains incomplete because no local checks-bundle contract is verified. Missing tools, rules, caches, unsupported callbacks, and invalid coverage are reported as incomplete. Findings omit source excerpts and scanner diagnostics.
 
