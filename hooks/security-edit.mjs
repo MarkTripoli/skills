@@ -23,15 +23,26 @@ function successfulResult(event) {
 
 function addPatchPaths(text, names) {
   if (typeof text !== 'string') return;
+  let currentPath = null;
   for (const line of text.split(/\r?\n/)) {
+    const hashline = /^\[([^\]]+)\]$/.exec(line.trim());
+    if (hashline) {
+      const taggedPath = /^(.+)#[A-Za-z0-9_-]+$/.exec(hashline[1]);
+      currentPath = taggedPath ? taggedPath[1] : hashline[1];
+      names.add(currentPath);
+    }
+    const moved = /^\s*MV\s+(.+?)\s*$/.exec(line);
+    if (moved) {
+      if (currentPath) names.delete(currentPath);
+      currentPath = moved[1];
+      names.add(currentPath);
+    }
     const file = /^\*\*\* (?:Update|Add|Delete) File: (.+)$/.exec(line);
-    if (file) names.add(file[1]);
-    const moved = /^\*\*\* Move to: (.+)$/.exec(line);
-    if (moved) names.add(moved[1]);
+    if (file) { currentPath = file[1]; names.add(currentPath); }
     const gitPath = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
-    if (gitPath) names.add(gitPath[2]);
+    if (gitPath) { currentPath = gitPath[2]; names.add(currentPath); }
     const added = /^\+\+\+ b\/(.+)$/.exec(line);
-    if (added) names.add(added[1]);
+    if (added) { currentPath = added[1]; names.add(currentPath); }
     const outputPath = /^(?:created|wrote|updated|edited|patched)(?:\s+file)?(?:\s+at)?\s*[:=-]\s*(.+)$/i.exec(line.trim());
     if (outputPath) names.add(outputPath[1].replace(/^['\"`]|['\"`]$/g, ''));
   }

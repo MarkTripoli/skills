@@ -42,9 +42,11 @@ test('successful write result scans saved Dockerfile bytes and reports advisory 
   assert.equal(JSON.stringify(report).includes('source prose is never reported'), false);
 });
 
-test('successful multi-file patch scans saved Dockerfile and workflow paths', t => {
+test('successful multi-file hashline edit scans saved files and follows MV destination', t => {
   const cwd = workspace(t);
-  const docker = file(cwd, 'Dockerfile', 'FROM saved image\n');
+  const dockerSource = file(cwd, 'Dockerfile', 'FROM saved image\n');
+  const docker = path.join(cwd, 'Dockerfile.production');
+  fs.renameSync(dockerSource, docker);
   const workflow = file(cwd, '.github/workflows/build.yaml', 'name: saved workflow\n');
   const seen = [];
   const run = (bin, args) => {
@@ -57,14 +59,21 @@ test('successful multi-file patch scans saved Dockerfile and workflow paths', t 
   };
   const patch = [
     '*** Begin Patch',
-    '*** Update File: Dockerfile',
-    '@@',
-    '*** Update File: .github/workflows/build.yaml',
-    '@@',
+    '[Dockerfile#A1B2]',
+    'MV Dockerfile.production',
+    '[.github/workflows/build.yaml#C3D4]',
+    'PUT 1.=1:',
+    '+name: saved workflow',
     '*** End Patch',
   ].join('\n');
-  const report = inspectEditedFile({ toolName: 'edit', input: { patch }, details: { files: [{ path: 'Dockerfile' }, { path: '.github/workflows/build.yaml' }] }, content: [{ type: 'text', text: patch }], isError: false }, { cwd, env: offlineEnv(cwd), run });
-  assert.deepEqual(report.results.map(item => item.file).sort(), ['.github/workflows/build.yaml', 'Dockerfile']);
+  const content = [
+    '[Dockerfile.production#D5E6]',
+    '1:FROM saved image',
+    '[.github/workflows/build.yaml#F7A8]',
+    '1:name: saved workflow',
+  ].join('\n');
+  const report = inspectEditedFile({ toolName: 'edit', input: { patch }, details: {}, content: [{ type: 'text', text: content }], isError: false }, { cwd, env: offlineEnv(cwd), run });
+  assert.deepEqual(report.results.map(item => item.file).sort(), ['.github/workflows/build.yaml', 'Dockerfile.production']);
   assert.deepEqual(seen.map(item => item.target).sort(), [docker, workflow].map(file => fs.realpathSync(file)).sort());
   assert.deepEqual(seen.map(item => item.contents).sort(), ['FROM saved image\n', 'name: saved workflow\n'].sort());
 });
