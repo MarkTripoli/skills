@@ -268,20 +268,36 @@ func persistAgentAttempt(database *db.DB, runID, stepName string, attempt agent.
 		result := attempt.Result
 		usage := result.Usage
 		if result.UsageReported || usage.Reported {
-			input, output, cache := usage.InputTokens, usage.OutputTokens, usage.CacheReadTokens
-			inv.InputTokens, inv.OutputTokens, inv.CacheReadTokens = &input, &output, &cache
-			deltaInput, deltaOutput, deltaCache := input, output, cache
+			hasFieldCoverage := usage.InputTokensReported || usage.OutputTokensReported || usage.CacheReadTokensReported
+			var input, output, cache *int
+			if !hasFieldCoverage || usage.InputTokensReported { value := usage.InputTokens; input = &value }
+			if !hasFieldCoverage || usage.OutputTokensReported { value := usage.OutputTokens; output = &value }
+			if !hasFieldCoverage || usage.CacheReadTokensReported { value := usage.CacheReadTokens; cache = &value }
+			inv.InputTokens, inv.OutputTokens, inv.CacheReadTokens = input, output, cache
+			var priorIn, priorOut, priorCache int
+			foundPrior := false
 			if result.SessionUsageCumulative && inv.SessionKey != "" {
-				priorIn, priorOut, priorCache, found := database.LatestSessionCumulative(runID, inv.SessionKey)
-				if found {
-					deltaInput = agent.PerRoundTokens(input, priorIn, true)
-					deltaOutput = agent.PerRoundTokens(output, priorOut, true)
-					deltaCache = agent.PerRoundTokens(cache, priorCache, true)
-				}
+				priorIn, priorOut, priorCache, foundPrior = database.LatestSessionCumulative(runID, inv.SessionKey)
 			}
-			inv.DeltaInputTokens, inv.DeltaOutputTokens, inv.DeltaCacheReadTokens = &deltaInput, &deltaOutput, &deltaCache
-			fresh := agent.FreshInputTokens(deltaInput, deltaCache)
-			inv.FreshInputTokens = &fresh
+			if input != nil {
+				value := *input
+				if foundPrior { value = agent.PerRoundTokens(value, priorIn, true) }
+				inv.DeltaInputTokens = &value
+			}
+			if output != nil {
+				value := *output
+				if foundPrior { value = agent.PerRoundTokens(value, priorOut, true) }
+				inv.DeltaOutputTokens = &value
+			}
+			if cache != nil {
+				value := *cache
+				if foundPrior { value = agent.PerRoundTokens(value, priorCache, true) }
+				inv.DeltaCacheReadTokens = &value
+			}
+			if inv.DeltaInputTokens != nil && inv.DeltaCacheReadTokens != nil {
+				fresh := agent.FreshInputTokens(*inv.DeltaInputTokens, *inv.DeltaCacheReadTokens)
+				inv.FreshInputTokens = &fresh
+			}
 			if usage.ReasoningReported { reasoning := usage.ReasoningTokens; inv.ReasoningTokens = &reasoning }
 			if result.CacheCreationReported || usage.CacheCreationReported {
 				cacheCreation := usage.CacheCreationTokens

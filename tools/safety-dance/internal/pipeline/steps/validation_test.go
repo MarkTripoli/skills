@@ -129,3 +129,22 @@ func TestPersistAgentAttemptUsesPerRoundFreshInput(t *testing.T) {
 		t.Fatalf("resumed fresh input=%+v; want 40 from delta input 50 minus delta cache 10", invocations)
 	}
 }
+func TestPersistAgentAttemptPreservesPartialTokenCoverage(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil { t.Fatal(err) }
+	defer d.Close()
+	if _, err := d.InsertRepoWithID("repo", "/checkout", "upstream", "main"); err != nil { t.Fatal(err) }
+	run, err := d.InsertRun("repo", "main", "head", "base")
+	if err != nil { t.Fatal(err) }
+	start := time.Unix(1_700_000_000, 0)
+	result := &agent.Result{UsageReported: true, Usage: agent.TokenUsage{Reported: true, OutputTokensReported: true}}
+	if err := persistAgentAttempt(d, run.ID, "review", agent.Attempt{Agent: "copilot", Result: result, StartedAt: start, CompletedAt: start.Add(time.Second)}); err != nil { t.Fatal(err) }
+	report, err := d.GetRunMetrics(run.ID)
+	if err != nil { t.Fatal(err) }
+	if report.Tokens.Input != nil || report.Tokens.InputReported != 0 || report.Tokens.CacheRead != nil || report.Tokens.CacheReadReported != 0 {
+		t.Fatalf("unavailable token counters gained coverage: %+v", report.Tokens)
+	}
+	if report.Tokens.Output == nil || *report.Tokens.Output != 0 || report.Tokens.OutputReported != 1 {
+		t.Fatalf("observed zero output counter lost: %+v", report.Tokens)
+	}
+}
