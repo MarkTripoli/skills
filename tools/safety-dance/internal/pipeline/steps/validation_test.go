@@ -3,7 +3,7 @@ package steps
 import (
 	"context"
 	"encoding/json"
-	"os"
+	"os/exec"
 	"time"
 	"path/filepath"
 	"testing"
@@ -108,5 +108,23 @@ func TestTypedPersistsProductionAgentAttemptForRunReport(t *testing.T) {
 	}
 	if report.Tokens.Input == nil || *report.Tokens.Input != 12 || report.Tokens.Output == nil || *report.Tokens.Output != 5 {
 		t.Fatalf("production usage missing from report: %+v", report.Tokens)
+	}
+}
+func TestPersistAgentAttemptUsesPerRoundFreshInput(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil { t.Fatal(err) }
+	defer d.Close()
+	if _, err := d.InsertRepoWithID("repo", "/checkout", "upstream", "main"); err != nil { t.Fatal(err) }
+	run, err := d.InsertRun("repo", "main", "head", "base")
+	if err != nil { t.Fatal(err) }
+	start := time.Unix(1_700_000_000, 0)
+	first := &agent.Result{SessionID: "session", SessionUsageCumulative: true, UsageReported: true, Usage: agent.TokenUsage{InputTokens: 100, OutputTokens: 8, CacheReadTokens: 20, Reported: true}}
+	if err := persistAgentAttempt(d, run.ID, "review", agent.Attempt{Agent: "codex", Result: first, StartedAt: start, CompletedAt: start.Add(time.Second)}); err != nil { t.Fatal(err) }
+	second := &agent.Result{SessionID: "session", Resumed: true, SessionUsageCumulative: true, UsageReported: true, Usage: agent.TokenUsage{InputTokens: 150, OutputTokens: 12, CacheReadTokens: 30, Reported: true}}
+	if err := persistAgentAttempt(d, run.ID, "review", agent.Attempt{Agent: "codex", Result: second, Session: &agent.SessionRef{ID: "session", Agent: "codex"}, StartedAt: start.Add(2*time.Second), CompletedAt: start.Add(3*time.Second)}); err != nil { t.Fatal(err) }
+	invocations, err := d.GetAgentInvocationsByRun(run.ID)
+	if err != nil { t.Fatal(err) }
+	if len(invocations) != 2 || invocations[1].FreshInputTokens == nil || *invocations[1].FreshInputTokens != 40 {
+		t.Fatalf("resumed fresh input=%+v; want 40 from delta input 50 minus delta cache 10", invocations)
 	}
 }

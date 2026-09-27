@@ -30,6 +30,19 @@ func TestRunReportCLIRequiresExactExistingRunAndPrintsProvenance(t *testing.T) {
 	for _, want := range []string{`"id": "`+run.ID+`"`, `"status":`, `"safety_dance_version": "v-test"`, `"input_reported_invocations": 0`} {
 		if !strings.Contains(out.String(), want) { t.Fatalf("report missing %q: %s", want, out.String()) }
 	}
+	stats := NewRoot()
+	var statsOut bytes.Buffer
+	stats.SetOut(&statsOut)
+	stats.SetArgs([]string{"stats", "--run", run.ID})
+	if err := stats.Execute(); err != nil { t.Fatal(err) }
+	if !strings.Contains(statsOut.String(), `"id": "`+run.ID+`"`) || !strings.Contains(statsOut.String(), `"safety_dance_version": "v-test"`) {
+		t.Fatalf("stats --run did not share run report projection: %s", statsOut.String())
+	}
+	stats = NewRoot()
+	stats.SetArgs([]string{"stats"})
+	if err := stats.Execute(); err == nil || !strings.Contains(err.Error(), "--run") {
+		t.Fatalf("stats without --run error=%v", err)
+	}
 	cmd = NewRoot()
 	cmd.SetArgs([]string{"run-report", "wrong-run-id"})
 	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "not found") { t.Fatalf("mismatched ID error=%v", err) }

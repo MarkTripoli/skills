@@ -280,7 +280,7 @@ func persistAgentAttempt(database *db.DB, runID, stepName string, attempt agent.
 				}
 			}
 			inv.DeltaInputTokens, inv.DeltaOutputTokens, inv.DeltaCacheReadTokens = &deltaInput, &deltaOutput, &deltaCache
-			fresh := agent.FreshInputTokens(input, cache)
+			fresh := agent.FreshInputTokens(deltaInput, deltaCache)
 			inv.FreshInputTokens = &fresh
 			if usage.ReasoningReported { reasoning := usage.ReasoningTokens; inv.ReasoningTokens = &reasoning }
 			if result.CacheCreationReported || usage.CacheCreationReported {
