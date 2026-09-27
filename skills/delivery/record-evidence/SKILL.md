@@ -19,7 +19,7 @@ For UI work, record the live session as video with the steps below. For non-UI w
 
 ## Where evidence lives
 
-Inside a task: `<task-root>/<slug>/evidence/<session-name>/` holds uncommitted support captures, while the durable receipt is the next indexed `evidence.recording` iteration from `references/evidence_template.md`. Before the first session, write `<task-root>/<slug>/evidence/.gitignore` containing `*`. Outside a task use `.artifacts/evidence/<session-name>/`. Upload captures to a durable, reviewer-accessible host; neither ignored local paths nor the committed receipt alone publish them. Commit the receipt and `index.json` explicitly as `docs(task): evidence artifact`.
+Inside a task: `<task-root>/<slug>/evidence/<session-name>/` holds ignored support captures, while the local durable receipt is the next indexed `evidence.recording` iteration from `references/evidence_template.md`. The task root is ignored by the project `.gitignore`; never stage its capture files, receipt or `index.json`. Outside a task use `.artifacts/evidence/<session-name>/`. Upload captures to a durable, reviewer-accessible host; neither ignored local paths nor the receipt alone publish them.
 
 UI recorder sessions produce `evidence.mp4`, `report.md`, `manifest.json`, `capture/`, `frames/`, and `events.jsonl`. Non-UI sessions keep the original captured transcript or probe output, invocation, environment, exit status, and a `report.md` with observed assertions under their session directory.
 
@@ -132,7 +132,7 @@ Panes align by wall clock (a pane that started later shows a dark hold first); `
 
 - UI `report.md` records result, revision, environment, capture details, per-test timestamps, narration, and caveats. For non-UI work, make the same report point to the original terminal transcript, probe output, or agent-session export and the command/tool invocation and exit status.
 - Upload the actual video or non-UI capture to a durable reviewer-accessible location for a task PR. For GitHub attachment, use an authenticated browser's PR editor/comment upload; `gh pr comment` cannot attach a local video. Another host is acceptable if reviewers can open the URL. If only GitHub PR uploads are available and no PR exists, create a draft PR with committed code as an upload container, following the conventional title/base rules in `/describe-pr`; keep it draft until evidence and both links are verified. Open the hosted URL and verify it displays/plays the capture. A local path, summary, or ignored file is insufficient.
-- Record the next immutable `evidence.recording` iteration through the conventions' Recording an artifact flow using `references/evidence_template.md`. Set `status` to the worst result; include the tested code SHA, branch, PR head SHA if available, capture type, test results, caveats, session files, and verified hosted capture URL. Extend the Sessions and Posted to sections for non-UI captures and their URLs. Commit the canonical path and `index.json`.
+- Record the next immutable local `evidence.recording` iteration through the conventions' Recording an artifact flow using `references/evidence_template.md`. Set `status` to the worst result; include the tested code SHA, branch, PR head SHA if available, capture type, test results, caveats, session files, and verified hosted capture URL. Keep the canonical path and `index.json` ignored.
 - Hand the verified hosted URL and receipt to `/describe-pr`, which publishes it in the PR description **and** a distinct PR comment and verifies both rendered links and the comment URL, whether the PR existed before recording or is created afterward. Attach the same capture to a tracker issue when applicable.
 - Before publication, compare the current PR head with the tested revision. Artifact-only commits may advance the head; if behavior-changing code differs, recapture against the new revision and record a new `evidence.recording` iteration. A failed assertion, capture/upload failure, inaccessible hosted URL, or stale code revision blocks publication; repair and recapture, not a prose claim.
 - Send the report and hosted capture to the requester.
@@ -166,7 +166,7 @@ For a bug fix, keep the pre-fix failure and post-fix success together in the evi
 
 - Confirm the server or build you probe is yours: `lsof -i :<port>` (or `ss -ltnp "sport = :<port>"`), then `ps -p <pid> -o args=`; on devices, `adb shell dumpsys package <id> | grep versionName` or `xcrun simctl get_app_container <udid> <bundle>`.
 - Evidence complements the repository's checks (typecheck, build, tests); it never replaces them.
-- Evidence directories are never committed; the `evidence/.gitignore` from [Where evidence lives](#where-evidence-lives) enforces it.
+- Evidence directories and task receipts are never committed; the repository `.gitignore` excludes the task root.
 
 ## Final response
 

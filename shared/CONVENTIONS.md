@@ -26,7 +26,7 @@ A valid override is a relative POSIX path: no absolute or drive-letter form, no 
 
 `workflow` records the delivery chain: `full`, `lean`, `prd`, `oneshot`, `bugfix`, `epic`, or `program`; the default is `full`. `resolve-reviews` and `epic-wave` are continuation routes over existing tasks, not new task kinds. The chains are in [workflows/delivery.md](../workflows/delivery.md).
 
-A skill given no task directory, and finding none whose `task.md` matches the request, opens the task worktree first. Then create the directory: pick a slug, write `task.md` from the user's message, and initialize a valid empty `index.json` (schema `skills.task-index/v1`, version 1, `generation` 0, no series), with the adjacent helper's `init` when the installation carries one and otherwise with the exact manual contract under Recording an artifact. `git add <task-root>/<slug>/task.md <task-root>/<slug>/index.json`, commit as `docs(task): open <slug>`, and report the path. The optional workflow prepares the same files before its first skill stage; stages reuse them. When `git check-ignore -q <task-root>/<slug>/task.md` reports the file ignored, remove only the exact task-root line that earlier versions of this collection added to the project `.gitignore`, stage that edit with the same commit, and stop with a one-line instruction when the path remains ignored. Outside git, save artifacts in place and report that they are uncommitted.
+A skill given no task directory, and finding none whose `task.md` matches the request, opens the task worktree first. Then create the directory: pick a slug, write `task.md` from the user's message, and initialize a valid empty `index.json` (schema `skills.task-index/v1`, version 1, `generation` 0, no series), with the adjacent helper's `init` when available or the exact manual contract under Recording an artifact. The project `.gitignore` keeps the default `.agents/tasks/` local; for a configured task root outside it, add its relative path to the local Git `info/exclude`. Report the local task path without staging or committing task files. The optional workflow prepares the same files before its first skill stage.
 
 An existing task directory without `index.json` is a legacy task. It is never silently migrated: its numbered files stay as they are, and the legacy rules below apply only while the index is genuinely absent.
 
@@ -56,7 +56,7 @@ git -C ~/.agents/worktrees/<repo>/<slug> status --short --branch
 The worktree is the default, not a question to put to the user. Four cases skip it, and nothing else does:
 
 - The session is already on the task's branch, the name passed to `-b` (`<slug>`, or `epic-<slug>` for an epic; check with `git rev-parse --abbrev-ref HEAD`), that is, already in this task's own worktree. Work where the session is; the worktree exists. (Being in some *other* task's worktree does not skip it: `<repo>` and `<target>` resolve the same from any worktree of the repo, so the correct one is still opened.)
-- The task directory already existed in this task's worktree. A later phase reuses it. An epic child directory committed on its parent's branch is not yet a child worktree: open the child's own worktree from the `base` recorded in its `task.md` before starting its first phase.
+- The task directory already existed in this task's worktree. A later phase reuses it. An epic child directory in the parent's local task root is not yet a child worktree: copy its `task.md` and empty `index.json` into the child's own worktree after opening that worktree from the recorded `base`.
 - The project is not a git work tree. Work in place and say so in the reply.
 - The user's message in this session asks for the current checkout. Their word overrides the default; nothing else does, not a handoff fence and not a bare skill invocation.
 
@@ -173,7 +173,7 @@ A reply that hands off to another skill ends with exactly one fenced `text` bloc
 
 The two lines before the fence are always `Next action:` and `Open a new session in {run_location}, then run:`. A terminal reply contains no command fence; it ends with the current state and any prerequisite action in plain prose.
 
-The new session must open in the task worktree, on the task branch, where the phase that printed the reply ran: the task directory and every artifact are committed there and travel with the branch, and the `@<file>` argument is a path relative to that worktree's root. `{run_location}` names that worktree and branch, so the reply cannot drop where to run. Fill it from observed git state, never a guess: in a git work tree, `` `<root>` on branch `<branch>` `` where `<root>` is `git rev-parse --show-toplevel` (the task worktree, since every phase runs from it) and `<branch>` is `git rev-parse --abbrev-ref HEAD`; when the worktree was skipped and the project is not a git work tree, `this checkout`. A reply states only the worktree and branch it is actually in.
+The new session must open in the same task worktree, on the same task branch: the task directory and every artifact are ignored local state and do not travel with the branch. The `@<file>` argument is relative to that worktree's root. `{run_location}` names that worktree and branch so the reply cannot lose the local files. Fill it from observed git state, never a guess: in a git work tree, `` `<root>` on branch `<branch>` `` where `<root>` is `git rev-parse --show-toplevel` and `<branch>` is `git rev-parse --abbrev-ref HEAD`; outside git use `this checkout`. A different checkout or freshly cloned branch has no task records unless the operator explicitly transfers them.
 
 The command fence is for manual mode: the user pastes it into a new session in the same task worktree. Optional orchestration starts the next stage itself; it never executes the printed fence.
 
@@ -207,9 +207,7 @@ Answer templates under `references/` use these placeholders; fill every one befo
 
 Pull request target resolution is the existing pull request base, then `task.md` `base:`, then the repository default branch.
 
-The task root is committed history. The task branch carries `task.md`, `index.json`, and every artifact with the code to the pull request. Review-resolution sessions use the existing pull-request branch and its committed task directory.
-
-Every skill commits its saved artifacts with explicit `git add <path>` as `docs(task): <artifact type> artifact`, for example `docs(task): plan artifact`. One artifact commit stages the new iteration's canonical path and `index.json` together, so the committed index never references an uncommitted file. Optional orchestration may commit remaining task-directory changes after a stage, but this never replaces the skill's standalone commit rule. Code commits stage explicit code paths and never mix artifact files in. Never `git add -A` or `git add .` for code.
+Task directories and indexed artifacts are ignored local state shared by phases in the same task worktree. Never stage or commit task-root files, including `task.md`, `index.json`, and artifact iterations. This local-only rule supersedes older skill-specific instructions to commit task artifacts. Code commits stage explicit source paths and never include task files; never `git add -A` or `git add .` for code. A fresh clone cannot resume a task from Git alone; keep the task worktree until the review is finished or explicitly transfer its task directory.
 
 Every commit message follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
 
