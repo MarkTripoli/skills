@@ -7,15 +7,23 @@ import {fileURLToPath} from 'node:url';
 
 const envFile = name => name === '.env' || name.startsWith('.env.');
 const placeholder = value => !value || /^(?:changeme|change_me|example|placeholder|your[_ -].*|<.*>|\$\{.*\}|\*+|x+)$/i.test(value.trim()) || /^(?:xxx+|todo|none|null)$/i.test(value.trim());
-function git(args, cwd, binary = false, rootFd = null) {
+function git(args, cwd, binary = false) {
   const env = {...process.env, GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1'};
   for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE']) delete env[key];
-  const stdio = ['ignore', 'pipe', 'ignore'];
-  if (rootFd !== null) stdio[3] = rootFd;
-  return execFileSync('git', args, {cwd, encoding: binary ? null : 'utf8', stdio, env});
+  return execFileSync('git', args, {cwd, encoding: binary ? null : 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env});
 }
 function gitAt(common, args, binary = false) {
   return git(['--git-dir', common, ...args], undefined, binary);
+}
+function assertRootPath(root) {
+  const current = fs.lstatSync(root.path);
+  if (current.isSymbolicLink() || current.dev !== root.stat.dev || current.ino !== root.stat.ino) throw new Error('repository root changed');
+}
+function gitFromRoot(root, args) {
+  assertRootPath(root);
+  const result = git(args, root.path);
+  assertRootPath(root);
+  return result;
 }
 function verifiedObject(common, oid, type, objectFormat) {
   const bytes = gitAt(common, ['cat-file', type, oid], true);
@@ -45,8 +53,7 @@ function safeIgnoredBytes(rootFd, name) {
   } finally { fs.closeSync(fd); }
 }
 function assertRoot(root) {
-  const current = fs.lstatSync(root.path);
-  if (current.isSymbolicLink() || current.dev !== root.stat.dev || current.ino !== root.stat.ino) throw new Error('repository root changed');
+  assertRootPath(root);
   const common = fs.realpathSync(root.common);
   const commonStat = fs.statSync(common);
   if (common !== root.common || commonStat.dev !== root.commonStat.dev || commonStat.ino !== root.commonStat.ino) throw new Error('repository identity changed');
@@ -69,7 +76,7 @@ function inputFiles(root, includeIgnored) {
   const files = [...tracked];
   if (includeIgnored) {
     assertRoot(root);
-    const ignored = git(['ls-files', '-z', '--others', '--ignored', '--exclude-standard'], `/dev/fd/3`, false, root.fd).split('\0').filter(Boolean);
+    const ignored = gitFromRoot(root, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard']).split('\0').filter(Boolean);
     assertRoot(root);
     for (const name of ignored) {
       if (!envFile(path.posix.basename(name))) continue;
@@ -93,12 +100,12 @@ export function correlate(repositories, {includeIgnored = false, ownerAuthorized
       if (openedRoot.dev !== stat.dev || openedRoot.ino !== stat.ino) { fs.closeSync(fd); throw new Error('repository root changed'); }
       const root = {path: real, stat, fd};
       roots.push(root);
-      const gitRoot = fs.realpathSync(git(['rev-parse', '--show-toplevel'], '/dev/fd/3', false, fd).trim());
+      const gitRoot = fs.realpathSync(gitFromRoot(root, ['rev-parse', '--show-toplevel']).trim());
       if (gitRoot !== real) throw new Error('selected path is not the repository root');
-      root.common = fs.realpathSync(git(['rev-parse', '--path-format=absolute', '--git-common-dir'], '/dev/fd/3', false, fd).trim());
+      root.common = fs.realpathSync(gitFromRoot(root, ['rev-parse', '--path-format=absolute', '--git-common-dir']).trim());
       root.commonStat = fs.statSync(root.common);
-      root.head = git(['rev-parse', '--verify', 'HEAD^{commit}'], '/dev/fd/3', false, fd).trim();
-      root.objectFormat = git(['rev-parse', '--show-object-format'], '/dev/fd/3', false, fd).trim();
+      root.head = gitFromRoot(root, ['rev-parse', '--verify', 'HEAD^{commit}']).trim();
+      root.objectFormat = gitFromRoot(root, ['rev-parse', '--show-object-format']).trim();
       if (!/^[0-9a-f]+$/.test(root.head) || !['sha1', 'sha256'].includes(root.objectFormat)) throw new Error('repository identity unavailable');
       assertRoot(root);
     }
