@@ -173,7 +173,7 @@ test('Hadolint passes option-like tracked Dockerfiles as path arguments', () => 
   try {
     const file='--trusted-registry=evil.Dockerfile';
     fs.writeFileSync(path.join(root,file),'FROM scratch\n');
-    execFileSync('git',['add',file],{cwd:root});
+    execFileSync('git',['add','--',file],{cwd:root});
     execFileSync('git',['commit','-qm','option-like Dockerfile fixture'],{cwd:root});
     let invocation;
     const report=run({cwd:root,spawn:(tool,args,options)=>{
