@@ -1,23 +1,12 @@
 #!/usr/bin/env node
 import {createHash, randomUUID} from 'node:crypto';
-import {execFileSync, spawnSync} from 'node:child_process';
+import {spawnSync} from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const envFile = name => name === '.env' || name.startsWith('.env.');
 const placeholder = value => !value || /^(?:changeme|change_me|example|placeholder|your[_ -].*|<.*>|\$\{.*\}|\*+|x+)$/i.test(value.trim()) || /^(?:xxx+|todo|none|null)$/i.test(value.trim());
-function git(args, cwd, binary = false, fd = null) {
-  const env = {...process.env, GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1'};
-  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE']) delete env[key];
-  const stdio = ['ignore', 'pipe', 'ignore'];
-  if (fd !== null) stdio[3] = fd;
-  return execFileSync('git', args, {cwd, encoding: binary ? null : 'utf8', maxBuffer: 16 * 1024 * 1024, stdio, env});
-}
-function gitAt(root, args, binary = false) {
-  const fdPath = process.platform === 'linux' ? '/proc/self/fd/3' : '/dev/fd/3';
-  return git(['--git-dir', fdPath, ...args], undefined, binary, root.gitFd);
-}
 function assertRootPath(root) {
   const current = fs.lstatSync(root.path);
   const held = fs.fstatSync(root.fd);
@@ -27,24 +16,24 @@ function assertRootPath(root) {
     throw new Error('repository root or Git metadata changed');
   }
 }
-function gitFromRoot(root, args) {
+function gitFromRoot(root, args, binary = false) {
   assertRootPath(root);
   const env = {...process.env, GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1'};
   for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE']) delete env[key];
   const helper = fileURLToPath(new URL('./git-from-root.py', import.meta.url));
   const result = spawnSync('python3', [helper, ...args], {
     cwd: path.dirname(fileURLToPath(import.meta.url)),
-    encoding: 'utf8',
+    encoding: binary ? null : 'utf8',
     maxBuffer: 16 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'ignore', root.fd, root.gitFd],
     env,
   });
   assertRootPath(root);
-  if (result.error || result.status !== 0 || typeof result.stdout !== 'string') throw new Error('repository Git operation failed');
+  if (result.error || result.status !== 0 || (binary ? !Buffer.isBuffer(result.stdout) : typeof result.stdout !== 'string')) throw new Error('repository Git operation failed');
   return result.stdout;
 }
 function verifiedObject(root, oid, type, objectFormat) {
-  const bytes = gitAt(root, ['cat-file', type, oid], true);
+  const bytes = gitFromRoot(root, ['cat-file', type, oid], true);
   const actual = createHash(objectFormat).update(`${type} ${bytes.length}\0`).update(bytes).digest('hex');
   if (actual !== oid) throw new Error('unsafe object');
   return bytes;
