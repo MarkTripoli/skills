@@ -209,13 +209,16 @@ const delivery = workflow({
       }
 
       const skill = decision.choice;
+      let dependencyWaves: string[][] | null = null;
       if (skill === 'implement-plan') {
         const admission = admitPlanWaves(state.latest.plan?.text || '');
         if (!admission.ok) return finish('blocked', `Plan dependency/file-scope admission refused before implementation: ${admission.error}`);
+        dependencyWaves = admission.waves;
       }
       const feedback = forced?.feedback || '';
       forced = null;
-      state = await runSkill(ctx, task, state, taskInputs, skill, ++steps, feedback);
+      const stageInputs = dependencyWaves ? { ...taskInputs, dependency_waves: dependencyWaves } : taskInputs;
+      state = await runSkill(ctx, task, state, stageInputs, skill, ++steps, feedback);
       const gate = await artifactGate(ctx, task, taskInputs, state, SKILLS[skill], `stage-${steps}`);
       state = gate.state;
       if (gate.stopped) return finish('blocked', `Human stopped after ${skill}. Task artifacts and native stage are retained.`);

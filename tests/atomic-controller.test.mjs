@@ -31,6 +31,15 @@ test('plan-wave admission matches planProgress headings and ignores fenced examp
   assert.match(admitPlanWaves(`${phase('## Phase 1: First', '-', '../outside.ts')}`).error, /unsafe or ambiguous/);
   assert.match(admitPlanWaves('## Phase Not numbered\\n').error, /Malformed numbered phase heading/);
 });
+test('plan implementation prompt binds work to admitted dependency waves', () => {
+  const source = { ...artifact('plan'), text: '# Plan\n\n## Phase 1\n' };
+  const prompt = stagePrompt(
+    { skillsDir: '/skills', cwd: '/repo', taskDir: '/task' },
+    'implement-plan', state({ plan: source }), { ...inputs, dependency_waves: [['1', '2'], ['3']] },
+  );
+  assert.match(prompt, /dependencyWaves are ordered as 1, 2 → 3/);
+  assert.match(prompt, /do not launch parallel workers/);
+});
 test('fixed modes enforce preparation prerequisites and canonical design artifact types', () => {
   assert.deepEqual(eligible(state(), inputs, 'prd', false), ['create-research']);
   assert.deepEqual(eligible(state({ research: artifact('research') }), inputs, 'prd', false), ['create-prd']);
