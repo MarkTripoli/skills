@@ -187,6 +187,7 @@ Artifact type be template frontmatter `type` for local planning, review, and ver
 | iterate-implementation | implementation | yes | Implementation feedback and repairs |
 | review-code | code-review | no | Review loop |
 | security-check | none | no | By hand on explicit request; opt-in Semgrep scan |
+| repo-relationships | none | no | By hand on explicit request; committed HEAD-only NATS, package, and Kubernetes citations |
 | fix-code-review | code-review-fixes | no | Repair review findings |
 | reproduce-bug | reproduction | yes | Bugfix before product edits |
 | fix-bug | fix | no | Bugfix after reproduction |

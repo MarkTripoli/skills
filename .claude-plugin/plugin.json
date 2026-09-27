@@ -48,6 +48,7 @@
     "./skills/delivery/iterate-tdd",
     "./skills/delivery/jev-ui",
     "./skills/delivery/record-evidence",
+    "./skills/delivery/repo-relationships",
     "./skills/delivery/reproduce-bug",
     "./skills/delivery/resolve-pr-reviews",
     "./skills/delivery/review-artifact-comments",
