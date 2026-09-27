@@ -12,24 +12,44 @@ function parsePath(value, phase) {
   return file;
 }
 
-// Each numbered phase declares Depends on: (a phase number or `-`) and one or
-// more template **File** paths. Admission reports ordered waves only; it never
-// dispatches implementation concurrently.
+function visiblePlanLines(text) {
+  let fence = null;
+  const visible = [];
+  for (const line of String(text).split(/\r?\n/)) {
+    const marker = line.match(/^\s*(`{3,}|~{3,})/);
+    if (marker) {
+      if (!fence) fence = marker[1][0];
+      else if (marker[1][0] === fence) fence = null;
+      visible.push('');
+    } else visible.push(fence ? '' : line);
+  }
+  return visible;
+}
+
+// Phase headings follow planProgress: ##/### Phase N, with optional title text.
+// Each phase declares Depends on: (a preceding phase number or `-`) and one or
+// more template **File** paths. Waves are admission evidence, never dispatch.
 export function admitPlanWaves(text) {
-  const lines = String(text).split(/\r?\n/);
+  const lines = visiblePlanLines(text);
   const phases = [];
   for (let i = 0; i < lines.length; i++) {
-    const heading = lines[i].match(/^## Phase\s+(\d+)\s*:/i);
-    if (!heading) continue;
+    const heading = lines[i].match(/^(#{2,3})\s+(.+)$/);
+    if (!heading || !/^(?:Phase|Step)\b/i.test(heading[2])) continue;
+    const phaseMatch = heading[2].match(/^(?:Phase|Step)\s+(\d+)\b/i);
+    if (!phaseMatch) return { ok: false, error: `Malformed numbered phase heading: ${heading[2]}.` };
+    const phase = phaseMatch[1];
     let end = i + 1;
-    while (end < lines.length && !/^##\s/.test(lines[end])) end++;
-    const phase = heading[1];
+    while (end < lines.length) {
+      const next = lines[end].match(/^(#{2,3})\s+(.+)$/);
+      if (next && (/^(?:Phase|Step)\b/i.test(next[2]) || next[1].length === 2)) break;
+      end++;
+    }
     const body = lines.slice(i + 1, end);
     const dependencyLines = body.filter(line => /^\s*(?:\*\*)?Depends on(?:\*\*)?:\s*/i.test(line));
     if (dependencyLines.length !== 1) return { ok: false, error: `Phase ${phase} must declare exactly one Depends on: line; dependency ownership is unknown.` };
     const dependencyValue = dependencyLines[0].replace(/^\s*(?:\*\*)?Depends on(?:\*\*)?:\s*/i, '').trim();
     const dependencies = dependencyValue === '-' ? [] : dependencyValue.split(',').map(value => {
-      const match = value.trim().match(/^(?:Phase\s+)?(\d+)$/i);
+      const match = value.trim().match(/^(?:(?:Phase|Step)\s+)?(\d+)$/i);
       return match?.[1] || '';
     });
     if (dependencies.some(value => !value)) return { ok: false, error: `Phase ${phase} has an ambiguous dependency declaration.` };
@@ -41,7 +61,7 @@ export function admitPlanWaves(text) {
     phases.push({ id: phase, dependencies: [...new Set(dependencies)], paths });
     i = end - 1;
   }
-  if (!phases.length) return { ok: false, error: 'Plan has no numbered ## Phase N: sections; dependency and file ownership are unknown.' };
+  if (!phases.length) return { ok: false, error: 'Plan has no numbered ##/### Phase N sections; dependency and file ownership are unknown.' };
   const byId = new Map();
   for (const phase of phases) {
     if (byId.has(phase.id)) return { ok: false, error: `Duplicate phase ${phase.id}.` };
@@ -49,7 +69,23 @@ export function admitPlanWaves(text) {
   }
   for (const phase of phases) for (const dependency of phase.dependencies) {
     if (!byId.has(dependency)) return { ok: false, error: `Phase ${phase.id} depends on unknown phase ${dependency}.` };
-    if (dependency === phase.id) return { ok: false, error: `Phase ${phase.id} depends on itself.` };
+    if (dependency === phase.id) return { ok: false, error: `Plan phase dependencies contain a cycle at phase ${phase.id}.` };
+  }
+  const visited = new Set();
+  const active = new Set();
+  function hasCycle(id) {
+    if (active.has(id)) return true;
+    if (visited.has(id)) return false;
+    active.add(id);
+    if (byId.get(id).dependencies.some(hasCycle)) return true;
+    active.delete(id);
+    visited.add(id);
+    return false;
+  }
+  if (phases.some(phase => hasCycle(phase.id))) return { ok: false, error: 'Plan phase dependencies contain a cycle.' };
+  for (const [index, phase] of phases.entries()) for (const dependency of phase.dependencies) {
+    const dependencyIndex = phases.findIndex(candidate => candidate.id === dependency);
+    if (dependencyIndex >= index) return { ok: false, error: `Phase ${phase.id} depends on phase ${dependency} that appears later; runtime implements phases in document order.` };
   }
   const remaining = new Set(phases.map(phase => phase.id));
   const completed = new Set();
