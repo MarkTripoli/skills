@@ -1,3 +1,5 @@
+import {spawnSync} from 'node:child_process';
+import zlib from 'node:zlib';
 import {execFileSync} from 'node:child_process';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -95,49 +97,100 @@ test('rejects repository subdirectories and linked worktrees as separate selecti
   assert.throws(() => correlate([a, linked]), /shared repository identity/);
 });
 
-test('fails closed when selected root is rebound during ignored-file open', t => {
+test('reads only the pinned directory when its pathname is rebound before helper open', t => {
   const root = temp(t);
-  const a = repo(root, 'one', {'.env': 'TOKEN=ordinary-fixture\n'});
-  const b = repo(root, 'two', {'.env': 'TOKEN=outside-race-value\n'});
-  const target = path.join(a, '.env.ignored');
-  const outside = path.join(root, 'outside-repository');
-  const held = path.join(root, 'held-repository');
+  const original = path.join(root, 'original');
+  const outside = path.join(root, 'outside');
+  const held = path.join(root, 'held');
+  fs.mkdirSync(original);
   fs.mkdirSync(outside);
-  fs.writeFileSync(path.join(a, '.gitignore'), '.env.ignored\n');
-  fs.writeFileSync(target, 'TOKEN=inside-root-value\n');
-  const canonicalTarget = fs.realpathSync(target);
-  fs.writeFileSync(path.join(outside, '.env.ignored'), 'TOKEN=outside-race-value\n');
-  const originalOpen = fs.openSync;
-  let swapped = false;
-  fs.openSync = function(file, ...args) {
-    if (file === canonicalTarget && !swapped) {
-      swapped = true;
-      fs.renameSync(a, held);
-      fs.symlinkSync(outside, a);
-      try { return originalOpen.call(this, file, ...args); }
-      finally {
-        fs.unlinkSync(a);
-        fs.renameSync(held, a);
-      }
-    }
-    return originalOpen.call(this, file, ...args);
-  };
+  fs.writeFileSync(path.join(original, '.env.ignored'), 'TOKEN=descriptor-bound-fixture\n');
+  fs.writeFileSync(path.join(outside, '.env.ignored'), 'TOKEN=outside-race-fixture\n');
+  const rootFd = fs.openSync(original, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+  const helper = path.join(path.dirname(fileURLToPath(import.meta.url)), '../skills/delivery/credentials/scripts/read-ignored.py');
+  fs.renameSync(original, held);
+  fs.symlinkSync(outside, original);
+  let result;
   try {
-    assert.throws(() => correlate([a, b], {includeIgnored: true, ownerAuthorized: true}), /unsafe path/);
+    result = spawnSync('python3', [helper, '.env.ignored'], {
+      cwd: path.dirname(helper),
+      encoding: null,
+      maxBuffer: 1024 * 1024 + 1024,
+      stdio: ['ignore', 'pipe', 'ignore', rootFd],
+    });
   } finally {
-    fs.openSync = originalOpen;
+    fs.unlinkSync(original);
+    fs.renameSync(held, original);
+    fs.closeSync(rootFd);
   }
-  assert.equal(swapped, true);
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout.toString('utf8'), 'TOKEN=descriptor-bound-fixture\n');
+  assert.equal(result.stdout.toString('utf8').includes('outside-race-fixture'), false);
 });
 
-test('fails closed for nested ignored environment files', t => {
+test('rejects a corrupted nested Git tree before correlating its apparent blob', t => {
+  const root = temp(t);
+  const expected = 'TOKEN=synthetic-corrupt-tree-match\n';
+  const a = repo(root, 'one', {'nested/.env': 'TOKEN=committed-original\n', '.env.reference': expected});
+  const b = repo(root, 'two', {'.env': expected});
+  execFileSync('git', ['-C', a, 'add', '-f', '--all']);
+  execFileSync('git', ['-C', a, 'commit', '-qm', 'nested environment fixture']);
+  const childTree = execFileSync('git', ['-C', a, 'rev-parse', 'HEAD:nested'], {encoding: 'utf8'}).trim();
+  const replacementBlob = execFileSync('git', ['-C', a, 'rev-parse', 'HEAD:.env.reference'], {encoding: 'utf8'}).trim();
+  const objectPath = path.join(a, '.git', 'objects', childTree.slice(0, 2), childTree.slice(2));
+  const rawTree = zlib.inflateSync(fs.readFileSync(objectPath));
+  const nameEnd = rawTree.indexOf(0);
+  const replacementOid = Buffer.from(replacementBlob, 'hex');
+  assert.equal(nameEnd + 1 + replacementOid.length, rawTree.length);
+  replacementOid.copy(rawTree, nameEnd + 1);
+  fs.chmodSync(objectPath, 0o644);
+  fs.writeFileSync(objectPath, zlib.deflateSync(rawTree));
+  assert.throws(() => correlate([a, b]));
+});
+
+test('correlates explicitly authorized nested ignored env files', t => {
   const root = temp(t);
   const a = repo(root, 'one', {'.env': 'TOKEN=one\n'});
   const b = repo(root, 'two', {'.env': 'TOKEN=two\n'});
-  fs.mkdirSync(path.join(a, 'nested'));
-  fs.writeFileSync(path.join(a, '.gitignore'), 'nested/\n');
-  fs.writeFileSync(path.join(a, 'nested', '.env.secret'), 'TOKEN=nested-value\n');
-  assert.throws(() => correlate([a, b], {includeIgnored: true, ownerAuthorized: true}), /unsafe path/);
+  for (const dir of [a, b]) {
+    fs.mkdirSync(path.join(dir, 'nested'));
+    fs.writeFileSync(path.join(dir, '.gitignore'), 'nested/\n');
+    fs.writeFileSync(path.join(dir, 'nested', '.env.secret'), 'TOKEN=nested-synthetic-match\n');
+  }
+  const report = correlate([a, b], {includeIgnored: true, ownerAuthorized: true});
+  assert.equal(report.findings.length, 1);
+  assert.deepEqual(report.findings[0].locations, [
+    {repo_index: 0, path: 'nested/.env.secret', line: 1},
+    {repo_index: 1, path: 'nested/.env.secret', line: 1},
+  ]);
+  assert.equal(JSON.stringify(report).includes('nested-synthetic-match'), false);
+});
+
+test('rejects an intermediate symlink while reading ignored env paths', t => {
+  const root = temp(t);
+  const original = path.join(root, 'original');
+  const outside = path.join(root, 'outside');
+  fs.mkdirSync(original);
+  fs.mkdirSync(outside);
+  fs.writeFileSync(path.join(outside, '.env.secret'), 'TOKEN=outside-intermediate-fixture\n');
+  fs.symlinkSync(outside, path.join(original, 'nested'));
+  const rootFd = fs.openSync(original, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+  const helper = path.join(path.dirname(fileURLToPath(import.meta.url)), '../skills/delivery/credentials/scripts/read-ignored.py');
+  let result;
+  try {
+    result = spawnSync('python3', [helper, 'nested/.env.secret'], {
+      cwd: path.dirname(helper),
+      encoding: null,
+      maxBuffer: 1024 * 1024 + 1024,
+      stdio: ['ignore', 'pipe', 'ignore', rootFd],
+    });
+  } finally {
+    fs.closeSync(rootFd);
+  }
+  assert.equal(result.error, undefined);
+  assert.notEqual(result.status, 0);
+  assert.equal(result.stdout.length, 0);
 });
 
 test('fails before reading when a selected root is rebound during selection', t => {

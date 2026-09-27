@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import {createHash, randomUUID} from 'node:crypto';
-import {execFileSync} from 'node:child_process';
+import {execFileSync, spawnSync} from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -10,7 +10,7 @@ const placeholder = value => !value || /^(?:changeme|change_me|example|placehold
 function git(args, cwd, binary = false) {
   const env = {...process.env, GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1'};
   for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE']) delete env[key];
-  return execFileSync('git', args, {cwd, encoding: binary ? null : 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env});
+  return execFileSync('git', args, {cwd, encoding: binary ? null : 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'], env});
 }
 function gitAt(common, args, binary = false) {
   return git(['--git-dir', common, ...args], undefined, binary);
@@ -45,21 +45,66 @@ function parseEnv(text) {
   return entries;
 }
 function safeIgnoredBytes(root, name) {
-  if (name.includes('/') || name.includes('\\') || name === '.' || name === '..') throw new Error('unsafe path');
+  const parts = name.split('/');
+  if (path.posix.isAbsolute(name) || parts.length > 128 || parts.some(part => !part || part === '.' || part === '..' || part.includes('\\'))) throw new Error('unsafe path');
   assertRoot(root);
-  const absolute = path.join(root.path, name);
-  const before = fs.lstatSync(absolute);
-  if (before.isSymbolicLink() || !before.isFile()) throw new Error('unsafe path');
-  if (typeof fs.constants.O_NOFOLLOW !== 'number') throw new Error('safe ignored reads unavailable');
-  const fd = fs.openSync(absolute, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-  try {
-    const opened = fs.fstatSync(fd);
-    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino) throw new Error('unsafe path');
-    assertRoot(root);
-    const rootDescriptor = fs.fstatSync(root.fd);
-    if (rootDescriptor.dev !== root.stat.dev || rootDescriptor.ino !== root.stat.ino) throw new Error('repository root changed');
-    return fs.readFileSync(fd, 'utf8');
-  } finally { fs.closeSync(fd); }
+  const helper = fileURLToPath(new URL('./read-ignored.py', import.meta.url));
+  const result = spawnSync('python3', [helper, name], {
+    cwd: path.dirname(fileURLToPath(import.meta.url)),
+    encoding: null,
+    maxBuffer: MAX_IGNORED_BYTES + 1024,
+    stdio: ['ignore', 'pipe', 'ignore', root.fd],
+  });
+  assertRoot(root);
+  if (result.error || result.status !== 0 || !Buffer.isBuffer(result.stdout) || result.stdout.length > MAX_IGNORED_BYTES) throw new Error('safe ignored read failed');
+  return result.stdout.toString('utf8');
+}
+const MAX_IGNORED_BYTES = 1024 * 1024;
+const MAX_TREE_DEPTH = 128;
+const MAX_TREE_ENTRIES = 200_000;
+function treeEntries(tree, oidBytes) {
+  const entries = [];
+  let offset = 0;
+  while (offset < tree.length) {
+    const modeEnd = tree.indexOf(0x20, offset);
+    const nameEnd = tree.indexOf(0, modeEnd + 1);
+    const oidEnd = nameEnd + 1 + oidBytes;
+    if (modeEnd < 0 || nameEnd < 0 || oidEnd > tree.length) throw new Error('unsafe object');
+    const nameBytes = tree.subarray(modeEnd + 1, nameEnd);
+    const name = nameBytes.toString('utf8');
+    const mode = tree.subarray(offset, modeEnd).toString('ascii');
+    if (!name || name === '.' || name === '..' || name.includes('/') || !Buffer.from(name, 'utf8').equals(nameBytes) || !['40000', '100644', '100755', '120000', '160000'].includes(mode)) throw new Error('unsafe object');
+    entries.push({mode, name, oid: tree.subarray(nameEnd + 1, oidEnd).toString('hex')});
+    offset = oidEnd;
+  }
+  return entries;
+}
+function trackedEnvFiles(root) {
+  const commit = verifiedObject(root.common, root.head, 'commit', root.objectFormat).toString('utf8');
+  const treeOid = commit.match(/^tree ([0-9a-f]+)$/m)?.[1];
+  if (!treeOid) throw new Error('unsafe object');
+  const oidBytes = root.objectFormat === 'sha1' ? 20 : 32;
+  const files = [];
+  let entryCount = 0;
+  function visit(oid, prefix, depth) {
+    if (depth > MAX_TREE_DEPTH) throw new Error('unsafe object');
+    const tree = verifiedObject(root.common, oid, 'tree', root.objectFormat);
+    for (const entry of treeEntries(tree, oidBytes)) {
+      if (++entryCount > MAX_TREE_ENTRIES) throw new Error('unsafe object');
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.mode === '40000') {
+        visit(entry.oid, relative, depth + 1);
+      } else if (envFile(path.posix.basename(entry.name))) {
+        if (entry.mode === '120000') throw new Error('unsafe path');
+        if (entry.mode === '100644' || entry.mode === '100755') {
+          const bytes = verifiedObject(root.common, entry.oid, 'blob', root.objectFormat).toString('utf8');
+          files.push({name: relative, bytes});
+        }
+      }
+    }
+  }
+  visit(treeOid, '', 0);
+  return files;
 }
 function assertRoot(root) {
   assertRootPath(root);
@@ -69,20 +114,7 @@ function assertRoot(root) {
 }
 function inputFiles(root, includeIgnored) {
   assertRoot(root);
-  const commit = verifiedObject(root.common, root.head, 'commit', root.objectFormat).toString('utf8');
-  const treeOid = commit.match(/^tree ([0-9a-f]+)$/m)?.[1];
-  if (!treeOid) throw new Error('unsafe object');
-  verifiedObject(root.common, treeOid, 'tree', root.objectFormat);
-  const listing = gitAt(root.common, ['ls-tree', '-r', '-z', root.head]).split('\0').filter(Boolean);
-  const tracked = [];
-  for (const record of listing) {
-    const match = record.match(/^(\d{6}) blob ([0-9a-f]+)\t(.+)$/s);
-    if (!match || !envFile(path.posix.basename(match[3]))) continue;
-    if (match[1] === '120000') throw new Error('unsafe path');
-    if (match[1] !== '100644' && match[1] !== '100755') continue;
-    tracked.push({name: match[3], bytes: verifiedObject(root.common, match[2], 'blob', root.objectFormat).toString('utf8')});
-  }
-  const files = [...tracked];
+  const files = trackedEnvFiles(root);
   if (includeIgnored) {
     assertRoot(root);
     const ignored = gitFromRoot(root, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard']).split('\0').filter(Boolean);
