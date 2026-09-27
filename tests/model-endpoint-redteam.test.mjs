@@ -3,16 +3,16 @@ import test from 'node:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {run} from '../skills/delivery/model-endpoint-redteam/scripts/probe.mjs';
+import {run, appendAudit, MAX_RESPONSE_BYTES} from '../skills/delivery/model-endpoint-redteam/scripts/probe.mjs';
 
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'model-redteam-'));
 const authFile=path.join(root,'authorization.json');
 const endpoint='https://203.0.113.9/v1/chat';
-const writeAuthorization=expires=>fs.writeFileSync(authFile,JSON.stringify({schema_version:1,origin:'https://203.0.113.9',path:'/v1/chat',operator:'fixture operator',authorized_at:'2026-01-01T00:00:00Z',expires}));
+const writeAuthorization=(expires,pathname='/v1/chat')=>fs.writeFileSync(authFile,JSON.stringify({schema_version:1,origin:'https://203.0.113.9',path:pathname,operator:'fixture operator',authorized_at:'2026-01-01T00:00:00Z',expires}));
 writeAuthorization('2099-01-01T00:00:00Z');
 test.after(()=>fs.rmSync(root,{recursive:true,force:true}));
 const base={url:endpoint,authorization:authFile,probes:['recon','schema','sensitivity','boundary','evasion','validation','extraction'],dryRun:true,live:false,retries:1,maxAttempts:7,timeoutMs:1000,rateMs:1};
-const goodResponse=()=>({ok:true,status:200,json:async()=>({choices:[{message:{content:'safe refusal'}}]})});
+const goodResponse=()=>new Response(JSON.stringify({choices:[{message:{content:'safe refusal'}}]}),{status:200});
 const liveOptions=(extra={})=>({...base,dryRun:false,live:true,...extra});
 
 test('direct default execution plans probes without fetching',async()=>{
@@ -61,4 +61,27 @@ test('zero pacing interval is rejected',async()=>{
  let calls=0;
  await assert.rejects(run(liveOptions({probes:['recon'],rateMs:0}),{fetchImpl:async()=>{calls++;return goodResponse();}}));
  assert.equal(calls,0);
+});
+
+test('audit append rejects symlinks and non-regular targets',async()=>{
+ const target=path.join(root,'audit-target.jsonl'),link=path.join(root,'audit-link.jsonl');
+ fs.writeFileSync(target,'preserve\n');fs.symlinkSync(target,link);
+ assert.throws(()=>appendAudit(link,{event:'attempt-start'}));
+ assert.equal(fs.readFileSync(target,'utf8'),'preserve\n');
+});
+
+test('oversized response is rejected without retaining response content',async()=>{
+ const secret='z'.repeat(MAX_RESPONSE_BYTES+1);
+ const result=await run(liveOptions({probes:['recon']}),{audit:()=>{},fetchImpl:async()=>new Response(JSON.stringify({data:secret}),{status:200}),runId:'bounded-fixture'});
+ assert.equal(result.status,'failed');assert.equal(result.probes[0].status,'failed');assert.equal(result.probes[0].evidence,undefined);assert.equal(JSON.stringify(result).includes(secret),false);
+});
+
+test('report and audit redact authorization path',async()=>{
+ const privatePath='/v1/token-path-secret-742';
+ writeAuthorization('2099-01-01T00:00:00Z',privatePath);
+ const audits=[];
+ const result=await run(liveOptions({url:`https://203.0.113.9${privatePath}`,probes:['recon']}),{audit:(_file,event)=>audits.push(event),fetchImpl:async()=>goodResponse(),runId:'path-redaction'});
+ assert.equal(result.authorized_scope_sha256.startsWith('sha256:'),true);
+ assert.equal(JSON.stringify({result,audits}).includes(privatePath),false);
+ writeAuthorization('2099-01-01T00:00:00Z');
 });
