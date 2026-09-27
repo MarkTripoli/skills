@@ -2,7 +2,7 @@
   "$schema": "skills.task-index/v1",
   "schemaVersion": 1,
   "task": "i-want-you-gpt",
-  "generation": 2,
+  "generation": 3,
   "artifactSeries": {
     "research.sources": {
       "current": "research.sources.0001",
@@ -29,6 +29,20 @@
           "type": "research-questions",
           "status": null,
           "summary": "Seven neutral questions cover the upstream development and security plugins, the public and Adyton collections, hooks, evaluations, and cross-agent/project boundaries. The research phase should distinguish executable behavior, prompt contracts, fixture evidence, and observed live outcomes at pinned revisions."
+        }
+      ]
+    },
+    "research.primary": {
+      "current": "research.primary.0001",
+      "iterations": [
+        {
+          "id": "research.primary.0001",
+          "iteration": 1,
+          "path": "artifacts/research/primary/0001.md",
+          "sha256": "bb3b1d38bcdc2713988928765f19d6147cceac87355ed245a7696a27ddd43100",
+          "type": "research",
+          "status": null,
+          "summary": "The upstream dev-team combines Claude-specific workflow instructions, a narrower Python dispatcher, project-local hook state and paid opt-in evaluations; security-assessment combines deterministic scanner adapters with agent judgment and report generation. Public skills already implement portable phase skills, artifact-bound approvals, verification, review and evidence, while Adyton additionally documents paired-repository Jira delivery. The notable current-state distinctions are hook enforcement scope, deep tool-first security assessment, cross-repository task contracts, and the different task-artifact formats in the two local collections."
         }
       ]
     }
