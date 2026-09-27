@@ -58,6 +58,23 @@ test('grades seeded detections, expiry, uncertainty and complete provenance', as
   assert.equal(grade.provenance.secret_scanner.version, '8.30.0');
 });
 
+test('grades six independent scanner lanes and rejects missing coverage despite aggregate claim', async () => {
+  const observed = await assessment();
+  observed.scan.lanes = Object.fromEntries([
+    ['semgrep', '1.168.0'], ['gitleaks', '8.30.0'], ['trivy_config', '0.64.0'],
+    ['trivy_fs', '0.64.0'], ['hadolint', '2.12.0'], ['actionlint', '1.7.7'],
+  ].map(([name, version]) => [name, {coverage: 'complete', tool: {name, status: 'ok', version}, findings: []}]));
+  observed.report = renderSecurityReport(observed.scan, observed.accepted_risks, observed.dispositions);
+  assert.equal(gradeSecurityAssessment(fixture, observed).status, 'passed');
+
+  observed.scan.lanes.actionlint.coverage = 'incomplete';
+  observed.scan.lanes.actionlint.tool.status = 'unavailable';
+  observed.report = renderSecurityReport(observed.scan, observed.accepted_risks, observed.dispositions);
+  const failed = gradeSecurityAssessment(fixture, observed);
+  assert.equal(failed.status, 'failed');
+  assert.match(failed.problems.join('; '), /actionlint scanner lane coverage/);
+});
+
 test('separates missed seeded defects from extra emissions', async () => {
   const observed = await assessment();
   observed.scan.findings.shift();
