@@ -7,19 +7,24 @@ import {fileURLToPath} from 'node:url';
 
 const envFile = name => name === '.env' || name.startsWith('.env.');
 const placeholder = value => !value || /^(?:changeme|change_me|example|placeholder|your[_ -].*|<.*>|\$\{.*\}|\*+|x+)$/i.test(value.trim()) || /^(?:xxx+|todo|none|null)$/i.test(value.trim());
-function git(args, cwd, binary = false) {
+function git(args, cwd, binary = false, fd = null) {
   const env = {...process.env, GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1'};
   for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE']) delete env[key];
-  return execFileSync('git', args, {cwd, encoding: binary ? null : 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'], env});
+  const stdio = ['ignore', 'pipe', 'ignore'];
+  if (fd !== null) stdio[3] = fd;
+  return execFileSync('git', args, {cwd, encoding: binary ? null : 'utf8', maxBuffer: 16 * 1024 * 1024, stdio, env});
 }
-function gitAt(common, args, binary = false) {
-  return git(['--git-dir', common, ...args], undefined, binary);
+function gitAt(root, args, binary = false) {
+  const fdPath = process.platform === 'linux' ? '/proc/self/fd/3' : '/dev/fd/3';
+  return git(['--git-dir', fdPath, ...args], undefined, binary, root.gitFd);
 }
 function assertRootPath(root) {
   const current = fs.lstatSync(root.path);
   const held = fs.fstatSync(root.fd);
-  if (current.isSymbolicLink() || !current.isDirectory() || current.dev !== root.stat.dev || current.ino !== root.stat.ino || held.dev !== root.stat.dev || held.ino !== root.stat.ino) {
-    throw new Error('repository root changed');
+  const gitMetadata = fs.lstatSync(root.gitMetadataPath);
+  const heldGitMetadata = fs.fstatSync(root.gitFd);
+  if (current.isSymbolicLink() || !current.isDirectory() || current.dev !== root.stat.dev || current.ino !== root.stat.ino || held.dev !== root.stat.dev || held.ino !== root.stat.ino || gitMetadata.isSymbolicLink() || !gitMetadata.isDirectory() || gitMetadata.dev !== root.gitMetadataStat.dev || gitMetadata.ino !== root.gitMetadataStat.ino || heldGitMetadata.dev !== root.gitMetadataStat.dev || heldGitMetadata.ino !== root.gitMetadataStat.ino) {
+    throw new Error('repository root or Git metadata changed');
   }
 }
 function gitFromRoot(root, args) {
@@ -31,15 +36,15 @@ function gitFromRoot(root, args) {
     cwd: path.dirname(fileURLToPath(import.meta.url)),
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024,
-    stdio: ['ignore', 'pipe', 'ignore', root.fd],
+    stdio: ['ignore', 'pipe', 'ignore', root.fd, root.gitFd],
     env,
   });
   assertRootPath(root);
   if (result.error || result.status !== 0 || typeof result.stdout !== 'string') throw new Error('repository Git operation failed');
   return result.stdout;
 }
-function verifiedObject(common, oid, type, objectFormat) {
-  const bytes = gitAt(common, ['cat-file', type, oid], true);
+function verifiedObject(root, oid, type, objectFormat) {
+  const bytes = gitAt(root, ['cat-file', type, oid], true);
   const actual = createHash(objectFormat).update(`${type} ${bytes.length}\0`).update(bytes).digest('hex');
   if (actual !== oid) throw new Error('unsafe object');
   return bytes;
@@ -60,7 +65,7 @@ function parseEnv(text) {
 function safeIgnoredBytes(root, name) {
   const parts = name.split('/');
   if (path.posix.isAbsolute(name) || parts.length > 128 || parts.some(part => !part || part === '.' || part === '..' || part.includes('\\'))) throw new Error('unsafe path');
-  assertRoot(root);
+  assertRootPath(root);
   const helper = fileURLToPath(new URL('./read-ignored.py', import.meta.url));
   const result = spawnSync('python3', [helper, name], {
     cwd: path.dirname(fileURLToPath(import.meta.url)),
@@ -68,7 +73,7 @@ function safeIgnoredBytes(root, name) {
     maxBuffer: MAX_IGNORED_BYTES + 1024,
     stdio: ['ignore', 'pipe', 'ignore', root.fd],
   });
-  assertRoot(root);
+  assertRootPath(root);
   if (result.error || result.status !== 0 || !Buffer.isBuffer(result.stdout) || result.stdout.length > MAX_IGNORED_BYTES) throw new Error('safe ignored read failed');
   return result.stdout.toString('utf8');
 }
@@ -93,7 +98,7 @@ function treeEntries(tree, oidBytes) {
   return entries;
 }
 function trackedEnvFiles(root) {
-  const commit = verifiedObject(root.common, root.head, 'commit', root.objectFormat).toString('utf8');
+  const commit = verifiedObject(root, root.head, 'commit', root.objectFormat).toString('utf8');
   const treeOid = commit.match(/^tree ([0-9a-f]+)$/m)?.[1];
   if (!treeOid) throw new Error('unsafe object');
   const oidBytes = root.objectFormat === 'sha1' ? 20 : 32;
@@ -101,7 +106,7 @@ function trackedEnvFiles(root) {
   let entryCount = 0;
   function visit(oid, prefix, depth) {
     if (depth > MAX_TREE_DEPTH) throw new Error('unsafe object');
-    const tree = verifiedObject(root.common, oid, 'tree', root.objectFormat);
+    const tree = verifiedObject(root, oid, 'tree', root.objectFormat);
     for (const entry of treeEntries(tree, oidBytes)) {
       if (++entryCount > MAX_TREE_ENTRIES) throw new Error('unsafe object');
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
@@ -110,7 +115,7 @@ function trackedEnvFiles(root) {
       } else if (envFile(path.posix.basename(entry.name))) {
         if (entry.mode === '120000') throw new Error('unsafe path');
         if (entry.mode === '100644' || entry.mode === '100755') {
-          const bytes = verifiedObject(root.common, entry.oid, 'blob', root.objectFormat).toString('utf8');
+          const bytes = verifiedObject(root, entry.oid, 'blob', root.objectFormat).toString('utf8');
           files.push({name: relative, bytes});
         }
       }
@@ -119,19 +124,13 @@ function trackedEnvFiles(root) {
   visit(treeOid, '', 0);
   return files;
 }
-function assertRoot(root) {
-  assertRootPath(root);
-  const common = fs.realpathSync(root.common);
-  const commonStat = fs.statSync(common);
-  if (common !== root.common || commonStat.dev !== root.commonStat.dev || commonStat.ino !== root.commonStat.ino) throw new Error('repository identity changed');
-}
 function inputFiles(root, includeIgnored) {
-  assertRoot(root);
+  assertRootPath(root);
   const files = trackedEnvFiles(root);
   if (includeIgnored) {
-    assertRoot(root);
+    assertRootPath(root);
     const ignored = gitFromRoot(root, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard']).split('\0').filter(Boolean);
-    assertRoot(root);
+    assertRootPath(root);
     for (const name of ignored) {
       if (!envFile(path.posix.basename(name))) continue;
       const bytes = safeIgnoredBytes(root, name);
@@ -152,19 +151,37 @@ export function correlate(repositories, {includeIgnored = false, ownerAuthorized
       const fd = fs.openSync(real, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | (fs.constants.O_NOFOLLOW ?? 0));
       const openedRoot = fs.fstatSync(fd);
       if (openedRoot.dev !== stat.dev || openedRoot.ino !== stat.ino) { fs.closeSync(fd); throw new Error('repository root changed'); }
-      const root = {path: real, stat, fd};
+      const gitMetadataPath = path.join(real, '.git');
+      let gitMetadataStat;
+      try {
+        gitMetadataStat = fs.lstatSync(gitMetadataPath);
+      } catch {
+        fs.closeSync(fd);
+        throw new Error('selected path is not the repository root');
+      }
+      if (gitMetadataStat.isSymbolicLink() || !gitMetadataStat.isDirectory()) { fs.closeSync(fd); throw new Error('unsupported repository metadata'); }
+      let gitFd;
+      try {
+        gitFd = fs.openSync(gitMetadataPath, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | (fs.constants.O_NOFOLLOW ?? 0));
+      } catch {
+        fs.closeSync(fd);
+        throw new Error('repository Git metadata changed');
+      }
+      const openedGitMetadata = fs.fstatSync(gitFd);
+      if (openedGitMetadata.dev !== gitMetadataStat.dev || openedGitMetadata.ino !== gitMetadataStat.ino) {
+        fs.closeSync(fd);
+        fs.closeSync(gitFd);
+        throw new Error('repository Git metadata changed');
+      }
+      const root = {path: real, stat, fd, gitMetadataPath, gitMetadataStat, gitFd, commonStat: openedGitMetadata};
       roots.push(root);
-      const gitRoot = fs.realpathSync(gitFromRoot(root, ['rev-parse', '--show-toplevel']).trim());
-      if (gitRoot !== real) throw new Error('selected path is not the repository root');
-      root.common = fs.realpathSync(gitFromRoot(root, ['rev-parse', '--path-format=absolute', '--git-common-dir']).trim());
-      root.commonStat = fs.statSync(root.common);
       root.head = gitFromRoot(root, ['rev-parse', '--verify', 'HEAD^{commit}']).trim();
       root.objectFormat = gitFromRoot(root, ['rev-parse', '--show-object-format']).trim();
       if (!/^[0-9a-f]+$/.test(root.head) || !['sha1', 'sha256'].includes(root.objectFormat)) throw new Error('repository identity unavailable');
-      assertRoot(root);
+      assertRootPath(root);
     }
     if (new Set(roots.map(item => item.path)).size !== roots.length) throw new Error('duplicate repository roots');
-    if (new Set(roots.map(item => item.common)).size !== roots.length) throw new Error('shared repository identity');
+    if (new Set(roots.map(item => `${item.commonStat.dev}:${item.commonStat.ino}`)).size !== roots.length) throw new Error('shared repository identity');
     const seen = new Map();
     for (const [repo, root] of roots.entries()) {
       for (const file of inputFiles(root, includeIgnored)) {
@@ -186,7 +203,10 @@ export function correlate(repositories, {includeIgnored = false, ownerAuthorized
     }
     return {schema_version: 1, findings};
   } finally {
-    for (const root of roots) fs.closeSync(root.fd);
+    for (const root of roots) {
+      fs.closeSync(root.fd);
+      fs.closeSync(root.gitFd);
+    }
   }
 }
 function cli(args) {

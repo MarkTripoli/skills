@@ -94,7 +94,7 @@ test('rejects repository subdirectories and linked worktrees as separate selecti
   assert.throws(() => correlate([path.join(a, 'nested'), b]), /not the repository root/);
   const linked = path.join(root, 'one-linked');
   execFileSync('git', ['-C', a, 'worktree', 'add', '--detach', linked, 'HEAD']);
-  assert.throws(() => correlate([a, linked]), /shared repository identity/);
+  assert.throws(() => correlate([a, linked]), /unsupported repository metadata/);
 });
 test('Git descriptor launcher stays on the original worktree during pathname rebinding', t => {
   const root = temp(t);
@@ -109,6 +109,7 @@ test('Git descriptor launcher stays on the original worktree during pathname reb
   const linkedHead = execFileSync('git', ['-C', linked, 'rev-parse', 'HEAD'], {encoding: 'utf8'}).trim();
   assert.notEqual(originalHead, linkedHead);
   const rootFd = fs.openSync(original, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+  const gitMetadataFd = fs.openSync(path.join(original, '.git'), fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
   const helper = path.join(path.dirname(fileURLToPath(import.meta.url)), '../skills/delivery/credentials/scripts/git-from-root.py');
   let result;
   fs.renameSync(original, moved);
@@ -118,12 +119,53 @@ test('Git descriptor launcher stays on the original worktree during pathname reb
       cwd: path.dirname(helper),
       encoding: 'utf8',
       maxBuffer: 1024 * 1024,
-      stdio: ['ignore', 'pipe', 'ignore', rootFd],
+      stdio: ['ignore', 'pipe', 'ignore', rootFd, gitMetadataFd],
     });
   } finally {
     fs.unlinkSync(original);
     fs.renameSync(moved, original);
     fs.closeSync(rootFd);
+    fs.closeSync(gitMetadataFd);
+  }
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout.trim(), originalHead);
+});
+
+test('Git descriptor launcher ignores a swapped .git link to another worktree', t => {
+  const root = temp(t);
+  const original = repo(root, 'original', {'.env': 'TOKEN=original-worktree\n'});
+  const linked = path.join(root, 'linked');
+  const metadata = path.join(original, '.git');
+  const heldMetadata = path.join(original, '.git-held');
+  execFileSync('git', ['-C', original, 'worktree', 'add', '--detach', linked, 'HEAD']);
+  fs.writeFileSync(path.join(linked, '.env'), 'TOKEN=linked-worktree\n');
+  execFileSync('git', ['-C', linked, 'add', '.env']);
+  execFileSync('git', ['-C', linked, 'commit', '-qm', 'linked worktree fixture']);
+  const originalHead = execFileSync('git', ['-C', original, 'rev-parse', 'HEAD'], {encoding: 'utf8'}).trim();
+  const linkedHead = execFileSync('git', ['-C', linked, 'rev-parse', 'HEAD'], {encoding: 'utf8'}).trim();
+  assert.notEqual(originalHead, linkedHead);
+  const linkedGitFile = fs.readFileSync(path.join(linked, '.git'), 'utf8').trim();
+  const linkedGitDir = path.resolve(linked, linkedGitFile.replace(/^gitdir:\s*/, ''));
+  const heldLinkedGitDir = path.join(heldMetadata, path.relative(metadata, linkedGitDir));
+  const rootFd = fs.openSync(original, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+  const gitMetadataFd = fs.openSync(metadata, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+  const helper = path.join(path.dirname(fileURLToPath(import.meta.url)), '../skills/delivery/credentials/scripts/git-from-root.py');
+  let result;
+  fs.renameSync(metadata, heldMetadata);
+  fs.symlinkSync(heldLinkedGitDir, metadata);
+  try {
+    result = spawnSync('python3', [helper, 'rev-parse', '--verify', 'HEAD^{commit}'], {
+      cwd: path.dirname(helper),
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore', rootFd, gitMetadataFd],
+    });
+  } finally {
+    fs.unlinkSync(metadata);
+    fs.renameSync(heldMetadata, metadata);
+    fs.closeSync(rootFd);
+    fs.closeSync(gitMetadataFd);
   }
   assert.equal(result.error, undefined);
   assert.equal(result.status, 0);

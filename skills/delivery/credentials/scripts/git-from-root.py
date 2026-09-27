@@ -18,9 +18,13 @@ def main():
         return 2
     for key in GIT_ENV:
         os.environ.pop(key, None)
-    os.environ["GIT_NO_LAZY_FETCH"] = "1"
-    os.environ["GIT_NO_REPLACE_OBJECTS"] = "1"
     try:
+        fd_root = "/proc/self/fd" if sys.platform.startswith("linux") else "/dev/fd"
+        os.environ["GIT_DIR"] = os.path.join(fd_root, "4")
+        os.environ["GIT_COMMON_DIR"] = os.path.join(fd_root, "4")
+        os.environ["GIT_NO_LAZY_FETCH"] = "1"
+        os.environ["GIT_NO_REPLACE_OBJECTS"] = "1"
+        os.environ["GIT_WORK_TREE"] = os.path.join(fd_root, "3")
         os.fchdir(3)
         os.execvp("git", ["git", *sys.argv[1:]])
     except BaseException:
