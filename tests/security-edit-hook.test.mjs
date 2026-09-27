@@ -24,9 +24,9 @@ test('successful write result scans saved Dockerfile bytes and reports advisory 
   const calls = [];
   const run = (bin, args, options) => {
     calls.push({ bin, args });
-    assert.equal(options.cwd, cwd);
+    assert.equal(options.cwd, fs.realpathSync(cwd));
     if (args[0] === '--version') return { status: 0, stdout: 'hadolint 2.12.0' };
-    assert.equal(args.at(-1), target);
+    assert.equal(args.at(-1), fs.realpathSync(target));
     assert.equal(fs.readFileSync(args.at(-1), 'utf8'), 'FROM saved-content\n');
     return { status: 0, stdout: JSON.stringify([{ line: 1, code: 'DL3006', level: 'warning', message: 'source prose is never reported' }]) };
   };
@@ -65,7 +65,7 @@ test('successful multi-file patch scans saved Dockerfile and workflow paths', t 
   ].join('\n');
   const report = inspectEditedFile({ toolName: 'edit', input: { patch }, details: { files: [{ path: 'Dockerfile' }, { path: '.github/workflows/build.yaml' }] }, content: [{ type: 'text', text: patch }], isError: false }, { cwd, env: offlineEnv(cwd), run });
   assert.deepEqual(report.results.map(item => item.file).sort(), ['.github/workflows/build.yaml', 'Dockerfile']);
-  assert.deepEqual(seen.map(item => item.target).sort(), [docker, workflow].sort());
+  assert.deepEqual(seen.map(item => item.target).sort(), [docker, workflow].map(file => fs.realpathSync(file)).sort());
   assert.deepEqual(seen.map(item => item.contents).sort(), ['FROM saved image\n', 'name: saved workflow\n'].sort());
 });
 
@@ -91,7 +91,7 @@ test('Semgrep requires an explicit local rules path and sees completed workflow 
   const run = (bin, args) => {
     calls.push({ bin, args });
     if (args[0] === '--version') return { status: 0, stdout: `${bin} local` };
-    assert.equal(args.at(-1), target);
+    assert.equal(args.at(-1), fs.realpathSync(target));
     assert.equal(fs.readFileSync(target, 'utf8'), 'name: saved workflow\n');
     if (bin === 'semgrep') return { status: 0, stdout: JSON.stringify({ results: [], errors: [] }) };
     if (bin === 'actionlint') return { status: 0, stdout: '' };
