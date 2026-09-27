@@ -34,4 +34,4 @@ Atomic's observed proof checks are narrower and should not be treated as the fut
 
 ## Runnable fixtures
 
-`node --test tests/publication-proof-policy.test.mjs` exercises the policy table as fixture cases. It is intentionally separate from runtime code: the next child may consume the rules without this enabler changing publication behavior.
+`node --test tests/publication-proof-policy.test.mjs` exercises the table against `shared/publication-proof-policy.mjs`, a policy-only decision over normalized proof observations. Nothing calls this function from a publication workflow yet. The next child must derive currentness, indexed-artifact-only advancement, distinct hosted comment and final body read-back from actual Git and hosted records; caller-supplied booleans alone are not proof.
