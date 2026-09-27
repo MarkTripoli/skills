@@ -96,6 +96,39 @@ test('rejects repository subdirectories and linked worktrees as separate selecti
   execFileSync('git', ['-C', a, 'worktree', 'add', '--detach', linked, 'HEAD']);
   assert.throws(() => correlate([a, linked]), /shared repository identity/);
 });
+test('Git descriptor launcher stays on the original worktree during pathname rebinding', t => {
+  const root = temp(t);
+  const original = repo(root, 'original', {'.env': 'TOKEN=original-worktree\n'});
+  const linked = path.join(root, 'linked');
+  const moved = path.join(root, 'original-held');
+  execFileSync('git', ['-C', original, 'worktree', 'add', '--detach', linked, 'HEAD']);
+  fs.writeFileSync(path.join(linked, '.env'), 'TOKEN=linked-worktree\n');
+  execFileSync('git', ['-C', linked, 'add', '.env']);
+  execFileSync('git', ['-C', linked, 'commit', '-qm', 'linked worktree fixture']);
+  const originalHead = execFileSync('git', ['-C', original, 'rev-parse', 'HEAD'], {encoding: 'utf8'}).trim();
+  const linkedHead = execFileSync('git', ['-C', linked, 'rev-parse', 'HEAD'], {encoding: 'utf8'}).trim();
+  assert.notEqual(originalHead, linkedHead);
+  const rootFd = fs.openSync(original, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+  const helper = path.join(path.dirname(fileURLToPath(import.meta.url)), '../skills/delivery/credentials/scripts/git-from-root.py');
+  let result;
+  fs.renameSync(original, moved);
+  fs.symlinkSync(linked, original);
+  try {
+    result = spawnSync('python3', [helper, 'rev-parse', 'HEAD'], {
+      cwd: path.dirname(helper),
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore', rootFd],
+    });
+  } finally {
+    fs.unlinkSync(original);
+    fs.renameSync(moved, original);
+    fs.closeSync(rootFd);
+  }
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout.trim(), originalHead);
+});
 
 test('reads only the pinned directory when its pathname is rebound before helper open', t => {
   const root = temp(t);

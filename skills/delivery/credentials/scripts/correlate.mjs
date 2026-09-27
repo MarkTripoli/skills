@@ -15,15 +15,21 @@ function git(args, cwd, binary = false) {
 function gitAt(common, args, binary = false) {
   return git(['--git-dir', common, ...args], undefined, binary);
 }
-function assertRootPath(root) {
-  const current = fs.lstatSync(root.path);
-  if (current.isSymbolicLink() || current.dev !== root.stat.dev || current.ino !== root.stat.ino) throw new Error('repository root changed');
-}
 function gitFromRoot(root, args) {
   assertRootPath(root);
-  const result = git(args, root.path);
+  const env = {...process.env, GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1'};
+  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE']) delete env[key];
+  const helper = fileURLToPath(new URL('./git-from-root.py', import.meta.url));
+  const result = spawnSync('python3', [helper, ...args], {
+    cwd: path.dirname(fileURLToPath(import.meta.url)),
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'ignore', root.fd],
+    env,
+  });
   assertRootPath(root);
-  return result;
+  if (result.error || result.status !== 0 || typeof result.stdout !== 'string') throw new Error('repository Git operation failed');
+  return result.stdout;
 }
 function verifiedObject(common, oid, type, objectFormat) {
   const bytes = gitAt(common, ['cat-file', type, oid], true);
