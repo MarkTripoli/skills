@@ -145,8 +145,9 @@ test('current replacement cannot suppress a historical Gitleaks secret without a
     source_references: [{path: 'src/replaced.js', start_line: 1, end_line: 1}],
     reachability_basis: `Current file no longer contains ${secret}.`,
   })});
-  assert.equal(disposition.reachability, 'unreachable');
+  assert.equal(disposition.reachability, 'uncertain');
   assert.deepEqual(disposition.source_references, [{path: 'src/replaced.js', start_line: 1, end_line: 1}]);
+  assert.match(disposition.reachability_basis, /historical secret without an accepted risk/);
   const scan = {findings: [finding]};
   const report = renderSecurityReport(scan, {}, [disposition]);
   assert.match(report, /Suppressed findings \(0\)/);

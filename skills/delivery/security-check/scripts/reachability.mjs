@@ -71,7 +71,8 @@ export async function reviewHighRisk(findings, {reviewer, sourceRoot} = {}) {
         dispositions.push(uncertain(finding, 'Reviewer response was incomplete or contained invalid citations; reachability could not be established.', checkedRoot));
         continue;
       }
-      const reachability = result.reachability;
+      const historicalSecret = finding.scanner === 'gitleaks' && result.reachability === 'unreachable';
+      const reachability = historicalSecret ? 'uncertain' : result.reachability;
       if (reachability !== 'uncertain' && references.length === 0) {
         dispositions.push(uncertain(finding, 'Reviewer did not provide a source reference for a reachability conclusion.', checkedRoot));
         continue;
@@ -80,7 +81,7 @@ export async function reviewHighRisk(findings, {reviewer, sourceRoot} = {}) {
         finding_id: finding.finding_id,
         reachability,
         source_references: references,
-        reachability_basis: SAFE_BASES[reachability],
+        reachability_basis: historicalSecret ? HISTORICAL_SECRET_BASIS : SAFE_BASES[reachability],
       });
     } catch {
       dispositions.push(uncertain(finding, 'Reviewer unavailable or failed; reachability could not be established.', checkedRoot));
@@ -120,7 +121,8 @@ export function renderSecurityReport(scan, acceptedRiskAssessment, dispositions)
   for (const finding of scan.findings) {
     const disposition = byId.get(finding.finding_id);
     const item = {...finding, source_references: disposition?.source_references ?? findingReference(finding),
-      reachability_basis: SAFE_BASES[disposition?.reachability]};
+      reachability_basis: finding.scanner === 'gitleaks' && disposition?.reachability_basis === HISTORICAL_SECRET_BASIS
+        ? HISTORICAL_SECRET_BASIS : SAFE_BASES[disposition?.reachability]};
     if (accepted.has(finding.finding_id)) {
       const risk = accepted.get(finding.finding_id);
       const reason = typeof risk?.reason === 'string' ? risk.reason.replace(/\s+/g, ' ').slice(0, MAX_BASIS_LENGTH) : 'reason unavailable';
