@@ -56,3 +56,27 @@ test('forged acceptance and missing lanes cannot produce complete coverage', () 
   lanes.unexpected = {tool: {name: 'unexpected', status: 'ok'}, coverage: 'complete'};
   assert.equal(assessCompliance(complete).coverage, 'incomplete');
 });
+
+test('suppression retains its proof, duplicate IDs fail closed, and lane tool identity is bound', () => {
+  const names = ['semgrep', 'gitleaks', 'trivy_config', 'trivy_fs', 'hadolint', 'actionlint'];
+  const lanes = Object.fromEntries(names.map(name => [name, {tool: {name, version: '1.0', status: 'ok'}, coverage: 'complete'}]));
+  const finding = makeFinding('same-id', 'semgrep', 'javascript.example', 'src/app.js');
+  const scan = {schema_version: 1, repository, revision, coverage: 'complete', secret_coverage: 'complete', lanes, findings: [finding]};
+  const risk = {repository, rule_id: finding.rule_id, path: finding.path, reason: 'Remediation scheduled', expires: '2026-10-01'};
+  const suppressed = assessCompliance(scan, {risks: [risk], now: new Date('2026-09-27T00:00:00Z')}).findings[0];
+  assert.equal(suppressed.disposition, 'suppressed');
+  assert.deepEqual(suppressed.accepted_risk, {reason: risk.reason, expires: risk.expires});
+  assert.equal(suppressed.citation.line, finding.line);
+  assert.equal(suppressed.citation.evidence_ref, finding.evidence_ref);
+
+  scan.findings = [finding, {...finding, rule_id: 'javascript.other', path: 'src/other.js'}];
+  const duplicate = assessCompliance(scan);
+  assert.deepEqual(duplicate.findings.map(item => item.disposition), ['unknown', 'unknown']);
+  assert.equal(duplicate.coverage, 'incomplete');
+
+  scan.findings = [finding];
+  lanes.hadolint.tool.name = 'actionlint';
+  const swapped = assessCompliance(scan);
+  assert.equal(swapped.tool_coverage.find(item => item.name === 'hadolint').coverage, 'incomplete');
+  assert.equal(swapped.coverage, 'incomplete');
+});

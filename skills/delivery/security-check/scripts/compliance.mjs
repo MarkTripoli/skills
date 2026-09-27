@@ -18,7 +18,7 @@ function laneTools(scan) {
     const tool = lane?.tool ?? lane;
     const status = tool?.status ?? 'unavailable';
     const known = EXPECTED_LANES.includes(name);
-    return {name, version: tool?.version ?? null, status: known ? status : 'unknown', coverage: known && status === 'ok' && lane?.coverage === 'complete' ? 'complete' : 'incomplete'};
+    return {name, version: tool?.version ?? null, status: known ? status : 'unknown', coverage: known && tool?.name === name && status === 'ok' && lane?.coverage === 'complete' ? 'complete' : 'incomplete'};
   });
   for (const name of EXPECTED_LANES) {
     if (!Object.hasOwn(lanes, name)) tools.push({name, version: null, status: 'unavailable', coverage: 'incomplete'});
@@ -30,7 +30,9 @@ function hasCitation(finding, scan) {
   return finding && finding.repository === scan.repository && finding.revision === scan.revision &&
     typeof finding.rule_id === 'string' && finding.rule_id.length > 0 &&
     typeof finding.path === 'string' && finding.path.length > 0 && !finding.path.startsWith('/') &&
-    !finding.path.split('/').some(part => part === '..' || part === '.' || part === '');
+    !finding.path.split('/').some(part => part === '..' || part === '.' || part === '') &&
+    Number.isSafeInteger(finding.line) && finding.line > 0 &&
+    typeof finding.evidence_ref === 'string' && finding.evidence_ref.length > 0;
 }
 
 /** Build a complete, provenance-bound triage inventory from normalized scanner output. */
@@ -38,24 +40,29 @@ export function assessCompliance(scan, {risks = [], now = new Date(), catalog = 
   if (scan?.schema_version !== 1 || !Array.isArray(scan.findings) || typeof scan.repository !== 'string' || typeof scan.revision !== 'string') {
     throw new Error('normalized scan required');
   }
-  if (!Array.isArray(risks)) throw new Error('accepted risks must be an array');
   if (!catalog || catalog.schema_version !== 1 || typeof catalog.catalog_version !== 'string' || !Array.isArray(catalog.controls)) {
     throw new Error('versioned control catalog required');
   }
   const accepted = applyAcceptedRisks(scan.findings, risks, {repository: scan.repository, now});
-  const suppressedIds = new Set(accepted.suppressed.map(item => item.finding_id));
+  const identity = finding => JSON.stringify([finding?.finding_id, finding?.repository, finding?.revision, finding?.scanner, finding?.rule_id, finding?.path, finding?.line, finding?.evidence_ref]);
+  const suppressed = new Map(accepted.suppressed.map(finding => [identity(finding), finding.accepted_risk]));
+  const idCounts = new Map();
+  for (const finding of scan.findings) idCounts.set(finding?.finding_id, (idCounts.get(finding?.finding_id) ?? 0) + 1);
+  const duplicateIds = new Set([...idCounts].filter(([, count]) => count > 1).map(([id]) => id));
   const findings = scan.findings.map(finding => {
     const cited = hasCitation(finding, scan);
     const control = catalog.controls.find(item => item.scanner === finding?.scanner && typeof item.rule_prefix === 'string' && finding.rule_id?.startsWith(item.rule_prefix));
+    const acceptedRisk = cited && !duplicateIds.has(finding?.finding_id) ? suppressed.get(identity(finding)) : null;
     let disposition = 'unknown';
-    if (cited && suppressedIds.has(finding?.finding_id)) disposition = 'suppressed';
-    else if (cited && control) disposition = 'active';
+    if (acceptedRisk) disposition = 'suppressed';
+    else if (cited && !duplicateIds.has(finding?.finding_id) && control) disposition = 'active';
     return {
       finding_id: finding?.finding_id ?? null,
-      citation: cited ? {repository: finding.repository, revision: finding.revision, rule_id: finding.rule_id, path: finding.path} : null,
-      citation_status: cited ? 'complete' : 'missing',
+      citation: cited ? {repository: finding.repository, revision: finding.revision, rule_id: finding.rule_id, path: finding.path, line: finding.line, evidence_ref: finding.evidence_ref} : null,
+      citation_status: cited && !duplicateIds.has(finding?.finding_id) ? 'complete' : 'missing',
       control_id: control?.id ?? null,
       disposition,
+      ...(acceptedRisk ? {accepted_risk: acceptedRisk} : {}),
     };
   });
   const tools = laneTools(scan);
