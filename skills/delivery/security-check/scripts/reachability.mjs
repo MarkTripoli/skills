@@ -71,12 +71,10 @@ export async function reviewHighRisk(findings, {reviewer} = {}) {
   return dispositions;
 }
 
-function acceptedFindingIds(assessment) {
-  const ids = new Set(Array.isArray(assessment?.accepted_finding_ids) ? assessment.accepted_finding_ids : []);
-  if (Array.isArray(assessment?.accepted_risks)) {
-    for (const risk of assessment.accepted_risks) if (typeof risk?.finding_id === 'string') ids.add(risk.finding_id);
-  }
-  return ids;
+function acceptedFindingMap(assessment) {
+  return new Map((Array.isArray(assessment?.suppressed) ? assessment.suppressed : [])
+    .filter(item => typeof item?.finding_id === 'string')
+    .map(item => [item.finding_id, item.accepted_risk]));
 }
 
 function renderGroup(title, findings) {
@@ -96,7 +94,7 @@ function renderGroup(title, findings) {
 /** Render scanner coverage, accepted risks, reachability dispositions, and limits. */
 export function renderSecurityReport(scan, acceptedRiskAssessment, dispositions) {
   if (!Array.isArray(scan?.findings) || !Array.isArray(dispositions)) throw new TypeError('scan.findings and dispositions must be arrays');
-  const accepted = acceptedFindingIds(acceptedRiskAssessment);
+  const accepted = acceptedFindingMap(acceptedRiskAssessment);
   const byId = new Map(dispositions.filter(item => typeof item?.finding_id === 'string').map(item => [item.finding_id, item]));
   const active = [];
   const suppressed = [];
@@ -105,7 +103,10 @@ export function renderSecurityReport(scan, acceptedRiskAssessment, dispositions)
     const disposition = byId.get(finding.finding_id);
     const item = {...finding, source_references: disposition?.source_references ?? findingReference(finding), reachability_basis: disposition?.reachability_basis};
     if (accepted.has(finding.finding_id)) {
-      item.reachability_basis = item.reachability_basis || 'Risk accepted by the supplied risk assessment.';
+      const risk = accepted.get(finding.finding_id);
+      const reason = typeof risk?.reason === 'string' ? risk.reason.replace(/\s+/g, ' ').slice(0, MAX_BASIS_LENGTH) : 'reason unavailable';
+      const expires = typeof risk?.expires === 'string' ? risk.expires : 'expiry unavailable';
+      item.reachability_basis = `Accepted risk: ${reason}; expires ${expires}.`;
       suppressed.push(item);
     } else if (disposition?.reachability === 'unreachable') {
       suppressed.push(item);
@@ -121,9 +122,11 @@ export function renderSecurityReport(scan, acceptedRiskAssessment, dispositions)
   return [
     'Security check report',
     `Scanner coverage: ${scanner} ${coverage}; tool status ${scan.tool?.status ?? 'unknown'}${scan.tool?.version ? ` (${scan.tool.version})` : ''}.`,
+    `Secret coverage: ${scan.secret_coverage ?? 'unknown'}; tool status ${scan.secret_tool?.status ?? 'unknown'}${scan.secret_tool?.version ? ` (${scan.secret_tool.version})` : ''}.`,
+    `Accepted-risk coverage: ${acceptedRiskAssessment?.coverage ?? 'unknown'}.`,
     renderGroup('Active findings', active),
     renderGroup('Suppressed findings', suppressed),
     renderGroup('Uncertain findings', uncertainFindings),
-    'Limits: scanner coverage is reported as provided and may be incomplete; reachability review runs only for ERROR/HIGH/CRITICAL findings, one reviewer call per such finding. Source references support a static assessment, not proof of runtime execution. Non-high findings are not reachability-reviewed. Accepted risks are listed as suppressed, not cleared.',
+    'Limits: scanner coverage is reported as provided and may be incomplete; reachability review runs only for ERROR/HIGH/CRITICAL findings, one reviewer call per such finding. Source references support a static assessment, not proof of runtime execution; Gitleaks locations can belong to historical commits. Non-high findings are not reachability-reviewed. Accepted risks are listed as suppressed, not cleared.',
   ].join('\n\n');
 }

@@ -54,7 +54,7 @@ test('renders scanner coverage and separates active, accepted, unreachable, and 
     coverage: 'incomplete',
     tool: {name: 'semgrep', status: 'failed', version: '1.168.0'},
     findings,
-  }, {accepted_finding_ids: ['accepted']}, [
+  }, {coverage: 'complete', suppressed: [{finding_id: 'accepted', accepted_risk: {reason: 'Reviewed exception', expires: '2027-01-01'}}]}, [
     {finding_id: 'reachable', ...cited('reachable')},
     {finding_id: 'unreachable', ...cited('unreachable')},
     {finding_id: 'accepted', ...cited('reachable')},
@@ -62,9 +62,12 @@ test('renders scanner coverage and separates active, accepted, unreachable, and 
   ]);
   assert.match(report, /Scanner coverage: semgrep incomplete; tool status failed/);
   assert.match(report, /Active findings \(2\)/);
+  assert.match(report, /Secret coverage: unknown/);
+  assert.match(report, /Accepted-risk coverage: complete/);
   assert.match(report, /Suppressed findings \(2\)/);
   assert.match(report, /Uncertain findings \(1\)/);
   assert.match(report, /accepted: Untrusted input reaches command execution/);
+  assert.match(report, /Reviewed exception; expires 2027-01-01/);
   assert.match(report, /vulnerable\.js:3-4/);
   assert.match(report, /not proof of runtime execution/);
 });
