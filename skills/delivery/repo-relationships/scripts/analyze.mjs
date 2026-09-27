@@ -268,6 +268,7 @@ function natsSubjects(source, limit = MAX_EVIDENCE, starts = lineStarts(source))
   }
   for (const binding of clients.values()) allowed.add(binding.index);
   const candidates = new Set([...connectFunctions.keys(), ...namespaces.keys(), ...clients.keys()]);
+  const isCandidate = index => tokens[index]?.type === 'id' && candidates.has(tokens[index].value) && !allowed.has(index);
   const matchingClose = (open, left, right) => {
     let depth = 0;
     for (let index = open; index < tokens.length; index++) {

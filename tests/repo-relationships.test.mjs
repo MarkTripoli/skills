@@ -51,6 +51,19 @@ test('matches literal cross-repository NATS subject and excludes unmatched subsc
     assert.equal(report.repositories.some(repo => JSON.stringify(repo).includes('token')), false);
   } finally { fs.rmSync(base, {recursive: true, force: true}); }
 });
+test('CLI preserves analyzable HEAD snapshots for imported NATS sources', () => {
+  const {base, create} = fixture();
+  try {
+    const publisher = create('publisher', {'src/events.js': "import { connect } from 'nats';\nconst nc = await connect();\nnc.publish('snapshot.ready', payload);\n"});
+    const subscriber = create('subscriber', {'src/events.js': "import { connect } from 'nats';\nconst nc = await connect();\nnc.subscribe('snapshot.ready', handler);\n"});
+    const result = spawnSync(process.execPath, [path.join(projectRoot, 'skills/delivery/repo-relationships/scripts/analyze.mjs'), '--repo', `publisher=${publisher}`, '--repo', `subscriber=${subscriber}`], {cwd: base, encoding: 'utf8'});
+    assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.coverage, 'complete');
+    assert.deepEqual(report.skipped_roots, []);
+    assert.equal(report.relationships.filter(edge => edge.kind === 'nats-subject' && edge.subject === 'snapshot.ready').length, 1);
+  } finally { fs.rmSync(base, {recursive: true, force: true}); }
+});
 
 test('rejects ambiguous package citations, fake manifest names, and duplicate YAML keys', () => {
   const {base, create} = fixture();
@@ -133,6 +146,8 @@ test('caps collected evidence before cross-repository expansion', () => {
     const subscriber = create('subscriber', {'src/sub.js': subscribes});
     const report = analyze([{name: 'publisher', root: publisher}, {name: 'subscriber', root: subscriber}]);
     assert.equal(report.evidence.length, 10000);
+    const lastPublish = report.evidence.filter(edge => edge.repo === 'publisher' && edge.kind === 'nats-publish').at(-1);
+    assert.equal(lastPublish.source.line, 5003);
     assert.equal(report.coverage, 'incomplete');
     assert.ok(report.skipped_roots.some(root => root.reason === 'evidence-limit'));
     assert.ok(report.relationships.length <= 5000);
