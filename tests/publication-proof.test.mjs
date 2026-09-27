@@ -32,7 +32,7 @@ function fixture({ legacy = false } = {}) {
   fs.writeFileSync(path.join(bin, 'gh'), `#!/bin/sh\ncase "$1 $2" in\n  "pr view") printf '%s' "$GH_PR_JSON" ;;\n  "repo view") printf '%s' '{"nameWithOwner":"owner/repo"}' ;;\n  "api repos/owner/repo/issues/comments/123") printf '%s' "$GH_COMMENT_JSON" ;;\n  *) exit 2 ;;\nesac\n`);
   fs.chmodSync(path.join(bin, 'gh'), 0o755);
   const fetchStub = path.join(root, 'fetch-stub.mjs');
-  fs.writeFileSync(fetchStub, 'globalThis.fetch = async () => ({status: 200, ok: true, url: "https://captures.example.test/proof.mp4"});\n');
+  fs.writeFileSync(fetchStub, 'globalThis.fetch = async (url) => new Response("video bytes", { headers: { "content-type": "video/mp4" } });\n');
   return { root, repo, taskDir, bin, fetchStub };
 }
 function addArtifact(taskDir, type, text) {
@@ -46,7 +46,7 @@ function addArtifact(taskDir, type, text) {
   fs.writeFileSync(path.join(taskDir, allocation.writePath), text);
   recordArtifact(taskDir, kind, variant, type, allocation.writePath);
 }
-const captureUrl = 'https://captures.example.test/proof.mp4';
+const captureUrl = 'https://github.com/user-attachments/assets/12345678-1234-1234-1234-123456789abc';
 const commentUrl = 'https://github.com/owner/repo/pull/7#issuecomment-123';
 const body = (tested, head, capture = captureUrl, result = 'passed') => `## Purpose\n\nOther reference: https://gitlab.com/example/unrelated\n\n## Evidence\n\n- result: ${result}\n- tested: ${tested}\n- current head: ${head}\n- capture: ${capture}\n- comment: ${commentUrl}\n\n## Change outline\n\nSource is unchanged.\n`;
 const comment = (tested, head, capture = captureUrl, result = 'passed') => ({ id: 123, html_url: commentUrl, body: `- result: ${result}\n- tested: ${tested}\n- current head: ${head}\n- capture: ${capture}` });
@@ -104,8 +104,56 @@ test('missing capture, wrong head, retargeted base and unreadable redirect fail 
   assert.equal(proofCommand({ ...data, posted: comment(data.tested, data.tested) }).status, 'incomplete');
   assert.equal(proofCommand({ ...data, baseBranch: 'release' }).status, 'incomplete');
   assert.equal(proofCommand({ ...data, baseHead: data.head }).status, 'incomplete');
-  fs.writeFileSync(data.fetchStub, 'globalThis.fetch = async () => ({status: 200, ok: true, url: "https://captures.example.test/users/sign_in"});\n');
+  fs.writeFileSync(data.fetchStub, 'globalThis.fetch = async () => Response.redirect("https://127.0.0.1/capture.mp4", 302);\n');
   assert.equal(proofCommand(data).status, 'incomplete');
+});
+
+test('direct raw gist text and image/video content are accepted, but HTML or empty captures are not', () => {
+  const data = completed();
+  const gist = 'https://gist.githubusercontent.com/owner/abcdef/raw/123456/proof.txt';
+  fs.writeFileSync(data.fetchStub, 'globalThis.fetch = async () => new Response("recorded proof", { headers: { "content-type": "text/plain; charset=utf-8" } });\n');
+  assert.equal(proofCommand({ ...data, prBody: body(data.tested, data.head, gist), posted: comment(data.tested, data.head, gist) }).status, 'pass');
+  const gitlab = 'https://gitlab.com/owner/repo/uploads/abcdef1234/proof.mp4';
+  fs.writeFileSync(data.fetchStub, 'globalThis.fetch = async () => new Response("video bytes", { headers: { "content-type": "video/mp4" } });\n');
+  assert.equal(proofCommand({ ...data, prBody: body(data.tested, data.head, gitlab), posted: comment(data.tested, data.head, gitlab) }).status, 'pass');
+  fs.writeFileSync(data.fetchStub, 'globalThis.fetch = async () => new Response("recorded proof", { headers: { "content-type": "text/plain; charset=utf-8" } });\n');
+  assert.equal(proofCommand(data).status, 'incomplete');
+  fs.writeFileSync(data.fetchStub, 'globalThis.fetch = async () => new Response("<html>login</html>", { headers: { "content-type": "text/html" } });\n');
+  assert.equal(proofCommand(data).status, 'incomplete');
+  fs.writeFileSync(data.fetchStub, 'globalThis.fetch = async () => new Response("", { headers: { "content-type": "video/mp4" } });\n');
+  assert.equal(proofCommand(data).status, 'incomplete');
+  fs.writeFileSync(data.fetchStub, 'globalThis.fetch = async () => new Response("image bytes", { headers: { "content-type": "image/png" } });\n');
+  assert.equal(proofCommand(data).status, 'pass');
+  fs.writeFileSync(data.fetchStub, 'globalThis.fetch = async () => new Response(Uint8Array.of(0, 0, 0, 24, 102, 116, 121, 112, 105, 115, 111, 109), { headers: { "content-type": "application/octet-stream" } });\n');
+  assert.equal(proofCommand(data).status, 'pass');
+});
+
+test('untrusted capture destinations and redirects to local or HTTP addresses are never fetched', () => {
+  const data = completed();
+  const fetches = path.join(data.root, 'fetches.log');
+  const stub = (script) => fs.writeFileSync(data.fetchStub, `import fs from 'node:fs';\n` +
+    `globalThis.fetch = async (url) => { fs.appendFileSync(${JSON.stringify(fetches)}, url + "\\n"); ${script} };\n`);
+  stub('return new Response("video bytes", { headers: { "content-type": "video/mp4" } });');
+  for (const url of ['https://127.0.0.1/proof.mp4', 'https://192.168.1.20/proof.mp4', 'https://internal.example.test/proof.mp4']) {
+    assert.equal(proofCommand({ ...data, prBody: body(data.tested, data.head, url), posted: comment(data.tested, data.head, url) }).status, 'incomplete');
+  }
+  assert.equal(fs.existsSync(fetches), false);
+  for (const destination of ['https://127.0.0.1/proof.mp4', 'https://192.168.1.20/proof.mp4', 'http://github.com/user-attachments/assets/1234']) {
+    stub(`return Response.redirect(${JSON.stringify(destination)}, 302);`);
+    assert.equal(proofCommand(data).status, 'incomplete');
+  }
+  assert.equal(fs.readFileSync(fetches, 'utf8'), `${captureUrl}\n`.repeat(3));
+  const githubMedia = 'https://private-user-images.githubusercontent.com/123456/proof.mp4';
+  stub(`return String(url) === ${JSON.stringify(captureUrl)} ? Response.redirect(${JSON.stringify(githubMedia)}, 302) : new Response("video bytes", { headers: { "content-type": "video/mp4" } });`);
+  assert.equal(proofCommand(data).status, 'pass');
+  assert.equal(fs.readFileSync(fetches, 'utf8').endsWith(`${captureUrl}\n${githubMedia}\n`), true);
+});
+
+test('comment capture must equal the PR capture field, not merely appear elsewhere in comment', () => {
+  const data = completed();
+  const posted = comment(data.tested, data.head, 'https://gist.githubusercontent.com/owner/abcdef/raw/other.txt');
+  posted.body += `\nOther reference: ${captureUrl}`;
+  assert.equal(proofCommand({ ...data, posted }).status, 'incomplete');
 });
 
 test('source changes after the tested commit are stale even after a revert', () => {

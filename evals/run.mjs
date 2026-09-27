@@ -5,6 +5,8 @@ import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { subjectProblems } from "../scripts/check-commits.mjs";
+import { artifacts, failures, handoff, newest, placeholders } from "./lib.mjs";
+import { recordSecurityAssessment } from "./security-assessment.mjs";
 import { gradeEvidenceScenario, isEvidenceScenario, snapshotEvidenceSources } from "./iterate-evidence.mjs";
 import { metricsForOutput } from "./metrics.mjs";
 
@@ -38,7 +40,11 @@ if (args[0] === "--compare") {
     model: run?.model ?? "unknown",
     actualModel: run?.metrics?.coverage?.models?.length === 1 ? run.metrics.coverage.models[0] : "unknown",
     wallTimeSeconds: Number.isFinite(run?.wallTimeSeconds) ? run.wallTimeSeconds : "unknown",
-    spend: Number.isFinite(run?.metrics?.cost?.total) && run.metrics.cost_basis === "provider_reported_usd" &&
+    spend: Number.isFinite(run?.metrics?.cost?.total) && run.metrics.cost_basis === "provider_billed_usd" &&
+      run.metrics.coverage?.complete === true
+      ? { amount: run.metrics.cost.total, currency: "USD", basis: run.metrics.cost_basis, source: run.metrics.cost_source }
+      : "unknown",
+    estimatedCost: Number.isFinite(run?.metrics?.cost?.total) && run.metrics.cost_basis === "model_rate_estimate_usd" &&
       run.metrics.coverage?.complete === true
       ? { amount: run.metrics.cost.total, currency: "USD", basis: run.metrics.cost_basis, source: run.metrics.cost_source }
       : "unknown",
@@ -53,10 +59,17 @@ if (args[0] === "--compare") {
   const spendComparable = fixtureMatched && modelMatched && solo.acceptance === "passed" && delivery.acceptance === "passed" &&
     solo.spend !== "unknown" && delivery.spend !== "unknown" &&
     solo.spend.currency === delivery.spend.currency && solo.spend.basis === delivery.spend.basis;
+  const estimatedCostComparable = fixtureMatched && modelMatched && solo.acceptance === "passed" && delivery.acceptance === "passed" &&
+    solo.estimatedCost !== "unknown" && delivery.estimatedCost !== "unknown" &&
+    solo.estimatedCost.currency === delivery.estimatedCost.currency && solo.estimatedCost.basis === delivery.estimatedCost.basis;
   console.log(JSON.stringify({
     solo, delivery, fixtureMatched, modelMatched, spendComparable,
     spendAdvantage: spendComparable
       ? solo.spend.amount < delivery.spend.amount ? "solo" : delivery.spend.amount < solo.spend.amount ? "delivery" : "tie"
+      : "unknown",
+    estimatedCostComparable,
+    estimatedCostAdvantage: estimatedCostComparable
+      ? solo.estimatedCost.amount < delivery.estimatedCost.amount ? "solo" : delivery.estimatedCost.amount < solo.estimatedCost.amount ? "delivery" : "tie"
       : "unknown",
   }, null, 2));
   process.exit(0);

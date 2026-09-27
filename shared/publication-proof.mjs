@@ -47,16 +47,69 @@ function currentRecord(taskDir, type, index) {
   }
   return latest;
 }
-function hosted(url) {
-  return /^https:\/\//i.test(url) && !/\s/.test(url);
-}
-async function readable(url) {
-  if (!hosted(url)) return false;
+function captureDestination(value) {
   try {
-    let response = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(10000) });
-    if (response.status === 405 || response.status === 501) response = await fetch(url, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(10000) });
-    return response.ok && !/(?:^|\/)(?:login|sign[_-]?in)(?:\/|$)/i.test(new URL(response.url || url).pathname);
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.port || url.username || url.password || url.hash) return null;
+    const host = url.hostname.toLowerCase();
+    const githubAttachment = host === 'github.com' && /^\/user-attachments\/assets\/[a-z0-9-]+$/i.test(url.pathname);
+    const gitlabUpload = host === 'gitlab.com' && /\/uploads\/[a-z0-9]+\/[^/]+$/i.test(url.pathname);
+    const gistRaw = host === 'gist.githubusercontent.com' && /^\/[^/]+\/[a-f0-9]+\/raw(?:\/|$)/i.test(url.pathname);
+    const githubMedia = ['user-images.githubusercontent.com', 'private-user-images.githubusercontent.com',
+      'objects.githubusercontent.com', 'raw.githubusercontent.com', 'github-production-user-asset-6210df.s3.amazonaws.com'].includes(host);
+    return githubAttachment || gitlabUpload || gistRaw || githubMedia ? url : null;
+  } catch { return null; }
+}
+async function readable(value) {
+  let url = captureDestination(value);
+  if (!url) return false;
+  try {
+    for (let hop = 0; hop < 6; hop++) {
+      const response = await fetch(url, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(10000) });
+      if (response.url && response.url !== url.href) {
+        await response.body?.cancel();
+        return false;
+      }
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        const location = response.headers.get('location');
+        await response.body?.cancel();
+        if (!location) return false;
+        url = captureDestination(new URL(location, url));
+        if (!url) return false;
+        continue;
+      }
+      if (!response.ok || /(?:^|\/)(?:login|sign[_-]?in)(?:\/|$)/i.test(url.pathname)) {
+        await response.body?.cancel();
+        return false;
+      }
+      const type = response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase();
+      if (!(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif',
+        'video/mp4', 'video/webm', 'video/quicktime', 'video/ogg', 'video/x-matroska'].includes(type) ||
+        (type === 'text/plain' && url.hostname === 'gist.githubusercontent.com' && url.pathname.includes('/raw')) ||
+        type === 'application/octet-stream')) {
+        await response.body?.cancel();
+        return false;
+      }
+      if (!response.body) return false;
+      const reader = response.body.getReader();
+      try {
+        const { value: bytes, done } = await reader.read();
+        if (done || !bytes?.length) return false;
+        const prefix = new TextDecoder().decode(bytes.subarray(0, 32)).trimStart().toLowerCase();
+        if (prefix.startsWith('<!doctype html') || prefix.startsWith('<html')) return false;
+        if (type === 'application/octet-stream') {
+          const media = bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 ||
+            bytes[0] === 0xff && bytes[1] === 0xd8 ||
+            bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 ||
+            bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3 ||
+            bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70;
+          if (!media) return false;
+        }
+        return true;
+      } finally { await reader.cancel(); }
+    }
   } catch { return false; }
+  return false;
 }
 function commitExists(repo, value) {
   if (!/^[0-9a-f]{7,40}$/i.test(value)) return '';
@@ -121,7 +174,7 @@ export async function inspect({ taskDir, repo, prNumber, draftHostCapture = fals
   const captureCurrent = Boolean(testedSha && artifactOnly && hostedResult);
   const captureHosted = await readable(captureUrl);
   const commentVerified = Boolean(comment && String(comment.id) === commentId && comment.html_url === hostedCommentUrl &&
-    hostedCommentUrl !== captureUrl && commentText.includes(captureUrl) &&
+    hostedCommentUrl !== captureUrl && field(commentText, 'capture') === captureUrl &&
     commentText.includes(testedSha) && commentText.includes(pr.headRefOid));
   const bodyPublished = Boolean(captureUrl && hostedCommentUrl && evidence.includes(captureUrl) && evidence.includes(hostedCommentUrl));
   const proof = {

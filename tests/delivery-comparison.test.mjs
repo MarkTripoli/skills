@@ -29,22 +29,24 @@ test("comparison leaves acceptance incomplete and spend unknown without matched 
   }
 });
 
-test("spend advantage requires matching model and passing runs", () => {
+test("model-rate estimates compare only matched passing runs without claiming billed spend", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "delivery-comparison-spend-"));
   try {
     const solo = path.join(dir, "solo");
     const delivery = path.join(dir, "delivery");
     fs.mkdirSync(solo);
     fs.mkdirSync(delivery);
-    const metrics = { wall_ms: 12000, cost: { total: 2 }, cost_basis: "provider_reported_usd",
-      cost_source: "omp.turn_end.message.usage.cost", coverage: { complete: true, models: ["openai/model-a"] } };
+    const metrics = { wall_ms: 12000, cost: { total: 2 }, cost_basis: "model_rate_estimate_usd",
+      cost_source: "omp.turn_end.message.usage.cost (local model rate table)", coverage: { complete: true, models: ["openai/model-a"] } };
     const record = { ok: true, model: "model-a", fixtureRevision: "seed-1", wallTimeSeconds: 12, metrics };
     fs.writeFileSync(path.join(solo, "comparison-run.json"), JSON.stringify(record));
     const compare = () => JSON.parse(spawnSync(process.execPath, [runner.pathname, "--compare", solo, delivery], { encoding: "utf8" }).stdout);
     fs.writeFileSync(path.join(delivery, "comparison-run.json"), JSON.stringify({ ...record, model: "model-b", metrics: { ...metrics, cost: { total: 3 } } }));
-    assert.equal(compare().spendAdvantage, "unknown");
+    assert.equal(compare().estimatedCostAdvantage, "unknown");
     fs.writeFileSync(path.join(delivery, "comparison-run.json"), JSON.stringify({ ...record, metrics: { ...metrics, cost: { total: 3 } } }));
-    assert.equal(compare().spendAdvantage, "solo");
+    assert.equal(compare().estimatedCostAdvantage, "solo");
+    assert.equal(compare().spendComparable, false);
+    assert.equal(compare().spendAdvantage, "unknown");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -64,6 +66,7 @@ test("real OMP turn_end usage is counted once and terminal agent_end supplies th
   const metrics = metricsForOutput(output, 17);
   assert.deepEqual(metrics.tokens, { input: 2, output: 3, cacheRead: 0, cacheWrite: 0 });
   assert.equal(metrics.cost.total, 0);
+  assert.equal(metrics.cost_basis, "model_rate_estimate_usd");
   assert.equal(metrics.coverage.complete, true);
   assert.deepEqual(metrics.coverage.models, ["openai/model-a"]);
   assert.equal(metrics.answer, "final answer");
