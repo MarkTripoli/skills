@@ -34,11 +34,11 @@ const safeSubject = value => typeof value === 'string' && value.length <= 200 &&
 function repoIdentity(name, root) {
   const real = fs.realpathSync(root);
   if (!fs.statSync(real).isDirectory()) throw new Error('not a directory');
-  const top = fs.realpathSync(git(['rev-parse', '--show-toplevel'], real));
+  const top = fs.realpathSync(git(['rev-parse', '--show-toplevel'], real).trim());
   if (top !== real) throw new Error('repository root must be the canonical Git toplevel');
-  const common = path.resolve(real, git(['rev-parse', '--git-common-dir'], real));
-  const origin = safeOrigin(git(['remote', 'get-url', 'origin'], real));
-  const head = git(['rev-parse', '--verify', 'HEAD^{commit}'], real);
+  const common = path.resolve(real, git(['rev-parse', '--git-common-dir'], real).trim());
+  const origin = safeOrigin(git(['remote', 'get-url', 'origin'], real).trim());
+  const head = git(['rev-parse', '--verify', 'HEAD^{commit}'], real).trim();
   if (!origin || !/^[a-f0-9]{40,64}$/i.test(head)) throw new Error('origin or HEAD unavailable');
   return {name, root: real, common, origin, head};
 }
