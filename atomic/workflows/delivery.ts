@@ -8,6 +8,7 @@ import path from 'node:path';
 import { resolveSkillsDir } from '../lib/skill-storage.mjs';
 import { childBatches, childCompletionSnapshot, childJoinSummary, joinChildren } from '../lib/child-scheduler.mjs';
 import { hostedProof } from '../lib/hosted-proof.mjs';
+import { admitPlanWaves } from '../lib/plan-waves.mjs';
 
 const choices = (values: string[], fallback: string) => Type.Union(values.map(value => Type.Literal(value)), { default: fallback });
 const delivery = workflow({
@@ -208,6 +209,10 @@ const delivery = workflow({
       }
 
       const skill = decision.choice;
+      if (skill === 'implement-plan') {
+        const admission = admitPlanWaves(state.latest.plan?.text || '');
+        if (!admission.ok) return finish('blocked', `Plan dependency/file-scope admission refused before implementation: ${admission.error}`);
+      }
       const feedback = forced?.feedback || '';
       forced = null;
       state = await runSkill(ctx, task, state, taskInputs, skill, ++steps, feedback);
