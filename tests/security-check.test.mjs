@@ -16,22 +16,45 @@ function repository() {
   git('config', 'user.name', 'Fixture');
   git('remote', 'add', 'origin', 'https://account:secret-token@example.test/owner/project.git');
   fs.writeFileSync(path.join(root, 'seeded-secret.js'), `// Generated only inside an isolated temporary repository.\nconst apiKey = '${syntheticToken}';\n`);
-  git('add', 'seeded-secret.js');
+  fs.writeFileSync(path.join(root, 'Dockerfile'), 'FROM scratch\n');
+  git('add', 'seeded-secret.js', 'Dockerfile');
   git('commit', '-qm', 'fixture');
   return {root, revision: git('rev-parse', 'HEAD')};
 }
 
 function scanners({secret = syntheticToken, semgrep = {results: [], errors: []}, gitleaks = [{RuleID: 'github-pat', File: 'seeded-secret.js', StartLine: 2, Secret: secret, Match: `apiKey = '${secret}'`}]} = {}) {
   return (tool, args) => {
-    if (tool === 'semgrep') return args[0] === '--version'
-      ? {status: 0, stdout: '1.168.0'}
-      : {status: 0, stdout: JSON.stringify(semgrep), stderr: secret};
-    if (tool === 'gitleaks') return args[0] === 'version'
-      ? {status: 0, stdout: '8.24.0'}
-      : {status: 0, stdout: JSON.stringify(gitleaks), stderr: secret};
+    if (args[0] === '--version' || (tool === 'gitleaks' && args[0] === 'version')) return {status: 0, stdout: tool === 'gitleaks' ? '8.24.0' : tool === 'semgrep' ? '1.168.0' : `${tool}-1.0`};
+    if (tool === 'semgrep') return {status: 0, stdout: JSON.stringify(semgrep), stderr: secret};
+    if (tool === 'gitleaks') return {status: 0, stdout: JSON.stringify(gitleaks), stderr: secret};
+    if (tool === 'trivy') return {status: 0, stdout: JSON.stringify({Results: []})};
+    if (tool === 'hadolint' || tool === 'actionlint') return {status: 0, stdout: '[]'};
     throw new Error(`unexpected scanner: ${tool}`);
   };
 }
+
+test('reports independent offline lanes, findings, unavailable tools, and malformed output', () => {
+  const {root} = repository();
+  try {
+    const spawn = (tool, args, options) => {
+      if (tool === 'actionlint') return {status: null, error: new Error('ENOENT')};
+      if (tool === 'hadolint' && args[0] !== '--version') return {status: 0, stdout: '{broken'};
+      if (tool === 'trivy' && args[0] === 'config') return {status: 0, stdout: JSON.stringify({Results:[{Target:'Dockerfile',Misconfigurations:[{ID:'AVD-DS-0001',Severity:'HIGH',Code:{Lines:[{Number:4}]}}]}]})};
+      return scanners({gitleaks:[]})(tool,args,options);
+    };
+    const report = run({cwd:root,spawn});
+    assert.equal(report.coverage,'incomplete');
+    assert.equal(report.lanes.trivy_config.coverage,'complete');
+    assert.equal(report.lanes.trivy_fs.coverage,'complete');
+    assert.equal(report.lanes.actionlint.tool.status,'unavailable');
+    assert.equal(report.lanes.hadolint.tool.status,'failed');
+    assert.equal(report.lanes.semgrep.coverage,'complete');
+    assert.equal(report.findings.find(x=>x.rule_id==='AVD-DS-0001').path,'Dockerfile');
+    assert.equal(report.findings.find(x=>x.rule_id==='AVD-DS-0001').line,4);
+  } finally {
+    fs.rmSync(root,{recursive:true,force:true});
+  }
+});
 
 test('reports repository-bound secret findings without exposing secret data', () => {
   const {root, revision} = repository();
