@@ -88,6 +88,8 @@ node shared/publication-proof.mjs <task-dir> <repo-root> <pr-number>
 
 Use the actual task directory, repository root, and PR number. The command validates current indexed artifact records, compares the receipt and clean review revisions with Git HEAD, checks that any advancement contains only indexed task artifacts, and reads the hosted PR, comment, and published body through `gh`. It prints JSON with `status`, `reason`, and `ready`; mark ready only for `status: "pass"` and `ready: true`. `stale` requires fresh evidence/review for the changed code; `incomplete` requires repairing missing proof and rerunning the command. An explicit `--override "<reason>"` records the requested reason in output but can never produce pass or authorize ready.
 
+The Claude plugin offers an optional Bash `PreToolUse` guard when `SKILLS_PUBLICATION_TASK_DIR` names this task directory: direct `gh`/`./gh pr create --draft` can host capture but cannot pass final proof, and `gh pr ready [number]` requires the shared decision above. Direct shell calls outside Claude, unsupported tools/runtimes, and out-of-band GitHub publication are not guarded; perform this skill's proof and read-back steps regardless of hook registration. Unsupported targeted Bash PR syntax is denied in the selected task.
+
 When a draft exists solely to host a capture that has not yet been uploaded, the provisional check is:
 
 ```bash

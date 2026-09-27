@@ -1,0 +1,17 @@
+{
+  "description": "Optional task-scoped publication guard for Claude Bash tool calls",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/publication-pretooluse.mjs"]
+          }
+        ]
+      }
+    ]
+  }
+}
