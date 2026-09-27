@@ -1,0 +1,36 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {assessCompliance} from '../skills/delivery/security-check/scripts/compliance.mjs';
+
+const repository = 'https://example.test/acme/project';
+const revision = 'a'.repeat(40);
+const makeFinding = (id, scanner, rule_id, path) => ({finding_id: id, repository, revision, scanner, rule_id, path, line: 1, severity: 'LOW'});
+
+test('compliance report preserves complete accounting, citation failures, risk expiry, and unknown tools', () => {
+  const findings = [
+    makeFinding('missing-citation', 'semgrep', 'js.rule', 'src/missing.js'),
+    makeFinding('expired-risk', 'semgrep', 'js.rule', 'src/expired.js'),
+    makeFinding('unknown-tool', 'future-scanner', 'new-rule', 'src/new.js'),
+    makeFinding('active', 'gitleaks', 'generic-api-key', 'config/example'),
+  ];
+  findings[0].revision = 'b'.repeat(40);
+  const scan = {
+    schema_version: 1, repository, revision, findings,
+    tool: {name: 'semgrep', version: '1.0', status: 'ok'},
+    secret_tool: {name: 'gitleaks', version: '2.0', status: 'ok'},
+  };
+  const report = assessCompliance(scan, {
+    now: new Date('2026-09-27T00:00:00Z'),
+    risks: [{repository, rule_id: 'js.rule', path: 'src/expired.js', reason: 'temporary', expires: '2026-09-26'}],
+  });
+  assert.equal(report.coverage, 'incomplete');
+  assert.deepEqual(report.findings.map(item => item.finding_id), findings.map(item => item.finding_id));
+  assert.equal(report.findings[0].citation_status, 'missing');
+  assert.equal(report.findings[0].disposition, 'unknown');
+  assert.equal(report.findings[1].disposition, 'active');
+  assert.ok(report.tool_coverage.some(tool => tool.name === 'future-scanner' && tool.status === 'unknown'));
+  assert.equal(report.accounting.input_findings, 4);
+  assert.equal(report.accounting.reported_findings, 4);
+  assert.equal(report.catalog.version, '2026-09-27.1');
+  assert.match(report.catalog.disclaimer, /not a certification audit/i);
+});
