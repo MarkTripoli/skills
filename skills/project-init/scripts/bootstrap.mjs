@@ -21,7 +21,7 @@ export function detectProject(root) {
   const pythonMarkers = PYTHON_MARKERS.filter(has);
   const otherProjectMarkers = OTHER_PROJECT_MARKERS.filter(has);
   const hasManifest = has("package.json");
-  if (otherProjectMarkers.length) {
+  if (pythonMarkers.length || otherProjectMarkers.length) {
     return { status: "unsupported", reason: "Existing non-Node project signals are unsupported." };
   }
   if (nodeMarkers.length > 1) return { status: "unsupported", reason: "Multiple Node version markers are ambiguous." };
