@@ -32,6 +32,28 @@ const safeOrigin = origin => {
 };
 const safeLabel = value => typeof value === 'string' && value.length <= 120 && /^[A-Za-z0-9@][A-Za-z0-9@._/-]*$/.test(value) && !/(?:password|passwd|secret|token|credential|api[_-]?key)/i.test(value);
 const safeSubject = value => typeof value === 'string' && value.length <= 200 && /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*(?:\.\*|\.>)?$/.test(value) && !/(?:password|passwd|secret|token|credential|api[_-]?key|gh[pousr]_|sk-)/i.test(value);
+function safeYamlMappings(node, seen = new Set()) {
+  if (!node || typeof node !== 'object') return true;
+  if (node.constructor?.name === 'Alias') return false;
+  if (seen.has(node)) return true;
+  seen.add(node);
+  if (!Array.isArray(node.items)) return true;
+  const pairs = node.items.filter(item => item && typeof item === 'object' && Object.prototype.hasOwnProperty.call(item, 'key'));
+  if (pairs.length) {
+    const normalized = new Set();
+    for (const pair of pairs) {
+      const key = pair.key;
+      if (!key || !Object.prototype.hasOwnProperty.call(key, 'value') || typeof key.value !== 'string' ||
+          (key.tag && key.tag !== 'tag:yaml.org,2002:str') || key.tag === 'tag:yaml.org,2002:merge') return false;
+      const normalizedKey = String(key.value);
+      if (normalized.has(normalizedKey)) return false;
+      normalized.add(normalizedKey);
+      if (!safeYamlMappings(key, seen) || !safeYamlMappings(pair.value, seen)) return false;
+    }
+    return true;
+  }
+  return node.items.every(item => safeYamlMappings(item, seen));
+}
 function repoIdentity(name, root) {
   const real = fs.realpathSync(root);
   if (!fs.statSync(real).isDirectory()) throw new Error('not a directory');
@@ -77,8 +99,21 @@ function headFiles(repo) {
   }
   return {files, incomplete};
 }
-function lineAt(text, index) { return text.slice(0, index).split('\n').length; }
-function jsonPropertyLines(text) {
+function lineStarts(text) {
+  const starts = [0];
+  for (let index = 0; index < text.length; index++) if (text.charCodeAt(index) === 10) starts.push(index + 1);
+  return starts;
+}
+function lineAt(starts, index) {
+  let low = 0, high = starts.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (starts[middle] <= index) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+function jsonPropertyLines(text, starts) {
   const locations = new Map(), stack = [];
   const record = (parent, key, line) => {
     if (!locations.has(parent)) locations.set(parent, new Map());
@@ -99,7 +134,7 @@ function jsonPropertyLines(text) {
       if (text[next] === ':' && frame?.type === '{') {
         try {
           const key = JSON.parse(text.slice(start, end));
-          record(frame.owner, key, lineAt(text, start));
+          record(frame.owner, key, lineAt(starts, start));
           frame.pending = key;
         } catch { return null; }
       }
@@ -149,45 +184,137 @@ function sourceTokens(source) {
   }
   return tokens;
 }
-function natsSubjects(source, limit = MAX_EVIDENCE) {
-  const tokens = sourceTokens(source), connectFunctions = new Set(), namespaces = new Set(), clients = new Set(), result = [];
-  let truncated = false;
+function tokenScopes(tokens) {
+  const scopes = new Array(tokens.length), parents = [-1], stack = [0];
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i].value === '}' && stack.length > 1) stack.pop();
+    scopes[i] = stack.at(-1);
+    if (tokens[i].value === '{') {
+      const child = parents.length;
+      parents.push(stack.at(-1));
+      stack.push(child);
+    }
+  }
+  return {scopes, parents};
+}
+function natsSubjects(source, limit = MAX_EVIDENCE, starts = lineStarts(source)) {
+  const tokens = sourceTokens(source), {scopes, parents} = tokenScopes(tokens);
+  const connectFunctions = new Map(), namespaces = new Map(), clients = new Map(), result = [];
+  let truncated = false, ambiguous = false, hasNatsBinding = false;
   const value = (i, v) => tokens[i]?.value === v;
+  const register = (bindings, name, index, scope = scopes[index]) => {
+    if (!name || tokens[index]?.type !== 'id') { ambiguous = true; return; }
+    if (bindings.has(name) && bindings.get(name).index !== index) ambiguous = true;
+    else bindings.set(name, {index, scope});
+  };
+  const visible = (binding, scope) => {
+    while (scope >= 0) {
+      if (scope === binding.scope) return true;
+      scope = parents[scope];
+    }
+    return false;
+  };
   for (let i = 0; i < tokens.length; i++) {
     if (value(i, 'import')) {
       let from = i + 1;
       while (from < tokens.length && !value(from, 'from') && tokens[from].value !== ';') from++;
-      if (!value(from, 'from') || tokens[from + 1]?.value !== 'nats') continue;
+      if (!value(from, 'from')) continue;
       const bindings = tokens.slice(i + 1, from);
-      if (bindings[0]?.value === 'type') continue;
-      if (bindings[0]?.value === '*' && bindings[1]?.value === 'as' && bindings[2]?.type === 'id') namespaces.add(bindings[2].value);
-      for (let j = 0; j < bindings.length; j++) if (bindings[j].value === 'connect' && bindings[j - 1]?.value !== 'type') connectFunctions.add(bindings[j + 1]?.value === 'as' ? bindings[j + 2]?.value : 'connect');
+      if (tokens[from + 1]?.value === 'nats' && bindings[0]?.value !== 'type') {
+        hasNatsBinding = true;
+        if (bindings[0]?.value === '*' && bindings[1]?.value === 'as' && bindings[2]?.type === 'id') register(namespaces, bindings[2].value, i + 3, 0);
+        for (let j = 0; j < bindings.length; j++) {
+          if (bindings[j].value !== 'connect' || bindings[j - 1]?.value === 'type') continue;
+          const localOffset = bindings[j + 1]?.value === 'as' ? j + 2 : j;
+          register(connectFunctions, bindings[localOffset]?.value, i + 1 + localOffset, 0);
+        }
+      }
     }
     if (value(i, 'require') && value(i + 1, '(') && tokens[i + 2]?.value === 'nats' && value(i + 3, ')')) {
-      if (value(i - 1, '=') && tokens[i - 2]?.type === 'id') namespaces.add(tokens[i - 2].value);
+      if (value(i - 3, 'const') && tokens[i - 2]?.type === 'id' && value(i - 1, '=')) {
+        hasNatsBinding = true;
+        register(namespaces, tokens[i - 2].value, i - 2);
+      }
       if (value(i - 1, '=') && value(i - 2, '}')) {
         let open = i - 3;
         while (open >= 0 && !value(open, '{')) open--;
-        for (let j = open + 1; j < i - 2; j++) if (value(j, 'connect')) connectFunctions.add(value(j + 1, ':') ? tokens[j + 2]?.value : 'connect');
+        if (value(open - 1, 'const')) {
+          hasNatsBinding = true;
+          for (let j = open + 1; j < i - 2; j++) {
+            if (!value(j, 'connect')) continue;
+            const localOffset = value(j + 1, ':') ? j + 2 : j;
+            register(connectFunctions, tokens[localOffset]?.value, localOffset, scopes[open - 1]);
+          }
+        }
       }
     }
   }
+  if (!hasNatsBinding) return {matches: result, truncated, ambiguous: false};
+  const allowed = new Set([...connectFunctions.values(), ...namespaces.values()].map(binding => binding.index));
   for (let i = 0; i + 4 < tokens.length; i++) {
-    if (tokens[i].value !== 'const' || tokens[i + 1]?.type !== 'id' || !value(i + 2, '=')) continue;
+    if (!value(i, 'const') || tokens[i + 1]?.type !== 'id' || !value(i + 2, '=')) continue;
     const name = tokens[i + 1].value; let callee = i + 3;
     if (value(callee, 'await')) callee++;
-    const isConnect = connectFunctions.has(tokens[callee]?.value) && value(callee + 1, '(') ||
-      namespaces.has(tokens[callee]?.value) && value(callee + 1, '.') && value(callee + 2, 'connect') && value(callee + 3, '(');
-    if (isConnect) clients.add(name);
+    const functionBinding = connectFunctions.get(tokens[callee]?.value);
+    const namespaceBinding = namespaces.get(tokens[callee]?.value);
+    const callsImportedConnect = functionBinding && value(callee + 1, '(') ||
+      namespaceBinding && value(callee + 1, '.') && value(callee + 2, 'connect') && value(callee + 3, '(');
+    const isConnect = callsImportedConnect && (functionBinding ? visible(functionBinding, scopes[callee]) : visible(namespaceBinding, scopes[callee]));
+    if (callsImportedConnect && !isConnect) ambiguous = true;
+    if (isConnect) {
+      if (clients.has(name)) ambiguous = true;
+      else clients.set(name, {index: i + 1, scope: scopes[i + 1]});
+    }
   }
+  for (const binding of clients.values()) allowed.add(binding.index);
+  const candidates = new Set([...connectFunctions.keys(), ...namespaces.keys(), ...clients.keys()]);
+  const matchingClose = (open, left, right) => {
+    let depth = 0;
+    for (let index = open; index < tokens.length; index++) {
+      if (value(index, left)) depth++;
+      else if (value(index, right) && --depth === 0) return index;
+    }
+    return -1;
+  };
+  for (let i = 0; i < tokens.length; i++) {
+    if (['const', 'let', 'var'].includes(tokens[i].value)) {
+      if (isCandidate(i + 1)) ambiguous = true;
+      if (value(i + 1, '{') || value(i + 1, '[')) {
+        const close = matchingClose(i + 1, tokens[i + 1].value, tokens[i + 1].value === '{' ? '}' : ']');
+        for (let j = i + 2; j >= 0 && j < close; j++) if (isCandidate(j)) ambiguous = true;
+      }
+    }
+    if ((value(i, 'function') || value(i, 'class')) && isCandidate(i + 1 + Number(value(i + 1, '*')))) ambiguous = true;
+    if (value(i, '(')) {
+      const close = matchingClose(i, '(', ')');
+      if (close < 0) continue;
+      const previous = tokens[i - 1]?.value;
+      const next = tokens[close + 1]?.value;
+      const parameterList = next === '=>' || value(i - 1, 'function') || value(i - 1, 'catch') ||
+        (next === '{' && tokens[i - 1]?.type === 'id' && !['if', 'while', 'for', 'switch', 'with'].includes(previous));
+      if (parameterList) for (let j = i + 1; j < close; j++) if (isCandidate(j)) ambiguous = true;
+    }
+    if (isCandidate(i) && value(i + 1, '=>')) ambiguous = true;
+    if (value(i, 'import')) {
+      let from = i + 1;
+      while (from < tokens.length && !value(from, 'from') && tokens[from].value !== ';') from++;
+      if (value(from, 'from') && tokens[from + 1]?.value !== 'nats') {
+        for (let j = i + 1; j < from; j++) if (isCandidate(j)) ambiguous = true;
+      }
+    }
+  }
+  if (ambiguous) return {matches: result, truncated, ambiguous: true};
   for (let i = 0; i + 5 < tokens.length; i++) {
-    if (!clients.has(tokens[i].value) || !value(i + 1, '.') || !['publish', 'subscribe'].includes(tokens[i + 2]?.value) ||
+    const client = clients.get(tokens[i].value);
+    if (!client || !value(i + 1, '.') || !['publish', 'subscribe'].includes(tokens[i + 2]?.value) ||
         !value(i + 3, '(') || tokens[i + 4]?.type !== 'string' || !tokens[i + 4].value || !safeSubject(tokens[i + 4].value) ||
         ![',', ')'].includes(tokens[i + 5]?.value)) continue;
+    if (!visible(client, scopes[i])) { ambiguous = true; continue; }
     if (result.length >= limit) { truncated = true; break; }
-    result.push({kind: tokens[i + 2].value === 'publish' ? 'nats-publish' : 'nats-subscribe', subject: tokens[i + 4].value, line: lineAt(source, tokens[i].start)});
+    result.push({kind: tokens[i + 2].value === 'publish' ? 'nats-publish' : 'nats-subscribe', subject: tokens[i + 4].value, line: lineAt(starts, tokens[i].start)});
   }
-  return {matches: result, truncated};
+  if (ambiguous) return {matches: [], truncated, ambiguous: true};
+  return {matches: result, truncated, ambiguous: false};
 }
 function codeEdges(repo, files, maxEdges = MAX_EVIDENCE) {
   const edges = [];
@@ -197,12 +324,16 @@ function codeEdges(repo, files, maxEdges = MAX_EVIDENCE) {
     edges.push(edge); return true;
   };
   for (const file of files) {
-    const subjects = natsSubjects(file.text, Math.max(0, maxEdges - edges.length));
-    for (const match of subjects.matches) emit({kind: match.kind, repo: repo.name, subject: match.subject, source: {path: file.path, line: match.line}});
-    if (subjects.truncated) { incomplete = true; truncated = true; }
+    const starts = lineStarts(file.text);
+    if (/\.(?:mjs|cjs|js|jsx|ts|tsx)$/.test(file.path)) {
+      const subjects = natsSubjects(file.text, Math.max(0, maxEdges - edges.length), starts);
+      for (const match of subjects.matches) emit({kind: match.kind, repo: repo.name, subject: match.subject, source: {path: file.path, line: match.line}});
+      if (subjects.truncated) { incomplete = true; truncated = true; }
+      if (subjects.ambiguous) incomplete = true;
+    }
     if (path.posix.basename(file.path) === 'package.json') {
       try {
-        const data = JSON.parse(file.text), locations = jsonPropertyLines(file.text);
+        const data = JSON.parse(file.text), locations = jsonPropertyLines(file.text, starts);
         const sections = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
         if (typeof data.name === 'string' && safeLabel(data.name)) {
           const line = locations?.get(null)?.get('name') ?? null;
@@ -224,22 +355,24 @@ function codeEdges(repo, files, maxEdges = MAX_EVIDENCE) {
     }
     if (/\.(yaml|yml)$/.test(file.path)) {
       let docs;
-      try { docs = parseAllDocuments(file.text, {uniqueKeys: true}); } catch { incomplete = true; continue; }
+      try { docs = parseAllDocuments(file.text, {uniqueKeys: true, logLevel: 'silent'}); } catch { incomplete = true; continue; }
       if (docs.length > 1) incomplete = true;
       for (const doc of docs) {
         if (doc.errors.length) { incomplete = true; continue; }
         try {
+          if (!safeYamlMappings(doc.contents)) { incomplete = true; continue; }
           const resource = doc.toJS();
           if (!resource || typeof resource !== 'object' || Array.isArray(resource)) { incomplete = true; continue; }
           const kind = resource.kind, spec = resource.spec;
           if (!['Service', 'Deployment', 'StatefulSet', 'DaemonSet', 'Pod'].includes(kind) || !spec) { incomplete = true; continue; }
           const name = String(resource.metadata?.name ?? 'unnamed');
-          const selector = kind === 'Service' ? (spec.selector ?? {}) : (spec.template?.metadata?.labels ?? resource.metadata?.labels ?? {});
+          const selector = kind === 'Service' ? (spec.selector ?? {}) :
+            kind === 'Pod' ? (resource.metadata?.labels ?? {}) : (spec.template?.metadata?.labels ?? {});
           if (!safeLabel(name) || !selector || typeof selector !== 'object' || Array.isArray(selector) || Object.keys(selector).length > MAX_SELECTOR_LABELS ||
               Object.entries(selector).some(([key, value]) => !safeLabel(key) || !safeLabel(String(value)))) { incomplete = true; continue; }
           const kindNode = doc.get('kind', true);
           if (!kindNode?.range) { incomplete = true; continue; }
-          emit({kind: 'kubernetes-declaration', repo: repo.name, resource_kind: kind, name, selector, source: {path: file.path, line: lineAt(file.text, kindNode.range[0])}});
+          emit({kind: 'kubernetes-declaration', repo: repo.name, resource_kind: kind, name, selector, source: {path: file.path, line: lineAt(starts, kindNode.range[0])}});
         } catch { incomplete = true; }
       }
     }

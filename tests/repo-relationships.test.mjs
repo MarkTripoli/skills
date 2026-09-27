@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {execFileSync} from 'node:child_process';
+import {execFileSync, spawnSync} from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -165,18 +165,62 @@ test('installed skill parses YAML without resolving a parent node_modules', () =
   try {
     const skill = path.join(base, 'installed', 'repo-relationships');
     fs.cpSync(path.join(projectRoot, 'skills/delivery/repo-relationships'), skill, {recursive: true});
+    const unsafeMarker = 'synthetic-yaml-credential-marker';
     const publisher = create('publisher', {
       'src/events.js': "import { connect } from 'nats';\nconst nc = await connect();\nnc.publish('install.ready', value);\n",
-      'deploy/service.yaml': 'apiVersion: v1\nkind: Service\nmetadata:\n  name: consumer-service\nspec:\n  selector:\n    app: consumer\n',
+      'deploy/service.yaml': 'apiVersion: v1\nkind: Service\nmetadata:\n  name: consumer-service\n  annotations:\n    sample: |\n      import { connect } from "nats";\n      const fake = await connect();\n      fake.publish("install.ready", value);\nspec:\n  selector:\n    app: consumer\n',
+      'deploy/complex.yaml': `apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: complex\n? [${unsafeMarker}, secondary]\n: hidden\n`,
     });
     const subscriber = create('subscriber', {
       'src/events.js': "import { connect } from 'nats';\nconst nc = await connect();\nnc.subscribe('install.ready', handler);\n",
       'deploy/workload.yaml': 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: consumer\nspec:\n  template:\n    metadata:\n      labels:\n        app: consumer\n',
+      'deploy/key-collision.yaml': 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: numeric-collision\nspec:\n  template:\n    metadata:\n      labels:\n        1: numeric\n        "1": string\n',
     });
     assert.equal(fs.existsSync(path.join(base, 'node_modules')), false);
-    const output = execFileSync(process.execPath, [path.join(skill, 'scripts/analyze.mjs'), '--repo', `publisher=${publisher}`, '--repo', `subscriber=${subscriber}`], {cwd: base, encoding: 'utf8'});
-    const report = JSON.parse(output);
-    assert.ok(report.relationships.some(edge => edge.kind === 'nats-subject' && edge.classification === 'candidate'));
-    assert.ok(report.relationships.some(edge => edge.kind === 'kubernetes-selector-match'));
+    const result = spawnSync(process.execPath, [path.join(skill, 'scripts/analyze.mjs'), '--repo', `publisher=${publisher}`, '--repo', `subscriber=${subscriber}`], {cwd: base, encoding: 'utf8'});
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, '');
+    assert.equal(result.stdout.includes(unsafeMarker), false);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.security.credentials_emitted, false);
+    assert.equal(report.coverage, 'incomplete');
+    assert.equal(report.relationships.filter(edge => edge.kind === 'nats-subject').length, 1);
+    assert.ok(report.relationships.some(edge => edge.kind === 'nats-subject' && edge.from.source.path === 'src/events.js'));
+    assert.equal(report.evidence.some(edge => edge.name === 'numeric-collision' || edge.name === 'complex'), false);
+    assert.ok(report.skipped_roots.some(root => root.name === 'publisher' && root.coverage === 'incomplete'));
+  } finally { fs.rmSync(base, {recursive: true, force: true}); }
+});
+test('fails closed on controller metadata labels but accepts Pod labels', () => {
+  const {base, create} = fixture();
+  try {
+    const service = create('service', {
+      'deploy/service.yaml': 'apiVersion: v1\nkind: Service\nmetadata:\n  name: shared-service\nspec:\n  selector:\n    app: shared\n',
+    });
+    const workloads = create('workloads', {
+      'deploy/controller.yaml': 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: controller\n  labels:\n    app: shared\nspec:\n  template:\n    metadata: {}\n',
+      'deploy/pod.yaml': 'apiVersion: v1\nkind: Pod\nmetadata:\n  name: labeled-pod\n  labels:\n    app: shared\nspec: {}\n',
+    });
+    const report = analyze([{name: 'service', root: service}, {name: 'workloads', root: workloads}]);
+    const matches = report.relationships.filter(edge => edge.kind === 'kubernetes-selector-match');
+    assert.equal(matches.length, 1);
+    assert.equal(matches[0].to.name, 'labeled-pod');
+    assert.equal(report.coverage, 'complete');
+  } finally { fs.rmSync(base, {recursive: true, force: true}); }
+});
+
+test('rejects shadowed NATS symbols and ignores YAML block scalar code', () => {
+  const {base, create} = fixture();
+  try {
+    const publisher = create('publisher', {'src/events.js': "import { connect } from 'nats';\nconst client = await connect();\nclient.publish('orders.created', payload);\n"});
+    const subscriber = create('subscriber', {'src/events.js': "import { connect } from 'nats';\nconst client = await connect();\nclient.subscribe('orders.created', handler);\n"});
+    const ambiguous = create('ambiguous', {
+      'src/shadow.js': "import { connect } from 'nats';\nconst client = await connect();\nfunction consume(client) { client.subscribe('orders.created', handler); }\nfunction fake() { const connect = () => ({}); const client = connect(); client.subscribe('orders.created', handler); }\n",
+      'deploy/workload.yaml': 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: safe-workload\n  annotations:\n    sample: |\n      import { connect } from "nats";\n      const fake = await connect();\n      fake.subscribe("orders.created", handler);\nspec:\n  template:\n    metadata:\n      labels:\n        app: safe\n',
+    });
+    const report = analyze([{name: 'publisher', root: publisher}, {name: 'subscriber', root: subscriber}, {name: 'ambiguous', root: ambiguous}]);
+    assert.equal(report.relationships.filter(edge => edge.kind === 'nats-subject').length, 1);
+    assert.equal(report.relationships.some(edge => edge.kind === 'nats-subject' && (edge.from.repo === 'ambiguous' || edge.to.repo === 'ambiguous')), false);
+    assert.equal(report.evidence.some(edge => edge.repo === 'ambiguous' && edge.kind.startsWith('nats-')), false);
+    assert.ok(report.skipped_roots.some(root => root.name === 'ambiguous' && root.coverage === 'incomplete'));
   } finally { fs.rmSync(base, {recursive: true, force: true}); }
 });
