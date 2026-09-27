@@ -2,7 +2,7 @@
   "$schema": "skills.task-index/v1",
   "schemaVersion": 1,
   "task": "i-want-you-gpt",
-  "generation": 8,
+  "generation": 9,
   "artifactSeries": {
     "research.sources": {
       "current": "research.sources.0001",
@@ -109,6 +109,20 @@
           "type": "evidence",
           "status": "passed",
           "summary": "Fifteen focused cases and live draft/ready publication probes passed at 591c40eb; scanner coverage was correctly reported incomplete, not clean. Original CLI output is anonymously readable at the hosted capture and linked in PR #141's distinct evidence comment."
+        }
+      ]
+    },
+    "pull-request.description": {
+      "current": "pull-request.description.0001",
+      "iterations": [
+        {
+          "id": "pull-request.description.0001",
+          "iteration": 1,
+          "path": "artifacts/pull-request/description/0001.md",
+          "sha256": "8341b27ceac3e6d5cba3b86d7ac8738ac8640d0f93f49f8b575fab495b1f09d7",
+          "type": "pr-description",
+          "status": null,
+          "summary": "Close the measured delivery and security gaps against `bdfinst/agentic-dev-team` without replacing portable phase skills, defaulting to a security-agent swarm, or claiming an unmeasured cost advantage."
         }
       ]
     }
