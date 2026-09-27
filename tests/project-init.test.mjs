@@ -93,3 +93,18 @@ test("Python and mixed Node/Python signals are unsupported", () => fixture((root
   assert.deepEqual(mixed.actions, []);
   assert.equal(fs.existsSync(path.join(root, "package.json")), false);
 }));
+
+test("Go project with Node version marker is unsupported and never bootstrapped", () => fixture((root) => {
+  fs.writeFileSync(path.join(root, "go.mod"), "module example.test/project\n");
+  fs.writeFileSync(path.join(root, ".nvmrc"), "22\n");
+  const plan = createPlan(root);
+  assert.equal(plan.mode, "unsupported");
+  assert.deepEqual(plan.actions, []);
+  const script = fileURLToPath(new URL("../skills/project-init/scripts/bootstrap.mjs", import.meta.url));
+  const dryRun = spawnSync(process.execPath, [script, "--target", root], { encoding: "utf8" });
+  assert.equal(dryRun.status, 2);
+  assert.equal(JSON.parse(dryRun.stdout).mode, "unsupported");
+  const apply = spawnSync(process.execPath, [script, "--target", root, "--apply", "--approve"], { encoding: "utf8" });
+  assert.equal(apply.status, 2);
+  assert.equal(fs.existsSync(path.join(root, "package.json")), false);
+}));

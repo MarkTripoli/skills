@@ -12,15 +12,17 @@ const LOCKFILES = [
   ["npm-shrinkwrap.json", "npm"],
 ];
 const PYTHON_MARKERS = ["pyproject.toml", "uv.lock", "poetry.lock", "Pipfile", "Pipfile.lock"];
+const OTHER_PROJECT_MARKERS = ["go.mod"];
 
 export function detectProject(root) {
   const has = (name) => fs.existsSync(path.join(root, name));
   const nodeMarkers = NODE_MARKERS.filter(has);
   const lockfiles = LOCKFILES.filter(([file]) => has(file));
   const pythonMarkers = PYTHON_MARKERS.filter(has);
+  const otherProjectMarkers = OTHER_PROJECT_MARKERS.filter(has);
   const hasManifest = has("package.json");
-  if (pythonMarkers.length && (nodeMarkers.length || lockfiles.length || hasManifest)) {
-    return { status: "unsupported", reason: "Mixed Node and Python project signals are unsupported." };
+  if (otherProjectMarkers.length) {
+    return { status: "unsupported", reason: "Existing non-Node project signals are unsupported." };
   }
   if (nodeMarkers.length > 1) return { status: "unsupported", reason: "Multiple Node version markers are ambiguous." };
   if (lockfiles.length > 1) return { status: "unsupported", reason: "Conflicting or multiple package-manager lockfiles are unsupported." };
