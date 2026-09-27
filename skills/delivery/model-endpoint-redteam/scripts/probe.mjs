@@ -122,12 +122,12 @@ async function readBoundedResponse(response){
   try{JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));}catch{throw Error('Response body is not valid JSON');}
   return {responseSha:hash(bytes)};
 }
-export async function run(options,{fetchImpl=fetch,sleep=ms=>new Promise(r=>setTimeout(r,ms)),audit=appendAudit,now=()=>new Date(),monotonicNow=()=>performance.now(),runId=randomUUID()}={}) {
+export async function run(options,{fetchImpl=fetch,sleep=ms=>new Promise(r=>setTimeout(r,ms)),monotonicNow=()=>performance.now(),runId=randomUUID()}={}) {
   validate(options);
   const live=options.live===true;
   const endpoint=new URL(options.url).origin;
   let attestation={operatorDigest:null,scope:null};
-  if(live)attestation=readAuthorization(options,now());
+  if(live)attestation=readAuthorization(options,new Date());
   const auditPath=options.audit??DEFAULT_AUDIT_FILE;
   const outcomes=[];let attempts=0,failedAttempts=0,lastAttemptAt=null;
   for(const name of options.probes){
@@ -138,10 +138,10 @@ export async function run(options,{fetchImpl=fetch,sleep=ms=>new Promise(r=>setT
       const attemptNumber=attempts+1,attemptId=`${runId}:${attemptNumber}`;
       if(lastAttemptAt!==null){const waitMs=Math.max(MIN_RATE_MS,options.rateMs)-(monotonicNow()-lastAttemptAt);if(waitMs>0)await sleep(waitMs);}
       attempts++;result.attempts++;
-      try{audit(auditPath,{event:'attempt-start',run_id:runId,attempt_id:attemptId,attempt:attemptNumber,probe:name,origin:endpoint,operator_sha256:attestation.operatorDigest,authorization_grant_sha256:attestation.grantDigest,at:now().toISOString()});}catch{throw Error('Audit write failed before request; execution stopped');}
+      try{appendAudit(auditPath,{event:'attempt-start',run_id:runId,attempt_id:attemptId,attempt:attemptNumber,probe:name,origin:endpoint,operator_sha256:attestation.operatorDigest,authorization_grant_sha256:attestation.grantDigest,at:new Date().toISOString()});}catch{throw Error('Audit write failed before request; execution stopped');}
       let attemptStatus='failed',fatalAuthorization=false,attemptFailed=false;
       try{
-        const checkedAt=now();
+        const checkedAt=new Date();
         if(checkedAt.getTime()>=attestation.expiresAt)throw Error('original authorization expired');
         const current=readAuthorization(options,checkedAt);
         if(current.scope!==attestation.scope||current.operatorDigest!==attestation.operatorDigest||current.authorizedAt!==attestation.authorizedAt||current.expiresAt!==attestation.expiresAt||current.grantDigest!==attestation.grantDigest)throw Error('authorization changed');
@@ -157,7 +157,7 @@ export async function run(options,{fetchImpl=fetch,sleep=ms=>new Promise(r=>setT
         }catch{result.status='failed';result.error='Request failed';attemptFailed=true;}
       }
       if(attemptFailed){failedAttempts++;result.failed_attempts++;}
-      try{audit(auditPath,{event:'attempt-result',run_id:runId,attempt_id:attemptId,attempt:attemptNumber,probe:name,status:attemptStatus,authorization_grant_sha256:attestation.grantDigest,at:now().toISOString()});}catch{throw Error('Audit write failed after request; execution stopped');}
+      try{appendAudit(auditPath,{event:'attempt-result',run_id:runId,attempt_id:attemptId,attempt:attemptNumber,probe:name,status:attemptStatus,authorization_grant_sha256:attestation.grantDigest,at:new Date().toISOString()});}catch{throw Error('Audit write failed after request; execution stopped');}
       lastAttemptAt=monotonicNow();
       if(fatalAuthorization)throw Error('Authorization expired or changed; execution stopped');
       if(result.status==='received_unassessed')break;
@@ -166,7 +166,7 @@ export async function run(options,{fetchImpl=fetch,sleep=ms=>new Promise(r=>setT
   }
   const status=!live?'planned':failedAttempts?'failed':'incomplete';
   const report={schema_version:1,status,run_id:runId,endpoint,authorized_scope_sha256:attestation.scope?hash(attestation.scope):null,operator_sha256:attestation.operatorDigest,authorization_grant_sha256:attestation.grantDigest,authorization:{operator_attestation:live,independently_verified:false},selected_probes:options.probes,probes:outcomes,attempts,failed_attempts:failedAttempts};
-  if(live){try{audit(auditPath,{event:'report',run_id:runId,status:report.status,at:now().toISOString()});}catch{throw Error('Audit write failed; report not finalized');}}
+  if(live){try{appendAudit(auditPath,{event:'report',run_id:runId,status:report.status,at:new Date().toISOString()});}catch{throw Error('Audit write failed; report not finalized');}}
   return report;
 }
 if(import.meta.url===new URL(`file://${process.argv[1]}`).href){try{const options=parse(process.argv.slice(2));if(options.help)console.log(help);else{validate(options);const report=await run(options);console.log(JSON.stringify(report));if(options.live&&report.status!=='complete')process.exitCode=1;}}catch(error){console.error(JSON.stringify({status:'refused',reason:safe(error.message)}));process.exitCode=1;}}
