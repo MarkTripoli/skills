@@ -11,7 +11,7 @@ const LOCKFILES = [
   ["package-lock.json", "npm"],
   ["npm-shrinkwrap.json", "npm"],
 ];
-const PYTHON_MARKERS = ["pyproject.toml", "uv.lock", "poetry.lock", "Pipfile", "Pipfile.lock"];
+const PYTHON_MARKERS = ["pyproject.toml", "uv.lock", "poetry.lock", "Pipfile", "Pipfile.lock", "requirements.txt"];
 const OTHER_PROJECT_MARKERS = ["go.mod"];
 
 export function detectProject(root) {

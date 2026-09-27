@@ -108,3 +108,16 @@ test("Go project with Node version marker is unsupported and never bootstrapped"
   assert.equal(apply.status, 2);
   assert.equal(fs.existsSync(path.join(root, "package.json")), false);
 }));
+
+test("requirements.txt with Node version marker is unsupported and never bootstrapped", () => fixture((root) => {
+  fs.writeFileSync(path.join(root, "requirements.txt"), "example==1.0\n");
+  fs.writeFileSync(path.join(root, ".nvmrc"), "22\n");
+  const plan = createPlan(root);
+  assert.equal(plan.mode, "unsupported");
+  assert.deepEqual(plan.actions, []);
+  const script = fileURLToPath(new URL("../skills/project-init/scripts/bootstrap.mjs", import.meta.url));
+  const apply = spawnSync(process.execPath, [script, "--target", root, "--apply", "--approve"], { encoding: "utf8" });
+  assert.equal(apply.status, 2);
+  assert.equal(JSON.parse(apply.stdout).mode, "unsupported");
+  assert.equal(fs.existsSync(path.join(root, "package.json")), false);
+}));
