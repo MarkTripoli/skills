@@ -85,6 +85,41 @@ test("deleted paths are not current coverage or mutation candidates", () => {
   assert.equal(changed.files.includes("src/deleted.py"), false);
 });
 
+test("changed-line coverage counts only added JSX lines, not unchanged LCOV counters", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "test-health-jsx-"));
+  const runGit = (...args) => {
+    const result = spawnSync("git", args, {
+      cwd: root, encoding: "utf8",
+      env: { ...process.env, GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.org", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.org" }
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  try {
+    runGit("init", "-q");
+    fs.mkdirSync(path.join(root, "src"));
+    const file = "src/view card.jsx";
+    fs.writeFileSync(path.join(root, file), "const untouched = 1;\nconst old = 2;\nconst ignored = 3;\n");
+    runGit("add", file);
+    runGit("commit", "-qm", "baseline");
+    const base = runGit("rev-parse", "HEAD");
+    fs.writeFileSync(path.join(root, file), "const untouched = 1;\nconst added = 2;\nconst ignored = 3;\ndiff --git a/fake b/fake\n");
+    runGit("add", file);
+    runGit("commit", "-qm", "change JSX");
+    const coveragePath = path.join(root, "current.info");
+    const lcov = `SF:${file}\nDA:1,0\nDA:2,1\nDA:3,0\nDA:4,0\nBRDA:1,0,0,0\nBRDA:2,0,0,0\nend_of_record\n`;
+    const report = buildReport({
+      root, base, coveragePath,
+      currentCommand: [process.execPath, "-e", `require("node:fs").writeFileSync(process.env.TEST_HEALTH_LCOV_PATH, ${JSON.stringify(lcov)})`]
+    });
+    assert.deepEqual(report.changed_files, [file]);
+    assert.equal(report.coverage.current.percent, 50);
+    assert.equal(report.coverage.linesHit, 1);
+    assert.equal(report.coverage.linesFound, 2);
+    assert.deepEqual(report.coverage.uncoveredBranches, [{ file, branch: "2:0:0" }]);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("invalid base with valid LCOV yields incomplete report rather than rename-map error", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "test-health-invalid-base-"));
   try {
@@ -129,6 +164,8 @@ test("only fresh independent executions on pinned source revisions yield measure
     runGit(root, "commit", "-qm", "baseline");
     const base = runGit(root, "rev-parse", "HEAD");
     runGit(root, "mv", "old.py", "new.py");
+    fs.appendFileSync(path.join(root, "new.py"), "print('added')\n");
+    runGit(root, "add", "new.py");
     runGit(root, "commit", "-qm", "rename");
     runGit(root, "worktree", "add", "--detach", baselineRoot, base);
     const coveragePath = path.join(root, "current.info");
@@ -136,7 +173,7 @@ test("only fresh independent executions on pinned source revisions yield measure
     const unverified = buildReport({ root, base, coveragePath, baselineCoveragePath });
     assert.equal(unverified.coverage.current.percent, null);
     assert.equal(unverified.coverage.delta_percentage_points, null);
-    fs.writeFileSync(coveragePath, "SF:new.py\nDA:1,1\nend_of_record\n");
+    fs.writeFileSync(coveragePath, "SF:new.py\nDA:5,1\nend_of_record\n");
     fs.writeFileSync(baselineCoveragePath, "SF:old.py\nDA:1,1\nend_of_record\n");
     const stale = buildReport({ root, base, coveragePath, baselineCoveragePath });
     assert.equal(stale.coverage.current.status, "unknown");
@@ -144,13 +181,13 @@ test("only fresh independent executions on pinned source revisions yield measure
     assert.equal(stale.coverage.delta_percentage_points, null);
     const reused = buildReport({ root, base, coveragePath, baselineCoveragePath: coveragePath });
     assert.equal(reused.coverage.delta_percentage_points, null);
-    const refused = buildReport({ root, base, coveragePath, currentCommand: lcovCommand("new.py", 0) });
+    const refused = buildReport({ root, base, baselineRoot, coveragePath, currentCommand: lcovCommand("new.py", 0) });
     assert.equal(refused.coverage.current.status, "incomplete");
     fs.rmSync(coveragePath);
     fs.rmSync(baselineCoveragePath);
     const report = buildReport({
       root, base, baselineRoot, coveragePath, baselineCoveragePath,
-      currentCommand: lcovCommand("new.py", 0), baselineCommand: lcovCommand("old.py", 1)
+      currentCommand: [process.execPath, "-e", 'require("node:fs").writeFileSync(process.env.TEST_HEALTH_LCOV_PATH, "SF:new.py\\nDA:5,0\\nend_of_record\\n")'], baselineCommand: lcovCommand("old.py", 1)
     });
     assert.deepEqual(report.renamed_files, [{ from: "old.py", to: "new.py" }]);
     assert.equal(report.coverage.current.percent, 0);

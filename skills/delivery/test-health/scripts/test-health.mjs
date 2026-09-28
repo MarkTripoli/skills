@@ -79,7 +79,7 @@ export function parseLcov(text, root = process.cwd()) {
   return { files, invalid };
 }
 
-export function coverage(parsed, changed, sourceOverrides = new Map()) {
+export function coverage(parsed, changed, sourceOverrides = new Map(), addedLines = null) {
   if (!parsed) return { status: "unknown", reason: "coverage data unavailable", percent: null, uncoveredBranches: [] };
   if (parsed.invalid.length) return { status: "incomplete", reason: "LCOV contains invalid or out-of-repository records", percent: null, uncoveredBranches: [], invalid_records: parsed.invalid };
   const rows = changed.map((name) => {
@@ -91,10 +91,17 @@ export function coverage(parsed, changed, sourceOverrides = new Map()) {
   let hit = 0, total = 0;
   const uncoveredBranches = [];
   for (const { name, row } of rows) {
-    for (const hits of row.lines.values()) { total++; if (hits > 0) hit++; }
-    for (const [key, hits] of row.branches) if (hits === 0 || hits === null) uncoveredBranches.push({ file: name, branch: key });
+    const selected = addedLines?.get(name);
+    for (const [line, hits] of row.lines) {
+      if (addedLines && !selected?.has(line)) continue;
+      total++;
+      if (hits > 0) hit++;
+    }
+    for (const [key, hits] of row.branches)
+      if ((!addedLines || selected?.has(Number(key.split(":", 1)[0]))) && (hits === 0 || hits === null))
+        uncoveredBranches.push({ file: name, branch: key });
   }
-  return { status: total ? "available" : "incomplete", reason: total ? null : "coverage contains no executable lines for changed files", percent: total ? Math.round((hit / total) * 10000) / 100 : null, linesHit: hit, linesFound: total, uncoveredBranches };
+  return { status: total ? "available" : "incomplete", reason: total ? null : addedLines ? "coverage contains no executable added lines" : "coverage contains no executable lines for changed files", percent: total ? Math.round((hit / total) * 10000) / 100 : null, linesHit: hit, linesFound: total, uncoveredBranches };
 }
 
 export function readLcov(filePath, root) {
@@ -123,16 +130,74 @@ function git(root, ...args) {
   return result.status === 0 ? result.stdout : null;
 }
 
+function addedSourceLines(root, base, name, previousName) {
+  const paths = [name, ...(previousName ? [previousName] : [])].map((file) => `:(literal)${file}`);
+  const patch = git(root, "diff", "--no-ext-diff", "--no-color", "--unified=0", "--find-renames", `${base}...HEAD`, "--", ...paths);
+  if (patch === null) return null;
+  const lines = new Set();
+  let sections = 0, oldRemaining = 0, newRemaining = 0, nextLine = 0, inHunk = false;
+  for (const line of patch.split("\n")) {
+    if (inHunk && (oldRemaining || newRemaining)) {
+      if (line.startsWith("\\ No newline at end of file")) continue;
+      if (line.startsWith("+")) {
+        if (!newRemaining--) return null;
+        if (lines.has(nextLine)) return null;
+        lines.add(nextLine++);
+      } else if (line.startsWith("-")) {
+        if (!oldRemaining--) return null;
+      } else if (line.startsWith(" ")) {
+        if (!oldRemaining-- || !newRemaining--) return null;
+        nextLine++;
+      } else return null;
+      continue;
+    }
+    inHunk = false;
+    if (line.startsWith("diff --git ")) {
+      if (++sections > 1) return null;
+      continue;
+    }
+    if (!line.startsWith("@@ ")) continue;
+    if (!sections) return null;
+    const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?:.*)$/.exec(line);
+    if (!match) return null;
+    const oldCount = Number(match[2] ?? 1), start = Number(match[3]), newCount = Number(match[4] ?? 1);
+    if (![Number(match[1]), oldCount, start, newCount].every(Number.isSafeInteger)) return null;
+    oldRemaining = oldCount;
+    newRemaining = newCount;
+    nextLine = start;
+    inHunk = true;
+  }
+  return sections === 1 && oldRemaining === 0 && newRemaining === 0 ? lines : null;
+}
+
 function changedSources(root, base) {
-  const output = git(root, "diff", "--name-status", `${base}...HEAD`, "--", "*.js", "*.mjs", "*.cjs", "*.ts", "*.tsx", "*.py");
+  const output = git(root, "diff", "--name-status", "-z", "--find-renames", `${base}...HEAD`, "--", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.ts", "*.tsx", "*.py");
   if (output === null) return { files: [], deleted: [], error: "could not read changed-file list" };
-  return { ...classifyChangedFiles(output), error: null };
+  const changed = classifyChangedFiles(output);
+  const oldNames = new Map(changed.renamed.map(({ from, to }) => [to, from]));
+  const addedLines = new Map();
+  for (const name of changed.files) {
+    const lines = addedSourceLines(root, base, name, oldNames.get(name));
+    if (lines === null) return { ...changed, error: "could not read changed-line diff" };
+    addedLines.set(name, lines);
+  }
+  return { ...changed, addedLines, error: null };
 }
 
 export function classifyChangedFiles(output) {
   const files = [], deleted = [], renamed = [];
-  for (const row of output.trim().split("\n").filter(Boolean)) {
-    const [status, ...names] = row.split("\t");
+  const rows = [];
+  if (output.includes("\0")) {
+    const fields = output.split("\0");
+    fields.pop();
+    for (let i = 0; i < fields.length;) {
+      const status = fields[i++];
+      rows.push([status, fields[i++], ...(status.startsWith("R") || status.startsWith("C") ? [fields[i++]] : [])]);
+    }
+  } else {
+    rows.push(...output.trim().split("\n").filter(Boolean).map((row) => row.split("\t")));
+  }
+  for (const [status, ...names] of rows) {
     if (status.startsWith("D")) deleted.push(names[0]);
     else if (status.startsWith("R") || status.startsWith("C")) {
       files.push(names.at(-1));
@@ -173,10 +238,10 @@ function runCoverage(root, revision, command, outputPath) {
   }
 }
 
-function boundCoverage(parsed, changed, overrides, run, changedError) {
+function boundCoverage(parsed, changed, overrides, run, changedError, addedLines = null) {
   if (changedError) return { status: "incomplete", reason: changedError, percent: null, uncoveredBranches: [] };
   if (run?.reason) return { status: "incomplete", reason: run.reason, percent: null, uncoveredBranches: [] };
-  const result = coverage(parsed, changed, overrides);
+  const result = coverage(parsed, changed, overrides, addedLines);
   if (result.status !== "available" || run?.provenance) return result;
   return { status: "unknown", reason: "LCOV has no verified test execution and source revision", percent: null, uncoveredBranches: [] };
 }
@@ -192,7 +257,7 @@ export function buildReport({ root, base, coveragePath, baselineCoveragePath, ba
     : runCoverage(baselineRoot, baseRevision, baselineCommand, baselineCoveragePath)) : null;
   const currentParsed = currentRun ? currentRun.parsed : readLcov(coveragePath, root);
   const baselineParsed = baselineRun ? baselineRun.parsed : readLcov(baselineCoveragePath, baselineRoot ?? root);
-  const currentCoverage = boundCoverage(currentParsed, changed.files, new Map(), currentRun, changed.error);
+  const currentCoverage = boundCoverage(currentParsed, changed.files, new Map(), currentRun, changed.error, changed.addedLines);
   const renameSources = new Map((changed.error ? [] : changed.renamed).map(({ from, to }) => [to, from]));
   const baselineCoverage = boundCoverage(baselineParsed, changed.files, renameSources, baselineRun, changed.error);
   const delta = currentCoverage.percent === null || baselineCoverage.percent === null ? null : Math.round((currentCoverage.percent - baselineCoverage.percent) * 100) / 100;
