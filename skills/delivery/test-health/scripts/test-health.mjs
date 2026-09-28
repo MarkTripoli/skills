@@ -187,7 +187,7 @@ function changedSources(root, base) {
 }
 
 export function classifyChangedFiles(output) {
-  const files = [], deleted = [], renamed = [];
+  const files = [], deleted = [], renamed = [], added = [];
   const rows = [];
   if (output.includes("\0")) {
     const fields = output.split("\0");
@@ -204,15 +204,20 @@ export function classifyChangedFiles(output) {
     else if (status.startsWith("R") || status.startsWith("C")) {
       files.push(names.at(-1));
       if (status.startsWith("R")) renamed.push({ from: names[0], to: names.at(-1) });
-    } else files.push(names[0]);
+    } else {
+      files.push(names[0]);
+      if (status.startsWith("A")) added.push(names[0]);
+    }
   }
-  return { files, deleted, renamed };
+  return { files, deleted, renamed, added };
 }
 
 function comparableDelta(current, baseline, changed, renameSources) {
-  if (!current || !baseline || current.invalid.length || baseline.invalid.length) return null;
+  if (!current || !baseline || current.invalid.length || baseline.invalid.length ||
+      changed.files.some((name) => !current.files.has(name))) return null;
   let currentHits = 0, baselineHits = 0, total = 0;
   for (const name of changed.files) {
+    if (changed.added.includes(name)) continue;
     const currentLines = current.files.get(name)?.lines;
     const baselineLines = baseline.files.get(renameSources.get(name) ?? name)?.lines;
     const hunks = changed.hunks.get(name);
@@ -233,8 +238,8 @@ function comparableDelta(current, baseline, changed, renameSources) {
       const newAnchor = newStart + (newCount === 0 ? 1 : 0);
       if (oldAnchor < oldNext || newAnchor < newNext || oldAnchor - oldNext !== newAnchor - newNext) return null;
       countSurvivors(oldAnchor);
-      oldNext = oldStart + oldCount;
-      newNext = newStart + newCount;
+      oldNext = oldAnchor + oldCount;
+      newNext = newAnchor + newCount;
     }
     countSurvivors(Infinity);
   }
@@ -313,9 +318,9 @@ export function buildReport({ root, base, coveragePath, baselineCoveragePath, ba
   const baselineParsed = baselineRun ? baselineRun.parsed : readLcov(baselineCoveragePath, baselineRoot ?? root);
   const currentCoverage = boundCoverage(currentParsed, changed.files, new Map(), currentRun, changed.error, changed.addedLines);
   const renameSources = new Map((changed.error ? [] : changed.renamed).map(({ from, to }) => [to, from]));
-  const baselineCoverage = boundCoverage(baselineParsed, changed.files, renameSources, baselineRun, changed.error);
-  const delta = currentCoverage.status === "available" && baselineCoverage.status === "available" &&
-    currentRun?.provenance && baselineRun?.provenance
+  const baselineFiles = changed.files.filter((name) => !changed.added?.includes(name));
+  const baselineCoverage = boundCoverage(baselineParsed, baselineFiles, renameSources, baselineRun, changed.error);
+  const delta = !changed.error && currentRun?.provenance && baselineRun?.provenance
     ? comparableDelta(currentParsed, baselineParsed, changed, renameSources) : null;
   const selected = [...new Set(selectedFiles)];
   const selectedDeleted = selected.filter((name) => changed.deleted.includes(name));

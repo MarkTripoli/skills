@@ -55,7 +55,7 @@ test("duplicate DA and BRDA identities fail closed despite matching LCOV summari
 
 test("renamed paths map baseline coverage from old path to new path", () => {
   const changed = classifyChangedFiles("R100\told.py\tnew.py\n");
-  assert.deepEqual(changed, { files: ["new.py"], deleted: [], renamed: [{ from: "old.py", to: "new.py" }] });
+  assert.deepEqual(changed, { files: ["new.py"], deleted: [], renamed: [{ from: "old.py", to: "new.py" }], added: [] });
   const baseline = coverage(parseLcov("SF:old.py\nDA:1,1\nend_of_record\n"), changed.files, new Map(changed.renamed.map(({ from, to }) => [to, from])));
   const current = coverage(parseLcov("SF:new.py\nDA:1,0\nend_of_record\n"), changed.files);
   assert.equal(baseline.percent, 100);
@@ -79,7 +79,7 @@ test("mutation no-tests, timeout, and killed runs are not survivors", () => {
 
 test("deleted paths are not current coverage or mutation candidates", () => {
   const changed = classifyChangedFiles("M\tsrc/current.py\nD\tsrc/deleted.py\n");
-  assert.deepEqual(changed, { files: ["src/current.py"], deleted: ["src/deleted.py"], renamed: [] });
+  assert.deepEqual(changed, { files: ["src/current.py"], deleted: ["src/deleted.py"], renamed: [], added: [] });
   const measured = coverage(parseLcov("SF:src/current.py\nDA:1,1\nend_of_record\n"), changed.files);
   assert.equal(measured.status, "available");
   assert.equal(changed.files.includes("src/deleted.py"), false);
@@ -209,6 +209,99 @@ test("only fresh independent executions on pinned source revisions yield measure
     fs.rmSync(root, { recursive: true, force: true });
     fs.rmSync(baselineRoot, { recursive: true, force: true });
   }
+});
+
+function reportWithPinnedCoverage({ baselineSource, currentSource, baselineLcov, currentLcov, newFile }) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "test-health-cohort-"));
+  const baselineRoot = fs.mkdtempSync(path.join(os.tmpdir(), "test-health-cohort-base-"));
+  const runGit = (cwd, ...args) => {
+    const result = spawnSync("git", args, {
+      cwd, encoding: "utf8",
+      env: { ...process.env, GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.org", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.org" }
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  let base, worktreeAdded = false;
+  try {
+    runGit(root, "init", "-q");
+    fs.writeFileSync(path.join(root, "app.js"), baselineSource);
+    fs.writeFileSync(path.join(root, "coverage.test.mjs"), `import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+test("source revision is exercised", () => {
+  const source = fs.readFileSync("app.js", "utf8");
+  assert.ok(source === ${JSON.stringify(baselineSource)} || source === ${JSON.stringify(currentSource)});
+  fs.writeFileSync(process.env.TEST_HEALTH_LCOV_PATH, source === ${JSON.stringify(currentSource)}
+    ? ${JSON.stringify(currentLcov)} : ${JSON.stringify(baselineLcov)});
+});
+`);
+    runGit(root, "add", "app.js", "coverage.test.mjs");
+    runGit(root, "commit", "-qm", "baseline");
+    base = runGit(root, "rev-parse", "HEAD");
+    fs.writeFileSync(path.join(root, "app.js"), currentSource);
+    if (newFile) fs.writeFileSync(path.join(root, newFile), "export const newFile = true;\n");
+    runGit(root, "add", "app.js", ...(newFile ? [newFile] : []));
+    runGit(root, "commit", "-qm", "change source");
+    runGit(root, "worktree", "add", "--detach", baselineRoot, base);
+    worktreeAdded = true;
+    return buildReport({
+      root, base, baselineRoot,
+      coveragePath: path.join(root, "current.info"),
+      baselineCoveragePath: path.join(baselineRoot, "baseline.info"),
+      currentCommand: [process.execPath, "--test", "coverage.test.mjs"],
+      baselineCommand: [process.execPath, "--test", "coverage.test.mjs"]
+    });
+  } finally {
+    if (worktreeAdded) runGit(root, "worktree", "remove", "--force", baselineRoot);
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(baselineRoot, { recursive: true, force: true });
+  }
+}
+
+test("inserted source lines leave unchanged LCOV lines aligned once", () => {
+  const report = reportWithPinnedCoverage({
+    baselineSource: "const first = 1;\nconst second = 2;\nconst third = 3;\n",
+    currentSource: "const first = 1;\nconst inserted = 4;\nconst second = 2;\nconst third = 3;\n",
+    baselineLcov: "SF:app.js\nDA:1,1\nDA:2,1\nDA:3,0\nend_of_record\n",
+    currentLcov: "SF:app.js\nDA:1,1\nDA:2,0\nDA:3,1\nDA:4,0\nend_of_record\n"
+  });
+  assert.equal(report.coverage.current.percent, 0);
+  assert.equal(report.coverage.baseline.percent, 66.67);
+  assert.equal(report.coverage.delta_percentage_points, 0);
+  assert.ok(report.coverage.provenance.current_run);
+  assert.ok(report.coverage.provenance.baseline_run);
+});
+
+test("deletion-only changes still compare surviving lines at shifted LCOV positions", () => {
+  const report = reportWithPinnedCoverage({
+    baselineSource: "const first = 1;\nconst removed = 2;\nconst second = 3;\nconst third = 4;\n",
+    currentSource: "const first = 1;\nconst second = 3;\nconst third = 4;\n",
+    baselineLcov: "SF:app.js\nDA:1,1\nDA:2,0\nDA:3,1\nDA:4,0\nend_of_record\n",
+    currentLcov: "SF:app.js\nDA:1,1\nDA:2,1\nDA:3,0\nend_of_record\n"
+  });
+  assert.equal(report.coverage.current.status, "incomplete");
+  assert.equal(report.coverage.current.reason, "coverage contains no executable added lines");
+  assert.equal(report.coverage.baseline.status, "available");
+  assert.equal(report.coverage.delta_percentage_points, 0);
+  assert.ok(report.coverage.provenance.current_run);
+  assert.ok(report.coverage.provenance.baseline_run);
+});
+
+test("new source files need no baseline record when existing files have a common cohort", () => {
+  const report = reportWithPinnedCoverage({
+    baselineSource: "const first = 1;\nconst old = 2;\n",
+    currentSource: "const first = 1;\nconst replacement = 2;\n",
+    baselineLcov: "SF:app.js\nDA:1,1\nDA:2,1\nend_of_record\n",
+    currentLcov: "SF:app.js\nDA:1,0\nDA:2,1\nend_of_record\nSF:new.js\nDA:1,0\nend_of_record\n",
+    newFile: "new.js"
+  });
+  assert.deepEqual(report.changed_files, ["app.js", "new.js"]);
+  assert.equal(report.coverage.current.percent, 50);
+  assert.equal(report.coverage.baseline.percent, 100);
+  assert.equal(report.coverage.delta_percentage_points, -100);
+  assert.ok(report.coverage.provenance.current_run);
+  assert.ok(report.coverage.provenance.baseline_run);
 });
 
 test("CLI rejects writer-only runs and untracked inputs, and compares only surviving executable lines", () => {
