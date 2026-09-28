@@ -14,12 +14,14 @@ writeAuthorization('2099-01-01T00:00:00Z');
 test.after(()=>fs.rmSync(root,{recursive:true,force:true}));
 const base={url:endpoint,authorization:authFile,probes:['recon','schema','sensitivity','boundary','evasion','validation','extraction'],dryRun:true,live:false,retries:1,maxAttempts:7,timeoutMs:1000,rateMs:1};
 let auditNumber=0;
-const liveOptions=(extra={})=>({...base,audit:path.join(root,`live-${++auditNumber}.jsonl`),dryRun:false,live:true,...extra});
+const liveOptions=(extra={})=>({...base,model:'fixture-model',audit:path.join(root,`live-${++auditNumber}.jsonl`),dryRun:false,live:true,...extra});
 const goodResponse=()=>new Response(JSON.stringify({choices:[{message:{content:'safe refusal'}}]}),{status:200});
 
 test('direct default execution plans probes without fetching',async()=>{
  let calls=0;const result=await run({...base,dryRun:undefined,live:undefined},{fetchImpl:async()=>{calls++;throw Error('must not fetch');}});
  assert.equal(calls,0);assert.equal(result.status,'planned');assert.equal(result.attempts,0);
+ assert.match(result.endpoint_sha256,/^sha256:[a-f0-9]{64}$/);
+ assert.equal(JSON.stringify(result).includes('https://203.0.113.9'),false);
 });
 
 test('live intent and written authorization are mandatory',async()=>{
@@ -27,6 +29,7 @@ test('live intent and written authorization are mandatory',async()=>{
  await assert.rejects(run({...base,dryRun:false},{fetchImpl:async()=>{calls++;return goodResponse();}}));
  await assert.rejects(run(liveOptions({authorization:undefined,probes:['recon']}),{fetchImpl:async()=>{calls++;return goodResponse();}}));
  await assert.rejects(run(liveOptions({url:'https://owned.example/v1/chat',probes:['recon']}),{fetchImpl:async()=>{calls++;return goodResponse();}}));
+ await assert.rejects(run(liveOptions({model:undefined,probes:['recon']}),{fetchImpl:async()=>{calls++;return goodResponse();}}),/explicit model/);
  assert.equal(calls,0);
 });
 
@@ -61,8 +64,9 @@ test('probe payload and digest stay pinned across retries',async()=>{
  const options=liveOptions({probes:['recon']}),original=PROBES.recon,bodies=[];let calls=0;
  try{
   const result=await run(options,{sleep:async()=>{},monotonicNow:()=>0,fetchImpl:async(_url,init)=>{calls++;bodies.push(init.body);if(calls===1){PROBES.recon='mutated during retry';throw Error('synthetic retry');}return goodResponse();}});
-  assert.equal(calls,2);assert.equal(bodies[0],bodies[1]);assert.equal(JSON.parse(bodies[0]).input,original);
-  assert.equal(result.probes[0].probe_sha256,`sha256:${createHash('sha256').update(original).digest('hex')}`);
+  assert.equal(calls,2);assert.equal(bodies[0],bodies[1]);
+  assert.deepEqual(JSON.parse(bodies[0]),{model:'fixture-model',messages:[{role:'user',content:original}]});
+  assert.equal(result.probes[0].probe_sha256,`sha256:${createHash('sha256').update(JSON.stringify({model:'fixture-model',messages:[{role:'user',content:original}]})).digest('hex')}`);
  }finally{PROBES.recon=original;}
 });
 
@@ -74,12 +78,25 @@ test('live authorization ignores caller-supplied historical clock',async()=>{
  writeAuthorization('2099-01-01T00:00:00Z');
 });
 
-test('successful response remains unassessed and incomplete',async()=>{
- const options=liveOptions({probes:['recon']});
- const result=await run(options,{fetchImpl:async()=>goodResponse(),runId:'fixture-run'});
+test('successful chat-completions request is unassessed and redacted',async()=>{
+ const target='https://203.0.113.9/v1/chat/completions';
+ writeAuthorization('2099-01-01T00:00:00Z','/v1/chat/completions');
+ const options=liveOptions({url:target,probes:['recon']});let wire;
+ const result=await run(options,{fetchImpl:async(url,init)=>{wire={url,...JSON.parse(init.body)};return goodResponse();},runId:'fixture-run'});
  assert.equal(result.status,'incomplete');assert.equal(result.probes[0].status,'received_unassessed');assert.match(result.probes[0].evidence.response_sha256,/^sha256:[a-f0-9]{64}$/);
+ assert.deepEqual(wire,{url:target,model:'fixture-model',messages:[{role:'user',content:PROBES.recon}]});
+ assert.match(result.endpoint_sha256,/^sha256:[a-f0-9]{64}$/);
+ assert.equal(JSON.stringify(result).includes('https://203.0.113.9'),false);
  const events=fs.readFileSync(options.audit,'utf8').trim().split('\n').map(line=>JSON.parse(line).event);
  assert.deepEqual(events,['attempt-start','attempt-result','report']);
+ writeAuthorization('2099-01-01T00:00:00Z');
+});
+test('validation probe sends malformed chat-completions fields',async()=>{
+ const target='https://203.0.113.9/v1/chat/completions';
+ writeAuthorization('2099-01-01T00:00:00Z','/v1/chat/completions');
+ const result=await run(liveOptions({url:target,probes:['validation']}),{fetchImpl:async(_url,init)=>{const body=JSON.parse(init.body);assert.equal(body.model,'fixture-model');assert.equal(body.messages,null);assert.equal(body.temperature,'not-a-number');return goodResponse();}});
+ assert.equal(result.status,'incomplete');assert.equal(result.probes[0].status,'received_unassessed');
+ writeAuthorization('2099-01-01T00:00:00Z');
 });
 
 test('each retry has a start/result audit pair and minimum pacing',async()=>{
@@ -106,6 +123,14 @@ test('authorization expiry is rechecked before each retry request',async()=>{
  const starts=fs.readFileSync(options.audit,'utf8').trim().split('\n').map(line=>JSON.parse(line)).filter(event=>event.event==='attempt-start');
  assert.deepEqual(starts.map(event=>event.attempt),[1,2]);
  writeAuthorization('2099-01-01T00:00:00Z');
+});
+
+test('unsupported timer delays are rejected before fetch',async()=>{
+ let calls=0;
+ for(const options of [liveOptions({probes:['recon'],rateMs:2_147_483_648}),liveOptions({probes:['recon'],timeoutMs:2_147_483_648})]){
+  await assert.rejects(run(options,{fetchImpl:async()=>{calls++;return goodResponse();}}),/bound exceeded/);
+ }
+ assert.equal(calls,0);
 });
 
 test('zero pacing interval is rejected',async()=>{
