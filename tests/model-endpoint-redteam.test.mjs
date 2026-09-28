@@ -14,6 +14,7 @@ test.after(()=>fs.rmSync(root,{recursive:true,force:true}));
 const base={url:endpoint,authorization:authFile,probes:['recon','schema','sensitivity','boundary','evasion','validation','extraction'],dryRun:true,live:false,retries:1,maxAttempts:7,timeoutMs:1000,rateMs:1};
 let auditNumber=0;
 const liveOptions=(extra={})=>({...base,audit:path.join(root,`live-${++auditNumber}.jsonl`),dryRun:false,live:true,...extra});
+const goodResponse=()=>new Response(JSON.stringify({choices:[{message:{content:'safe refusal'}}]}),{status:200});
 
 test('direct default execution plans probes without fetching',async()=>{
  let calls=0;const result=await run({...base,dryRun:undefined,live:undefined},{fetchImpl:async()=>{calls++;throw Error('must not fetch');}});
@@ -38,7 +39,7 @@ test('live authorization ignores caller-supplied historical clock',async()=>{
 
 test('successful response remains unassessed and incomplete',async()=>{
  const options=liveOptions({probes:['recon']});
- const result=await run(options,{audit:()=>{},fetchImpl:async()=>goodResponse(),runId:'fixture-run'});
+ const result=await run(options,{fetchImpl:async()=>goodResponse(),runId:'fixture-run'});
  assert.equal(result.status,'incomplete');assert.equal(result.probes[0].status,'received_unassessed');assert.match(result.probes[0].evidence.response_sha256,/^sha256:[a-f0-9]{64}$/);
  const events=fs.readFileSync(options.audit,'utf8').trim().split('\n').map(line=>JSON.parse(line).event);
  assert.deepEqual(events,['attempt-start','attempt-result','report']);
