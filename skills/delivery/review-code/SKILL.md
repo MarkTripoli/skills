@@ -31,6 +31,8 @@ Before deciding status, classify the diff's consequence from affected behavior, 
 
 Atomic delivery dispatches its own independent reviewer for every `clean` artifact, including low-risk changes. Record concrete low-risk rationale if the artifact's author skipped a separate dispatch; do not present a self-review, an author claim, or an unavailable worker as independent coverage. Atomic's independent dispatch must complete against exact HEAD with assigned acceptance and risk coverage before it can advance; if it is unavailable, clean cannot advance. Human approval and hosted publication evidence remain separate gates.
 
+When verification is opted out, the Atomic independent reviewer must supply one idempotent acceptance probe per criterion, its claimed exit and decisive output, and a changed-line citation explaining why that observation covers the promised behavior. Atomic replays the probe; a statement that an assertion exists without a reachable assertion or reproduced observation cannot support `clean`.
+
 ## Review
 
 Trace behavior through callers/tests. Evaluate every applicable axis:

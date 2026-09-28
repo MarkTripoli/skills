@@ -357,8 +357,6 @@ test('passed verification requires every task, plan, and receipt acceptance item
 test('a claimed A-row pass cannot advance without controller-executed output', async () => {
   const f = proofFixture();
   try {
-    const rows = f.row('A1', 'CLI doubles input 21.', 7, 42) + f.row('A2', 'CLI doubles input 7.', 7, 14);
-    await assert.rejects(() => runSkill(f.ctx(f.check + rows), f.task, f.before, f.options, 'verify-implementation', 1), /not corroborated by execution/);
     const noCommand = '| A1 | CLI doubles input 21. | observed manually | exit 0; 42 | pass |\n' + f.row('A2', 'CLI doubles input 7.', 7, 14);
     await assert.rejects(() => runSkill(f.ctx(f.check + noCommand), f.task, f.before, f.options, 'verify-implementation', 2), /no executable command/);
     const fakeCheck = f.check.replace('exit 0; 42', 'exit 0; 999') + f.row('A1', 'CLI doubles input 21.', 21, 42) +
@@ -372,6 +370,25 @@ test('a claimed A-row pass cannot advance without controller-executed output', a
     const mutation = '| A1 | CLI doubles input 21. | `curl -X POST https://example.invalid/claim` | exit 0; 42 | pass |\n' +
       f.row('A2', 'CLI doubles input 7.', 7, 14);
     await assert.rejects(() => runSkill(f.ctx(f.check + mutation), f.task, f.before, f.options, 'verify-implementation', 6), /cannot be safely replayed/);
+    for (const unsafe of [
+      'curl -d name=value https://example.invalid/claim',
+      'curl -F name=value https://example.invalid/claim',
+      'curl -T payload https://example.invalid/claim',
+      'sh -c "curl -d name=value https://example.invalid/claim"',
+    ]) {
+      const replay = `| A1 | CLI doubles input 21. | \`${unsafe}\` | exit 0; 42 | pass |\n` +
+        f.row('A2', 'CLI doubles input 7.', 7, 14);
+      await assert.rejects(() => runSkill(f.ctx(f.check + replay), f.task, f.before, f.options,
+        'verify-implementation', 7), /cannot be safely replayed/);
+    }
+    const exitOnly = '| A1 | CLI doubles input 21. | `node cli.mjs 7` | exit 0 | pass |\n' +
+      f.row('A2', 'CLI doubles input 7.', 7, 14);
+    await assert.rejects(() => runSkill(f.ctx(f.check + exitOnly), f.task, f.before, f.options,
+      'verify-implementation', 8), /no decisive output/);
+    const unrelated = '| A1 | CLI doubles input 21. | `node cli.mjs 7` | exit 0; 14 | pass |\n' +
+      f.row('A2', 'CLI doubles input 7.', 7, 14);
+    await assert.rejects(() => runSkill(f.ctx(f.check + unrelated), f.task, f.before, f.options,
+      'verify-implementation', 9), /omit an acceptance input or outcome/);
     const noCheck = f.row('A1', 'CLI doubles input 21.', 21, 42) + f.row('A2', 'CLI doubles input 7.', 7, 14);
     await assert.rejects(() => runSkill(f.ctx(noCheck), f.task, f.before, f.options, 'verify-implementation', 5), /omitted repository checks: npm test/);
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
@@ -397,10 +414,14 @@ test('multiline CI and configured Python checks cannot disappear from passed ver
     fs.mkdirSync(path.join(f.repo, '.github', 'workflows'), { recursive: true });
     fs.mkdirSync(path.join(f.repo, 'scripts'));
     fs.writeFileSync(path.join(f.repo, '.github', 'workflows', 'checks.yml'),
-      'jobs:\n  proof:\n    steps:\n      - run: |\n          node scripts/check-cli.mjs \"$CHECK_INPUT\"\n');
+      'jobs:\n  proof:\n    steps:\n      - run: |\n          node scripts/check-cli.mjs 21\n');
     fs.writeFileSync(path.join(f.repo, 'scripts', 'check-cli.mjs'),
       'import { execFileSync } from \"node:child_process\";\nif (execFileSync(process.execPath, [\"cli.mjs\", process.argv[2]], { encoding: \"utf8\" }).trim() !== \"42\") process.exit(1);\nconsole.log(\"checked 42\");\n');
     const rows = f.row('A1', 'CLI doubles input 21.', 21, 42) + f.row('A2', 'CLI doubles input 7.', 7, 14);
+    const wrongFlag = '| C2 | wrong CI flags | `node scripts/check-cli.mjs --help` | exit 0; checked 42 | pass |\n';
+    await assert.rejects(() => runSkill(f.ctx(f.check + wrongFlag + rows), f.task,
+      initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative)),
+      f.options, 'verify-implementation', 0), /omitted repository checks: node scripts\/check-cli\.mjs 21/);
     const before = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
     await assert.rejects(() => runSkill(f.ctx(f.check + rows), f.task, before, f.options, 'verify-implementation', 1),
       /omitted repository checks: node scripts\/check-cli\.mjs/);
@@ -416,6 +437,20 @@ test('multiline CI and configured Python checks cannot disappear from passed ver
     await assert.rejects(() => runSkill(f.ctx(f.check + ci.replace('multiline CI source check', 'CI source check with Python tools') + rows),
       f.task, configured, f.options, 'verify-implementation', 4),
       /omitted repository checks: ruff check \., mypy \./);
+  } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
+});
+
+test('release workflow prerequisite and Python runner checks remain mandatory', async () => {
+  const f = proofFixture();
+  try {
+    const workflows = path.join(f.repo, '.github', 'workflows');
+    fs.mkdirSync(workflows, { recursive: true });
+    fs.writeFileSync(path.join(workflows, 'release.yml'),
+      'jobs:\n  publish:\n    steps:\n      - run: |\n          node scripts/check-package.mjs --strict\n          python -m pytest\n          uv run pytest\n          npm publish\n');
+    const rows = f.check + f.row('A1', 'CLI doubles input 21.', 21, 42) +
+      f.row('A2', 'CLI doubles input 7.', 7, 14);
+    await assert.rejects(() => runSkill(f.ctx(rows), f.task, f.before, f.options,
+      'verify-implementation', 1), /omitted repository checks: node scripts\/check-package\.mjs --strict, python -m pytest, uv run pytest/);
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 
@@ -456,7 +491,10 @@ test('verification opt-out can review independent acceptance evidence without in
       const evidence = 'cli.mjs:2 independently invoked node cli.mjs 21 and observed 42; invoked node cli.mjs 7 and observed 14';
       return { sessionId: 'independent-opt-out-review', text: JSON.stringify({
         head, revision: f.before.revision,
-        acceptance: ['CLI doubles input 21.', 'CLI doubles input 7.'].map(item => ({ item, evidence })),
+        acceptance: ['CLI doubles input 21.', 'CLI doubles input 7.'].map((item, index) => ({
+          item, evidence, command: index === 0 ? 'node cli.mjs 21' : 'node cli.mjs 7',
+          observed: index === 0 ? 'exit 0; 42' : 'exit 0; 14',
+        })),
         risks: ['functional correctness', 'security and data integrity', 'acceptance oracle and test reachability']
           .map(risk => ({ risk, evidence })),
         findings: [],

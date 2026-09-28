@@ -187,7 +187,7 @@ function verificationRows(artifact) {
 }
 function repositoryChecks(cwd) {
   const checks = new Map();
-  const add = (command, prefix = false) => checks.set(command, prefix);
+  const add = command => checks.set(command, true);
   const exists = name => fs.existsSync(path.join(cwd, name));
   if (exists('package.json')) {
     const manifest = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8'));
@@ -211,8 +211,12 @@ function repositoryChecks(cwd) {
   if (exists('Package.swift')) add('swift test');
   if (exists('build.gradle') || exists('build.gradle.kts')) add('./gradlew test');
   const workflows = path.join(cwd, '.github', 'workflows');
+  const addWorkflow = (name, command) => {
+    if (/\$\{?[\w]|[;&|`]/.test(command)) throw new Error(`Cannot safely replay dynamic or chained CI check in ${name}: ${command}`);
+    add(command);
+  };
   if (fs.existsSync(workflows)) for (const name of fs.readdirSync(workflows)) {
-    if (!/\.ya?ml$/.test(name) || /(?:release|deploy|publish)/i.test(name)) continue;
+    if (!/\.ya?ml$/.test(name)) continue;
     const lines = fs.readFileSync(path.join(workflows, name), 'utf8').split('\n');
     for (let index = 0; index < lines.length; index++) {
       const match = lines[index].match(/^(\s*)(?:-\s*)?run:\s*(.*?)\s*$/);
@@ -224,11 +228,12 @@ function repositoryChecks(cwd) {
         index--;
       } else commandLines.push(match[2]);
       for (const line of commandLines) {
-        if (/^(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|typecheck|build|check)\b/.test(line)) add(line);
-        else if (/^(?:go (?:test|vet)|cargo (?:test|clippy)|pytest|ruff|mypy|make (?:test|lint|check)|swift test|\.\/gradlew test)\b/.test(line)) add(line);
+        if (!line || /^\s*#/.test(line)) continue;
+        if (/^(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|typecheck|build|check)\b/.test(line)) addWorkflow(name, line);
+        else if (/^(?:go (?:test|vet)|cargo (?:test|clippy)|pytest|python3? -m pytest|uv run (?:pytest|python3? -m pytest|ruff|mypy)|ruff|mypy|make (?:test|lint|check)|swift test|\.\/gradlew test)\b/.test(line)) addWorkflow(name, line);
         else {
           const script = line.match(/^(?:node|python3?|bun)\s+(?!-[ecp]\b)([^\s"'$|;&]+\.(?:m?js|cjs|py))\b/);
-          if (script) add(line.slice(0, script[0].length), true);
+          if (script && !/(?:deploy|release|publish|migrat|push)/i.test(script[1])) addWorkflow(name, line);
         }
       }
     }
@@ -247,8 +252,7 @@ function requireAcceptanceEvidence(task, state, artifact) {
     throw new Error(`${artifact.file}: passed verification has a missing or nonpassing repository check C-row`);
   }
   const recorded = checks.map(row => row['decided by'].match(/^`([^`\n]+)`$/)?.[1]).filter(Boolean);
-  const missing = [...repositoryChecks(task.cwd)].filter(([required, prefix]) =>
-    !recorded.some(command => command === required || (prefix && command.startsWith(`${required} `)))).map(([required]) => required);
+  const missing = [...repositoryChecks(task.cwd).keys()].filter(required => !recorded.includes(required));
   if (missing.length) throw new Error(`${artifact.file}: passed verification omitted repository checks: ${missing.join(', ')}`);
   if (acceptance.length !== promises.length || acceptance.some(row => !/^A[1-9]\d*$/i.test(row.id)) || promises.some((promise, index) => {
     const row = acceptance.find(candidate => candidate.id.toUpperCase() === `A${index + 1}`);
@@ -263,8 +267,9 @@ function replayableVerificationCommand(command, id) {
       /^\s*(?:node|bun|python3?|ruby|perl)\s+(?:-[ecp]\b|--eval\b)/.test(command)) {
     throw new Error(`${id} acceptance command only manufactures a result; it does not exercise product behavior`);
   }
-  if (/\b(?:curl|http|wget)\b/.test(command) &&
-      /(?:\s(?:-X|--request|--method)\s*(?:POST|PUT|PATCH|DELETE)\b|--data(?:-raw|-binary|-urlencode)?\b|--post-data\b|\b(?:POST|PUT|PATCH|DELETE)\s+https?:)/i.test(command) ||
+  if (/^\s*(?:sh|bash|zsh|\/bin\/(?:sh|bash|zsh))\s+-c\b/.test(command) ||
+      /\b(?:curl|http|wget)\b/.test(command) &&
+      /(?:(?:^|\s)(?:-X\s*|-X|--request(?:=|\s+)|--method(?:=|\s+))(?:POST|PUT|PATCH|DELETE)\b|(?:^|\s)(?:-[dFT]|--form(?:-string)?|--upload-file|--json|--data(?:-raw|-binary|-urlencode)?|--post-data|--post-file)(?:\S|\s|$)|\b(?:POST|PUT|PATCH|DELETE)\s+(?:https?:|[^\s]+\/))/i.test(command) ||
       /^\s*(?:git\s+(?:push|reset|clean)|(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:migrate|deploy|publish)\b|rm\b|mv\b)/.test(command)) {
     throw new Error(`${id} acceptance command cannot be safely replayed; use an isolated idempotent test instead`);
   }
@@ -286,6 +291,16 @@ function executeVerification(task, state, artifact, rows, step) {
     const quoted = exit ? row.observed.slice(exit.index + exit[0].length)
       .replace(/^[\s:;,.—-]*(?:(?:stdout|output)\s*[:=]\s*)?/i, '')
       .replace(/^[`"']|[`"']$/g, '').trim() : '';
+    if (row.id.toUpperCase().startsWith('A')) {
+      if (!quoted && !/^\s*(?:test\s|[\[]\s)/.test(command)) {
+        throw new Error(`${artifact.file}: ${row.id} has no decisive output or executable boolean predicate`);
+      }
+      const tokens = [...(row.item || '').matchAll(/(?<!\d)\d+(?:\.\d+)?(?!\d)/g)].map(match => match[0]);
+      const claimed = `${command} ${quoted} ${/\b(?:exit(?:s|ed)?|status)\b/i.test(row.item || '') ? `exit ${exit?.[1] || ''}` : ''}`;
+      if (tokens.some(token => !new RegExp(`(?<![\\d.])${token.replace('.', '\\.')}(?![\\d.])`).test(claimed))) {
+        throw new Error(`${artifact.file}: ${row.id} command and observed result omit an acceptance input or outcome`);
+      }
+    }
     if (run.error || !exit || run.status !== Number(exit[1]) ||
       (row.id.toUpperCase().startsWith('C') && run.status !== 0) ||
       (quoted && !actualLines.includes(quoted))) {
@@ -348,17 +363,28 @@ async function requireIndependentReview(ctx, task, state, artifact, step, stageS
   const risks = ['functional correctness', 'security and data integrity', 'acceptance oracle and test reachability'];
   const changed = changedSourcePaths(task, sourceHead);
   const changedLines = changedSourceLines(task, sourceHead, changed);
-  const execution = state.proofs.verification?.executionEvidence || [];
+  let execution = verified ? state.proofs.verification?.executionEvidence || [] : [];
   const name = `${String(step).padStart(3, '0')}-independent-review`;
   const prompt = [
     `Independently review the changed implementation in ${task.cwd} against task ${path.join(task.taskDir, 'task.md')}. Do not edit files or publish anything.`,
     `Pin reviewed source HEAD ${sourceHead} (current HEAD ${head} may include only the task artifact commit) and source revision ${state.revision}; inspect changed source paths ${JSON.stringify([...changed])}, actual controller-run acceptance commands and outputs ${JSON.stringify(execution)}, task and authoritative artifacts. For deleted paths cite the old-side deleted line number from the base diff; deletion-only work still needs a consequential review. Review acceptance items ${JSON.stringify(acceptance)} and risks ${JSON.stringify(risks)}.`,
     `Return only a JSON object {"head":string,"revision":string,"acceptance":[{"item":string,"evidence":string}],"risks":[{"risk":string,"evidence":string}],"findings":[{"location":string,"problem":string}]}. Every acceptance item must be examined against actual changed implementation lines and an independently meaningful direct observation or reachable test assertion. A green but unrelated test is a finding, never acceptance proof. Cite a changed path:line plus a test assertion path:line where tests provide the oracle; include the controller-executed command and decisive output when verification ran. For opted-out verification, independently inspect acceptance behavior without pretending an absent oracle ran. Cover every risk with inspected changed path:line and concrete behavior. Report consequential findings; incomplete inspection cannot claim coverage.`,
+    `When verification is opted out, each acceptance entry MUST also include {"command":"an idempotent direct product probe","observed":"exit N; decisive output"}; the controller reruns the command and rejects claims without an observed result. Cite that command and its decisive output in evidence. No verification artifact is invented.`,
   ].join('\n\n');
   const result = await ctx.task(name, { prompt, context: 'fresh', cwd: task.cwd, model, maxOutput: { bytes: 16_384, lines: 160 } });
   let report;
   try { report = JSON.parse(result.text); }
   catch { throw new Error(`${artifact.file}: independent reviewer did not return a completed structured report`); }
+  if (!verified && stageSession && result.sessionId && result.sessionId !== stageSession &&
+      report?.head === sourceHead && report.revision === state.revision &&
+      Array.isArray(report.acceptance) && report.acceptance.length === acceptance.length &&
+      report.acceptance.every(covered => typeof covered.command === 'string' && typeof covered.observed === 'string')) {
+    const probes = acceptance.map((item, index) => {
+      const covered = report.acceptance.find(entry => entry.item === item);
+      return { id: `A${index + 1}`, item, 'decided by': `\`${covered?.command || ''}\``, observed: covered?.observed || '' };
+    });
+    execution = executeVerification(task, state, artifact, probes, `${step}-review`);
+  }
   const inspected = evidence => {
     if (typeof evidence !== 'string' || evidence.length < 40) return false;
     const citations = [...evidence.matchAll(/(?:^|\s)([^\s:]+):([1-9]\d*)\b/g)];
@@ -370,11 +396,9 @@ async function requireIndependentReview(ctx, task, state, artifact, step, stageS
     Array.isArray(report.acceptance) && report.acceptance.length === acceptance.length &&
     acceptance.every((item, index) => report.acceptance.some(covered => {
       const oracle = execution.find(row => row.id.toUpperCase() === `A${index + 1}`);
-      return covered.item === item && inspected(covered.evidence) &&
-        (verified ? oracle && covered.evidence.includes(oracle.command) &&
-          covered.evidence.includes(oracle.observed || `exit ${oracle.exit}`)
-          : /\b(?:observed|asserted|printed|returned)\b/i.test(covered.evidence) &&
-            /\b(?:node|npm|pnpm|yarn|bun|python|pytest|go|cargo|curl|test|assert|GET|HTTP|exit)\b/i.test(covered.evidence));
+      return covered.item === item && inspected(covered.evidence) && oracle &&
+        covered.evidence.includes(oracle.command) &&
+        covered.evidence.includes(oracle.observed || `exit ${oracle.exit}`);
     })) &&
     Array.isArray(report.risks) && report.risks.length === risks.length &&
     risks.every(risk => report.risks.some(item => item.risk === risk && inspected(item.evidence))) &&
@@ -382,7 +406,7 @@ async function requireIndependentReview(ctx, task, state, artifact, step, stageS
   if (!complete || git(task.cwd, ['rev-parse', 'HEAD']) !== head || revision(task.cwd, task.taskRootRelative) !== state.revision) {
     throw new Error(`${artifact.file}: independent reviewer proof is missing, scope-incomplete, or not bound to exact HEAD`);
   }
-  saveRecord(task, `${name}-proof`, { artifact: artifact.file, hash: artifact.hash, reviewed_head: sourceHead, head, revision: state.revision, changed: [...changed], session: result.sessionId, report });
+  saveRecord(task, `${name}-proof`, { artifact: artifact.file, hash: artifact.hash, reviewed_head: sourceHead, head, revision: state.revision, changed: [...changed], session: result.sessionId, execution, report });
   if (report.findings.length) throw new Error(`${artifact.file}: independent reviewer found consequential defects; clean review cannot advance`);
   return { head, session: result.sessionId };
 }

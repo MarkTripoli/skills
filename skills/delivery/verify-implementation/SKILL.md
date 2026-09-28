@@ -50,7 +50,9 @@ Review-code owns the consequential-diff dispatch gate. Verification may record o
 
 - Never edit product code, configuration, or test files, and never commit code. Only the verification artifact is committed, as a `docs(task)` commit.
 - Run each check as the repository defines it, never a narrowed variant that leaves out the failing part. A single test file or a focused command is an extra `A` item, not a replacement for the `C` item.
+- Copy CI check invocations including their required flags and arguments, including checks inside release workflows and Python `-m` or `uv run` commands. If a CI variable cannot be resolved to an executable command, do not claim `passed` from a different command; record the missing prerequisite.
 - The controller independently re-runs each recorded `C` and `A` command before accepting `passed`. Use only repeatable, read-only checks against isolated fixtures; exercise POST requests, migrations, and one-shot actions through resettable test harnesses rather than replaying a live mutation. A passing expected-error check records its actual nonzero exit code and decisive error, and a silent predicate records the exact exit code; neither needs fabricated stdout.
+- For every `A` row, record a decisive observed output line matching the promised input or outcome. An exit-only result is meaningful only for an executable boolean predicate such as `test -f`; a different input that happens to exit zero is not acceptance proof. Never replay `curl` form/data/upload flags or shell-wrapped live mutations.
 - A failing check is recorded, never fixed; the next phase fixes, this phase records. Say what failed and what was seen, not what should be changed.
 - Deterministic results decide before the typed-judgment helper is asked; the helper reads the prose that exit codes and exact strings cannot settle.
 - Do not send repository code, diffs, or secrets to the helper; `steps.json` carries `expected` and trimmed `observed` text only.
