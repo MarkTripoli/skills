@@ -1,5 +1,4 @@
 ---
 "@marktripoli/skills": minor
 ---
-
-Add an eval-feedback skill for evidence-linked eval audits and human-approved, reversible feedback proposals.
+Add fail-closed eval feedback audits that require retained grading outcomes and keep unsupported quality, savings, and approval claims pending.

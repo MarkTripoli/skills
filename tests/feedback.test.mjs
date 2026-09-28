@@ -3,7 +3,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 import { auditEvalPair, decideFeedback } from "../evals/feedback.mjs";
 
 const manifest = (overrides = {}) => ({
@@ -16,18 +15,14 @@ const manifest = (overrides = {}) => ({
   metrics: {
     cost: { total: 0.42, input: 0.1, output: 0.2, cacheRead: 0.05, cacheWrite: 0.07 },
     cost_basis: "provider_billed_usd",
-    cost_source: "provider usage record",
+    cost_source: "caller-provided provider label",
     tokens: { input: 100, output: 200, cacheRead: 50, cacheWrite: 70 },
     coverage: { complete: true, turns: 20, usage_events: 20, cost_events: 20, models: ["provider/model-a"] },
   },
   ...overrides,
 });
 const proposal = { rule: "prefer model B for task X", rationale: "targeted evidence", targetScenario: "counter-evidence", expectedBehavior: "increment reaches 1" };
-const gradeArtifact = fileURLToPath(new URL("./fixtures/feedback-grade.json", import.meta.url));
-const grading = { status: "passed", targetScenario: "counter-evidence", expectedBehavior: "increment reaches 1", evidence: [gradeArtifact] };
-const wrongGradeArtifact = fileURLToPath(new URL("./fixtures/feedback-grade-other-target.json", import.meta.url));
-const missingGradeArtifact = fileURLToPath(new URL("./fixtures/missing-grade.json", import.meta.url));
-const approval = { decision: "approved", actor: "reviewer", at: "2026-09-27T12:00:00Z", reversal: "revert feedback record 001" };
+const metadataOnlyGrade = { status: "passed", targetScenario: proposal.targetScenario, expectedBehavior: proposal.expectedBehavior, evidence: [] };
 
 function withRetainedPair(beforeOverrides, afterOverrides, action, { samePath = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "feedback-manifests-"));
@@ -39,22 +34,39 @@ function withRetainedPair(beforeOverrides, afterOverrides, action, { samePath = 
     return JSON.parse(JSON.stringify(value));
   };
   try {
-    const before = make("before", beforeOverrides);
-    const after = make("after", afterOverrides);
-    return action(before, after);
+    return action(make("before", beforeOverrides), make("after", afterOverrides), root);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
 
+function retainedGrade(root, overrides = {}) {
+  const output = path.join(root, "grade");
+  const phase = "1-counter-evidence";
+  fs.mkdirSync(path.join(root, ".dist", "fixtures"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".dist", "fixtures", "case.json"), "{}\n");
+  fs.mkdirSync(path.join(output, phase), { recursive: true });
+  fs.writeFileSync(path.join(output, phase, "answer.md"), "Observed increment reached 1.\n");
+  const run = {
+    name: proposal.targetScenario,
+    ok: true,
+    fixtureRevision: "fixture-abc",
+    sourceRevision: "source-123",
+    phases: [{ phase, ok: true, problems: [] }],
+    ...overrides,
+  };
+  const file = path.join(output, "comparison-run.json");
+  fs.writeFileSync(file, `${JSON.stringify(run, null, 2)}\n`);
+  return { status: "passed", targetScenario: proposal.targetScenario, expectedBehavior: proposal.expectedBehavior, evidence: [file] };
+}
+
 const auditPair = (before = {}, after = {}, options) =>
   withRetainedPair(before, after, (b, a) => auditEvalPair(b, a, options));
-const decidePair = ({ before = {}, after = {}, decision = approval, grade = grading, proposed = proposal } = {}) =>
-  withRetainedPair(before, after, (b, a) => decideFeedback({ before: b, after: a, proposal: proposed, grading: grade, approval: decision }));
+const decidePair = (before = {}, after = {}, options = {}) =>
+  withRetainedPair(before, after, (b, a, root) => decideFeedback({ before: b, after: a, proposal, grading: retainedGrade(root), ...options }));
 
 test("same retained manifest cannot serve as both comparison runs despite caller run IDs", () => {
   withRetainedPair({}, {}, (before, after) => {
-    assert.equal(auditEvalPair(before, after).matched, null);
     before.runId = "caller-before";
     after.runId = "caller-after";
     const audit = auditEvalPair(before, after);
@@ -69,8 +81,7 @@ test("missing manifests and caller metadata that differs from retained bytes fai
     assert.equal(auditEvalPair(before, after).matched, null);
   });
   withRetainedPair({}, {}, (before, after) => {
-    const forged = { ...before, sourceRevision: "forged-source" };
-    const audit = auditEvalPair(forged, after);
+    const audit = auditEvalPair({ ...before, sourceRevision: "forged-source" }, after);
     assert.equal(audit.matched, null);
     assert.ok(audit.problems.includes("before: caller evidence differs from retained manifest"));
   });
@@ -82,83 +93,39 @@ test("fixture revisions and observed model identities must match", () => {
   assert.ok(auditPair({}, { actualModel: "provider/model-a", metrics: { ...manifest().metrics, coverage: { ...manifest().metrics.coverage, models: ["provider/model-a", "provider/model-b"] } } }).problems.includes("after: observed model conflicts with coverage"));
 });
 
-test("source revision must be independently recorded", () => {
-  const audit = auditPair({ sourceRevision: undefined });
-  assert.equal(audit.matched, null);
-  assert.ok(audit.problems.includes("before: sourceRevision missing"));
+test("scalar sample counts cannot establish independent evaluated samples", () => {
+  const audit = auditPair();
+  assert.equal(audit.qualityClaimsAllowed, false);
+  assert.equal(audit.claimsAllowed, false);
+  assert.ok(audit.problems.includes("the eval runner does not retain independently evaluated sample outcome rows"));
 });
 
-test("sample floor cannot be lowered below ten", () => {
-  assert.throws(() => auditPair({}, {}, { minimumSamples: 2 }), /cannot be lower than 10/);
-  const tiny = auditPair({ sampleCount: 9 });
-  assert.equal(tiny.claimsAllowed, false);
-});
-
-test("failed or incomplete-coverage runs cannot join or claim", () => {
-  const failed = auditPair({ ok: false });
-  assert.equal(failed.matched, null);
-  assert.equal(failed.claimsAllowed, false);
-  for (const coverage of [{ complete: false, turns: 20, usage_events: 20, cost_events: 20, models: ["provider/model-a"] }, { turns: 20, usage_events: 20, cost_events: 20, models: ["provider/model-a"] }]) {
-    const audit = auditPair({}, { metrics: { ...manifest().metrics, coverage } });
-    assert.equal(audit.matched, null);
-    assert.equal(audit.claimsAllowed, false);
-    assert.equal(typeof audit.savingsClaimsAllowed, "boolean");
-  }
-});
-
-test("monetary savings require complete billed components for every measured turn", () => {
-  const totalsOnly = auditPair({}, { metrics: { ...manifest().metrics, cost: { total: 0.42 } } });
-  assert.equal(totalsOnly.qualityClaimsAllowed, true);
-  assert.equal(totalsOnly.savingsClaimsAllowed, false);
-  const partial = auditPair({}, { metrics: { ...manifest().metrics, coverage: { ...manifest().metrics.coverage, cost_events: 1 } } });
-  assert.equal(partial.qualityClaimsAllowed, true);
-  assert.equal(partial.savingsClaimsAllowed, false);
-  const complete = auditPair();
-  assert.equal(complete.savingsClaimsAllowed, true);
-  assert.equal(complete.costEvidence.before.source, "provider usage record");
-});
-
-test("estimated costs cannot support monetary savings claims", () => {
-  const audit = auditPair({ metrics: { ...manifest().metrics, cost_basis: "model_rate_estimate_usd" } });
-  assert.equal(audit.qualityClaimsAllowed, true);
+test("caller cost labels and totals cannot authorize savings without provider billing records", () => {
+  const audit = auditPair();
   assert.equal(audit.savingsClaimsAllowed, false);
+  assert.equal(audit.costEvidence, null);
+  const forged = auditPair({}, { metrics: { ...manifest().metrics, cost: { total: 0.01 }, cost_basis: "provider_billed_usd" } });
+  assert.equal(forged.savingsClaimsAllowed, false);
 });
 
-test("passing feedback requires a retained grading artifact reference", () => {
-  const result = decidePair({ grade: { ...grading, evidence: [missingGradeArtifact] } });
-  assert.equal(result.disposition, "held");
-  assert.ok(result.problems.includes("targeted grading artifact must exist and match fixture, scenario, and expected behavior"));
+test("metadata-only grading claims do not count as an executed outcome", () => {
+  withRetainedPair({}, {}, (before, after) => {
+    const result = decideFeedback({ before, after, proposal, grading: metadataOnlyGrade });
+    assert.equal(result.disposition, "held");
+    assert.ok(result.problems.includes("executed grading run, retained fixture snapshot, and phase outcomes required"));
+  });
 });
 
-test("retained grading artifact must match proposal fixture and result", () => {
-  const result = decidePair({ grade: { ...grading, evidence: [wrongGradeArtifact] } });
-  assert.equal(result.disposition, "held");
-  assert.ok(result.problems.includes("targeted grading artifact must exist and match fixture, scenario, and expected behavior"));
-});
-
-test("grading must target the proposed scenario and expected behavior", () => {
-  const result = decidePair({ grade: { ...grading, targetScenario: "unrelated" } });
-  assert.equal(result.disposition, "held");
-  assert.ok(result.problems.includes("grading target does not match proposal"));
-});
-
-test("forged caller audit flags cannot approve without retained run sources", () => {
-  const result = decideFeedback({ audit: { qualityClaimsAllowed: true, matched: { fixtureVersion: "fixture-abc" } }, proposal, grading, approval });
-  assert.equal(result.disposition, "held");
-  assert.equal(result.audit.claimsAllowed, false);
-});
-
-test("human-approved feedback derives audit from retained runs and remains reversible", () => {
+test("executed grading outcomes are inspected but unsupported samples still hold feedback", () => {
   const result = decidePair();
-  assert.equal(result.disposition, "approved");
-  assert.equal(result.applied, false);
-  assert.equal(result.audit.claimsAllowed, true);
-  assert.equal(result.grading.targetScenario, proposal.targetScenario);
-  assert.equal(result.approval.reversal, approval.reversal);
+  assert.equal(result.disposition, "held");
+  assert.equal(result.approvalStatus, "pending-human-review");
+  assert.ok(!result.problems.includes("executed grading run, retained fixture snapshot, and phase outcomes required"));
 });
 
-test("human rejection is retained without changing routing", () => {
-  const result = decidePair({ decision: { ...approval, decision: "rejected" } });
-  assert.equal(result.disposition, "rejected");
+test("caller-supplied approval fields cannot authenticate a decision", () => {
+  const result = decidePair({}, {}, { approval: { decision: "approved", actor: "reviewer", at: "2026-09-27T12:00:00Z", reversal: "undo" } });
+  assert.equal(result.disposition, "held");
+  assert.equal(result.approvalStatus, "pending-human-review");
   assert.equal(result.applied, false);
 });

@@ -4,14 +4,9 @@ import { isDeepStrictEqual } from "node:util";
 
 const JOIN_FIELDS = ["fixtureVersion", "model", "actualModel", "sourceRevision", "usageCoverage"];
 const MINIMUM_SAMPLES = 10;
-const COST_COMPONENTS = ["input", "output", "cacheRead", "cacheWrite"];
 
 function positiveInteger(value) {
   return Number.isSafeInteger(value) && value > 0;
-}
-
-function finiteNonNegative(value) {
-  return Number.isFinite(value) && value >= 0;
 }
 
 function resolveManifestPath(run) {
@@ -20,31 +15,19 @@ function resolveManifestPath(run) {
     : null;
 }
 
-function loadRetainedManifest(run, side) {
-  const manifestPath = resolveManifestPath(run);
+function loadRetainedManifest(input, side) {
+  const manifestPath = resolveManifestPath(input);
   if (!manifestPath) return { problems: [`${side}: retained manifest path missing`] };
   try {
-    const retained = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-    const callerSnapshot = JSON.parse(JSON.stringify(run));
-    if (!isDeepStrictEqual(retained, callerSnapshot) || resolveManifestPath(retained) !== manifestPath) {
+    const run = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    const callerSnapshot = JSON.parse(JSON.stringify(input));
+    if (!isDeepStrictEqual(run, callerSnapshot) || resolveManifestPath(run) !== manifestPath) {
       return { problems: [`${side}: caller evidence differs from retained manifest`] };
     }
-    return { manifestPath, run: retained, problems: [] };
+    return { run, manifestPath, problems: [] };
   } catch {
-    return { manifestPath, problems: [`${side}: retained comparison manifest missing or invalid`] };
+    return { problems: [`${side}: retained comparison manifest missing or invalid`] };
   }
-}
-
-function completeCost(run) {
-  const phases = Array.isArray(run.phases) && run.phases.length ? run.phases.map((phase) => phase.cost) : null;
-  const source = COST_COMPONENTS.every((field) => finiteNonNegative(run.metrics?.cost?.[field]))
-    ? run.metrics.cost
-    : phases?.every((cost) => cost && COST_COMPONENTS.every((field) => finiteNonNegative(cost[field])))
-      ? Object.fromEntries(COST_COMPONENTS.map((field) => [field, phases.reduce((sum, cost) => sum + cost[field], 0)]))
-      : null;
-  return source && finiteNonNegative(run.metrics?.cost?.total)
-    ? { total: run.metrics.cost.total, ...Object.fromEntries(COST_COMPONENTS.map((field) => [field, source[field]])) }
-    : null;
 }
 
 function recordedRunEvidence(input, side) {
@@ -61,7 +44,6 @@ function recordedRunEvidence(input, side) {
   }
   const manifestPath = loaded.manifestPath;
   const evidenceRef = typeof run.evidenceRef === "string" ? path.resolve(run.evidenceRef) : manifestPath;
-  const cost = completeCost(run);
   const normalized = {
     runId: manifestPath,
     manifestPath,
@@ -72,11 +54,6 @@ function recordedRunEvidence(input, side) {
     usageCoverage: coverage?.complete === true ? "complete" : coverage?.complete === false ? "incomplete" : run.usageCoverage,
     sampleCount: run.sampleCount,
     evidenceRef,
-    cost: cost ? { ...cost, currency: "USD", basis: run.metrics?.cost_basis, source: run.metrics?.cost_source } : null,
-    usageEvents: coverage?.usage_events,
-    costEvents: coverage?.cost_events,
-    measuredEvents: coverage?.turns,
-    tokens: run.metrics?.tokens,
   };
   for (const field of JOIN_FIELDS) {
     if (typeof normalized[field] !== "string" || !normalized[field].trim()) problems.push(`${side}: ${field} missing`);
@@ -106,34 +83,45 @@ export function auditEvalPair(beforeInput, afterInput, { minimumSamples = MINIMU
     }
   }
   const comparable = problems.length === 0;
-  const qualityClaimsAllowed = Boolean(comparable && before?.sampleCount >= minimumSamples && after?.sampleCount >= minimumSamples);
-  const usageComplete = (run) => COST_COMPONENTS.every((field) => finiteNonNegative(run?.tokens?.[field]));
-  const costEvidenceValid = (run) => run?.cost && finiteNonNegative(run.cost.total) &&
-    COST_COMPONENTS.every((field) => finiteNonNegative(run.cost[field])) && usageComplete(run) &&
-    positiveInteger(run.measuredEvents) && run.usageEvents === run.measuredEvents && run.costEvents === run.measuredEvents &&
-    run.cost.currency === "USD" && run.cost.basis === "provider_billed_usd" && typeof run.cost.source === "string" && run.cost.source.trim();
-  const savingsClaimsAllowed = Boolean(qualityClaimsAllowed && costEvidenceValid(before) && costEvidenceValid(after) &&
-    before.cost.currency === after.cost.currency && before.cost.basis === after.cost.basis &&
-    before.cost.source === after.cost.source);
+  const qualityClaimsAllowed = false;
+  const savingsClaimsAllowed = false;
+  const limits = [
+    "the eval runner does not retain independently evaluated sample outcome rows",
+    "the eval runner records model-rate estimates, not provider billing records",
+  ];
   return {
     qualityClaimsAllowed,
     claimsAllowed: qualityClaimsAllowed,
     savingsClaimsAllowed,
-    problems,
+    problems: [...problems, ...limits],
     matched: comparable ? Object.fromEntries([...JOIN_FIELDS.map((field) => [field, before[field]]), ["beforeRunId", before.runId], ["afterRunId", after.runId], ["beforeEvidenceRef", before.evidenceRef], ["afterEvidenceRef", after.evidenceRef]]) : null,
-    costEvidence: savingsClaimsAllowed ? { before: before.cost, after: after.cost } : null,
+    costEvidence: null,
   };
 }
 
-function retainedGradingEvidence(grading, audit, proposal) {
+function retainedPhaseAnswer(outputDir, phase) {
+  if (typeof phase?.phase !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(phase.phase)) return false;
+  const answer = path.resolve(outputDir, phase.phase, "answer.md");
+  if (!answer.startsWith(`${outputDir}${path.sep}`)) return false;
+  try { return fs.statSync(answer).size > 0; } catch { return false; }
+}
+function retainedGradingOutcome(grading, audit, proposal) {
   if (!Array.isArray(grading?.evidence)) return [];
   return grading.evidence.flatMap((reference) => {
     if (typeof reference !== "string" || !reference.trim() || /^https?:\/\//i.test(reference)) return [];
     const file = path.resolve(reference);
     try {
-      const artifact = JSON.parse(fs.readFileSync(file, "utf8"));
-      if (artifact.status !== "passed" || artifact.targetScenario !== proposal.targetScenario ||
-          artifact.expectedBehavior !== proposal.expectedBehavior || artifact.fixtureRevision !== audit.matched?.fixtureVersion) return [];
+      const run = JSON.parse(fs.readFileSync(file, "utf8"));
+      const outputDir = path.dirname(file);
+      const fixtureSnapshot = path.resolve(outputDir, "..", ".dist", "fixtures");
+      const phasesAreGraded = Array.isArray(run.phases) && run.phases.length > 0 && run.phases.every((phase) =>
+        phase?.ok === true && Array.isArray(phase.problems) && phase.problems.length === 0 &&
+        retainedPhaseAnswer(outputDir, phase));
+      if (path.basename(file) !== "comparison-run.json" || !fs.existsSync(fixtureSnapshot) || fs.readdirSync(fixtureSnapshot).length === 0 ||
+          run.ok !== true || run.name !== grading.targetScenario ||
+          run.fixtureRevision !== audit.matched?.fixtureVersion || run.sourceRevision !== audit.matched?.sourceRevision ||
+          !phasesAreGraded || grading.targetScenario !== proposal.targetScenario ||
+          grading.expectedBehavior !== proposal.expectedBehavior) return [];
       return [file];
     } catch {
       return [];
@@ -141,23 +129,22 @@ function retainedGradingEvidence(grading, audit, proposal) {
   });
 }
 
-export function decideFeedback({ before, after, minimumSamples, proposal, grading, approval }) {
+export function decideFeedback({ before, after, minimumSamples, proposal, grading }) {
   const audit = auditEvalPair(before, after, { minimumSamples });
   const problems = [];
   if (!audit.qualityClaimsAllowed || !audit.matched) problems.push("comparable evidence required");
   if (!proposal || typeof proposal.rule !== "string" || !proposal.rule.trim() || typeof proposal.rationale !== "string" || !proposal.rationale.trim()) problems.push("rule and rationale required");
   if (!proposal || typeof proposal.targetScenario !== "string" || !proposal.targetScenario.trim() || typeof proposal.expectedBehavior !== "string" || !proposal.expectedBehavior.trim()) problems.push("target scenario and expected behavior required");
   if (grading && proposal && (grading.targetScenario !== proposal.targetScenario || grading.expectedBehavior !== proposal.expectedBehavior)) problems.push("grading target does not match proposal");
-  const gradingEvidence = retainedGradingEvidence(grading, audit, proposal ?? {});
-  if (!grading || grading.status !== "passed" || gradingEvidence.length === 0) problems.push("targeted grading artifact must exist and match fixture, scenario, and expected behavior");
-  if (!approval || !["approved", "rejected"].includes(approval.decision) || typeof approval.actor !== "string" || !approval.actor.trim() || !Number.isFinite(Date.parse(approval.at)) || typeof approval.reversal !== "string" || !approval.reversal.trim()) problems.push("human decision, timestamp, actor, and reversal path required");
-  if (problems.length) return { disposition: "held", problems, applied: false, audit };
+  const gradingEvidence = retainedGradingOutcome(grading, audit, proposal ?? {});
+  if (!grading || grading.status !== "passed" || gradingEvidence.length === 0) problems.push("executed grading run, retained fixture snapshot, and phase outcomes required");
+  if (problems.length) return { disposition: "held", approvalStatus: "pending-human-review", applied: false, problems, audit };
   return {
-    disposition: approval.decision,
+    disposition: "pending-human-review",
+    approvalStatus: "pending-human-review",
     applied: false,
     proposal: { rule: proposal.rule, rationale: proposal.rationale, targetScenario: proposal.targetScenario, expectedBehavior: proposal.expectedBehavior },
     grading: { status: grading.status, targetScenario: grading.targetScenario, expectedBehavior: grading.expectedBehavior, evidence: gradingEvidence },
-    approval: { decision: approval.decision, actor: approval.actor, at: approval.at, reversal: approval.reversal },
     audit,
   };
 }

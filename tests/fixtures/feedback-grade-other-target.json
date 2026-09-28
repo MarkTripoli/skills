@@ -1,6 +1,0 @@
-{
-  "status": "passed",
-  "fixtureRevision": "fixture-abc",
-  "targetScenario": "unrelated-scenario",
-  "expectedBehavior": "different outcome"
-}

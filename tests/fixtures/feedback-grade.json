@@ -1,6 +1,0 @@
-{
-  "status": "passed",
-  "fixtureRevision": "fixture-abc",
-  "targetScenario": "counter-evidence",
-  "expectedBehavior": "increment reaches 1"
-}
