@@ -267,6 +267,9 @@ function repositoryChecks(cwd) {
             throw new Error(`Cannot resolve CI release packaging check in ${name}: ${line}`);
           }
           addWorkflow(name, `node --test ${packageTest}`);
+        } else if (/^node --test(?:\s|$)/.test(line)) {
+          // CI's direct Node test invocation is required proof, not optional prose.
+          addWorkflow(name, line);
         } else {
           const script = line.match(/^(?:node|python3?|bun)\s+(?!-[ecp]\b)([^\s"'$|;&]+\.(?:m?js|cjs|py))\b/);
           if (script && !/(?:deploy|release|publish|migrat|push)/i.test(script[1])) addWorkflow(name, line);
@@ -389,6 +392,10 @@ function replayableVerificationCommand(command, id, cwd) {
 }
 function executeVerification(task, state, artifact, rows, step) {
   const beforeHead = git(task.cwd, ['rev-parse', 'HEAD']);
+  const replayEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+  for (const key of ['NODE_OPTIONS', 'NODE_TEST_CONTEXT', 'PYTHONPATH', 'PYTHONSTARTUP', 'RUBYOPT', 'PERL5OPT']) {
+    delete replayEnv[key];
+  }
   const evidence = [];
   for (const row of rows) {
     const command = row['decided by'].match(/^`([^`\n]+)`$/)?.[1];
@@ -396,7 +403,7 @@ function executeVerification(task, state, artifact, rows, step) {
     const [bin, ...args] = replayableVerificationCommand(command, row.id, task.cwd);
     const run = spawnSync(bin, args, {
       cwd: task.cwd, encoding: 'utf8', timeout: 600_000, maxBuffer: 16 * 1024 * 1024,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      env: replayEnv,
     });
     const actualLines = `${run.stdout || ''}\n${run.stderr || ''}`.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
     const output = actualLines.join(' ');
@@ -474,16 +481,13 @@ function changedSourceLines(task, head, changed, ancestor) {
       continue;
     }
     const deleted = !fs.existsSync(path.join(task.cwd, file));
-    const diffs = [
-      ...(ancestor ? [git(task.cwd, ['diff', '--unified=0', ancestor, head, '--', file])] : []),
-      git(task.cwd, ['diff', '--unified=0', head, '--', file]),
-    ];
-    lines.set(file, diffs.flatMap(diff => [...diff.matchAll(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm)]
+    const diff = git(task.cwd, ['diff', '--unified=0', ancestor || head, '--', file]);
+    lines.set(file, [...diff.matchAll(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm)]
       .map(([, oldStart, oldLength, newStart, newLength]) => {
         const start = Number(deleted ? oldStart : newStart);
         const length = Number(deleted ? oldLength ?? 1 : newLength ?? 1);
         return [Math.max(1, start), Math.max(1, start + length - 1)];
-      })));
+      }));
   }
   return lines;
 }

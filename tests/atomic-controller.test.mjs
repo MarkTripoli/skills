@@ -572,6 +572,30 @@ test('multiline CI and configured Python checks cannot disappear from passed ver
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 
+test('direct CI node --test commands remain mandatory replayable repository checks', async () => {
+  const f = proofFixture();
+  try {
+    const workflows = path.join(f.repo, '.github', 'workflows');
+    fs.mkdirSync(workflows, { recursive: true });
+    fs.mkdirSync(path.join(f.repo, 'tests'));
+    fs.writeFileSync(path.join(f.repo, 'tests', 'unit.test.mjs'),
+      `import test from 'node:test'; import assert from 'node:assert/strict'; import {execFileSync} from 'node:child_process';\ntest('cli doubles 21', () => assert.equal(execFileSync(process.execPath, ['cli.mjs', '21'], {encoding:'utf8'}).trim(), '42'));\n`);
+    fs.writeFileSync(path.join(workflows, 'checks.yml'),
+      'jobs:\n  proof:\n    steps:\n      - run: node --test tests/unit.test.mjs\n');
+    const before = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
+    const acceptance = f.row('A1', 'CLI doubles input 21.', 21, 42) +
+      f.row('A2', 'CLI doubles input 7.', 7, 14);
+    await assert.rejects(() => runSkill(f.ctx(f.check + acceptance), f.task, before, f.options,
+      'verify-implementation', 1), /omitted repository checks: node --test tests\/unit\.test\.mjs/);
+    const rows = f.check +
+      '| C2 | Direct Node CI test | `node --test tests/unit.test.mjs` | exit 0; ℹ pass 1 | pass |\n' + acceptance;
+    const verified = await runSkill(f.ctx(rows), f.task, before, f.options,
+      'verify-implementation', 2);
+    assert.deepEqual(verified.proofs.verification.executionEvidence.map(row => row.id),
+      ['C1', 'C2', 'A1', 'A2']);
+  } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
+});
+
 test('event-scoped Conventional Commits CI defers to exact-head hosted job, not unsafe local variable replay', async () => {
   const f = proofFixture();
   try {
@@ -757,6 +781,39 @@ test('clean review requires a completed separate exact-HEAD reviewer; genuine ch
     assert.equal(dispatches, 4);
     assert.deepEqual(eligible(reviewed, f.options, 'oneshot', false), ['record-evidence']);
     assert.equal(fs.existsSync(path.join(f.taskDir, '.atomic-delivery', 'proof-run', '005-independent-review-proof.json')), true);
+  } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
+});
+
+test('independent review cites committed changes at their shifted working-tree lines', async () => {
+  const f = proofFixture();
+  try {
+    const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: f.repo, encoding: 'utf8' }).trim();
+    fs.writeFileSync(path.join(f.repo, 'cli.mjs'),
+      '// Existing CLI\nconsole.log(Number(process.argv[2]) * 2);\n');
+    execFileSync('git', ['add', 'cli.mjs'], { cwd: f.repo });
+    execFileSync('git', ['commit', '-m', 'fix: double CLI input'], { cwd: f.repo });
+    fs.writeFileSync(path.join(f.repo, 'cli.mjs'),
+      '// preparation 1\n// preparation 2\n// preparation 3\n// preparation 4\n// preparation 5\n// Existing CLI\nconsole.log(Number(process.argv[2]) * 2);\n');
+    fs.appendFileSync(path.join(f.taskDir, 'task.md'), `\nbase: ${base}`);
+    const before = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
+    const rows = f.check + f.row('A1', 'CLI doubles input 21.', 21, 42) +
+      f.row('A2', 'CLI doubles input 7.', 7, 14);
+    const verified = await runSkill(f.ctx(rows), f.task, before, f.options,
+      'verify-implementation', 1);
+    const reviewer = f.ctx(rows, () => {
+      const head = execFileSync('git', ['rev-parse', 'HEAD^'], { cwd: f.repo, encoding: 'utf8' }).trim();
+      const evidence = 'cli.mjs:7 inspected changed doubling logic; node cli.mjs 21 printed 42 and node cli.mjs 7 printed 14';
+      return { sessionId: 'shifted-line-reviewer', text: JSON.stringify({
+        head, revision: verified.revision,
+        acceptance: ['CLI doubles input 21.', 'CLI doubles input 7.'].map(item => ({ item, evidence })),
+        risks: ['functional correctness', 'security and data integrity', 'acceptance oracle and test reachability']
+          .map(risk => ({ risk, evidence })),
+        findings: [],
+      }) };
+    });
+    const reviewed = await runSkill(reviewer, f.task, verified, f.options,
+      'review-code', 2);
+    assert.deepEqual(eligible(reviewed, f.options, 'oneshot', false), ['record-evidence']);
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 
