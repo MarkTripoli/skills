@@ -38,7 +38,8 @@ test('compliance report preserves complete accounting, citation failures, risk e
 test('forged acceptance and missing lanes cannot produce complete coverage', () => {
   const finding = {...makeFinding('forged', 'semgrep', 'javascript.lang.security.audit.child-process-exec', 'src/app.js'), disposition: 'accepted'};
   const names = ['semgrep', 'gitleaks', 'trivy_config', 'trivy_fs', 'hadolint', 'actionlint'];
-  const lanes = Object.fromEntries(names.map(name => [name, {tool: {name: name.startsWith('trivy_') ? 'trivy' : name, version: '1.0', status: 'ok'}, coverage: 'complete'}]));
+  const lanes = Object.fromEntries(names.map(name => [name, {tool: {name: name.startsWith('trivy_') ? 'trivy' : name, version: '1.0', status: 'ok'}, coverage: 'complete', findings: []}]));
+  lanes.semgrep.findings = [finding];
   const complete = {schema_version: 1, repository, revision, coverage: 'complete', secret_coverage: 'complete', lanes, findings: [finding]};
   const report = assessCompliance(complete);
   assert.equal(report.findings[0].control_id, 'SEC-CODE-REVIEW');
@@ -50,17 +51,18 @@ test('forged acceptance and missing lanes cannot produce complete coverage', () 
   assert.equal(missingLane.coverage, 'incomplete');
   assert.ok(missingLane.tool_coverage.some(tool => tool.name === 'trivy_fs' && tool.status === 'unavailable'));
 
-  lanes.trivy_fs = {tool: {name: 'trivy_fs', version: '1.0', status: 'ok'}};
+  lanes.trivy_fs = {tool: {name: 'trivy_fs', version: '1.0', status: 'ok'}, findings: []};
   assert.equal(assessCompliance(complete).coverage, 'incomplete');
   lanes.trivy_fs.coverage = 'complete';
-  lanes.unexpected = {tool: {name: 'unexpected', status: 'ok'}, coverage: 'complete'};
+  lanes.unexpected = {tool: {name: 'unexpected', status: 'ok'}, coverage: 'complete', findings: []};
   assert.equal(assessCompliance(complete).coverage, 'incomplete');
 });
 
 test('suppression retains its proof, duplicate IDs fail closed, and lane tool identity is bound', () => {
   const names = ['semgrep', 'gitleaks', 'trivy_config', 'trivy_fs', 'hadolint', 'actionlint'];
-  const lanes = Object.fromEntries(names.map(name => [name, {tool: {name: name.startsWith('trivy_') ? 'trivy' : name, version: '1.0', status: 'ok'}, coverage: 'complete'}]));
+  const lanes = Object.fromEntries(names.map(name => [name, {tool: {name: name.startsWith('trivy_') ? 'trivy' : name, version: '1.0', status: 'ok'}, coverage: 'complete', findings: []}]));
   const finding = makeFinding('same-id', 'semgrep', 'javascript.example', 'src/app.js');
+  lanes.semgrep.findings = [finding];
   const scan = {schema_version: 1, repository, revision, coverage: 'complete', secret_coverage: 'complete', lanes, findings: [finding]};
   const risk = {repository, rule_id: finding.rule_id, path: finding.path, reason: 'Remediation scheduled', expires: '2026-10-01'};
   const suppressed = assessCompliance(scan, {risks: [risk], now: new Date('2026-09-27T00:00:00Z')}).findings[0];
@@ -70,11 +72,13 @@ test('suppression retains its proof, duplicate IDs fail closed, and lane tool id
   assert.equal(suppressed.citation.evidence_ref, finding.evidence_ref);
 
   scan.findings = [finding, {...finding, rule_id: 'javascript.other', path: 'src/other.js'}];
+  lanes.semgrep.findings = [...scan.findings];
   const duplicate = assessCompliance(scan);
   assert.deepEqual(duplicate.findings.map(item => item.disposition), ['unknown', 'unknown']);
   assert.equal(duplicate.coverage, 'incomplete');
 
   scan.findings = [finding];
+  lanes.semgrep.findings = [finding];
   lanes.hadolint.tool.name = 'actionlint';
   const swapped = assessCompliance(scan);
   assert.equal(swapped.tool_coverage.find(item => item.name === 'hadolint').coverage, 'incomplete');
@@ -83,7 +87,7 @@ test('suppression retains its proof, duplicate IDs fail closed, and lane tool id
 
 test('actual Trivy binary identity permits complete six-lane scanner coverage', () => {
   const names = ['semgrep', 'gitleaks', 'trivy_config', 'trivy_fs', 'hadolint', 'actionlint'];
-  const lanes = Object.fromEntries(names.map(name => [name, {tool: {name: name.startsWith('trivy_') ? 'trivy' : name, status: 'ok'}, coverage: 'complete'}]));
+  const lanes = Object.fromEntries(names.map(name => [name, {tool: {name: name.startsWith('trivy_') ? 'trivy' : name, status: 'ok'}, coverage: 'complete', findings: []}]));
   const report = assessCompliance({schema_version: 1, repository, revision, coverage: 'complete', secret_coverage: 'complete', lanes, findings: []});
   assert.equal(report.coverage, 'complete');
   assert.equal(report.tool_coverage.find(tool => tool.name === 'trivy_fs').coverage, 'complete');
@@ -128,4 +132,27 @@ test('rejected accepted-risk entries expose validation failure without suppressi
   assert.equal(report.accepted_risk_validation.coverage, 'incomplete');
   assert.ok(report.accepted_risk_validation.errors.some(error => /expires/.test(error)));
   assert.equal(report.coverage, 'incomplete');
+});
+
+test('valid historical Gitleaks risk remains suppressed without asserting a HEAD line', () => {
+  const secret = makeFinding('historical-risk', 'gitleaks', 'generic-api-key', 'src/removed-secret.js');
+  const risk = {repository, rule_id: secret.rule_id, path: secret.path, reason: 'Approved historical remediation', expires: '2026-10-01'};
+  const report = assessCompliance({schema_version: 1, repository, revision, findings: [secret]}, {risks: [risk], now: new Date('2026-09-27T00:00:00Z')});
+  assert.equal(report.findings[0].disposition, 'suppressed');
+  assert.deepEqual(report.findings[0].accepted_risk, {reason: risk.reason, expires: risk.expires});
+  assert.equal(report.findings[0].citation, null);
+  assert.equal(report.findings[0].citation_status, 'historical-unverified');
+  assert.equal(report.coverage, 'incomplete');
+});
+
+test('contradictory lane findings and missing lane arrays cannot claim clean inventory', () => {
+  const names = ['semgrep', 'gitleaks', 'trivy_config', 'trivy_fs', 'hadolint', 'actionlint'];
+  const lanes = Object.fromEntries(names.map(name => [name, {tool: {name: name.startsWith('trivy_') ? 'trivy' : name, status: 'ok'}, coverage: 'complete', findings: []}]));
+  const scan = {schema_version: 1, repository, revision, coverage: 'complete', secret_coverage: 'complete', lanes, findings: []};
+  const clean = assessCompliance(scan);
+  assert.equal(clean.coverage, 'complete');
+  lanes.semgrep.findings = [makeFinding('hidden', 'semgrep', 'javascript.example', 'src/hidden.js')];
+  assert.throws(() => assessCompliance(scan), /lane findings disagree/);
+  delete lanes.semgrep.findings;
+  assert.throws(() => assessCompliance(scan), /lane findings disagree/);
 });

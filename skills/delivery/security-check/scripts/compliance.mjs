@@ -13,6 +13,16 @@ export const CONTROL_CATALOG = {
 const EXPECTED_LANES = ['semgrep', 'gitleaks', 'trivy_config', 'trivy_fs', 'hadolint', 'actionlint'];
 const LANE_TOOLS = {semgrep: 'semgrep', gitleaks: 'gitleaks', trivy_config: 'trivy', trivy_fs: 'trivy', hadolint: 'hadolint', actionlint: 'actionlint'};
 
+function laneFindingsMatch(scan) {
+  if (!scan.lanes) return true;
+  const entries = Object.values(scan.lanes);
+  if (entries.some(lane => !Array.isArray(lane?.findings) || (lane.file_findings !== undefined && !Array.isArray(lane.file_findings)))) return false;
+  const signatures = findings => findings.map(finding =>
+    JSON.stringify(Object.entries(finding ?? {}).sort(([left], [right]) => left.localeCompare(right)))).sort();
+  return JSON.stringify(signatures(scan.findings)) === JSON.stringify(signatures(entries.flatMap(lane => lane.findings))) &&
+    JSON.stringify(signatures(scan.file_findings ?? [])) === JSON.stringify(signatures(entries.flatMap(lane => lane.file_findings ?? [])));
+}
+
 function laneTools(scan) {
   const lanes = scan.lanes && typeof scan.lanes === 'object' && !Array.isArray(scan.lanes) ? scan.lanes : {};
   const tools = Object.entries(lanes).map(([name, lane]) => {
@@ -41,6 +51,7 @@ export function assessCompliance(scan, {risks = [], now = new Date(), catalog = 
   if (scan?.schema_version !== 1 || !Array.isArray(scan.findings) || (scan.file_findings !== undefined && !Array.isArray(scan.file_findings)) || typeof scan.repository !== 'string' || typeof scan.revision !== 'string') {
     throw new Error('normalized scan required');
   }
+  if (!laneFindingsMatch(scan)) throw new Error('normalized scan lane findings disagree with aggregate');
   if (!catalog || catalog.schema_version !== 1 || typeof catalog.catalog_version !== 'string' || !Array.isArray(catalog.controls)) {
     throw new Error('versioned control catalog required');
   }
@@ -56,7 +67,7 @@ export function assessCompliance(scan, {risks = [], now = new Date(), catalog = 
     const cited = located && !historical;
     const identified = typeof finding?.finding_id === 'string' && finding.finding_id.length > 0 && !duplicateIds.has(finding.finding_id);
     const control = catalog.controls.find(item => item.scanner === finding?.scanner && typeof item.rule_prefix === 'string' && typeof finding?.rule_id === 'string' && finding.rule_id.startsWith(item.rule_prefix));
-    const acceptedRisk = cited && identified ? suppressed.get(identity(finding)) : null;
+    const acceptedRisk = located && identified ? suppressed.get(identity(finding)) : null;
     let disposition = 'unknown';
     if (acceptedRisk) disposition = 'suppressed';
     else if (cited && identified && control) disposition = 'active';
