@@ -417,6 +417,8 @@ function replayableVerificationCommand(command, id, cwd) {
       return relative === testedEntrypoint?.replace(/^\.\//, '');
     } catch { return false; }
   };
+  const testTarget = file => localFile(file) &&
+    /^(?:tests\/)?[^/]+\.test\.[cm]?js$/.test(file.replace(/^\.\//, ''));
   const uvCommandIndex = executable === 'uv'
     ? argv.findIndex((arg, index) => index > 1 && !arg.startsWith('-')) : -1;
   const uvCommand = argv[uvCommandIndex];
@@ -436,7 +438,7 @@ function replayableVerificationCommand(command, id, cwd) {
       (executable === 'pytest' && !pytestArgs(argv.slice(1))) ||
       (['node', 'ruby', 'perl'].includes(executable) &&
         (!((executable === 'node' && argv[1] === '--test' &&
-            (argv.length === 2 || argv.slice(2).every(arg => localFile(arg)))) ||
+            (argv.length === 2 || argv.slice(2).every(testTarget))) ||
            (executable === 'node' && argv[1] === '--check' && argv.length === 3 && localFile(argv[2])) ||
            readOnlyScript(argv[1])))) ||
       (executable === 'uv' && (argv[1] !== 'run' ||
@@ -491,13 +493,17 @@ function executeVerification(task, state, artifact, rows, step) {
         throw new Error(`${artifact.file}: ${row.id} has no decisive output or executable boolean predicate`);
       }
       const tokens = [...(row.item || '').matchAll(/(?<!\d)\d+(?:\.\d+)?(?!\d)/g)].map(match => match[0]);
+      if (tokens.length && bin === 'node' && args[0] === '--test') {
+        throw new Error(`${artifact.file}: ${row.id} test-runner labels cannot substantiate numeric acceptance claims`);
+      }
       const input = /\binput\s+(\d+(?:\.\d+)?)\b/i.exec(row.item || '')?.[1];
       if (input && ['node', 'python', 'python3', 'ruby', 'perl'].includes(bin) &&
           /\.(?:[cm]?js|py|rb)$/.test(args[0] || '') && args[1] !== input) {
         throw new Error(`${artifact.file}: ${row.id} acceptance command did not exercise the claimed input`);
       }
-      if (bin === 'test' && !(row.item || '').includes(args[1])) {
-        throw new Error(`${artifact.file}: ${row.id} boolean predicate did not test the named acceptance target`);
+      if (bin === 'test' && (!(row.item || '').includes(args[1]) ||
+          /\b(?:not|absent|missing|without|removed|deleted|no longer)\b/i.test((row.item || '').replaceAll(args[1], '')))) {
+        throw new Error(`${artifact.file}: ${row.id} boolean predicate does not substantiate the named acceptance claim`);
       }
       const claimed = `${command} ${quoted} ${/\b(?:exit(?:s|ed)?|status)\b/i.test(row.item || '') ? `exit ${exit?.[1] || ''}` : ''}`;
       if (tokens.some(token => !new RegExp(`(?<![\\d.])${token.replace('.', '\\.')}(?![\\d.])`).test(claimed))) {

@@ -751,7 +751,7 @@ test('a genuine expected-error exit and a silent filesystem predicate are accept
     const unrelatedFile = '| A1 | Invalid argument exits 2. | `node tests/errors.mjs bad` | exit 2; invalid argument | pass |\n' +
       '| A2 | package.json exists. | `test -f README.md` | exit 0 | pass |\n';
     await assert.rejects(() => runSkill(f.ctx(f.check + unrelatedFile), f.task, before,
-      f.options, 'verify-implementation', 2), /did not test the named acceptance target/);
+      f.options, 'verify-implementation', 2), /does not substantiate the named acceptance claim/);
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 
@@ -763,6 +763,35 @@ test('a failed boolean file predicate cannot pass as acceptance evidence', async
     const row = '| A1 | missing.json exists. | `test -f missing.json` | exit 1 | pass |\n';
     await assert.rejects(() => runSkill(f.ctx(f.check + row), f.task, before, f.options, 'verify-implementation', 1),
       /claimed pass is not corroborated/);
+  } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
+});
+
+test('A-row replay refuses mutating test-runner targets, numeric labels, and inverted predicates', async () => {
+  const f = proofFixture();
+  try {
+    fs.mkdirSync(path.join(f.repo, 'scripts'));
+    const marker = path.join(f.repo, 'mutated.txt');
+    fs.writeFileSync(path.join(f.repo, 'scripts', 'install.mjs'),
+      `import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(marker)}, 'changed'); console.log('42');\n`);
+    fs.mkdirSync(path.join(f.repo, 'tests'));
+    fs.writeFileSync(path.join(f.repo, 'tests', 'decoy21.test.mjs'),
+      "import test from 'node:test'; console.log('42'); test('unrelated test', () => {});\n");
+    const before = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
+    const other = f.row('A2', 'CLI doubles input 7.', 7, 14);
+    for (const [command, reason] of [
+      ['node --test scripts/install.mjs', /cannot be safely replayed/],
+      ['node --test tests/decoy21.test.mjs', /test-runner labels cannot substantiate numeric/],
+    ]) {
+      const row = `| A1 | CLI doubles input 21. | \`${command}\` | exit 0; 42 | pass |\n`;
+      await assert.rejects(() => runSkill(f.ctx(f.check + row + other), f.task, before,
+        f.options, 'verify-implementation', 1), reason);
+    }
+    assert.equal(fs.existsSync(marker), false);
+    fs.writeFileSync(path.join(f.taskDir, 'task.md'), '# Task\n\n## Acceptance criteria\n\n- package.json does not exist.\n');
+    const inverseState = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
+    const inverse = '| A1 | package.json does not exist. | `test -f package.json` | exit 0 | pass |\n';
+    await assert.rejects(() => runSkill(f.ctx(f.check + inverse), f.task, inverseState,
+      f.options, 'verify-implementation', 2), /does not substantiate the named acceptance claim/);
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 

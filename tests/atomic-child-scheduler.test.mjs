@@ -117,14 +117,15 @@ test('ignored child task proof joins only through its merged PR and hosted evide
   process.env.NODE_OPTIONS = `--import=${fetchStub}`;
   process.env.GH_LIST_JSON = JSON.stringify([pr]);
   process.env.GH_PR_JSON = JSON.stringify({ url: pr.url, number: 7, headRefOid: head,
-    baseRefName: 'epic', baseRefOid: baseHead, isDraft: false, body });
+    baseRefName: 'epic', baseRefOid: baseHead, title: 'feat(api): implement API', isDraft: false, body });
   process.env.GH_HEAD = head;
   process.env.GH_CHECK_PAGES = JSON.stringify([{ total_count: 2, check_runs: ['test', 'Conventional Commits']
     .map((name, index) => ({ id: index + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })) }]);
   process.env.GH_COMMENT_JSON = JSON.stringify({ id: 123, html_url: commentUrl,
     body: `- result: passed\n- tested: ${head}\n- current head: ${head}\n- recording: api-probe\n- capture: ${captureUrl}` });
   assert.deepEqual(childWave(task, [api]).done, ['api']);
-  assert.equal(joinChildren(task, [api], new Map([['api', record]])).complete, true);
+  const joined = joinChildren(task, [api], new Map([['api', record]]));
+  assert.equal(joined.complete, true, JSON.stringify(joined.children));
   process.env.GH_COMMENT_JSON = JSON.stringify({ id: 123, html_url: commentUrl, body: 'Missing capture' });
   assert.equal(joinChildren(task, [api], new Map([['api', record]])).complete, false);
   assert.throws(() => childWave(task, [api], [{ ...pr, mergeCommit: { oid: baseHead } }]), /no matching source/);
