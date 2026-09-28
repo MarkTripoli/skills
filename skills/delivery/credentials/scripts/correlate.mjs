@@ -20,6 +20,7 @@ function gitFromRoot(root, args, {binary = false, worktreeCwd = false} = {}) {
   assertRootPath(root);
   const env = {...process.env, GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1'};
   for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE']) delete env[key];
+  const helper = fileURLToPath(new URL('./git-from-root.py', import.meta.url));
   const result = spawnSync('python3', [helper, ...(worktreeCwd ? ['--worktree-cwd'] : []), ...args], {
     cwd: path.dirname(fileURLToPath(import.meta.url)),
     encoding: binary ? null : 'utf8',
