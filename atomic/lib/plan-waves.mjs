@@ -94,20 +94,21 @@ export function admitPlanWaves(text) {
     const dependencyIndex = phases.findIndex(candidate => candidate.id === dependency);
     if (dependencyIndex >= index) return { ok: false, error: `Phase ${phase.id} depends on phase ${dependency} that appears later; runtime implements phases in document order.` };
   }
-  const remaining = new Set(phases.map(phase => phase.id));
   const completed = new Set();
   const waves = [];
-  while (remaining.size) {
-    const ready = phases.filter(phase => remaining.has(phase.id) && phase.dependencies.every(id => completed.has(id)));
-    if (!ready.length) return { ok: false, error: 'Plan phase dependencies contain a cycle.' };
-    for (let i = 0; i < ready.length; i++) {
-      for (let j = i + 1; j < ready.length; j++) {
-        if (overlaps(ready[i].paths, ready[j].paths)) return { ok: false, error: `Phases ${ready[i].id} and ${ready[j].id} have overlapping declared file scope.` };
-      }
+  for (let index = 0; index < phases.length;) {
+    const wave = [];
+    while (index < phases.length) {
+      const phase = phases[index];
+      if (!phase.dependencies.every(id => completed.has(id))) break;
+      const conflict = wave.find(id => overlaps(byId.get(id).paths, phase.paths));
+      if (conflict) return { ok: false, error: `Phases ${conflict} and ${phase.id} have overlapping declared file scope.` };
+      wave.push(phase.id);
+      index++;
     }
-    const wave = ready.map(phase => phase.id);
+    if (!wave.length) return { ok: false, error: 'Plan phase dependencies contain a cycle.' };
     waves.push(wave);
-    for (const id of wave) { remaining.delete(id); completed.add(id); }
+    for (const id of wave) completed.add(id);
   }
   return { ok: true, waves };
 }

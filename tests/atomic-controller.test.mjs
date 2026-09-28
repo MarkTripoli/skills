@@ -22,6 +22,10 @@ test('plan-wave admission matches planProgress headings and ignores fenced examp
     `${heading}\n\n**Depends on**: ${dependency}\n\n#### 1.1 Edit\n**File**: \`${file}\`\n**Changes**: Update it.\n`;
   const plan = `${phase('## Phase 1', '-', 'src/a.ts')}\n${phase('### Phase 2: Work', '-', 'src/b.ts')}\n${phase('## Phase 3: Final', 'Phase 1, 2', 'src/c.ts')}`;
   assert.deepEqual(admitPlanWaves(plan), { ok: true, waves: [['1', '2'], ['3']] });
+  const interleaved = `${phase('## Phase 1', '-', 'src/a.ts')}\n${phase('## Phase 2', 'Phase 1', 'src/b.ts')}\n${phase('## Phase 3', '-', 'src/c.ts')}`;
+  assert.deepEqual(admitPlanWaves(interleaved), { ok: true, waves: [['1'], ['2', '3']] });
+  const dependencyGap = `${phase('## Phase 1', '-', 'src/a.ts')}\n${phase('## Phase 2', 'Phase 1', 'src/b.ts')}\n${phase('## Phase 3', '-', 'src/a.ts')}`;
+  assert.deepEqual(admitPlanWaves(dependencyGap), { ok: true, waves: [['1'], ['2', '3']] });
   assert.deepEqual(admitPlanWaves(`${phase('## Phase 1', '-', 'src/a.ts')}\n\`\`\`md\n## Phase 2: Example\n**Depends on**: -\n**File**: \`src/a.ts\`\n\`\`\``), { ok: true, waves: [['1']] });
   const nestedFence = `${phase('## Phase 1', '-', 'src/a.ts')}\n\`\`\`\`markdown\n\`\`\`js\n**File**: \`src/b.ts\`\n\`\`\`\n\`\`\`\`\n${phase('## Phase 2', '-', 'src/b.ts')}`;
   assert.deepEqual(admitPlanWaves(nestedFence), { ok: true, waves: [['1', '2']] });
@@ -40,6 +44,24 @@ test('plan-wave admission matches planProgress headings and ignores fenced examp
   assert.match(admitPlanWaves(`${phase('## Phase 1: First', '-', 'src/shared')}\n${phase('## Phase 2: Second', '-', 'src/shared/child')}`).error, /overlapping declared file scope/);
   assert.match(admitPlanWaves(`${phase('## Phase 1: First', '-', '../outside.ts')}`).error, /unsafe or ambiguous/);
   assert.match(admitPlanWaves('## Phase Not numbered\\n').error, /Malformed numbered phase heading/);
+});
+test('final checklist closure does not excuse changed dependency or file ownership', () => {
+  const before = [
+    '## Phase 1', '**Depends on**: -', '**File**: `src/a.ts`', '- [x] Implement phase one',
+    '## Phase 2', '**Depends on**: Phase 1', '**File**: `src/b.ts`', '- [ ] Implement phase two',
+  ].join('\n');
+  assert.deepEqual(admitPlanWaves(before), { ok: true, waves: [['1'], ['2']] });
+  const finished = before.replace('[ ] Implement phase two', '[x] Implement phase two');
+  assert.equal(planProgress(finished).complete, true);
+  assert.deepEqual(admitPlanWaves(finished), { ok: true, waves: [['1'], ['2']] });
+  for (const [revised, reason] of [
+    [finished.replace('src/b.ts', '../outside.ts'), /unsafe or ambiguous file path/],
+    [finished.replace('**Depends on**: Phase 1', '**Depends on**: Phase 9'), /unknown phase 9/],
+    [finished.replace('**File**: `src/b.ts`', '**Changes**: Update phase two.'), /unknown file ownership/],
+  ]) {
+    assert.equal(planProgress(revised).complete, true);
+    assert.match(admitPlanWaves(revised).error, reason);
+  }
 });
 test('plan implementation prompt binds work to admitted dependency waves', () => {
   const source = { ...artifact('plan'), text: '# Plan\n\n## Phase 1\n' };

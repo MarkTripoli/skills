@@ -219,6 +219,10 @@ const delivery = workflow({
       forced = null;
       const stageInputs = dependencyWaves ? { ...taskInputs, dependency_waves: dependencyWaves } : taskInputs;
       state = await runSkill(ctx, task, state, stageInputs, skill, ++steps, feedback);
+      if (skill === 'implement-plan') {
+        const finalAdmission = admitPlanWaves(state.latest.plan?.text || '');
+        if (!finalAdmission.ok) return finish('blocked', `Plan dependency/file-scope admission refused after implementation: ${finalAdmission.error}`);
+      }
       const gate = await artifactGate(ctx, task, taskInputs, state, SKILLS[skill], `stage-${steps}`);
       state = gate.state;
       if (gate.stopped) return finish('blocked', `Human stopped after ${skill}. Task artifacts and native stage are retained.`);
