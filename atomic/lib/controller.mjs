@@ -332,9 +332,11 @@ function replayableVerificationCommand(command, id) {
   if (!argv.length || !argv[0]) unsafe();
   const executable = path.posix.basename(argv[0]);
   if (/^[A-Za-z_][A-Za-z_0-9]*=/.test(argv[0]) ||
-      ['curl', 'http', 'wget', 'sh', 'bash', 'zsh', 'env', 'command', 'exec', 'sudo', 'xargs'].includes(executable) ||
-      (executable === 'git' && ['push', 'reset', 'clean'].includes(argv[1])) ||
-      (['npm', 'pnpm', 'yarn', 'bun'].includes(executable) && ['migrate', 'deploy', 'publish'].includes(argv[1] === 'run' ? argv[2] : argv[1])) ||
+      ['curl', 'http', 'wget', 'gh', 'glab', 'git', 'ssh', 'scp', 'sftp', 'ftp', 'rsync',
+        'aws', 'az', 'gcloud', 'wrangler', 'kubectl', 'docker', 'podman', 'npx', 'pip', 'pip3', 'uvx',
+        'sh', 'bash', 'zsh', 'env', 'command', 'exec', 'sudo', 'xargs'].includes(executable) ||
+      (['npm', 'pnpm', 'yarn', 'bun'].includes(executable) &&
+        !['test', 'lint', 'typecheck', 'build', 'check'].includes(argv[1] === 'run' ? argv[2] : argv[1])) ||
       ['rm', 'mv'].includes(executable)) unsafe();
   if (['true', 'false', ':', 'echo', 'printf'].includes(executable) ||
       (['node', 'bun', 'python', 'python3', 'ruby', 'perl'].includes(executable) &&
