@@ -466,7 +466,7 @@ test("project OMP installs and uninstalls stay rooted across destination parent 
         targets: ["oh-my-pi"], skillNames: [skillName], project: true, cwd: project, home, env, uninstall,
       });
       const built = uninstall ? new Map() : buildTrees(planned, tmpdir());
-      const root = fs.realpathSync(project);
+      const root = path.resolve(project);
       const originalOpen = fs.openSync;
       let swapped = false;
       fs.openSync = function (target, ...args) {
