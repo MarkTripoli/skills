@@ -107,6 +107,25 @@ test('rejects repository subdirectories and linked worktrees as separate selecti
   assert.throws(() => correlate([a, linked]), /unsupported repository metadata/);
 });
 
+test('rejects external Git metadata symlinks and object alternates', t => {
+  const root = temp(t);
+  const linked = repo(root, 'linked', {'.env': 'TOKEN=linked-metadata-fixture\n'});
+  const other = repo(root, 'other', {'.env': 'TOKEN=alternate-metadata-fixture\n'});
+  const branch = execFileSync('git', ['-C', linked, 'symbolic-ref', '--short', 'HEAD'], {encoding: 'utf8'}).trim();
+  const otherBranch = execFileSync('git', ['-C', other, 'symbolic-ref', '--short', 'HEAD'], {encoding: 'utf8'}).trim();
+  const ref = path.join(linked, '.git', 'refs', 'heads', branch);
+  const heldRef = `${ref}.held`;
+  fs.renameSync(ref, heldRef);
+  fs.symlinkSync(path.join(other, '.git', 'refs', 'heads', otherBranch), ref);
+  assert.throws(() => correlate([linked, other]));
+  fs.unlinkSync(ref);
+  fs.renameSync(heldRef, ref);
+
+  const alternate = path.join(linked, '.git', 'objects', 'info', 'alternates');
+  fs.writeFileSync(alternate, `${path.join(other, '.git', 'objects')}\n`);
+  assert.throws(() => correlate([linked, other]));
+});
+
 test('Git descriptor launcher resolves commits from ordinary repository metadata', t => {
   const root = temp(t);
   const original = repo(root, 'ordinary', {'.env': 'TOKEN=ordinary-repository\n'});
@@ -278,11 +297,12 @@ test('reads only the pinned directory when its pathname is rebound before helper
   fs.symlinkSync(outside, original);
   let result;
   try {
-    result = spawnSync('python3', [helper, '.env.ignored'], {
+    result = spawnSync('python3', [helper], {
+      input: Buffer.from('.env.ignored'),
       cwd: path.dirname(helper),
       encoding: null,
       maxBuffer: 1024 * 1024 + 1024,
-      stdio: ['ignore', 'pipe', 'ignore', rootFd],
+      stdio: ['pipe', 'pipe', 'ignore', rootFd],
     });
   } finally {
     fs.unlinkSync(original);
@@ -337,6 +357,18 @@ test('fails closed on repeated oversized blobs, cumulative bytes, and scan work'
   assert.throws(() => correlate([work, other]), /repository scan limit exceeded/);
 });
 
+
+test('fails closed before an oversized ignored-path walk', t => {
+  const root = temp(t);
+  const a = repo(root, 'large-worktree', {'.env': 'TOKEN=worktree-only\n'});
+  const b = repo(root, 'other-worktree', {'.env': 'TOKEN=other-only\n'});
+  const bulk = path.join(a, 'bulk');
+  fs.mkdirSync(bulk);
+  fs.writeFileSync(path.join(a, '.gitignore'), 'bulk/\n');
+  for (let index = 0; index < 20_001; index++) fs.writeFileSync(path.join(bulk, `entry-${String(index).padStart(5, '0')}`), '');
+  assert.throws(() => correlate([a, b], {includeIgnored: true, ownerAuthorized: true}), /repository Git operation failed/);
+});
+
 test('correlates explicitly authorized nested ignored env files', t => {
   const root = temp(t);
   const a = repo(root, 'one', {'.env': 'TOKEN=one\n'});
@@ -367,11 +399,12 @@ test('rejects an intermediate symlink while reading ignored env paths', t => {
   const helper = path.join(path.dirname(fileURLToPath(import.meta.url)), '../skills/delivery/credentials/scripts/read-ignored.py');
   let result;
   try {
-    result = spawnSync('python3', [helper, 'nested/.env.secret'], {
+    result = spawnSync('python3', [helper], {
+      input: Buffer.from('nested/.env.secret'),
       cwd: path.dirname(helper),
       encoding: null,
       maxBuffer: 1024 * 1024 + 1024,
-      stdio: ['ignore', 'pipe', 'ignore', rootFd],
+      stdio: ['pipe', 'pipe', 'ignore', rootFd],
     });
   } finally {
     fs.closeSync(rootFd);

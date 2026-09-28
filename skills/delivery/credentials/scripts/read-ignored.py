@@ -4,12 +4,19 @@ import stat
 import sys
 
 MAX_BYTES = 1024 * 1024
+MAX_PATH_BYTES = 4096
 
 
 def main():
-    if len(sys.argv) != 2 or not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+    if len(sys.argv) != 1 or not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
         return 2
-    name = sys.argv[1]
+    raw_name = sys.stdin.buffer.read(MAX_PATH_BYTES + 1)
+    if not raw_name or len(raw_name) > MAX_PATH_BYTES or b"\0" in raw_name:
+        return 2
+    try:
+        name = raw_name.decode("utf-8")
+    except UnicodeDecodeError:
+        return 2
     parts = name.split("/")
     if parts[-1] != ".env" and not parts[-1].startswith(".env."):
         return 2

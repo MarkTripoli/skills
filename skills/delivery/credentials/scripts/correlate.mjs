@@ -2,6 +2,7 @@
 import {createHash, randomUUID} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
@@ -16,21 +17,44 @@ function assertRootPath(root) {
     throw new Error('repository root or Git metadata changed');
   }
 }
-function gitFromRoot(root, args, {binary = false, worktreeCwd = false} = {}) {
+function gitFromRoot(root, args, {binary = false} = {}) {
   assertRootPath(root);
   const env = {...process.env, GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1'};
   for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE']) delete env[key];
   const helper = fileURLToPath(new URL('./git-from-root.py', import.meta.url));
-  const result = spawnSync('python3', [helper, ...(worktreeCwd ? ['--worktree-cwd'] : []), ...args], {
+  const result = spawnSync('python3', [helper, '--git', root.snapshotPath, ...args], {
     cwd: path.dirname(fileURLToPath(import.meta.url)),
     encoding: binary ? null : 'utf8',
     maxBuffer: 16 * 1024 * 1024,
+    timeout: 10_000,
     stdio: ['ignore', 'pipe', 'ignore', root.fd, root.gitFd],
     env,
   });
   assertRootPath(root);
   if (result.error || result.status !== 0 || (binary ? !Buffer.isBuffer(result.stdout) : typeof result.stdout !== 'string')) throw new Error('repository Git operation failed');
   return result.stdout;
+}
+function createGitSnapshot(root) {
+  const helper = fileURLToPath(new URL('./git-from-root.py', import.meta.url));
+  const snapshotPath = fs.mkdtempSync(path.join(os.tmpdir(), 'credential-correlation-git-'));
+  const env = {...process.env};
+  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE']) delete env[key];
+  try {
+    const result = spawnSync('python3', [helper, '--snapshot', snapshotPath], {
+      cwd: path.dirname(fileURLToPath(import.meta.url)),
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024,
+      timeout: 10_000,
+      stdio: ['ignore', 'ignore', 'ignore', root.fd, root.gitFd],
+      env,
+    });
+    assertRootPath(root);
+    if (result.error || result.status !== 0) throw new Error('repository metadata snapshot failed');
+    root.snapshotPath = snapshotPath;
+  } catch (error) {
+    fs.rmSync(snapshotPath, {recursive: true, force: true});
+    throw error;
+  }
 }
 function chargeScanBudget(budget, {files = 0, bytes = 0, work = 0} = {}) {
   budget.files += files;
@@ -85,15 +109,17 @@ function pathRedactionMarker(values) {
 }
 function safeIgnoredBytes(root, name, budget) {
   const parts = name.split('/');
-  if (path.posix.isAbsolute(name) || parts.length > 128 || parts.some(part => !part || part === '.' || part === '..' || part.includes('\\'))) throw new Error('unsafe path');
+  if (path.posix.isAbsolute(name) || parts.length > 128 || parts.some(part => !part || part === '.' || part === '..' || part.includes('\\')) || Buffer.byteLength(name, 'utf8') > 4096) throw new Error('unsafe path');
   assertRootPath(root);
   const helper = fileURLToPath(new URL('./read-ignored.py', import.meta.url));
   chargeScanBudget(budget, {work: 1});
-  const result = spawnSync('python3', [helper, name], {
+  const result = spawnSync('python3', [helper], {
     cwd: path.dirname(fileURLToPath(import.meta.url)),
+    input: Buffer.from(name, 'utf8'),
     encoding: null,
     maxBuffer: MAX_IGNORED_BYTES + 1024,
-    stdio: ['ignore', 'pipe', 'ignore', root.fd],
+    timeout: 10_000,
+    stdio: ['pipe', 'pipe', 'ignore', root.fd],
   });
   assertRootPath(root);
   if (result.error || result.status !== 0 || !Buffer.isBuffer(result.stdout) || result.stdout.length > MAX_IGNORED_BYTES) throw new Error('safe ignored read failed');
@@ -154,7 +180,7 @@ function* inputFiles(root, includeIgnored, budget) {
   yield* trackedEnvFiles(root, budget);
   if (includeIgnored) {
     assertRootPath(root);
-    const ignored = gitFromRoot(root, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard'], {binary: true, worktreeCwd: true});
+    const ignored = gitFromRoot(root, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard'], {binary: true});
     chargeScanBudget(budget, {bytes: ignored.length, work: 1});
     assertRootPath(root);
     let start = 0;
@@ -210,6 +236,7 @@ export function correlate(repositories, {includeIgnored = false, ownerAuthorized
       }
       const root = {path: real, stat, fd, gitMetadataPath, gitMetadataStat, gitFd, commonStat: openedGitMetadata};
       roots.push(root);
+      createGitSnapshot(root);
       root.head = gitFromRoot(root, ['rev-parse', '--verify', 'HEAD^{commit}']).trim();
       root.objectFormat = gitFromRoot(root, ['rev-parse', '--show-object-format']).trim();
       if (!/^[0-9a-f]+$/.test(root.head) || !['sha1', 'sha256'].includes(root.objectFormat)) throw new Error('repository identity unavailable');
@@ -260,6 +287,7 @@ export function correlate(repositories, {includeIgnored = false, ownerAuthorized
     return {schema_version: 1, findings};
   } finally {
     for (const root of roots) {
+      if (root.snapshotPath) fs.rmSync(root.snapshotPath, {recursive: true, force: true});
       fs.closeSync(root.fd);
       fs.closeSync(root.gitFd);
     }
