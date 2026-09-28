@@ -30,10 +30,11 @@ export function buildReport(input) {
     && coverage?.consent === true
     && SUPPORTED_SOURCES.has(coverage?.source)
     && validInterval;
-  const sufficient = provenCoverage && days >= 30 && now - through <= COVERAGE_LAG_MS;
+  const currentCoverage = provenCoverage && now - through <= COVERAGE_LAG_MS;
+  const sufficient = currentCoverage && days >= 30;
   const usage = new Set();
   const unplaced = new Set();
-  if (provenCoverage) {
+  if (currentCoverage) {
     for (const event of input.events) {
       if (event?.consent !== true || event.source !== coverage.source) continue;
       if (typeof event.name !== "string" || typeof event.version !== "string" || !["success", "failure", "interrupted"].includes(event.outcome)) continue;
@@ -54,7 +55,9 @@ export function buildReport(input) {
         && presentSince <= now - 30 * DAY_MS
         && through - Math.max(from, presentSince) >= 30 * DAY_MS;
       let status = "unknown";
-      if (item.pinned === true) status = "pinned";
+      if ((item.pinned !== undefined && typeof item.pinned !== "boolean")
+        || (item.ignored !== undefined && typeof item.ignored !== "boolean")) status = "unknown";
+      else if (item.pinned === true) status = "pinned";
       else if (item.ignored === true) status = "ignored";
       else if (observed) status = "active";
       else if (sufficient && continuouslyPresent && !unplaced.has(key)) status = "stale-candidate";

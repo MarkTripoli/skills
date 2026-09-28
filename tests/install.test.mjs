@@ -48,7 +48,7 @@ test("usage lifecycle requires consented supported coverage reaching report time
     assert.deepEqual(unknown.suggestions.map(({ status }) => status), ["unknown", "unknown", "pinned"]);
 
     const inventory = fixture.inventory.map((item) => ({ ...item, presentSince: "2025-12-01T00:00:00Z" }));
-    const historical = buildReport({
+    const historicalInput = {
       ...fixture,
       inventory,
       coverage: {
@@ -58,9 +58,15 @@ test("usage lifecycle requires consented supported coverage reaching report time
         observedFrom: "2026-01-01T00:00:00Z",
         observedThrough: "2026-02-01T00:00:00Z",
       },
-    });
+    };
+    const historical = buildReport(historicalInput);
     assert.equal(historical.coverage.sufficient, false);
     assert.deepEqual(historical.suggestions.map(({ status }) => status), ["unknown", "unknown", "pinned"]);
+    const januaryUse = buildReport({ ...historicalInput, events: [
+      { name: inventory[0].name, version: inventory[0].version, outcome: "success", source: "codex",
+        consent: true, timestamp: "2026-01-15T00:00:00Z" },
+    ] });
+    assert.equal(januaryUse.suggestions[0].status, "unknown");
 
     const future = buildReport({
       ...fixture,
@@ -118,6 +124,12 @@ test("usage lifecycle requires continuous item presence and counts only timestam
     assert.deepEqual(report.suggestions.map(({ status }) => status), [
       "stale-candidate", "active", "unknown", "unknown", "unknown", "unknown", "unknown", "pinned", "ignored",
     ]);
+    const malformed = buildReport({ ...input, inventory: [
+      { ...old, name: "attempted-pin", pinned: "true" },
+      { ...old, name: "attempted-ignore", ignored: 1 },
+      { ...old, name: "explicitly-unpinned", pinned: false, ignored: false },
+    ] });
+    assert.deepEqual(malformed.suggestions.map(({ status }) => status), ["unknown", "unknown", "stale-candidate"]);
 
     const outdated = buildReport({ ...input, coverage: { ...coverage, observedThrough: "2026-09-27T11:59:59Z" } });
     assert.equal(outdated.coverage.sufficient, false);
