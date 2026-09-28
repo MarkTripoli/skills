@@ -30,15 +30,15 @@ function parse(argv) {
   return out;
 }
 function validate(o) {
-  if(o.help)return;
-  if(!o.url)throw Error('Explicit endpoint URL required');
+  if(o.help)throw Error('Help mode is only available in the command-line interface');
+  if(typeof o.url!=='string'||!o.url)throw Error('Explicit endpoint URL required');
   if(o.live&&o.dryRun)throw Error('Live and dry-run modes are mutually exclusive');
   if(o.dryRun===false&&!o.live)throw Error('Live execution requires explicit live intent');
-  if(o.live&&!o.authorization)throw Error('Live execution requires a local written authorization artifact');
+  if(o.live&&typeof o.authorization!=='string')throw Error('Live execution requires a local written authorization artifact');
+  if(o.live&&o.audit!==undefined&&typeof o.audit!=='string')throw Error('Audit path must be a string');
   const u=new URL(o.url), hostname=u.hostname.replace(/^\[|\]$/g,'');
   if(!['http:','https:'].includes(u.protocol)||u.username||u.password||u.hash||u.search)throw Error('Use an explicit query-free HTTP(S) URL without credentials');
-  if(o.live&&!net.isIP(hostname))throw Error('Live hostname targets are refused; DNS connection pinning is unsupported');
-  if(!o.probes.length||o.probes.some(p=>!PROBES[p])||new Set(o.probes).size!==o.probes.length)throw Error('Unknown, duplicate, or empty probe selection');
+  if(!Array.isArray(o.probes)||!o.probes.length||o.probes.some(p=>typeof p!=='string'||!PROBES[p])||new Set(o.probes).size!==o.probes.length)throw Error('Unknown, duplicate, or empty probe selection');
   for(const k of ['maxAttempts','retries','timeoutMs','rateMs'])if(!Number.isSafeInteger(o[k])||o[k]<0)throw Error(`Invalid ${k}`);
   if(o.maxAttempts<1||o.timeoutMs<1||o.maxAttempts>100||o.retries>10||o.rateMs<1)throw Error('Attempt, retry, timeout, or rate bound exceeded');
 }
@@ -122,7 +122,18 @@ async function readBoundedResponse(response){
   try{JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));}catch{throw Error('Response body is not valid JSON');}
   return {responseSha:hash(bytes)};
 }
-export async function run(options,{fetchImpl=fetch,sleep=ms=>new Promise(r=>setTimeout(r,ms)),monotonicNow=()=>performance.now(),runId=randomUUID()}={}) {
+function snapshotOptions(source){
+  if(!source||typeof source!=='object')throw Error('Options object required');
+  const suppliedProbes=source.probes;
+  const probes=Array.isArray(suppliedProbes)?Object.freeze(suppliedProbes.slice()):suppliedProbes;
+  return Object.freeze({
+    help:source.help,url:source.url,authorization:source.authorization,probes,
+    live:source.live,dryRun:source.dryRun,retries:source.retries,maxAttempts:source.maxAttempts,
+    timeoutMs:source.timeoutMs,rateMs:source.rateMs,audit:source.audit
+  });
+}
+export async function run(suppliedOptions,{fetchImpl=fetch,sleep=ms=>new Promise(r=>setTimeout(r,ms)),monotonicNow=()=>performance.now(),runId=randomUUID()}={}) {
+  const options=snapshotOptions(suppliedOptions);
   validate(options);
   const live=options.live===true;
   const endpoint=new URL(options.url).origin;

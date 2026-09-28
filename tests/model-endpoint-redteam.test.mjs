@@ -29,6 +29,21 @@ test('live intent and written authorization are mandatory',async()=>{
  assert.equal(calls,0);
 });
 
+test('module help cannot bypass live option validation',async()=>{
+ let calls=0;
+ await assert.rejects(run(liveOptions({help:true,url:`${endpoint}?unsafe=1`,probes:['recon']}),{fetchImpl:async()=>{calls++;return goodResponse();}}),/Help mode/);
+ assert.equal(calls,0);
+});
+
+test('live run pins getter-backed URL and copied probe selection',async()=>{
+ const options=liveOptions({probes:['recon']});let reads=0,fetchUrl;
+ Object.defineProperty(options,'url',{get(){reads++;return reads===1?endpoint:'https://203.0.113.10/v1/chat';}});
+ const result=await run(options,{fetchImpl:async url=>{fetchUrl=url;options.probes[0]='schema';return goodResponse();}});
+ assert.equal(reads,1);assert.equal(fetchUrl,endpoint);assert.deepEqual(result.selected_probes,['recon']);
+ const start=JSON.parse(fs.readFileSync(options.audit,'utf8').split('\n')[0]);
+ assert.equal(start.origin,'https://203.0.113.9');
+});
+
 test('live authorization ignores caller-supplied historical clock',async()=>{
  writeAuthorization('2000-01-01T00:00:00Z','/v1/chat','1990-01-01T00:00:00Z');
  let calls=0;const options=liveOptions({probes:['recon']});
