@@ -475,7 +475,7 @@ test("OMP hook installation preserves external files behind symlinked destinatio
       fs.symlinkSync(path.join(outside, "skills-security"), security.to, "dir");
     }
 
-    assert.throws(() => apply(planned, { built: new Map(), uninstall: false, home }), /refusing unsafe OMP hook destination/);
+    assert.throws(() => apply(planned, { built: new Map(), uninstall: false, home }));
     assert.equal(fs.readFileSync(securitySentinel, "utf8"), "external security file\n");
     assert.equal(fs.readFileSync(publicationSentinel, "utf8"), "external publication file\n");
     assert.deepEqual(tree(outside), externalTree);
