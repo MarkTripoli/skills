@@ -16,12 +16,12 @@ function assertRootPath(root) {
     throw new Error('repository root or Git metadata changed');
   }
 }
-function gitFromRoot(root, args, binary = false) {
+function gitFromRoot(root, args, {binary = false, worktreeCwd = false} = {}) {
   assertRootPath(root);
   const env = {...process.env, GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1'};
   for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE']) delete env[key];
   const helper = fileURLToPath(new URL('./git-from-root.py', import.meta.url));
-  const result = spawnSync('python3', [helper, ...args], {
+  const result = spawnSync('python3', [helper, ...(worktreeCwd ? ['--worktree-cwd'] : []), ...args], {
     cwd: path.dirname(fileURLToPath(import.meta.url)),
     encoding: binary ? null : 'utf8',
     maxBuffer: 16 * 1024 * 1024,
@@ -33,7 +33,7 @@ function gitFromRoot(root, args, binary = false) {
   return result.stdout;
 }
 function verifiedObject(root, oid, type, objectFormat) {
-  const bytes = gitFromRoot(root, ['cat-file', type, oid], true);
+  const bytes = gitFromRoot(root, ['cat-file', type, oid], {binary: true});
   const actual = createHash(objectFormat).update(`${type} ${bytes.length}\0`).update(bytes).digest('hex');
   if (actual !== oid) throw new Error('unsafe object');
   return bytes;
@@ -118,7 +118,7 @@ function inputFiles(root, includeIgnored) {
   const files = trackedEnvFiles(root);
   if (includeIgnored) {
     assertRootPath(root);
-    const ignored = gitFromRoot(root, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard']).split('\0').filter(Boolean);
+    const ignored = gitFromRoot(root, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard'], {worktreeCwd: true}).split('\0').filter(Boolean);
     assertRootPath(root);
     for (const name of ignored) {
       if (!envFile(path.posix.basename(name))) continue;
