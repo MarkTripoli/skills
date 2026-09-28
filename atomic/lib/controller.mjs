@@ -300,39 +300,35 @@ function requireAcceptanceEvidence(task, state, artifact) {
 }
 function replayableVerificationCommand(command, id) {
   const unsafe = () => { throw new Error(`${id} acceptance command cannot be safely replayed; use an isolated idempotent test instead`); };
+  if (/[\r\n\0]/.test(command)) unsafe();
   const argv = [];
-  let word = '';
-  let started = false;
-  let quote = '';
-  const flush = () => {
-    if (started) { argv.push(word); word = ''; started = false; }
-  };
-  for (let i = 0; i < command.length; i++) {
-    const char = command[i];
-    if (char === '\r' || char === '\n' || char === '\0') unsafe();
-    if (quote === "'") {
-      if (char === "'") quote = '';
+  for (let i = 0; i < command.length;) {
+    if (/\s/.test(command[i])) { i++; continue; }
+    let word = '';
+    while (i < command.length && !/\s/.test(command[i])) {
+      const char = command[i++];
+      if (char === "'" || char === '"') {
+        let closed = false;
+        while (i < command.length) {
+          const quoted = command[i++];
+          if (quoted === char) { closed = true; break; }
+          if (char === '"' && (quoted === '$' || quoted === '`')) unsafe();
+          if (char === '"' && quoted === '\\' && i < command.length) {
+            const next = command[i];
+            if ('\\$`"'.includes(next)) { word += next; i++; continue; }
+          }
+          word += quoted;
+        }
+        if (!closed) unsafe();
+      } else if (char === '\\') {
+        if (i === command.length) unsafe();
+        word += command[i++];
+      } else if (';&|`$<>()*?[]{}'.includes(char) ||
+          ((char === '#' || char === '~') && !word)) unsafe();
       else word += char;
-    } else if (char === '"') {
-      if (char === '"') quote = '';
-      else if (char === '$' || char === '`') unsafe();
-      else if (char === '\\') {
-        const next = command[++i];
-        if (!next || next === '\n' || next === '\r') unsafe();
-        word += '\\$`"'.includes(next) ? next : `\\${next}`;
-      } else word += char;
-    } else if (char === "'" || char === '"') { quote = char; started = true; }
-    else if (/\s/.test(char)) flush();
-    else if (char === '\\') {
-      const next = command[++i];
-      if (!next || next === '\n' || next === '\r') unsafe();
-      word += next; started = true;
-    } else if (';&|`$<>()*?[]{}'.includes(char) || (char === '#' && !started) ||
-        (char === '~' && !started)) unsafe();
-    else { word += char; started = true; }
+    }
+    argv.push(word);
   }
-  if (quote) unsafe();
-  flush();
   if (!argv.length || !argv[0]) unsafe();
   const executable = path.posix.basename(argv[0]);
   if (/^[A-Za-z_][A-Za-z_0-9]*=/.test(argv[0]) ||
