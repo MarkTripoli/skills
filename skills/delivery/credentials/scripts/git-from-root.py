@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import fcntl
 import os
 import sys
 
@@ -26,7 +27,9 @@ def main():
         os.fchdir(3)
         work_tree = os.getcwd()
         if worktree_cwd:
-            os.environ["GIT_DIR"] = "/dev/fd/4"
+            git_dir_fd = fcntl.fcntl(4, fcntl.F_DUPFD, 64)
+            os.set_inheritable(git_dir_fd, True)
+            os.environ["GIT_DIR"] = f"/dev/fd/{git_dir_fd}"
             os.environ["GIT_WORK_TREE"] = "."
         else:
             os.fchdir(4)

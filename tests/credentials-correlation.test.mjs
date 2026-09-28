@@ -205,6 +205,31 @@ test('Git descriptor launcher ignores a swapped .git link to another worktree', 
   assert.equal(result.stdout.trim(), originalHead);
 });
 
+test('descriptor-pinned Git listing finds nested ignored environment files', t => {
+  const root = temp(t);
+  const original = repo(root, 'original', {'.env': 'TOKEN=tracked-fixture\n', '.gitignore': 'nested/\n'});
+  fs.mkdirSync(path.join(original, 'nested'));
+  fs.writeFileSync(path.join(original, 'nested', '.env.secret'), 'TOKEN=ignored-listing-fixture\n');
+  const rootFd = fs.openSync(original, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+  const gitMetadataFd = fs.openSync(path.join(original, '.git'), fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+  const helper = path.join(path.dirname(fileURLToPath(import.meta.url)), '../skills/delivery/credentials/scripts/git-from-root.py');
+  let result;
+  try {
+    result = spawnSync('python3', [helper, '--worktree-cwd', 'ls-files', '-z', '--others', '--ignored', '--exclude-standard'], {
+      cwd: path.dirname(helper),
+      encoding: null,
+      maxBuffer: 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore', rootFd, gitMetadataFd],
+    });
+  } finally {
+    fs.closeSync(rootFd);
+    fs.closeSync(gitMetadataFd);
+  }
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout.toString('utf8'), 'nested/.env.secret\\0');
+});
+
 test('ignored listing stays on pinned metadata during a .git path swap', t => {
   const root = temp(t);
   const original = repo(root, 'original', {'.env': 'TOKEN=original-metadata\n'});
