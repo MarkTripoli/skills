@@ -141,7 +141,7 @@ test('context policy requires a live metric and child identity before every disp
 
 test('context threshold requires the fresh child live metric before dispatch', (t) => {
   const { dir } = fixture(t);
-  initialize(dir, { ...options, context_policy: 'stop-at-60' });
+  initialize(dir, { ...options, max_steps: 3, context_policy: 'stop-at-60' });
   checkpointContext(dir, { sessionId: 'old-session', contextUsage: { tokens: 60, contextWindow: 100, percent: 60 } });
   assert.equal(inspect(dir).context_boundary.action, 'fresh-session');
   assert.throws(() => begin(dir, 'create-plan'));
