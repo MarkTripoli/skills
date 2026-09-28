@@ -301,14 +301,18 @@ function proofFixture() {
     fs.mkdirSync(path.join(skillsDir, name), { recursive: true });
     fs.writeFileSync(path.join(skillsDir, name, 'SKILL.md'), `# ${name}\n`);
   }
-  fs.writeFileSync(path.join(repo, 'cli.mjs'), 'console.log(Number(process.argv[2]) * 2);\n');
+  fs.writeFileSync(path.join(repo, 'cli.mjs'), '// Existing CLI\nconsole.log(Number(process.argv[2]) + 1);\n');
+  execFileSync('git', ['add', 'cli.mjs'], { cwd: repo, stdio: 'ignore' });
+  execFileSync('git', ['commit', '-m', 'existing CLI'], { cwd: repo, stdio: 'ignore' });
+  fs.writeFileSync(path.join(repo, 'cli.mjs'), '// Existing CLI\nconsole.log(Number(process.argv[2]) * 2);\n');
+  fs.writeFileSync(path.join(repo, 'package.json'), JSON.stringify({ scripts: { test: 'node cli.mjs 21' } }));
   fs.writeFileSync(path.join(taskDir, 'task.md'), '# Task\n\n## Acceptance criteria\n\n- CLI doubles input 21.\n- CLI doubles input 7.\n');
   fs.writeFileSync(path.join(taskDir, '01-implementation.md'), '---\ntype: implementation\nsummary: implemented\n---\n# Receipt\n\nImplemented CLI.\n');
   const task = { taskDir, cwd: repo, taskRootRelative: '.agents/tasks', skillsDir, runId: 'proof-run' };
   const before = initialState(observeArtifacts(taskDir), revision(repo, task.taskRootRelative));
   const options = { verify: true, app_test: 'none', model: 'test-model', model_routing: 'fixed' };
   const row = (id, item, input, observed) => `| ${id} | ${item} | \`node cli.mjs ${input}\` | exit 0; ${observed} | pass |\n`;
-  const check = row('C1', 'repository CLI check', 21, 42);
+  const check = '| C1 | repository npm test | `npm test` | exit 0; 42 | pass |\n';
   const table = '| Id | Item | Decided by | Observed | Verdict |\n|---|---|---|---|---|\n';
   const verification = rows => `---\ntype: verification\nsummary: CLI checked\nstatus: passed\n---\n## Items\n\n${table}${rows}`;
   const ctx = (rows, worker) => ({
@@ -357,13 +361,49 @@ test('a claimed A-row pass cannot advance without controller-executed output', a
     await assert.rejects(() => runSkill(f.ctx(f.check + rows), f.task, f.before, f.options, 'verify-implementation', 1), /not corroborated by execution/);
     const noCommand = '| A1 | CLI doubles input 21. | observed manually | exit 0; 42 | pass |\n' + f.row('A2', 'CLI doubles input 7.', 7, 14);
     await assert.rejects(() => runSkill(f.ctx(f.check + noCommand), f.task, f.before, f.options, 'verify-implementation', 2), /no executable command/);
-    const fakeCheck = f.row('C1', 'repository CLI check', 21, 999) + f.row('A1', 'CLI doubles input 21.', 21, 42) +
+    const fakeCheck = f.check.replace('exit 0; 42', 'exit 0; 999') + f.row('A1', 'CLI doubles input 21.', 21, 42) +
       f.row('A2', 'CLI doubles input 7.', 7, 14);
     await assert.rejects(() => runSkill(f.ctx(fakeCheck), f.task, f.before, f.options, 'verify-implementation', 3), /C1 claimed pass is not corroborated/);
     const echo = '| A1 | CLI doubles input 21. | `printf 42` | exit 0; 42 | pass |\n' + f.row('A2', 'CLI doubles input 7.', 7, 14);
-    await assert.rejects(() => runSkill(f.ctx(f.check + echo), f.task, f.before, f.options, 'verify-implementation', 4), /does not invoke an existing changed source entrypoint or behavior test file/);
+    await assert.rejects(() => runSkill(f.ctx(f.check + echo), f.task, f.before, f.options, 'verify-implementation', 4), /only manufactures a result/);
     const noCheck = f.row('A1', 'CLI doubles input 21.', 21, 42) + f.row('A2', 'CLI doubles input 7.', 7, 14);
-    await assert.rejects(() => runSkill(f.ctx(noCheck), f.task, f.before, f.options, 'verify-implementation', 5), /requires a recorded passing repository check C-row/);
+    await assert.rejects(() => runSkill(f.ctx(noCheck), f.task, f.before, f.options, 'verify-implementation', 5), /omitted repository checks: npm test/);
+  } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
+});
+
+test('no discovered repository check still permits direct acceptance probes', async () => {
+  const f = proofFixture();
+  try {
+    fs.rmSync(path.join(f.repo, 'package.json'));
+    const rows = f.row('A1', 'CLI doubles input 21.', 21, 42) + f.row('A2', 'CLI doubles input 7.', 7, 14);
+    const verified = await runSkill(f.ctx(rows), f.task,
+      initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative)),
+      f.options, 'verify-implementation', 1);
+    assert.deepEqual(eligible(verified, f.options, 'oneshot', false), ['review-code']);
+    const proof = JSON.parse(fs.readFileSync(path.join(f.taskDir, '.atomic-delivery', 'proof-run', '001-verification-execution.json'), 'utf8'));
+    assert.deepEqual(proof.evidence.map(row => row.id), ['A1', 'A2']);
+  } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
+});
+
+test('verification opt-out can review independent acceptance evidence without invented execution', async () => {
+  const f = proofFixture();
+  try {
+    const options = { ...f.options, verify: false };
+    const reviewer = f.ctx('', () => {
+      const head = execFileSync('git', ['rev-parse', 'HEAD^'], { cwd: f.repo, encoding: 'utf8' }).trim();
+      assert.equal(execFileSync(process.execPath, ['cli.mjs', '21'], { cwd: f.repo, encoding: 'utf8' }).trim(), '42');
+      assert.equal(execFileSync(process.execPath, ['cli.mjs', '7'], { cwd: f.repo, encoding: 'utf8' }).trim(), '14');
+      const evidence = 'cli.mjs:2 independently invoked node cli.mjs 21 and observed 42; invoked node cli.mjs 7 and observed 14';
+      return { sessionId: 'independent-opt-out-review', text: JSON.stringify({
+        head, revision: f.before.revision,
+        acceptance: ['CLI doubles input 21.', 'CLI doubles input 7.'].map(item => ({ item, evidence })),
+        risks: ['functional correctness', 'security and data integrity', 'acceptance oracle and test reachability']
+          .map(risk => ({ risk, evidence })),
+        findings: [],
+      }) };
+    });
+    const reviewed = await runSkill(reviewer, f.task, f.before, options, 'review-code', 1);
+    assert.equal(reviewed.latest['code-review'].status, 'clean');
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 
@@ -371,7 +411,7 @@ test('no acceptance promises still require execution of the recorded repository 
   const f = proofFixture();
   try {
     fs.writeFileSync(path.join(f.taskDir, 'task.md'), '# Task\n\nNo acceptance criteria were promised.\n');
-    const check = '| C1 | repository CLI check | `node cli.mjs 21` | exit 0; 42 | pass |\n';
+    const check = f.check;
     const accepted = await runSkill(f.ctx(check), f.task, f.before, f.options, 'verify-implementation', 1);
     assert.deepEqual(eligible(accepted, f.options, 'oneshot', false), ['review-code']);
     await assert.rejects(() => runSkill(f.ctx(''), f.task, f.before, f.options, 'verify-implementation', 2), /contradicts evidence verdicts/);
@@ -400,14 +440,27 @@ test('clean review requires a completed separate exact-HEAD reviewer; genuine ch
       }) };
     });
     await assert.rejects(() => runSkill(unrelated, f.task, verified, f.options, 'review-code', 3), /scope-incomplete/);
+    const unchanged = f.ctx(rows, () => {
+      dispatches++;
+      const head = execFileSync('git', ['rev-parse', 'HEAD^'], { cwd: f.repo, encoding: 'utf8' }).trim();
+      const evidence = 'cli.mjs:1 inspected unchanged header and invoked node cli.mjs 21; observed 42 and invoked node cli.mjs 7; observed 14';
+      return { sessionId: 'separate-but-unchanged-line', text: JSON.stringify({
+        head, revision: verified.revision,
+        acceptance: ['CLI doubles input 21.', 'CLI doubles input 7.'].map(item => ({ item, evidence })),
+        risks: ['functional correctness', 'security and data integrity', 'acceptance oracle and test reachability']
+          .map(risk => ({ risk, evidence })),
+        findings: [],
+      }) };
+    });
+    await assert.rejects(() => runSkill(unchanged, f.task, verified, f.options, 'review-code', 4), /scope-incomplete/);
     const reviewer = f.ctx(rows, () => {
       dispatches++;
       const output = execFileSync(process.execPath, ['cli.mjs', '21'], { cwd: f.repo, encoding: 'utf8' }).trim();
       assert.equal(output, '42');
       assert.equal(execFileSync(process.execPath, ['cli.mjs', '7'], { cwd: f.repo, encoding: 'utf8' }).trim(), '14');
       const head = execFileSync('git', ['rev-parse', 'HEAD^'], { cwd: f.repo, encoding: 'utf8' }).trim();
-      const sourceLine = fs.readFileSync(path.join(f.repo, 'cli.mjs'), 'utf8').split('\n')[0];
-      const evidence = `cli.mjs:1 ${sourceLine}; direct invocation node cli.mjs 21 printed 42 and node cli.mjs 7 printed 14`;
+      const sourceLine = fs.readFileSync(path.join(f.repo, 'cli.mjs'), 'utf8').split('\n')[1];
+      const evidence = `cli.mjs:2 ${sourceLine}; direct invocation node cli.mjs 21 printed 42 and node cli.mjs 7 printed 14`;
       return { sessionId: 'separate-reviewer-session', text: JSON.stringify({
         head, revision: verified.revision, acceptance: [
           { item: 'CLI doubles input 21.', evidence },
@@ -415,15 +468,15 @@ test('clean review requires a completed separate exact-HEAD reviewer; genuine ch
         ],
         risks: [
           { risk: 'functional correctness', evidence },
-          { risk: 'security and data integrity', evidence: `cli.mjs:1 inspected argument conversion and output: ${sourceLine}` },
-          { risk: 'acceptance oracle and test reachability', evidence: 'cli.mjs:1 independently invoked both accepted inputs and observed 42 and 14' },
+          { risk: 'security and data integrity', evidence: `cli.mjs:2 inspected argument conversion and output: ${sourceLine}` },
+          { risk: 'acceptance oracle and test reachability', evidence: 'cli.mjs:2 independently invoked both accepted inputs and observed 42 and 14' },
         ], findings: [],
       }) };
     });
-    const reviewed = await runSkill(reviewer, f.task, verified, f.options, 'review-code', 4);
-    assert.equal(dispatches, 3);
+    const reviewed = await runSkill(reviewer, f.task, verified, f.options, 'review-code', 5);
+    assert.equal(dispatches, 4);
     assert.deepEqual(eligible(reviewed, f.options, 'oneshot', false), ['record-evidence']);
-    assert.equal(fs.existsSync(path.join(f.taskDir, '.atomic-delivery', 'proof-run', '004-independent-review-proof.json')), true);
+    assert.equal(fs.existsSync(path.join(f.taskDir, '.atomic-delivery', 'proof-run', '005-independent-review-proof.json')), true);
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 

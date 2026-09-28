@@ -185,6 +185,36 @@ function verificationRows(artifact) {
   return table.filter(row => !row.every(cell => /^-+$/.test(cell))).map(row =>
     Object.fromEntries(Object.entries(columns).map(([name, index]) => [name, row[index] || ''])));
 }
+function repositoryChecks(cwd) {
+  const checks = new Set();
+  const exists = name => fs.existsSync(path.join(cwd, name));
+  if (exists('package.json')) {
+    const manifest = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8'));
+    const manager = exists('pnpm-lock.yaml') ? 'pnpm' : exists('yarn.lock') ? 'yarn'
+      : exists('bun.lock') || exists('bun.lockb') ? 'bun' : 'npm';
+    for (const name of ['test', 'lint', 'typecheck', 'build', 'check']) {
+      if (Object.hasOwn(manifest.scripts || {}, name)) checks.add(`${manager} ${name === 'test' ? name : `run ${name}`}`);
+    }
+  }
+  if (exists('Makefile')) {
+    const makefile = fs.readFileSync(path.join(cwd, 'Makefile'), 'utf8');
+    for (const name of ['test', 'lint', 'check']) if (new RegExp(`^${name}:`, 'm').test(makefile)) checks.add(`make ${name}`);
+  }
+  if (exists('go.mod')) { checks.add('go test ./...'); checks.add('go vet ./...'); }
+  if (exists('Cargo.toml')) checks.add('cargo test');
+  if (['pyproject.toml', 'setup.cfg', 'tox.ini'].some(exists)) checks.add('pytest');
+  if (exists('Package.swift')) checks.add('swift test');
+  if (exists('build.gradle') || exists('build.gradle.kts')) checks.add('./gradlew test');
+  const workflows = path.join(cwd, '.github', 'workflows');
+  if (fs.existsSync(workflows)) for (const name of fs.readdirSync(workflows)) {
+    if (!/\.ya?ml$/.test(name)) continue;
+    for (const line of fs.readFileSync(path.join(workflows, name), 'utf8').split('\n')) {
+      const command = line.match(/^\s*(?:-\s*)?run:\s*(.+?)\s*$/)?.[1];
+      if (command && /^(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|typecheck|build|check)\b|go (?:test|vet)\b|cargo (?:test|clippy)\b|pytest\b|make (?:test|lint|check)\b|swift test\b|\.\/gradlew test\b)/.test(command)) checks.add(command);
+    }
+  }
+  return checks;
+}
 function requireAcceptanceEvidence(task, state, artifact) {
   if (artifact.type !== 'verification' || artifact.status !== 'passed') return [];
   const promises = acceptanceItems(task, state);
@@ -192,10 +222,13 @@ function requireAcceptanceEvidence(task, state, artifact) {
   const acceptance = rows.filter(row => /^A/i.test(row.id));
   const checks = rows.filter(row => /^C/i.test(row.id));
   const normalized = value => value.toLowerCase().replace(/[`*_\[\]]/g, '').replace(/\s+/g, ' ').trim();
-  if (!rows.length || !checks.length || checks.some(row => !/^C[1-9]\d*$/i.test(row.id) || row.verdict.toLowerCase() !== 'pass') ||
+  if (checks.some(row => !/^C[1-9]\d*$/i.test(row.id) || row.verdict.toLowerCase() !== 'pass') ||
       new Set(checks.map(row => row.id.toUpperCase())).size !== checks.length) {
-    throw new Error(`${artifact.file}: passed verification requires a recorded passing repository check C-row`);
+    throw new Error(`${artifact.file}: passed verification has a missing or nonpassing repository check C-row`);
   }
+  const recorded = new Set(checks.map(row => row['decided by'].match(/^`([^`\n]+)`$/)?.[1]));
+  const missing = [...repositoryChecks(task.cwd)].filter(command => !recorded.has(command));
+  if (missing.length) throw new Error(`${artifact.file}: passed verification omitted repository checks: ${missing.join(', ')}`);
   if (acceptance.length !== promises.length || acceptance.some(row => !/^A[1-9]\d*$/i.test(row.id)) || promises.some((promise, index) => {
     const row = acceptance.find(candidate => candidate.id.toUpperCase() === `A${index + 1}`);
     return !row || row.verdict.toLowerCase() !== 'pass' || !normalized(row.item).includes(normalized(promise));
@@ -204,26 +237,18 @@ function requireAcceptanceEvidence(task, state, artifact) {
   }
   return [...checks, ...acceptance];
 }
-function acceptanceOracleCommand(task, command, id, changed) {
-  if (/[;&|<>$`()]/.test(command)) throw new Error(`${id} acceptance command must directly invoke a behavior oracle, not shell expansion or command chaining`);
-  if (/^(?:(?:npm|pnpm|yarn|bun) (?:test|run (?:test|check|verify)(?::[a-z0-9_-]+)?)|go test|cargo test|pytest|python3? -m pytest)(?:\s|$)/.test(command)) return;
-  const match = command.match(/^(?:node|bun|python3?)\s+(?:--test\s+)?(\S+)(?:\s+.*)?$/);
-  const target = match?.[1];
-  const file = target && path.resolve(task.cwd, target);
-  const relative = file && path.relative(task.cwd, file);
-  const inside = relative && !relative.startsWith('..') && !path.isAbsolute(relative);
-  if (!inside || !fs.existsSync(file) || (!changed.has(relative) && !/(?:^|[./_-])test(?:s)?[./_-]/i.test(target))) {
-    throw new Error(`${id} acceptance command does not invoke an existing changed source entrypoint or behavior test file`);
+function acceptanceOracleCommand(command, id) {
+  if (/^\s*(?:true|false|:|echo|printf)(?:\s|$)/.test(command)) {
+    throw new Error(`${id} acceptance command only manufactures a result; it does not exercise product behavior`);
   }
 }
 function executeVerification(task, state, artifact, rows, step) {
   const beforeHead = git(task.cwd, ['rev-parse', 'HEAD']);
-  const changed = changedSourcePaths(task, beforeHead);
   const evidence = [];
   for (const row of rows) {
     const command = row['decided by'].match(/^`([^`\n]+)`$/)?.[1];
     if (!command) throw new Error(`${artifact.file}: ${row.id} has no executable command; an artifact assertion is not proof`);
-    if (row.id.toUpperCase().startsWith('A')) acceptanceOracleCommand(task, command, row.id, changed);
+    if (row.id.toUpperCase().startsWith('A')) acceptanceOracleCommand(command, row.id);
     const run = spawnSync('/bin/sh', ['-c', command], {
       cwd: task.cwd, encoding: 'utf8', timeout: 600_000, maxBuffer: 16 * 1024 * 1024,
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
@@ -262,29 +287,50 @@ function changedSourcePaths(task, head) {
   return new Set([...names].filter(name => name && name !== taskRoot && !name.startsWith(`${taskRoot}/`) &&
     name !== '.atomic' && !name.startsWith('.atomic/') && fs.existsSync(path.join(task.cwd, name))));
 }
-async function requireIndependentReview(ctx, task, state, artifact, step, stageSession, acceptance, sourceHead, model) {
+function changedSourceLines(task, head, changed) {
+  const taskText = fs.readFileSync(path.join(task.taskDir, 'task.md'), 'utf8');
+  const base = taskText.match(/^base:\s*["']?([^"'\n]+)["']?\s*$/m)?.[1];
+  const ancestor = [base, 'origin/HEAD', 'origin/main', 'main', 'origin/master', 'master']
+    .filter(Boolean).map(ref => git(task.cwd, ['merge-base', head, ref], true)).find(Boolean);
+  const untracked = new Set(git(task.cwd, ['ls-files', '--others', '--exclude-standard', '-z', '--', '.']).split('\0'));
+  const lines = new Map();
+  for (const file of changed) {
+    if (untracked.has(file)) {
+      lines.set(file, [[1, fs.readFileSync(path.join(task.cwd, file), 'utf8').split('\n').length]]);
+      continue;
+    }
+    const diffs = [
+      ...(ancestor ? [git(task.cwd, ['diff', '--unified=0', ancestor, head, '--', file])] : []),
+      git(task.cwd, ['diff', '--unified=0', head, '--', file]),
+    ];
+    lines.set(file, diffs.flatMap(diff => [...diff.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)]
+      .map(([, start, length]) => [Math.max(1, Number(start)), Math.max(1, Number(start) + Number(length ?? 1) - 1)])));
+  }
+  return lines;
+}
+async function requireIndependentReview(ctx, task, state, artifact, step, stageSession, acceptance, sourceHead, model, verified) {
   const head = git(task.cwd, ['rev-parse', 'HEAD']);
   if (artifact.metadata.head_sha !== sourceHead || git(task.cwd, ['merge-base', sourceHead, head]) !== sourceHead) {
     throw new Error(`${artifact.file}: clean review is not pinned to exact source HEAD ${sourceHead}`);
   }
   const risks = ['functional correctness', 'security and data integrity', 'acceptance oracle and test reachability'];
   const changed = changedSourcePaths(task, sourceHead);
+  const changedLines = changedSourceLines(task, sourceHead, changed);
   const execution = state.proofs.verification?.executionEvidence || [];
   const name = `${String(step).padStart(3, '0')}-independent-review`;
   const prompt = [
     `Independently review the changed implementation in ${task.cwd} against task ${path.join(task.taskDir, 'task.md')}. Do not edit files or publish anything.`,
     `Pin reviewed source HEAD ${sourceHead} (current HEAD ${head} may include only the task artifact commit) and source revision ${state.revision}; inspect changed source paths ${JSON.stringify([...changed])}, actual controller-run acceptance commands and outputs ${JSON.stringify(execution)}, task and authoritative artifacts. Review acceptance items ${JSON.stringify(acceptance)} and risks ${JSON.stringify(risks)}.`,
-    `Return only a JSON object {"head":string,"revision":string,"acceptance":[{"item":string,"evidence":string}],"risks":[{"risk":string,"evidence":string}],"findings":[{"location":string,"problem":string}]}. Each acceptance evidence must cite an actual changed path:line, the controller-executed command and its observed outcome. Each risk must cite a changed path:line and concrete inspected behavior. Report all consequential findings. An unavailable or incomplete inspection must not claim coverage.`,
+    `Return only a JSON object {"head":string,"revision":string,"acceptance":[{"item":string,"evidence":string}],"risks":[{"risk":string,"evidence":string}],"findings":[{"location":string,"problem":string}]}. Every acceptance item must be examined against actual changed implementation lines and an independently meaningful direct observation or reachable test assertion. A green but unrelated test is a finding, never acceptance proof. Cite a changed path:line plus a test assertion path:line where tests provide the oracle; include the controller-executed command and decisive output when verification ran. For opted-out verification, independently inspect acceptance behavior without pretending an absent oracle ran. Cover every risk with inspected changed path:line and concrete behavior. Report consequential findings; incomplete inspection cannot claim coverage.`,
   ].join('\n\n');
   const result = await ctx.task(name, { prompt, context: 'fresh', cwd: task.cwd, model, maxOutput: { bytes: 16_384, lines: 160 } });
   let report;
   try { report = JSON.parse(result.text); }
   catch { throw new Error(`${artifact.file}: independent reviewer did not return a completed structured report`); }
   const inspected = evidence => {
-    const match = typeof evidence === 'string' && evidence.match(/(?:^|\s)([^\s:]+):([1-9]\d*)\b/);
-    if (!match || !changed.has(match[1]) || evidence.length < 40) return false;
-    const file = path.join(task.cwd, match[1]);
-    return Number(match[2]) <= fs.readFileSync(file, 'utf8').split('\n').length &&
+    if (typeof evidence !== 'string' || evidence.length < 40) return false;
+    const citations = [...evidence.matchAll(/(?:^|\s)([^\s:]+):([1-9]\d*)\b/g)];
+    return citations.some(([, file, line]) => changedLines.get(file)?.some(([start, end]) => Number(line) >= start && Number(line) <= end)) &&
       /\b(?:observed|printed|returned|passed|failed|asserted|invoked|executed|confirmed|produces?|rejects?|preserves?|inspected)\b/i.test(evidence);
   };
   const complete = stageSession && result.sessionId && result.sessionId !== stageSession && report && !Array.isArray(report) &&
@@ -293,7 +339,7 @@ async function requireIndependentReview(ctx, task, state, artifact, step, stageS
     acceptance.every((item, index) => report.acceptance.some(covered => {
       const oracle = execution.find(row => row.id.toUpperCase() === `A${index + 1}`);
       return covered.item === item && inspected(covered.evidence) &&
-        oracle && covered.evidence.includes(oracle.command) && covered.evidence.includes(oracle.observed);
+        (!verified || (oracle && covered.evidence.includes(oracle.command) && covered.evidence.includes(oracle.observed)));
     })) &&
     Array.isArray(report.risks) && report.risks.length === risks.length &&
     risks.every(risk => report.risks.some(item => item.risk === risk && inspected(item.evidence))) &&
@@ -388,7 +434,7 @@ export async function runSkill(ctx, task, state, inputs, skill, step, feedback =
     return next;
   });
   if (skill === 'review-code' && observed.latest['code-review']?.status === 'clean') {
-    await requireIndependentReview(ctx, task, state, observed.latest['code-review'], step, result.sessionId, acceptanceItems(task, state), sourceHead, selection.model);
+    await requireIndependentReview(ctx, task, state, observed.latest['code-review'], step, result.sessionId, acceptanceItems(task, state), sourceHead, selection.model, Boolean(inputs.verify));
   }
   return observed;
 }
