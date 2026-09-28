@@ -142,33 +142,27 @@ for (const kind of ["file", "symlink"]) {
   }));
 }
 
-test("a shared target cannot replace the protected stage at cleanup", () => fixture((root) => {
-  fs.chmodSync(root, 0o777);
+test("a replaceable staging directory is rejected before attacker bytes can publish", () => fixture((root) => {
   fs.writeFileSync(path.join(root, ".nvmrc"), "22\n");
   const plan = createPlan(root);
-  const unlink = fs.unlinkSync;
-  let cleanupReached = false;
-  let replaced = false;
-  fs.unlinkSync = (file) => {
-    cleanupReached = true;
-    // An actor without ownership can replace a public stage just before
-    // unlink, but cannot enter a mode-0700 staging directory.
-    if (fs.statSync(path.dirname(file)).mode & 0o002) {
-      unlink(file);
-      fs.writeFileSync(file, "foreign staged data\n");
-      replaced = true;
-    }
-    return unlink(file);
+  fs.chmodSync(root, 0o777);
+  const link = fs.linkSync;
+  let publicationAttempted = false;
+  fs.linkSync = (from, to) => {
+    publicationAttempted = true;
+    const removed = `${path.dirname(from)}-renamed`;
+    fs.renameSync(path.dirname(from), removed);
+    fs.mkdirSync(path.dirname(from), { mode: 0o700 });
+    fs.writeFileSync(from, "attacker manifest\n");
+    return link(from, to);
   };
   try {
-    assert.equal(applyPlan(root, plan).outcome, "applied");
+    assert.throws(() => applyPlan(root, plan), /permits replacement/);
   } finally {
-    fs.unlinkSync = unlink;
+    fs.linkSync = link;
   }
-  assert.equal(cleanupReached, true);
-  assert.equal(replaced, false);
-  assert.deepEqual(fs.readdirSync(root).sort(), [".nvmrc", "package.json"]);
-  assert.equal(fs.readFileSync(path.join(root, "package.json"), "utf8"), '{\n  "private": true\n}\n');
+  assert.equal(publicationAttempted, false);
+  assert.deepEqual(fs.readdirSync(root), [".nvmrc"]);
 }));
 
 test("a foreign staged inode at cleanup is left intact", () => fixture((root) => {
@@ -340,17 +334,43 @@ test("intermediate symlink target is rejected", () => fixture((root) => {
   assert.throws(() => createPlan(path.join(alias, "project")), /symlink/);
 }));
 
-test("CLI distinguishes dry-run from approved write", () => fixture((root) => {
+test("CLI requires the dry-run planId for an approved write", () => fixture((root) => {
   fs.writeFileSync(path.join(root, ".nvmrc"), "22\n");
   const script = fileURLToPath(new URL("../skills/project-init/scripts/bootstrap.mjs", import.meta.url));
   const dryRun = spawnSync(process.execPath, [script, "--target", root], { encoding: "utf8" });
   assert.equal(dryRun.status, 0);
-  assert.equal(JSON.parse(dryRun.stdout).outcome, "planned");
+  const plan = JSON.parse(dryRun.stdout);
+  assert.equal(plan.outcome, "planned");
+  assert.match(plan.planId, /^[a-f0-9]{64}$/);
   assert.equal(fs.existsSync(path.join(root, "package.json")), false);
-  const applied = spawnSync(process.execPath, [script, "--target", root, "--apply", "--approve"], { encoding: "utf8" });
+  const missing = spawnSync(process.execPath, [script, "--target", root, "--apply", "--approve"], { encoding: "utf8" });
+  assert.equal(missing.status, 1);
+  const wrong = spawnSync(process.execPath, [script, "--target", root, "--apply", "--approve", "incorrect"], { encoding: "utf8" });
+  assert.equal(wrong.status, 1);
+  assert.equal(fs.existsSync(path.join(root, "package.json")), false);
+  const applied = spawnSync(process.execPath, [script, "--target", root, "--apply", "--approve", plan.planId], { encoding: "utf8" });
   assert.equal(applied.status, 0);
   assert.equal(JSON.parse(applied.stdout).outcome, "applied");
-  assert.equal(fs.existsSync(path.join(root, "package.json")), true);
+  assert.equal(fs.readFileSync(path.join(root, "package.json"), "utf8"), '{\n  "private": true\n}\n');
+}));
+
+test("CLI approval cannot write after the dry-run target inode is replaced", () => fixture((root) => {
+  const project = path.join(root, "project");
+  const moved = path.join(root, "moved");
+  fs.mkdirSync(project);
+  fs.writeFileSync(path.join(project, ".nvmrc"), "22\n");
+  const script = fileURLToPath(new URL("../skills/project-init/scripts/bootstrap.mjs", import.meta.url));
+  const dryRun = spawnSync(process.execPath, [script, "--target", project], { encoding: "utf8" });
+  assert.equal(dryRun.status, 0);
+  const { planId } = JSON.parse(dryRun.stdout);
+  fs.renameSync(project, moved);
+  fs.mkdirSync(project);
+  fs.writeFileSync(path.join(project, ".nvmrc"), "22\n");
+  const applied = spawnSync(process.execPath, [script, "--target", project, "--apply", "--approve", planId], { encoding: "utf8" });
+  assert.equal(applied.status, 1);
+  assert.match(applied.stderr, /plan changed/);
+  assert.deepEqual(fs.readdirSync(project), [".nvmrc"]);
+  assert.deepEqual(fs.readdirSync(moved), [".nvmrc"]);
 }));
 
 test("lockfile-only and conflicting manager signals are unsupported", () => fixture((root) => {
@@ -382,7 +402,7 @@ test("Go project with Node version marker is unsupported and never bootstrapped"
   const dryRun = spawnSync(process.execPath, [script, "--target", root], { encoding: "utf8" });
   assert.equal(dryRun.status, 2);
   assert.equal(JSON.parse(dryRun.stdout).mode, "unsupported");
-  const apply = spawnSync(process.execPath, [script, "--target", root, "--apply", "--approve"], { encoding: "utf8" });
+  const apply = spawnSync(process.execPath, [script, "--target", root, "--apply", "--approve", plan.planId], { encoding: "utf8" });
   assert.equal(apply.status, 2);
   assert.equal(fs.existsSync(path.join(root, "package.json")), false);
 }));
@@ -394,7 +414,7 @@ test("requirements.txt with Node version marker is unsupported and never bootstr
   assert.equal(plan.mode, "unsupported");
   assert.deepEqual(plan.actions, []);
   const script = fileURLToPath(new URL("../skills/project-init/scripts/bootstrap.mjs", import.meta.url));
-  const apply = spawnSync(process.execPath, [script, "--target", root, "--apply", "--approve"], { encoding: "utf8" });
+  const apply = spawnSync(process.execPath, [script, "--target", root, "--apply", "--approve", plan.planId], { encoding: "utf8" });
   assert.equal(apply.status, 2);
   assert.equal(JSON.parse(apply.stdout).mode, "unsupported");
   assert.equal(fs.existsSync(path.join(root, "package.json")), false);
@@ -411,7 +431,7 @@ for (const [name, file, contents] of [
     assert.equal(plan.mode, "supported");
     assert.deepEqual(plan.actions, []);
     const script = fileURLToPath(new URL("../skills/project-init/scripts/bootstrap.mjs", import.meta.url));
-    const apply = spawnSync(process.execPath, [script, "--target", root, "--apply", "--approve"], { encoding: "utf8" });
+    const apply = spawnSync(process.execPath, [script, "--target", root, "--apply", "--approve", plan.planId], { encoding: "utf8" });
     assert.equal(apply.status, 0);
     assert.equal(JSON.parse(apply.stdout).outcome, "unchanged");
     assert.equal(fs.existsSync(path.join(root, "package.json")), false);

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Read-only project stack detection and explicitly approved minimal Node bootstrap.
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -93,7 +94,7 @@ function planInPinnedDirectory(project, identity) {
   const detection = detectProject(".");
   const canCreate = detection.status === "detected" && detection.stack === "node" &&
     !fs.existsSync("package.json") && containsOnlyVersionMarkers(".");
-  return {
+  const plan = {
     version: 1,
     mode: canCreate ? "supported" : detection.status === "detected" ? "supported" : "unsupported",
     outcome: "planned",
@@ -102,11 +103,12 @@ function planInPinnedDirectory(project, identity) {
     detected: detection.status === "detected" ? [{ stack: detection.stack, manager: detection.manager, manifest: detection.manifest }] : [],
     actions: canCreate ? [{ type: "create-file", path: "package.json", contents: '{\n  "private": true\n}\n' }] : [],
     explanation: canCreate
-      ? "Supported empty Node target. A minimal package.json can be created only with --apply --approve."
+      ? "Supported empty Node target. A minimal package.json can be created only with --apply --approve <planId> from this dry run."
       : detection.status === "detected"
         ? "Existing Node project detected. Existing configuration is preserved; no changes are proposed."
         : detection.reason,
   };
+  return { ...plan, planId: createHash("sha256").update(JSON.stringify(plan)).digest("hex") };
 }
 
 export function createPlan(root) {
@@ -125,6 +127,11 @@ export function applyPlan(root, plan) {
     const current = planInPinnedDirectory(requested, identity);
     if (current.mode !== "supported" || JSON.stringify(current.actions) !== JSON.stringify(plan.actions)) {
       throw new Error("Bootstrap plan is stale; refusing to write.");
+    }
+    // A private stage is not protected if another user can rename its parent
+    // entry. Refuse publication in a group- or world-writable target.
+    if (fs.statSync(".").mode & 0o022) {
+      throw new Error("Bootstrap target permits replacement of staged files; refusing to write.");
     }
     // Stage on the approved filesystem inside a private directory. Other
     // users cannot replace the source between the ownership check and cleanup.
@@ -173,17 +180,20 @@ export function applyPlan(root, plan) {
 function cli(argv) {
   let target = process.cwd();
   let apply = false;
-  let approve = false;
+  let approve;
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--target") {
       if (!argv[i + 1] || argv[i + 1].startsWith("--")) throw new Error("--target requires a directory.");
       target = path.resolve(argv[++i]);
     } else if (argv[i] === "--apply") apply = true;
-    else if (argv[i] === "--approve") approve = true;
-    else throw new Error(`Unknown argument: ${argv[i]}`);
+    else if (argv[i] === "--approve") {
+      if (!argv[i + 1] || argv[i + 1].startsWith("--")) throw new Error("--approve requires the dry-run planId.");
+      approve = argv[++i];
+    } else throw new Error(`Unknown argument: ${argv[i]}`);
   }
-  if (apply !== approve) throw new Error("--apply and --approve must be supplied together.");
+  if (apply !== (approve !== undefined)) throw new Error("--apply and --approve <planId> must be supplied together.");
   let result = createPlan(target);
+  if (apply && approve !== result.planId) throw new Error("Bootstrap plan changed; refusing to write.");
   if (apply && result.actions.length) result = applyPlan(target, result);
   else if (apply && result.mode === "supported") result = { ...result, outcome: "unchanged" };
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
