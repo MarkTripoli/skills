@@ -23,7 +23,6 @@ def main():
         work_tree = os.getcwd()
         os.fchdir(4)
         os.environ["GIT_DIR"] = "."
-        os.environ["GIT_COMMON_DIR"] = "."
         os.environ["GIT_WORK_TREE"] = work_tree
         os.environ["GIT_NO_LAZY_FETCH"] = "1"
         os.environ["GIT_NO_REPLACE_OBJECTS"] = "1"

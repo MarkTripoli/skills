@@ -106,6 +106,29 @@ test('rejects repository subdirectories and linked worktrees as separate selecti
   execFileSync('git', ['-C', a, 'worktree', 'add', '--detach', linked, 'HEAD']);
   assert.throws(() => correlate([a, linked]), /unsupported repository metadata/);
 });
+
+test('Git descriptor launcher resolves commits from ordinary repository metadata', t => {
+  const root = temp(t);
+  const original = repo(root, 'ordinary', {'.env': 'TOKEN=ordinary-repository\n'});
+  const rootFd = fs.openSync(original, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+  const gitMetadataFd = fs.openSync(path.join(original, '.git'), fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+  const helper = path.join(path.dirname(fileURLToPath(import.meta.url)), '../skills/delivery/credentials/scripts/git-from-root.py');
+  let result;
+  try {
+    result = spawnSync('python3', [helper, 'rev-parse', '--verify', 'HEAD^{commit}'], {
+      cwd: path.dirname(helper),
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore', rootFd, gitMetadataFd],
+    });
+  } finally {
+    fs.closeSync(rootFd);
+    fs.closeSync(gitMetadataFd);
+  }
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout.trim(), execFileSync('git', ['-C', original, 'rev-parse', '--verify', 'HEAD^{commit}'], {encoding: 'utf8'}).trim());
+});
 test('Git descriptor launcher stays on the original worktree during pathname rebinding', t => {
   const root = temp(t);
   const original = repo(root, 'original', {'.env': 'TOKEN=original-worktree\n'});
