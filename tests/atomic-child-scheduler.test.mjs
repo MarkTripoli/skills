@@ -106,22 +106,26 @@ test('ignored child task proof joins only through its merged PR and hosted evide
     mergeCommit: { oid: merged }, mergedAt: '2026-09-27T00:00:00Z', url: 'https://github.com/owner/repo/pull/7' };
   const bin = path.join(root, 'bin');
   fs.mkdirSync(bin);
-  fs.writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\ncase "$1 $2" in\n  "pr list") printf %s "$GH_LIST_JSON" ;;\n  "pr view") printf %s "$GH_PR_JSON" ;;\n  "repo view") printf %s \'{"nameWithOwner":"owner/repo"}\' ;;\n  "api repos/owner/repo/issues/comments/123") printf %s "$GH_COMMENT_JSON" ;;\n  *) exit 2 ;;\nesac\n');
+  fs.writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\ncase "$1 $2" in\n  "pr list") printf %s "$GH_LIST_JSON" ;;\n  "pr view") printf %s "$GH_PR_JSON" ;;\n  "repo view") printf %s \'{"nameWithOwner":"owner/repo"}\' ;;\n  "api --paginate") if [ "$3" = "--slurp" ] && [ "$4" = "repos/owner/repo/commits/$GH_HEAD/check-runs?per_page=100" ]; then printf %s "$GH_CHECK_PAGES"; else exit 2; fi ;;\n  "api repos/owner/repo/issues/comments/123") printf %s "$GH_COMMENT_JSON" ;;\n  *) exit 2 ;;\nesac\n');
   fs.chmodSync(path.join(bin, 'gh'), 0o755);
   const fetchStub = path.join(root, 'fetch-stub.mjs');
   fs.writeFileSync(fetchStub, `globalThis.fetch = async () => ({ ok: true, status: 200, url: '${captureUrl}', headers: new Headers({ 'content-type': 'text/plain' }), body: new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('Source SHA: ${head}\\nRequest: GET /api/items\\nStatus: 200\\nResponse body: observed API result')); controller.close(); } }) });\n`);
-  const keys = ['PATH', 'NODE_OPTIONS', 'GH_LIST_JSON', 'GH_PR_JSON', 'GH_COMMENT_JSON'];
+  const keys = ['PATH', 'NODE_OPTIONS', 'GH_LIST_JSON', 'GH_PR_JSON', 'GH_COMMENT_JSON', 'GH_HEAD', 'GH_CHECK_PAGES'];
   const original = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   t.after(() => { for (const key of keys) if (original[key] === undefined) delete process.env[key]; else process.env[key] = original[key]; });
   process.env.PATH = `${bin}:${process.env.PATH}`;
   process.env.NODE_OPTIONS = `--import=${fetchStub}`;
   process.env.GH_LIST_JSON = JSON.stringify([pr]);
   process.env.GH_PR_JSON = JSON.stringify({ url: pr.url, number: 7, headRefOid: head,
-    baseRefName: 'epic', baseRefOid: baseHead, isDraft: false, body });
+    baseRefName: 'epic', baseRefOid: baseHead, title: 'feat(api): implement API', isDraft: false, body });
+  process.env.GH_HEAD = head;
+  process.env.GH_CHECK_PAGES = JSON.stringify([{ total_count: 2, check_runs: ['test', 'Conventional Commits']
+    .map((name, index) => ({ id: index + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })) }]);
   process.env.GH_COMMENT_JSON = JSON.stringify({ id: 123, html_url: commentUrl,
     body: `- result: passed\n- tested: ${head}\n- current head: ${head}\n- recording: api-probe\n- capture: ${captureUrl}` });
   assert.deepEqual(childWave(task, [api]).done, ['api']);
-  assert.equal(joinChildren(task, [api], new Map([['api', record]])).complete, true);
+  const joined = joinChildren(task, [api], new Map([['api', record]]));
+  assert.equal(joined.complete, true, JSON.stringify(joined.children));
   process.env.GH_COMMENT_JSON = JSON.stringify({ id: 123, html_url: commentUrl, body: 'Missing capture' });
   assert.equal(joinChildren(task, [api], new Map([['api', record]])).complete, false);
   assert.throws(() => childWave(task, [api], [{ ...pr, mergeCommit: { oid: baseHead } }]), /no matching source/);

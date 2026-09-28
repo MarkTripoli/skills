@@ -10,6 +10,7 @@ export function decidePublicationProof(proof) {
   if (proof.head !== proof.tested && (!proof.artifactOnlyAdvancement || !proof.indexedArtifactsOnly)) {
     return blocked("stale");
   }
+  if (!proof.commitChecksCurrent) return blocked("incomplete");
   if (proof.reviewRequired && (!proof.reviewCurrent || proof.review !== "clean")) return blocked("incomplete");
   if (proof.verificationRequired && (!proof.verificationCurrent || proof.verification !== "passed")) return blocked("incomplete");
   if (proof.capture !== "passed" || !proof.captureCurrent || !proof.captureHosted) return blocked("incomplete");

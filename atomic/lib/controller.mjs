@@ -1,8 +1,11 @@
 import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { observeArtifacts, planProgress, requireFresh } from './artifacts.mjs';
-import { revision, saveRecord } from './workspace.mjs';
+import { parseDocument } from 'yaml';
+import { digest, observeArtifacts, planProgress, requireFresh, readArtifact, section } from './artifacts.mjs';
+import { indexFileExists, recordArtifact, reserveArtifactIteration } from './artifact-index.mjs';
+import { git, revision, saveRecord } from './workspace.mjs';
 import { selectStageModel } from './models.mjs';
 import { currentHostedCapture, hostedProof } from './hosted-proof.mjs';
 import {
@@ -140,6 +143,551 @@ function makeRecovery(skill, source, before, after, receipt, codeRevision) {
   };
 }
 function validProof(state, type, status) { return currentProof(state, type) && (!status || state.latest[type].status === status); }
+function acceptanceItems(task, state) {
+  const request = fs.readFileSync(path.join(task.taskDir, 'task.md'), 'utf8');
+  const source = primarySource(state.latest);
+  const items = [];
+  const seen = new Set();
+  const add = text => {
+    const item = text.replace(/^\s*(?:[-*]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/, '').trim();
+    const key = item.toLowerCase().replace(/[`*_]/g, '').replace(/\s+/g, ' ');
+    if (item && !/^(?:none\.?|n\/a|not applicable)\.?$/i.test(item) && !seen.has(key)) {
+      seen.add(key);
+      items.push(item);
+    }
+  };
+  const bullets = text => text.split('\n').filter(line => /^\s*(?:[-*]|\d+[.)])\s+/.test(line));
+  const criteria = section(request, 'Acceptance criteria');
+  const taskItems = bullets(criteria);
+  for (const line of taskItems.length ? taskItems : criteria.trim() ? [criteria.trim()] : []) add(line);
+  for (const line of bullets(section(source?.text || '', 'Desired End State'))) add(line);
+  const receipts = state.artifactSeries
+    ? Object.values(state.artifactSeries).flatMap(series => series.iterations)
+    : Object.keys(state.hashes || {}).filter(file => path.dirname(file) === task.taskDir && /^\d{2,}-[a-z0-9-]+\.md$/.test(path.basename(file))).map(file => readArtifact(file));
+  for (const artifact of [source, ...receipts.filter(item => ['implementation', 'fix'].includes(item.type)), state.latest.implementation, state.latest.fix]) {
+    if (!artifact) continue;
+    const lines = artifact.text.split('\n');
+    let verifyLevel = 0;
+    let humanReview = false;
+    for (const line of lines) {
+      const heading = line.match(/^(#{1,6})\s+(.+?)\s*$/);
+      if (heading) {
+        const level = heading[1].length;
+        const title = heading[2].replace(/:\s*$/, '');
+        if (level <= 2) humanReview = /^Human Review$/i.test(title);
+        if (verifyLevel && level <= verifyLevel) verifyLevel = 0;
+        if (!humanReview && ((level === 3 && /^Verify$/i.test(title)) ||
+          (level === 4 && /^Automated Verification$/i.test(title)))) verifyLevel = level;
+      } else if (verifyLevel && /^\s*[-*]\s+(?:\[[ xX]\]\s+)?\S/.test(line)) add(line);
+    }
+  }
+  const reproduction = state.latest.reproduction?.text.match(/^\s*(?:[-*]\s*)?Run:\s*(.+)$/im);
+  if (reproduction) add(`Run: ${reproduction[1]}`);
+  return items;
+}
+function verificationRows(artifact) {
+  const table = section(artifact.text, 'Items').split('\n')
+    .filter(line => /^\s*\|/.test(line))
+    .map(line => line.split(/(?<!\\)\|/).slice(1, -1).map(cell => cell.trim()));
+  const header = table.shift()?.map(cell => cell.toLowerCase()) || [];
+  const columns = Object.fromEntries(['id', 'item', 'decided by', 'observed', 'verdict'].map(name => [name, header.indexOf(name)]));
+  if (Object.values(columns).some(index => index < 0)) throw new Error(`${artifact.file}: verification Items table lacks proof columns`);
+  return table.filter(row => !row.every(cell => /^-+$/.test(cell))).map(row =>
+    Object.fromEntries(Object.entries(columns).map(([name, index]) => [name, row[index] || ''])));
+}
+function repositoryChecks(cwd) {
+  const checks = new Map();
+  const add = command => checks.set(command, true);
+  const exists = name => fs.existsSync(path.join(cwd, name));
+  if (exists('package.json')) {
+    const manifest = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8'));
+    const manager = exists('pnpm-lock.yaml') ? 'pnpm' : exists('yarn.lock') ? 'yarn'
+      : exists('bun.lock') || exists('bun.lockb') ? 'bun' : 'npm';
+    for (const name of ['test', 'lint', 'typecheck', 'build', 'check']) {
+      if (!Object.hasOwn(manifest.scripts || {}, name)) continue;
+      const script = manifest.scripts[name];
+      // The runtime packager requires a runtime; its bare package build is not a check.
+      if (name === 'build' && script === 'node scripts/build-runtimes.mjs') {
+        add(`${manager} run build -- --runtime codex`);
+      } else add(`${manager} ${name === 'test' ? name : `run ${name}`}`);
+    }
+  }
+  if (exists('Makefile')) {
+    const makefile = fs.readFileSync(path.join(cwd, 'Makefile'), 'utf8');
+    for (const name of ['test', 'lint', 'check']) if (new RegExp(`^${name}:`, 'm').test(makefile)) add(`make ${name}`);
+  }
+  if (exists('go.mod')) { add('go test ./...'); add('go vet ./...'); }
+  if (exists('Cargo.toml')) add('cargo test');
+  const python = ['pyproject.toml', 'setup.cfg', 'tox.ini'].filter(exists)
+    .map(name => fs.readFileSync(path.join(cwd, name), 'utf8')).join('\n');
+  if (/\[(?:tool\.pytest(?:\.ini_options)?|tool:pytest|pytest)\]|\bpytest\b/.test(python)) add('pytest');
+  if (/\[tool\.ruff(?:\.[^\]]+)?\]|^\s*ruff(?:\s|$)/m.test(python)) add('ruff check .');
+  if (/\[(?:tool\.mypy|mypy)\]|^\s*mypy(?:\s|$)/m.test(python)) add('mypy .');
+  if (exists('Package.swift')) add('swift test');
+  if (exists('build.gradle') || exists('build.gradle.kts')) add('./gradlew test');
+  const workflows = path.join(cwd, '.github', 'workflows');
+  const addWorkflow = (name, command, directory = '.') => {
+    if (/\$\{?[\w]|[;&|`]/.test(command)) throw new Error(`Cannot safely replay dynamic or chained CI check in ${name}: ${command}`);
+    if (directory !== '.' && (!/^[A-Za-z0-9._/-]+$/.test(directory) ||
+        directory.startsWith('/') || directory.split('/').some(part => !part || part === '.' || part === '..'))) {
+      throw new Error(`Cannot safely replay CI working directory in ${name}: ${directory}`);
+    }
+    add(directory === '.' ? command : `at ${directory}: ${command}`);
+  };
+  if (fs.existsSync(workflows)) for (const name of fs.readdirSync(workflows)) {
+    if (!/\.ya?ml$/.test(name)) continue;
+    const document = parseDocument(fs.readFileSync(path.join(workflows, name), 'utf8'), { uniqueKeys: true });
+    if (document.errors.length) throw new Error(`Invalid CI workflow ${name}: ${document.errors[0].message}`);
+    const workflow = document.toJS();
+    const jobs = workflow?.jobs || {};
+    const eventScoped = Boolean(workflow?.on &&
+      (Object.hasOwn(workflow.on, 'pull_request') || Object.hasOwn(workflow.on, 'merge_group')));
+    for (const job of Object.values(jobs)) for (const step of job.steps || []) {
+      if (typeof step.run !== 'string') continue;
+      const workingDirectory = step['working-directory'] ?? job.defaults?.run?.['working-directory'] ??
+        workflow.defaults?.run?.['working-directory'] ?? '.';
+      const commandLines = step.run.split('\n').map(line => line.trim());
+      for (const line of commandLines) {
+        if (!line || line.startsWith('#')) continue;
+        // PR title and commit range are event inputs, not executable local
+        // literals. The hosted exact-HEAD Conventional Commits job checks them.
+        if (eventScoped && /^node scripts\/check-commits\.mjs "\$BASE\.\.\$HEAD" "\$@"$/.test(line)) continue;
+        if (/\bgovulncheck\b/.test(line) && !/\bgo install\b/.test(line)) {
+          const version = commandLines.join('\n').match(/\bgo install golang\.org\/x\/vuln\/cmd\/govulncheck@([A-Za-z0-9.+-]+)/)?.[1];
+          const directory = line.match(/\(\s*cd\s+([^\s;)]+)\s*&&/)?.[1];
+          if (!version || !directory) throw new Error(`Cannot resolve CI vulnerability check in ${name}: ${line}`);
+          addWorkflow(name, `go -C ${directory} run golang.org/x/vuln/cmd/govulncheck@${version} ./...`, workingDirectory);
+        } else if (/^(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|typecheck|build|check)\b/.test(line)) addWorkflow(name, line, workingDirectory);
+        else if (/^(?:go (?:test|vet)|cargo (?:test|clippy)|pytest|python3? -m pytest|uv run (?:(?:--[\w-]+(?:=[^\s]+)?\s+)*)(?:pytest|python3? -m pytest|ruff|mypy)|ruff|mypy|make (?:test|lint|check)|swift test|\.\/gradlew test)\b/.test(line)) addWorkflow(name, line, workingDirectory);
+        else if (/^go build\b/.test(line)) {
+          const directory = step['working-directory'];
+          const source = line.match(/(\.\/cmd\/[A-Za-z0-9_/-]+)$/)?.[1];
+          if (!/^[A-Za-z0-9_./-]+$/.test(directory || '') || !source) {
+            throw new Error(`Cannot resolve CI release build in ${name}: ${line}`);
+          }
+          addWorkflow(name, `go -C ${directory} build -o /dev/null ${source}`);
+        } else if (/^\.\/scripts\/package-release\.sh\b/.test(line)) {
+          const directory = step['working-directory'];
+          const packageTest = `tests/${path.basename(directory || '')}-release.test.mjs`;
+          if (!/^[A-Za-z0-9_./-]+$/.test(directory || '') || !exists(packageTest)) {
+            throw new Error(`Cannot resolve CI release packaging check in ${name}: ${line}`);
+          }
+          addWorkflow(name, `node --test ${packageTest}`);
+        } else if (/^node --test(?:\s|$)/.test(line)) {
+          // CI's direct Node test invocation is required proof, not optional prose.
+          addWorkflow(name, line, workingDirectory);
+        } else {
+          const script = line.match(/^(?:node|python3?|bun)\s+(?!-[ecp]\b)([^\s"'$|;&]+\.(?:m?js|cjs|py))\b/);
+          if (script && !/(?:deploy|release|publish|migrat|push)/i.test(script[1])) addWorkflow(name, line, workingDirectory);
+          else if (/^uv run\b/.test(line)) throw new Error(`Cannot resolve CI check in ${name}: ${line}`);
+        }
+      }
+    }
+  }
+  return checks;
+}
+function requireAcceptanceEvidence(task, state, artifact) {
+  if (artifact.type !== 'verification' || artifact.status !== 'passed') return [];
+  const promises = acceptanceItems(task, state);
+  const rows = verificationRows(artifact);
+  const acceptance = rows.filter(row => /^A/i.test(row.id));
+  const checks = rows.filter(row => /^C/i.test(row.id));
+  const normalized = value => value.toLowerCase().replace(/[`*_\[\]]/g, '').replace(/\s+/g, ' ').trim();
+  if (checks.some(row => !/^C[1-9]\d*$/i.test(row.id) || row.verdict.toLowerCase() !== 'pass') ||
+      new Set(checks.map(row => row.id.toUpperCase())).size !== checks.length) {
+    throw new Error(`${artifact.file}: passed verification has a missing or nonpassing repository check C-row`);
+  }
+  const recorded = checks.map(row => row['decided by'].match(/^`([^`\n]+)`$/)?.[1]).filter(Boolean);
+  const missing = [...repositoryChecks(task.cwd).keys()].filter(required => !recorded.includes(required));
+  if (missing.length) throw new Error(`${artifact.file}: passed verification omitted repository checks: ${missing.join(', ')}`);
+  const ids = new Set(acceptance.map(row => row.id.toUpperCase()));
+  if (acceptance.length < promises.length ||
+      acceptance.some(row => !/^A[1-9]\d*$/i.test(row.id) || !row.item.trim() || row.verdict.toLowerCase() !== 'pass') ||
+      ids.size !== acceptance.length ||
+      acceptance.some((_, index) => !ids.has(`A${index + 1}`)) ||
+      promises.some((promise, index) => {
+        const row = acceptance.find(candidate => candidate.id.toUpperCase() === `A${index + 1}`);
+        return !row || !normalized(row.item).includes(normalized(promise));
+      })) {
+    throw new Error(`${artifact.file}: passed verification lacks a matching passed A-row for every upstream acceptance item`);
+  }
+  return [...checks, ...acceptance];
+}
+const localVerificationTools = new Set([
+  'node', 'bun', 'python', 'python3', 'ruby', 'perl', 'npm', 'pnpm', 'yarn',
+  'go', 'cargo', 'pytest', 'uv', 'ruff', 'mypy', 'make', 'swift', 'gradlew', 'test',
+]);
+const localPythonModules = new Set(['pytest', 'unittest', 'ruff', 'mypy']);
+const localCheckScripts = new Set(['test', 'lint', 'typecheck', 'build', 'check']);
+
+function replayableVerificationCommand(command, id, cwd) {
+  const unsafe = () => { throw new Error(`${id} acceptance command cannot be safely replayed; use an isolated idempotent test instead`); };
+  if (/[\r\n\0]/.test(command)) unsafe();
+  const argv = [];
+  for (let i = 0; i < command.length;) {
+    if (/\s/.test(command[i])) { i++; continue; }
+    let word = '';
+    while (i < command.length && !/\s/.test(command[i])) {
+      const char = command[i++];
+      if (char === "'" || char === '"') {
+        let closed = false;
+        while (i < command.length) {
+          const quoted = command[i++];
+          if (quoted === char) { closed = true; break; }
+          if (char === '"' && (quoted === '$' || quoted === '`')) unsafe();
+          if (char === '"' && quoted === '\\' && i < command.length) {
+            const next = command[i];
+            if ('\\$`"'.includes(next)) { word += next; i++; continue; }
+          }
+          word += quoted;
+        }
+        if (!closed) unsafe();
+      } else if (char === '\\') {
+        if (i === command.length) unsafe();
+        word += command[i++];
+      } else if (';&|`$<>()*?[]{}'.includes(char) ||
+          ((char === '#' || char === '~') && !word)) unsafe();
+      else word += char;
+    }
+    argv.push(word);
+  }
+  if (!argv.length || !argv[0]) unsafe();
+  let replayCwd = cwd;
+  if (argv[0] === 'at') {
+    const directory = argv[1]?.match(/^([A-Za-z0-9._/-]+):$/)?.[1];
+    if (!directory || directory.startsWith('/') || directory.split('/').some(part => !part || part === '.' || part === '..') ||
+        argv.length < 3) unsafe();
+    const target = path.resolve(cwd, directory);
+    try {
+      if (!fs.lstatSync(target).isDirectory() ||
+          !fs.realpathSync(target).startsWith(`${fs.realpathSync(cwd)}${path.sep}`)) unsafe();
+    } catch { unsafe(); }
+    replayCwd = target;
+    argv.splice(0, 2);
+  }
+  const executable = path.posix.basename(argv[0]);
+  if (['true', 'false', ':', 'echo', 'printf'].includes(executable) ||
+      (['node', 'bun', 'python', 'python3', 'ruby', 'perl'].includes(executable) &&
+        argv.slice(1).some(arg => /^-[ecp]|^--(?:eval|print)(?:=|$)/.test(arg)))) {
+    throw new Error(`${id} acceptance command only manufactures a result; it does not exercise product behavior`);
+  }
+  const localFile = (filename, directory = false) => {
+    if (!filename || filename.startsWith('-') || path.isAbsolute(filename) ||
+        filename.split('/').includes('..')) return false;
+    try {
+      const file = path.resolve(replayCwd, filename);
+      const stat = fs.lstatSync(file);
+      const real = fs.realpathSync(file);
+      const root = fs.realpathSync(replayCwd);
+      return (stat.isFile() || (directory && stat.isDirectory())) &&
+        (real === root || real.startsWith(`${root}${path.sep}`));
+    } catch { return false; }
+  };
+  const localExecutable = argv[0] === './gradlew' && localFile(argv[0]);
+  const pytestArgs = args => args.every(arg => localFile(arg, true) ||
+    ['-q', '-s', '-x', '--disable-warnings', '--no-header', '--no-summary'].includes(arg) ||
+    /^--maxfail=[1-9]\d*$/.test(arg));
+  const goDirectory = executable === 'go' && argv[1] === '-C' ? argv[2] : '';
+  const goAction = goDirectory ? argv[3] : argv[1];
+  const goScanner = goDirectory && goAction === 'run' && argv.length === 6 &&
+    /^golang\.org\/x\/vuln\/cmd\/govulncheck@v\d+\.\d+\.\d+$/.test(argv[4]) &&
+    argv[5] === './...';
+  const goArgs = argv.slice(goDirectory ? 4 : 2);
+  const goPackages = goArgs.length > 0 && goArgs.every(arg => arg === './...' ||
+    (arg.startsWith('./') && localFile(path.join(goDirectory, arg), true)));
+  const goBuild = goAction === 'build' && goArgs.length === 3 && goArgs[0] === '-o' &&
+    goArgs[1] === '/dev/null' && goArgs[2].startsWith('./cmd/') &&
+    localFile(path.join(goDirectory, goArgs[2]), true);
+  const ruffArgs = args => args.length === 2 && args[0] === 'check' && localFile(args[1], true);
+  const mypyArgs = args => args.length === 1 && localFile(args[0], true);
+  const packageScript = argv[1] === 'run' ? argv[2] : argv[1];
+  const packageArgs = argv.slice(argv[1] === 'run' ? 3 : 2);
+  const packageSafe = localCheckScripts.has(packageScript) &&
+    (!packageArgs.length || (packageScript === 'build' &&
+      packageArgs.join('\0') === '--\0--runtime\0codex'));
+  const readOnlyScript = file => {
+    if (!localFile(file)) return false;
+    const relative = file.replace(/^\.\//, '');
+    if (/^tests\/[^/]+\.(?:[cm]?js|py|rb)$/.test(relative) ||
+        /^scripts\/(?:check-[a-z0-9-]+|validate)\.(?:[cm]?js|py|rb)$/.test(relative)) return true;
+    if (executable !== 'node') return false;
+    try {
+      const manifest = JSON.parse(fs.readFileSync(path.join(replayCwd, 'package.json'), 'utf8'));
+      const testedEntrypoint = /^node ([A-Za-z0-9_./-]+\.(?:[cm]?js))(?:\s|$)/.exec(manifest.scripts?.test)?.[1];
+      return relative === testedEntrypoint?.replace(/^\.\//, '');
+    } catch { return false; }
+  };
+  const testTarget = file => localFile(file) &&
+    /^(?:tests\/)?[^/]+\.test\.[cm]?js$/.test(file.replace(/^\.\//, ''));
+  const uvCommandIndex = executable === 'uv'
+    ? argv.findIndex((arg, index) => index > 1 && !arg.startsWith('-')) : -1;
+  const uvCommand = argv[uvCommandIndex];
+  if (/^[A-Za-z_][A-Za-z_0-9]*=/.test(argv[0]) ||
+      (!localVerificationTools.has(executable) && !localExecutable) ||
+      (argv[0].includes('/') && !localExecutable) ||
+      (['npm', 'pnpm', 'yarn', 'bun'].includes(executable) && !packageSafe) ||
+      (['python', 'python3'].includes(executable) && (argv[1] === '-m'
+        ? !localPythonModules.has(argv[2]) ||
+          (argv[2] === 'pytest' && !pytestArgs(argv.slice(3))) ||
+          (argv[2] === 'unittest' && argv.length !== 3) ||
+          (argv[2] === 'ruff' && !ruffArgs(argv.slice(3))) ||
+          (argv[2] === 'mypy' && !mypyArgs(argv.slice(3)))
+        : !readOnlyScript(argv[1]))) ||
+      (executable === 'ruff' && !ruffArgs(argv.slice(1))) ||
+      (executable === 'mypy' && !mypyArgs(argv.slice(1))) ||
+      (executable === 'pytest' && !pytestArgs(argv.slice(1))) ||
+      (['node', 'ruby', 'perl'].includes(executable) &&
+        (!((executable === 'node' && argv[1] === '--test' &&
+            (argv.length === 2 || argv.slice(2).every(testTarget))) ||
+           (executable === 'node' && argv[1] === '--check' && argv.length === 3 && localFile(argv[2])) ||
+           readOnlyScript(argv[1])))) ||
+      (executable === 'uv' && (argv[1] !== 'run' ||
+        !argv.slice(2, uvCommandIndex).every(arg => ['--locked', '--offline'].includes(arg)) ||
+        !(localPythonModules.has(uvCommand) ||
+          (['python', 'python3'].includes(uvCommand) &&
+            argv[uvCommandIndex + 1] === '-m' &&
+            localPythonModules.has(argv[uvCommandIndex + 2]))) ||
+        (uvCommand === 'pytest' && !pytestArgs(argv.slice(uvCommandIndex + 1))) ||
+        (['python', 'python3'].includes(uvCommand) && argv[uvCommandIndex + 2] === 'pytest' &&
+          !pytestArgs(argv.slice(uvCommandIndex + 3))) ||
+        (uvCommand === 'ruff' && !ruffArgs(argv.slice(uvCommandIndex + 1))) ||
+        (uvCommand === 'mypy' && !mypyArgs(argv.slice(uvCommandIndex + 1))) ||
+        (['python', 'python3'].includes(uvCommand) &&
+          ((argv[uvCommandIndex + 2] === 'ruff' && !ruffArgs(argv.slice(uvCommandIndex + 3))) ||
+           (argv[uvCommandIndex + 2] === 'mypy' && !mypyArgs(argv.slice(uvCommandIndex + 3))))))) ||
+      (executable === 'go' && ((goDirectory && !localFile(goDirectory, true)) ||
+        !((['test', 'vet'].includes(goAction) && goPackages) || goBuild || goScanner))) ||
+      (executable === 'cargo' && (!['test', 'clippy', 'check', 'build'].includes(argv[1]) || argv.length !== 2)) ||
+      (executable === 'gradlew' && (!localExecutable || !['test', 'check', 'lint'].includes(argv[1]) || argv.length !== 2)) ||
+      (executable === 'make' && (!localCheckScripts.has(argv[1]) || argv.length !== 2)) ||
+      (executable === 'test' && (argv.length !== 3 ||
+        !['-f', '-d', '-e', '-s'].includes(argv[1]) ||
+        path.isAbsolute(argv[2]) || argv[2].split('/').includes('..'))) ||
+      (executable === 'swift' && (argv[1] !== 'test' || argv.length !== 2))) unsafe();
+  return { argv, cwd: replayCwd };
+}
+function executeVerification(task, state, artifact, rows, step) {
+  const beforeHead = git(task.cwd, ['rev-parse', 'HEAD']);
+  const replayEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+  for (const key of ['NODE_OPTIONS', 'NODE_TEST_CONTEXT', 'PYTHONPATH', 'PYTHONSTARTUP', 'RUBYOPT', 'PERL5OPT']) {
+    delete replayEnv[key];
+  }
+  const evidence = [];
+  for (const row of rows) {
+    const command = row['decided by'].match(/^`([^`\n]+)`$/)?.[1];
+    if (!command) throw new Error(`${artifact.file}: ${row.id} has no executable command; an artifact assertion is not proof`);
+    const { argv, cwd } = replayableVerificationCommand(command, row.id, task.cwd);
+    const [bin, ...args] = argv;
+    const run = spawnSync(bin, args, {
+      cwd, encoding: 'utf8', timeout: 600_000, maxBuffer: 16 * 1024 * 1024,
+      env: replayEnv,
+    });
+    const actualLines = `${run.stdout || ''}\n${run.stderr || ''}`.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    const output = actualLines.join(' ');
+    const exit = row.observed.match(/\b(?:exit(?:ed)?(?:\s+code)?|status)\s*[:=]?\s*(\d{1,3})\b/i);
+    const quoted = exit ? row.observed.slice(exit.index + exit[0].length)
+      .replace(/^[\s:;,.—-]*(?:(?:stdout|output)\s*[:=]\s*)?/i, '')
+      .replace(/^[`"']|[`"']$/g, '').trim() : '';
+    if (row.id.toUpperCase().startsWith('A')) {
+      if (!quoted && bin !== 'test') {
+        throw new Error(`${artifact.file}: ${row.id} has no decisive output or executable boolean predicate`);
+      }
+      const tokens = [...(row.item || '').matchAll(/(?<!\d)\d+(?:\.\d+)?(?!\d)/g)].map(match => match[0]);
+      if (tokens.length && bin === 'node' && args[0] === '--test') {
+        throw new Error(`${artifact.file}: ${row.id} test-runner labels cannot substantiate numeric acceptance claims`);
+      }
+      const input = /\binput\s+(\d+(?:\.\d+)?)\b/i.exec(row.item || '')?.[1];
+      if (input && ['node', 'python', 'python3', 'ruby', 'perl'].includes(bin) &&
+          /\.(?:[cm]?js|py|rb)$/.test(args[0] || '') && args[1] !== input) {
+        throw new Error(`${artifact.file}: ${row.id} acceptance command did not exercise the claimed input`);
+      }
+      if (bin === 'test' && (!(row.item || '').includes(args[1]) ||
+          /\b(?:not|absent|missing|without|removed|deleted|no longer)\b/i.test((row.item || '').replaceAll(args[1], '')))) {
+        throw new Error(`${artifact.file}: ${row.id} boolean predicate does not substantiate the named acceptance claim`);
+      }
+      const claimed = `${command} ${quoted} ${/\b(?:exit(?:s|ed)?|status)\b/i.test(row.item || '') ? `exit ${exit?.[1] || ''}` : ''}`;
+      if (tokens.some(token => !new RegExp(`(?<![\\d.])${token.replace('.', '\\.')}(?![\\d.])`).test(claimed))) {
+        throw new Error(`${artifact.file}: ${row.id} command and observed result omit an acceptance input or outcome`);
+      }
+    }
+    if (run.error || !exit || run.status !== Number(exit[1]) ||
+      (row.id.toUpperCase().startsWith('C') && run.status !== 0) ||
+      (bin === 'test' && run.status !== 0) ||
+      (quoted && !actualLines.includes(quoted))) {
+      throw new Error(`${artifact.file}: ${row.id} claimed pass is not corroborated by execution (${run.error?.message || `exit ${run.status}`}; ${output.slice(0, 300)})`);
+    }
+    const current = revision(task.cwd, task.taskRootRelative);
+    if (current !== state.revision || git(task.cwd, ['rev-parse', 'HEAD']) !== beforeHead) {
+      throw new Error(`${artifact.file}: ${row.id} changed the exact source revision while checking it`);
+    }
+    evidence.push({ id: row.id, command, exit: run.status, observed: quoted, output_sha256: digest(output), output, head: beforeHead, revision: current });
+  }
+  saveRecord(task, `${String(step).padStart(3, '0')}-verification-execution`, { artifact: artifact.file, hash: artifact.hash, head: beforeHead, revision: state.revision, evidence });
+  return evidence;
+}
+function reviewBase(task, sourceHead) {
+  const result = spawnSync('gh', ['pr', 'view', '--json', 'baseRefName,baseRefOid,headRefOid'], {
+    cwd: task.cwd, encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024,
+  });
+  if (result.error || result.status !== 0) {
+    const noPr = /no pull requests found for branch/i.test(result.stderr || '');
+    if (!noPr && (git(task.cwd, ['remote']).trim() || process.env.GH_REPO)) {
+      throw new Error(`Cannot resolve hosted PR review base: ${result.error?.message || result.stderr?.trim() || `exit ${result.status}`}`);
+    }
+  } else {
+    let pr;
+    try { pr = JSON.parse(result.stdout); }
+    catch { throw new Error('Hosted PR review base response is not valid JSON'); }
+    if (!pr?.baseRefName || !/^[0-9a-f]{40}$/i.test(pr.baseRefOid || '') ||
+        !/^[0-9a-f]{40}$/i.test(pr.headRefOid || '') ||
+        ![sourceHead, pr.headRefOid].includes(git(task.cwd, ['merge-base', sourceHead, pr.headRefOid], true))) {
+      throw new Error('Hosted PR source/base is missing or does not match the reviewed source lineage');
+    }
+    const ancestor = git(task.cwd, ['merge-base', sourceHead, pr.baseRefOid], true);
+    if (!ancestor) throw new Error('Hosted PR base commit is unavailable for independent review');
+    return { branch: pr.baseRefName, sha: ancestor, hosted: true };
+  }
+  const taskText = fs.readFileSync(path.join(task.taskDir, 'task.md'), 'utf8');
+  const base = taskText.match(/^base:\s*["']?([^"'\n]+)["']?\s*$/m)?.[1];
+  const refs = [base, 'origin/HEAD', 'origin/main', 'main', 'origin/master', 'master'].filter(Boolean);
+  return { branch: base || '', sha: refs.map(ref => git(task.cwd, ['merge-base', sourceHead, ref], true)).find(Boolean) || '', hosted: false };
+}
+function changedSourcePaths(task, head, ancestor) {
+  const names = new Set([
+    ...(ancestor ? git(task.cwd, ['diff', '--name-only', '-z', ancestor, head, '--', '.']).split('\0') : []),
+    ...git(task.cwd, ['diff', '--name-only', '-z', head, '--', '.']).split('\0'),
+    ...git(task.cwd, ['ls-files', '--others', '--exclude-standard', '-z', '--', '.']).split('\0'),
+  ]);
+  const taskRoot = task.taskRootRelative || '.agents/tasks';
+  return new Set([...names].filter(name => name && name !== taskRoot && !name.startsWith(`${taskRoot}/`) &&
+    name !== '.atomic' && !name.startsWith('.atomic/')));
+}
+function changedSourceLines(task, head, changed, ancestor) {
+  const untracked = new Set(git(task.cwd, ['ls-files', '--others', '--exclude-standard', '-z', '--', '.']).split('\0'));
+  const lines = new Map();
+  for (const file of changed) {
+    if (untracked.has(file)) {
+      lines.set(file, [[1, fs.readFileSync(path.join(task.cwd, file), 'utf8').split('\n').length, 'new']]);
+      continue;
+    }
+    const deleted = !fs.existsSync(path.join(task.cwd, file));
+    const diff = git(task.cwd, ['diff', '--unified=0', ancestor || head, '--', file]);
+    lines.set(file, [...diff.matchAll(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm)]
+      .map(([, oldStart, oldLength, newStart, newLength]) => {
+        const oldSide = deleted || Number(newLength ?? 1) === 0;
+        const start = Number(oldSide ? oldStart : newStart);
+        const length = Number(oldSide ? oldLength ?? 1 : newLength ?? 1);
+        return [Math.max(1, start), Math.max(1, start + length - 1), oldSide ? 'old' : 'new'];
+      }));
+  }
+  return lines;
+}
+async function requireIndependentReview(ctx, task, state, artifact, step, stageSession, acceptance, sourceHead, model, verified) {
+  const head = git(task.cwd, ['rev-parse', 'HEAD']);
+  if (artifact.metadata.head_sha !== sourceHead || git(task.cwd, ['merge-base', sourceHead, head]) !== sourceHead) {
+    throw new Error(`${artifact.file}: clean review is not pinned to exact source HEAD ${sourceHead}`);
+  }
+  const base = reviewBase(task, sourceHead);
+  if (base.hosted && (artifact.metadata.base_branch !== base.branch || artifact.metadata.base_sha !== base.sha)) {
+    throw new Error(`${artifact.file}: clean review base differs from hosted PR ${base.branch} at ${base.sha}`);
+  }
+  const risks = ['functional correctness', 'security and data integrity', 'acceptance oracle and test reachability'];
+  const changed = changedSourcePaths(task, sourceHead, base.sha);
+  const changedLines = changedSourceLines(task, sourceHead, changed, base.sha);
+  let execution = verified ? state.proofs.verification?.executionEvidence || [] : [];
+  const name = `${String(step).padStart(3, '0')}-independent-review`;
+  const prompt = [
+    `Independently review the changed implementation in ${task.cwd} against task ${path.join(task.taskDir, 'task.md')}. Do not edit files or publish anything.`,
+    `Pin reviewed source HEAD ${sourceHead} (current HEAD ${head} may include only the task artifact commit), source revision ${state.revision}, and review base ${base.branch || '(local fallback)'} at merge-base SHA ${base.sha || '(none)'}. Inspect changed source paths ${JSON.stringify([...changed])}, actual controller-run acceptance commands and outputs ${JSON.stringify(execution)}, task and authoritative artifacts. For deleted hunks cite the explicit old side as path:old:line from this base diff; cite additions as path:line. Review acceptance items ${JSON.stringify(acceptance)} and risks ${JSON.stringify(risks)}.`,
+    `Return only a JSON object {"head":string,"revision":string,"base_branch":string,"base_sha":string,"acceptance":[{"item":string,"evidence":string}],"risks":[{"risk":string,"evidence":string}],"findings":[{"location":string,"problem":string}]}. Every acceptance item must be examined against actual changed implementation lines and an independently meaningful direct observation or reachable test assertion. A green but unrelated test is a finding, never acceptance proof. Cite a changed path:line plus a test assertion path:line where tests provide the oracle; include the controller-executed command and decisive output when verification ran. For opted-out verification, independently inspect acceptance behavior without pretending an absent oracle ran. Cover every risk with inspected changed path:line and concrete behavior. Report consequential findings; incomplete inspection cannot claim coverage.`,
+    `When verification is opted out, each acceptance entry MUST also include {"command":"an idempotent direct product probe","observed":"exit N; decisive output"}; the controller reruns the command and rejects claims without an observed result. Cite that command and its decisive output in evidence. No verification artifact is invented.`,
+  ].join('\n\n');
+  const result = await ctx.task(name, { prompt, context: 'fresh', cwd: task.cwd, model, maxOutput: { bytes: 16_384, lines: 160 } });
+  let report;
+  try { report = JSON.parse(result.text); }
+  catch { throw new Error(`${artifact.file}: independent reviewer did not return a completed structured report`); }
+  if (!verified && stageSession && result.sessionId && result.sessionId !== stageSession &&
+      report?.head === sourceHead && report.revision === state.revision &&
+      (!base.hosted || (report.base_branch === base.branch && report.base_sha === base.sha)) &&
+      Array.isArray(report.acceptance) && report.acceptance.length === acceptance.length &&
+      report.acceptance.every(covered => typeof covered.command === 'string' && typeof covered.observed === 'string')) {
+    const probes = acceptance.map((item, index) => {
+      const covered = report.acceptance.find(entry => entry.item === item);
+      return { id: `A${index + 1}`, item, 'decided by': `\`${covered?.command || ''}\``, observed: covered?.observed || '' };
+    });
+    execution = executeVerification(task, state, artifact, probes, `${step}-review`);
+  }
+  const inspected = evidence => {
+    if (typeof evidence !== 'string' || evidence.length < 40) return false;
+    const citations = [...evidence.matchAll(/(?:^|\s)([^\s:]+):(?:(old):)?([1-9]\d*)\b/g)];
+    return citations.some(([, file, side, line]) => changedLines.get(file)?.some(([start, end, changedSide]) =>
+      (side || 'new') === changedSide && Number(line) >= start && Number(line) <= end)) &&
+      /\b(?:observed|printed|returned|passed|failed|asserted|invoked|executed|confirmed|produces?|rejects?|preserves?|inspected)\b/i.test(evidence);
+  };
+  const complete = stageSession && result.sessionId && result.sessionId !== stageSession && report && !Array.isArray(report) &&
+    report.head === sourceHead && report.revision === state.revision &&
+    (!base.hosted || (report.base_branch === base.branch && report.base_sha === base.sha)) && changed.size > 0 &&
+    Array.isArray(report.acceptance) && report.acceptance.length === acceptance.length &&
+    acceptance.every((item, index) => report.acceptance.some(covered => {
+      const oracle = execution.find(row => row.id.toUpperCase() === `A${index + 1}`);
+      return covered.item === item && inspected(covered.evidence) && oracle &&
+        covered.evidence.includes(oracle.command) &&
+        covered.evidence.includes(oracle.observed || `exit ${oracle.exit}`);
+    })) &&
+    Array.isArray(report.risks) && report.risks.length === risks.length &&
+    risks.every(risk => report.risks.some(item => item.risk === risk && inspected(item.evidence))) &&
+    Array.isArray(report.findings);
+  if (!complete || git(task.cwd, ['rev-parse', 'HEAD']) !== head || revision(task.cwd, task.taskRootRelative) !== state.revision) {
+    throw new Error(`${artifact.file}: independent reviewer proof is missing, scope-incomplete, or not bound to exact HEAD`);
+  }
+  saveRecord(task, `${name}-proof`, { artifact: artifact.file, hash: artifact.hash, reviewed_head: sourceHead, head, base, revision: state.revision, changed: [...changed], session: result.sessionId, execution, report });
+  if (!report.findings.every(item => item && typeof item.location === 'string' && item.location.trim() &&
+    typeof item.problem === 'string' && item.problem.trim())) {
+    throw new Error(`${artifact.file}: independent reviewer returned malformed findings`);
+  }
+  return { head, session: result.sessionId, findings: report.findings };
+}
+function recordIndependentFindings(task, reviewed, findings, sourceHead) {
+  const clean = value => value.replace(/\s+/g, ' ').trim();
+  const text = `---
+type: code-review
+status: findings
+summary: Independent exact-source reviewer found consequential defects
+head_sha: ${sourceHead}
+---
+
+# Independent source review findings
+
+## Standards
+
+The separate reviewer inspected the changed implementation against the pinned source and reported defects after the writer's clean draft.
+
+## Spec
+
+Resolve the findings before another independent exact-source review. The earlier clean draft does not authorize publication.
+
+## Critical and Required Findings
+
+${findings.map((item, i) => `### CR-${i + 1}: ${clean(item.location)}
+
+${clean(item.problem)}`).join('\n\n')}
+`;
+  if (indexFileExists(path.join(task.taskDir, 'index.json'))) {
+    const reserved = reserveArtifactIteration(task.taskDir, 'review', 'code');
+    const staged = path.join(task.taskDir, reserved.writePath);
+    fs.writeFileSync(staged, text, { encoding: 'utf8', flag: 'wx' });
+    recordArtifact(task.taskDir, 'review', 'code', 'code-review', staged);
+  } else {
+    const sequence = Math.max(0, ...fs.readdirSync(task.taskDir).map(name => Number(name.match(/^(\d{2,})-[a-z0-9-]+\.md$/)?.[1]) || 0)) + 1;
+    fs.writeFileSync(path.join(task.taskDir, `${String(sequence).padStart(2, '0')}-code-review-independent.md`),
+      text, { encoding: 'utf8', flag: 'wx' });
+  }
+  const after = observeArtifacts(task.taskDir);
+  if (after.latest['code-review']?.status !== 'findings' || after.latest['code-review'].hash === reviewed.hash) {
+    throw new Error('Independent review findings did not supersede the writer review artifact');
+  }
+  return after;
+}
 function currentHostedDescription(state) {
   const proof = state.proofs?.['hosted-description'];
   return Boolean(state.hosted?.descriptionCurrent && proof &&
@@ -172,17 +720,25 @@ export async function runSkill(ctx, task, state, inputs, skill, step, feedback =
     saveRecord(task, `${name}-model`, choice);
     return choice;
   }, { timeoutMs: 90_000 });
+  const sourceHead = skill === 'review-code' ? git(task.cwd, ['rev-parse', 'HEAD']) : null;
   const result = await ctx.task(name, {
     prompt, context: 'fresh', cwd: task.cwd,
     model: selection.model,
     maxOutput: { bytes: 16_384, lines: 160 },
   });
-  return ctx.tool(`${name}-observe`, { task_dir: task.taskDir, skill, context_policy: inputs.context_policy ?? 'off' }, async () => {
+  const observed = await ctx.tool(`${name}-observe`, { task_dir: task.taskDir, skill, context_policy: inputs.context_policy ?? 'off' }, async () => {
     const after = observeArtifacts(task.taskDir);
     const hostedStage = skill === 'record-evidence' || skill === 'describe-pr';
     const artifact = hostedStage ? null : requireFresh(state, after, SKILLS[skill], expectedArtifactIteration(state, SKILLS[skill]));
+    if (['verify-implementation', 'review-code'].includes(skill) && (
+      fs.readFileSync(path.join(task.taskDir, 'task.md'), 'utf8') !== taskRequest ||
+      ['plan', 'structure-outline', 'implementation', 'fix', 'reproduction'].some(type => state.latest[type]?.hash !== after.latest[type]?.hash)
+    )) throw new Error(`${skill} changed authoritative task, plan, or receipt while claiming independent proof`);
+    const executionRows = skill === 'verify-implementation' ? requireAcceptanceEvidence(task, state, artifact) : [];
     const codeRevision = revision(task.cwd, task.taskRootRelative);
     if (!mutations.has(skill) && state.revision !== codeRevision) throw new Error(`${skill} changed implementation files; its independent observation is invalid`);
+    const executionEvidence = skill === 'verify-implementation' && artifact.status === 'passed'
+      ? executeVerification(task, state, artifact, executionRows, step) : [];
     if (hostedStage) {
       const hosted = await hostedProof(task);
       if (!currentHostedCapture(hosted) || (skill === 'describe-pr' && !hosted.descriptionCurrent)) {
@@ -208,12 +764,26 @@ export async function runSkill(ctx, task, state, inputs, skill, step, feedback =
       if (afterProgress.remaining >= beforeProgress.remaining) recovery = makeRecovery(skill, newSource, beforeProgress, afterProgress, artifact, codeRevision);
     }
     const generation = state.generation + (mutations.has(skill) ? 1 : 0);
-    const next = { ...state, ...after, revision: codeRevision, generation, proofs: { ...state.proofs, [artifact.type]: { hash: artifact.hash, revision: codeRevision, generation, session: result.sessionId || name } } };
+    const next = { ...state, ...after, revision: codeRevision, generation, proofs: { ...state.proofs, [artifact.type]: { hash: artifact.hash, revision: codeRevision, generation, session: result.sessionId || name, ...(executionEvidence.length ? { executionEvidence } : {}) } } };
     if (recovery) next.recovery = recovery;
     if (recovery) saveRecord(task, `${name}-recovery`, recovery);
     saveRecord(task, name, { skill, artifact: artifact.file, hash: artifact.hash, revision: codeRevision, generation, session: result.sessionId ?? null, session_file: result.sessionFile ?? null, model: result.model ?? selection.model, selected_model: selection.model, model_selection: selection, modelAttempts: result.modelAttempts ?? null, model_attempts: result.modelAttempts ?? null, result: result.text, ...(recovery ? { recovery } : {}) });
     return next;
   });
+  if (skill === 'review-code' && observed.latest['code-review']?.status === 'clean') {
+    const review = await requireIndependentReview(ctx, task, state, observed.latest['code-review'], step,
+      result.sessionId, acceptanceItems(task, state), sourceHead, selection.model, Boolean(inputs.verify));
+    if (review.findings.length) {
+      const after = recordIndependentFindings(task, observed.latest['code-review'], review.findings, sourceHead);
+      const finding = after.latest['code-review'];
+      return { ...observed, ...after, proofs: {
+        ...observed.proofs, 'code-review': {
+          hash: finding.hash, revision: observed.revision, generation: observed.generation, session: review.session,
+        },
+      } };
+    }
+  }
+  return observed;
 }
 
 export async function artifactGate(ctx, task, inputs, state, type, step) {

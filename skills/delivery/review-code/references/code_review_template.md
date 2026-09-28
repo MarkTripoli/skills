@@ -42,6 +42,15 @@ summary: "State the reviewed scope, the highest-risk result, and what the next p
 - resulting large-file concerns:
 - dependency or lockfile changes:
 
+
+## Independent Review
+
+- risk profile and consequence:
+- dispatch: reviewer identity/mechanism, or skipped with low-risk rationale:
+- pinned scope and acceptance criteria examined:
+- validated findings and coverage, or gap:
+- hosted publication proof and human approval: separate; not established by this review
+
 ## Tests Reviewed First
 
 - behavior claimed by tests:

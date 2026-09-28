@@ -21,9 +21,17 @@ Determine merge target: existing pull request base, else `base:` from `task.md`,
 
 Read `task.md`/`ticket.md` and current indexed implementation source (prefer `planning.plan`, `planning.structure`, `design.tdd`, `design.prd`). Use current artifact summaries to avoid unrelated documents. Read repo instructions, changed tests, commits, and PR description before judging.
 
-When `task.md` lists acceptance criteria, decide each one against the diff and tests. A criterion the change does not prove is a major-severity finding; a criterion the change contradicts is critical. When `review.verification` has a current iteration, read its items table first: a criterion recorded as `pass` with a command and quoted output is proven; `fail` and `untested` items are findings to confirm.
+When `task.md` lists acceptance criteria, decide each one against the diff and tests. A criterion the change does not prove is a major-severity finding; a criterion the change contradicts is critical. When `review.verification` has a current iteration, read its items table first: a criterion recorded as `pass` with a command and quoted output is candidate evidence, not proof until its oracle meaningfully reaches the promised outcome. `fail` and `untested` items are findings to confirm.
 
 Before allocating a new review, when `review.code` has a current iteration, read only that iteration's `### CR-...` heading lines. Record each in `## Previous Round` as `fixed`, `still open`, or `declined`, decided from the current diff and current `review.fixes` evidence, never from the prior reviewer's reasoning. Raise still-open entries again with new identifiers.
+
+## Independent review coverage
+
+Before deciding status, classify the diff's consequence from affected behavior, data, security, compatibility, and blast radius; do not use line counts or a raw coverage percentage. A consequential diff requires a genuinely independent reviewer lens, dispatched through the available worker mechanism with an assignment scoped to distinct risks and relevant acceptance criteria. Read that worker's completed report and validate that it names the pinned diff/acceptance scope, examined its assigned risks, and supports each finding with concrete evidence; reconcile its findings with this review. A planned, failed, missing, or scope-incomplete dispatch is not independent coverage and cannot support `clean`.
+
+Atomic delivery dispatches its own independent reviewer for every `clean` artifact, including low-risk changes. Record concrete low-risk rationale if the artifact's author skipped a separate dispatch; do not present a self-review, an author claim, or an unavailable worker as independent coverage. Atomic's independent dispatch must complete against exact HEAD with assigned acceptance and risk coverage before it can advance; if it is unavailable, clean cannot advance. Human approval and hosted publication evidence remain separate gates.
+
+When verification is opted out, the Atomic independent reviewer must supply one idempotent acceptance probe per criterion, its claimed exit and decisive output, and a changed-line citation explaining why that observation covers the promised behavior. Atomic replays the probe; a statement that an assertion exists without a reachable assertion or reproduced observation cannot support `clean`.
 
 ## Review
 
@@ -36,6 +44,10 @@ Trace behavior through callers/tests. Evaluate every applicable axis:
 5. **Performance:** N+1, unbounded queries/loops, blocking async, unnecessary renders, missing pagination, hot-path allocations.
 
 Interfaces: accessibility, keyboard/pointer, responsive, manual/screenshot evidence.
+
+## Acceptance oracle and test quality
+
+For each acceptance criterion, identify the observable outcome and the test or observation that exercises it. Inspect tests for a real assertion about that outcome, a path that reaches the behavior, and an oracle independent of the implementation's own output. Flag circular oracles that derive expected values from the same code/result under test, tests with no meaningful assertion, and checks whose setup never reaches the claimed path. A green command with such checks is not acceptance proof: distinguish “tests passed” from “acceptance verified” in the artifact and keep the criterion unproven. Judge the test's semantics and reachability, not assertion counts, coverage percentages, or brittle text matching.
 
 ## Health and severity
 

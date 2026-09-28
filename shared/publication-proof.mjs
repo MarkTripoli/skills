@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { currentArtifact, indexFileExists, parseArtifactText, readArtifactIndex, readArtifactScalars } from './task-artifacts.mjs';
 import { decidePublicationProof } from './publication-proof-policy.mjs';
+import { SUBJECT_PATTERN, subjectProblems } from '../scripts/check-commits.mjs';
 
 function command(bin, args, cwd, { trim = true } = {}) {
   const result = spawnSync(bin, args, { cwd, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
@@ -313,6 +314,29 @@ function completeDescription(body) {
     /### Verify\s*\n[\s\S]*?-\s*\[[ x]\]\s+\S/im.test(human) &&
     /### Known limits\s*\n[\s\S]*?-\s+\S/im.test(human);
 }
+export function exactHeadChecks(response, sha) {
+  const pages = Array.isArray(response) ? response : [response];
+  if (!pages.length || !pages.every(page => page && Number.isSafeInteger(page.total_count) &&
+      page.total_count >= 0 && Array.isArray(page.check_runs) && page.check_runs.length <= 100 &&
+      page.total_count === pages[0]?.total_count)) return false;
+  const count = pages[0].total_count;
+  if (pages.length !== Math.max(1, Math.ceil(count / 100)) ||
+      pages.some((page, index) => page.check_runs.length !== Math.min(100, count - index * 100))) return false;
+  const required = new Set(['test', 'Conventional Commits']);
+  const latest = new Map();
+  const ids = new Set();
+  for (const page of pages) for (const run of page.check_runs) {
+    if (!Number.isSafeInteger(run?.id) || ids.has(run.id)) return false;
+    ids.add(run.id);
+    if (!required.has(run.name) || run.head_sha !== sha || run.app?.slug !== 'github-actions') continue;
+    if (!latest.has(run.name) || run.id > latest.get(run.name).id) latest.set(run.name, run);
+  }
+  return [...required].every(name => {
+    const run = latest.get(name);
+    return run?.status === 'completed' && run.conclusion === 'success';
+  });
+}
+
 export async function inspect({ taskDir, repo, prNumber, draftHostCapture = false, override = '' }) {
   const task = path.resolve(taskDir); const root = path.dirname(task);
   const index = indexFileExists(path.join(task, 'index.json')) ? readArtifactIndex(task) : null;
@@ -321,8 +345,12 @@ export async function inspect({ taskDir, repo, prNumber, draftHostCapture = fals
   const headSha = command('git', ['rev-parse', 'HEAD'], repo);
   const taskText = fs.readFileSync(path.join(task, 'task.md'), 'utf8');
   const verificationRequired = Boolean(verification) || /verification\s*:\s*required|verification is required|required verification/i.test(taskText);
-  const pr = JSON.parse(command('gh', ['pr', 'view', String(prNumber), '--json', 'url,number,headRefOid,baseRefName,baseRefOid,isDraft,body'], repo));
+  const pr = JSON.parse(command('gh', ['pr', 'view', String(prNumber), '--json', 'url,number,title,headRefOid,baseRefName,baseRefOid,isDraft,body'], repo));
   const owner = JSON.parse(command('gh', ['repo', 'view', '--json', 'nameWithOwner'], repo)).nameWithOwner;
+  const commitChecks = JSON.parse(command('gh', ['api', '--paginate', '--slurp',
+    `repos/${owner}/commits/${pr.headRefOid}/check-runs?per_page=100`], repo));
+  const commitChecksCurrent = typeof pr.title === 'string' && SUBJECT_PATTERN.test(pr.title) &&
+    subjectProblems(pr.title).length === 0 && exactHeadChecks(commitChecks, pr.headRefOid);
   const bodyText = pr.body ?? '';
   const evidence = section(bodyText, 'Evidence');
   const bodyFields = evidenceFields(evidence);
@@ -363,7 +391,7 @@ export async function inspect({ taskDir, repo, prNumber, draftHostCapture = fals
   const proof = {
     mode: draftHostCapture ? 'draft-host-capture' : 'ready', captureUploadMissing: draftHostCapture && Boolean(pr.isDraft && !bodyFields.captures.size),
     head: headSha, tested: testedSha, artifactOnlyAdvancement: artifactOnly, indexedArtifactsOnly: artifactOnly,
-    substantiveChanged: Boolean(testedSha && !artifactOnly), reviewRequired: true, review: review?.status, reviewCurrent,
+    substantiveChanged: Boolean(testedSha && !artifactOnly), commitChecksCurrent, reviewRequired: true, review: review?.status, reviewCurrent,
     verificationRequired, verification: verification?.status, verificationCurrent, capture: hostedResult ? 'passed' : '',
     captureCurrent, captureHosted, commentVerified, commentDistinct: Boolean(comment && commentVerified),
     finalBodyPublished: bodyPublished, finalBodyVerified: descriptionCurrent, bypass: Boolean(override),
@@ -372,7 +400,7 @@ export async function inspect({ taskDir, repo, prNumber, draftHostCapture = fals
   let reason = decision.status === 'pass' ? 'all current publication proof is verified' : decision.status === 'stale' ? 'tested proof does not cover the substantive code at HEAD' : draftHostCapture ? (pr.isDraft ? 'draft is permitted only to host capture; ready publication is not authorized' : 'capture-hosting mode requires an existing draft PR') : override ? `audited override requested: ${override}; mandatory proof remains incomplete` : 'required current hosted proof or publication read-back is missing';
   if (override) reason = `audited override requested: ${override}; decision remains ${decision.status}`;
   return { ...decision, reason, head: headSha, tested: testedSha || null, pullRequest: pr.url, override: override || null,
-    captureCurrent, captureHosted, commentVerified, reviewCurrent, verificationRequired, verificationCurrent, bodyPublished,
+    captureCurrent, captureHosted, commentVerified, commitChecksCurrent, reviewCurrent, verificationRequired, verificationCurrent, bodyPublished,
     descriptionCurrent,
     descriptionHash: createHash('sha256').update(bodyText).digest('hex') };
 }
