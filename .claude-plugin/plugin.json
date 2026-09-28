@@ -48,6 +48,7 @@
     "./skills/delivery/iterate-structure-outline",
     "./skills/delivery/iterate-tdd",
     "./skills/delivery/jev-ui",
+    "./skills/delivery/model-endpoint-redteam",
     "./skills/delivery/record-evidence",
     "./skills/delivery/repo-relationships",
     "./skills/delivery/reproduce-bug",
