@@ -8,6 +8,7 @@ import { short } from './install-plan.mjs';
 const MARK_BEGIN = '# >>> MarkTripoli/skills workers (managed by the installer; edits inside are overwritten)';
 const MARK_END = '# <<< MarkTripoli/skills workers';
 const noDsStore = src => path.basename(src) !== '.DS_Store';
+const publicationFiles = ['hooks/omp-publication.mjs', 'shared/publication-command.mjs', 'shared/publication-proof.mjs', 'shared/publication-proof-policy.mjs', 'shared/task-artifacts.mjs', 'shared/task-root.mjs'];
 
 function copyDir(from, to) {
   fs.rmSync(to, { recursive: true, force: true });
@@ -64,13 +65,27 @@ export function apply(planned, { built, uninstall, home }) {
         if (uninstall && updated.trim() === '') fs.rmSync(step.to, { force: true }); else { fs.mkdirSync(path.dirname(step.to), { recursive: true }); fs.writeFileSync(step.to, updated); }
         done.push(`${uninstall ? 'updated selected workers in' : 'updated the workers block in'} ${short(step.to, home)}`); break;
       }
+      case 'publication-hook': {
+        for (const name of publicationFiles) {
+          const to = path.join(step.to, name);
+          if (uninstall) fs.rmSync(to, { force: true });
+          else { fs.mkdirSync(path.dirname(to), { recursive: true }); fs.copyFileSync(path.join(repoRoot, name), to); }
+        }
+        if (uninstall) {
+          for (const dir of ['hooks', 'shared', '']) {
+            const target = path.join(step.to, dir);
+            if (fs.existsSync(target) && fs.readdirSync(target).length === 0) fs.rmdirSync(target);
+          }
+        }
+        done.push(`${uninstall ? 'removed' : 'installed'} optional OMP Bash publication guard ${short(path.join(step.to, 'hooks', 'omp-publication.mjs'), home)}; ${uninstall ? 'registration was not changed' : 'launch with omp --hook=<installed-path> and SKILLS_PUBLICATION_TASK_DIR=<absolute-task-dir>; only intercepted Bash calls are guarded (not direct shell or Codex)'}`); break;
+      }
       case 'workflow': {
         const entry = path.join(path.dirname(step.to), 'skills-delivery.mjs');
         if (uninstall) { fs.rmSync(entry, { force: true }); fs.rmSync(step.to, { recursive: true, force: true }); }
         else {
           copyDir(path.join(repoRoot, 'atomic'), step.to);
           fs.mkdirSync(path.join(step.to, 'shared'), { recursive: true });
-          for (const name of ['task-artifacts.mjs', 'task-root.mjs']) fs.copyFileSync(path.join(repoRoot, 'shared', name), path.join(step.to, 'shared', name));
+          for (const name of ['task-artifacts.mjs', 'task-root.mjs', 'publication-proof.mjs', 'publication-proof-policy.mjs']) fs.copyFileSync(path.join(repoRoot, 'shared', name), path.join(step.to, 'shared', name));
           const yamlRoot = path.dirname(fileURLToPath(import.meta.resolve('yaml/package.json')));
           copyDir(yamlRoot, path.join(step.to, 'node_modules', 'yaml'));
           fs.writeFileSync(entry, "export { default } from './skills-delivery/workflows/delivery.ts';\n");

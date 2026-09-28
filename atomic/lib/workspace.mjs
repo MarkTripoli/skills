@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { digest, frontmatter, validateChildren } from './artifacts.mjs';
 import { initTaskArtifacts, readArtifactIndex } from './artifact-index.mjs';
 import { DEFAULT_TASK_ROOT, normalizeTaskRoot, resolveTaskRoot } from './task-storage.mjs';
-import { committedChildCompletion } from './child-evidence.mjs';
+import { hostedChildCompletion, hostedChildPRs } from './child-evidence.mjs';
 import { taskRootAtBase } from './workspace-base.mjs';
 import { expandPath, resolveSkillsDir } from './skill-storage.mjs';
 
@@ -154,18 +154,23 @@ export function childrenFor(task) {
     if (!fs.existsSync(file)) continue;
     const { metadata, body } = frontmatter(fs.readFileSync(file, 'utf8'), file);
     if (metadata.parent !== task.slug) continue;
-    children.push({ slug: metadata.slug, workflow: metadata.workflow, depends_on: metadata.depends_on ?? [], request: body, taskDir: dir });
+    children.push({ slug: metadata.slug, workflow: metadata.workflow, depends_on: metadata.depends_on ?? [], write_paths: metadata.write_paths, request: body, taskDir: dir });
   }
   return validateChildren(children);
 }
-export function childWave(task, children) {
+export function childWave(task, children, mergedPRs = null) {
   if (!children.length) throw new Error('Epic delivery has no child tasks');
   const done = [];
   const started = [];
   const ready = [];
   const blocked = [];
+  let hosted = mergedPRs;
   for (const child of children) {
-    if (committedChildCompletion(task.cwd, child, git)) { done.push(child.slug); continue; }
+    if (hostedChildCompletion(task.cwd, child, task.branch, git, null,
+      hosted ??= hostedChildPRs(task.cwd, task.branch))) {
+      done.push(child.slug);
+      continue;
+    }
     const branch = git(task.cwd, ['rev-parse', '--verify', `refs/heads/${child.slug}`], true);
     if (branch || git(task.cwd, ['show-ref', '--verify', `refs/remotes/origin/${child.slug}`], true)) started.push(child.slug);
   }

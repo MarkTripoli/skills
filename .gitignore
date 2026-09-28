@@ -17,3 +17,7 @@ node_modules/
 # Atomic's session-local todo state is not a task artifact.
 /.atomic/todos/
 /.atomic-delivery/
+
+# Agent task records are local workspace state.
+/.agent/tasks/
+/.agents/tasks/

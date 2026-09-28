@@ -13,7 +13,7 @@ You turn an approved epic plan into one task directory per child and tell the us
 
 1. **Locate the task directory and read `task.md`** per the conventions. The epic's slug is the parent slug for every child.
 
-2. **Read the epic branch**: `git rev-parse --abbrev-ref HEAD`. Stop when it prints `HEAD`, `main`, or `master`: the epic must use its own branch because the children cut their worktrees from its committed task files. Tell the user to create the epic branch with `git switch -c epic-<epic slug>` before rerunning this skill. Record the current name as `<epic branch>`.
+2. **Read the epic branch**: `git rev-parse --abbrev-ref HEAD`. Stop when it prints `HEAD`, `main`, or `master`: the epic must use its own branch because children base their code worktrees on it. Tell the user to create the epic branch with `git switch -c epic-<epic slug>` before rerunning this skill. Record the current name as `<epic branch>`. Child task files stay local and must be copied into each child worktree at handoff.
 
 3. **Select the epic plan**. Use explicit `@file`; otherwise current `planning.epic` from `index.json`. Read it completely. Stop when no epic plan exists.
 
@@ -27,11 +27,11 @@ You turn an approved epic plan into one task directory per child and tell the us
 
 8. **Open one GitHub issue per child**. Run this step only when authenticated to the GitHub origin (`gh auth status`); otherwise record the existing Known limits line. Process waves in order so dependency issue numbers are known. For each child, create the issue with `gh issue create`, including its title, prompt, acceptance criteria, dependency issue numbers (or `none`), epic reference, and `Task directory: <task-root>/<child slug>`. Add the returned issue number to that child's `task.md`; continue after an individual issue failure and report each failure in Known limits.
 
-9. **Commit child task files**: explicitly stage each child's `task.md` and `index.json`, then commit `docs(task): open epic children`. They must be in the epic branch before child worktrees start.
+9. **Keep child tasks local**: do not stage or commit their `task.md` or `index.json`. Each child's first handoff opens its worktree from the epic branch and copies both files from the epic worktree into the same task-root path before running a skill. Existing child worktrees retain their own local files.
 
-10. **Write the receipt**. Record the next immutable `delivery.epic` iteration through the conventions' Recording an artifact flow using `references/epic_delivery_template.md`. Commit its canonical path and `index.json` explicitly as `docs(task): epic-delivery artifact`.
+10. **Write the receipt**. Record the next immutable `delivery.epic` iteration through the conventions' Recording an artifact flow using `references/epic_delivery_template.md`. Keep the receipt and index local to the epic worktree.
 
-11. **Final answer**. Use `references/epic_delivery_final_answer.md` exactly. Fill `{artifact_link}` with the canonical receipt path. List each wave-1 child's slug, configured task directory, issue, and first manual skill. Build `{child_start_command}` with `<task-root>/<child slug>/`. Each child opens a fresh session in its own worktree from the epic branch. These are human handoffs, not commands this skill executes.
+11. **Final answer**. Use `references/epic_delivery_final_answer.md` exactly. Fill `{artifact_link}` with the local receipt path. List each wave-1 child's slug, configured task directory, issue, and first manual skill. Build `{child_start_command}` with `<task-root>/<child slug>/`. Each child starts a fresh session in its own worktree from the epic branch after copying its `task.md` and `index.json`; later waves use the same handoff after their dependencies merge. No child phases start in this skill.
 
 ## Rules
 
@@ -39,4 +39,4 @@ You turn an approved epic plan into one task directory per child and tell the us
 - Never start a child's phases from this session. Each child uses independent skill sessions, one at a time or in parallel within a ready wave. Optional automated launching belongs to the workflow, not this skill.
 - Children in later waves start only after every dependency's pull request is merged; say so in the receipt.
 - `issue` in a child's `task.md` is always the number `gh issue create` returned; never guess one, and never fail the run because issues could not be created.
-- The only commits this skill makes are `docs(task): open epic children` and the receipt commit; it never stages code.
+- This skill never stages or commits task files; only source changes made by separate implementation phases belong in Git.

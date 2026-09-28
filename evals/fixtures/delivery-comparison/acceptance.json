@@ -1,0 +1,9 @@
+{
+  "id": "delivery-comparison-fixed-v1",
+  "seed": "notification-cli-required-runtime-argument",
+  "acceptance": [
+    "The build command supplies RUNTIME=node",
+    "The successful build emits built for node",
+    "A bare usage error is not represented as a product failure"
+  ]
+}

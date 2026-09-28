@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { childrenFor, childWave, ensureTask, prepareChild, revision } from '../atomic/lib/workspace.mjs';
+import { childBatches } from '../atomic/lib/child-scheduler.mjs';
 import { initTaskArtifacts, recordArtifact, reserveArtifactIteration } from '../shared/task-artifacts.mjs';
 
 function runGit(cwd, args, optional = false) {
@@ -29,8 +30,8 @@ function repository(t) {
   return root;
 }
 
-function taskDocument({ slug, workflow = 'oneshot', parent = null, request = 'Task request' }) {
-  return `---\nslug: ${JSON.stringify(slug)}\nworkflow: ${JSON.stringify(workflow)}\n${parent ? `parent: ${JSON.stringify(parent)}\n` : ''}---\n${request}\n`;
+function taskDocument({ slug, workflow = 'oneshot', parent = null, request = 'Task request', write_paths = null }) {
+  return `---\nslug: ${JSON.stringify(slug)}\nworkflow: ${JSON.stringify(workflow)}\n${parent ? `parent: ${JSON.stringify(parent)}\n` : ''}${write_paths ? `write_paths: ${JSON.stringify(write_paths)}\n` : ''}---\n${request}\n`;
 }
 
 test('explicit task_dir bypasses repository task-root discovery and reports its effective root', t => {
@@ -95,6 +96,27 @@ test('prepareChild mirrors the parent effective root and childrenFor keeps sibli
   assert.equal(fs.existsSync(path.join(prepared, 'index.json')), false);
 });
 
+test('independent ready children materialize separate owned worktrees with fixture concurrency two', t => {
+  const root = repository(t);
+  const parent = ensureTask({ request: 'Deliver independent children' }, root, `parallel-epic-${Date.now()}`, 'epic');
+  for (const [slug, write_paths] of [['api-child', ['src/api']], ['ui-child', ['src/ui']]]) {
+    const dir = path.join(parent.taskRoot, slug);
+    fs.mkdirSync(dir, {recursive: true});
+    fs.writeFileSync(path.join(dir, 'task.md'), taskDocument({slug, parent: parent.slug, write_paths}));
+  }
+  const children = childrenFor(parent);
+  const wave = childWave(parent, children, []);
+  assert.deepEqual(wave.ready, ['api-child', 'ui-child']);
+  const [batch] = childBatches(wave.ready, children, 2);
+  assert.equal(batch.length, 2);
+  const childTaskDirs = batch.map(slug => prepareChild(parent, children.find(child => child.slug === slug)));
+  assert.notEqual(path.dirname(path.dirname(childTaskDirs[0])), path.dirname(path.dirname(childTaskDirs[1])));
+  for (const [index, slug] of batch.entries()) {
+    assert.equal(fs.existsSync(path.join(childTaskDirs[index], 'task.md')), true);
+    assert.equal(runGit(childTaskDirs[index], ['branch', '--show-current']), slug);
+  }
+});
+
 test('prepareChild initializes an empty index only when the source child is indexed', t => {
   const root = repository(t);
   const parent = ensureTask({ request: 'Deliver indexed children' }, root, `indexed-epic-${Date.now()}`, 'epic');
@@ -115,92 +137,19 @@ test('prepareChild initializes an empty index only when the source child is inde
   assert.equal(fs.existsSync(path.join(prepared, 'artifacts')), false);
 });
 
-test('childWave accepts committed indexed PR evidence and ignores uncommitted replacements', t => {
+test('childWave never treats a task-local PR description as a merged child', t => {
   const root = repository(t);
-  const taskRoot = path.join(root, '.agents', 'tasks');
-  const parentDir = path.join(taskRoot, 'parent');
-  const childDir = path.join(taskRoot, 'indexed-child');
+  const parentDir = path.join(root, '.agents', 'tasks', 'parent');
+  const childDir = path.join(root, '.agents', 'tasks', 'indexed-child');
   fs.mkdirSync(parentDir, { recursive: true });
   fs.mkdirSync(childDir, { recursive: true });
   fs.writeFileSync(path.join(parentDir, 'task.md'), taskDocument({ slug: 'parent', workflow: 'epic' }));
   fs.writeFileSync(path.join(childDir, 'task.md'), taskDocument({ slug: 'indexed-child', parent: 'parent' }));
-  initTaskArtifacts(childDir);
-  const staging = path.join(childDir, reserveArtifactIteration(childDir, 'pull-request', 'description').writePath);
-  fs.writeFileSync(staging, '# PR\n\n## Purpose\n\nCommitted purpose.\n\n## Change outline\n\n- Committed outline.\n');
-  const record = recordArtifact(childDir, 'pull-request', 'description', 'pr-description', staging);
-  const description = path.join(childDir, record.path);
-  runGit(root, ['add', '.agents']);
-  runGit(root, ['commit', '-m', 'merge indexed child evidence']);
-  fs.writeFileSync(description, '# PR\n\nUncommitted invalid replacement.\n');
-  const task = { cwd: root, taskDir: parentDir, slug: 'parent' };
+  fs.writeFileSync(path.join(childDir, 'pr-description.md'), '## Purpose\n\nLocal claim only.\n');
+  const task = { cwd: root, taskDir: parentDir, slug: 'parent', branch: 'main' };
 
-  assert.deepEqual(childWave(task, childrenFor(task)), { done: ['indexed-child'], started: [], ready: [], blocked: [] });
-});
-
-test('childWave fails closed when committed indexed PR evidence is invalid', t => {
-  const root = repository(t);
-  const taskRoot = path.join(root, '.agents', 'tasks');
-  const parentDir = path.join(taskRoot, 'parent');
-  const childDir = path.join(taskRoot, 'indexed-child');
-  fs.mkdirSync(parentDir, { recursive: true });
-  fs.mkdirSync(childDir, { recursive: true });
-  fs.writeFileSync(path.join(parentDir, 'task.md'), taskDocument({ slug: 'parent', workflow: 'epic' }));
-  fs.writeFileSync(path.join(childDir, 'task.md'), taskDocument({ slug: 'indexed-child', parent: 'parent' }));
-  initTaskArtifacts(childDir);
-  const staging = path.join(childDir, reserveArtifactIteration(childDir, 'pull-request', 'description').writePath);
-  fs.writeFileSync(staging, '# PR\n\n## Purpose\n\nPurpose.\n\n## Change outline\n\n- Outline.\n');
-  recordArtifact(childDir, 'pull-request', 'description', 'pr-description', staging);
-  const indexFile = path.join(childDir, 'index.json');
-  const index = JSON.parse(fs.readFileSync(indexFile, 'utf8'));
-  index.artifactSeries['pull-request.description'].iterations[0].sha256 = '0'.repeat(64);
-  fs.writeFileSync(indexFile, `${JSON.stringify(index, null, 2)}\n`);
-  fs.writeFileSync(path.join(childDir, 'pr-description.md'), '# PR\n\n## Purpose\n\nLegacy.\n\n## Change outline\n\n- Must not bypass index.\n');
-  runGit(root, ['add', '.agents']);
-  runGit(root, ['commit', '-m', 'merge invalid indexed child evidence']);
-  const task = { cwd: root, taskDir: parentDir, slug: 'parent' };
-
-  assert.throws(() => childWave(task, childrenFor(task)), /hash|digest|indexed/i);
-});
-
-test('childWave validates every committed indexed record from git objects', t => {
-  const root = repository(t);
-  const taskRoot = path.join(root, '.agents', 'tasks');
-  const parentDir = path.join(taskRoot, 'parent');
-  const childDir = path.join(taskRoot, 'indexed-child');
-  fs.mkdirSync(parentDir, { recursive: true });
-  fs.mkdirSync(childDir, { recursive: true });
-  fs.writeFileSync(path.join(parentDir, 'task.md'), taskDocument({ slug: 'parent', workflow: 'epic' }));
-  fs.writeFileSync(path.join(childDir, 'task.md'), taskDocument({ slug: 'indexed-child', parent: 'parent' }));
-  initTaskArtifacts(childDir);
-  const research = path.join(childDir, reserveArtifactIteration(childDir, 'research', 'primary').writePath);
-  fs.writeFileSync(research, '---\ntype: research\nsummary: Committed research\n---\n# Research\n\nEvidence.\n');
-  const researchRecord = recordArtifact(childDir, 'research', 'primary', 'research', research);
-  const description = path.join(childDir, reserveArtifactIteration(childDir, 'pull-request', 'description').writePath);
-  fs.writeFileSync(description, '# PR\n\n## Purpose\n\nPurpose.\n\n## Change outline\n\n- Outline.\n');
-  recordArtifact(childDir, 'pull-request', 'description', 'pr-description', description);
-  fs.rmSync(path.join(childDir, researchRecord.path));
-  runGit(root, ['add', '.agents']);
-  runGit(root, ['commit', '-m', 'merge child with dangling unrelated evidence']);
-  const task = { cwd: root, taskDir: parentDir, slug: 'parent' };
-
-  assert.throws(() => childWave(task, childrenFor(task)), /missing|dangling|research/i);
-});
-
-test('childWave retains committed legacy PR description fallback when no index exists', t => {
-  const root = repository(t);
-  const taskRoot = path.join(root, '.agents', 'tasks');
-  const parentDir = path.join(taskRoot, 'parent');
-  const childDir = path.join(taskRoot, 'legacy-child');
-  fs.mkdirSync(parentDir, { recursive: true });
-  fs.mkdirSync(childDir, { recursive: true });
-  fs.writeFileSync(path.join(parentDir, 'task.md'), taskDocument({ slug: 'parent', workflow: 'epic' }));
-  fs.writeFileSync(path.join(childDir, 'task.md'), taskDocument({ slug: 'legacy-child', parent: 'parent' }));
-  fs.writeFileSync(path.join(childDir, 'pr-description.md'), '# PR\n\n## Purpose\n\nLegacy purpose.\n\n## Change outline\n\n- Legacy outline.\n');
-  runGit(root, ['add', '.agents']);
-  runGit(root, ['commit', '-m', 'merge legacy child evidence']);
-  const task = { cwd: root, taskDir: parentDir, slug: 'parent' };
-
-  assert.deepEqual(childWave(task, childrenFor(task)), { done: ['legacy-child'], started: [], ready: [], blocked: [] });
+  assert.deepEqual(childWave(task, childrenFor(task), []),
+    { done: [], started: [], ready: ['indexed-child'], blocked: [] });
 });
 
 test('ensureTask resolves task root and project skills from the selected base', t => {

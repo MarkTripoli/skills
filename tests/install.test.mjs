@@ -113,6 +113,12 @@ test("Atomic is opt-in and rejects partial skill selection before writing", () =
   const full = plan({ ...parseArgs(["pi", "--atomic", "--skill", "*"]), home, cwd: home, env });
   assert.equal(full.steps.find((step) => step.kind === "workflow").to, path.join(home, ".atomic", "agent", "workflows", "skills-delivery"));
   assert.equal(full.steps.find((step) => step.target === "portable").to, path.join(home, ".agents", "skills"));
+  const installed = install({ ...parseArgs(["pi", "--atomic", "--skill", "*"]), home, cwd: home, env });
+  const workflow = installed.steps.find(step => step.kind === "workflow").to;
+  for (const helper of ["publication-proof.mjs", "publication-proof-policy.mjs", "task-artifacts.mjs", "task-root.mjs"]) {
+    assert.ok(fs.existsSync(path.join(workflow, "shared", helper)));
+  }
+  uninstall(installed, home);
 });
 
 test("a selected skill installs and uninstalls independently in every target", () => {
@@ -367,4 +373,32 @@ test("video skills install by their canonical names without enabling workflow or
   uninstall(planned, home);
   for (const name of skillNames) assert.equal(fs.existsSync(path.join(skillDir, name)), false);
   assert.equal(fs.readFileSync(foreign, "utf8"), "keep unrelated resource\n");
+});
+
+test("optional OMP publication hook installs a self-contained guarded entry only when selected", () => {
+  const home = tmpdir("omp-hook-home-");
+  const project = tmpdir("omp-hook-project-");
+  assert.equal(parseArgs(["oh-my-pi", "--omp-publication-hook"]).ompPublicationHook, true);
+  assert.throws(() => plan({ targets: ["codex"], ompPublicationHook: true, cwd: project, home, env }), /requires the oh-my-pi target/);
+  const ordinary = plan({ targets: ["oh-my-pi"], skillNames: ["show-me"], cwd: project, home, env });
+  assert.equal(ordinary.steps.some(step => step.kind === "publication-hook"), false);
+  assert.match(ordinary.notes.join("\\n"), /optional.*--omp-publication-hook/);
+
+  for (const projectScope of [false, true]) {
+    const options = { targets: ["oh-my-pi"], skillNames: ["show-me"], ompPublicationHook: true, project: projectScope, cwd: project, home, env };
+    const planned = install(options);
+    const step = planned.steps.find(item => item.kind === "publication-hook");
+    const base = projectScope ? project : home;
+    const entry = path.join(base, ".omp", ...(projectScope ? [] : ["agent"]), "hooks", "skills-publication", "hooks", "omp-publication.mjs");
+    assert.equal(path.join(step.to, "hooks", "omp-publication.mjs"), entry);
+    assert.ok(fs.existsSync(entry));
+    assert.ok(fs.existsSync(path.join(step.to, "shared", "publication-command.mjs")));
+    assert.ok(fs.existsSync(path.join(step.to, "shared", "publication-proof.mjs")));
+    assert.ok(fs.existsSync(path.join(step.to, "shared", "task-artifacts.mjs")));
+    const foreign = path.join(step.to, "foreign");
+    put(foreign, "keep\\n");
+    uninstall(planned, home);
+    assert.equal(fs.existsSync(entry), false);
+    assert.equal(fs.readFileSync(foreign, "utf8"), "keep\\n");
+  }
 });

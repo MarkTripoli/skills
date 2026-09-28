@@ -89,7 +89,7 @@ Pick sequence below. `auto` pick again after each saved result. Explicit workflo
 | `resolve-reviews` | resolve-pr-reviews → recapture and update description/comment when behavior changes | Existing task and PR need review feedback handled |
 | `epic-wave` | Recheck existing epic deps and run ready children with evidence before each child PR | Next wave come after prereq merges |
 
-Run `gather-sources` first when the request names material outside the repository. Every PR-producing chain runs `record-evidence` after review and before `describe-pr`, independent of `gates`, `verify`, or `app_test`. UI behavior uses actual live video; CLI uses a captured terminal session; API/performance uses captured probe output; agent behavior uses the real tool-call/response transcript. The indexed `evidence.recording` receipt binds the tested code revision and PR head; a failed or missing capture blocks publication. The verified hosted capture goes in both the PR description's Evidence section and a distinct PR comment. Behavior-changing review feedback recaptures and updates both before approval. For authenticated end-to-end work spanning an API and its frontend, `video-iterative-development` can supplement but not replace this receipt and publication gate.
+Run `gather-sources` first when the request names material outside the repository. Every PR-producing chain runs `record-evidence` after review and before `describe-pr`, independent of `gates`, `verify`, or `app_test`. UI behavior uses actual live video; CLI uses a captured terminal session; API/performance uses captured probe output; agent behavior uses the real tool-call/response transcript. Hosted proof in the PR description and distinct comment binds the tested code revision, result, capture URL, and current PR head; missing, stale, unreadable, or mismatched proof blocks publication.
 
 ## Gates and native controls
 
@@ -135,13 +135,13 @@ If implementation step save new report but not move checklist, workflow write do
 
 Code changes need new verify and review. Completion need truthful implementation report to swap out stalled-work report.
 
-Unless `verify=false`, `verify-implementation` runs repo checks and promised acceptance items. Turned-on `test-app` works the real app. Failures go to `iterate-implementation`, then new verify or app-test stage. `review-code` and `fix-code-review` repeat till clean, blocked, or capped by `max_steps`. After review, `record-evidence` captures real behavior at the code revision; missing, failed, or stale captures return to repair/recapture and cannot advance to PR description. These checks come before publication. See [verification](../docs/verification.md) and [app testing](../docs/app-testing.md).
+Unless `verify=false`, `verify-implementation` runs repo checks and promised acceptance items. Turned-on `test-app` works the real app. Failures go to `iterate-implementation`, then new verify or app-test stage. `review-code` and `fix-code-review` repeat till clean, blocked, or capped by `max_steps`. After review, `record-evidence` captures real behavior at the code revision in scratch space outside the task directory and publishes a hosted capture and distinct PR comment. Missing, failed, or stale hosted proof cannot advance to the PR description. These checks come before publication. See [verification](../docs/verification.md) and [app testing](../docs/app-testing.md).
 
 ## Task, artifact, and worktree ownership
 
-Task be `<task-root>/<slug>/`: `task.md`, authoritative `index.json`, immutable iteration under `artifacts/<kind>/<variant>/`. Task root default `.agents/tasks`, follow repo `<!-- skills:task-root=... -->`; controller resolve at selected base and fail when checked-out root disagree. Task root be committed project history, not throwaway state. Revision record next series iteration, never edit recorded one. `pr-description` indexed at `pull-request.description`, body-only with no frontmatter. [Collection conventions](../shared/CONVENTIONS.md) set exact formats, manual record contract, legacy no-index exception, commit ownership.
+Task be `<task-root>/<slug>/`: `task.md`, authoritative `index.json`, immutable iteration under `artifacts/<kind>/<variant>/` for planning, review, and verification metadata. Task root default `.agents/tasks`, follow repo `<!-- skills:task-root=... -->`; controller resolve at selected base and fail when checked-out root disagree. Task root is ignored local worktree state, not committed project history. Revision record next series iteration, never edit recorded one. Captures, evidence receipts, and PR-description files never live in the task root; only the hosted PR body, distinct comment, and direct capture URL are publication proof. [Collection conventions](../shared/CONVENTIONS.md) set exact formats, manual record contract, legacy no-index exception and source commit ownership.
 
-New task get own lasting worktree and branch. Explicit existing `task_dir` reuse task, index, artifacts; parent dir be authoritative task root. Keep manual sessions going in checkout and branch printed in handoff. Code commits stage explicit code paths; artifact commits stage only task files. Workflow operation never allow committing unrelated staged work.
+New task get own lasting worktree and branch. Explicit existing `task_dir` reuse task, index, artifacts; parent dir be authoritative task root. Keep manual sessions going in checkout and branch printed in handoff. Code commits stage explicit source paths; never stage task files. Workflow operation never allow committing unrelated staged work.
 
 Atomic own run state. User own task branches, artifacts, worktrees. Pausing, quitting, uninstalling skills, or swapping controller not allow deleting task records or cancelled-run worktrees. Old engine checkpoints be not Atomic checkpoints; keep going from kept artifacts in new `delivery` run when need.
 
@@ -149,7 +149,7 @@ Atomic own run state. User own task branches, artifacts, worktrees. Pausing, qui
 
 An **epic** split work into child tasks that each merge apart. Each child need `workflow`, `depends_on`, acceptance criteria, prompt. `start-epic-delivery` make their task dirs and GitHub issues when access there. See [task-sizing rules](../shared/SLICING.md).
 
-Ready children run in separate worktrees. Prereq branches must have merged; pull request description be no proof. Workflow not merge pull requests. Merge them apart, then run `workflow=epic-wave` with same epic `task_dir`.
+Ready children run in separate worktrees. A dependency is complete only after its PR targeting the epic branch has merged, its merge commit is present in the parent, and the local native completion agrees with the PR's reviewed head, hosted capture, distinct evidence comment, and final body. A PR description alone is not proof. Task files stay ignored; keep the child worktree and its local receipts until the epic joins. The workflow does not merge PRs: merge them separately, then run `workflow=epic-wave` with the same epic `task_dir`.
 
 ```text
 /workflow delivery request="Build usage billing" workflow=program branch=epic-billing gates=plan
@@ -161,7 +161,7 @@ Examples use default `.agents/tasks`; substitute configured root when `skills:ta
 
 ## Phase table
 
-Artifact type be template frontmatter `type`. Human gates count only when turned on; every skill work by hand too. Worker-role skills sit apart in source tree.
+Artifact type be template frontmatter `type` for local planning, review, and verification only. Publication stages write hosted proof instead of task artifacts. Human gates count only when turned on; every skill work by hand too. Worker-role skills sit apart in source tree.
 
 | Skill | Artifact type | Human gate | Runs in |
 |---|---|---|---|
@@ -186,10 +186,11 @@ Artifact type be template frontmatter `type`. Human gates count only when turned
 | implement-outline | implementation | yes | One outline step per stage |
 | iterate-implementation | implementation | yes | Implementation feedback and repairs |
 | review-code | code-review | no | Review loop |
+| security-check | none | no | By hand on explicit request; opt-in Semgrep scan |
 | fix-code-review | code-review-fixes | no | Repair review findings |
 | reproduce-bug | reproduction | yes | Bugfix before product edits |
 | fix-bug | fix | no | Bugfix after reproduction |
-| record-evidence | evidence | no | Required after review, before every PR description; recapture after behavior-changing reviews |
+| record-evidence | hosted capture and PR comment | no | Required after review; recapture after behavior-changing reviews |
 | iterate-evidence | evidence-iteration | no | Own authorized capture, inspect, repair loop |
 | video-iterative-development | none | no | By hand; authenticated API and frontend delivery with browser and Android evidence |
 | video-iterative-orchestration | none | no | By hand; dependency-aware implementation orchestration with isolated worktrees and delivery gates |
@@ -200,7 +201,7 @@ Artifact type be template frontmatter `type`. Human gates count only when turned
 | test-app | app-test | no | When `app_test` turned on; by hand too |
 | typed-judgment | none | no | Optional skill judgments and controller JEV routing |
 | jev-ui | none | no | By hand; capped browser and Android control |
-| describe-pr | pr-description | yes | Final PR description and its revisions |
+| describe-pr | hosted PR body | yes | Final PR description and its revisions |
 | resolve-pr-reviews | pr-review | no | Existing PR review round |
 | ci-commit | commit | no | By hand; explicit-path commit conventions |
 | review-artifact-comments | comment-review | no | By hand; artifact feedback |

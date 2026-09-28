@@ -1,21 +1,3 @@
-#!/usr/bin/env node
-// Runs the skills against a live model, one fresh `omp -p` session per phase, and grades what each
-// phase left behind: the artifact, its frontmatter, the facts that had to travel from the sources,
-// the commit, and the handoff fence naming the next skill. Nothing here is mocked; a run costs
-// model time and needs `omp` on PATH with a configured provider, so it is `npm run evals`, not `npm test`.
-//
-// Usage: node evals/run.mjs [scenario ...] [--keep] [--model <model>] [--max-time <minutes>]
-//        node evals/run.mjs [scenario ...] --grade <run dir>
-//   scenario   names under evals/scenarios/ (default: all)
-//   --keep     keep every scenario's temporary repository (failed ones are kept regardless)
-//   --model    pass an explicit model selector through to each spawned `omp` session
-//   --grade    no model: re-grade the recordings of an earlier run (`evals/results/<stamp>` or `latest`)
-//              with the current checks; git-state checks are skipped, everything else runs.
-//
-// Output: evals/results/<stamp>/<scenario>/<n>-<skill>/{prompt.md,answer.md,stderr.log,task/},
-// evals/results/<stamp>/<scenario>/report.json (written as each scenario ends),
-// evals/results/<stamp>/summary.json, and `evals/results/latest` pointing at the newest run.
-// Recordings are never deleted by a later run. Exit 1 when any phase fails.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -23,10 +5,13 @@ import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { subjectProblems } from "../scripts/check-commits.mjs";
-import { gradeEvidenceScenario, isEvidenceScenario, snapshotEvidenceSources } from "./iterate-evidence.mjs";
 import { artifacts, failures, handoff, newest, placeholders } from "./lib.mjs";
+import { recordSecurityAssessment } from "./security-assessment.mjs";
+import { gradeEvidenceScenario, isEvidenceScenario, snapshotEvidenceSources } from "./iterate-evidence.mjs";
+import { metricsForOutput } from "./metrics.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+
 const repoRoot = path.resolve(here, "..");
 const resultsRoot = path.join(here, "results");
 const scenariosDir = path.join(here, "scenarios");
@@ -34,6 +19,76 @@ const fixturesDir = path.join(here, "fixtures");
 const guidanceFiles = ["WRITING.md", "CONVENTIONS.md"];
 
 const args = process.argv.slice(2);
+if (args[0] === "--compare") {
+  if (args.length !== 3) {
+    console.error("usage: node evals/run.mjs --compare <solo-run> <delivery-run>");
+    process.exit(2);
+  }
+  const read = (value) => {
+    const dir = path.resolve(value === "latest" ? path.join(resultsRoot, value) : value);
+    try {
+      return {
+        ...JSON.parse(fs.readFileSync(path.join(dir, "comparison-run.json"), "utf8")),
+        rawOutput: path.relative(repoRoot, dir),
+      };
+    } catch {
+      return null;
+    }
+  };
+  const fields = (run) => ({
+    acceptance: run?.ok === true ? "passed" : run?.ok === false ? "failed" : "incomplete",
+    model: run?.model ?? "unknown",
+    actualModel: run?.metrics?.coverage?.models?.length === 1 ? run.metrics.coverage.models[0] : "unknown",
+    wallTimeSeconds: Number.isFinite(run?.wallTimeSeconds) ? run.wallTimeSeconds : "unknown",
+    spend: Number.isFinite(run?.metrics?.cost?.total) && run.metrics.cost_basis === "provider_billed_usd" &&
+      run.metrics.coverage?.complete === true
+      ? { amount: run.metrics.cost.total, currency: "USD", basis: run.metrics.cost_basis, source: run.metrics.cost_source }
+      : "unknown",
+    estimatedCost: Number.isFinite(run?.metrics?.cost?.total) && run.metrics.cost_basis === "model_rate_estimate_usd" &&
+      run.metrics.coverage?.complete === true
+      ? { amount: run.metrics.cost.total, currency: "USD", basis: run.metrics.cost_basis, source: run.metrics.cost_source }
+      : "unknown",
+    fixtureRevision: run?.fixtureRevision ?? "unknown",
+    rawOutput: run?.rawOutput ?? "unknown",
+  });
+  const solo = fields(read(args[1]));
+  const delivery = fields(read(args[2]));
+  const fixtureMatched = solo.fixtureRevision !== "unknown" && solo.fixtureRevision === delivery.fixtureRevision;
+  const modelMatched = solo.model !== "unknown" && solo.model === delivery.model &&
+    solo.actualModel !== "unknown" && solo.actualModel === delivery.actualModel;
+  const spendComparable = fixtureMatched && modelMatched && solo.acceptance === "passed" && delivery.acceptance === "passed" &&
+    solo.spend !== "unknown" && delivery.spend !== "unknown" &&
+    solo.spend.currency === delivery.spend.currency && solo.spend.basis === delivery.spend.basis;
+  const estimatedCostComparable = fixtureMatched && modelMatched && solo.acceptance === "passed" && delivery.acceptance === "passed" &&
+    solo.estimatedCost !== "unknown" && delivery.estimatedCost !== "unknown" &&
+    solo.estimatedCost.currency === delivery.estimatedCost.currency && solo.estimatedCost.basis === delivery.estimatedCost.basis;
+  console.log(JSON.stringify({
+    solo, delivery, fixtureMatched, modelMatched, spendComparable,
+    spendAdvantage: spendComparable
+      ? solo.spend.amount < delivery.spend.amount ? "solo" : delivery.spend.amount < solo.spend.amount ? "delivery" : "tie"
+      : "unknown",
+    estimatedCostComparable,
+    estimatedCostAdvantage: estimatedCostComparable
+      ? solo.estimatedCost.amount < delivery.estimatedCost.amount ? "solo" : delivery.estimatedCost.amount < solo.estimatedCost.amount ? "delivery" : "tie"
+      : "unknown",
+  }, null, 2));
+  process.exit(0);
+}
+if (args[0] === "--grade-security") {
+  if (args.length !== 2 || !args[1] || args[1].startsWith("--")) {
+    console.error("usage: node evals/run.mjs --grade-security <normalized-assessment.json>");
+    process.exit(2);
+  }
+  try {
+    const fixture = path.join(fixturesDir, "security-check", "ground-truth.json");
+    const {dir, grade} = recordSecurityAssessment(args[1], fixture, resultsRoot);
+    console.log(JSON.stringify({...grade, result_dir: dir}, null, 2));
+    process.exit(grade.status === "passed" ? 0 : 1);
+  } catch {
+    console.error("security assessment or fixture is invalid");
+    process.exit(2);
+  }
+}
 const keep = args.includes("--keep");
 const flagValue = (flag) => {
   const i = args.indexOf(flag);
@@ -124,26 +179,18 @@ function phasePrompt(skillsDir, phase, taskRel) {
 
 function runOmp(prompt, cwd) {
   return new Promise((resolve) => {
-    // Its own process group, so a kill on timeout reaches the child workers omp spawned.
-    const ompArgs = ["-p", "--auto-approve", "--no-session", `--max-time=${maxMinutes}m`];
+    const ompArgs = ["-p", "--auto-approve", "--no-session", "--mode", "json", `--max-time=${maxMinutes}m`];
     if (model !== null) ompArgs.push("--model", model);
     ompArgs.push(prompt);
     const child = spawn("omp", ompArgs, {
-      cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
-      detached: true,
+      cwd, stdio: ["ignore", "pipe", "pipe"], env: process.env, detached: true,
     });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d) => (stdout += d));
     child.stderr.on("data", (d) => (stderr += d));
     const timer = setTimeout(() => {
-      try {
-        process.kill(-child.pid, "SIGKILL");
-      } catch {
-        child.kill("SIGKILL");
-      }
+      try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }
     }, (maxMinutes + 1) * 60 * 1000);
     child.on("close", (code) => {
       clearTimeout(timer);
@@ -178,7 +225,6 @@ function headArtifactCommitProblems(ctx) {
 }
 
 // Checks every phase must pass before its own: one text handoff fence naming the next skill,
-// the artifact with its type and summary, no template placeholder left anywhere in it (frontmatter
 // included), its commit carrying that file, a repository that is otherwise untouched (no code,
 // config, or stray file written or committed by a phase that only writes an artifact), and earlier
 // artifacts and `task.md` unchanged. Git-state checks need the live repository and are skipped when
@@ -249,7 +295,7 @@ async function runScenario(scenario, runDir, dist) {
   // The commit before any phase ran: everything a phase changes outside `.agents/` is measured from here.
   const fixtureSha = git(repo, "rev-parse", "HEAD");
   const resultDir = path.join(runDir, scenario.name);
-  const result = { name: scenario.name, repo, phases: [], ok: true };
+  const result = { name: scenario.name, repo, phases: [], ok: true, model: model ?? "omp-default", fixtureRevision: fixtureSha, wallTimeSeconds: 0, metrics: { wall_ms: 0, tokens: {}, cost: null, cost_basis: null, cost_source: null, coverage: { complete: true, usage_events: 0, cost_events: 0, models: [] } } };
 
   for (const [index, phase] of scenario.phases.entries()) {
     const label = `${index + 1}-${phase.skill}`;
@@ -262,35 +308,35 @@ async function runScenario(scenario, runDir, dist) {
     const started = Date.now();
     console.log(`[${scenario.name}] ${label}: started`);
     const { code, stdout, stderr } = await runOmp(prompt, repo);
-    const seconds = Math.round((Date.now() - started) / 1000);
-    fs.writeFileSync(path.join(out, "answer.md"), stdout);
+    const wallMs = Date.now() - started;
+    const metrics = metricsForOutput(stdout, wallMs);
+    const answer = metrics.answer ?? "";
+    fs.writeFileSync(path.join(out, "answer.md"), answer);
     fs.writeFileSync(path.join(out, "stderr.log"), stderr);
     if (fs.existsSync(taskDir)) fs.cpSync(taskDir, path.join(out, "task"), { recursive: true });
-
-    const ctx = {
-      live: true,
-      repo,
-      codeRoot: repo,
-      taskDir,
-      fixtureSha,
-      before,
-      template,
-      answer: stdout,
-      artifact: newest(taskDir, phase.artifactType),
-      artifacts: artifacts(taskDir),
-    };
+    const ctx = { live: true, repo, codeRoot: repo, taskDir, fixtureSha, before, template, answer, artifact: newest(taskDir, phase.artifactType), artifacts: artifacts(taskDir) };
     const problems = grade(phase, ctx, code);
-    result.phases.push({ phase: label, seconds, ok: problems.length === 0, problems });
-    report(scenario.name, label, seconds, problems);
-    if (problems.length) {
-      result.ok = false;
-      break;
-    }
+    result.wallTimeSeconds += Math.round(wallMs / 1000);
+    const aggregate = result.metrics;
+    aggregate.wall_ms += wallMs;
+    for (const key of ["input", "output", "cacheRead", "cacheWrite"]) if (metrics.tokens?.[key] !== null && metrics.tokens?.[key] !== undefined) aggregate.tokens[key] = (aggregate.tokens[key] ?? 0) + metrics.tokens[key];
+    if (metrics.cost) { aggregate.cost ??= { total: 0 }; aggregate.cost.total += metrics.cost.total; }
+    aggregate.cost_basis = metrics.cost_basis;
+    aggregate.cost_source = metrics.cost_source;
+    aggregate.coverage.complete &&= metrics.coverage.complete;
+    aggregate.coverage.usage_events += metrics.coverage.usage_events;
+    aggregate.coverage.cost_events += metrics.coverage.cost_events;
+    aggregate.coverage.models = [...new Set([...aggregate.coverage.models, ...metrics.coverage.models])];
+    result.phases.push({ phase: label, wall_ms: wallMs, tokens: metrics.tokens, cost: metrics.cost, coverage: metrics.coverage, ok: problems.length === 0, problems });
+    report(scenario.name, label, Math.round(wallMs / 1000), problems);
+    if (problems.length) { result.ok = false; break; }
   }
   if (result.ok && !keep) {
     fs.rmSync(repo, { recursive: true, force: true });
     result.repo = null;
   } else console.log(`[${scenario.name}] repository kept at ${repo}`);
+  result.rawOutput = path.relative(repoRoot, resultDir);
+  fs.writeFileSync(path.join(resultDir, "comparison-run.json"), JSON.stringify(result, null, 2));
   fs.writeFileSync(path.join(resultDir, "report.json"), JSON.stringify(result, null, 2));
   return result;
 }

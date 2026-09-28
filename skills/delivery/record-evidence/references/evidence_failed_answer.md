@@ -1,21 +1,16 @@
-Artifact saved: {artifact_link}
+Hosted recordings: {direct URLs/types for captures actually uploaded and inspected, or "None—upload blocked"}
+Tested revision: {full_tested_sha} | {Current PR head when one exists; otherwise "PR not created"}
 
-Report: {report_link}
-
-Summary:
-{summary}
-
+Result: {failed or blocked; name exact failed target/host/revision blocker}
 Check:
-- <one line per test: result, test name, video timestamp>
+- {For every attempted target: actual result, test name, capture label if hosted, timestamp/output line if recorded}
 
 Caveats:
-- <one line per item in the report's Caveats section, or "None.">
+- {Precise missing capture/permission/status or None.}
 
-Posted to: <PR comment link, tracker issue, or "requester only">
+Posted to: {Only actual same-PR comment and supplied issue permalinks after readback; otherwise "Not published"}
 
-At least one test failed on video, so the implementation changes before a pull request is described. The failed tests above are the feedback for the next phase; the recording is the "before" half of the fix's evidence.
-
-The next phase has not started.
+The failure blocks PR readiness. Repair the implementation or recording environment, then capture the required surfaces again; do not describe the PR as ready. The next phase has not started.
 
 Next action:
 Open a new session in {run_location}, then run:

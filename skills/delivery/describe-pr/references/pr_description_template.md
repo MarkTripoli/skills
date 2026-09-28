@@ -16,10 +16,24 @@ Omit this section when `task.md` states none.
 
 ## Evidence
 
-Include this section for every delivered change. Block publication until the current revision's recorded evidence is available and posted.
+Publish the original recording for each required surface to a supported direct host (GitHub user-attachments or raw gist). The separate PR comment repeats the revision fields and every recording/capture pair exactly. Inspect each hosted object, not just its URL or MIME type: UI requires live video; non-UI requires the original invocation, tested SHA, successful exit/status/outcome, and observed output. Screenshots supplement UI video only.
 
-- {Result line from the current evidence receipt: tests passed, failed, untested; exact revision tested.}
-- {One bullet per captured surface: label, hosted report/capture URL and the separate PR comment URL. UI video must play; CLI/API/agent captures must be readable.}
+- result: passed
+- tested: {FULL_TESTED_CODE_SHA}
+- current head: {FULL_PR_HEAD_SHA}
+- recording: {ui-video|cli-terminal|api-probe|agent-session}
+- capture: {DIRECT_HOSTED_CAPTURE_URL}
+- comment: {DISTINCT_COMMENT_PERMALINK_ON_THIS_PR}
+
+For mixed surfaces, replace the unlabeled recording/capture pair with one pair per required surface using matching, distinct lowercase-hyphenated labels (for example `- recording browser-ui: ui-video` and `- capture browser-ui: {DIRECT_VIDEO_URL}`). Each label must appear in both description and comment.
+
+### Recorded tests
+
+| Test | Result | Capture | Cue |
+|---|---|---|---|
+| {Substantive observable behavior} | passed | {primary for unlabeled pair, otherwise exact capture label} | {Video timestamp or captured output line} |
+
+Add one substantive passed row for each capture label and a row for each other required test. State any failed or untested target and its reason/caveat honestly; a failed or required-untested target blocks `result: passed` and ready publication.
 
 ## Change outline
 
