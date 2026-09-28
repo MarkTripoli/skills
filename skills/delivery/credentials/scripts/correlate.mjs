@@ -16,12 +16,12 @@ function assertRootPath(root) {
     throw new Error('repository root or Git metadata changed');
   }
 }
-function gitFromRoot(root, args, {binary = false, worktreeCwd = false} = {}) {
+function gitFromRoot(root, args, {binary = false} = {}) {
   assertRootPath(root);
   const env = {...process.env, GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1'};
   for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE']) delete env[key];
   const helper = fileURLToPath(new URL('./git-from-root.py', import.meta.url));
-  const result = spawnSync('python3', [helper, ...(worktreeCwd ? ['--worktree-cwd'] : []), ...args], {
+  const result = spawnSync('python3', [helper, ...args], {
     cwd: path.dirname(fileURLToPath(import.meta.url)),
     encoding: binary ? null : 'utf8',
     maxBuffer: 16 * 1024 * 1024,
@@ -32,30 +32,63 @@ function gitFromRoot(root, args, {binary = false, worktreeCwd = false} = {}) {
   if (result.error || result.status !== 0 || (binary ? !Buffer.isBuffer(result.stdout) : typeof result.stdout !== 'string')) throw new Error('repository Git operation failed');
   return result.stdout;
 }
-function verifiedObject(root, oid, type, objectFormat) {
+function chargeScanBudget(budget, {files = 0, bytes = 0, work = 0} = {}) {
+  budget.files += files;
+  budget.bytes += bytes;
+  budget.work += work;
+  if (budget.files > MAX_ROOT_FILES || budget.bytes > MAX_ROOT_BYTES || budget.work > MAX_ROOT_WORK) {
+    throw new Error('repository scan limit exceeded');
+  }
+}
+function verifiedObject(root, oid, type, objectFormat, budget) {
   const bytes = gitFromRoot(root, ['cat-file', type, oid], {binary: true});
+  chargeScanBudget(budget, {bytes: bytes.length, work: 1});
   const actual = createHash(objectFormat).update(`${type} ${bytes.length}\0`).update(bytes).digest('hex');
   if (actual !== oid) throw new Error('unsafe object');
   return bytes;
 }
-function parseEnv(text) {
-  const entries = [];
-  for (const [index, line] of text.split(/\r?\n/).entries()) {
+function* parseEnv(bytes, budget) {
+  const text = bytes.toString('utf8');
+  let start = 0;
+  let lineNumber = 0;
+  while (start <= text.length) {
+    const lineEnd = text.indexOf('\n', start);
+    let line = text.slice(start, lineEnd === -1 ? text.length : lineEnd);
+    if (line.endsWith('\r')) line = line.slice(0, -1);
+    lineNumber++;
+    chargeScanBudget(budget, {work: 1});
     const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
-    if (!match) continue;
-    let value = match[2];
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
-    else value = value.replace(/\s+#.*$/, '');
-    value = value.trim();
-    if (!placeholder(value)) entries.push({value, line: index + 1});
+    if (match) {
+      let value = match[2];
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
+      else value = value.replace(/\s+#.*$/, '');
+      value = value.trim();
+      if (!placeholder(value)) yield {value, line: lineNumber};
+    }
+    if (lineEnd === -1) break;
+    start = lineEnd + 1;
   }
-  return entries;
 }
-function safeIgnoredBytes(root, name) {
+
+function pathRedactionMarker(values) {
+  const used = new Set();
+  for (const value of values) {
+    for (const char of value) {
+      const code = char.codePointAt(0);
+      if (code >= 0xe000 && code <= 0xf8ff) used.add(code);
+    }
+  }
+  for (let code = 0xe000; code <= 0xf8ff; code++) {
+    if (!used.has(code)) return String.fromCodePoint(code);
+  }
+  throw new Error('repository scan limit exceeded');
+}
+function safeIgnoredBytes(root, name, budget) {
   const parts = name.split('/');
   if (path.posix.isAbsolute(name) || parts.length > 128 || parts.some(part => !part || part === '.' || part === '..' || part.includes('\\'))) throw new Error('unsafe path');
   assertRootPath(root);
   const helper = fileURLToPath(new URL('./read-ignored.py', import.meta.url));
+  chargeScanBudget(budget, {work: 1});
   const result = spawnSync('python3', [helper, name], {
     cwd: path.dirname(fileURLToPath(import.meta.url)),
     encoding: null,
@@ -64,69 +97,82 @@ function safeIgnoredBytes(root, name) {
   });
   assertRootPath(root);
   if (result.error || result.status !== 0 || !Buffer.isBuffer(result.stdout) || result.stdout.length > MAX_IGNORED_BYTES) throw new Error('safe ignored read failed');
-  return result.stdout.toString('utf8');
+  chargeScanBudget(budget, {bytes: result.stdout.length});
+  return result.stdout;
 }
-const MAX_IGNORED_BYTES = 1024 * 1024;
+const MAX_ENV_FILE_BYTES = 1024 * 1024;
+const MAX_IGNORED_BYTES = MAX_ENV_FILE_BYTES;
+const MAX_ROOT_FILES = 4096;
+const MAX_ROOT_BYTES = 32 * 1024 * 1024;
+const MAX_ROOT_WORK = 20_000;
 const MAX_TREE_DEPTH = 128;
-const MAX_TREE_ENTRIES = 200_000;
-function treeEntries(tree, oidBytes) {
-  const entries = [];
+function* treeEntries(tree, oidBytes) {
   let offset = 0;
   while (offset < tree.length) {
     const modeEnd = tree.indexOf(0x20, offset);
+    if (modeEnd < 0) throw new Error('unsafe object');
     const nameEnd = tree.indexOf(0, modeEnd + 1);
+    if (nameEnd < 0) throw new Error('unsafe object');
     const oidEnd = nameEnd + 1 + oidBytes;
-    if (modeEnd < 0 || nameEnd < 0 || oidEnd > tree.length) throw new Error('unsafe object');
+    if (oidEnd > tree.length) throw new Error('unsafe object');
     const nameBytes = tree.subarray(modeEnd + 1, nameEnd);
     const name = nameBytes.toString('utf8');
     const mode = tree.subarray(offset, modeEnd).toString('ascii');
     if (!name || name === '.' || name === '..' || name.includes('/') || !Buffer.from(name, 'utf8').equals(nameBytes) || !['40000', '100644', '100755', '120000', '160000'].includes(mode)) throw new Error('unsafe object');
-    entries.push({mode, name, oid: tree.subarray(nameEnd + 1, oidEnd).toString('hex')});
+    yield {mode, name, oid: tree.subarray(nameEnd + 1, oidEnd).toString('hex')};
     offset = oidEnd;
   }
-  return entries;
 }
-function trackedEnvFiles(root) {
-  const commit = verifiedObject(root, root.head, 'commit', root.objectFormat).toString('utf8');
+function* trackedEnvFiles(root, budget) {
+  const commit = verifiedObject(root, root.head, 'commit', root.objectFormat, budget).toString('utf8');
   const treeOid = commit.match(/^tree ([0-9a-f]+)$/m)?.[1];
   if (!treeOid) throw new Error('unsafe object');
   const oidBytes = root.objectFormat === 'sha1' ? 20 : 32;
-  const files = [];
-  let entryCount = 0;
-  function visit(oid, prefix, depth) {
+  function* visit(oid, prefix, depth) {
     if (depth > MAX_TREE_DEPTH) throw new Error('unsafe object');
-    const tree = verifiedObject(root, oid, 'tree', root.objectFormat);
+    const tree = verifiedObject(root, oid, 'tree', root.objectFormat, budget);
     for (const entry of treeEntries(tree, oidBytes)) {
-      if (++entryCount > MAX_TREE_ENTRIES) throw new Error('unsafe object');
+      chargeScanBudget(budget, {work: 1});
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.mode === '40000') {
-        visit(entry.oid, relative, depth + 1);
+        yield* visit(entry.oid, relative, depth + 1);
       } else if (envFile(path.posix.basename(entry.name))) {
         if (entry.mode === '120000') throw new Error('unsafe path');
         if (entry.mode === '100644' || entry.mode === '100755') {
-          const bytes = verifiedObject(root, entry.oid, 'blob', root.objectFormat).toString('utf8');
-          files.push({name: relative, bytes});
+          chargeScanBudget(budget, {files: 1});
+          const bytes = verifiedObject(root, entry.oid, 'blob', root.objectFormat, budget);
+          if (bytes.length > MAX_ENV_FILE_BYTES) throw new Error('repository scan limit exceeded');
+          yield {name: relative, bytes};
         }
       }
     }
   }
-  visit(treeOid, '', 0);
-  return files;
+  yield* visit(treeOid, '', 0);
 }
-function inputFiles(root, includeIgnored) {
+function* inputFiles(root, includeIgnored, budget) {
   assertRootPath(root);
-  const files = trackedEnvFiles(root);
+  yield* trackedEnvFiles(root, budget);
   if (includeIgnored) {
     assertRootPath(root);
-    const ignored = gitFromRoot(root, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard'], {worktreeCwd: true}).split('\0').filter(Boolean);
+    const ignored = gitFromRoot(root, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard'], {binary: true});
+    chargeScanBudget(budget, {bytes: ignored.length, work: 1});
     assertRootPath(root);
-    for (const name of ignored) {
-      if (!envFile(path.posix.basename(name))) continue;
-      const bytes = safeIgnoredBytes(root, name);
-      if (bytes !== null) files.push({name, bytes});
+    let start = 0;
+    while (start < ignored.length) {
+      const end = ignored.indexOf(0, start);
+      if (end < 0) throw new Error('unsafe path');
+      const bytes = ignored.subarray(start, end);
+      const name = bytes.toString('utf8');
+      if (!Buffer.from(name, 'utf8').equals(bytes)) throw new Error('unsafe path');
+      chargeScanBudget(budget, {work: 1});
+      if (envFile(path.posix.basename(name))) {
+        chargeScanBudget(budget, {files: 1});
+        const contents = safeIgnoredBytes(root, name, budget);
+        yield {name, bytes: contents};
+      }
+      start = end + 1;
     }
   }
-  return files;
 }
 export function correlate(repositories, {includeIgnored = false, ownerAuthorized = false} = {}) {
   if (!Array.isArray(repositories) || repositories.length < 2) throw new Error('select at least two repositories');
@@ -172,11 +218,13 @@ export function correlate(repositories, {includeIgnored = false, ownerAuthorized
     if (new Set(roots.map(item => item.path)).size !== roots.length) throw new Error('duplicate repository roots');
     if (new Set(roots.map(item => `${item.commonStat.dev}:${item.commonStat.ino}`)).size !== roots.length) throw new Error('shared repository identity');
     const seen = new Map();
+    const budgets = roots.map(() => ({files: 0, bytes: 0, work: 0}));
     for (const [repo, root] of roots.entries()) {
-      for (const file of inputFiles(root, includeIgnored)) {
+      const budget = budgets[repo];
+      for (const file of inputFiles(root, includeIgnored, budget)) {
         const rel = path.posix.normalize(file.name);
         if (rel === '.' || rel === '..' || rel.startsWith('../') || path.posix.isAbsolute(rel)) throw new Error('unsafe path');
-        for (const entry of parseEnv(file.bytes)) {
+        for (const entry of parseEnv(file.bytes, budget)) {
           let repos = seen.get(entry.value);
           if (!repos) seen.set(entry.value, repos = new Map());
           let occurrences = repos.get(repo);
@@ -185,10 +233,29 @@ export function correlate(repositories, {includeIgnored = false, ownerAuthorized
         }
       }
     }
+    const redactionValues = [...seen.keys()].sort((a, b) => b.length - a.length);
+    let pathMarker;
     const findings = [];
     for (const occurrences of seen.values()) {
       if (occurrences.size < 2) continue;
-      findings.push({group_id: randomUUID(), locations: [...occurrences.values()].flat()});
+      const locations = [];
+      for (const occurrence of [...occurrences.values()].flat()) {
+        let safePath = occurrence.path;
+        let pathRedacted = false;
+        for (const secret of redactionValues) {
+          chargeScanBudget(budgets[occurrence.repo_index], {work: 1});
+          if (secret.length > safePath.length) continue;
+          if (safePath.includes(secret)) {
+            pathMarker ??= pathRedactionMarker(redactionValues);
+            safePath = safePath.split(secret).join(pathMarker);
+            pathRedacted = true;
+          }
+        }
+        const location = {repo_index: occurrence.repo_index, path: safePath, line: occurrence.line};
+        if (pathRedacted) location.path_redacted = true;
+        locations.push(location);
+      }
+      findings.push({group_id: randomUUID(), locations});
     }
     return {schema_version: 1, findings};
   } finally {

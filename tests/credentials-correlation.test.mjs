@@ -28,6 +28,14 @@ function requireGit(dir) {
   execFileSync('git', ['-C', dir, 'config', 'user.name', 'Credential Fixture']);
   execFileSync('git', ['-C', dir, 'commit', '-qm', 'fixture']);
 }
+
+function replaceHeadWithRepeatedBlobTree(dir, count, contents, prefix) {
+  const oid = execFileSync('git', ['-C', dir, 'hash-object', '-w', '--stdin'], {input: contents, encoding: 'utf8'}).trim();
+  const entries = Array.from({length: count}, (_, index) => `100644 blob ${oid}\t${prefix}${String(index).padStart(5, '0')}`).join('\n') + '\n';
+  const tree = execFileSync('git', ['-C', dir, 'mktree'], {input: entries, encoding: 'utf8'}).trim();
+  const commit = execFileSync('git', ['-C', dir, 'commit-tree', tree, '-m', 'repeated blob fixture'], {encoding: 'utf8'}).trim();
+  execFileSync('git', ['-C', dir, 'update-ref', 'HEAD', commit]);
+}
 function temp(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'credential-correlation-'));
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
@@ -37,14 +45,16 @@ function temp(t) {
 test('correlates equal values only across distinct repositories without leaking them', t => {
   const root = temp(t);
   const contents = fs.readFileSync(fixture, 'utf8');
-  const a = repo(root, 'one', {'.env.local': contents});
-  const b = repo(root, 'two', {'.env.production': contents});
+  const secret = 'fixture-shared-token-7Qp';
+  const leakingPath = `.env.${secret}`;
+  const a = repo(root, 'one', {[leakingPath]: contents});
+  const b = repo(root, 'two', {[leakingPath]: contents});
   const report = correlate([a, b]);
   assert.equal(report.findings.length, 1);
   assert.match(report.findings[0].group_id, /^[0-9a-f-]{36}$/);
   assert.deepEqual(report.findings[0].locations, [
-    {repo_index: 0, path: '.env.local', line: 1},
-    {repo_index: 1, path: '.env.production', line: 1},
+    {repo_index: 0, path: '.env.\uE000', line: 1, path_redacted: true},
+    {repo_index: 1, path: '.env.\uE000', line: 1, path_redacted: true},
   ]);
   assert.equal(JSON.stringify(report).includes('fixture-shared-token-7Qp'), false);
   assert.equal(JSON.stringify(report).includes('API_TOKEN'), false);
@@ -172,6 +182,39 @@ test('Git descriptor launcher ignores a swapped .git link to another worktree', 
   assert.equal(result.stdout.trim(), originalHead);
 });
 
+test('ignored listing stays on pinned metadata during a .git path swap', t => {
+  const root = temp(t);
+  const original = repo(root, 'original', {'.env': 'TOKEN=original-metadata\n'});
+  const alternate = repo(root, 'alternate', {'.env': 'TOKEN=alternate-metadata\n'});
+  const candidate = '.env.fake-metadata-swap';
+  fs.writeFileSync(path.join(original, candidate), 'TOKEN=unread-swap-fixture\n');
+  fs.writeFileSync(path.join(alternate, '.git', 'info', 'exclude'), `${candidate}\n`);
+  const metadata = path.join(original, '.git');
+  const heldMetadata = path.join(original, '.git-held');
+  const rootFd = fs.openSync(original, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+  const gitMetadataFd = fs.openSync(metadata, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+  const helper = path.join(path.dirname(fileURLToPath(import.meta.url)), '../skills/delivery/credentials/scripts/git-from-root.py');
+  let result;
+  fs.renameSync(metadata, heldMetadata);
+  fs.symlinkSync(path.join(alternate, '.git'), metadata);
+  try {
+    result = spawnSync('python3', [helper, '-c', 'core.excludesFile=/dev/null', 'ls-files', '-z', '--others', '--ignored', '--exclude-standard'], {
+      cwd: path.dirname(helper),
+      encoding: null,
+      maxBuffer: 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore', rootFd, gitMetadataFd],
+    });
+  } finally {
+    fs.unlinkSync(metadata);
+    fs.renameSync(heldMetadata, metadata);
+    fs.closeSync(rootFd);
+    fs.closeSync(gitMetadataFd);
+  }
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout.length, 0);
+});
+
 test('reads only the pinned directory when its pathname is rebound before helper open', t => {
   const root = temp(t);
   const original = path.join(root, 'original');
@@ -228,6 +271,22 @@ test('rejects a corrupted nested Git tree before correlating its apparent blob',
   fs.chmodSync(objectPath, 0o644);
   fs.writeFileSync(objectPath, zlib.deflateSync(rawTree));
   assert.throws(() => correlate([a, b]));
+});
+
+test('fails closed on repeated oversized blobs, cumulative bytes, and scan work', t => {
+  const root = temp(t);
+  const other = repo(root, 'other', {'.env': 'TOKEN=not-reported-alone\n'});
+  const oversized = repo(root, 'oversized', {'.env': 'TOKEN=small\n'});
+  replaceHeadWithRepeatedBlobTree(oversized, 501, Buffer.alloc(8 * 1024 * 1024, 0x41), '.env.');
+  assert.throws(() => correlate([oversized, other]), /repository scan limit exceeded/);
+
+  const cumulative = repo(root, 'cumulative', {'.env': 'TOKEN=not-reported-alone\n'});
+  replaceHeadWithRepeatedBlobTree(cumulative, 33, Buffer.alloc(1024 * 1024, 0x42), '.env.');
+  assert.throws(() => correlate([cumulative, other]), /repository scan limit exceeded/);
+
+  const work = repo(root, 'work', {'.env': 'TOKEN=not-reported-alone\n'});
+  replaceHeadWithRepeatedBlobTree(work, 20_001, Buffer.from('x'), 'entry-');
+  assert.throws(() => correlate([work, other]), /repository scan limit exceeded/);
 });
 
 test('correlates explicitly authorized nested ignored env files', t => {
