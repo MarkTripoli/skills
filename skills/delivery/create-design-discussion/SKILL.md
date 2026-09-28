@@ -21,6 +21,7 @@ Convert task request and research into a decision document. Explain current prod
 - Product spec: user behavior today and after change. Keep behavior-focused; file and function names belong in patterns or architecture, not in user-facing current-state bullets.
 - Architecture: show how behavior fits together (before/after, Mermaid, pseudocode, component tree, file tree, `diff` blocks).
 - Design Questions: put unresolved decisions under Design Questions. For each major choice, show options, tradeoffs, and a recommendation grounded in research or local conventions. Include testing approach if research found patterns.
+- **Disposition and authority**: For every consequential ambiguity, record whether its resolution is a source-backed inference or a stakeholder choice, name the owner, and state the acceptance impact. An unresolved stakeholder choice stays under Design Questions and is not an agreed criterion; it blocks handoff and cannot authorize implementation. Cite the source for each inference; never present an inference as stakeholder approval.
 - Question state is binding: initial questions stay open. Do not move a question to Resolved Design Questions because you think the answer is obvious. Questions stay open until user decision, approval, or resolution in a newer artifact. When resolved, record chosen option, rationale, rejected alternatives.
 - Patterns: local patterns for implementation. File locations and short snippets only. Do not paste large source blocks.
 

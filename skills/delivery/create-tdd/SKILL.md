@@ -19,6 +19,7 @@ Run as interview: System Design (behavior across components), then Program Desig
 - Rework affected sections; do not append notes. The TDD reads as a cohesive design, not a running list of answers.
 - Use diagrams, signatures, endpoint shapes, file trees, call trees, or pseudocode when they clarify the decision.
 - Use the smallest useful set of representations.
+- **Disposition and authority**: For every consequential ambiguity, record whether resolution is a source-backed inference or stakeholder choice, name the owner, and state acceptance impact. Cite sources for inferences; an unresolved stakeholder choice remains open, is not an agreed criterion, and blocks approval/handoff and implementation. Do not convert inferred architecture into stakeholder agreement.
 - If engineering constraints alter scope or UX, make that explicit and revise the PRD or mockups when they exist.
 
 ## References
@@ -33,12 +34,11 @@ PRD is helpful but not required. Cite inputs; do not duplicate. If requirements 
 
 ## Converting an existing technical document
 
-When the request asks to convert, import, adopt, or port an existing RFC, design document, technical spec, or architecture decision record, and the current `research.sources` artifact (or a file the user names) holds it, skip the interview and both review gates, then write the TDD in one pass:
+When the request asks to convert, import, adopt, or port an existing RFC, design document, technical spec, or architecture decision record, and the current `research.sources` artifact (or a file the user names) holds it, map stated content in one pass; do not invent decisions for missing or open content:
 
-1. Map the source onto the template: its architecture, components, endpoints, data flow, and external systems become System Design; its module layout, call paths, and internal contracts become Program Design; its interfaces, schemas, and message shapes become Type Definitions; its settings, flags, and migrations become Configuration; its failure modes and recovery become Error Handling; its non-goals become What We're Not Doing. Beside each mapped statement cite the source as the sources artifact records it: location and pointer. Redraw a diagram the source gives as Mermaid only when its content is fully stated; otherwise link the source's visual by location.
-2. Fill the blanks from the repository, not from the source: for each area the source names, start a child worker for role `agent-codebase-locator` or `agent-codebase-pattern-finder` (see the conventions' Child workers section), wait for it, read its final message, and write Local Patterns from what it found, cited with paths. Where the repository contradicts the source (a module, contract, or store the source assumes does not exist or differs), record the difference in the affected section and as a `### Known limits` item; do not resolve it.
-3. A template section the source does not cover, and every item the source marks open (`TBD`, `TODO`, `open question`, `to be decided`), reads `Not stated in <source title>.` followed by the closest fact the source gives, never an invented decision. Each becomes one `### Known limits` item and one `### Verify` box naming the decision the reader must make.
-4. Do not ask questions during the conversion. Wrap up per Step 7: save, commit, and reply with `references/tdd_final_answer.md`, whose `Check:` and `Known limits:` lines carry the blanks the reader fills before the plan.
+1. Map stated architecture, components, endpoints, data flow, external systems, module layout, call paths, and internal contracts to the matching sections. Cite the source beside each mapped statement. Redraw a diagram only when its content is fully stated; otherwise link its visual by location.
+2. Fill local pattern evidence as specified below. Record repository contradictions and every missing or explicitly open item (`TBD`, `TODO`, `open question`, `to be decided`) in `### Known limits` and `### Verify`; add consequential items to `### Ambiguity Disposition`, naming a decision owner and acceptance impact. Preserve `Not stated in <source title>.` rather than inventing a resolution.
+3. A missing or open consequential architecture, contract, or failure-path decision is a stakeholder choice, not an agreed design. Before approval, resolve each through the normal one-question-at-a-time system/program design interview with the named owner; wait after each question and obtain both existing review-gate approvals. Do not hand off to `/create-plan` while any such choice remains open. Non-consequential omissions may remain known limits.
 
 ## Step 2: Write the skeleton
 

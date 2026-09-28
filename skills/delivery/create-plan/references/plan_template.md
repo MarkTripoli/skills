@@ -75,6 +75,33 @@ Omit this section when the phase has none.
 
 [Repeat this structure.]
 
+
+## Ambiguity Disposition
+
+| Consequential ambiguity | Disposition (source-backed inference or stakeholder choice) | Owner | Source / rationale | Acceptance impact | State |
+|---|---|---|---|---|---|
+| [Question] | [Inference / stakeholder choice] | [Named owner] | [Citation or rationale] | [Criteria affected] | [Open / resolved] |
+
+Unresolved stakeholder choices are not agreed criteria and cannot authorize implementation.
+
+## Acceptance Critique (before Human Review)
+
+Independent reviewer: [named role/person, independent of plan author]
+
+Review method: [How the reviewer independently compared plan phases/criteria with product and technical acceptance obligations.]
+
+Review scope: [Criteria, phases, and applicable positive, negative, error, boundary, and failure outcomes examined; note evidence/source used.]
+
+| Acceptance criterion / phase | Challenge and observed gap | Actionable revision | Revision applied (location/evidence) | Critique rerun (reviewer/result) |
+|---|---|---|---|---|
+| [Criterion] | [Outcome examined and gap, or `No gap`; explain] | [Specific change or `None`] | [Applied change and plan location, or `Not required` with rationale] | [Reviewer and result after revision, or `Not required` with rationale] |
+
+| Lens | Applied or skipped | Evidence / concrete skip reason |
+|---|---|---|
+| Acceptance | Applied | [Coverage of observable outcomes, unmet criteria, and review evidence] |
+| [Other relevant lens] | [Applied / skipped] | [Finding or why irrelevant] |
+
+Resolve every actionable finding by applying the revision and recording its location/evidence, then rerun and record the independent critique result. A clean critique records that no revision was required. Unresolved findings or stakeholder choices block approval and implementation.
 ## Human Review
 
 ### Review targets

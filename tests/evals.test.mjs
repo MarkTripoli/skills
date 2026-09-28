@@ -49,6 +49,8 @@ test("source repairs remain allowed but receipt/source commits cannot be mixed",
   assert.ok(evidencePathProblems(base, [repaired], [{ sha: "mixed", subject: "docs(task): evidence", paths: ["app.js", receipt] }], task).length > 0);
 });
 
+
+
 test("a forbidden write reverted before the final state is still retained at a tool boundary", () => {
   const altered = { boundary: "tool_execution_end", files: { ...base.files, "spec.md": { sha256: "weakened" } } };
   assert.ok(evidencePathProblems(base, [altered, base], [], task).some((problem) => problem.includes("spec.md")));

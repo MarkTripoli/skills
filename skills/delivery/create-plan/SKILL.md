@@ -31,6 +31,7 @@ Expand the structure outline into a detailed implementation plan with concrete e
    - Convert each structure-outline phase into implementation steps.
    - Include concrete code examples where they clarify the change.
    - Include automated verification commands and real manual checks when needed.
+- **Disposition and critique**: For every consequential ambiguity inherited or discovered, record source-backed inference versus stakeholder choice, its owner, and acceptance impact. Cite inference sources. Unresolved owner choices remain open, cannot become agreed criteria or authorize implementation, and block approval/handoff. Before the existing human review gate, obtain an independent acceptance-focused critique of each consequential plan. Test observable positive, negative, error, boundary, and failure outcomes as relevant to scope; record actionable findings with affected criterion/phase, required revision, and whether a rerun is needed. Use other lenses only when relevant and record a concrete skip reason for each omitted lens. Revise and rerun the critique after actionable changes; the human gate remains the sole approval gate.
 
 ## Plan Guidelines
 
