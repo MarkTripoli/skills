@@ -25,9 +25,165 @@ test("existing Node setup is detected and preserved across repeated plans", () =
   assert.equal(fs.readFileSync(path.join(root, "package.json"), "utf8"), before);
 }));
 
+test("packageManager identifies an existing manager without a lockfile", () => fixture((root) => {
+  fs.writeFileSync(path.join(root, "package.json"), '{"name":"existing","packageManager":"yarn@4.5.1"}\n');
+  const plan = createPlan(root);
+  assert.equal(plan.mode, "supported");
+  assert.deepEqual(plan.detected, [{ stack: "node", manager: "yarn", manifest: "package.json" }]);
+  assert.deepEqual(plan.actions, []);
+}));
+
+test("packageManager conflicting with a lockfile does not claim a supported toolchain", () => fixture((root) => {
+  fs.writeFileSync(path.join(root, "package.json"), '{"packageManager":"pnpm@9.0.0"}\n');
+  fs.writeFileSync(path.join(root, "yarn.lock"), "# yarn lock\n");
+  const plan = createPlan(root);
+  assert.equal(plan.mode, "unsupported");
+  assert.deepEqual(plan.detected, []);
+  assert.deepEqual(plan.actions, []);
+  assert.match(plan.explanation, /conflicts/);
+}));
+
+test("non-object JSON manifests never imply a supported Node project", () => fixture((root) => {
+  for (const value of [[], null, "package", 42, true]) {
+    fs.writeFileSync(path.join(root, "package.json"), `${JSON.stringify(value)}\n`);
+    const plan = createPlan(root);
+    assert.equal(plan.mode, "unsupported", JSON.stringify(value));
+    assert.deepEqual(plan.detected, []);
+    assert.deepEqual(plan.actions, []);
+  }
+}));
+
+test("invalid package-manager versions fail closed even with a matching lockfile", () => fixture((root) => {
+  fs.writeFileSync(path.join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+  for (const version of ["not-a-version", "latest", "9", "9.0", "09.0.0", "9.0.0-01", "9.0.0+sha224.invalid", "9007199254740992.0.0"]) {
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ packageManager: `pnpm@${version}` }));
+    const plan = createPlan(root);
+    assert.equal(plan.mode, "unsupported", version);
+    assert.deepEqual(plan.detected, []);
+    assert.deepEqual(plan.actions, []);
+  }
+}));
+
+test("Corepack pinned versions with a SHA-224 hash remain supported", () => fixture((root) => {
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({
+    packageManager: `yarn@4.5.1-rc.1+sha224.${"a".repeat(56)}`,
+  }));
+  assert.deepEqual(createPlan(root).detected, [{ stack: "node", manager: "yarn", manifest: "package.json" }]);
+}));
+
+test("devEngines.packageManager selects a validated Corepack fallback", () => fixture((root) => {
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({
+    devEngines: { packageManager: { name: "pnpm", version: `9.0.0+sha224.${"b".repeat(56)}` } },
+  }));
+  fs.writeFileSync(path.join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+  const plan = createPlan(root);
+  assert.equal(plan.mode, "supported");
+  assert.deepEqual(plan.detected, [{ stack: "node", manager: "pnpm", manifest: "package.json" }]);
+  assert.deepEqual(plan.actions, []);
+}));
+
+test("single-object devEngines.packageManager array selects a pinned Corepack fallback", () => fixture((root) => {
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({
+    devEngines: { packageManager: [{ name: "pnpm", version: "9.0.0" }] },
+  }));
+  const plan = createPlan(root);
+  assert.equal(plan.mode, "supported");
+  assert.deepEqual(plan.detected, [{ stack: "node", manager: "pnpm", manifest: "package.json" }]);
+  assert.deepEqual(plan.actions, []);
+}));
+
+test("matching Corepack pins may carry integrity metadata on only one declaration", () => fixture((root) => {
+  const hash = "a".repeat(56);
+  for (const [declared, fallback] of [
+    [`pnpm@9.0.0+sha224.${hash}`, "9.0.0"],
+    ["pnpm@9.0.0", `9.0.0+sha224.${hash}`],
+    [`pnpm@9.0.0+sha224.${hash.toUpperCase()}`, `9.0.0+sha224.${hash}`],
+  ]) {
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({
+      packageManager: declared, devEngines: { packageManager: { name: "pnpm", version: fallback } },
+    }));
+    assert.deepEqual(createPlan(root).detected, [{ stack: "node", manager: "pnpm", manifest: "package.json" }]);
+  }
+}));
+
+test("malformed or conflicting Corepack fallback never claims a supported toolchain", () => fixture((root) => {
+  const manifest = path.join(root, "package.json");
+  const cases = [
+    { devEngines: { packageManager: { name: "pnpm", version: "not-a-version" } } },
+    { devEngines: { packageManager: { name: "pnpm" } } },
+    { devEngines: { packageManager: { name: "pnpm", version: "9.0.0" } }, packageManager: "yarn@4.5.1" },
+    { devEngines: { packageManager: { name: "pnpm", version: "9.0.1" } }, packageManager: "pnpm@9.0.0" },
+    { devEngines: { packageManager: { name: "yarn", version: "4.5.1", onFail: "warn" } } },
+    { devEngines: { packageManager: ["pnpm", "9.0.0"] } },
+    { devEngines: { packageManager: { name: ["pnpm"], version: "9.0.0" } } },
+    { devEngines: { packageManager: { name: "pnpm", version: ["9.0.0"] } } },
+    { devEngines: { packageManager: [] } },
+    { devEngines: { packageManager: [{ name: "pnpm", version: "9.0.0" }, { name: "pnpm", version: "9.0.0" }] } },
+    { devEngines: { packageManager: [{ name: "pnpm", version: "9.0.0" }, { name: "yarn", version: "4.5.1" }] } },
+    { devEngines: { packageManager: [{ name: "pnpm", version: "latest" }] } },
+    { devEngines: { packageManager: [{ name: ["pnpm"], version: "9.0.0" }] } },
+    { devEngines: { packageManager: [{ name: "pnpm", version: ["9.0.0"] }] } },
+    { devEngines: { packageManager: [{ name: "pnpm", version: "9.0.1" }] }, packageManager: "pnpm@9.0.0" },
+    { devEngines: { packageManager: { name: "pnpm", version: `9.0.0+sha224.${"a".repeat(56)}` } },
+      packageManager: `pnpm@9.0.0+sha224.${"b".repeat(56)}` },
+  ];
+  fs.writeFileSync(path.join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+  for (const contents of cases) {
+    fs.writeFileSync(manifest, JSON.stringify(contents));
+    const plan = createPlan(root);
+    assert.equal(plan.mode, "unsupported", JSON.stringify(contents));
+    assert.deepEqual(plan.detected, []);
+    assert.deepEqual(plan.actions, []);
+  }
+}));
+
+test("a directory named package.json is not a Node manifest", () => fixture((root) => {
+  const manifest = path.join(root, "package.json");
+  fs.mkdirSync(manifest);
+  fs.writeFileSync(path.join(root, ".nvmrc"), "22\n");
+  const plan = createPlan(root);
+  assert.equal(plan.mode, "unsupported");
+  assert.deepEqual(plan.detected, []);
+  assert.deepEqual(plan.actions, []);
+  assert.match(plan.explanation, /regular file/);
+  const script = fileURLToPath(new URL("../skills/project-init/scripts/bootstrap.mjs", import.meta.url));
+  const applied = spawnSync(process.execPath, [script, "--target", root, "--apply", "--approve", plan.planId], { encoding: "utf8" });
+  assert.equal(applied.status, 2);
+  assert.equal(JSON.parse(applied.stdout).mode, "unsupported");
+  assert.equal(fs.statSync(manifest).isDirectory(), true);
+}));
+
+test("non-file version markers and lockfiles never imply an initialized Node project", () => fixture((root) => {
+  for (const marker of [".nvmrc", ".node-version"]) {
+    const location = path.join(root, marker);
+    fs.mkdirSync(location);
+    const plan = createPlan(root);
+    assert.equal(plan.mode, "unsupported");
+    assert.deepEqual(plan.detected, []);
+    assert.deepEqual(plan.actions, []);
+    assert.match(plan.explanation, /regular files/);
+    fs.rmdirSync(location);
+  }
+  const dangling = path.join(root, ".nvmrc");
+  fs.symlinkSync("missing-version", dangling);
+  assert.equal(createPlan(root).mode, "unsupported");
+  fs.writeFileSync(path.join(root, "package.json"), '{"name":"existing"}\n');
+  const withManifest = createPlan(root);
+  assert.equal(withManifest.mode, "unsupported");
+  assert.match(withManifest.explanation, /regular files/);
+  fs.unlinkSync(dangling);
+  fs.mkdirSync(path.join(root, "pnpm-lock.yaml"));
+  const plan = createPlan(root);
+  assert.equal(plan.mode, "unsupported");
+  assert.deepEqual(plan.detected, []);
+  assert.match(plan.explanation, /regular files/);
+}));
+
 test("empty supported Node target plans without mutation and creates only with approval", () => fixture((root) => {
   fs.writeFileSync(path.join(root, ".nvmrc"), "22\n");
   const first = createPlan(root);
+  assert.deepEqual(first.detected, []);
+  assert.equal(first.mode, "supported");
   assert.deepEqual(first.actions.map(({ path: file }) => file), ["package.json"]);
   assert.equal(fs.existsSync(path.join(root, "package.json")), false);
   assert.deepEqual(createPlan(root), first);
@@ -35,6 +191,16 @@ test("empty supported Node target plans without mutation and creates only with a
   assert.equal(applied.outcome, "applied");
   assert.equal(fs.readFileSync(path.join(root, "package.json"), "utf8"), '{\n  "private": true\n}\n');
   assert.deepEqual(createPlan(root).actions, []);
+}));
+
+test("version-only targets with other files do not claim a manifest or npm manager", () => fixture((root) => {
+  fs.writeFileSync(path.join(root, ".nvmrc"), "22\n");
+  fs.writeFileSync(path.join(root, "notes.txt"), "keep\n");
+  const plan = createPlan(root);
+  assert.equal(plan.mode, "supported");
+  assert.deepEqual(plan.detected, []);
+  assert.deepEqual(plan.actions, []);
+  assert.match(plan.explanation, /version marker/);
 }));
 
 test("creation refuses a file appearing after plan generation", () => fixture((root) => {
@@ -60,6 +226,46 @@ test("a partial staging write never publishes a manifest", () => fixture((root) 
     fs.writeFileSync = write;
   }
   assert.deepEqual(fs.readdirSync(root), [".nvmrc"]);
+}));
+
+test("an interrupted stage outside the target does not block a retry", () => fixture((root) => {
+  const project = path.join(root, "project");
+  fs.mkdirSync(project);
+  fs.writeFileSync(path.join(project, ".nvmrc"), "22\n");
+  const script = fileURLToPath(new URL("../skills/project-init/scripts/bootstrap.mjs", import.meta.url));
+  const plan = createPlan(project);
+  const preload = path.join(root, "interrupt.cjs");
+  fs.writeFileSync(preload, [
+    'const fs = require("node:fs");',
+    "const write = fs.writeFileSync;",
+    "fs.writeFileSync = (file, contents, options) => {",
+    "  if (typeof file === 'number') { write(file, contents.slice(0, 3), options); process.exit(79); }",
+    "  return write(file, contents, options);",
+    "};",
+  ].join("\n"));
+  const interrupted = spawnSync(process.execPath, ["--require", preload, script, "--target", project, "--apply", "--approve", plan.planId], { encoding: "utf8" });
+  assert.equal(interrupted.status, 79, interrupted.stderr);
+  assert.deepEqual(fs.readdirSync(project), [".nvmrc"]);
+  const oldStage = fs.readdirSync(root).find((name) => name.startsWith(".package-staging-"));
+  assert.ok(oldStage);
+  const retry = createPlan(project);
+  assert.deepEqual(retry.detected, []);
+  assert.deepEqual(retry.actions, plan.actions);
+  assert.equal(applyPlan(project, retry).outcome, "applied");
+  assert.equal(fs.readFileSync(path.join(project, "package.json"), "utf8"), plan.actions[0].contents);
+  assert.equal(fs.existsSync(path.join(root, oldStage)), true);
+}));
+
+
+test("foreign staging-like entries are still treated as project content", () => fixture((root) => {
+  fs.writeFileSync(path.join(root, ".nvmrc"), "22\n");
+  const foreign = path.join(root, ".package-staging-abc123");
+  fs.mkdirSync(foreign, { mode: 0o700 });
+  fs.writeFileSync(path.join(foreign, "package.json"), '{"private":');
+  const plan = createPlan(root);
+  assert.deepEqual(plan.actions, []);
+  assert.deepEqual(plan.detected, []);
+  assert.equal(fs.existsSync(path.join(root, "package.json")), false);
 }));
 
 test("a concurrent manifest replacement survives a failed write", () => fixture((root) => {
@@ -138,7 +344,8 @@ for (const kind of ["file", "symlink"]) {
     assert.equal(fs.readFileSync(foreign, "utf8"), "foreign data\n");
     assert.equal(fs.readFileSync(path.join(root, "package.json"), "utf8"),
       kind === "symlink" ? "foreign data\n" : "foreign manifest\n");
-    assert.equal(fs.lstatSync(path.join(root, staged)).isSymbolicLink(), kind === "symlink");
+    assert.equal(fs.lstatSync(staged).isSymbolicLink(), kind === "symlink");
+    fs.rmSync(path.dirname(staged), { recursive: true, force: true });
   }));
 }
 
@@ -189,6 +396,105 @@ test("a target owned by another user cannot publish an attacker-controlled stage
   assert.deepEqual(fs.readdirSync(root), [".nvmrc"]);
 }));
 
+test("a replaceable ancestor of the staging parent is rejected before staging", () => fixture((root) => {
+  const ancestor = path.join(root, "replaceable");
+  const stagingParent = path.join(ancestor, "parent");
+  const project = path.join(stagingParent, "project");
+  fs.mkdirSync(project, { recursive: true });
+  fs.writeFileSync(path.join(project, ".nvmrc"), "22\n");
+  const plan = createPlan(project);
+  fs.chmodSync(ancestor, 0o777);
+  const mkdtemp = fs.mkdtempSync;
+  let stagingAttempted = false;
+  fs.mkdtempSync = (...args) => {
+    stagingAttempted = true;
+    return mkdtemp(...args);
+  };
+  try {
+    assert.throws(() => applyPlan(project, plan), /protected same-device staging directory/);
+  } finally {
+    fs.mkdtempSync = mkdtemp;
+  }
+  assert.equal(stagingAttempted, false);
+  assert.deepEqual(fs.readdirSync(stagingParent), ["project"]);
+  assert.deepEqual(fs.readdirSync(project), [".nvmrc"]);
+}));
+
+test("Darwin ACL-writable staging parent is rejected before publication", { skip: process.platform !== "darwin" }, () => fixture((root) => {
+  const project = path.join(root, "project");
+  fs.mkdirSync(project);
+  fs.writeFileSync(path.join(project, ".nvmrc"), "22\n");
+  const plan = createPlan(project);
+  assert.equal(fs.statSync(root).mode & 0o022, 0);
+  const acl = spawnSync("/bin/chmod", ["+a", "everyone allow add_file,add_subdirectory,delete_child", root], { encoding: "utf8" });
+  assert.equal(acl.status, 0, acl.stderr);
+  const listing = spawnSync("/bin/ls", ["-lde", root], { encoding: "utf8" });
+  assert.match(listing.stdout, /^\s*0:\s.*allow add_file/m);
+  const link = fs.linkSync;
+  let publicationAttempted = false;
+  fs.linkSync = (...args) => {
+    publicationAttempted = true;
+    return link(...args);
+  };
+  try {
+    assert.throws(() => applyPlan(project, plan), /staging directory ACL/);
+  } finally {
+    fs.linkSync = link;
+  }
+  assert.equal(publicationAttempted, false);
+  assert.deepEqual(fs.readdirSync(root), ["project"]);
+  assert.deepEqual(fs.readdirSync(project), [".nvmrc"]);
+}));
+
+test("Darwin ACL-writable bootstrap target is rejected before publication", { skip: process.platform !== "darwin" }, () => fixture((root) => {
+  const project = path.join(root, "project");
+  fs.mkdirSync(project);
+  fs.writeFileSync(path.join(project, ".nvmrc"), "22\n");
+  const plan = createPlan(project);
+  const acl = spawnSync("/bin/chmod", ["+a", "everyone allow search,add_file,delete_child", project], { encoding: "utf8" });
+  assert.equal(acl.status, 0, acl.stderr);
+  const listing = spawnSync("/bin/ls", ["-lde", project], { encoding: "utf8" });
+  assert.match(listing.stdout, /^\s*0:\s.*allow .*search/m);
+  const link = fs.linkSync;
+  let publicationAttempted = false;
+  fs.linkSync = (...args) => {
+    publicationAttempted = true;
+    return link(...args);
+  };
+  try {
+    assert.throws(() => applyPlan(project, plan), /staging directory ACL/);
+  } finally {
+    fs.linkSync = link;
+  }
+  assert.equal(publicationAttempted, false);
+  assert.deepEqual(fs.readdirSync(project), [".nvmrc"]);
+}));
+
+test("Darwin ACL-writable staging ancestor is rejected before staging", { skip: process.platform !== "darwin" }, () => fixture((root) => {
+  const ancestor = path.join(root, "ancestor");
+  const stagingParent = path.join(ancestor, "parent");
+  const project = path.join(stagingParent, "project");
+  fs.mkdirSync(project, { recursive: true });
+  fs.writeFileSync(path.join(project, ".nvmrc"), "22\n");
+  const plan = createPlan(project);
+  const acl = spawnSync("/bin/chmod", ["+a", "everyone allow add_subdirectory,delete_child", ancestor], { encoding: "utf8" });
+  assert.equal(acl.status, 0, acl.stderr);
+  const mkdtemp = fs.mkdtempSync;
+  let stagingAttempted = false;
+  fs.mkdtempSync = (...args) => {
+    stagingAttempted = true;
+    return mkdtemp(...args);
+  };
+  try {
+    assert.throws(() => applyPlan(project, plan), /staging directory ACL/);
+  } finally {
+    fs.mkdtempSync = mkdtemp;
+  }
+  assert.equal(stagingAttempted, false);
+  assert.deepEqual(fs.readdirSync(stagingParent), ["project"]);
+  assert.deepEqual(fs.readdirSync(project), [".nvmrc"]);
+}));
+
 test("a foreign staged inode at cleanup is left intact", () => fixture((root) => {
   fs.writeFileSync(path.join(root, ".nvmrc"), "22\n");
   const plan = createPlan(root);
@@ -215,8 +521,9 @@ test("a foreign staged inode at cleanup is left intact", () => fixture((root) =>
     fs.lstatSync = lstat;
   }
   assert.equal(replaced, true);
-  assert.equal(fs.readFileSync(path.join(root, staged), "utf8"), "foreign staged data\n");
+  assert.equal(fs.readFileSync(staged, "utf8"), "foreign staged data\n");
   assert.equal(fs.readFileSync(path.join(root, "package.json"), "utf8"), '{\n  "private": true\n}\n');
+  fs.rmSync(path.dirname(staged), { recursive: true, force: true });
 }));
 
 test("a parent swapped before directory open fails closed", () => fixture((root) => {
@@ -321,20 +628,20 @@ test("replanning stays on the approved inode when its intermediate parent become
   fs.writeFileSync(path.join(project, ".nvmrc"), "22\n");
   fs.writeFileSync(path.join(outside, "project", ".nvmrc"), "22\n");
   const plan = createPlan(project);
-  const exists = fs.existsSync;
+  const lstat = fs.lstatSync;
   let swapped = false;
-  fs.existsSync = (file) => {
+  fs.lstatSync = (file, options) => {
     if (!swapped && file === ".nvmrc") {
       swapped = true;
       fs.renameSync(parent, moved);
       fs.symlinkSync(outside, parent, "dir");
     }
-    return exists(file);
+    return lstat(file, options);
   };
   try {
     assert.equal(applyPlan(project, plan).outcome, "applied");
   } finally {
-    fs.existsSync = exists;
+    fs.lstatSync = lstat;
   }
   assert.equal(swapped, true);
   assert.equal(fs.existsSync(path.join(outside, "project", "package.json")), false);
@@ -376,6 +683,36 @@ test("CLI requires the dry-run planId for an approved write", () => fixture((roo
   assert.equal(applied.status, 0);
   assert.equal(JSON.parse(applied.stdout).outcome, "applied");
   assert.equal(fs.readFileSync(path.join(root, "package.json"), "utf8"), '{\n  "private": true\n}\n');
+}));
+
+test("CLI reports success when its target cwd is renamed during publication", () => fixture((root) => {
+  const project = path.join(root, "project");
+  const moved = path.join(root, "moved");
+  fs.mkdirSync(project);
+  fs.writeFileSync(path.join(project, ".nvmrc"), "22\n");
+  const script = fileURLToPath(new URL("../skills/project-init/scripts/bootstrap.mjs", import.meta.url));
+  const dryRun = spawnSync(process.execPath, [script], { cwd: project, encoding: "utf8" });
+  assert.equal(dryRun.status, 0);
+  const { planId } = JSON.parse(dryRun.stdout);
+  const preload = path.join(root, "rename-at-publication.cjs");
+  fs.writeFileSync(preload, [
+    'const fs = require("node:fs");',
+    "const link = fs.linkSync;",
+    "fs.linkSync = (from, to) => {",
+    "  fs.renameSync(process.env.BOOTSTRAP_PROJECT, process.env.BOOTSTRAP_MOVED);",
+    "  return link(from, to);",
+    "};",
+  ].join("\n"));
+  const applied = spawnSync(process.execPath, ["--require", preload, script, "--apply", "--approve", planId], {
+    cwd: project,
+    encoding: "utf8",
+    env: { ...process.env, BOOTSTRAP_PROJECT: project, BOOTSTRAP_MOVED: moved },
+  });
+  assert.equal(applied.status, 0, applied.stderr);
+  assert.equal(applied.stderr, "");
+  assert.equal(JSON.parse(applied.stdout).outcome, "applied");
+  assert.equal(fs.existsSync(project), false);
+  assert.equal(fs.readFileSync(path.join(moved, "package.json"), "utf8"), '{\n  "private": true\n}\n');
 }));
 
 test("CLI approval cannot write after the dry-run target inode is replaced", () => fixture((root) => {
