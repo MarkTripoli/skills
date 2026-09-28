@@ -4,6 +4,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseDocument } from 'yaml';
 import { digest, observeArtifacts, planProgress, requireFresh, readArtifact, section } from './artifacts.mjs';
+import { indexFileExists, recordArtifact, reserveArtifactIteration } from './artifact-index.mjs';
 import { git, revision, saveRecord } from './workspace.mjs';
 import { selectStageModel } from './models.mjs';
 import { currentHostedCapture, hostedProof } from './hosted-proof.mjs';
@@ -203,7 +204,12 @@ function repositoryChecks(cwd) {
     const manager = exists('pnpm-lock.yaml') ? 'pnpm' : exists('yarn.lock') ? 'yarn'
       : exists('bun.lock') || exists('bun.lockb') ? 'bun' : 'npm';
     for (const name of ['test', 'lint', 'typecheck', 'build', 'check']) {
-      if (Object.hasOwn(manifest.scripts || {}, name)) add(`${manager} ${name === 'test' ? name : `run ${name}`}`);
+      if (!Object.hasOwn(manifest.scripts || {}, name)) continue;
+      const script = manifest.scripts[name];
+      // The runtime packager requires a runtime; its bare package build is not a check.
+      if (name === 'build' && script === 'node scripts/build-runtimes.mjs') {
+        add(`${manager} run build -- --runtime codex`);
+      } else add(`${manager} ${name === 'test' ? name : `run ${name}`}`);
     }
   }
   if (exists('Makefile')) {
@@ -343,26 +349,37 @@ function replayableVerificationCommand(command, id, cwd) {
         argv.slice(1).some(arg => /^-[ecp]|^--(?:eval|print)(?:=|$)/.test(arg)))) {
     throw new Error(`${id} acceptance command only manufactures a result; it does not exercise product behavior`);
   }
-  const localExecutable = argv[0].startsWith('./') && !argv[0].split('/').includes('..') && (() => {
+  const localFile = filename => {
+    if (!filename || filename.startsWith('-') || path.isAbsolute(filename) ||
+        filename.split('/').includes('..')) return false;
     try {
-      const file = path.resolve(cwd, argv[0]);
-      const root = fs.realpathSync(cwd);
-      return fs.lstatSync(file).isFile() && fs.realpathSync(file).startsWith(`${root}${path.sep}`);
+      const file = path.resolve(cwd, filename);
+      return fs.lstatSync(file).isFile() &&
+        fs.realpathSync(file).startsWith(`${fs.realpathSync(cwd)}${path.sep}`);
     } catch { return false; }
-  })();
-  const uvCommand = executable === 'uv' ? argv.find((arg, index) => index > 1 && !arg.startsWith('-')) : null;
+  };
+  const localExecutable = argv[0].startsWith('./') && localFile(argv[0]);
+  const uvCommandIndex = executable === 'uv'
+    ? argv.findIndex((arg, index) => index > 1 && !arg.startsWith('-')) : -1;
+  const uvCommand = argv[uvCommandIndex];
   if (/^[A-Za-z_][A-Za-z_0-9]*=/.test(argv[0]) ||
       (!localVerificationTools.has(executable) && !localExecutable) ||
       (argv[0].includes('/') && !localExecutable) ||
       (['npm', 'pnpm', 'yarn', 'bun'].includes(executable) &&
         !localCheckScripts.has(argv[1] === 'run' ? argv[2] : argv[1])) ||
-      (['python', 'python3'].includes(executable) && argv.includes('-m') &&
-        !localPythonModules.has(argv[argv.indexOf('-m') + 1])) ||
+      (['python', 'python3'].includes(executable) && (argv[1] === '-m'
+        ? !localPythonModules.has(argv[2]) : !localFile(argv[1]))) ||
+      (['node', 'ruby', 'perl'].includes(executable) &&
+        !localFile(argv[1] === '--test' || argv[1] === '--check' ? argv[2] : argv[1])) ||
       (executable === 'uv' && (argv[1] !== 'run' ||
+        !argv.slice(2, uvCommandIndex).every(arg => ['--locked', '--offline'].includes(arg)) ||
         !(localPythonModules.has(uvCommand) ||
           (['python', 'python3'].includes(uvCommand) &&
-            localPythonModules.has(argv[argv.indexOf('-m') + 1]))))) ||
+            argv[uvCommandIndex + 1] === '-m' &&
+            localPythonModules.has(argv[uvCommandIndex + 2]))))) ||
       (executable === 'go' && !['test', 'vet', 'build'].includes(argv[1] === '-C' ? argv[3] : argv[1])) ||
+      (executable === 'cargo' && !['test', 'clippy', 'check', 'build'].includes(argv[1])) ||
+      (executable === 'gradlew' && !['test', 'check', 'lint'].includes(argv[1])) ||
       (executable === 'make' && !localCheckScripts.has(argv[1])) ||
       (executable === 'test' && (argv.length !== 3 ||
         !['-f', '-d', '-e', '-s'].includes(argv[1]) ||
@@ -528,8 +545,52 @@ async function requireIndependentReview(ctx, task, state, artifact, step, stageS
     throw new Error(`${artifact.file}: independent reviewer proof is missing, scope-incomplete, or not bound to exact HEAD`);
   }
   saveRecord(task, `${name}-proof`, { artifact: artifact.file, hash: artifact.hash, reviewed_head: sourceHead, head, base, revision: state.revision, changed: [...changed], session: result.sessionId, execution, report });
-  if (report.findings.length) throw new Error(`${artifact.file}: independent reviewer found consequential defects; clean review cannot advance`);
-  return { head, session: result.sessionId };
+  if (!report.findings.every(item => item && typeof item.location === 'string' && item.location.trim() &&
+    typeof item.problem === 'string' && item.problem.trim())) {
+    throw new Error(`${artifact.file}: independent reviewer returned malformed findings`);
+  }
+  return { head, session: result.sessionId, findings: report.findings };
+}
+function recordIndependentFindings(task, reviewed, findings, sourceHead) {
+  const clean = value => value.replace(/\s+/g, ' ').trim();
+  const text = `---
+type: code-review
+status: findings
+summary: Independent exact-source reviewer found consequential defects
+head_sha: ${sourceHead}
+---
+
+# Independent source review findings
+
+## Standards
+
+The separate reviewer inspected the changed implementation against the pinned source and reported defects after the writer's clean draft.
+
+## Spec
+
+Resolve the findings before another independent exact-source review. The earlier clean draft does not authorize publication.
+
+## Critical and Required Findings
+
+${findings.map((item, i) => `### CR-${i + 1}: ${clean(item.location)}
+
+${clean(item.problem)}`).join('\n\n')}
+`;
+  if (indexFileExists(path.join(task.taskDir, 'index.json'))) {
+    const reserved = reserveArtifactIteration(task.taskDir, 'review', 'code');
+    const staged = path.join(task.taskDir, reserved.writePath);
+    fs.writeFileSync(staged, text, { encoding: 'utf8', flag: 'wx' });
+    recordArtifact(task.taskDir, 'review', 'code', 'code-review', staged);
+  } else {
+    const sequence = Math.max(0, ...fs.readdirSync(task.taskDir).map(name => Number(name.match(/^(\d{2,})-[a-z0-9-]+\.md$/)?.[1]) || 0)) + 1;
+    fs.writeFileSync(path.join(task.taskDir, `${String(sequence).padStart(2, '0')}-code-review-independent.md`),
+      text, { encoding: 'utf8', flag: 'wx' });
+  }
+  const after = observeArtifacts(task.taskDir);
+  if (after.latest['code-review']?.status !== 'findings' || after.latest['code-review'].hash === reviewed.hash) {
+    throw new Error('Independent review findings did not supersede the writer review artifact');
+  }
+  return after;
 }
 function currentHostedDescription(state) {
   const proof = state.proofs?.['hosted-description'];
@@ -614,7 +675,17 @@ export async function runSkill(ctx, task, state, inputs, skill, step, feedback =
     return next;
   });
   if (skill === 'review-code' && observed.latest['code-review']?.status === 'clean') {
-    await requireIndependentReview(ctx, task, state, observed.latest['code-review'], step, result.sessionId, acceptanceItems(task, state), sourceHead, selection.model, Boolean(inputs.verify));
+    const review = await requireIndependentReview(ctx, task, state, observed.latest['code-review'], step,
+      result.sessionId, acceptanceItems(task, state), sourceHead, selection.model, Boolean(inputs.verify));
+    if (review.findings.length) {
+      const after = recordIndependentFindings(task, observed.latest['code-review'], review.findings, sourceHead);
+      const finding = after.latest['code-review'];
+      return { ...observed, ...after, proofs: {
+        ...observed.proofs, 'code-review': {
+          hash: finding.hash, revision: observed.revision, generation: observed.generation, session: review.session,
+        },
+      } };
+    }
   }
   return observed;
 }
