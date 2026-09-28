@@ -145,7 +145,9 @@ test('ordinary next-phase handoff admits a fresh child only after the prior live
   const metric = (sessionId, percent) => ({ sessionId, contextUsage: { tokens: percent, contextWindow: 100, percent } });
   checkpointContext(dir, metric('child-a', 20));
   begin(dir, 'create-prd');
-  assert.throws(() => startFreshSession(dir, 'child-b'), /measured context boundary/);
+  checkpointContext(dir, metric('child-a', 22));
+  assert.throws(() => startFreshSession(dir, 'child-b'), /current child to finish/);
+  assert.equal(inspect(dir).context_boundary.sessionId, 'child-a');
   suspendPhase(dir, 'create-prd', 'agent://prd-a', 'Who owns this?');
   checkpointContext(dir, metric('child-a', 25));
   assert.throws(() => startFreshSession(dir, 'child-b'), /active phase and human gate/);
@@ -154,6 +156,7 @@ test('ordinary next-phase handoff admits a fresh child only after the prior live
   const pending = gate(dir, file);
   assert.throws(() => startFreshSession(dir, 'child-b'), /active phase and human gate/);
   answer(dir, file, pending.hash, 'approve');
+  assert.equal(initialize(dir, { ...options, max_steps: 3, context_policy: 'stop-at-60' }).completed_step, 1);
 
   startFreshSession(dir, 'child-b');
   assert.equal(inspect(dir).context_boundary.action, 'awaiting-checkpoint');
@@ -169,12 +172,15 @@ test('ordinary next-phase handoff admits a fresh child only after the prior live
   assert.equal(inspect(dir).context_boundary.action, 'recheck-required');
   assert.throws(() => startFreshSession(dir, 'child-a'), /measured context boundary/);
   checkpointContext(dir, metric('child-b', 20));
+  assert.throws(() => startFreshSession(dir, 'child-c'), /current child to finish/);
+  assert.deepEqual(inspect(dir).context_boundary.retiredSessionIds, ['child-a']);
+  assert.equal(gate(dir, file).approved, true);
   assert.equal(inspect(dir).context_boundary.action, 'continue');
   assert.throws(() => startFreshSession(dir, 'child-a'), /retired child session/);
 });
 
 test('context threshold requires the fresh child live metric before dispatch', (t) => {
-  const { dir } = fixture(t);
+  const { dir, file } = fixture(t);
   initialize(dir, { ...options, max_steps: 3, context_policy: 'stop-at-60' });
   checkpointContext(dir, { sessionId: 'old-session', contextUsage: { tokens: 60, contextWindow: 100, percent: 60 } });
   assert.equal(inspect(dir).context_boundary.action, 'fresh-session');
@@ -199,6 +205,9 @@ test('context threshold requires the fresh child live metric before dispatch', (
   checkpointContext(dir, { sessionId: 'new-session', contextUsage: { tokens: 25, contextWindow: 100, percent: 25 } });
   begin(dir, 'verify-implementation');
   checkpointContext(dir, { sessionId: 'new-session', contextUsage: { tokens: 60, contextWindow: 100, percent: 60 } });
+  assert.throws(() => startFreshSession(dir, 'third-session'), /current child to finish/);
+  const pending = gate(dir, file);
+  answer(dir, file, pending.hash, 'approve');
   startFreshSession(dir, 'third-session');
   checkpointContext(dir, { sessionId: 'third-session', contextUsage: { tokens: 10, contextWindow: 100, percent: 10 } });
   begin(dir, 'review-code');

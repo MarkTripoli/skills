@@ -110,6 +110,9 @@ export function startFreshSession(taskDir, sessionId) {
   if (state.stopped || state.pending || state.phase) {
     throw new Error('Resolve the active phase and human gate before handing off its child session');
   }
+  if (state.steps > 0 && state.completed_step !== state.steps) {
+    throw new Error('Wait for the current child to finish and gate its artifact before retiring its session');
+  }
   if (typeof sessionId !== 'string' || !sessionId.trim()) {
     throw new Error('A fresh session identity is required to cross the context boundary');
   }
@@ -148,6 +151,7 @@ export function begin(taskDir, skill) {
   if (!skill || typeof skill !== 'string') throw new Error('Skill name is required');
   if (state.steps >= state.options.max_steps) throw new Error(`Reached max_steps=${state.options.max_steps}`);
   state.steps += 1;
+  state.completed_step = null;
   state.last_skill = skill;
   if ((state.options.context_policy ?? 'off') === 'stop-at-60') {
     state.context_boundary = {
@@ -171,8 +175,10 @@ export function gate(taskDir, file) {
   if (state.pending && state.pending.file !== current.file) throw new Error('A different artifact is awaiting a human decision');
   const replaced = Boolean(state.pending && state.pending.hash !== current.hash);
   if (state.revision?.file === current.file && state.revision.hash === current.hash) throw new Error('The requested revision has not changed the artifact');
+  state.completed_step = state.steps;
   if (state.approvals[current.file] === current.hash) {
-    if (state.pending) { state.pending = null; save(root, state); }
+    if (state.pending) state.pending = null;
+    save(root, state);
     return { approved: true, ...current, steps: state.steps };
   }
   state.pending = current;
