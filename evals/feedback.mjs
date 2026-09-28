@@ -56,6 +56,7 @@ function recordedRunEvidence(run, side) {
     evidenceRef,
     cost: cost ? { ...cost, currency: "USD", basis: run.metrics?.cost_basis, source: run.metrics?.cost_source } : null,
     usageEvents: coverage?.usage_events,
+    costEvents: coverage?.cost_events,
     measuredEvents: coverage?.turns,
     tokens: run.metrics?.tokens,
   };
