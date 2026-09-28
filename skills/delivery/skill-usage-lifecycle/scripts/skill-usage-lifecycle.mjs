@@ -3,6 +3,8 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const SUPPORTED_SOURCES = new Set(["claude-code", "codex", "oh-my-pi", "pi"]);
+const DAY_MS = 86_400_000;
+const COVERAGE_LAG_MS = DAY_MS;
 
 function parseTimestamp(value) {
   if (typeof value !== "string") return NaN;
@@ -23,12 +25,12 @@ export function buildReport(input) {
   const from = parseTimestamp(coverage?.observedFrom);
   const through = parseTimestamp(coverage?.observedThrough);
   const validInterval = Number.isFinite(from) && Number.isFinite(through) && from <= through && from <= now && through <= now;
-  const days = validInterval ? (through - from) / 86_400_000 : null;
+  const days = validInterval ? (through - from) / DAY_MS : null;
   const provenCoverage = coverage?.complete === true
     && coverage?.consent === true
     && SUPPORTED_SOURCES.has(coverage?.source)
     && validInterval;
-  const sufficient = provenCoverage && days >= 30;
+  const sufficient = provenCoverage && days >= 30 && now - through <= COVERAGE_LAG_MS;
   const usage = new Set();
   const unplaced = new Set();
   if (provenCoverage) {
@@ -44,12 +46,18 @@ export function buildReport(input) {
   return {
     coverage: { sufficient, source: SUPPORTED_SOURCES.has(coverage?.source) ? coverage.source : null, days },
     suggestions: input.inventory.map((item) => {
-      const observed = usage.has(`${item.name}\0${item.version}`);
+      const key = `${item.name}\0${item.version}`;
+      const observed = usage.has(key);
+      // presentSince attests uninterrupted presence, which event coverage alone cannot establish.
+      const presentSince = parseTimestamp(item.presentSince);
+      const continuouslyPresent = Number.isFinite(presentSince)
+        && presentSince <= now - 30 * DAY_MS
+        && through - Math.max(from, presentSince) >= 30 * DAY_MS;
       let status = "unknown";
       if (item.pinned === true) status = "pinned";
       else if (item.ignored === true) status = "ignored";
       else if (observed) status = "active";
-      else if (sufficient && !unplaced.has(`${item.name}\0${item.version}`)) status = "stale-candidate";
+      else if (sufficient && continuouslyPresent && !unplaced.has(key)) status = "stale-candidate";
       return { name: item.name, version: item.version, status };
     }),
     policy: "Suggestions only. No skill is deleted or disabled; usage stays local.",
