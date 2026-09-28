@@ -4,6 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { evaluateContextBoundary } from '../route-model/context.mjs';
+import { currentArtifact, indexFileExists, parseArtifactText } from '../../../shared/task-artifacts.mjs';
 
 const filename = '.first-sergent-state.json';
 const allowedGates = new Set(['all', 'plan', 'pr', 'none']);
@@ -11,6 +12,40 @@ const allowedTransports = new Set(['native', 'herdr']);
 const allowedQuotaModes = new Set(['off', 'omp', 'agent-router']);
 const allowedContextPolicies = new Set(['off', 'stop-at-60']);
 const digest = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
+const phaseArtifactTypes = Object.freeze({
+  'gather-sources': 'sources',
+  'create-research-questions': 'research-questions',
+  'iterate-research-questions': 'research-questions',
+  'create-research': 'research',
+  'iterate-research': 'research',
+  'create-design-discussion': 'design-discussion',
+  'iterate-design-discussion': 'design-discussion',
+  'create-prd': 'design-prd',
+  'iterate-prd': 'design-prd',
+  'create-tdd': 'design-tdd',
+  'iterate-tdd': 'design-tdd',
+  'create-structure-outline': 'structure-outline',
+  'iterate-structure-outline': 'structure-outline',
+  'create-plan': 'plan',
+  'iterate-plan': 'plan',
+  'create-epic-plan': 'epic-plan',
+  'start-epic-delivery': 'epic-delivery',
+  'reproduce-bug': 'reproduction',
+  'fix-bug': 'fix',
+  'implement-plan': 'implementation',
+  'implement-outline': 'implementation',
+  'iterate-implementation': 'implementation',
+  'verify-implementation': 'verification',
+  'test-app': 'app-test',
+  'review-code': 'code-review',
+  'fix-code-review': 'code-review-fixes',
+  'review-artifact-comments': 'comment-review',
+  'describe-pr': 'pr-description',
+  'resolve-pr-reviews': 'pr-review',
+  'record-evidence': 'evidence',
+  'iterate-evidence': 'evidence-iteration',
+  'ci-commit': 'commit',
+});
 
 function taskPath(taskDir) {
   const root = fs.realpathSync(taskDir);
@@ -22,6 +57,19 @@ function artifact(root, file) {
   const resolved = fs.realpathSync(path.resolve(root, file));
   if (!resolved.startsWith(`${root}${path.sep}`) || resolved === path.join(root, 'task.md')) throw new Error('Artifact must be inside the task directory');
   return { file: path.relative(root, resolved), hash: digest(fs.readFileSync(resolved)) };
+}
+
+function phaseArtifact(root, state, current) {
+  const expectedType = phaseArtifactTypes[state.last_skill];
+  if (!expectedType) throw new Error(`No artifact type is registered for active phase ${state.last_skill}`);
+  const text = fs.readFileSync(path.join(root, current.file), 'utf8');
+  parseArtifactText(text, expectedType, current.file);
+  if (indexFileExists(path.join(root, 'index.json'))) {
+    const record = currentArtifact(root, expectedType);
+    if (!record || record.path !== current.file || record.sha256 !== current.hash) {
+      throw new Error(`Artifact does not match the current ${state.last_skill} phase artifact`);
+    }
+  }
 }
 
 function save(root, state) {
@@ -172,10 +220,11 @@ export function gate(taskDir, file) {
   if (state.stopped) throw new Error('Human stopped this delivery');
   if (state.phase) throw new Error('Finish the addressable phase before gating its artifact');
   const current = artifact(root, file);
+  if (state.steps > 0) phaseArtifact(root, state, current);
   if (state.pending && state.pending.file !== current.file) throw new Error('A different artifact is awaiting a human decision');
   const replaced = Boolean(state.pending && state.pending.hash !== current.hash);
   if (state.revision?.file === current.file && state.revision.hash === current.hash) throw new Error('The requested revision has not changed the artifact');
-  state.completed_step = state.steps;
+  if (state.steps > 0) state.completed_step = state.steps;
   if (state.approvals[current.file] === current.hash) {
     if (state.pending) state.pending = null;
     save(root, state);

@@ -11,7 +11,7 @@ function fixture(t) {
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.writeFileSync(path.join(dir, 'task.md'), '---\nslug: sample\n---\nOriginal user request\n');
   const file = path.join(dir, '01-plan.md');
-  fs.writeFileSync(file, '---\ntype: plan\n---\nFirst plan\n');
+  fs.writeFileSync(file, '---\ntype: plan\nsummary: First plan\n---\nFirst plan\n');
   return { dir, file };
 }
 
@@ -37,14 +37,14 @@ test('approved artifact survives a fresh orchestrator but a changed revision req
   answer(dir, file, first.hash, 'approve');
   assert.equal(gate(dir, file).approved, true);
   assert.equal(inspect(dir).steps, 1);
-  fs.writeFileSync(file, '---\ntype: plan\n---\nRevised plan\n');
+  fs.writeFileSync(file, '---\ntype: plan\nsummary: Revised plan\n---\nRevised plan\n');
   assert.throws(() => answer(dir, file, first.hash, 'approve'), /No human gate is pending/);
   const second = gate(dir, file);
   assert.equal(second.approved, false);
   answer(dir, file, second.hash, 'approve');
   assert.equal(gate(dir, file).approved, true);
-  const other = path.join(dir, '02-research.md');
-  fs.writeFileSync(other, '---\ntype: research\n---\nSecond artifact\n');
+  const other = path.join(dir, '02-plan.md');
+  fs.writeFileSync(other, '---\ntype: plan\nsummary: Second plan\n---\nSecond artifact\n');
   gate(dir, other);
   assert.throws(() => gate(dir, file), /different artifact is awaiting/);
 });
@@ -88,6 +88,8 @@ test('an in-phase question blocks outer gates until the same child finishes', (t
   const { dir, file } = fixture(t);
   initialize(dir, options);
   begin(dir, 'create-prd');
+  const prd = path.join(dir, '01-design-prd.md');
+  fs.writeFileSync(prd, '---\ntype: design-prd\nsummary: First PRD\n---\nFirst PRD\n');
   suspendPhase(dir, 'create-prd', 'agent://prd-1', 'Which user owns this flow?');
   assert.equal(inspect(dir).phase.handle, 'agent://prd-1');
   assert.throws(() => gate(dir, file), /Finish the addressable phase/);
@@ -100,9 +102,9 @@ test('an in-phase question blocks outer gates until the same child finishes', (t
   assert.throws(() => suspendPhase(dir, 'create-prd', 'agent://prd-1', 'New question'), /Answer the previous/);
   answerPhase(dir, 'agent://prd-1', 'At checkout');
   assert.equal(inspect(dir).phase.answer, 'At checkout');
-  completedPhase(dir, 'agent://prd-1', file);
+  completedPhase(dir, 'agent://prd-1', prd);
   assert.equal(inspect(dir).phase, null);
-  assert.equal(gate(dir, file).approved, false);
+  assert.equal(gate(dir, prd).approved, false);
 });
 
 test('a stop decision remains terminal after a restarted liaison', (t) => {
@@ -140,7 +142,10 @@ test('context policy requires a live metric and child identity before every disp
 });
 
 test('ordinary next-phase handoff admits a fresh child only after the prior live metric and gates', (t) => {
-  const { dir, file } = fixture(t);
+  const { dir } = fixture(t);
+  const prd = path.join(dir, '01-design-prd.md');
+  const tdd = path.join(dir, '01-design-tdd.md');
+  fs.writeFileSync(prd, '---\ntype: design-prd\nsummary: Approved PRD\n---\nApproved PRD\n');
   initialize(dir, { ...options, max_steps: 3, context_policy: 'stop-at-60' });
   const metric = (sessionId, percent) => ({ sessionId, contextUsage: { tokens: percent, contextWindow: 100, percent } });
   checkpointContext(dir, metric('child-a', 20));
@@ -152,10 +157,10 @@ test('ordinary next-phase handoff admits a fresh child only after the prior live
   checkpointContext(dir, metric('child-a', 25));
   assert.throws(() => startFreshSession(dir, 'child-b'), /active phase and human gate/);
   answerPhase(dir, 'agent://prd-a', 'Administrator');
-  completedPhase(dir, 'agent://prd-a', file);
-  const pending = gate(dir, file);
+  completedPhase(dir, 'agent://prd-a', prd);
+  const pending = gate(dir, prd);
   assert.throws(() => startFreshSession(dir, 'child-b'), /active phase and human gate/);
-  answer(dir, file, pending.hash, 'approve');
+  answer(dir, prd, pending.hash, 'approve');
   assert.equal(inspect(dir).completed_step, 1);
 
   startFreshSession(dir, 'child-b');
@@ -173,9 +178,20 @@ test('ordinary next-phase handoff admits a fresh child only after the prior live
   assert.throws(() => startFreshSession(dir, 'child-a'), /measured context boundary/);
   checkpointContext(dir, metric('child-b', 20));
   assert.throws(() => startFreshSession(dir, 'child-c'), /current child to finish/);
-  assert.deepEqual(inspect(dir).context_boundary.retiredSessionIds, ['child-a']);
-  assert.equal(gate(dir, file).approved, true);
-  assert.equal(inspect(dir).context_boundary.action, 'continue');
+  assert.throws(() => gate(dir, prd), /artifact type design-prd does not match design-tdd/);
+  assert.equal(inspect(dir).completed_step, null);
+  assert.equal(fs.existsSync(tdd), false);
+  assert.throws(() => startFreshSession(dir, 'child-c'), /current child to finish/);
+  fs.writeFileSync(tdd, '---\ntype: design-tdd\n---\nIncomplete TDD\n');
+  assert.throws(() => gate(dir, tdd), /summary must be a scalar/);
+  assert.equal(inspect(dir).completed_step, null);
+  fs.writeFileSync(tdd, '---\ntype: design-tdd\nsummary: Completed TDD\n---\nCompleted TDD\n');
+  const tddPending = gate(dir, tdd);
+  assert.equal(tddPending.approved, false);
+  assert.throws(() => startFreshSession(dir, 'child-c'), /active phase and human gate/);
+  answer(dir, tdd, tddPending.hash, 'approve');
+  assert.equal(inspect(dir).completed_step, 2);
+  assert.equal(gate(dir, tdd).approved, true);
   assert.throws(() => startFreshSession(dir, 'child-a'), /retired child session/);
 });
 
@@ -203,7 +219,7 @@ test('context threshold requires the fresh child live metric before dispatch', (
   assert.deepEqual(inspect(dir).context_boundary.retiredSessionIds, ['old-session']);
   assert.throws(() => begin(dir, 'verify-implementation'));
   checkpointContext(dir, { sessionId: 'new-session', contextUsage: { tokens: 25, contextWindow: 100, percent: 25 } });
-  begin(dir, 'verify-implementation');
+  begin(dir, 'create-plan');
   checkpointContext(dir, { sessionId: 'new-session', contextUsage: { tokens: 60, contextWindow: 100, percent: 60 } });
   assert.throws(() => startFreshSession(dir, 'third-session'), /current child to finish/);
   const pending = gate(dir, file);
