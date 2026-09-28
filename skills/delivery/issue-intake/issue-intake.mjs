@@ -75,10 +75,14 @@ function taskRoots(taskRoot, repositoryRoot) {
   const roots = [];
   for (const record of inventory.stdout.slice(0, -2).split('\0\0')) {
     const fields = record.split('\0');
-    if (!fields[0]?.startsWith('worktree ') || !fields[1]?.startsWith('HEAD ') || fields.some(field => field.startsWith('prunable '))) {
+    if (!fields[0]?.startsWith('worktree ') || fields.some(field => field.startsWith('prunable '))) {
       throw new Error('cannot safely inventory repository worktrees');
     }
-    if (fields.includes('bare')) continue;
+    if (fields.includes('bare')) {
+      if (fields.length !== 2 || fields[1] !== 'bare') throw new Error('cannot safely inventory repository worktrees');
+      continue;
+    }
+    if (!fields[1]?.startsWith('HEAD ')) throw new Error('cannot safely inventory repository worktrees');
     const worktree = fields[0].slice('worktree '.length);
     try {
       const actual = fs.realpathSync(worktree);
@@ -285,9 +289,10 @@ function intakeLocked(options) {
 }
 export function intake(options) {
   const repositoryRoot = options.repositoryRoot ?? (options.taskRoot.endsWith(`${path.sep}.agents${path.sep}tasks`) ? checkoutRoot() : null);
-  const scoped = { ...options, taskRoots: taskRoots(options.taskRoot, repositoryRoot) };
+  const stateFile = resolvedPath(options.stateFile);
+  const scoped = { ...options, stateFile, taskRoots: taskRoots(options.taskRoot, repositoryRoot) };
   if (options.dryRun !== false) return dryRun(scoped);
-  return withClaimLock(options.stateFile, options.staleMs ?? 30 * 60_000, () => intakeLocked(scoped));
+  return withClaimLock(stateFile, options.staleMs ?? 30 * 60_000, () => intakeLocked(scoped));
 }
 function inside(parent, child) {
   const relative = path.relative(parent, child);
@@ -316,14 +321,29 @@ function resolvedPath(target) {
 }
 function validateLocalPaths(taskRoot, stateFile, cwd = process.cwd()) {
   const repositoryRoot = checkoutRoot(cwd);
-  for (const target of [taskRoot, stateFile]) {
-    for (const candidate of new Set([target, resolvedPath(target)])) {
-      if (!inside(repositoryRoot, candidate)) continue;
-      const relative = path.relative(repositoryRoot, candidate) + (target === taskRoot ? '/' : '');
-      const ignored = spawnSync('git', ['-C', repositoryRoot, 'check-ignore', '--quiet', '--no-index', '--', relative], { encoding: 'utf8' });
-      if (ignored.error || ignored.status !== 0) throw new Error(`${target} is inside the checkout but is not ignored; choose an ignored or external path`);
-    }
-  }
+  const canonicalState = resolvedPath(stateFile);
+  const checkIgnored = (target, probe = '') => {
+    if (!inside(repositoryRoot, target)) return;
+    const relative = path.relative(repositoryRoot, target) + probe;
+    const ignored = spawnSync('git', ['-C', repositoryRoot, 'check-ignore', '--quiet', '--no-index', '--', relative], { encoding: 'utf8' });
+    if (ignored.error || ignored.status !== 0) throw new Error(`${target} is inside the checkout but is not ignored; choose an ignored or external path`);
+  };
+  const checkDerived = (target, probe) => {
+    for (const candidate of new Set([target, resolvedPath(target)])) checkIgnored(candidate, probe);
+  };
+  for (const target of new Set([taskRoot, resolvedPath(taskRoot)])) checkIgnored(target, '/');
+  for (const target of new Set([stateFile, canonicalState])) checkIgnored(target);
+  const receiptDirectory = path.join(path.dirname(canonicalState), 'issue-intake-receipts');
+  for (const target of [
+    `${canonicalState}.lock`,
+    `${canonicalState}.lock.reaper`,
+    `${canonicalState}.lock.stale-${crypto.randomUUID()}`,
+    `${canonicalState}.lock.released-${crypto.randomUUID()}`,
+    `${canonicalState}.lock.reaper.released-${crypto.randomUUID()}`,
+    receiptDirectory,
+  ]) checkDerived(target, '/owner.json');
+  checkDerived(receiptDirectory, '/receipt.json');
+  checkDerived(receiptDirectory, '/receipt.json.tmp');
   return repositoryRoot;
 }
 function main(argv) {

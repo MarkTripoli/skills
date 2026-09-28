@@ -10,7 +10,7 @@ import { intake } from '../skills/delivery/issue-intake/issue-intake.mjs';
 const cliPath = fileURLToPath(new URL('../skills/delivery/issue-intake/issue-intake.mjs', import.meta.url));
 const issue = { number: 7, title: 'Fix the widget', body: 'Request body', state: 'OPEN', labels: [{ name: 'ready' }], url: 'https://github.com/acme/app/issues/7' };
 function setup(t, rows = [issue], prs = []) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'issue-intake-'));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'issue-intake-')));
   const taskRoot = path.join(root, 'tasks'); fs.mkdirSync(taskRoot);
   const stateFile = path.join(root, 'claims.json');
   const gh = path.join(root, 'gh-mock.mjs');
@@ -186,6 +186,33 @@ test('default ignored task root finds sibling worktree tasks before claim or han
   assert.equal(JSON.parse(distinct.stdout)[0].status, 'eligible');
 });
 
+test('bare-backed worktree inventory reaches sibling tasks before dispatch', t => {
+  const f = setup(t);
+  const seed = worktrees(f).target;
+  const bare = path.join(f.root, 'bare.git');
+  assert.equal(spawnSync('git', ['clone', '--bare', '-q', seed, bare]).status, 0);
+  const target = path.join(f.root, 'bare-target');
+  const sibling = path.join(f.root, 'bare-sibling');
+  for (const checkout of [target, sibling]) {
+    assert.equal(spawnSync('git', ['--git-dir', bare, 'worktree', 'add', '--detach', '-q', checkout]).status, 0);
+  }
+  const inventory = spawnSync('git', ['-C', target, 'worktree', 'list', '--porcelain', '-z'], { encoding: 'utf8' });
+  assert.equal(inventory.status, 0);
+  assert.match(inventory.stdout, /\0bare\0\0/);
+  const task = path.join(sibling, '.agents/tasks', 'in-progress');
+  fs.mkdirSync(task, { recursive: true });
+  fs.writeFileSync(path.join(task, 'task.md'), '---\nrepository: acme/app\nissue: 7\n---\n');
+  const args = [cliPath, '--repo=acme/app', '--task-root=.agents/tasks', `--state=${f.stateFile}`];
+  const launch = extra => spawnSync(process.execPath, [...args, ...extra], { cwd: target, env: f.env, encoding: 'utf8' });
+  const dry = launch([]);
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.deepEqual(JSON.parse(dry.stdout)[0], { issue: 7, status: 'duplicate-task', tasks: [fs.realpathSync(task)] });
+  const execute = launch(['--execute', '--handoff=nonexistent-handoff']);
+  assert.equal(execute.status, 0, execute.stderr);
+  assert.equal(JSON.parse(execute.stdout)[0].status, 'duplicate-task');
+  assert.equal(fs.existsSync(f.stateFile), false);
+});
+
 test('uninspectable registered worktree aborts before dispatch', t => {
   const f = setup(t);
   const { target, sibling } = worktrees(f);
@@ -231,6 +258,45 @@ test('symlinked task root and uncreated state parent cannot escape into unignore
   assert.equal(fs.existsSync(ignoredState), false);
 });
 
+test('a state-file-only ignore does not expose derived lock and receipt artifacts', t => {
+  const f = setup(t);
+  const { target, taskRoot } = worktrees(f);
+  const ignore = path.join(target, '.gitignore');
+  const stateFile = path.join(target, 'claims.json');
+  fs.writeFileSync(ignore, '.agents/tasks/\n/claims.json\n');
+  const launch = (file, execute = false) => spawnSync(process.execPath, [
+    cliPath, '--repo=acme/app', `--task-root=${taskRoot}`, `--state=${file}`,
+    ...(execute ? ['--execute', '--handoff=nonexistent-handoff'] : []),
+  ], { cwd: target, env: f.env, encoding: 'utf8' });
+  const unsafe = launch(stateFile, true);
+  assert.notEqual(unsafe.status, 0);
+  assert.match(unsafe.stderr, /not ignored/);
+  assert.equal(fs.existsSync(stateFile), false);
+  assert.equal(fs.existsSync(`${stateFile}.lock`), false);
+  assert.equal(fs.existsSync(`${stateFile}.lock.reaper`), false);
+  assert.equal(fs.existsSync(path.join(target, 'issue-intake-receipts')), false);
+  assert.equal(fs.existsSync(f.ghLog), false);
+  fs.writeFileSync(ignore, '.agents/tasks/\n/claims.json\n/claims.json.lock/\n/issue-intake-receipts/\n');
+  const exposedReaper = launch(stateFile, true);
+  assert.notEqual(exposedReaper.status, 0);
+  assert.match(exposedReaper.stderr, /not ignored/);
+  fs.writeFileSync(ignore, '.agents/tasks/\n/claims.json\n/claims.json.lock*/\n');
+  const exposedReceipts = launch(stateFile, true);
+  assert.notEqual(exposedReceipts.status, 0);
+  assert.match(exposedReceipts.stderr, /not ignored/);
+  assert.equal(fs.existsSync(f.ghLog), false);
+  assert.equal(fs.existsSync(stateFile), false);
+
+  fs.writeFileSync(ignore, '.agents/tasks/\n/.intake/\n');
+  const ignoredDirectoryState = path.join(target, '.intake', 'claims.json');
+  const safe = launch(ignoredDirectoryState);
+  assert.equal(safe.status, 0, safe.stderr);
+  assert.equal(JSON.parse(safe.stdout)[0].status, 'eligible');
+  assert.equal(fs.existsSync(ignoredDirectoryState), false);
+  const external = launch(f.stateFile);
+  assert.equal(external.status, 0, external.stderr);
+});
+
 test('missing and invalid issue numbers fail before dispatch', t => {
   for (const number of [undefined, 0, -3, 1.5, '7']) {
     const row = { ...issue };
@@ -256,6 +322,34 @@ test('successful handoff stores repository-scoped receipt without creating task 
   assert(handed.some(arg => arg.includes('Issue #7: Fix the widget')));
   const state = JSON.parse(fs.readFileSync(f.stateFile, 'utf8'));
   assert.equal(state.claims.find(row => row.key === 'acme/app#7').costNote.verified, false);
+});
+
+test('an existing state symlink shares claim, lock, and receipt identity with its target', t => {
+  const f = setup(t);
+  fs.writeFileSync(f.stateFile, JSON.stringify(stateWith([])));
+  const alias = path.join(f.root, 'state-alias.json');
+  fs.symlinkSync(f.stateFile, alias);
+  const handoff = path.join(f.root, 'count-handoff');
+  const count = path.join(f.root, 'handoff-count');
+  fs.writeFileSync(handoff, '#!/bin/sh\nprintf x >> \"$HANDOFF_COUNT\"\n');
+  fs.chmodSync(handoff, 0o755);
+  const launch = state => spawnSync(process.execPath, [
+    cliPath, '--repo=acme/app', `--task-root=${f.taskRoot}`, `--state=${state}`, '--execute', `--handoff=${handoff}`,
+  ], { encoding: 'utf8', env: { ...f.env, HANDOFF_COUNT: count } });
+  const aliased = launch(alias);
+  assert.equal(aliased.status, 0, aliased.stderr);
+  assert.equal(JSON.parse(aliased.stdout)[0].status, 'handed-off');
+  assert.equal(fs.readFileSync(count, 'utf8'), 'x');
+  assert.equal(fs.lstatSync(alias).isSymbolicLink(), true);
+  const claim = JSON.parse(fs.readFileSync(f.stateFile, 'utf8')).claims[0];
+  assert.equal(claim.status, 'complete');
+  assert.equal(path.dirname(claim.receipt), path.join(f.root, 'issue-intake-receipts'));
+  assert.equal(fs.existsSync(`${alias}.lock`), false);
+  assert.equal(fs.existsSync(`${alias}.lock.reaper`), false);
+  const canonical = launch(f.stateFile);
+  assert.equal(canonical.status, 0, canonical.stderr);
+  assert.equal(JSON.parse(canonical.stdout)[0].status, 'complete');
+  assert.equal(fs.readFileSync(count, 'utf8'), 'x');
 });
 
 test('dispatch intent survives crash and is never handed off a second time automatically', t => {
