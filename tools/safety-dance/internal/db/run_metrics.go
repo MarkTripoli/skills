@@ -13,7 +13,6 @@ type RunMetrics struct {
 type RunOutcome struct {
 	ID string `json:"id"`
 	Status string `json:"status"`
-	Error *string `json:"error,omitempty"`
 	SafetyDanceVersion *string `json:"safety_dance_version,omitempty"`
 	SafetyDanceBuildSHA *string `json:"safety_dance_build_sha,omitempty"`
 	CreatedAt int64 `json:"created_at"`
@@ -61,7 +60,7 @@ func (d *DB) GetRunMetrics(runID string) (*RunMetrics, error) {
 		return nil, err
 	}
 	out := &RunMetrics{
-		Run: RunOutcome{ID: run.ID, Status: string(run.Status), Error: run.Error, SafetyDanceVersion: run.SafetyDanceVersion, SafetyDanceBuildSHA: run.SafetyDanceBuildSHA, CreatedAt: run.CreatedAt},
+		Run: RunOutcome{ID: run.ID, Status: string(run.Status), SafetyDanceVersion: run.SafetyDanceVersion, SafetyDanceBuildSHA: run.SafetyDanceBuildSHA, CreatedAt: run.CreatedAt},
 		Invocations: invocations, MediaAttachments: attachments, Cost: "not calculated; no provider-billed cost available",
 	}
 	out.Tokens.Invocations = len(invocations)

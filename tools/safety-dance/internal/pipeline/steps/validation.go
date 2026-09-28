@@ -299,10 +299,10 @@ func persistAgentAttempt(database *db.DB, runID, stepName string, attempt agent.
 				inv.FreshInputTokens = &fresh
 			}
 			if usage.ReasoningReported { reasoning := usage.ReasoningTokens; inv.ReasoningTokens = &reasoning }
-			if result.CacheCreationReported || usage.CacheCreationReported {
-				cacheCreation := usage.CacheCreationTokens
-				inv.CacheCreationTokens = &cacheCreation
-			}
+		}
+		if result.CacheCreationReported || usage.CacheCreationReported {
+			cacheCreation := usage.CacheCreationTokens
+			inv.CacheCreationTokens = &cacheCreation
 		}
 		if result.Metrics != nil {
 			metrics := result.Metrics

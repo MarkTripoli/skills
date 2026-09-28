@@ -1,7 +1,9 @@
 package db
 
 import (
+	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -31,4 +33,22 @@ func TestRunMetricsPreservesZeroMissingAndRunProvenance(t *testing.T) {
 	if report.Tokens.Output == nil || *report.Tokens.Output != 3 || report.Tokens.OutputReported != 1 { t.Fatalf("cumulative output double-counted: %+v", report.Tokens) }
 	if report.Tokens.CacheRead == nil || *report.Tokens.CacheRead != 0 || report.Tokens.CacheReadReported != 1 { t.Fatalf("observed cache zero lost: %+v", report.Tokens) }
 	if wrong, err := d.GetRunMetrics("not-"+run.ID); err != nil || wrong != nil { t.Fatalf("mismatched run report=%v err=%v", wrong, err) }
+}
+
+func TestRunMetricsDoesNotExposePersistedFailureOutput(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil { t.Fatal(err) }
+	defer d.Close()
+	if _, err := d.InsertRepoWithID("repo", "/checkout", "upstream", "main"); err != nil { t.Fatal(err) }
+	run, err := d.InsertRun("repo", "main", "head", "base")
+	if err != nil { t.Fatal(err) }
+	secret := "provider-token-sensitive-value"
+	if _, err := d.sql.Exec(`UPDATE runs SET status = ?, error = ? WHERE id = ?`, "failed", "validation failed: "+secret+"\nsecret output", run.ID); err != nil { t.Fatal(err) }
+	report, err := d.GetRunMetrics(run.ID)
+	if err != nil { t.Fatal(err) }
+	body, err := json.Marshal(report)
+	if err != nil { t.Fatal(err) }
+	if report.Run.Status != "failed" || strings.Contains(string(body), secret) || strings.Contains(string(body), "secret output") || strings.Contains(string(body), `"error"`) {
+		t.Fatalf("report lost failure classification or exposed raw error: %s", body)
+	}
 }

@@ -148,3 +148,24 @@ func TestPersistAgentAttemptPreservesPartialTokenCoverage(t *testing.T) {
 		t.Fatalf("observed zero output counter lost: %+v", report.Tokens)
 	}
 }
+
+func TestPersistAgentAttemptDoesNotInventPrimaryCoverageForCacheOnly(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil { t.Fatal(err) }
+	defer d.Close()
+	if _, err := d.InsertRepoWithID("repo", "/checkout", "upstream", "main"); err != nil { t.Fatal(err) }
+	run, err := d.InsertRun("repo", "main", "head", "base")
+	if err != nil { t.Fatal(err) }
+	start := time.Unix(1_700_000_000, 0)
+	result := &agent.Result{CacheCreationReported: true, Usage: agent.TokenUsage{CacheCreationReported: true}}
+	if err := persistAgentAttempt(d, run.ID, "review", agent.Attempt{Agent: "acp:omp", Result: result, StartedAt: start, CompletedAt: start.Add(time.Second)}); err != nil { t.Fatal(err) }
+	report, err := d.GetRunMetrics(run.ID)
+	if err != nil { t.Fatal(err) }
+	if report.Tokens.Input != nil || report.Tokens.Output != nil || report.Tokens.CacheRead != nil ||
+		report.Tokens.InputReported != 0 || report.Tokens.OutputReported != 0 || report.Tokens.CacheReadReported != 0 {
+		t.Fatalf("cache-only usage invented primary coverage: %+v", report.Tokens)
+	}
+	if len(report.Invocations) != 1 || report.Invocations[0].CacheCreationTokens == nil || *report.Invocations[0].CacheCreationTokens != 0 {
+		t.Fatalf("observed cache-creation zero lost: %+v", report.Invocations)
+	}
+}
