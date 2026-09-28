@@ -19,7 +19,7 @@ function setup(t, rows = [issue], prs = []) {
   fs.chmodSync(gh, 0o755);
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const env = { ...process.env, GH_BIN: gh, GH_LOG: ghLog };
-  const runCli = (args = []) => spawnSync(process.execPath, [cliPath, '--repo=acme/app', `--task-root=${taskRoot}`, `--state=${stateFile}`, ...args], { encoding: 'utf8', env });
+  const runCli = (args = [], repo = 'acme/app') => spawnSync(process.execPath, [cliPath, `--repo=${repo}`, `--task-root=${taskRoot}`, `--state=${stateFile}`, ...args], { encoding: 'utf8', env });
   const runHandoff = (args = []) => {
     const log = path.join(root, 'handoff.json');
     const handoff = path.join(root, 'handoff.mjs');
@@ -44,6 +44,32 @@ test('dry-run remains read-only, applies server label filter, and paginates beyo
   assert.deepEqual(fs.readdirSync(f.taskRoot), []);
 });
 
+test('bounded GH responses larger than the spawn default remain readable', t => {
+  const rows = Array.from({ length: 25 }, (_, i) => ({ ...issue, number: i + 1, body: 'x'.repeat(50_000) }));
+  const f = setup(t, rows);
+  const result = f.runCli(['--label=ready']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).find(row => row.issue === 25).status, 'eligible');
+});
+
+test('installed skill command resolves its sibling script from a separate target checkout', t => {
+  const f = setup(t);
+  const installed = path.join(f.root, 'installed', 'issue-intake');
+  const target = path.join(f.root, 'target');
+  fs.mkdirSync(installed, { recursive: true });
+  fs.mkdirSync(target);
+  fs.copyFileSync(cliPath, path.join(installed, 'issue-intake.mjs'));
+  const skillFile = path.join(installed, 'SKILL.md');
+  fs.copyFileSync(fileURLToPath(new URL('../skills/delivery/issue-intake/SKILL.md', import.meta.url)), skillFile);
+  assert.equal(spawnSync('git', ['init', '-q', target]).status, 0);
+  const result = spawnSync('sh', ['-c', 'node "$(dirname "$SKILL_FILE")/issue-intake.mjs" "$@"', 'sh', '--repo=acme/app', `--task-root=${f.taskRoot}`, `--state=${f.stateFile}`, '--label=ready'], {
+    cwd: target, env: { ...f.env, SKILL_FILE: skillFile }, encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout)[0].status, 'eligible');
+  assert.deepEqual(fs.readdirSync(target).filter(name => name !== '.git'), []);
+});
+
 test('truncated queue and PR listings fail closed', t => {
   const rows = Array.from({ length: 1000 }, (_, i) => ({ ...issue, number: i + 1 }));
   const queue = setup(t, rows).runCli();
@@ -64,14 +90,14 @@ test('empty queue and server-returned label mismatch allocate nothing', t => {
 });
 
 test('failed handoff leaves a durable unknown receipt and never relaunches', t => {
-  const f = setup(t);
+  const f = setup(t, [issue, { ...issue, number: 8 }, { ...issue, number: 9 }]);
   const failing = path.join(f.root, 'fail.sh');
   fs.writeFileSync(failing, '#!/bin/sh\nexit 1\n'); fs.chmodSync(failing, 0o755);
   const first = spawnSync(process.execPath, [cliPath, '--repo=acme/app', `--task-root=${f.taskRoot}`, `--state=${f.stateFile}`, '--execute', `--handoff=${failing}`], { encoding: 'utf8', env: f.env });
-  assert.equal(JSON.parse(first.stdout)[0].status, 'handoff-unknown');
+  assert.deepEqual(JSON.parse(first.stdout).map(row => [row.issue, row.status, row.blockedBy]), [[7, 'handoff-unknown', undefined], [8, 'blocked-not-attempted', 7], [9, 'blocked-not-attempted', 7]]);
   const before = fs.readFileSync(f.stateFile, 'utf8');
   const second = f.runHandoff();
-  assert.equal(JSON.parse(second.stdout)[0].status, 'handoff-unknown');
+  assert.deepEqual(JSON.parse(second.stdout).map(row => row.status), ['handoff-unknown', 'blocked-not-attempted', 'blocked-not-attempted']);
   assert.equal(fs.readFileSync(f.stateFile, 'utf8'), before);
   assert.deepEqual(fs.readdirSync(f.taskRoot), []);
 });
@@ -107,7 +133,7 @@ test('issue lookup recognizes only task frontmatter, not body text', t => {
   assert.equal(fs.existsSync(execute.log), false);
   fs.writeFileSync(task, '---\nslug: body-only\nrepository: "acme/#app" # quoted hash is data\nissue: 7\n---\nBody.\n');
   assert.equal(JSON.parse(f.runCli().stdout)[0].status, 'eligible');
-  assert.equal(JSON.parse(f.runCli(['--repo=acme/#app']).stdout)[0].status, 'duplicate-task');
+  assert.equal(JSON.parse(f.runCli([], 'acme/#app').stdout)[0].status, 'duplicate-task');
 });
 test('shared task roots and PR bodies stay scoped to canonical repository identity', t => {
   const externalPrs = [{ number: 4, title: 'External references', body: 'other/repo#7 and https://github.com/other/repo/issues/7 and https://github.com/other/acme/app#7', url: '' }];
@@ -149,7 +175,7 @@ test('successful handoff stores repository-scoped receipt without creating task 
 });
 
 test('dispatch intent survives crash and is never handed off a second time automatically', t => {
-  const f = setup(t);
+  const f = setup(t, [issue, { ...issue, number: 8 }]);
   const id = 'sha256-id';
   const receipt = path.join(f.root, 'issue-intake-receipts', `${id}.json`);
   fs.mkdirSync(path.dirname(receipt));
@@ -157,7 +183,7 @@ test('dispatch intent survives crash and is never handed off a second time autom
   fs.writeFileSync(f.stateFile, JSON.stringify(stateWith([{ key: 'acme/app#7', repo: 'acme/app', issue: 7, status: 'dispatching', idempotencyKey: id, receipt }])));
   const result = f.runHandoff();
   assert.equal(result.status, 0);
-  assert.equal(JSON.parse(result.stdout)[0].status, 'handoff-unknown');
+  assert.deepEqual(JSON.parse(result.stdout).map(row => row.status), ['handoff-unknown', 'blocked-not-attempted']);
   assert.equal(fs.existsSync(result.log), false);
 });
 
@@ -244,4 +270,21 @@ test('unsafe task root and ambiguous execution flags fail before state creation'
   assert.notEqual(f.runCli(['--execute=false']).status, 0);
   assert.notEqual(f.runCli(['--execute']).status, 0);
   assert.equal(fs.existsSync(f.stateFile), false);
+});
+
+test('malformed CLI tokens cannot change repository scope or reach lookup and dispatch', t => {
+  const f = setup(t);
+  for (const args of [
+    ['execute'], ['--execute'], ['--execute=false'], ['--label'], ['--label', 'ready'],
+    ['--label='], ['--label=--execute'], ['--unknown=x'], ['--repo=other/repo'],
+    [`--task-root=${path.join(f.root, 'other')}`], ['--handoff=other-adapter'],
+  ]) {
+    const result = f.runHandoff(args);
+    assert.notEqual(result.status, 0, JSON.stringify(args));
+    assert.equal(fs.existsSync(result.log), false, JSON.stringify(args));
+    assert.equal(fs.existsSync(f.ghLog), false, JSON.stringify(args));
+    assert.equal(fs.existsSync(f.stateFile), false, JSON.stringify(args));
+  }
+  assert.notEqual(f.runCli(['--handoff=other-adapter']).status, 0);
+  assert.equal(fs.existsSync(f.ghLog), false);
 });

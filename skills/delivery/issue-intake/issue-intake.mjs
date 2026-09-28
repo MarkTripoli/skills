@@ -12,7 +12,7 @@ function run(command, args, options = {}) {
   if (result.error || result.status !== 0) throw new Error(`${command} ${args.join(' ')} failed: ${result.error?.message ?? result.stderr.trim()}`);
   return result.stdout;
 }
-function gh(args) { return run(process.env.GH_BIN || 'gh', args); }
+function gh(args) { return run(process.env.GH_BIN || 'gh', args, { maxBuffer: 64 * 1024 * 1024 }); }
 function parse(text, label) { try { return JSON.parse(text); } catch { throw new Error(`${label} returned invalid JSON`); } }
 function eligible(issue, labels) {
   return issue.state === 'OPEN' && labels.every(label => issue.labels?.some(item => item.name === label));
@@ -182,7 +182,9 @@ function intakeLocked(options) {
   const { issues, prs } = lookup({ repo, labels, runGh });
   const state = readState(stateFile);
   const outcomes = [];
+  let blockedBy = null;
   for (const issue of issues) {
+    if (blockedBy !== null) { outcomes.push({ issue: issue.number, status: 'blocked-not-attempted', blockedBy }); continue; }
     const key = claimKey(repo, issue.number);
     const claim = state.claims.find(item => item.key === key);
     const relatedPrs = matchingPrs(prs, repo, issue.number);
@@ -206,7 +208,8 @@ function intakeLocked(options) {
         continue;
       }
       outcomes.push({ issue: issue.number, status: 'handoff-unknown', receipt });
-      break;
+      blockedBy = issue.number;
+      continue;
     }
     const active = { key, repo, issue: issue.number, status: 'dispatching', idempotencyKey, receipt, ownerPid: process.pid, updatedAt: clock(), costNote: costReport ? { text: costReport, verified: false } : null };
     state.claims = state.claims.filter(item => item.key !== key).concat(active);
@@ -229,7 +232,8 @@ function intakeLocked(options) {
       active.status = 'handoff-unknown'; active.ownerPid = null; active.error = error.message; active.updatedAt = clock();
       saveState(stateFile, state);
       outcomes.push({ issue: issue.number, status: 'handoff-unknown', receipt, error: error.message });
-      break;
+      blockedBy = issue.number;
+      continue;
     }
     writeReceipt(receipt, { idempotencyKey, repo, issue: issue.number, status: 'accepted', recordedAt: clock(), costNote: active.costNote });
     active.status = 'complete'; active.ownerPid = null; active.updatedAt = clock();
@@ -240,7 +244,7 @@ function intakeLocked(options) {
 }
 export function intake(options) {
   if (options.dryRun !== false) return dryRun(options);
-  if (!options.handoff) throw new Error('--execute requires --handoff; refusing before claim creation');
+  if (typeof options.handoff !== 'string' || !options.handoff.trim()) throw new Error('--execute requires --handoff; refusing before claim creation');
   return withClaimLock(options.stateFile, options.staleMs ?? 30 * 60_000, () => intakeLocked(options));
 }
 function inside(parent, child) {
@@ -259,16 +263,35 @@ function validateLocalPaths(taskRoot, stateFile, cwd = process.cwd()) {
   }
 }
 function main(argv) {
-  if (argv.some(arg => arg.startsWith('--execute='))) throw new Error('--execute is a flag; use --execute or omit it for dry-run');
-  const values = Object.fromEntries(argv.slice(2).map(arg => { const [key, ...parts] = arg.replace(/^--/, '').split('='); return [key, parts.join('=') || true]; }));
+  const values = Object.create(null);
+  const labels = [];
+  for (const arg of argv.slice(2)) {
+    if (arg === '--execute') {
+      if (values.execute) throw new Error('--execute must be specified once');
+      values.execute = true;
+      continue;
+    }
+    if (arg.startsWith('--execute=')) throw new Error('--execute is a flag; use --execute or omit it for dry-run');
+    const match = /^--(repo|task-root|state|label|handoff|cost-report)=(.*)$/s.exec(arg);
+    if (!match || !match[2].trim() || match[2].startsWith('--')) throw new Error(`invalid issue-intake argument: ${arg}`);
+    const [, key, value] = match;
+    if (key === 'label') { labels.push(value); continue; }
+    if (values[key] !== undefined) throw new Error(`duplicate issue-intake argument: --${key}`);
+    values[key] = value;
+  }
   if (!values.repo || !values['task-root']) throw new Error('usage: issue-intake.mjs --repo=OWNER/REPO --task-root=PATH [--state=PATH] [--label=NAME] [--execute --handoff=COMMAND]');
-  if (values.execute && !values.handoff) throw new Error('--execute requires --handoff; refusing before claim creation');
+  if (!/^[^\s/]+\/[^\s/]+$/.test(values.repo)) throw new Error('--repo requires OWNER/REPO');
+  if (Boolean(values.execute) !== Boolean(values.handoff)) throw new Error('--execute requires --handoff, and --handoff requires --execute');
   const taskRoot = path.resolve(values['task-root']);
   const stateFile = path.resolve(values.state || path.join(os.homedir(), '.local/state/skills/issue-intake.json'));
   validateLocalPaths(taskRoot, stateFile);
-  const result = intake({ repo: values.repo, taskRoot, stateFile, labels: argv.filter(arg => arg.startsWith('--label=')).map(arg => arg.slice(8)), dryRun: !values.execute, handoff: values.handoff || null, costReport: values['cost-report'] || null });
+  const result = intake({ repo: values.repo, taskRoot, stateFile, labels, dryRun: !values.execute, handoff: values.handoff || null, costReport: values['cost-report'] || null });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+let invokedDirectly = false;
+try {
+  invokedDirectly = Boolean(process.argv[1]) && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+} catch {} // Module imports may have no filesystem-backed argv[1].
+if (invokedDirectly) {
   try { main(process.argv); } catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1; }
 }
