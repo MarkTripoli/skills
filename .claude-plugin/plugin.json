@@ -64,6 +64,7 @@
     "./skills/slack-coordinator",
     "./skills/delivery/start-epic-delivery",
     "./skills/delivery/test-app",
+    "./skills/delivery/test-health",
     "./skills/delivery/typed-judgment",
     "./skills/delivery/verify-implementation",
     "./skills/delivery/video-iterative-development",
