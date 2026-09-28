@@ -1283,6 +1283,7 @@ func (u *TokenUsage) Add(other TokenUsage) {
 	u.OutputTokens += other.OutputTokens
 	u.CacheReadTokens += other.CacheReadTokens
 	u.CacheCreationTokens += other.CacheCreationTokens
+	u.ReasoningTokens += other.ReasoningTokens
 	u.ReasoningReported = u.ReasoningReported || other.ReasoningReported
 	u.InputTokensReported = u.InputTokensReported || other.InputTokensReported
 	u.OutputTokensReported = u.OutputTokensReported || other.OutputTokensReported
