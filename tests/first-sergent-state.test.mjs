@@ -54,7 +54,9 @@ test('state accepts the destination pull-request gate policy', (t) => {
 test('approved artifact survives a fresh orchestrator but a changed revision requires review again', (t) => {
   const { dir, file } = fixture(t);
   initialize(dir, options);
+  fs.unlinkSync(file);
   begin(dir, 'create-plan');
+  fs.writeFileSync(file, '---\ntype: plan\nsummary: First plan\n---\nFirst plan\n');
   const first = gate(dir, file);
   assert.equal(first.approved, false);
   assert.throws(() => begin(dir, 'implement-plan'), /pending human gate/);
@@ -110,9 +112,9 @@ test('revision feedback persists until a real in-place change and attempts remai
 
 test('an in-phase question blocks outer gates until the same child finishes', (t) => {
   const { dir, file } = fixture(t);
+  const prd = path.join(dir, '01-design-prd.md');
   initialize(dir, options);
   begin(dir, 'create-prd');
-  const prd = path.join(dir, '01-design-prd.md');
   fs.writeFileSync(prd, '---\ntype: design-prd\nsummary: First PRD\n---\nFirst PRD\n');
   suspendPhase(dir, 'create-prd', 'agent://prd-1', 'Which user owns this flow?');
   assert.equal(inspect(dir).phase.handle, 'agent://prd-1');
@@ -169,11 +171,11 @@ test('ordinary next-phase handoff admits a fresh child only after the prior live
   const { dir } = fixture(t);
   const prd = path.join(dir, '01-design-prd.md');
   const tdd = path.join(dir, '01-design-tdd.md');
-  fs.writeFileSync(prd, '---\ntype: design-prd\nsummary: Approved PRD\n---\nApproved PRD\n');
   initialize(dir, { ...options, max_steps: 3, context_policy: 'stop-at-60' });
   const metric = (sessionId, percent) => ({ sessionId, contextUsage: { tokens: percent, contextWindow: 100, percent } });
   checkpointContext(dir, metric('child-a', 20));
   begin(dir, 'create-prd');
+  fs.writeFileSync(prd, '---\ntype: design-prd\nsummary: Approved PRD\n---\nApproved PRD\n');
   checkpointContext(dir, metric('child-a', 22));
   assert.throws(() => startFreshSession(dir, 'child-b'), /current child to finish/);
   assert.equal(inspect(dir).context_boundary.sessionId, 'child-a');
@@ -474,6 +476,57 @@ test('legacy indexed unapproved phase snapshots existing artifact without accept
   assert.throws(() => gate(dir, first), /has not recorded a new artifact iteration/);
 });
 
+test('indexless legacy phases reject old receipts under every no-human gate', (t) => {
+  for (const gates of ['none', 'pr', 'plan']) {
+    const { dir } = fixture(t);
+    const old = path.join(dir, '01-implementation-sample.md');
+    const older = path.join(dir, '00-implementation-sample.md');
+    const fresh = path.join(dir, '02-implementation-sample.md');
+    const receipt = (summary) => `---\ntype: implementation\nsummary: ${summary}\n---\n${summary}\n`;
+    fs.writeFileSync(old, receipt('Previous phase'));
+    fs.writeFileSync(older, receipt('Older phase'));
+    initialize(dir, { ...options, gates });
+    begin(dir, 'implement-plan');
+    assert.throws(() => gate(dir, old), /has not produced a fresh legacy artifact/);
+    assert.throws(() => gate(dir, older), /has not produced a fresh legacy artifact/);
+    assert.equal(inspect(dir).completed_step, null);
+    fs.writeFileSync(fresh, receipt('New phase'));
+    assert.equal(gate(dir, fresh).approved, true);
+    assert.equal(inspect(dir).completed_step, 1);
+    begin(dir, 'implement-plan');
+    assert.throws(() => gate(dir, fresh), /has not produced a fresh legacy artifact/);
+    assert.equal(inspect(dir).completed_step, null);
+  }
+});
+
+test('indexless completed legacy resume retains completion but incomplete state replays', (t) => {
+  const { dir } = fixture(t);
+  const file = path.join(dir, '01-implementation-sample.md');
+  const newer = path.join(dir, '02-implementation-sample.md');
+  initialize(dir, { ...options, max_steps: 3 });
+  begin(dir, 'implement-plan');
+  fs.writeFileSync(file, '---\ntype: implementation\nsummary: Finished\n---\nFinished\n');
+  const pending = gate(dir, file);
+  answer(dir, file, pending.hash, 'approve');
+  const stateFile = path.join(dir, '.first-sergent-state.json');
+  const saved = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+  delete saved.phase_legacy_before;
+  fs.writeFileSync(stateFile, JSON.stringify(saved));
+  assert.equal(inspect(dir).completed_step, 1);
+  assert.equal(gate(dir, file).approved, true);
+  begin(dir, 'implement-plan');
+  const incomplete = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+  delete incomplete.phase_legacy_before;
+  fs.writeFileSync(stateFile, JSON.stringify(incomplete));
+  assert.equal(inspect(dir).legacy_replay, true);
+  assert.throws(() => gate(dir, file), /has not produced a fresh legacy artifact/);
+  startFreshSession(dir, 'new-child');
+  begin(dir, 'implement-plan');
+  assert.throws(() => gate(dir, file), /has not produced a fresh legacy artifact/);
+  fs.writeFileSync(newer, '---\ntype: implementation\nsummary: Replayed\n---\nReplayed\n');
+  assert.equal(gate(dir, newer).approved, false);
+});
+
 test('legacy no-human policies replay unapproved indexed artifacts in a new child below threshold', (t) => {
   for (const gates of ['none', 'pr']) {
     const { dir, record, legacy } = indexedFixture(t);
@@ -572,6 +625,7 @@ test('context threshold requires the fresh child live metric before dispatch', (
   assert.equal(inspect(dir).resume_step, 2);
   checkpointContext(dir, { sessionId: 'third-session', contextUsage: { tokens: 10, contextWindow: 100, percent: 10 } });
   begin(dir, 'create-plan');
+  fs.appendFileSync(file, '\nFresh third-session plan revision.\n');
   assert.equal(inspect(dir).steps, 2);
   const pending = gate(dir, file);
   answer(dir, file, pending.hash, 'approve');

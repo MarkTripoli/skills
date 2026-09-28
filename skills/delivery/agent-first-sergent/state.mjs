@@ -78,6 +78,16 @@ function phaseArtifact(root, state, current) {
   }
 }
 
+function legacyArtifacts(root) {
+  const before = {};
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (entry.isFile() && /^\d{2}-.*\.md$/.test(entry.name)) {
+      before[entry.name] = digest(fs.readFileSync(path.join(root, entry.name)));
+    }
+  }
+  return before;
+}
+
 function save(root, state) {
   const target = path.join(root, filename);
   const temporary = `${target}.${process.pid}.tmp`;
@@ -110,6 +120,13 @@ export function inspect(taskDir) {
       !state.pending && !state.revision;
     if (!Object.hasOwn(state, 'completed_step')) state.completed_step = attributable ? state.steps : null;
     if (!hadSnapshot) state.phase_artifact_before = record ? { id: record.id, hash: record.sha256 } : null;
+    if (state.completed_step !== state.steps) state.legacy_replay = true;
+    save(root, state);
+  }
+  if (state.steps > 0 && !hostedPhases.has(state.last_skill) && !indexFileExists(path.join(root, 'index.json'))
+    && !Object.hasOwn(state, 'phase_legacy_before')) {
+    if (state.completed_step === state.steps) state.legacy_resume_completed = true;
+    state.phase_legacy_before = legacyArtifacts(root);
     if (state.completed_step !== state.steps) state.legacy_replay = true;
     save(root, state);
   }
@@ -259,6 +276,9 @@ export function begin(taskDir, skill) {
   state.completed_step = null;
   state.last_skill = skill;
   state.phase_artifact_before = prior ? { id: prior.id, hash: prior.sha256 } : null;
+  state.phase_legacy_before = expectedType && !indexFileExists(path.join(root, 'index.json'))
+    ? legacyArtifacts(root) : null;
+  delete state.legacy_resume_completed;
   state.hosted_approval = null;
   state.hosted_revision = null;
   if ((state.options.context_policy ?? 'off') === 'stop-at-60') {
@@ -288,6 +308,12 @@ export function gate(taskDir, file) {
     const record = currentArtifact(root, phaseArtifactTypes[state.last_skill]);
     if (record && record.id === state.phase_artifact_before?.id && state.completed_step !== state.steps) {
       throw new Error('Active phase has not recorded a new artifact iteration');
+    }
+  }
+  if (state.steps > 0 && state.phase_legacy_before !== null && state.phase_legacy_before !== undefined) {
+    if (!/^\d{2}-.*\.md$/.test(current.file)) throw new Error('Legacy phase artifact must be a numbered task-root file');
+    if (state.phase_legacy_before[current.file] === current.hash && !state.legacy_resume_completed) {
+      throw new Error('Active phase has not produced a fresh legacy artifact');
     }
   }
   if (state.pending?.kind === 'hosted') throw new Error('A hosted description is awaiting a human decision');
