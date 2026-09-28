@@ -100,20 +100,23 @@ test("changed-line coverage counts only added JSX lines, not unchanged LCOV coun
     fs.mkdirSync(path.join(root, "src"));
     const file = "src/view card.jsx";
     fs.writeFileSync(path.join(root, file), "const untouched = 1;\nconst old = 2;\nconst ignored = 3;\n");
-    runGit("add", file);
+    const runner = "test/coverage.test.mjs";
+    fs.mkdirSync(path.join(root, "test"));
+    const lcov = `SF:${file}\nDA:1,0\nDA:2,1\nDA:3,0\nDA:4,0\nBRDA:1,0,0,0\nBRDA:2,0,0,0\nend_of_record\n`;
+    fs.writeFileSync(path.join(root, runner), `import test from "node:test";\nimport assert from "node:assert/strict";\nimport fs from "node:fs";\ntest("changed source is exercised", () => { assert.match(fs.readFileSync(${JSON.stringify(file)}, "utf8"), /const added/); fs.writeFileSync(process.env.TEST_HEALTH_LCOV_PATH, ${JSON.stringify(lcov)}); });\n`);
+    runGit("add", file, runner);
     runGit("commit", "-qm", "baseline");
     const base = runGit("rev-parse", "HEAD");
     fs.writeFileSync(path.join(root, file), "const untouched = 1;\nconst added = 2;\nconst ignored = 3;\ndiff --git a/fake b/fake\n");
     runGit("add", file);
     runGit("commit", "-qm", "change JSX");
     const coveragePath = path.join(root, "current.info");
-    const lcov = `SF:${file}\nDA:1,0\nDA:2,1\nDA:3,0\nDA:4,0\nBRDA:1,0,0,0\nBRDA:2,0,0,0\nend_of_record\n`;
     const report = buildReport({
       root, base, coveragePath,
-      currentCommand: [process.execPath, "-e", `require("node:fs").writeFileSync(process.env.TEST_HEALTH_LCOV_PATH, ${JSON.stringify(lcov)})`]
+      currentCommand: [process.execPath, "--test", runner]
     });
     assert.deepEqual(report.changed_files, [file]);
-    assert.equal(report.coverage.current.percent, 50);
+    assert.equal(report.coverage.current.percent, 50, JSON.stringify(report.coverage.current));
     assert.equal(report.coverage.linesHit, 1);
     assert.equal(report.coverage.linesFound, 2);
     assert.deepEqual(report.coverage.uncoveredBranches, [{ file, branch: "2:0:0" }]);
@@ -155,12 +158,12 @@ test("only fresh independent executions on pinned source revisions yield measure
     assert.equal(result.status, 0, result.stderr);
     return result.stdout.trim();
   };
-  const lcovCommand = (source, hits) => [process.execPath, "-e",
-    `require("node:fs").writeFileSync(process.env.TEST_HEALTH_LCOV_PATH, "SF:${source}\\nDA:1,${hits}\\nend_of_record\\n")`];
+  const lcovCommand = [process.execPath, "--test", "coverage.test.mjs"];
   try {
     runGit(root, "init", "-q");
     fs.writeFileSync(path.join(root, "old.py"), "def example():\n    return 1\n\nprint(example())\n");
-    runGit(root, "add", "old.py");
+    fs.writeFileSync(path.join(root, "coverage.test.mjs"), `import test from "node:test";\nimport assert from "node:assert/strict";\nimport fs from "node:fs";\ntest("renamed source is exercised", () => { const file = fs.existsSync("old.py") ? "old.py" : "new.py"; const source = fs.readFileSync(file, "utf8"); assert.match(source, /def example/); const changed = source.includes("added"); fs.writeFileSync(process.env.TEST_HEALTH_LCOV_PATH, \`SF:\${file}\\nDA:1,\${changed ? 0 : 1}\\n\${changed ? "DA:5,0\\n" : ""}end_of_record\\n\`); });\n`);
+    runGit(root, "add", "old.py", "coverage.test.mjs");
     runGit(root, "commit", "-qm", "baseline");
     const base = runGit(root, "rev-parse", "HEAD");
     runGit(root, "mv", "old.py", "new.py");
@@ -181,28 +184,118 @@ test("only fresh independent executions on pinned source revisions yield measure
     assert.equal(stale.coverage.delta_percentage_points, null);
     const reused = buildReport({ root, base, coveragePath, baselineCoveragePath: coveragePath });
     assert.equal(reused.coverage.delta_percentage_points, null);
-    const refused = buildReport({ root, base, baselineRoot, coveragePath, currentCommand: lcovCommand("new.py", 0) });
+    const refused = buildReport({ root, base, baselineRoot, coveragePath, currentCommand: lcovCommand });
     assert.equal(refused.coverage.current.status, "incomplete");
     fs.rmSync(coveragePath);
     fs.rmSync(baselineCoveragePath);
     const report = buildReport({
       root, base, baselineRoot, coveragePath, baselineCoveragePath,
-      currentCommand: [process.execPath, "-e", 'require("node:fs").writeFileSync(process.env.TEST_HEALTH_LCOV_PATH, "SF:new.py\\nDA:5,0\\nend_of_record\\n")'], baselineCommand: lcovCommand("old.py", 1)
+      currentCommand: lcovCommand, baselineCommand: lcovCommand
     });
     assert.deepEqual(report.renamed_files, [{ from: "old.py", to: "new.py" }]);
-    assert.equal(report.coverage.current.percent, 0);
+    assert.equal(report.coverage.current.percent, 0, JSON.stringify(report.coverage.current));
     assert.equal(report.coverage.baseline.percent, 100);
     assert.equal(report.coverage.delta_percentage_points, -100);
     assert.equal(report.coverage.provenance.current_run.revision, report.revision);
     assert.equal(report.coverage.provenance.baseline_run.revision, base);
     const mismatch = buildReport({
       root, base, baselineRoot: root, coveragePath: path.join(root, "again.info"),
-      baselineCoveragePath: path.join(root, "other.info"), baselineCommand: lcovCommand("old.py", 1)
+      baselineCoveragePath: path.join(root, "other.info"), baselineCommand: lcovCommand
     });
     assert.equal(mismatch.coverage.baseline.status, "incomplete");
     assert.equal(mismatch.coverage.delta_percentage_points, null);
   } finally {
     runGit(root, "worktree", "remove", "--force", baselineRoot);
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(baselineRoot, { recursive: true, force: true });
+  }
+});
+
+test("CLI rejects writer-only runs and untracked inputs, and compares only surviving executable lines", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "test-health-cli-"));
+  const baselineRoot = fs.mkdtempSync(path.join(os.tmpdir(), "test-health-cli-base-"));
+  const script = fileURLToPath(new URL("../skills/delivery/test-health/scripts/test-health.mjs", import.meta.url));
+  const runGit = (cwd, ...args) => {
+    const result = spawnSync("git", args, {
+      cwd, encoding: "utf8",
+      env: { ...process.env, GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.org", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.org" }
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  const report = (current, baseline, currentCommand, baselineCommand) => {
+    const result = spawnSync(process.execPath, [
+      script, "--root", root, "--base", base, "--baseline-root", baselineRoot,
+      "--coverage", path.join(root, current), "--baseline-coverage", path.join(baselineRoot, baseline),
+      "--current-command", JSON.stringify(currentCommand), "--baseline-command", JSON.stringify(baselineCommand)
+    ], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  };
+  const command = [process.execPath, "--test", "coverage.test.mjs"];
+  let base;
+  try {
+    runGit(root, "init", "-q");
+    fs.writeFileSync(path.join(root, "app.js"), "export const unchanged = 1;\nexport const old = 2;\n");
+    fs.writeFileSync(path.join(root, "coverage.test.mjs"), `import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+test("source behavior", () => {
+  const source = fs.readFileSync("app.js", "utf8");
+  assert.match(source, /unchanged/);
+  const current = source.includes("added");
+  const selected = path.basename(process.env.TEST_HEALTH_LCOV_PATH);
+  const line = source.includes("import") ? 3 : 2;
+  const oldLine = selected.startsWith("disjoint") ? "" : \`DA:1,\${current ? 0 : 1}\\n\`;
+  fs.writeFileSync(process.env.TEST_HEALTH_LCOV_PATH, \`SF:app.js\\n\${oldLine}DA:\${current ? line : 2},1\\nend_of_record\\n\`);
+  if (selected === "post.info") fs.writeFileSync("sidecar.js", "export const sidecar = true;\\n");
+});
+`);
+    runGit(root, "add", "app.js", "coverage.test.mjs");
+    runGit(root, "commit", "-qm", "baseline");
+    base = runGit(root, "rev-parse", "HEAD");
+    fs.writeFileSync(path.join(root, "app.js"), "export const unchanged = 1;\nexport const added = 2;\n");
+    runGit(root, "add", "app.js");
+    runGit(root, "commit", "-qm", "change executable line");
+    runGit(root, "worktree", "add", "--detach", baselineRoot, base);
+
+    const measured = report("current.info", "baseline.info", command, command);
+    assert.equal(measured.coverage.current.percent, 100, JSON.stringify(measured.coverage.current));
+    assert.equal(measured.coverage.baseline.percent, 100);
+    assert.equal(measured.coverage.delta_percentage_points, -100);
+    fs.rmSync(path.join(root, "current.info"));
+    fs.rmSync(path.join(baselineRoot, "baseline.info"));
+    const disjoint = report("disjoint-current.info", "disjoint-baseline.info", command, command);
+    assert.equal(disjoint.coverage.current.status, "available");
+    assert.equal(disjoint.coverage.delta_percentage_points, null);
+    fs.rmSync(path.join(root, "disjoint-current.info"));
+    fs.rmSync(path.join(baselineRoot, "disjoint-baseline.info"));
+
+    const writer = [process.execPath, "-e", 'require("node:fs").writeFileSync(process.env.TEST_HEALTH_LCOV_PATH, "SF:app.js\\nDA:2,1\\nend_of_record\\n")'];
+    const forged = report("writer.info", "writer-base.info", writer, command);
+    assert.equal(forged.coverage.current.status, "incomplete");
+    assert.equal(forged.coverage.provenance.current_run, null);
+    assert.equal(forged.coverage.delta_percentage_points, null);
+    fs.rmSync(path.join(root, "writer.info"));
+    fs.rmSync(path.join(baselineRoot, "writer-base.info"));
+
+    fs.writeFileSync(path.join(root, "app.js"), 'import "./sidecar.js";\nexport const unchanged = 1;\nexport const added = 2;\n');
+    runGit(root, "add", "app.js");
+    runGit(root, "commit", "-qm", "import sidecar");
+    fs.writeFileSync(path.join(root, "sidecar.js"), "export const sidecar = true;\n");
+    const before = report("before.info", "before-base.info", command, command);
+    assert.equal(before.coverage.current.status, "incomplete");
+    assert.equal(before.coverage.provenance.current_run, null);
+    assert.equal(before.coverage.delta_percentage_points, null);
+    fs.rmSync(path.join(baselineRoot, "before-base.info"));
+    fs.rmSync(path.join(root, "sidecar.js"));
+    const after = report("post.info", "post-base.info", command, command);
+    assert.equal(after.coverage.current.status, "incomplete");
+    assert.equal(after.coverage.provenance.current_run, null);
+    assert.equal(after.coverage.delta_percentage_points, null);
+  } finally {
+    if (base) runGit(root, "worktree", "remove", "--force", baselineRoot);
     fs.rmSync(root, { recursive: true, force: true });
     fs.rmSync(baselineRoot, { recursive: true, force: true });
   }

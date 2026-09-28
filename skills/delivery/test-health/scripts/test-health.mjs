@@ -134,7 +134,7 @@ function addedSourceLines(root, base, name, previousName) {
   const paths = [name, ...(previousName ? [previousName] : [])].map((file) => `:(literal)${file}`);
   const patch = git(root, "diff", "--no-ext-diff", "--no-color", "--unified=0", "--find-renames", `${base}...HEAD`, "--", ...paths);
   if (patch === null) return null;
-  const lines = new Set();
+  const lines = new Set(), hunks = [];
   let sections = 0, oldRemaining = 0, newRemaining = 0, nextLine = 0, inHunk = false;
   for (const line of patch.split("\n")) {
     if (inHunk && (oldRemaining || newRemaining)) {
@@ -160,6 +160,7 @@ function addedSourceLines(root, base, name, previousName) {
     if (!sections) return null;
     const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?:.*)$/.exec(line);
     if (!match) return null;
+    hunks.push({ oldStart: Number(match[1]), oldCount: Number(match[2] ?? 1), newStart: Number(match[3]), newCount: Number(match[4] ?? 1) });
     const oldCount = Number(match[2] ?? 1), start = Number(match[3]), newCount = Number(match[4] ?? 1);
     if (![Number(match[1]), oldCount, start, newCount].every(Number.isSafeInteger)) return null;
     oldRemaining = oldCount;
@@ -167,7 +168,7 @@ function addedSourceLines(root, base, name, previousName) {
     nextLine = start;
     inHunk = true;
   }
-  return sections === 1 && oldRemaining === 0 && newRemaining === 0 ? lines : null;
+  return sections === 1 && oldRemaining === 0 && newRemaining === 0 ? { lines, hunks } : null;
 }
 
 function changedSources(root, base) {
@@ -175,13 +176,14 @@ function changedSources(root, base) {
   if (output === null) return { files: [], deleted: [], error: "could not read changed-file list" };
   const changed = classifyChangedFiles(output);
   const oldNames = new Map(changed.renamed.map(({ from, to }) => [to, from]));
-  const addedLines = new Map();
+  const addedLines = new Map(), hunks = new Map();
   for (const name of changed.files) {
-    const lines = addedSourceLines(root, base, name, oldNames.get(name));
-    if (lines === null) return { ...changed, error: "could not read changed-line diff" };
-    addedLines.set(name, lines);
+    const diff = addedSourceLines(root, base, name, oldNames.get(name));
+    if (diff === null) return { ...changed, error: "could not read changed-line diff" };
+    addedLines.set(name, diff.lines);
+    hunks.set(name, diff.hunks);
   }
-  return { ...changed, addedLines, error: null };
+  return { ...changed, addedLines, hunks, error: null };
 }
 
 export function classifyChangedFiles(output) {
@@ -207,6 +209,54 @@ export function classifyChangedFiles(output) {
   return { files, deleted, renamed };
 }
 
+function comparableDelta(current, baseline, changed, renameSources) {
+  if (!current || !baseline || current.invalid.length || baseline.invalid.length) return null;
+  let currentHits = 0, baselineHits = 0, total = 0;
+  for (const name of changed.files) {
+    const currentLines = current.files.get(name)?.lines;
+    const baselineLines = baseline.files.get(renameSources.get(name) ?? name)?.lines;
+    const hunks = changed.hunks.get(name);
+    if (!currentLines || !baselineLines || !hunks) return null;
+    let oldNext = 1, newNext = 1;
+    const countSurvivors = (oldEnd) => {
+      for (const [line, hits] of baselineLines) {
+        if (line < oldNext || line >= oldEnd) continue;
+        const currentHitsOnLine = currentLines.get(newNext + line - oldNext);
+        if (currentHitsOnLine === undefined) continue;
+        total++;
+        if (hits > 0) baselineHits++;
+        if (currentHitsOnLine > 0) currentHits++;
+      }
+    };
+    for (const { oldStart, oldCount, newStart, newCount } of hunks) {
+      const oldAnchor = oldStart + (oldCount === 0 ? 1 : 0);
+      const newAnchor = newStart + (newCount === 0 ? 1 : 0);
+      if (oldAnchor < oldNext || newAnchor < newNext || oldAnchor - oldNext !== newAnchor - newNext) return null;
+      countSurvivors(oldAnchor);
+      oldNext = oldStart + oldCount;
+      newNext = newStart + newCount;
+    }
+    countSurvivors(Infinity);
+  }
+  return total ? Math.round(((currentHits - baselineHits) / total) * 10000) / 100 : null;
+}
+
+function untrackedInputs(root, outputPath) {
+  const result = git(root, "ls-files", "--others", "--exclude-standard", "-z");
+  if (result === null) return null;
+  const output = outputPath && path.relative(root, path.resolve(outputPath)).split(path.sep).join("/");
+  return result.split("\0").filter((name) => name && name !== output);
+}
+
+function completedTestExecution(command, stdout) {
+  const executable = path.basename(command[0]).replace(/\.exe$/i, "");
+  if ((executable !== "node" && command[0] !== process.execPath) || command[1] !== "--test") return false;
+  const tests = /^(?:#|ℹ) tests (\d+)$/m.exec(stdout);
+  const passed = /^(?:#|ℹ) pass (\d+)$/m.exec(stdout);
+  return tests && passed && Number(tests[1]) > 0 && Number(passed[1]) === Number(tests[1]) &&
+    /^(?:#|ℹ) fail 0$/m.test(stdout);
+}
+
 function runCoverage(root, revision, command, outputPath) {
   const failure = (reason) => ({ parsed: null, reason, provenance: null });
   if (!Array.isArray(command) || !command.length || command.some((part) => typeof part !== "string" || !part))
@@ -215,17 +265,21 @@ function runCoverage(root, revision, command, outputPath) {
   try { checkout = fs.realpathSync(root); } catch { return failure("coverage source worktree is unavailable"); }
   if (!revision || git(root, "rev-parse", "HEAD")?.trim() !== revision ||
       git(root, "rev-parse", "--show-toplevel")?.trim() !== checkout ||
-      git(root, "diff", "--quiet", "HEAD", "--") === null)
-    return failure("coverage source revision or tracked worktree is not clean and pinned");
+      git(root, "diff", "--quiet", "HEAD", "--") === null ||
+      untrackedInputs(root, outputPath)?.length !== 0)
+    return failure("coverage source revision or worktree inputs are not clean and pinned");
   if (!outputPath || fs.existsSync(outputPath)) return failure("coverage run requires a fresh, absent output path");
+  const env = { ...process.env, TEST_HEALTH_LCOV_PATH: outputPath };
+  delete env.NODE_TEST_CONTEXT; // A nested invocation must run its own tests, not inherit Node's parent runner guard.
   const result = spawnSync(command[0], command.slice(1), {
-    cwd: root, env: { ...process.env, TEST_HEALTH_LCOV_PATH: outputPath },
-    stdio: "ignore", timeout: 600000
+    cwd: root, env, encoding: "utf8", timeout: 600000, maxBuffer: 1024 * 1024
   });
   if (result.status !== 0) return failure("coverage command did not complete successfully");
+  if (!completedTestExecution(command, result.stdout ?? "")) return failure("coverage command did not demonstrate executed tests");
   if (git(root, "rev-parse", "HEAD")?.trim() !== revision ||
-      git(root, "diff", "--quiet", "HEAD", "--") === null)
-    return failure("coverage source changed during test execution");
+      git(root, "diff", "--quiet", "HEAD", "--") === null ||
+      untrackedInputs(root, outputPath)?.length !== 0)
+    return failure("coverage source or worktree inputs changed during test execution");
   try {
     if (!fs.lstatSync(outputPath).isFile()) return failure("coverage command did not create a regular LCOV file");
     const bytes = fs.readFileSync(outputPath);
@@ -260,7 +314,9 @@ export function buildReport({ root, base, coveragePath, baselineCoveragePath, ba
   const currentCoverage = boundCoverage(currentParsed, changed.files, new Map(), currentRun, changed.error, changed.addedLines);
   const renameSources = new Map((changed.error ? [] : changed.renamed).map(({ from, to }) => [to, from]));
   const baselineCoverage = boundCoverage(baselineParsed, changed.files, renameSources, baselineRun, changed.error);
-  const delta = currentCoverage.percent === null || baselineCoverage.percent === null ? null : Math.round((currentCoverage.percent - baselineCoverage.percent) * 100) / 100;
+  const delta = currentCoverage.status === "available" && baselineCoverage.status === "available" &&
+    currentRun?.provenance && baselineRun?.provenance
+    ? comparableDelta(currentParsed, baselineParsed, changed, renameSources) : null;
   const selected = [...new Set(selectedFiles)];
   const selectedDeleted = selected.filter((name) => changed.deleted.includes(name));
   const invalidSelected = selected.filter((name) => !changed.files.includes(name) && !selectedDeleted.includes(name));
