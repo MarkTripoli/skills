@@ -121,3 +121,22 @@ test("requirements.txt with Node version marker is unsupported and never bootstr
   assert.equal(JSON.parse(apply.stdout).mode, "unsupported");
   assert.equal(fs.existsSync(path.join(root, "package.json")), false);
 }));
+
+for (const [name, file, contents] of [
+  ["Go workspace", "go.work", "go 1.22\n"],
+  ["arbitrary file", "notes.txt", "keep\n"],
+]) {
+  test(`${name} content blocks empty Node bootstrap`, () => fixture((root) => {
+    fs.writeFileSync(path.join(root, ".nvmrc"), "22\n");
+    fs.writeFileSync(path.join(root, file), contents);
+    const plan = createPlan(root);
+    assert.equal(plan.mode, "supported");
+    assert.deepEqual(plan.actions, []);
+    const script = fileURLToPath(new URL("../skills/project-init/scripts/bootstrap.mjs", import.meta.url));
+    const apply = spawnSync(process.execPath, [script, "--target", root, "--apply", "--approve"], { encoding: "utf8" });
+    assert.equal(apply.status, 0);
+    assert.equal(JSON.parse(apply.stdout).outcome, "unchanged");
+    assert.equal(fs.existsSync(path.join(root, "package.json")), false);
+    assert.equal(fs.readFileSync(path.join(root, file), "utf8"), contents);
+  }));
+}

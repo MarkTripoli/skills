@@ -57,11 +57,18 @@ function normalizeProject(root) {
   const parent = fs.realpathSync(path.dirname(requested));
   return path.join(parent, path.basename(requested));
 }
+function containsOnlyVersionMarkers(project) {
+  return fs.readdirSync(project, { withFileTypes: true }).every((entry) =>
+    NODE_MARKERS.includes(entry.name) && entry.isFile(),
+  );
+}
+
 
 export function createPlan(root) {
   const project = normalizeProject(root);
   const detection = detectProject(project);
-  const canCreate = detection.status === "detected" && detection.stack === "node" && !fs.existsSync(path.join(project, "package.json"));
+  const canCreate = detection.status === "detected" && detection.stack === "node" &&
+    !fs.existsSync(path.join(project, "package.json")) && containsOnlyVersionMarkers(project);
   return {
     version: 1,
     mode: canCreate ? "supported" : detection.status === "detected" ? "supported" : "unsupported",
