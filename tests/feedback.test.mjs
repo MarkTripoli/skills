@@ -56,7 +56,10 @@ function fixtureRepo(root) {
   git(repo, "config", "user.email", "eval@example.invalid");
   git(repo, "config", "user.name", "Eval fixture");
   git(repo, "add", "-A");
-  git(repo, "commit", "-q", "-m", "fixture");
+  execFileSync("git", ["commit", "-q", "-m", "fixture"], {
+    cwd: repo,
+    env: { ...process.env, GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z", GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z" },
+  });
   return { repo, revision: git(repo, "rev-parse", "HEAD") };
 }
 
@@ -124,6 +127,19 @@ function editSample(cohort, action, index = 0) {
   const run = JSON.parse(fs.readFileSync(file, "utf8"));
   action(run);
   save(file, run);
+}
+
+function advanceFixture(cohort) {
+  const repo = path.join(cohort.rawOutput, "fixture", "repo");
+  fs.writeFileSync(path.join(repo, "revised-fixture.txt"), "revised\n");
+  git(repo, "add", "-A");
+  git(repo, "commit", "-q", "-m", "revise fixture");
+  const revision = git(repo, "rev-parse", "HEAD");
+  for (let index = 0; index < cohort.sampleRuns.length; index++) {
+    editSample(cohort, (run) => { run.fixtureRevision = revision; }, index);
+  }
+  cohort.fixtureRevision = revision;
+  save(path.join(cohort.rawOutput, "comparison-run.json"), cohort);
 }
 
 test("matched independent retained outcomes support descriptive quality, never billed savings", () => {
@@ -205,11 +221,28 @@ test("raw OMP usage, independently regraded outcome, and runtime proof bind each
 test("feedback is pending human review only with an independently retained passing grade", () => {
   withPair((before, after) => {
     const grading = { status: "passed", targetScenario: scenario, expectedBehavior: proposal.expectedBehavior, evidence: [sample(after)] };
+    assert.equal(before.fixtureRevision, after.fixtureRevision);
     const result = decideFeedback({ before, after, proposal, grading, approval: { decision: "approved", actor: "caller" } });
     assert.equal(result.disposition, "pending-human-review", result.problems?.join("; "));
     assert.equal(result.applied, false);
     const held = decideFeedback({ before, after, proposal, grading: { ...grading, evidence: [] } });
     assert.equal(held.disposition, "held");
+  });
+});
+
+test("grading evidence must match the fixture revision of both paired runs", () => {
+  withPair((before, after) => {
+    advanceFixture(after);
+    assert.notEqual(before.fixtureRevision, after.fixtureRevision);
+    const audit = auditEvalPair(before, after);
+    assert.equal(audit.qualityClaimsAllowed, true, audit.problems.join("; "));
+    for (const evidence of [sample(before), sample(after)]) {
+      const grading = { status: "passed", targetScenario: scenario, expectedBehavior: proposal.expectedBehavior, evidence: [evidence] };
+      const result = decideFeedback({ before, after, proposal, grading });
+      assert.equal(result.disposition, "held", evidence);
+      assert.equal(result.applied, false);
+      assert.ok(result.problems.some((problem) => problem.includes("executed grading run")), evidence);
+    }
   });
 });
 

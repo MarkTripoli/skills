@@ -436,7 +436,7 @@ function retainedPhaseAnswer(outputDir, phase) {
   try { return fs.statSync(answer).size > 0; } catch { return false; }
 }
 
-function retainedGradingOutcome(grading, audit, proposal) {
+function retainedGradingOutcome(grading, audit, proposal, before, after) {
   if (!Array.isArray(grading?.evidence)) return [];
   return grading.evidence.flatMap((reference) => {
     if (typeof reference !== "string" || !reference.trim() || /^https?:\/\//i.test(reference)) return [];
@@ -448,6 +448,7 @@ function retainedGradingOutcome(grading, audit, proposal) {
       if (path.basename(file) !== "comparison-run.json" || recorded.problems.length > 0 || rows.length === 0 ||
           Array.isArray(run.sampleRuns) || run.ok !== true || !rows.every((row) => row.passed) ||
           run.name !== grading.targetScenario || run.fixtureVersion !== audit.matched?.fixtureVersion ||
+          run.fixtureRevision !== before.fixtureRevision || run.fixtureRevision !== after.fixtureRevision ||
           run.sourceRevision !== audit.matched?.sourceRevision ||
           grading.targetScenario !== proposal.targetScenario || grading.expectedBehavior !== proposal.expectedBehavior) return [];
       return [file];
@@ -464,7 +465,7 @@ export function decideFeedback({ before, after, minimumSamples, proposal, gradin
   if (!proposal || typeof proposal.rule !== "string" || !proposal.rule.trim() || typeof proposal.rationale !== "string" || !proposal.rationale.trim()) problems.push("rule and rationale required");
   if (!proposal || typeof proposal.targetScenario !== "string" || !proposal.targetScenario.trim() || typeof proposal.expectedBehavior !== "string" || !proposal.expectedBehavior.trim()) problems.push("target scenario and expected behavior required");
   if (grading && proposal && (grading.targetScenario !== proposal.targetScenario || grading.expectedBehavior !== proposal.expectedBehavior)) problems.push("grading target does not match proposal");
-  const gradingEvidence = retainedGradingOutcome(grading, audit, proposal ?? {});
+  const gradingEvidence = retainedGradingOutcome(grading, audit, proposal ?? {}, before, after);
   if (!grading || grading.status !== "passed" || gradingEvidence.length === 0) problems.push("executed grading run, retained fixture snapshot, and phase outcomes required");
   if (problems.length) return { disposition: "held", approvalStatus: "pending-human-review", applied: false, problems, audit };
   return {
