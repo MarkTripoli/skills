@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Read-only project stack detection and explicitly approved minimal Node bootstrap.
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -96,12 +97,56 @@ export function applyPlan(root, plan) {
   if (current.mode !== "supported" || JSON.stringify(current.actions) !== JSON.stringify(plan.actions)) {
     throw new Error("Bootstrap plan is stale; refusing to write.");
   }
-  const target = path.join(requested, "package.json");
-  const fd = fs.openSync(target, "wx", 0o644);
+  // Node has no openat: pin the directory as cwd, and verify its inode before
+  // using relative names. A swapped parent path cannot redirect the write.
+  if (typeof fs.constants.O_DIRECTORY !== "number" || typeof fs.constants.O_NOFOLLOW !== "number") {
+    throw new Error("Cannot securely open the target directory on this platform.");
+  }
+  const previousDirectory = process.cwd();
+  const directoryFd = fs.openSync(requested, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
   try {
-    fs.writeFileSync(fd, plan.actions[0].contents, "utf8");
+    const pinned = fs.fstatSync(directoryFd);
+    if (!pinned.isDirectory() || pinned.dev !== targetInfo.dev || pinned.ino !== targetInfo.ino) {
+      throw new Error("Bootstrap target changed; refusing to write.");
+    }
+    process.chdir(requested);
+    const cwd = fs.statSync(".");
+    if (cwd.dev !== pinned.dev || cwd.ino !== pinned.ino) {
+      throw new Error("Bootstrap target changed; refusing to write.");
+    }
+    // Write before publishing. An exclusive hard link publishes the complete
+    // inode without overwriting a manifest created by another invocation.
+    const staged = `.package.json.${randomUUID()}`;
+    const fd = fs.openSync(staged, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o644);
+    let created;
+    try {
+      created = fs.fstatSync(fd);
+      fs.writeFileSync(fd, plan.actions[0].contents, "utf8");
+      const entry = fs.lstatSync(staged);
+      if (entry.dev !== created.dev || entry.ino !== created.ino) {
+        throw new Error("Bootstrap staging file changed; refusing to write.");
+      }
+      fs.linkSync(staged, "package.json");
+    } finally {
+      try {
+        fs.closeSync(fd);
+      } finally {
+        if (created) {
+          try {
+            const entry = fs.lstatSync(staged);
+            if (entry.dev === created.dev && entry.ino === created.ino) fs.unlinkSync(staged);
+          } catch (error) {
+            if (error.code !== "ENOENT") throw error;
+          }
+        }
+      }
+    }
   } finally {
-    fs.closeSync(fd);
+    try {
+      process.chdir(previousDirectory);
+    } finally {
+      fs.closeSync(directoryFd);
+    }
   }
   return { ...plan, outcome: "applied" };
 }

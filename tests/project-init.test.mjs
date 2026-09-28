@@ -45,6 +45,124 @@ test("creation refuses a file appearing after plan generation", () => fixture((r
   assert.equal(fs.readFileSync(path.join(root, "package.json"), "utf8"), "operator data\n");
 }));
 
+test("a partial staging write never publishes a manifest", () => fixture((root) => {
+  fs.writeFileSync(path.join(root, ".nvmrc"), "22\n");
+  const plan = createPlan(root);
+  const write = fs.writeFileSync;
+  fs.writeFileSync = (file, contents, options) => {
+    if (typeof file !== "number") return write(file, contents, options);
+    write(file, contents.slice(0, 3), options);
+    throw new Error("injected write failure");
+  };
+  try {
+    assert.throws(() => applyPlan(root, plan), /injected write failure/);
+  } finally {
+    fs.writeFileSync = write;
+  }
+  assert.deepEqual(fs.readdirSync(root), [".nvmrc"]);
+}));
+
+test("a concurrent manifest replacement survives a failed write", () => fixture((root) => {
+  fs.writeFileSync(path.join(root, ".node-version"), "22\n");
+  const plan = createPlan(root);
+  const write = fs.writeFileSync;
+  fs.writeFileSync = (file, contents, options) => {
+    if (typeof file !== "number") return write(file, contents, options);
+    write(file, contents.slice(0, 3), options);
+    write(path.join(root, "package.json"), "concurrent manifest\n");
+    throw new Error("injected write failure");
+  };
+  try {
+    assert.throws(() => applyPlan(root, plan), /injected write failure/);
+  } finally {
+    fs.writeFileSync = write;
+  }
+  assert.equal(fs.readFileSync(path.join(root, "package.json"), "utf8"), "concurrent manifest\n");
+  assert.deepEqual(fs.readdirSync(root).sort(), [".node-version", "package.json"]);
+}));
+
+test("a manifest created at publication wins the exclusive link", () => fixture((root) => {
+  fs.writeFileSync(path.join(root, ".nvmrc"), "22\n");
+  const plan = createPlan(root);
+  const link = fs.linkSync;
+  fs.linkSync = (from, to) => {
+    fs.writeFileSync(path.join(root, "package.json"), "concurrent manifest\n");
+    return link(from, to);
+  };
+  try {
+    assert.throws(() => applyPlan(root, plan), { code: "EEXIST" });
+  } finally {
+    fs.linkSync = link;
+  }
+  assert.equal(fs.readFileSync(path.join(root, "package.json"), "utf8"), "concurrent manifest\n");
+  assert.deepEqual(fs.readdirSync(root).sort(), [".nvmrc", "package.json"]);
+}));
+
+test("cleanup does not unlink a replacement published after our manifest", () => fixture((root) => {
+  fs.writeFileSync(path.join(root, ".nvmrc"), "22\n");
+  const plan = createPlan(root);
+  const link = fs.linkSync;
+  fs.linkSync = (from, to) => {
+    link(from, to);
+    fs.unlinkSync("package.json");
+    fs.writeFileSync("package.json", "replacement manifest\n");
+  };
+  try {
+    assert.equal(applyPlan(root, plan).outcome, "applied");
+  } finally {
+    fs.linkSync = link;
+  }
+  assert.equal(fs.readFileSync(path.join(root, "package.json"), "utf8"), "replacement manifest\n");
+}));
+
+test("a parent swapped before directory open fails closed", () => fixture((root) => {
+  const project = path.join(root, "project");
+  const moved = path.join(root, "moved");
+  const outside = path.join(root, "outside");
+  fs.mkdirSync(project);
+  fs.mkdirSync(outside);
+  fs.writeFileSync(path.join(project, ".nvmrc"), "22\n");
+  const plan = createPlan(project);
+  const open = fs.openSync;
+  fs.openSync = (file, flags, mode) => {
+    if (file === plan.project) {
+      fs.renameSync(project, moved);
+      fs.symlinkSync(outside, project, "dir");
+    }
+    return open(file, flags, mode);
+  };
+  try {
+    assert.throws(() => applyPlan(project, plan));
+  } finally {
+    fs.openSync = open;
+  }
+  assert.equal(fs.existsSync(path.join(outside, "package.json")), false);
+  assert.equal(fs.existsSync(path.join(moved, "package.json")), false);
+}));
+
+test("a swapped parent path cannot redirect publication outside the approved directory", () => fixture((root) => {
+  const project = path.join(root, "project");
+  const moved = path.join(root, "moved");
+  const outside = path.join(root, "outside");
+  fs.mkdirSync(project);
+  fs.mkdirSync(outside);
+  fs.writeFileSync(path.join(project, ".nvmrc"), "22\n");
+  const plan = createPlan(project);
+  const link = fs.linkSync;
+  fs.linkSync = (from, to) => {
+    fs.renameSync(project, moved);
+    fs.symlinkSync(outside, project, "dir");
+    return link(from, to);
+  };
+  try {
+    assert.equal(applyPlan(project, plan).outcome, "applied");
+  } finally {
+    fs.linkSync = link;
+  }
+  assert.equal(fs.existsSync(path.join(outside, "package.json")), false);
+  assert.equal(fs.readFileSync(path.join(moved, "package.json"), "utf8"), '{\n  "private": true\n}\n');
+}));
+
 test("Python signals appearing after planning invalidate approval", () => fixture((root) => {
   fs.writeFileSync(path.join(root, ".nvmrc"), "22\n");
   const plan = createPlan(root);
