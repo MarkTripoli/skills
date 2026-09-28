@@ -44,7 +44,9 @@ export function admitPlanWaves(text) {
     if (!heading || !/^(?:Phase|Step)\b/i.test(heading[2])) continue;
     const phaseMatch = heading[2].match(/^(?:Phase|Step)\s+(\d+)\b/i);
     if (!phaseMatch) return { ok: false, error: `Malformed numbered phase heading: ${heading[2]}.` };
-    const phase = phaseMatch[1];
+    const phaseNumber = Number(phaseMatch[1]);
+    if (!Number.isSafeInteger(phaseNumber)) return { ok: false, error: `Invalid numbered phase heading: ${heading[2]}.` };
+    const phase = String(phaseNumber);
     let end = i + 1;
     while (end < lines.length) {
       const next = lines[end].match(/^(#{2,3})\s+(.+)$/);
@@ -57,7 +59,8 @@ export function admitPlanWaves(text) {
     const dependencyValue = dependencyLines[0].replace(/^\s*(?:\*\*)?Depends on(?:\*\*)?:\s*/i, '').trim();
     const dependencies = dependencyValue === '-' ? [] : dependencyValue.split(',').map(value => {
       const match = value.trim().match(/^(?:(?:Phase|Step)\s+)?(\d+)$/i);
-      return match?.[1] || '';
+      const number = match ? Number(match[1]) : NaN;
+      return Number.isSafeInteger(number) ? String(number) : '';
     });
     if (dependencies.some(value => !value)) return { ok: false, error: `Phase ${phase} has an ambiguous dependency declaration.` };
     const fileLines = body.filter(line => /^\s*\*\*File\*\*:/i.test(line));

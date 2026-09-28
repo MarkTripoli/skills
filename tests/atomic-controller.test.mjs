@@ -26,6 +26,10 @@ test('plan-wave admission matches planProgress headings and ignores fenced examp
   assert.deepEqual(admitPlanWaves(interleaved), { ok: true, waves: [['1'], ['2', '3']] });
   const dependencyGap = `${phase('## Phase 1', '-', 'src/a.ts')}\n${phase('## Phase 2', 'Phase 1', 'src/b.ts')}\n${phase('## Phase 3', '-', 'src/a.ts')}`;
   assert.deepEqual(admitPlanWaves(dependencyGap), { ok: true, waves: [['1'], ['2', '3']] });
+  const padded = `${phase('## Phase 01', '-', 'src/a.ts')}\n${phase('## Phase 02', 'Phase 1', 'src/b.ts')}`;
+  assert.deepEqual(admitPlanWaves(padded), { ok: true, waves: [['1'], ['2']] });
+  assert.deepEqual(admitPlanWaves(`${phase('## Phase 1', '-', 'src/a.ts')}\n${phase('## Phase 02', 'Phase 01', 'src/b.ts')}`), { ok: true, waves: [['1'], ['2']] });
+  assert.match(admitPlanWaves(`${phase('## Phase 01', '-', 'src/a.ts')}\n${phase('## Phase 1', '-', 'src/b.ts')}`).error, /Duplicate phase 1/);
   assert.deepEqual(admitPlanWaves(`${phase('## Phase 1', '-', 'src/a.ts')}\n\`\`\`md\n## Phase 2: Example\n**Depends on**: -\n**File**: \`src/a.ts\`\n\`\`\``), { ok: true, waves: [['1']] });
   const nestedFence = `${phase('## Phase 1', '-', 'src/a.ts')}\n\`\`\`\`markdown\n\`\`\`js\n**File**: \`src/b.ts\`\n\`\`\`\n\`\`\`\`\n${phase('## Phase 2', '-', 'src/b.ts')}`;
   assert.deepEqual(admitPlanWaves(nestedFence), { ok: true, waves: [['1', '2']] });
