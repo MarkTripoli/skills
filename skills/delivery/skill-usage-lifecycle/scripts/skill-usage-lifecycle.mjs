@@ -4,26 +4,42 @@ import { fileURLToPath } from "node:url";
 
 const SUPPORTED_SOURCES = new Set(["claude-code", "codex", "oh-my-pi", "pi"]);
 
+function parseTimestamp(value) {
+  if (typeof value !== "string") return NaN;
+  const match = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:0\d|1[0-3]):[0-5]\d|[+-]14:00)$/.exec(value);
+  if (!match) return NaN;
+  const calendar = new Date(0);
+  calendar.setUTCFullYear(Number(match[1]), Number(match[2]), 0);
+  if (Number(match[3]) > calendar.getUTCDate()) return NaN;
+  return Date.parse(value);
+}
+
 export function buildReport(input) {
   if (!input || !Array.isArray(input.inventory) || !Array.isArray(input.events)) {
     throw new Error("input must contain inventory and events arrays");
   }
   const coverage = input.coverage;
   const now = Date.now();
-  const from = Date.parse(coverage?.observedFrom);
-  const through = Date.parse(coverage?.observedThrough);
+  const from = parseTimestamp(coverage?.observedFrom);
+  const through = parseTimestamp(coverage?.observedThrough);
   const validInterval = Number.isFinite(from) && Number.isFinite(through) && from <= through && from <= now && through <= now;
   const days = validInterval ? (through - from) / 86_400_000 : null;
-  const sufficient = coverage?.complete === true
+  const provenCoverage = coverage?.complete === true
     && coverage?.consent === true
     && SUPPORTED_SOURCES.has(coverage?.source)
-    && days !== null
-    && days >= 30;
+    && validInterval;
+  const sufficient = provenCoverage && days >= 30;
   const usage = new Set();
-  for (const event of input.events) {
-    if (event?.consent !== true || !SUPPORTED_SOURCES.has(event.source)) continue;
-    if (typeof event.name !== "string" || typeof event.version !== "string" || !["success", "failure", "interrupted"].includes(event.outcome)) continue;
-    usage.add(`${event.name}\0${event.version}`);
+  const unplaced = new Set();
+  if (provenCoverage) {
+    for (const event of input.events) {
+      if (event?.consent !== true || event.source !== coverage.source) continue;
+      if (typeof event.name !== "string" || typeof event.version !== "string" || !["success", "failure", "interrupted"].includes(event.outcome)) continue;
+      const key = `${event.name}\0${event.version}`;
+      const timestamp = parseTimestamp(event.timestamp);
+      if (!Number.isFinite(timestamp)) unplaced.add(key);
+      else if (timestamp >= from && timestamp <= through) usage.add(key);
+    }
   }
   return {
     coverage: { sufficient, source: SUPPORTED_SOURCES.has(coverage?.source) ? coverage.source : null, days },
@@ -32,8 +48,8 @@ export function buildReport(input) {
       let status = "unknown";
       if (item.pinned === true) status = "pinned";
       else if (item.ignored === true) status = "ignored";
-      else if (sufficient) status = observed ? "active" : "stale-candidate";
       else if (observed) status = "active";
+      else if (sufficient && !unplaced.has(`${item.name}\0${item.version}`)) status = "stale-candidate";
       return { name: item.name, version: item.version, status };
     }),
     policy: "Suggestions only. No skill is deleted or disabled; usage stays local.",

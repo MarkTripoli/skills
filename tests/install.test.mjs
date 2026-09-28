@@ -69,6 +69,33 @@ test("usage lifecycle requires consented supported coverage and preserves unknow
   assert.deepEqual(future.suggestions.map(({ status }) => status), ["unknown", "unknown", "pinned"]);
 });
 
+test("usage lifecycle counts only timestamped use within proven coverage", () => {
+  const coverage = {
+    complete: true,
+    consent: true,
+    source: "codex",
+    observedFrom: "2026-01-01T00:00:00Z",
+    observedThrough: "2026-01-31T00:00:00Z",
+  };
+  const input = {
+    coverage,
+    inventory: ["historical", "covered", "undated", "invalid-date"].map((name) => ({ name, version: "1.0.0" })),
+    events: [
+      { name: "historical", version: "1.0.0", outcome: "success", source: "codex", consent: true, timestamp: "2025-12-31T23:59:59Z" },
+      { name: "covered", version: "1.0.0", outcome: "failure", source: "codex", consent: true, timestamp: "2026-01-15T00:00:00Z" },
+      { name: "undated", version: "1.0.0", outcome: "success", source: "codex", consent: true },
+      { name: "invalid-date", version: "1.0.0", outcome: "success", source: "codex", consent: true, timestamp: "2026-02-30T00:00:00Z" },
+    ],
+  };
+  const report = buildReport(input);
+  assert.equal(report.coverage.sufficient, true);
+  assert.deepEqual(report.suggestions.map(({ status }) => status), ["stale-candidate", "active", "unknown", "unknown"]);
+
+  const withoutProvenance = buildReport({ ...input, coverage: { ...coverage, complete: false } });
+  assert.equal(withoutProvenance.coverage.sufficient, false);
+  assert.deepEqual(withoutProvenance.suggestions.map(({ status }) => status), ["unknown", "unknown", "unknown", "unknown"]);
+});
+
 test("installed usage lifecycle skill includes a runnable report executable", () => {
   const home = tmpdir("skills-lifecycle-install-");
   const planned = install({ targets: ["portable"], skillNames: ["skill-usage-lifecycle"], project: true, cwd: home, home, env });

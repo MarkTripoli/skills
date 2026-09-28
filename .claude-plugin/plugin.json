@@ -62,6 +62,7 @@
     "./skills/delivery/safety-dance",
     "./skills/delivery/security-check",
     "./skills/show-me",
+    "./skills/delivery/skill-usage-lifecycle",
     "./skills/slack-coordinator",
     "./skills/delivery/start-epic-delivery",
     "./skills/delivery/test-app",
