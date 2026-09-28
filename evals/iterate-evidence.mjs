@@ -949,7 +949,7 @@ async function boundedEvidenceProblems(out, setup, trace, snapshots, base, final
   return problems;
 }
 
-export async function gradeEvidenceScenario(scenario, runDir) {
+export async function gradeEvidenceScenario(scenario, runDir, { quiet = false } = {}) {
   const resultDir = path.join(runDir, scenario.name);
   const out = path.join(resultDir, "1-iterate-evidence");
   const result = { name: scenario.name, repo: null, phases: [], ok: false, graded: true };
@@ -1024,8 +1024,10 @@ export async function gradeEvidenceScenario(scenario, runDir) {
   }
   result.ok = problems.length === 0;
   result.phases.push({ phase: "1-iterate-evidence", seconds: null, ok: result.ok, problems });
-  console.log(`[${scenario.name}] saved evidence: ${result.ok ? "ok" : "FAIL"}`);
-  for (const problem of problems) console.log(`    - ${problem}`);
+  if (!quiet) {
+    console.log(`[${scenario.name}] saved evidence: ${result.ok ? "ok" : "FAIL"}`);
+    for (const problem of problems) console.log(`    - ${problem}`);
+  }
   return result;
 }
 

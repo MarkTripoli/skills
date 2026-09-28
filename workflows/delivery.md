@@ -93,6 +93,7 @@ Run `gather-sources` first when the request names material outside the repositor
 
 Optional `/test-health` analyzes targeted changed-line and branch coverage; a numeric baseline-versus-HEAD delta requires fresh executed commands in pinned, clean source worktrees. Duplicate counters and unbound or stale LCOV remain unknown, not passing coverage proof.
 
+Optional `/eval-feedback` analyzes retained, source-pinned evaluation cohorts and proposes changes for human review only. Missing independent outcome or billing receipts remain unknown; metadata-only scores and self-declared savings do not establish a delivered result.
 ## Gates and native controls
 
 - `all`: review artifact and implementation edges.
