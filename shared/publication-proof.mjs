@@ -313,6 +313,21 @@ function completeDescription(body) {
     /### Verify\s*\n[\s\S]*?-\s*\[[ x]\]\s+\S/im.test(human) &&
     /### Known limits\s*\n[\s\S]*?-\s+\S/im.test(human);
 }
+export function exactHeadChecks(response, sha) {
+  const runs = response?.check_runs;
+  if (!Array.isArray(runs) || response.total_count !== runs.length) return false;
+  const required = new Set(['test', 'Conventional Commits']);
+  const latest = new Map();
+  for (const run of runs) {
+    if (!required.has(run.name) || run.head_sha !== sha || run.app?.slug !== 'github-actions') continue;
+    if (!latest.has(run.name) || run.id > latest.get(run.name).id) latest.set(run.name, run);
+  }
+  return [...required].every(name => {
+    const run = latest.get(name);
+    return run?.status === 'completed' && run.conclusion === 'success';
+  });
+}
+
 export async function inspect({ taskDir, repo, prNumber, draftHostCapture = false, override = '' }) {
   const task = path.resolve(taskDir); const root = path.dirname(task);
   const index = indexFileExists(path.join(task, 'index.json')) ? readArtifactIndex(task) : null;
@@ -323,6 +338,8 @@ export async function inspect({ taskDir, repo, prNumber, draftHostCapture = fals
   const verificationRequired = Boolean(verification) || /verification\s*:\s*required|verification is required|required verification/i.test(taskText);
   const pr = JSON.parse(command('gh', ['pr', 'view', String(prNumber), '--json', 'url,number,headRefOid,baseRefName,baseRefOid,isDraft,body'], repo));
   const owner = JSON.parse(command('gh', ['repo', 'view', '--json', 'nameWithOwner'], repo)).nameWithOwner;
+  const commitChecks = JSON.parse(command('gh', ['api', `repos/${owner}/commits/${pr.headRefOid}/check-runs?per_page=100`], repo));
+  const commitChecksCurrent = exactHeadChecks(commitChecks, pr.headRefOid);
   const bodyText = pr.body ?? '';
   const evidence = section(bodyText, 'Evidence');
   const bodyFields = evidenceFields(evidence);
@@ -363,7 +380,7 @@ export async function inspect({ taskDir, repo, prNumber, draftHostCapture = fals
   const proof = {
     mode: draftHostCapture ? 'draft-host-capture' : 'ready', captureUploadMissing: draftHostCapture && Boolean(pr.isDraft && !bodyFields.captures.size),
     head: headSha, tested: testedSha, artifactOnlyAdvancement: artifactOnly, indexedArtifactsOnly: artifactOnly,
-    substantiveChanged: Boolean(testedSha && !artifactOnly), reviewRequired: true, review: review?.status, reviewCurrent,
+    substantiveChanged: Boolean(testedSha && !artifactOnly), commitChecksCurrent, reviewRequired: true, review: review?.status, reviewCurrent,
     verificationRequired, verification: verification?.status, verificationCurrent, capture: hostedResult ? 'passed' : '',
     captureCurrent, captureHosted, commentVerified, commentDistinct: Boolean(comment && commentVerified),
     finalBodyPublished: bodyPublished, finalBodyVerified: descriptionCurrent, bypass: Boolean(override),
@@ -372,7 +389,7 @@ export async function inspect({ taskDir, repo, prNumber, draftHostCapture = fals
   let reason = decision.status === 'pass' ? 'all current publication proof is verified' : decision.status === 'stale' ? 'tested proof does not cover the substantive code at HEAD' : draftHostCapture ? (pr.isDraft ? 'draft is permitted only to host capture; ready publication is not authorized' : 'capture-hosting mode requires an existing draft PR') : override ? `audited override requested: ${override}; mandatory proof remains incomplete` : 'required current hosted proof or publication read-back is missing';
   if (override) reason = `audited override requested: ${override}; decision remains ${decision.status}`;
   return { ...decision, reason, head: headSha, tested: testedSha || null, pullRequest: pr.url, override: override || null,
-    captureCurrent, captureHosted, commentVerified, reviewCurrent, verificationRequired, verificationCurrent, bodyPublished,
+    captureCurrent, captureHosted, commentVerified, commitChecksCurrent, reviewCurrent, verificationRequired, verificationCurrent, bodyPublished,
     descriptionCurrent,
     descriptionHash: createHash('sha256').update(bodyText).digest('hex') };
 }

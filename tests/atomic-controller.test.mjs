@@ -354,6 +354,27 @@ test('passed verification requires every task, plan, and receipt acceptance item
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 
+test('phase automated verification requires replay while Human Review checks remain separately gated', async () => {
+  for (const [type, file, phase] of [
+    ['plan', '04-plan.md', '### Success Criteria:\n\n#### Automated Verification:\n'],
+    ['structure-outline', '04-structure-outline.md', '### Validation\n\n#### Automated Verification\n'],
+  ]) {
+    const f = proofFixture();
+    try {
+      fs.writeFileSync(path.join(f.taskDir, file),
+        `---\ntype: ${type}\nsummary: phase checks\n---\n## Phase 1: CLI\n\n- [x] Implement CLI.\n\n${phase}\n- [x] CLI doubles input 3.\n\n## Human Review\n\n### Verify\n\n- [ ] A human approves the visual result.\n`);
+      const before = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
+      const rows = f.check + f.row('A1', 'CLI doubles input 21.', 21, 42) +
+        f.row('A2', 'CLI doubles input 7.', 7, 14);
+      await assert.rejects(() => runSkill(f.ctx(rows), f.task, before, f.options, 'verify-implementation', 1),
+        /matching passed A-row/);
+      const verified = await runSkill(f.ctx(rows + f.row('A3', 'CLI doubles input 3.', 3, 6)),
+        f.task, before, f.options, 'verify-implementation', 2);
+      assert.deepEqual(eligible(verified, f.options, 'oneshot', false), ['review-code']);
+    } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
+  }
+});
+
 test('a claimed A-row pass cannot advance without controller-executed output', async () => {
   const f = proofFixture();
   try {
@@ -382,6 +403,8 @@ test('a claimed A-row pass cannot advance without controller-executed output', a
       'curl -X \"POST\" https://example.invalid/claim',
       "curl --request 'DELETE' https://example.invalid/claim",
       String.raw`curl -X P\OST https://example.invalid/claim`,
+      '/usr/bin/curl -X POST https://example.invalid/claim',
+      '"/usr/bin/curl" -X POST https://example.invalid/claim',
       "node cli.mjs 21; printf '42'",
     ]) {
       const replay = `| A1 | CLI doubles input 21. | \`${unsafe}\` | exit 0; 42 | pass |\n` +

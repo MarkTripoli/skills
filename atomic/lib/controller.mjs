@@ -166,10 +166,18 @@ function acceptanceItems(task, state) {
   for (const artifact of [source, ...receipts.filter(item => ['implementation', 'fix'].includes(item.type)), state.latest.implementation, state.latest.fix]) {
     if (!artifact) continue;
     const lines = artifact.text.split('\n');
-    let verify = false;
+    let verifyLevel = 0;
+    let humanReview = false;
     for (const line of lines) {
-      if (/^#{1,3}\s/.test(line)) verify = /^### Verify\s*$/i.test(line);
-      else if (verify && /^\s*[-*]\s+(?:\[[ xX]\]\s+)?\S/.test(line)) add(line);
+      const heading = line.match(/^(#{1,6})\s+(.+?)\s*$/);
+      if (heading) {
+        const level = heading[1].length;
+        const title = heading[2].replace(/:\s*$/, '');
+        if (level <= 2) humanReview = /^Human Review$/i.test(title);
+        if (verifyLevel && level <= verifyLevel) verifyLevel = 0;
+        if (!humanReview && ((level === 3 && /^Verify$/i.test(title)) ||
+          (level === 4 && /^Automated Verification$/i.test(title)))) verifyLevel = level;
+      } else if (verifyLevel && /^\s*[-*]\s+(?:\[[ xX]\]\s+)?\S/.test(line)) add(line);
     }
   }
   const reproduction = state.latest.reproduction?.text.match(/^\s*(?:[-*]\s*)?Run:\s*(.+)$/im);
@@ -297,7 +305,7 @@ function replayableVerificationCommand(command, id) {
   }
   if (/[\\;&|`$<>\r\n]/.test(command) ||
       /^\s*(?:sh|bash|zsh|\/bin\/(?:sh|bash|zsh))\s+-c\b/.test(command) ||
-      /(?:^|\s)(?:curl|http|wget)(?:\s|$)/.test(command) ||
+      /\b(?:curl|http|wget)(?=\s|$|["'])/.test(command) ||
       /^\s*(?:git\s+(?:push|reset|clean)|(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:migrate|deploy|publish)\b|rm\b|mv\b)/.test(command)) {
     throw new Error(`${id} acceptance command cannot be safely replayed; use an isolated idempotent test instead`);
   }
