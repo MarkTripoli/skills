@@ -352,16 +352,25 @@ function replayableVerificationCommand(command, id, cwd) {
         argv.slice(1).some(arg => /^-[ecp]|^--(?:eval|print)(?:=|$)/.test(arg)))) {
     throw new Error(`${id} acceptance command only manufactures a result; it does not exercise product behavior`);
   }
-  const localFile = filename => {
+  const localFile = (filename, directory = false) => {
     if (!filename || filename.startsWith('-') || path.isAbsolute(filename) ||
         filename.split('/').includes('..')) return false;
     try {
       const file = path.resolve(cwd, filename);
-      return fs.lstatSync(file).isFile() &&
+      const stat = fs.lstatSync(file);
+      return (stat.isFile() || (directory && stat.isDirectory())) &&
         fs.realpathSync(file).startsWith(`${fs.realpathSync(cwd)}${path.sep}`);
     } catch { return false; }
   };
-  const localExecutable = argv[0].startsWith('./') && localFile(argv[0]);
+  const localExecutable = argv[0] === './gradlew' && localFile(argv[0]);
+  const pytestArgs = args => args.every(arg => localFile(arg, true) ||
+    ['-q', '-s', '-x', '--disable-warnings', '--no-header', '--no-summary'].includes(arg) ||
+    /^--maxfail=[1-9]\d*$/.test(arg));
+  const goDirectory = executable === 'go' && argv[1] === '-C' ? argv[2] : '';
+  const goAction = goDirectory ? argv[3] : argv[1];
+  const goScanner = goDirectory && goAction === 'run' && argv.length === 6 &&
+    /^golang\.org\/x\/vuln\/cmd\/govulncheck@v\d+\.\d+\.\d+$/.test(argv[4]) &&
+    argv[5] === './...';
   const uvCommandIndex = executable === 'uv'
     ? argv.findIndex((arg, index) => index > 1 && !arg.startsWith('-')) : -1;
   const uvCommand = argv[uvCommandIndex];
@@ -371,16 +380,27 @@ function replayableVerificationCommand(command, id, cwd) {
       (['npm', 'pnpm', 'yarn', 'bun'].includes(executable) &&
         !localCheckScripts.has(argv[1] === 'run' ? argv[2] : argv[1])) ||
       (['python', 'python3'].includes(executable) && (argv[1] === '-m'
-        ? !localPythonModules.has(argv[2]) : !localFile(argv[1]))) ||
+        ? !localPythonModules.has(argv[2]) ||
+          (argv[2] === 'pytest' && !pytestArgs(argv.slice(3))) ||
+          (argv[2] === 'unittest' && argv.length !== 3)
+        : !localFile(argv[1]))) ||
+      (executable === 'pytest' && !pytestArgs(argv.slice(1))) ||
       (['node', 'ruby', 'perl'].includes(executable) &&
-        !localFile(argv[1] === '--test' || argv[1] === '--check' ? argv[2] : argv[1])) ||
+        (!localFile(argv[1] === '--test' || argv[1] === '--check' ? argv[2] : argv[1]) &&
+          !(executable === 'node' && argv[1] === '--test' && argv.length === 2) ||
+          (executable === 'node' && argv[1] === '--test' && !argv.slice(2).every(arg => localFile(arg))) ||
+          (argv[1] === '--check' && argv.length !== 3))) ||
       (executable === 'uv' && (argv[1] !== 'run' ||
         !argv.slice(2, uvCommandIndex).every(arg => ['--locked', '--offline'].includes(arg)) ||
         !(localPythonModules.has(uvCommand) ||
           (['python', 'python3'].includes(uvCommand) &&
             argv[uvCommandIndex + 1] === '-m' &&
-            localPythonModules.has(argv[uvCommandIndex + 2]))))) ||
-      (executable === 'go' && !['test', 'vet', 'build'].includes(argv[1] === '-C' ? argv[3] : argv[1])) ||
+            localPythonModules.has(argv[uvCommandIndex + 2]))) ||
+        (uvCommand === 'pytest' && !pytestArgs(argv.slice(uvCommandIndex + 1))) ||
+        (['python', 'python3'].includes(uvCommand) && argv[uvCommandIndex + 2] === 'pytest' &&
+          !pytestArgs(argv.slice(uvCommandIndex + 3))))) ||
+      (executable === 'go' && ((goDirectory && !localFile(goDirectory, true)) ||
+        (!['test', 'vet', 'build'].includes(goAction) && !goScanner))) ||
       (executable === 'cargo' && !['test', 'clippy', 'check', 'build'].includes(argv[1])) ||
       (executable === 'gradlew' && !['test', 'check', 'lint'].includes(argv[1])) ||
       (executable === 'make' && !localCheckScripts.has(argv[1])) ||
@@ -477,7 +497,7 @@ function changedSourceLines(task, head, changed, ancestor) {
   const lines = new Map();
   for (const file of changed) {
     if (untracked.has(file)) {
-      lines.set(file, [[1, fs.readFileSync(path.join(task.cwd, file), 'utf8').split('\n').length]]);
+      lines.set(file, [[1, fs.readFileSync(path.join(task.cwd, file), 'utf8').split('\n').length, 'new']]);
       continue;
     }
     const deleted = !fs.existsSync(path.join(task.cwd, file));
@@ -487,7 +507,7 @@ function changedSourceLines(task, head, changed, ancestor) {
         const oldSide = deleted || Number(newLength ?? 1) === 0;
         const start = Number(oldSide ? oldStart : newStart);
         const length = Number(oldSide ? oldLength ?? 1 : newLength ?? 1);
-        return [Math.max(1, start), Math.max(1, start + length - 1)];
+        return [Math.max(1, start), Math.max(1, start + length - 1), oldSide ? 'old' : 'new'];
       }));
   }
   return lines;
@@ -508,7 +528,7 @@ async function requireIndependentReview(ctx, task, state, artifact, step, stageS
   const name = `${String(step).padStart(3, '0')}-independent-review`;
   const prompt = [
     `Independently review the changed implementation in ${task.cwd} against task ${path.join(task.taskDir, 'task.md')}. Do not edit files or publish anything.`,
-    `Pin reviewed source HEAD ${sourceHead} (current HEAD ${head} may include only the task artifact commit), source revision ${state.revision}, and review base ${base.branch || '(local fallback)'} at merge-base SHA ${base.sha || '(none)'}. Inspect changed source paths ${JSON.stringify([...changed])}, actual controller-run acceptance commands and outputs ${JSON.stringify(execution)}, task and authoritative artifacts. For deleted paths cite old-side deleted line numbers from this base diff. Review acceptance items ${JSON.stringify(acceptance)} and risks ${JSON.stringify(risks)}.`,
+    `Pin reviewed source HEAD ${sourceHead} (current HEAD ${head} may include only the task artifact commit), source revision ${state.revision}, and review base ${base.branch || '(local fallback)'} at merge-base SHA ${base.sha || '(none)'}. Inspect changed source paths ${JSON.stringify([...changed])}, actual controller-run acceptance commands and outputs ${JSON.stringify(execution)}, task and authoritative artifacts. For deleted hunks cite the explicit old side as path:old:line from this base diff; cite additions as path:line. Review acceptance items ${JSON.stringify(acceptance)} and risks ${JSON.stringify(risks)}.`,
     `Return only a JSON object {"head":string,"revision":string,"base_branch":string,"base_sha":string,"acceptance":[{"item":string,"evidence":string}],"risks":[{"risk":string,"evidence":string}],"findings":[{"location":string,"problem":string}]}. Every acceptance item must be examined against actual changed implementation lines and an independently meaningful direct observation or reachable test assertion. A green but unrelated test is a finding, never acceptance proof. Cite a changed path:line plus a test assertion path:line where tests provide the oracle; include the controller-executed command and decisive output when verification ran. For opted-out verification, independently inspect acceptance behavior without pretending an absent oracle ran. Cover every risk with inspected changed path:line and concrete behavior. Report consequential findings; incomplete inspection cannot claim coverage.`,
     `When verification is opted out, each acceptance entry MUST also include {"command":"an idempotent direct product probe","observed":"exit N; decisive output"}; the controller reruns the command and rejects claims without an observed result. Cite that command and its decisive output in evidence. No verification artifact is invented.`,
   ].join('\n\n');
@@ -529,8 +549,9 @@ async function requireIndependentReview(ctx, task, state, artifact, step, stageS
   }
   const inspected = evidence => {
     if (typeof evidence !== 'string' || evidence.length < 40) return false;
-    const citations = [...evidence.matchAll(/(?:^|\s)([^\s:]+):([1-9]\d*)\b/g)];
-    return citations.some(([, file, line]) => changedLines.get(file)?.some(([start, end]) => Number(line) >= start && Number(line) <= end)) &&
+    const citations = [...evidence.matchAll(/(?:^|\s)([^\s:]+):(?:(old):)?([1-9]\d*)\b/g)];
+    return citations.some(([, file, side, line]) => changedLines.get(file)?.some(([start, end, changedSide]) =>
+      (side || 'new') === changedSide && Number(line) >= start && Number(line) <= end)) &&
       /\b(?:observed|printed|returned|passed|failed|asserted|invoked|executed|confirmed|produces?|rejects?|preserves?|inspected)\b/i.test(evidence);
   };
   const complete = stageSession && result.sessionId && result.sessionId !== stageSession && report && !Array.isArray(report) &&

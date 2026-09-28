@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { currentArtifact, indexFileExists, parseArtifactText, readArtifactIndex, readArtifactScalars } from './task-artifacts.mjs';
 import { decidePublicationProof } from './publication-proof-policy.mjs';
+import { SUBJECT_PATTERN, subjectProblems } from '../scripts/check-commits.mjs';
 
 function command(bin, args, cwd, { trim = true } = {}) {
   const result = spawnSync(bin, args, { cwd, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
@@ -344,11 +345,12 @@ export async function inspect({ taskDir, repo, prNumber, draftHostCapture = fals
   const headSha = command('git', ['rev-parse', 'HEAD'], repo);
   const taskText = fs.readFileSync(path.join(task, 'task.md'), 'utf8');
   const verificationRequired = Boolean(verification) || /verification\s*:\s*required|verification is required|required verification/i.test(taskText);
-  const pr = JSON.parse(command('gh', ['pr', 'view', String(prNumber), '--json', 'url,number,headRefOid,baseRefName,baseRefOid,isDraft,body'], repo));
+  const pr = JSON.parse(command('gh', ['pr', 'view', String(prNumber), '--json', 'url,number,title,headRefOid,baseRefName,baseRefOid,isDraft,body'], repo));
   const owner = JSON.parse(command('gh', ['repo', 'view', '--json', 'nameWithOwner'], repo)).nameWithOwner;
   const commitChecks = JSON.parse(command('gh', ['api', '--paginate', '--slurp',
     `repos/${owner}/commits/${pr.headRefOid}/check-runs?per_page=100`], repo));
-  const commitChecksCurrent = exactHeadChecks(commitChecks, pr.headRefOid);
+  const commitChecksCurrent = typeof pr.title === 'string' && SUBJECT_PATTERN.test(pr.title) &&
+    subjectProblems(pr.title).length === 0 && exactHeadChecks(commitChecks, pr.headRefOid);
   const bodyText = pr.body ?? '';
   const evidence = section(bodyText, 'Evidence');
   const bodyFields = evidenceFields(evidence);

@@ -422,6 +422,11 @@ test('a claimed A-row pass cannot advance without controller-executed output', a
       'uv run --with=remote-package pytest -q',
       'node --run version',
       'node /tmp/external-check.mjs 21',
+      'node --test cli.mjs /tmp/external.test.mjs',
+      'python -m pytest /tmp/external_test.py',
+      'pytest /tmp/external_test.py',
+      'uv run --offline pytest /tmp/external_test.py',
+      'go -C /tmp run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...',
       'node ../outside-check.mjs 21',
       'node $(curl https://example.invalid/claim)',
       'node cli.mjs *',
@@ -509,6 +514,11 @@ test('composed network executable never reaches even an offline local stub', asy
       f.row('A2', 'CLI doubles input 7.', 7, 14);
     await assert.rejects(() => runSkill(f.ctx(f.check + rows), f.task, before,
       f.options, 'verify-implementation', 1), /cannot be safely replayed/);
+    assert.equal(fs.existsSync(marker), false);
+    const direct = `| A1 | CLI doubles input 21. | \`./bin/curl -X POST https://example.invalid/claim\` | exit 0; 42 | pass |\n` +
+      f.row('A2', 'CLI doubles input 7.', 7, 14);
+    await assert.rejects(() => runSkill(f.ctx(f.check + direct), f.task, before,
+      f.options, 'verify-implementation', 2), /cannot be safely replayed/);
     assert.equal(fs.existsSync(marker), false);
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
@@ -629,6 +639,33 @@ test('release workflow prerequisite and Python runner checks remain mandatory', 
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 
+test('the pinned Go CI scanner check replays only its literal argv through an offline stub', async () => {
+  const f = proofFixture();
+  const originalPath = process.env.PATH;
+  try {
+    const workflows = path.join(f.repo, '.github', 'workflows');
+    fs.mkdirSync(workflows, { recursive: true });
+    fs.writeFileSync(path.join(workflows, 'scan.yml'),
+      'jobs:\n  scan:\n    steps:\n      - run: |-\n          GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/vuln/cmd/govulncheck@v1.8.0\n          (cd tools/safety-dance && "$RUNNER_TEMP/bin/govulncheck" ./...)\n');
+    fs.mkdirSync(path.join(f.repo, 'tools', 'safety-dance'), { recursive: true });
+    fs.writeFileSync(path.join(f.repo, 'tools', 'safety-dance', 'go.mod'), 'module example.invalid/safety-dance\n\ngo 1.23\n');
+    const bin = path.join(f.repo, 'bin');
+    fs.mkdirSync(bin);
+    const argv = ['-C', 'tools/safety-dance', 'run', 'golang.org/x/vuln/cmd/govulncheck@v1.8.0', './...'];
+    fs.writeFileSync(path.join(bin, 'go'), `#!${process.execPath}\nif (JSON.stringify(process.argv.slice(2)) !== ${JSON.stringify(JSON.stringify(argv))}) process.exit(2);\nconsole.log('offline scanner stub verified literal argv');\n`, { mode: 0o755 });
+    process.env.PATH = `${bin}${path.delimiter}${originalPath}`;
+    const rows = f.check +
+      '| C2 | pinned Go vulnerability check | `go -C tools/safety-dance run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...` | exit 0; offline scanner stub verified literal argv | pass |\n' +
+      f.row('A1', 'CLI doubles input 21.', 21, 42) + f.row('A2', 'CLI doubles input 7.', 7, 14);
+    const before = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
+    const verified = await runSkill(f.ctx(rows), f.task, before, f.options, 'verify-implementation', 1);
+    assert.deepEqual(verified.proofs.verification.executionEvidence.map(row => row.id), ['C1', 'C2', 'A1', 'A2']);
+  } finally {
+    process.env.PATH = originalPath;
+    fs.rmSync(f.repo, { recursive: true, force: true });
+  }
+});
+
 test('a genuine expected-error exit and a silent filesystem predicate are acceptance evidence', async () => {
   const f = proofFixture();
   try {
@@ -695,7 +732,7 @@ test('deletion-only source diffs still admit independent review of old-side chan
     const reviewer = f.ctx('', () => {
       const head = execFileSync('git', ['rev-parse', 'HEAD^'], { cwd: f.repo, encoding: 'utf8' }).trim();
       assert.equal(fs.existsSync(path.join(f.repo, 'cli.mjs')), false);
-      const evidence = 'cli.mjs:2 inspected the deleted old-side CLI implementation and observed the obsolete path absent';
+      const evidence = 'cli.mjs:old:2 inspected the deleted old-side CLI implementation and observed the obsolete path absent';
       return { sessionId: 'independent-deletion-review', text: JSON.stringify({
         head, revision: before.revision, acceptance: [],
         risks: ['functional correctness', 'security and data integrity', 'acceptance oracle and test reachability']
@@ -817,14 +854,14 @@ test('independent review cites committed changes at their shifted working-tree l
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 
-test('deletion-only review hunks cannot cite an unchanged preceding line', async () => {
+test('deletion-only review hunks cannot cite a surviving line shifted into the deleted number', async () => {
   const f = proofFixture();
   try {
     fs.writeFileSync(path.join(f.repo, 'cli.mjs'),
-      'console.log(Number(process.argv[2]) * 2);\n// obsolete line\n');
+      'console.log(Number(process.argv[2]) * 2);\n// obsolete line\n// surviving line\n');
     execFileSync('git', ['add', 'cli.mjs'], { cwd: f.repo });
     execFileSync('git', ['commit', '-m', 'fix: double CLI input'], { cwd: f.repo });
-    fs.writeFileSync(path.join(f.repo, 'cli.mjs'), 'console.log(Number(process.argv[2]) * 2);\n');
+    fs.writeFileSync(path.join(f.repo, 'cli.mjs'), 'console.log(Number(process.argv[2]) * 2);\n// surviving line\n');
     const before = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
     const rows = f.check + f.row('A1', 'CLI doubles input 21.', 21, 42) +
       f.row('A2', 'CLI doubles input 7.', 7, 14);
@@ -832,7 +869,7 @@ test('deletion-only review hunks cannot cite an unchanged preceding line', async
       'verify-implementation', 1);
     const reviewer = f.ctx(rows, () => {
       const head = execFileSync('git', ['rev-parse', 'HEAD^'], { cwd: f.repo, encoding: 'utf8' }).trim();
-      const evidence = 'cli.mjs:1 inspected unchanged doubling logic; node cli.mjs 21 printed 42 and node cli.mjs 7 printed 14';
+      const evidence = 'cli.mjs:2 inspected unchanged surviving line; node cli.mjs 21 printed 42 and node cli.mjs 7 printed 14';
       return { sessionId: 'unchanged-line-reviewer', text: JSON.stringify({
         head, revision: verified.revision,
         acceptance: ['CLI doubles input 21.', 'CLI doubles input 7.'].map(item => ({ item, evidence })),

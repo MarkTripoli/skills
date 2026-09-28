@@ -74,14 +74,14 @@ const table = `| Test | Result | Capture | Cue |
 | Browser playback and assertion | passed | primary | 00:12 asserted player state |`;
 const body = (tested, head, capture = captureUrl, result = 'passed', recording = 'ui-video') => `## Purpose\n\nPublish the feature for reviewers.\n\n## Special things to note\n\n- No unusual migration.\n\n## Evidence\n\n${fields(tested, head, capture, result, recording)}\n- comment: ${commentUrl}\n\n### Recorded tests\n\n${recording === 'ui-video' ? table : table.replace('Browser playback and assertion | passed | primary | 00:12 asserted player state', 'Focused command returned expected output | passed | primary | output line 4: expected identifier')}\n\n## Change outline\n\n- Source is unchanged.\n\n## Human Review\n\n### Review targets\n\n- Check the observable behavior.\n\n### Verify\n\n- [ ] Confirm hosted capture and review.\n\n### Known limits\n\n- None.\n`;
 const comment = (tested, head, capture = captureUrl, result = 'passed', recording = 'ui-video') => ({ id: 123, html_url: commentUrl, body: fields(tested, head, capture, result, recording) });
-function proofCommand({ repo, taskDir, bin, fetchStub, extra = [], prHead, tested, baseHead = tested ?? prHead, baseBranch = 'main', draft = false, prBody = '', posted = null, decoderDisabled = false, frameMissing = false, mediaLog = '', checkPages }) {
+function proofCommand({ repo, taskDir, bin, fetchStub, extra = [], prHead, tested, baseHead = tested ?? prHead, baseBranch = 'main', prTitle = 'feat: add proof', draft = false, prBody = '', posted = null, decoderDisabled = false, frameMissing = false, mediaLog = '', checkPages }) {
   const checks = checkPages ?? [{ total_count: 2, check_runs: ['test', 'Conventional Commits']
     .map((name, index) => ({ id: index + 1, name, head_sha: prHead, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })) }];
   const script = new URL('../shared/publication-proof.mjs', import.meta.url).pathname;
   return JSON.parse(run(process.execPath, ['--import', fetchStub, script, taskDir, repo, '7', ...extra], repo, {
     ...process.env,
     PATH: `${bin}:${process.env.PATH}`,
-    GH_PR_JSON: JSON.stringify({ url: 'https://github.com/owner/repo/pull/7', number: 7, headRefOid: prHead, baseRefName: baseBranch, baseRefOid: baseHead, isDraft: draft, body: prBody }),
+    GH_PR_JSON: JSON.stringify({ url: 'https://github.com/owner/repo/pull/7', number: 7, title: prTitle, headRefOid: prHead, baseRefName: baseBranch, baseRefOid: baseHead, isDraft: draft, body: prBody }),
     GH_COMMENT_JSON: JSON.stringify(posted),
     GH_TESTED_SHA: tested ?? prHead,
     GH_HEAD: prHead,
@@ -128,6 +128,14 @@ test('hosted body and comment, not task-local evidence, authorize current review
   assert.equal(proofCommand({ ...data, posted: comment(data.tested, data.head, captureUrl, 'not passed') }).status, 'incomplete');
   assert.equal(proofCommand({ ...data, prBody: body(data.tested, data.head, captureUrl, 'not passed') }).status, 'incomplete');
   assert.equal(proofCommand({ ...data, posted: { ...data.posted, id: 999 } }).status, 'incomplete');
+});
+
+test('editing a PR title invalidates stale successful commit-title checks at the same head', () => {
+  const data = completed();
+  assert.equal(proofCommand(data).status, 'pass');
+  const staleTitle = proofCommand({ ...data, prTitle: 'Breaking title outside Conventional Commits' });
+  assert.equal(staleTitle.status, 'incomplete');
+  assert.equal(staleTitle.commitChecksCurrent, false);
 });
 
 test('publication gate reads all exact-head check pages and rejects incomplete or later failing jobs', () => {
