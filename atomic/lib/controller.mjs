@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { observeArtifacts, planProgress, requireFresh } from './artifacts.mjs';
+import { observeArtifacts, planProgress, requireFresh, section } from './artifacts.mjs';
 import { revision, saveRecord } from './workspace.mjs';
 import { selectStageModel } from './models.mjs';
 import { currentHostedCapture, hostedProof } from './hosted-proof.mjs';
@@ -140,6 +140,26 @@ function makeRecovery(skill, source, before, after, receipt, codeRevision) {
   };
 }
 function validProof(state, type, status) { return currentProof(state, type) && (!status || state.latest[type].status === status); }
+function requireAcceptanceEvidence(task, state, artifact) {
+  if (artifact.type !== 'verification' || artifact.status !== 'passed') return;
+  const request = fs.readFileSync(path.join(task.taskDir, 'task.md'), 'utf8');
+  const criteria = section(request, 'Acceptance criteria').trim();
+  const source = state.latest.plan || state.latest['structure-outline'];
+  const hasVerifyItem = text => /(?:^|\n)### Verify\s*\n(?:(?!^#{1,3}\s).*\n)*?\s*[-*]\s+(?:\[[ xX]\]\s+)?\S/m.test(text || '');
+  const required = (criteria && !/^(?:none\.?|n\/a|not applicable)\.?$/i.test(criteria)) ||
+    /^\s*[-*]\s+\S/m.test(section(source?.text || '', 'Desired End State')) ||
+    [source, state.latest.implementation, state.latest.fix].some(item => hasVerifyItem(item?.text)) ||
+    (state.latest.reproduction && /\bRun:\s*\S/i.test(state.latest.reproduction.text));
+  if (!required) return;
+  const rows = section(artifact.text, 'Items').split('\n').filter(line => line.trim().startsWith('|'))
+    .map(line => line.split('|').slice(1, -1).map(cell => cell.trim().toLowerCase()));
+  const header = rows.shift() || [];
+  const id = header.indexOf('id');
+  const verdict = header.indexOf('verdict');
+  if (id < 0 || verdict < 0 || !rows.some(row => /^a[1-9]\d*$/.test(row[id] || '') && row[verdict] === 'pass')) {
+    throw new Error(`${artifact.file}: passed verification lacks an accepted A-row for required upstream acceptance evidence`);
+  }
+}
 function currentHostedDescription(state) {
   const proof = state.proofs?.['hosted-description'];
   return Boolean(state.hosted?.descriptionCurrent && proof &&
@@ -181,6 +201,7 @@ export async function runSkill(ctx, task, state, inputs, skill, step, feedback =
     const after = observeArtifacts(task.taskDir);
     const hostedStage = skill === 'record-evidence' || skill === 'describe-pr';
     const artifact = hostedStage ? null : requireFresh(state, after, SKILLS[skill], expectedArtifactIteration(state, SKILLS[skill]));
+    if (skill === 'verify-implementation') requireAcceptanceEvidence(task, state, artifact);
     const codeRevision = revision(task.cwd, task.taskRootRelative);
     if (!mutations.has(skill) && state.revision !== codeRevision) throw new Error(`${skill} changed implementation files; its independent observation is invalid`);
     if (hostedStage) {

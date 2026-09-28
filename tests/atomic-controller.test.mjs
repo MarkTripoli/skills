@@ -291,6 +291,48 @@ test('passed verification rejects unknown verdict rows even when another row pas
   assert.throws(() => readArtifact(file), /contradicts evidence/);
 });
 
+test('a passed C-only verification cannot bypass task acceptance, but no-acceptance tasks may pass', async () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'atomic-acceptance-'));
+  initGit(repo);
+  const taskDir = path.join(repo, '.agents', 'tasks', 'acceptance');
+  const skillsDir = path.join(repo, 'installed-skills');
+  fs.mkdirSync(taskDir, { recursive: true });
+  fs.mkdirSync(path.join(skillsDir, 'verify-implementation'), { recursive: true });
+  fs.writeFileSync(path.join(skillsDir, 'verify-implementation', 'SKILL.md'), '# verify-implementation\n');
+  fs.writeFileSync(path.join(taskDir, '01-implementation.md'), '---\ntype: implementation\nsummary: implemented\n---\n# Receipt\n\nImplemented change.\n');
+  const latest = observeArtifacts(taskDir);
+  const before = initialState(latest, revision(repo, '.agents/tasks'));
+  const task = { taskDir, cwd: repo, taskRootRelative: '.agents/tasks', skillsDir, runId: 'acceptance-run' };
+  const inputs = { verify: true, app_test: 'none', model: 'test-model', model_routing: 'fixed' };
+  const header = '---\ntype: verification\nsummary: checks recorded\nstatus: passed\n---\n## Items\n\n| Id | Item | Verdict |\n|---|---|---|\n';
+  let rows;
+  const ctx = {
+    tool: async (name, _args, callback) => name.endsWith('-select-model') ? { model: 'test-model' } : callback(),
+    task: async () => {
+      fs.writeFileSync(path.join(taskDir, '02-verification.md'), header + rows);
+      return { sessionId: 'verifier', text: 'Verification finished.' };
+    },
+  };
+  try {
+    fs.writeFileSync(path.join(taskDir, 'task.md'), '# Task\n\n## Acceptance criteria\n\n- CLI reports the requested value.\n');
+    rows = '| C1 | repository check | pass |\n';
+    await assert.rejects(() => runSkill(ctx, task, before, inputs, 'verify-implementation', 1), /lacks an accepted A-row/);
+    rows += '| A1 | CLI reports the requested value | pass |\n';
+    const accepted = await runSkill(ctx, task, before, inputs, 'verify-implementation', 2);
+    assert.deepEqual(eligible(accepted, inputs, 'oneshot', false), ['review-code']);
+    fs.writeFileSync(path.join(taskDir, 'task.md'), '# Task\n\nNo acceptance items are specified for this task.\n');
+    rows = '| C1 | repository check | pass |\n';
+    const noAcceptance = await runSkill(ctx, task, before, inputs, 'verify-implementation', 3);
+    assert.deepEqual(eligible(noAcceptance, inputs, 'oneshot', false), ['review-code']);
+    fs.writeFileSync(path.join(taskDir, '03-plan.md'), '---\ntype: plan\nsummary: plan\n---\n# Plan\n\n## Desired End State\n\n- CLI returns a value visible to users.\n\n## Phase 1\n- [x] Implement the behavior\n');
+    const planned = initialState(observeArtifacts(taskDir), revision(repo, '.agents/tasks'));
+    rows = '| C1 | changed repository check | pass |\n';
+    await assert.rejects(() => runSkill(ctx, task, planned, inputs, 'verify-implementation', 4), /lacks an accepted A-row/);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 function initGit(dir) {
   const run = (args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: 'ignore' });
   run(['init', '-b', 'main']);
