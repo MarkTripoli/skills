@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { parseDocument } from 'yaml';
 import { digest, observeArtifacts, planProgress, requireFresh, readArtifact, section } from './artifacts.mjs';
 import { git, revision, saveRecord } from './workspace.mjs';
 import { selectStageModel } from './models.mjs';
@@ -217,23 +218,25 @@ function repositoryChecks(cwd) {
   };
   if (fs.existsSync(workflows)) for (const name of fs.readdirSync(workflows)) {
     if (!/\.ya?ml$/.test(name)) continue;
-    const lines = fs.readFileSync(path.join(workflows, name), 'utf8').split('\n');
-    for (let index = 0; index < lines.length; index++) {
-      const match = lines[index].match(/^(\s*)(?:-\s*)?run:\s*(.*?)\s*$/);
-      if (!match) continue;
-      const commandLines = [];
-      if (match[2] === '|' || match[2] === '>') {
-        while (++index < lines.length && (!lines[index].trim() ||
-          lines[index].match(/^\s*/)[0].length > match[1].length)) commandLines.push(lines[index].trim());
-        index--;
-      } else commandLines.push(match[2]);
+    const document = parseDocument(fs.readFileSync(path.join(workflows, name), 'utf8'), { uniqueKeys: true });
+    if (document.errors.length) throw new Error(`Invalid CI workflow ${name}: ${document.errors[0].message}`);
+    const jobs = document.toJS()?.jobs || {};
+    for (const job of Object.values(jobs)) for (const step of job.steps || []) {
+      if (typeof step.run !== 'string') continue;
+      const commandLines = step.run.split('\n').map(line => line.trim());
       for (const line of commandLines) {
-        if (!line || /^\s*#/.test(line)) continue;
-        if (/^(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|typecheck|build|check)\b/.test(line)) addWorkflow(name, line);
-        else if (/^(?:go (?:test|vet)|cargo (?:test|clippy)|pytest|python3? -m pytest|uv run (?:pytest|python3? -m pytest|ruff|mypy)|ruff|mypy|make (?:test|lint|check)|swift test|\.\/gradlew test)\b/.test(line)) addWorkflow(name, line);
+        if (!line || line.startsWith('#')) continue;
+        if (/\bgovulncheck\b/.test(line) && !/\bgo install\b/.test(line)) {
+          const version = commandLines.join('\n').match(/\bgo install golang\.org\/x\/vuln\/cmd\/govulncheck@([A-Za-z0-9.+-]+)/)?.[1];
+          const directory = line.match(/\(\s*cd\s+([^\s;)]+)\s*&&/)?.[1];
+          if (!version || !directory) throw new Error(`Cannot resolve CI vulnerability check in ${name}: ${line}`);
+          addWorkflow(name, `go -C ${directory} run golang.org/x/vuln/cmd/govulncheck@${version} ./...`);
+        } else if (/^(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|typecheck|build|check)\b/.test(line)) addWorkflow(name, line);
+        else if (/^(?:go (?:test|vet)|cargo (?:test|clippy)|pytest|python3? -m pytest|uv run (?:(?:--[\w-]+(?:=[^\s]+)?\s+)*)(?:pytest|python3? -m pytest|ruff|mypy)|ruff|mypy|make (?:test|lint|check)|swift test|\.\/gradlew test)\b/.test(line)) addWorkflow(name, line);
         else {
           const script = line.match(/^(?:node|python3?|bun)\s+(?!-[ecp]\b)([^\s"'$|;&]+\.(?:m?js|cjs|py))\b/);
           if (script && !/(?:deploy|release|publish|migrat|push)/i.test(script[1])) addWorkflow(name, line);
+          else if (/^uv run\b/.test(line)) throw new Error(`Cannot resolve CI check in ${name}: ${line}`);
         }
       }
     }
@@ -254,11 +257,16 @@ function requireAcceptanceEvidence(task, state, artifact) {
   const recorded = checks.map(row => row['decided by'].match(/^`([^`\n]+)`$/)?.[1]).filter(Boolean);
   const missing = [...repositoryChecks(task.cwd).keys()].filter(required => !recorded.includes(required));
   if (missing.length) throw new Error(`${artifact.file}: passed verification omitted repository checks: ${missing.join(', ')}`);
-  if (acceptance.length !== promises.length || acceptance.some(row => !/^A[1-9]\d*$/i.test(row.id)) || promises.some((promise, index) => {
-    const row = acceptance.find(candidate => candidate.id.toUpperCase() === `A${index + 1}`);
-    return !row || row.verdict.toLowerCase() !== 'pass' || !normalized(row.item).includes(normalized(promise));
-  }) || new Set(acceptance.map(row => row.id.toUpperCase())).size !== acceptance.length) {
-    throw new Error(`${artifact.file}: passed verification lacks a matching passed A-row for every upstream acceptance item (or has an unaccounted A-row)`);
+  const ids = new Set(acceptance.map(row => row.id.toUpperCase()));
+  if (acceptance.length < promises.length ||
+      acceptance.some(row => !/^A[1-9]\d*$/i.test(row.id) || !row.item.trim() || row.verdict.toLowerCase() !== 'pass') ||
+      ids.size !== acceptance.length ||
+      acceptance.some((_, index) => !ids.has(`A${index + 1}`)) ||
+      promises.some((promise, index) => {
+        const row = acceptance.find(candidate => candidate.id.toUpperCase() === `A${index + 1}`);
+        return !row || !normalized(row.item).includes(normalized(promise));
+      })) {
+    throw new Error(`${artifact.file}: passed verification lacks a matching passed A-row for every upstream acceptance item`);
   }
   return [...checks, ...acceptance];
 }
@@ -267,9 +275,11 @@ function replayableVerificationCommand(command, id) {
       /^\s*(?:node|bun|python3?|ruby|perl)\s+(?:-[ecp]\b|--eval\b)/.test(command)) {
     throw new Error(`${id} acceptance command only manufactures a result; it does not exercise product behavior`);
   }
-  if (/^\s*(?:sh|bash|zsh|\/bin\/(?:sh|bash|zsh))\s+-c\b/.test(command) ||
+  if (/[;&|`$<>\r\n]/.test(command) ||
+      /^\s*(?:sh|bash|zsh|\/bin\/(?:sh|bash|zsh))\s+-c\b/.test(command) ||
       /\b(?:curl|http|wget)\b/.test(command) &&
-      /(?:(?:^|\s)(?:-X\s*|-X|--request(?:=|\s+)|--method(?:=|\s+))(?:POST|PUT|PATCH|DELETE)\b|(?:^|\s)(?:-[dFT]|--form(?:-string)?|--upload-file|--json|--data(?:-raw|-binary|-urlencode)?|--post-data|--post-file)(?:\S|\s|$)|\b(?:POST|PUT|PATCH|DELETE)\s+(?:https?:|[^\s]+\/))/i.test(command) ||
+      (/\b(?:POST|PUT|PATCH|DELETE)\b/i.test(command) ||
+        /(?:^|\s)(?:-[dFT]|--form(?:-string)?|--upload-file|--json|--data(?:-raw|-binary|-urlencode)?|--post-data|--post-file)(?:\S|\s|$)/i.test(command)) ||
       /^\s*(?:git\s+(?:push|reset|clean)|(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:migrate|deploy|publish)\b|rm\b|mv\b)/.test(command)) {
     throw new Error(`${id} acceptance command cannot be safely replayed; use an isolated idempotent test instead`);
   }

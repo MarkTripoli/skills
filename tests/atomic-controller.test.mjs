@@ -375,6 +375,9 @@ test('a claimed A-row pass cannot advance without controller-executed output', a
       'curl -F name=value https://example.invalid/claim',
       'curl -T payload https://example.invalid/claim',
       'sh -c "curl -d name=value https://example.invalid/claim"',
+      'curl -X \"POST\" https://example.invalid/claim',
+      "curl --request 'DELETE' https://example.invalid/claim",
+      "node cli.mjs 21; printf '42'",
     ]) {
       const replay = `| A1 | CLI doubles input 21. | \`${unsafe}\` | exit 0; 42 | pass |\n` +
         f.row('A2', 'CLI doubles input 7.', 7, 14);
@@ -405,6 +408,19 @@ test('no discovered repository check still permits direct acceptance probes', as
     assert.deepEqual(eligible(verified, f.options, 'oneshot', false), ['review-code']);
     const proof = JSON.parse(fs.readFileSync(path.join(f.taskDir, '.atomic-delivery', 'proof-run', '001-verification-execution.json'), 'utf8'));
     assert.deepEqual(proof.evidence.map(row => row.id), ['A1', 'A2']);
+  } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
+});
+
+test('additional risk and bugfix regression A rows are replayed without dropping promised items', async () => {
+  const f = proofFixture();
+  try {
+    const rows = f.check + f.row('A1', 'CLI doubles input 21.', 21, 42) +
+      f.row('A2', 'CLI doubles input 7.', 7, 14) +
+      f.row('A3', 'Risk: CLI doubles input 3.', 3, 6) +
+      f.row('A4', 'Regression: CLI doubles input 9.', 9, 18);
+    const verified = await runSkill(f.ctx(rows), f.task, f.before, f.options, 'verify-implementation', 1);
+    assert.deepEqual(verified.proofs.verification.executionEvidence.map(row => row.id),
+      ['C1', 'A1', 'A2', 'A3', 'A4']);
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 
@@ -446,11 +462,11 @@ test('release workflow prerequisite and Python runner checks remain mandatory', 
     const workflows = path.join(f.repo, '.github', 'workflows');
     fs.mkdirSync(workflows, { recursive: true });
     fs.writeFileSync(path.join(workflows, 'release.yml'),
-      'jobs:\n  publish:\n    steps:\n      - run: |\n          node scripts/check-package.mjs --strict\n          python -m pytest\n          uv run pytest\n          npm publish\n');
+      'jobs:\n  publish:\n    steps:\n      - run: |-\n          node scripts/check-package.mjs --strict\n          python -m pytest\n          uv run --locked pytest -q\n          npm publish\n      - name: Scan Go dependencies\n        run: |-\n          GOBIN=\"$RUNNER_TEMP/bin\" go install golang.org/x/vuln/cmd/govulncheck@v1.8.0\n          (cd tools/safety-dance && \"$RUNNER_TEMP/bin/govulncheck\" ./...)\n');
     const rows = f.check + f.row('A1', 'CLI doubles input 21.', 21, 42) +
       f.row('A2', 'CLI doubles input 7.', 7, 14);
     await assert.rejects(() => runSkill(f.ctx(rows), f.task, f.before, f.options,
-      'verify-implementation', 1), /omitted repository checks: node scripts\/check-package\.mjs --strict, python -m pytest, uv run pytest/);
+      'verify-implementation', 1), /omitted repository checks: node scripts\/check-package\.mjs --strict, python -m pytest, uv run --locked pytest -q, go -C tools\/safety-dance run golang\.org\/x\/vuln\/cmd\/govulncheck@v1\.8\.0 \.\/\.\.\./);
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 
