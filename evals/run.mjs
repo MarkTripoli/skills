@@ -9,6 +9,8 @@ import { artifacts, failures, handoff, newest, placeholders } from "./lib.mjs";
 import { recordSecurityAssessment } from "./security-assessment.mjs";
 import { gradeEvidenceScenario, isEvidenceScenario, snapshotEvidenceSources } from "./iterate-evidence.mjs";
 import { metricsForOutput } from "./metrics.mjs";
+import { fingerprintDirectory, fingerprintEvalSource } from "./evidence.mjs";
+import { auditEvalPair } from "./feedback.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -27,10 +29,9 @@ if (args[0] === "--compare") {
   const read = (value) => {
     const dir = path.resolve(value === "latest" ? path.join(resultsRoot, value) : value);
     try {
-      return {
-        ...JSON.parse(fs.readFileSync(path.join(dir, "comparison-run.json"), "utf8")),
-        rawOutput: path.relative(repoRoot, dir),
-      };
+      const run = JSON.parse(fs.readFileSync(path.join(dir, "comparison-run.json"), "utf8"));
+      if (path.resolve(repoRoot, run.rawOutput) !== fs.realpathSync(dir)) return null;
+      return run;
     } catch {
       return null;
     }
@@ -40,37 +41,36 @@ if (args[0] === "--compare") {
     model: run?.model ?? "unknown",
     actualModel: run?.metrics?.coverage?.models?.length === 1 ? run.metrics.coverage.models[0] : "unknown",
     wallTimeSeconds: Number.isFinite(run?.wallTimeSeconds) ? run.wallTimeSeconds : "unknown",
-    spend: Number.isFinite(run?.metrics?.cost?.total) && run.metrics.cost_basis === "provider_billed_usd" &&
-      run.metrics.coverage?.complete === true
-      ? { amount: run.metrics.cost.total, currency: "USD", basis: run.metrics.cost_basis, source: run.metrics.cost_source }
-      : "unknown",
-    estimatedCost: Number.isFinite(run?.metrics?.cost?.total) && run.metrics.cost_basis === "model_rate_estimate_usd" &&
-      run.metrics.coverage?.complete === true
-      ? { amount: run.metrics.cost.total, currency: "USD", basis: run.metrics.cost_basis, source: run.metrics.cost_source }
-      : "unknown",
+    spend: "unknown",
+    estimatedCost: "unknown",
     fixtureRevision: run?.fixtureRevision ?? "unknown",
+    fixtureVersion: run?.fixtureVersion ?? run?.fixtureSnapshotRevision ?? "unknown",
+    sourceRevision: run?.sourceRevision ?? "unknown",
     rawOutput: run?.rawOutput ?? "unknown",
   });
-  const solo = fields(read(args[1]));
-  const delivery = fields(read(args[2]));
-  const fixtureMatched = solo.fixtureRevision !== "unknown" && solo.fixtureRevision === delivery.fixtureRevision;
+  const soloRun = read(args[1]);
+  const deliveryRun = read(args[2]);
+  const solo = fields(soloRun);
+  const delivery = fields(deliveryRun);
+  const fixtureMatched = solo.fixtureVersion !== "unknown" && solo.fixtureVersion === delivery.fixtureVersion;
   const modelMatched = solo.model !== "unknown" && solo.model === delivery.model &&
     solo.actualModel !== "unknown" && solo.actualModel === delivery.actualModel;
-  const spendComparable = fixtureMatched && modelMatched && solo.acceptance === "passed" && delivery.acceptance === "passed" &&
-    solo.spend !== "unknown" && delivery.spend !== "unknown" &&
-    solo.spend.currency === delivery.spend.currency && solo.spend.basis === delivery.spend.basis;
-  const estimatedCostComparable = fixtureMatched && modelMatched && solo.acceptance === "passed" && delivery.acceptance === "passed" &&
-    solo.estimatedCost !== "unknown" && delivery.estimatedCost !== "unknown" &&
-    solo.estimatedCost.currency === delivery.estimatedCost.currency && solo.estimatedCost.basis === delivery.estimatedCost.basis;
+  const spendComparable = false;
+  const qualityAudit = auditEvalPair(soloRun, deliveryRun);
+  const estimatedCostComparable = qualityAudit.estimatedCostEvidence !== null;
+  const estimatedCostEvidence = qualityAudit.estimatedCostEvidence;
   console.log(JSON.stringify({
     solo, delivery, fixtureMatched, modelMatched, spendComparable,
-    spendAdvantage: spendComparable
-      ? solo.spend.amount < delivery.spend.amount ? "solo" : delivery.spend.amount < solo.spend.amount ? "delivery" : "tie"
-      : "unknown",
+    spendAdvantage: "unknown",
     estimatedCostComparable,
     estimatedCostAdvantage: estimatedCostComparable
-      ? solo.estimatedCost.amount < delivery.estimatedCost.amount ? "solo" : delivery.estimatedCost.amount < solo.estimatedCost.amount ? "delivery" : "tie"
+      ? estimatedCostEvidence.beforeUsd < estimatedCostEvidence.afterUsd ? "solo" : estimatedCostEvidence.afterUsd < estimatedCostEvidence.beforeUsd ? "delivery" : "tie"
       : "unknown",
+    estimatedCostEvidence,
+    qualityClaimsAllowed: qualityAudit.qualityClaimsAllowed,
+    qualityEvidence: qualityAudit.qualityEvidence,
+    qualityProblems: qualityAudit.problems,
+    savingsClaimsAllowed: qualityAudit.savingsClaimsAllowed,
   }, null, 2));
   process.exit(0);
 }
@@ -135,6 +135,13 @@ function snapshotSources(dist) {
   for (const file of guidanceFiles) fs.cpSync(path.join(repoRoot, "shared", file), path.join(shared, file));
   fs.cpSync(fixturesDir, path.join(dist, "fixtures"), { recursive: true });
   fs.cpSync(shared, path.join(dist, "fixtures", "shared"), { recursive: true });
+}
+function snapshotScenarioSources(scenarios, dist) {
+  const destination = path.join(dist, "eval-sources", "scenarios");
+  fs.mkdirSync(destination, { recursive: true });
+  for (const scenario of scenarios) {
+    fs.copyFileSync(path.join(scenariosDir, `${scenario.name}.mjs`), path.join(destination, `${scenario.name}.mjs`));
+  }
 }
 // A throwaway git repository holding the fixture codebase, the worker definitions, and the task directory.
 function prepareRepo(scenario, dist) {
@@ -294,8 +301,10 @@ async function runScenario(scenario, runDir, dist) {
   const taskRel = path.relative(repo, taskDir);
   // The commit before any phase ran: everything a phase changes outside `.agents/` is measured from here.
   const fixtureSha = git(repo, "rev-parse", "HEAD");
+  const fixtureSnapshotRevision = fingerprintDirectory(path.join(dist, "fixtures"));
+  const sourceRevision = fingerprintEvalSource(dist, scenario.name, fixtureSnapshotRevision);
   const resultDir = path.join(runDir, scenario.name);
-  const result = { name: scenario.name, repo, phases: [], ok: true, model: model ?? "omp-default", fixtureRevision: fixtureSha, wallTimeSeconds: 0, metrics: { wall_ms: 0, tokens: {}, cost: null, cost_basis: null, cost_source: null, coverage: { complete: true, usage_events: 0, cost_events: 0, models: [] } } };
+  const result = { name: scenario.name, repo, phases: [], ok: true, model: model ?? "omp-default", fixtureRevision: fixtureSha, fixtureVersion: fixtureSnapshotRevision, sourceRevision, fixtureSnapshotRevision, wallTimeSeconds: 0, metrics: { wall_ms: 0, tokens: {}, cost: null, cost_basis: null, cost_source: null, coverage: { complete: true, turns: 0, usage_events: 0, cost_events: 0, models: [] } } };
 
   for (const [index, phase] of scenario.phases.entries()) {
     const label = `${index + 1}-${phase.skill}`;
@@ -320,6 +329,7 @@ async function runScenario(scenario, runDir, dist) {
     const aggregate = result.metrics;
     aggregate.wall_ms += wallMs;
     for (const key of ["input", "output", "cacheRead", "cacheWrite"]) if (metrics.tokens?.[key] !== null && metrics.tokens?.[key] !== undefined) aggregate.tokens[key] = (aggregate.tokens[key] ?? 0) + metrics.tokens[key];
+    aggregate.coverage.turns += metrics.coverage.turns;
     if (metrics.cost) { aggregate.cost ??= { total: 0 }; aggregate.cost.total += metrics.cost.total; }
     aggregate.cost_basis = metrics.cost_basis;
     aggregate.cost_source = metrics.cost_source;
@@ -327,7 +337,7 @@ async function runScenario(scenario, runDir, dist) {
     aggregate.coverage.usage_events += metrics.coverage.usage_events;
     aggregate.coverage.cost_events += metrics.coverage.cost_events;
     aggregate.coverage.models = [...new Set([...aggregate.coverage.models, ...metrics.coverage.models])];
-    result.phases.push({ phase: label, wall_ms: wallMs, tokens: metrics.tokens, cost: metrics.cost, coverage: metrics.coverage, ok: problems.length === 0, problems });
+    result.phases.push({ phase: label, wall_ms: wallMs, tokens: metrics.tokens, cost: metrics.cost, cost_basis: metrics.cost_basis, cost_source: metrics.cost_source, coverage: metrics.coverage, ok: problems.length === 0, problems });
     report(scenario.name, label, Math.round(wallMs / 1000), problems);
     if (problems.length) { result.ok = false; break; }
   }
@@ -420,6 +430,7 @@ if (gradeDir !== null) {
   }
   if (scenarios.some(isEvidenceScenario)) snapshotEvidenceSources(repoRoot, dist);
   snapshotSources(dist);
+  snapshotScenarioSources(scenarios, dist);
   const latest = path.join(resultsRoot, "latest");
   fs.rmSync(latest, { force: true });
   fs.symlinkSync(stamp, latest);
