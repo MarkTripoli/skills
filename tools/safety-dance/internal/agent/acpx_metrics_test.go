@@ -35,3 +35,23 @@ func TestAcpxCacheCreationOnlyDoesNotClaimPrimaryCounters(t *testing.T) {
 		t.Fatalf("cache-only usage gained primary coverage or lost observed zero: %+v", usage)
 	}
 }
+
+func TestAcpxNullCountersRemainUnknownUntilObserved(t *testing.T) {
+	var usage TokenUsage
+	stream := `{"result":{"usage":{"input_tokens":null,"outputTokens":null,"cache_read_tokens":null,"cache_write_tokens":null}}}` + "\n" +
+		`{"method":"session/update","params":{"update":{"sessionUpdate":"usage_update","used":null,"inputTokens":null,"_meta":{"usage":{"output_tokens":null,"cachedInputTokens":null,"cacheCreationTokens":null}}}}}` + "\n"
+	if _, _, err := parseAcpxJSONEvents(context.Background(), strings.NewReader(stream), nil, &usage); err != nil {
+		t.Fatal(err)
+	}
+	if usage.Reported || usage.InputTokensReported || usage.OutputTokensReported || usage.CacheReadTokensReported || usage.CacheCreationReported || resultFromUsage(usage) != nil {
+		t.Fatalf("null counters were reported as observed zero: %+v", usage)
+	}
+
+	stream = `{"result":{"usage":{"input_tokens":null,"output_tokens":0,"cache_read_tokens":null,"cache_write_tokens":0}}}` + "\n"
+	if _, _, err := parseAcpxJSONEvents(context.Background(), strings.NewReader(stream), nil, &usage); err != nil {
+		t.Fatal(err)
+	}
+	if !usage.Reported || usage.InputTokensReported || !usage.OutputTokensReported || usage.CacheReadTokensReported || !usage.CacheCreationReported || usage.OutputTokens != 0 || resultFromUsage(usage) == nil {
+		t.Fatalf("observed zero and unknown counters were not distinguished: %+v", usage)
+	}
+}

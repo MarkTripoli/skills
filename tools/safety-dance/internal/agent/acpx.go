@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -395,7 +396,7 @@ func markAcpxUsagePresence(line []byte, msg *acpxJSONMessage) {
 		return
 	}
 	markAcpxUsageFields(raw.Params.Update, &msg.Params.Update.acpxUsageFields)
-	if _, ok := update["used"]; ok {
+	if used, ok := update["used"]; ok && string(bytes.TrimSpace(used)) != "null" {
 		msg.Params.Update.usedReported = true
 	}
 	if meta, ok := update["_meta"]; ok {
@@ -416,7 +417,10 @@ func markAcpxUsageFields(raw json.RawMessage, fields *acpxUsageFields) {
 	if json.Unmarshal(raw, &values) != nil {
 		return
 	}
-	for key := range values {
+	for key, value := range values {
+		if string(bytes.TrimSpace(value)) == "null" {
+			continue
+		}
 		switch key {
 		case "input_tokens", "inputTokens":
 			fields.reported, fields.inputReported = true, true
