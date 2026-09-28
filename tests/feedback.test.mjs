@@ -5,16 +5,27 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
+import test, { after } from "node:test";
 import { auditEvalPair, decideFeedback } from "../evals/feedback.mjs";
 import { fingerprintDirectory, fingerprintEvalSource, RUNNER_SOURCES } from "../evals/evidence.mjs";
 import { metricsForOutput } from "../evals/metrics.mjs";
+import { buildRuntime } from "../scripts/lib/build.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scenario = "verify-required-arguments";
 const model = "provider/model-a";
 const answer = "Ran npm run build -- RUNTIME=node; observed built for node. Read package.json, CI, and README.\n";
 const proposal = { rule: "prefer model B for task X", rationale: "targeted evidence", targetScenario: scenario, expectedBehavior: "required runtime build succeeds" };
+let generatedFixture;
+after(() => { if (generatedFixture) fs.rmSync(generatedFixture, { recursive: true, force: true }); });
+
+function generatedSources() {
+  if (!generatedFixture) {
+    generatedFixture = fs.mkdtempSync(path.join(os.tmpdir(), "feedback-generated-"));
+    buildRuntime("oh-my-pi", generatedFixture);
+  }
+  return generatedFixture;
+}
 
 function save(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -30,10 +41,13 @@ function snapshot(dist) {
   fs.mkdirSync(fixtures, { recursive: true });
   fs.writeFileSync(path.join(fixtures, "case.json"), "{\"value\":1}\n");
   save(path.join(fixtures, "delivery-comparison", "acceptance.json"), { id: "required-runtime", acceptance: ["Build succeeds with RUNTIME=node"] });
-  fs.mkdirSync(path.join(dist, "agents"), { recursive: true });
+  const generated = generatedSources();
+  fs.cpSync(path.join(generated, "agents"), path.join(dist, "agents"), { recursive: true });
+  fs.cpSync(path.join(generated, "skills"), path.join(dist, "skills"), { recursive: true });
   fs.mkdirSync(path.join(dist, "shared"), { recursive: true });
-  fs.writeFileSync(path.join(dist, "agents", "worker.txt"), "retained worker\n");
-  fs.writeFileSync(path.join(dist, "shared", "CONVENTIONS.txt"), "retained guidance\n");
+  for (const file of ["WRITING.md", "CONVENTIONS.md"]) {
+    fs.copyFileSync(path.join(repoRoot, "shared", file), path.join(dist, "shared", file));
+  }
   const source = path.join(dist, "eval-sources");
   fs.mkdirSync(path.join(source, "scenarios"), { recursive: true });
   fs.mkdirSync(path.join(source, "runner"), { recursive: true });
@@ -177,7 +191,8 @@ test("caller metadata, missing samples, and reused execution identities cannot m
 
 test("fixture, scenario, runner, and transitive grader source must remain pinned", () => {
   for (const relative of ["fixtures/case.json", `eval-sources/scenarios/${scenario}.mjs`,
-    "eval-sources/runner/acme-chain.mjs", "eval-sources/runner/scripts/check-commits.mjs"]) {
+    "eval-sources/runner/acme-chain.mjs", "eval-sources/runner/scripts/check-commits.mjs",
+    "skills/verify-implementation/SKILL.md", "agents/agent-implementer.md", "shared/WRITING.md"]) {
     withPair((before, after) => {
       fs.appendFileSync(path.join(after.rawOutput, ".dist", relative), "tampered\n");
       const audit = auditEvalPair(before, after);
@@ -187,6 +202,31 @@ test("fixture, scenario, runner, and transitive grader source must remain pinned
   }
 });
 
+test("pinned skills, agents, and guidance must match current generated sources", () => {
+  for (const [relative, message] of [
+    ["skills/verify-implementation/SKILL.md", "pinned skills source differs"],
+    ["skills/verify-implementation/references/verification_template.md", "pinned skills source differs"],
+    ["agents/agent-implementer.md", "pinned agents source differs"],
+    ["shared/WRITING.md", "pinned shared guidance differs"],
+    ["shared/CONVENTIONS.md", "pinned shared guidance differs"],
+  ]) {
+    withPair((before, after) => {
+      const dist = path.join(after.rawOutput, ".dist");
+      const initialRevision = after.sourceRevision;
+      fs.appendFileSync(path.join(dist, relative), "\n// previous version\n");
+      const revision = fingerprintEvalSource(dist, scenario, after.fixtureSnapshotRevision);
+      assert.notEqual(revision, initialRevision, relative);
+      for (let index = 0; index < after.sampleRuns.length; index++) {
+        editSample(after, (run) => { run.sourceRevision = revision; }, index);
+      }
+      after.sourceRevision = revision;
+      save(path.join(after.rawOutput, "comparison-run.json"), after);
+      const audit = auditEvalPair(before, after);
+      assert.equal(audit.qualityClaimsAllowed, false, relative);
+      assert.ok(audit.problems.some((problem) => problem.includes(message)), `${relative}: ${audit.problems.join("; ")}`);
+    });
+  }
+});
 
 test("a self-consistent old grader snapshot cannot be regraded with changed current code", () => {
   withPair((before, after) => {
@@ -342,6 +382,38 @@ test("unsupported evidence cohorts reject before creating results or launching p
     assert.equal(fs.existsSync(path.join(root, "results")), false);
     assert.equal(fs.existsSync(marker), false);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("live multi-sample fixture repositories start at the same commit", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "feedback-live-samples-"));
+  let sampleRepos = [];
+  try {
+    const bin = path.join(root, "bin");
+    fs.mkdirSync(bin);
+    const omp = path.join(bin, "omp");
+    fs.writeFileSync(omp, "#!/usr/bin/env node\nprocess.stdout.write('{}\\n');\n");
+    fs.chmodSync(omp, 0o755);
+    const resultsRoot = path.join(root, "results");
+    const result = spawnSync(process.execPath, [path.join(repoRoot, "evals", "run.mjs"),
+      "--samples", "2", scenario], {
+      cwd: repoRoot, encoding: "utf8",
+      env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, SKILLS_EVAL_RESULTS_ROOT: resultsRoot },
+    });
+    assert.equal(result.status, 1, result.stderr); // Fake OMP produces no artifact; fixture setup still completes.
+    const cohortDir = path.join(resultsRoot, fs.readlinkSync(path.join(resultsRoot, "latest")), scenario);
+    const cohort = JSON.parse(fs.readFileSync(path.join(cohortDir, "comparison-run.json"), "utf8"));
+    const samples = cohort.sampleRuns.map((reference) =>
+      JSON.parse(fs.readFileSync(path.join(cohortDir, reference, "comparison-run.json"), "utf8")));
+    assert.equal(samples.length, 2);
+    sampleRepos = samples.map((sample) => sample.repo);
+    assert.notEqual(samples[0].executionId, samples[1].executionId);
+    assert.equal(samples[0].fixtureRevision, samples[1].fixtureRevision);
+    assert.equal(cohort.fixtureRevision, samples[0].fixtureRevision);
+    assert.equal(samples[0].sourceRevision, samples[1].sourceRevision);
+  } finally {
+    for (const repo of sampleRepos) fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("solo recorder retains the initial HEAD, final HEAD proof, and fixture snapshot without a paid run", () => {

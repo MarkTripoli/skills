@@ -49,6 +49,7 @@ export function fingerprintEvalSource(dist, scenario, fixtureSnapshotRevision = 
     { label: "scenario", root: path.join(dist, "eval-sources", "scenarios", `${scenario}.mjs`) },
     { label: "runner", root: path.join(dist, "eval-sources", "runner") },
     { label: "agents", root: path.join(dist, "agents") },
+    { label: "skills", root: path.join(dist, "skills") },
     { label: "shared", root: path.join(dist, "shared") },
   ]);
   return crypto.createHash("sha256").update(sources).update("\0fixtures\0").update(fixtureSnapshotRevision).digest("hex");

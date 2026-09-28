@@ -1,9 +1,11 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
-import { fingerprintDirectory, fingerprintEvalSource, RUNNER_SOURCES } from "./evidence.mjs";
+import { fingerprintDirectories, fingerprintDirectory, fingerprintEvalSource, RUNNER_SOURCES } from "./evidence.mjs";
+import { buildRuntime } from "../scripts/lib/build.mjs";
 import { metricsForOutput } from "./metrics.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -12,6 +14,33 @@ const JOIN_FIELDS = ["fixtureVersion", "fixtureSnapshotRevision", "model", "actu
 const MINIMUM_SAMPLES = 10;
 const USAGE_KEYS = ["input", "output", "cacheRead", "cacheWrite"];
 const ESTIMATED_COST_SOURCE = "omp.turn_end.message.usage.cost (local model rate table)";
+const GUIDANCE_FILES = ["WRITING.md", "CONVENTIONS.md"];
+let currentGeneratedRevision;
+let currentGeneratedInputRevision;
+
+function generatedRevision() {
+  const inputRevision = fingerprintDirectories([
+    { label: "skills", root: path.join(repoRoot, "skills") },
+    { label: "runtime", root: path.join(repoRoot, "runtimes", "oh-my-pi.md") },
+    { label: "artifact-helper", root: path.join(repoRoot, "shared", "task-artifacts.mjs") },
+    { label: "root-helper", root: path.join(repoRoot, "shared", "task-root.mjs") },
+    { label: "builder", root: path.join(repoRoot, "scripts", "lib", "build.mjs") },
+    { label: "layout", root: path.join(repoRoot, "scripts", "lib", "layout.mjs") },
+  ]);
+  if (currentGeneratedRevision && inputRevision === currentGeneratedInputRevision) return currentGeneratedRevision;
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "skills-feedback-source-"));
+  try {
+    buildRuntime("oh-my-pi", directory);
+    currentGeneratedRevision = {
+      agents: fingerprintDirectory(path.join(directory, "agents")),
+      skills: fingerprintDirectory(path.join(directory, "skills")),
+    };
+    currentGeneratedInputRevision = inputRevision;
+    return currentGeneratedRevision;
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
 
 function positiveInteger(value) {
   return Number.isSafeInteger(value) && value > 0;
@@ -129,14 +158,24 @@ function retainedOutcomeRows(run, manifestPath, side) {
         const current = path.join(repoRoot, source);
         if (!fs.readFileSync(pinned).equals(fs.readFileSync(current))) problems.push(`${side}: pinned runner source ${source} differs from current grader source`);
       }
+      const generated = generatedRevision();
+      for (const kind of ["agents", "skills"]) {
+        if (fingerprintDirectory(path.join(sourceRoot, kind)) !== generated[kind]) {
+          problems.push(`${side}: pinned ${kind} source differs from current generated source`);
+        }
+      }
+      const pinnedShared = path.join(sourceRoot, "shared");
+      if (!isDeepStrictEqual(fs.readdirSync(pinnedShared).sort(), [...GUIDANCE_FILES].sort()) ||
+          GUIDANCE_FILES.some((file) => !fs.readFileSync(path.join(pinnedShared, file)).equals(fs.readFileSync(path.join(repoRoot, "shared", file))))) {
+        problems.push(`${side}: pinned shared guidance differs from current source`);
+      }
     } catch { problems.push(`${side}: pinned evaluator source is unavailable to the grader`); }
   }
   if (typeof run.name !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(run.name)) {
     problems.push(`${side}: scenario name missing or invalid`);
     return { rows: [], problems, fixtureSnapshotRevision, sourceRevision };
   }
-  if (!fixtureSnapshot || !sourceRevision || sourceRevision !== run.sourceRevision ||
-      problems.some((problem) => problem.includes("pinned evaluator source") || problem.includes("pinned scenario source") || problem.includes("pinned runner source"))) {
+  if (!fixtureSnapshot || !sourceRevision || sourceRevision !== run.sourceRevision || problems.length) {
     return { rows: [], problems, fixtureSnapshotRevision, sourceRevision };
   }
   if (!Array.isArray(run.phases) || run.phases.length === 0) {

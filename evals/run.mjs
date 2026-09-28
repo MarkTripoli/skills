@@ -120,6 +120,14 @@ if (gradeJson && (gradeDir === null || args.length < 4)) {
 const names = args.filter((a, i) => !a.startsWith("--") && !["--max-time", "--grade", "--model", "--samples"].includes(args[i - 1]));
 
 const git = (cwd, ...argv) => execFileSync("git", argv, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+const fixtureCreated = new Date().toISOString().slice(0, 10);
+function fixtureCommit(repo, message) {
+  execFileSync("git", ["commit", "-q", "-m", message], {
+    cwd: repo,
+    env: { ...process.env, GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z", GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
 
 function loadScenarios() {
   const files = fs
@@ -171,17 +179,17 @@ function prepareRepo(scenario, dist) {
   copyFixtures(scenario, repo, path.join(dist, "fixtures"));
   fs.cpSync(path.join(dist, "agents"), path.join(repo, ".omp", "agents"), { recursive: true });
   git(repo, "add", "-A");
-  git(repo, "commit", "-q", "-m", "chore: fixture codebase and worker definitions");
+  fixtureCommit(repo, "chore: fixture codebase and worker definitions");
 
   const taskDir = path.join(repo, ".agents", "tasks", scenario.slug);
   fs.mkdirSync(taskDir, { recursive: true });
-  const created = new Date().toISOString().slice(0, 10);
+  const created = fixtureCreated;
   fs.writeFileSync(
     path.join(taskDir, "task.md"),
     `---\nslug: ${scenario.slug}\ntitle: ${scenario.title}\nworkflow: ${scenario.workflow}\ncreated: ${created}\n---\n${scenario.request}\n`,
   );
   git(repo, "add", path.relative(repo, path.join(taskDir, "task.md")));
-  git(repo, "commit", "-q", "-m", `docs(task): open ${scenario.slug}`);
+  fixtureCommit(repo, `docs(task): open ${scenario.slug}`);
   return { repo, taskDir };
 }
 
