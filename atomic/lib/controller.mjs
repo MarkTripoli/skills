@@ -484,8 +484,9 @@ function changedSourceLines(task, head, changed, ancestor) {
     const diff = git(task.cwd, ['diff', '--unified=0', ancestor || head, '--', file]);
     lines.set(file, [...diff.matchAll(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm)]
       .map(([, oldStart, oldLength, newStart, newLength]) => {
-        const start = Number(deleted ? oldStart : newStart);
-        const length = Number(deleted ? oldLength ?? 1 : newLength ?? 1);
+        const oldSide = deleted || Number(newLength ?? 1) === 0;
+        const start = Number(oldSide ? oldStart : newStart);
+        const length = Number(oldSide ? oldLength ?? 1 : newLength ?? 1);
         return [Math.max(1, start), Math.max(1, start + length - 1)];
       }));
   }

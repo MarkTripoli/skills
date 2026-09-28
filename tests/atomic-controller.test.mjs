@@ -817,6 +817,35 @@ test('independent review cites committed changes at their shifted working-tree l
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 
+test('deletion-only review hunks cannot cite an unchanged preceding line', async () => {
+  const f = proofFixture();
+  try {
+    fs.writeFileSync(path.join(f.repo, 'cli.mjs'),
+      'console.log(Number(process.argv[2]) * 2);\n// obsolete line\n');
+    execFileSync('git', ['add', 'cli.mjs'], { cwd: f.repo });
+    execFileSync('git', ['commit', '-m', 'fix: double CLI input'], { cwd: f.repo });
+    fs.writeFileSync(path.join(f.repo, 'cli.mjs'), 'console.log(Number(process.argv[2]) * 2);\n');
+    const before = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
+    const rows = f.check + f.row('A1', 'CLI doubles input 21.', 21, 42) +
+      f.row('A2', 'CLI doubles input 7.', 7, 14);
+    const verified = await runSkill(f.ctx(rows), f.task, before, f.options,
+      'verify-implementation', 1);
+    const reviewer = f.ctx(rows, () => {
+      const head = execFileSync('git', ['rev-parse', 'HEAD^'], { cwd: f.repo, encoding: 'utf8' }).trim();
+      const evidence = 'cli.mjs:1 inspected unchanged doubling logic; node cli.mjs 21 printed 42 and node cli.mjs 7 printed 14';
+      return { sessionId: 'unchanged-line-reviewer', text: JSON.stringify({
+        head, revision: verified.revision,
+        acceptance: ['CLI doubles input 21.', 'CLI doubles input 7.'].map(item => ({ item, evidence })),
+        risks: ['functional correctness', 'security and data integrity', 'acceptance oracle and test reachability']
+          .map(risk => ({ risk, evidence })),
+        findings: [],
+      }) };
+    });
+    await assert.rejects(() => runSkill(reviewer, f.task, verified, f.options,
+      'review-code', 2), /scope-incomplete/);
+  } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
+});
+
 test('independent reviewer findings supersede a writer clean draft and enter repair', async () => {
   const f = proofFixture();
   try {
