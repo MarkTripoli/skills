@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { evaluateContextBoundary } from '../route-model/context.mjs';
-import { currentArtifact, indexFileExists, parseArtifactText, readArtifactIndex } from '../../../shared/task-artifacts.mjs';
+import { currentArtifact, indexFileExists, parseArtifactText } from '../../../shared/task-artifacts.mjs';
 
 const filename = '.first-sergent-state.json';
 const allowedGates = new Set(['all', 'plan', 'pr', 'none']);
@@ -45,6 +45,13 @@ const phaseArtifactTypes = Object.freeze({
   'ci-commit': 'commit',
 });
 const hostedPhases = new Set(['record-evidence', 'describe-pr']);
+const planGatedPhases = new Set([
+  'create-design-discussion', 'iterate-design-discussion', 'create-prd', 'iterate-prd',
+  'create-tdd', 'iterate-tdd', 'create-structure-outline', 'iterate-structure-outline',
+  'create-plan', 'iterate-plan', 'create-epic-plan', 'reproduce-bug',
+]);
+const needsLocalApproval = (state) => state.options.gates === 'all' ||
+  (state.options.gates === 'plan' && planGatedPhases.has(state.last_skill));
 
 function taskPath(taskDir) {
   const root = fs.realpathSync(taskDir);
@@ -89,22 +96,21 @@ export function inspect(taskDir) {
   if (!fs.existsSync(file)) return null;
   const state = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (state?.version !== 1 || !Number.isSafeInteger(state.steps) || state.steps < 0 || !state.options || !allowedGates.has(state.options.gates) || (state.options.transport !== undefined && !allowedTransports.has(state.options.transport)) || (state.options.quota_mode !== undefined && !allowedQuotaModes.has(state.options.quota_mode)) || (state.options.quota_mode === 'agent-router' && state.options.transport !== 'herdr') || (state.options.context_policy !== undefined && !allowedContextPolicies.has(state.options.context_policy)) || !state.options.workflow || !Number.isSafeInteger(state.options.max_steps) || state.options.max_steps < 1 || !state.approvals || typeof state.approvals !== 'object' || Array.isArray(state.approvals)) throw new Error(`Invalid First Sergent state: ${file}`);
-  // Legacy indexed runs have no dispatch snapshot. Only distinct, indexed,
-  // approved iterations can establish a completed step; otherwise preserve the
-  // current iteration as the baseline so a repeated phase cannot reuse it.
+  // An approval recorded against a path/hash is not tied to a dispatch. In
+  // particular, approvals from other phases cannot prove this phase finished.
+  // A missing dispatch snapshot must be replayed against the current iteration.
   if (state.steps > 0 && !hostedPhases.has(state.last_skill) && indexFileExists(path.join(root, 'index.json'))
     && (!Object.hasOwn(state, 'phase_artifact_before') || !Object.hasOwn(state, 'completed_step'))) {
     const type = phaseArtifactTypes[state.last_skill];
     const record = type ? currentArtifact(root, type) : null;
-    const index = readArtifactIndex(root);
-    const approvedIterations = Object.values(index.artifactSeries).flatMap(series => series.iterations)
-      .filter(iteration => state.approvals[iteration.path] === iteration.sha256).length;
-    const approved = record && state.approvals[record.path] === record.sha256 &&
-      approvedIterations >= state.steps && !state.pending && !state.revision;
-    if (!Object.hasOwn(state, 'completed_step')) state.completed_step = approved ? state.steps : null;
-    if (!Object.hasOwn(state, 'phase_artifact_before')) {
-      state.phase_artifact_before = record ? { id: record.id, hash: record.sha256 } : null;
-    }
+    const hadSnapshot = Object.hasOwn(state, 'phase_artifact_before');
+    const attributable = hadSnapshot && record &&
+      record.id !== state.phase_artifact_before?.id &&
+      (!needsLocalApproval(state) || state.approvals[record.path] === record.sha256) &&
+      !state.pending && !state.revision;
+    if (!Object.hasOwn(state, 'completed_step')) state.completed_step = attributable ? state.steps : null;
+    if (!hadSnapshot) state.phase_artifact_before = record ? { id: record.id, hash: record.sha256 } : null;
+    if (state.completed_step !== state.steps) state.legacy_replay = true;
     save(root, state);
   }
   return state;
@@ -168,30 +174,38 @@ export function checkpointContext(taskDir, usage) {
 export function startFreshSession(taskDir, sessionId) {
   const root = taskPath(taskDir);
   const state = inspect(root);
-  if (!state?.context_boundary || (state.context_boundary.action !== 'fresh-session'
-    && !(state.steps > 0 && state.context_boundary.action === 'continue'))) {
+  const replay = state?.legacy_replay === true;
+  if (!state || (!replay && (!state.context_boundary || (state.context_boundary.action !== 'fresh-session'
+    && !(state.steps > 0 && state.context_boundary.action === 'continue')))) ||
+    (replay && (state.options.context_policy ?? 'off') === 'stop-at-60' &&
+      !['continue', 'fresh-session'].includes(state.context_boundary?.action))) {
     throw new Error('No measured context boundary is waiting for a fresh session');
   }
   if (state.stopped || state.pending || state.phase) {
     throw new Error('Resolve the active phase and human gate before handing off its child session');
   }
   const resumingPhase = state.steps > 0 && state.completed_step !== state.steps;
-  if (resumingPhase && state.context_boundary.action !== 'fresh-session') {
+  if (resumingPhase && state.context_boundary?.action !== 'fresh-session' && !replay) {
     throw new Error('Wait for the current child to finish and gate its artifact before retiring its session');
   }
   if (typeof sessionId !== 'string' || !sessionId.trim()) {
     throw new Error('A fresh session identity is required to cross the context boundary');
   }
+  if (state.resume_step !== undefined) throw new Error('Resume the already-registered fresh child session');
   const nextSessionId = sessionId.trim();
-  if (!state.context_boundary.sessionId || nextSessionId === state.context_boundary.sessionId
-    || (state.context_boundary.retiredSessionIds ?? []).includes(nextSessionId)) {
+  if (state.replay_session_id === nextSessionId || nextSessionId === state.context_boundary?.sessionId
+    || (state.context_boundary?.retiredSessionIds ?? []).includes(nextSessionId)) {
     throw new Error('Fresh session identity must be new and differ from every retired child session');
+  }
+  if (resumingPhase) state.resume_step = state.steps;
+  if (!state.context_boundary) {
+    state.replay_session_id = nextSessionId;
+    return save(root, state);
   }
   const retiredSessionIds = [...new Set([
     ...(state.context_boundary.retiredSessionIds ?? []),
     state.context_boundary.sessionId,
   ])];
-  if (resumingPhase) state.resume_step = state.steps;
   state.context_boundary = {
     action: 'awaiting-checkpoint',
     status: 'unknown',
@@ -216,19 +230,24 @@ export function begin(taskDir, skill) {
   if (state.pending) throw new Error('Resolve the pending human gate before dispatch');
   if (state.phase) throw new Error('Resume the addressable phase before dispatching another');
   if (!skill || typeof skill !== 'string') throw new Error('Skill name is required');
+  if (state.legacy_replay && state.resume_step === undefined) {
+    throw new Error('Replay the legacy phase in a fresh child session before dispatching another');
+  }
   if (state.resume_step === undefined && state.steps >= state.options.max_steps) throw new Error(`Reached max_steps=${state.options.max_steps}`);
   if (state.resume_step !== undefined) {
     if (state.resume_step !== state.steps || skill !== state.last_skill) {
       throw new Error('Resume the checkpointed phase before dispatching another');
     }
     delete state.resume_step;
-    state.context_boundary = {
-      action: 'recheck-required',
-      status: 'unknown',
-      sessionId: state.context_boundary.sessionId,
-      retiredSessionIds: state.context_boundary.retiredSessionIds ?? [],
-      reason: 'a new live context metric is required before the next dispatch',
-    };
+    if (state.context_boundary) {
+      state.context_boundary = {
+        action: 'recheck-required',
+        status: 'unknown',
+        sessionId: state.context_boundary.sessionId,
+        retiredSessionIds: state.context_boundary.retiredSessionIds ?? [],
+        reason: 'a new live context metric is required before the next dispatch',
+      };
+    }
     return save(root, state);
   }
   if (state.steps > 0 && hostedPhases.has(state.last_skill) && state.completed_step !== state.steps) {
@@ -276,7 +295,8 @@ export function gate(taskDir, file) {
   const replaced = Boolean(state.pending && state.pending.hash !== current.hash);
   if (state.revision?.file === current.file && state.revision.hash === current.hash) throw new Error('The requested revision has not changed the artifact');
   if (state.steps > 0) state.completed_step = state.steps;
-  if (state.approvals[current.file] === current.hash) {
+  if (state.legacy_replay) delete state.legacy_replay;
+  if (!needsLocalApproval(state) || state.approvals[current.file] === current.hash) {
     if (state.pending) state.pending = null;
     save(root, state);
     return { approved: true, ...current, steps: state.steps };

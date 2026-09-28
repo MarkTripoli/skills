@@ -18,6 +18,29 @@ function fixture(t) {
 
 const options = { workflow: 'full', gates: 'all', max_steps: 2, verify: true };
 
+function indexedFixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'first-sergent-indexed-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'sample');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, 'task.md'), '---\nslug: sample\n---\nOriginal user request\n');
+  initTaskArtifacts(dir);
+  const record = (type, kind, variant, summary) => {
+    const allocation = reserveArtifactIteration(dir, kind, variant);
+    const staging = path.join(dir, allocation.writePath);
+    fs.writeFileSync(staging, `---\ntype: ${type}\nsummary: ${summary}\n---\n${summary}\n`);
+    return path.join(dir, recordArtifact(dir, kind, variant, type, staging).path);
+  };
+  const legacy = () => {
+    const file = path.join(dir, '.first-sergent-state.json');
+    const state = JSON.parse(fs.readFileSync(file, 'utf8'));
+    delete state.phase_artifact_before;
+    delete state.completed_step;
+    fs.writeFileSync(file, JSON.stringify(state));
+  };
+  return { dir, record, legacy };
+}
+
 test('state accepts the destination pull-request gate policy', (t) => {
   const { dir } = fixture(t);
   const state = initialize(dir, { ...options, gates: 'pr' });
@@ -392,7 +415,6 @@ test('legacy indexed completed phase resumes while next repeated phase requires 
   answer(dir, first, pending.hash, 'approve');
   const stateFile = path.join(dir, '.first-sergent-state.json');
   const old = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-  delete old.phase_artifact_before;
   delete old.completed_step;
   fs.writeFileSync(stateFile, JSON.stringify(old));
   assert.equal(inspect(dir).completed_step, 1);
@@ -408,9 +430,20 @@ test('legacy indexed completed phase resumes while next repeated phase requires 
   assert.equal(inspect(dir).completed_step, null);
   assert.throws(() => gate(dir, first), /has not recorded a new artifact iteration/);
   assert.equal(inspect(dir).completed_step, null);
-  checkpointContext(dir, { sessionId: 'child-b', contextUsage: { tokens: 60, contextWindow: 100, percent: 60 } });
+  checkpointContext(dir, metric('child-b'));
   startFreshSession(dir, 'child-c');
   assert.equal(inspect(dir).resume_step, 2);
+  assert.equal(inspect(dir).context_boundary.action, 'awaiting-checkpoint');
+  checkpointContext(dir, metric('child-c'));
+  assert.throws(() => begin(dir, 'review-code'), /Resume the checkpointed phase/);
+  begin(dir, 'implement-plan');
+  assert.equal(inspect(dir).steps, 2);
+  assert.throws(() => gate(dir, first), /has not recorded a new artifact iteration/);
+  const next = reserveArtifactIteration(dir, 'implementation', 'receipt');
+  const stagingNext = path.join(dir, next.writePath);
+  fs.writeFileSync(stagingNext, '---\ntype: implementation\nsummary: Replayed implementation\n---\nReplayed implementation\n');
+  const second = path.join(dir, recordArtifact(dir, 'implementation', 'receipt', 'implementation', stagingNext).path);
+  assert.equal(gate(dir, second).approved, false);
 });
 
 test('legacy indexed unapproved phase snapshots existing artifact without accepting it', (t) => {
@@ -432,6 +465,81 @@ test('legacy indexed unapproved phase snapshots existing artifact without accept
   fs.writeFileSync(path.join(dir, '.first-sergent-state.json'), JSON.stringify(old));
   assert.equal(inspect(dir).completed_step, null);
   assert.throws(() => gate(dir, first), /has not recorded a new artifact iteration/);
+  assert.equal(inspect(dir).legacy_replay, true);
+  assert.throws(() => begin(dir, 'review-code'), /Replay the legacy phase/);
+  startFreshSession(dir, 'new-child');
+  assert.throws(() => begin(dir, 'review-code'), /Resume the checkpointed phase/);
+  begin(dir, 'implement-plan');
+  assert.equal(inspect(dir).steps, 1);
+  assert.throws(() => gate(dir, first), /has not recorded a new artifact iteration/);
+});
+
+test('legacy no-human policies replay unapproved indexed artifacts in a new child below threshold', (t) => {
+  for (const gates of ['none', 'pr']) {
+    const { dir, record, legacy } = indexedFixture(t);
+    initialize(dir, { ...options, gates, max_steps: 3, context_policy: 'stop-at-60' });
+    const metric = (sessionId) => ({ sessionId, contextUsage: { tokens: 20, contextWindow: 100, percent: 20 } });
+    checkpointContext(dir, metric('old-child'));
+    begin(dir, 'implement-plan');
+    const stale = record('implementation', 'implementation', 'receipt', 'Already indexed without approval');
+    legacy();
+    assert.equal(inspect(dir).completed_step, null);
+    assert.equal(inspect(dir).legacy_replay, true);
+    assert.throws(() => gate(dir, stale), /has not recorded a new artifact iteration/);
+    checkpointContext(dir, metric('old-child'));
+    assert.throws(() => begin(dir, 'review-code'), /Replay the legacy phase/);
+    startFreshSession(dir, 'new-child');
+    assert.equal(inspect(dir).resume_step, 1);
+    assert.throws(() => startFreshSession(dir, 'another-child'), /measured context boundary/);
+    checkpointContext(dir, metric('new-child'));
+    begin(dir, 'implement-plan');
+    assert.equal(inspect(dir).steps, 1);
+    assert.throws(() => gate(dir, stale), /has not recorded a new artifact iteration/);
+    const replayed = record('implementation', 'implementation', 'receipt', 'Fresh replay');
+    assert.equal(gate(dir, replayed).approved, true);
+    assert.equal(inspect(dir).completed_step, 1);
+    assert.deepEqual(inspect(dir).approvals, {});
+    checkpointContext(dir, metric('new-child'));
+    startFreshSession(dir, 'third-child');
+    checkpointContext(dir, metric('third-child'));
+    begin(dir, 'implement-plan');
+    assert.throws(() => gate(dir, replayed), /has not recorded a new artifact iteration/);
+  }
+});
+
+test('old approvals from unrelated and repeated phases never complete a new legacy phase', (t) => {
+  const { dir, record, legacy } = indexedFixture(t);
+  initialize(dir, { ...options, max_steps: 4 });
+  begin(dir, 'implement-plan');
+  for (const summary of ['First implementation', 'Revised implementation']) {
+    const file = record('implementation', 'implementation', 'receipt', summary);
+    const pending = gate(dir, file);
+    answer(dir, file, pending.hash, 'approve');
+  }
+  begin(dir, 'create-research');
+  const research = record('research', 'research', 'primary', 'Research');
+  const pending = gate(dir, research);
+  answer(dir, research, pending.hash, 'approve');
+  begin(dir, 'implement-plan');
+  legacy();
+  const stale = path.join(dir, 'artifacts/implementation/receipt/0002.md');
+  assert.equal(inspect(dir).completed_step, null);
+  assert.equal(inspect(dir).legacy_replay, true);
+  assert.throws(() => gate(dir, stale), /has not recorded a new artifact iteration/);
+  assert.throws(() => begin(dir, 'review-code'), /Replay the legacy phase/);
+  startFreshSession(dir, 'new-child');
+  assert.throws(() => startFreshSession(dir, 'new-child'), /already-registered/);
+  assert.throws(() => begin(dir, 'review-code'), /Resume the checkpointed phase/);
+  begin(dir, 'implement-plan');
+  assert.equal(inspect(dir).steps, 3);
+  assert.throws(() => gate(dir, stale), /has not recorded a new artifact iteration/);
+  const fresh = record('implementation', 'implementation', 'receipt', 'Third implementation');
+  assert.equal(gate(dir, fresh).approved, false);
+  assert.equal(inspect(dir).approvals[path.relative(dir, fresh)], undefined);
+  answer(dir, fresh, inspect(dir).pending.hash, 'approve');
+  assert.equal(inspect(dir).completed_step, 3);
+  begin(dir, 'review-code');
+  assert.equal(inspect(dir).steps, 4);
 });
 
 test('context threshold requires the fresh child live metric before dispatch', (t) => {
