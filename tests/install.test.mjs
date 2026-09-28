@@ -424,6 +424,25 @@ test("project OMP installs reject symlinked skill and agent destinations before 
   }
 });
 
+test("project installer Python helpers ignore project-local json modules", () => {
+  const home = tmpdir("omp-project-python-home-");
+  const project = tmpdir("omp-project-python-project-");
+  const sentinel = path.join(tmpdir("omp-project-python-outside-"), "sentinel");
+  put(sentinel, "unchanged\n");
+  put(path.join(project, "json.py"), `open(${JSON.stringify(sentinel)}, 'w').write('imported\\n')\n`);
+  const planned = plan({ targets: ["oh-my-pi"], skillNames: ["show-me"], project: true, cwd: project, home, env });
+  const built = buildTrees(planned, tmpdir());
+  const originalCwd = process.cwd();
+  try {
+    process.chdir(project);
+    apply(planned, { built, uninstall: false, home });
+  } finally {
+    process.chdir(originalCwd);
+  }
+  assert.equal(fs.readFileSync(sentinel, "utf8"), "unchanged\n");
+  assert.ok(fs.existsSync(path.join(project, ".omp", "skills", "show-me", "SKILL.md")));
+});
+
 test("project OMP installs and uninstalls stay rooted across destination parent swaps", () => {
   for (const uninstall of [false, true]) {
     for (const destination of ["skills", "agents"]) {
@@ -460,7 +479,7 @@ test("project OMP installs and uninstalls stay rooted across destination parent 
         return fd;
       };
       try {
-        assert.throws(() => apply(planned, { built, uninstall, home }), /refusing unsafe project destination/);
+        assert.throws(() => apply(planned, { built, uninstall, home }), /refusing symlinked project destination/);
       } finally {
         fs.openSync = originalOpen;
       }
@@ -471,6 +490,38 @@ test("project OMP installs and uninstalls stay rooted across destination parent 
       assert.equal(fs.readlinkSync(targetRoot), outside);
     }
   }
+});
+
+test("project root replacement after opening fails closed before external mutation", () => {
+  const home = tmpdir("omp-project-root-race-home-");
+  const project = tmpdir("omp-project-root-race-project-");
+  const savedProject = `${project}-saved`;
+  temps.push(savedProject);
+  const outside = tmpdir("omp-project-root-race-outside-");
+  const sentinel = path.join(outside, ".omp", "skills", "show-me", "SKILL.md");
+  put(sentinel, "external root sentinel\n");
+  const planned = plan({ targets: ["oh-my-pi"], skillNames: ["show-me"], project: true, cwd: project, home, env });
+  const built = buildTrees(planned, tmpdir());
+  const originalOpen = fs.openSync;
+  let swapped = false;
+  fs.openSync = function (target, ...args) {
+    const fd = originalOpen.call(fs, target, ...args);
+    if (!swapped && target === project) {
+      fs.renameSync(project, savedProject);
+      fs.symlinkSync(outside, project, "dir");
+      swapped = true;
+    }
+    return fd;
+  };
+  try {
+    assert.throws(() => apply(planned, { built, uninstall: false, home }), /project root identity change/);
+  } finally {
+    fs.openSync = originalOpen;
+  }
+  assert.equal(swapped, true);
+  assert.equal(fs.readFileSync(sentinel, "utf8"), "external root sentinel\n");
+  assert.equal(fs.readlinkSync(project), outside);
+  assert.equal(fs.existsSync(path.join(savedProject, ".omp")), false);
 });
 
 test("project OMP hook uninstall refuses symlinked security and publication directories", () => {

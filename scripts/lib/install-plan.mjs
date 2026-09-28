@@ -9,6 +9,19 @@ const TARGETS = [...RUNTIMES, 'portable'];
 const TARGET_LABEL = { 'claude-code': 'Claude Code', codex: 'Codex', 'oh-my-pi': 'Oh My Pi', pi: 'Pi', portable: 'Portable' };
 const SKILL_DEPENDENCIES = { deliver: ['agent-first-sergent'], 'agent-first-sergent': ['route-model', 'typed-judgment'], 'jev-ui': ['typed-judgment', 'record-evidence'], 'iterate-evidence': ['record-evidence'] };
 const BINARY = { 'claude-code': 'claude', codex: 'codex', 'oh-my-pi': 'omp', pi: 'pi' };
+function projectRootIdentity(root) {
+  const flags = fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW;
+  if (!fs.constants.O_DIRECTORY || !fs.constants.O_NOFOLLOW) throw new Error('secure project installs require no-follow directory support');
+  const fd = fs.openSync(path.resolve(root), flags);
+  try {
+    const info = fs.fstatSync(fd);
+    if (!info.isDirectory()) throw new Error('project root is not a directory');
+    return { dev: info.dev, ino: info.ino };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 
 function dependencyClosure(names) {
   const result = new Set(names);
@@ -103,6 +116,7 @@ export function atomicDestination({ project, cwd = process.cwd(), home = os.home
 }
 export function plan(options) {
   const { targets, project = false, atomic = false, uninstall = false, cwd = process.cwd(), home = os.homedir(), env = process.env } = options;
+  const rootIdentity = project ? projectRootIdentity(cwd) : null;
   const { skills } = scanSkills(path.join(repoRoot, 'skills'));
   const allNames = skills.map(skill => skill.name);
   const requestedNames = resolveSkillNames(options.skillNames ?? [], skills);
@@ -141,7 +155,7 @@ export function plan(options) {
   }
   if (atomic) steps.push({ target: 'atomic', kind: 'workflow', to: atomicDestination({ project, cwd, home, env }) });
   if (!atomic && targets.includes('codex') && !project && (targets.includes('pi') || targets.includes('oh-my-pi'))) notes.push('Pi and Oh My Pi also read ~/.agents/skills, where the Codex copy lives; their own skill directories are installed too, so a skill may appear twice by name in those runtimes');
-  return { steps, notes, names, requestedNames, projectRoot: project ? path.resolve(cwd) : null };
+  return { steps, notes, names, requestedNames, projectRoot: project ? path.resolve(cwd) : null, projectRootIdentity: rootIdentity };
 }
 
 export function short(file, home) { return file.startsWith(home) ? `~${file.slice(home.length)}` : file; }

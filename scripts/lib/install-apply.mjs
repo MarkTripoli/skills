@@ -128,11 +128,10 @@ except Exception:
 finally:
     os.close(root_fd)`;
 
-function copyHookFiles(sets) {
+function copyHookFiles(sets, pinnedRootFd) {
   const roots = new Set(sets.map(set => set.root));
   if (roots.size !== 1) throw new Error('OMP hooks must share one trusted installation root');
   const [root] = roots;
-  const rootPath = fs.realpathSync(root);
   const entries = sets.flatMap(({ to, names }) => names.map(name => {
     const source = path.join(repoRoot, name);
     return {
@@ -143,17 +142,18 @@ function copyHookFiles(sets) {
   }));
   const manifest = Buffer.from(`${JSON.stringify(entries.map(({ path: relative, mode, bytes }) => ({ path: relative, mode, size: bytes.length })))}\n`);
   const input = Buffer.concat([manifest, ...entries.map(entry => entry.bytes)]);
-  let rootFd;
+  let rootFd = pinnedRootFd;
+  const ownsRootFd = rootFd === undefined;
   try {
-    rootFd = fs.openSync(rootPath, fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY || 0) | (fs.constants.O_NOFOLLOW || 0));
-    const result = spawnSync('python3', ['-c', SAFE_HOOK_COPY_SCRIPT], {
+    if (ownsRootFd) rootFd = fs.openSync(fs.realpathSync(root), fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+    const result = spawnSync('python3', ['-I', '-c', SAFE_HOOK_COPY_SCRIPT], {
       input, encoding: null, timeout: 30_000, maxBuffer: 1024 * 1024,
       stdio: ['pipe', 'ignore', 'pipe', rootFd],
     });
     if (result.error?.code === 'ENOENT') throw new Error('Python 3 is required for safe OMP hook installation');
     if (result.error || result.status !== 0) throw new Error('refusing unsafe OMP hook destination or secure copy unavailable');
   } finally {
-    if (rootFd !== undefined) fs.closeSync(rootFd);
+    if (ownsRootFd && rootFd !== undefined) fs.closeSync(rootFd);
   }
 }
 
@@ -257,6 +257,38 @@ except Exception:
 finally:
     os.close(root_fd)`;
 
+const SAFE_PROJECT_PREFLIGHT_SCRIPT = String.raw`import json, os, stat, sys
+if not hasattr(os, 'O_NOFOLLOW') or not hasattr(os, 'O_DIRECTORY'):
+    raise SystemExit(1)
+root_fd = os.dup(3)
+def check(value):
+    if not value or value.startswith('/') or any(part in ('', '.', '..') for part in value.split('/')):
+        raise RuntimeError('unsafe project path')
+    parts = value.split('/')
+    fd = os.dup(root_fd)
+    try:
+        for index, part in enumerate(parts):
+            try:
+                info = os.stat(part, dir_fd=fd, follow_symlinks=False)
+            except FileNotFoundError:
+                return
+            if stat.S_ISLNK(info.st_mode):
+                raise RuntimeError('symlinked project destination')
+            if index < len(parts) - 1:
+                if not stat.S_ISDIR(info.st_mode):
+                    raise RuntimeError('non-directory project parent')
+                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                os.close(fd)
+                fd = child
+    finally:
+        os.close(fd)
+try:
+    for value in json.loads(sys.stdin.buffer.read()):
+        check(value)
+except Exception:
+    sys.exit(1)
+finally:
+    os.close(root_fd)`;
 const SAFE_PROJECT_MUTATION_SCRIPT = String.raw`import json, os, secrets, stat, sys
 if not hasattr(os, 'O_NOFOLLOW') or not hasattr(os, 'O_DIRECTORY'):
     raise SystemExit(1)
@@ -469,9 +501,8 @@ except Exception:
 finally:
     os.close(root_fd)`;
 
-function mutateProject(root, operations) {
+function mutateProject(root, operations, rootFd) {
   const lexicalRoot = path.resolve(root);
-  const rootPath = fs.realpathSync(lexicalRoot);
   const prepared = operations.map(operation => {
     const relative = path.relative(lexicalRoot, path.resolve(operation.destination));
     if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
@@ -483,18 +514,12 @@ function mutateProject(root, operations) {
       ...(operation.source ? { source: path.resolve(operation.source) } : {}),
     };
   });
-  let rootFd;
-  try {
-    rootFd = fs.openSync(rootPath, fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY || 0) | (fs.constants.O_NOFOLLOW || 0));
-    const result = spawnSync('python3', ['-c', SAFE_PROJECT_MUTATION_SCRIPT], {
-      input: JSON.stringify(prepared), encoding: null, timeout: 30_000, maxBuffer: 1024 * 1024,
-      stdio: ['pipe', 'ignore', 'pipe', rootFd],
-    });
-    if (result.error?.code === 'ENOENT') throw new Error('Python 3 is required for safe project installation');
-    if (result.error || result.status !== 0) throw new Error('refusing unsafe project destination or secure mutation unavailable');
-  } finally {
-    if (rootFd !== undefined) fs.closeSync(rootFd);
-  }
+  const result = spawnSync('python3', ['-I', '-c', SAFE_PROJECT_MUTATION_SCRIPT], {
+    input: JSON.stringify(prepared), encoding: null, timeout: 30_000, maxBuffer: 1024 * 1024,
+    stdio: ['pipe', 'ignore', 'pipe', rootFd],
+  });
+  if (result.error?.code === 'ENOENT') throw new Error('Python 3 is required for safe project installation');
+  if (result.error || result.status !== 0) throw new Error('refusing unsafe project destination or secure mutation unavailable');
 }
 
 function projectMutationOperations(planned, built, uninstall, stages) {
@@ -545,32 +570,31 @@ function hookSets(planned) {
     return [];
   });
 }
-
-function removeHookFiles(sets) {
+function removeHookFiles(sets, pinnedRootFd) {
   const roots = new Set(sets.map(set => set.root));
   if (roots.size !== 1) throw new Error('OMP hooks must share one trusted installation root');
   const [root] = roots;
   const paths = values => values.map(value => path.relative(root, value).split(path.sep).join('/'));
   const files = paths(sets.flatMap(({ to, names }) => names.map(name => path.join(to, name))));
   const directories = paths(sets.flatMap(({ to, directories: names }) => names.map(name => path.join(to, name))));
-  let rootFd;
+  let rootFd = pinnedRootFd;
+  const ownsRootFd = rootFd === undefined;
   try {
-    rootFd = fs.openSync(fs.realpathSync(root), fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY || 0) | (fs.constants.O_NOFOLLOW || 0));
-    const result = spawnSync('python3', ['-c', SAFE_HOOK_REMOVE_SCRIPT], {
+    if (ownsRootFd) rootFd = fs.openSync(fs.realpathSync(root), fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+    const result = spawnSync('python3', ['-I', '-c', SAFE_HOOK_REMOVE_SCRIPT], {
       input: JSON.stringify({ files, directories }), encoding: null, timeout: 30_000, maxBuffer: 1024 * 1024,
       stdio: ['pipe', 'ignore', 'pipe', rootFd],
     });
     if (result.error?.code === 'ENOENT') throw new Error('Python 3 is required for safe OMP hook removal');
     if (result.error || result.status !== 0) throw new Error('refusing unsafe OMP hook destination or secure removal unavailable');
   } finally {
-    if (rootFd !== undefined) fs.closeSync(rootFd);
+    if (ownsRootFd && rootFd !== undefined) fs.closeSync(rootFd);
   }
 }
 
-function preflightProjectDestinations(planned, uninstall) {
+function preflightProjectDestinations(planned, uninstall, rootFd) {
   if (!planned.projectRoot) return;
   const lexicalRoot = path.resolve(planned.projectRoot);
-  const root = fs.realpathSync(lexicalRoot);
   const destinations = [];
   for (const step of planned.steps) {
     if (step.kind === 'skills') {
@@ -587,20 +611,19 @@ function preflightProjectDestinations(planned, uninstall) {
       destinations.push(step.to, path.join(path.dirname(step.to), 'skills-delivery.mjs'));
     }
   }
-  for (const destination of destinations) {
+  const relativePaths = destinations.map(destination => {
     const relative = path.relative(lexicalRoot, path.resolve(destination));
     if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
       throw new Error(`refusing project destination outside its root: ${destination}`);
     }
-    let current = root;
-    for (const component of relative.split(path.sep).filter(Boolean)) {
-      current = path.join(current, component);
-      let info;
-      try { info = fs.lstatSync(current); }
-      catch (error) { if (error.code === 'ENOENT') break; throw error; }
-      if (info.isSymbolicLink()) throw new Error(`refusing symlinked project destination: ${destination}`);
-    }
-  }
+    return relative.split(path.sep).join('/');
+  });
+  const result = spawnSync('python3', ['-I', '-c', SAFE_PROJECT_PREFLIGHT_SCRIPT], {
+    input: JSON.stringify(relativePaths), encoding: null, timeout: 30_000, maxBuffer: 1024 * 1024,
+    stdio: ['pipe', 'ignore', 'pipe', rootFd],
+  });
+  if (result.error?.code === 'ENOENT') throw new Error('Python 3 is required for safe project preflight');
+  if (result.error || result.status !== 0) throw new Error('refusing symlinked project destination or secure preflight unavailable');
 }
 
 function copyDir(from, to) {
@@ -633,21 +656,51 @@ function selectedConfigBlock(text, block, names, uninstall) {
   for (const name of names) { if (uninstall) merged.delete(name); else if (incoming.has(name)) merged.set(name, incoming.get(name)); }
   return updateConfigBlock(text, [...merged.values()].join('\n\n') || null);
 }
-export function apply(planned, { built, uninstall, home }) {
+function openProjectRoot(planned) {
+  if (!planned.projectRoot) return undefined;
+  const flags = fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW;
+  if (!fs.constants.O_DIRECTORY || !fs.constants.O_NOFOLLOW) throw new Error('secure project installs require no-follow directory support');
+  let fd;
+  try {
+    fd = fs.openSync(path.resolve(planned.projectRoot), flags);
+    const actual = fs.fstatSync(fd);
+    const expected = planned.projectRootIdentity;
+    if (!actual.isDirectory() || !expected || actual.dev !== expected.dev || actual.ino !== expected.ino) {
+      throw new Error('project root identity changed since planning');
+    }
+    return fd;
+  } catch (error) {
+    if (fd !== undefined) fs.closeSync(fd);
+    throw new Error(`refusing project root identity change or secure root open failure: ${error.message}`);
+  }
+}
+
+function assertProjectRootStillNamed(planned, rootFd) {
+  const actual = fs.fstatSync(rootFd);
+  let named;
+  try { named = fs.lstatSync(path.resolve(planned.projectRoot)); }
+  catch { throw new Error('refusing project root identity change during preflight'); }
+  if (named.isSymbolicLink() || !named.isDirectory() || named.dev !== actual.dev || named.ino !== actual.ino) {
+    throw new Error('refusing project root identity change during preflight');
+  }
+}
+
+function applyWithRoot(planned, { built, uninstall, home }, projectRootFd) {
   const done = [];
-  preflightProjectDestinations(planned, uninstall);
+  preflightProjectDestinations(planned, uninstall, projectRootFd);
+  if (planned.projectRoot) assertProjectRootStillNamed(planned, projectRootFd);
   if (planned.projectRoot) {
     const stages = [];
     try {
       const operations = projectMutationOperations(planned, built, uninstall, stages);
-      if (operations.length > 0) mutateProject(planned.projectRoot, operations);
+      if (operations.length > 0) mutateProject(planned.projectRoot, operations, projectRootFd);
     } finally {
       for (const stage of stages) fs.rmSync(stage, { recursive: true, force: true });
     }
   }
   const hooks = hookSets(planned);
-  if (uninstall && hooks.length > 0) removeHookFiles(hooks);
-  else if (hooks.length > 0) copyHookFiles(hooks);
+  if (uninstall && hooks.length > 0) removeHookFiles(hooks, projectRootFd);
+  else if (hooks.length > 0) copyHookFiles(hooks, projectRootFd);
   for (const step of planned.steps) {
     const tree = built.get(step.target);
     switch (step.kind) {
@@ -701,6 +754,14 @@ export function apply(planned, { built, uninstall, home }) {
     }
   }
   return done;
+}
+export function apply(planned, options) {
+  const projectRootFd = openProjectRoot(planned);
+  try {
+    return applyWithRoot(planned, options, projectRootFd);
+  } finally {
+    if (projectRootFd !== undefined) fs.closeSync(projectRootFd);
+  }
 }
 export function buildTrees(planned, work) {
   const built = new Map(); const selected = new Set(planned.names);

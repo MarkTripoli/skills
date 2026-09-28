@@ -84,9 +84,48 @@ function tomlMultiline(value) {
 
 const noDsStore = (src) => path.basename(src) !== ".DS_Store";
 
+function assertNoSymlinks(root) {
+  const rootInfo = fs.lstatSync(root);
+  if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory()) throw new Error(`refusing symlink in staged skill tree: ${root}`);
+  const pending = [root];
+  while (pending.length) {
+    const directory = pending.pop();
+    for (const name of fs.readdirSync(directory)) {
+      const entry = path.join(directory, name);
+      const info = fs.lstatSync(entry);
+      if (info.isSymbolicLink()) throw new Error(`refusing symlink in staged skill tree: ${entry}`);
+      if (info.isDirectory()) pending.push(entry);
+    }
+  }
+}
+
+function assertArtifactHelperDestinations(skillTarget, references) {
+  const targetInfo = fs.lstatSync(skillTarget);
+  if (targetInfo.isSymbolicLink() || !targetInfo.isDirectory()) {
+    throw new Error(`refusing symlinked task-artifact helper destination: ${skillTarget}`);
+  }
+  let referencesInfo;
+  try { referencesInfo = fs.lstatSync(references); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  if (referencesInfo && (referencesInfo.isSymbolicLink() || !referencesInfo.isDirectory())) {
+    throw new Error(`refusing symlinked task-artifact helper destination: ${references}`);
+  }
+  if (!referencesInfo) fs.mkdirSync(references);
+  for (const name of ['task-artifacts.mjs', 'task-root.mjs']) {
+    const destination = path.join(references, name);
+    let info;
+    try { info = fs.lstatSync(destination); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (info && (info.isSymbolicLink() || !info.isFile())) {
+      throw new Error(`refusing symlinked task-artifact helper destination: ${destination}`);
+    }
+  }
+}
+
 export function copyTaskArtifactHelper(skillTarget) {
+  assertNoSymlinks(skillTarget);
   const references = path.join(skillTarget, "references");
-  fs.mkdirSync(references, { recursive: true });
+  assertArtifactHelperDestinations(skillTarget, references);
   for (const name of ["task-artifacts.mjs", "task-root.mjs"]) fs.copyFileSync(path.join(repoRoot, "shared", name), path.join(references, name));
 }
 

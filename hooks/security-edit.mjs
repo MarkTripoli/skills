@@ -221,7 +221,7 @@ function authorizedRelative(root, lexical) {
 }
 
 function secureRead(root, rootFd, relative, aliases) {
-  const result = spawnSync('python3', ['-c', SECURE_READ_SCRIPT, root, relative, String(MAX_SNAPSHOT_BYTES), JSON.stringify(aliases)], {
+  const result = spawnSync('python3', ['-I', '-c', SECURE_READ_SCRIPT, root, relative, String(MAX_SNAPSHOT_BYTES), JSON.stringify(aliases)], {
     encoding: null,
     timeout: 30_000,
     maxBuffer: MAX_SNAPSHOT_BYTES + 4096,

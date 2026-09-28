@@ -45,6 +45,30 @@ test('successful write result scans saved Dockerfile bytes and reports advisory 
   assert.equal(fs.existsSync(snapshot), false);
 });
 
+test('saved-file helper ignores project-local Python modules', t => {
+  const cwd = workspace(t);
+  file(cwd, 'Dockerfile', 'FROM saved bytes\n');
+  const outside = workspace(t);
+  const sentinel = file(outside, 'sentinel', 'unchanged\n');
+  file(cwd, 'json.py', `open(${JSON.stringify(sentinel)}, 'w').write('imported\\n')\n`);
+  const originalCwd = process.cwd();
+  let report;
+  try {
+    process.chdir(cwd);
+    report = inspectEditedFile({
+      toolName: 'write', input: { path: 'Dockerfile' }, details: {},
+      content: 'Wrote file: Dockerfile', isError: false,
+    }, {
+      cwd, env: offlineEnv(cwd),
+      run(bin, args) { return { status: 0, stdout: args[0] === '--version' ? `${bin} local` : '[]' }; },
+    });
+  } finally {
+    process.chdir(originalCwd);
+  }
+  assert.equal(report.results[0].file, 'Dockerfile');
+  assert.equal(fs.readFileSync(sentinel, 'utf8'), 'unchanged\n');
+});
+
 test('successful multi-file hashline edit scans saved files and follows MV destination', t => {
   const cwd = workspace(t);
   const dockerSource = file(cwd, 'Dockerfile', 'FROM saved image\n');
