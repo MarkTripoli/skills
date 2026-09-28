@@ -113,6 +113,26 @@ test('failed handoff leaves a durable unknown receipt and never relaunches', t =
   assert.deepEqual(fs.readdirSync(f.taskRoot), []);
 });
 
+test('a failed handoff that wrote a task still blocks later issues until reconciled', t => {
+  const f = setup(t, [issue, { ...issue, number: 8 }]);
+  const failing = path.join(f.root, 'create-task-then-fail.sh');
+  fs.writeFileSync(failing, '#!/bin/sh\nmkdir -p "$TASK_ROOT/in-progress"\nprintf \'%s\\n\' \'---\' \'repository: acme/app\' \'issue: 7\' \'---\' > "$TASK_ROOT/in-progress/task.md"\nexit 1\n');
+  fs.chmodSync(failing, 0o755);
+  const first = spawnSync(process.execPath, [
+    cliPath, '--repo=acme/app', `--task-root=${f.taskRoot}`, `--state=${f.stateFile}`,
+    '--execute', `--handoff=${failing}`,
+  ], { encoding: 'utf8', env: { ...f.env, TASK_ROOT: f.taskRoot } });
+  assert.equal(first.status, 0, first.stderr);
+  assert.deepEqual(JSON.parse(first.stdout).map(row => row.status), ['handoff-unknown', 'blocked-not-attempted']);
+  assert.deepEqual(JSON.parse(f.runCli().stdout).map(row => row.status), ['handoff-unknown', 'eligible']);
+  const second = f.runHandoff();
+  assert.equal(second.status, 0, second.stderr);
+  assert.deepEqual(JSON.parse(second.stdout).map(row => [row.status, row.blockedBy]), [
+    ['handoff-unknown', undefined], ['blocked-not-attempted', 7],
+  ]);
+  assert.equal(fs.existsSync(second.log), false);
+});
+
 test('schema-one claims fail closed instead of guessing repository ownership', t => {
   const f = setup(t);
   fs.writeFileSync(f.stateFile, JSON.stringify({ schema: 1, claims: [{ issue: 7, status: 'complete' }] }));
@@ -321,6 +341,26 @@ test('a state-file-only ignore does not expose derived lock and receipt artifact
   assert.equal(fs.existsSync(ignoredDirectoryState), false);
   const external = launch(f.stateFile);
   assert.equal(external.status, 0, external.stderr);
+});
+
+test('a symlinked receipt directory cannot expose actual receipts in a selectively ignored checkout', t => {
+  const f = setup(t);
+  const { target, taskRoot } = worktrees(f);
+  const destination = path.join(target, 'receipts');
+  fs.mkdirSync(destination);
+  fs.symlinkSync(destination, path.join(f.root, 'issue-intake-receipts'), 'dir');
+  fs.writeFileSync(path.join(target, '.gitignore'), [
+    '.agents/tasks/', '/receipts/owner.json', '/receipts/receipt.json', '/receipts/receipt.json.tmp', '',
+  ].join('\n'));
+  const result = spawnSync(process.execPath, [
+    cliPath, '--repo=acme/app', `--task-root=${taskRoot}`, `--state=${f.stateFile}`,
+    '--execute', '--handoff=nonexistent-handoff',
+  ], { cwd: target, env: f.env, encoding: 'utf8' });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /not ignored/);
+  assert.deepEqual(fs.readdirSync(destination), []);
+  assert.equal(fs.existsSync(f.stateFile), false);
+  assert.equal(fs.existsSync(f.ghLog), false);
 });
 
 test('missing and invalid issue numbers fail before dispatch', t => {

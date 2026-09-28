@@ -212,11 +212,11 @@ function dryRun(options) {
     const claim = state.claims.find(item => item.key === key);
     const tasks = tasksByIssue.get(issue.number) ?? [];
     const existingPr = matchingPrs(prs, options.repo, issue.number);
+    if (claim?.status === 'dispatching' || claim?.status === 'handoff-unknown') return { issue: issue.number, status: 'handoff-unknown', receipt: claim.receipt };
     if (!eligible(issue, options.labels ?? [])) return { issue: issue.number, status: 'ineligible' };
     if (existingPr.length) return { issue: issue.number, status: 'existing-pr', prs: existingPr };
     if (tasks.length) return { issue: issue.number, status: 'duplicate-task', tasks };
     if (claim?.status === 'complete') return { issue: issue.number, status: 'complete', receipt: claim.receipt };
-    if (claim?.status === 'dispatching' || claim?.status === 'handoff-unknown') return { issue: issue.number, status: 'handoff-unknown', receipt: claim.receipt };
     return { issue: issue.number, status: 'eligible', idempotencyKey: claim?.idempotencyKey ?? key };
   });
 }
@@ -231,17 +231,12 @@ function intakeLocked(options) {
     if (blockedBy !== null) { outcomes.push({ issue: issue.number, status: 'blocked-not-attempted', blockedBy }); continue; }
     const key = claimKey(repo, issue.number);
     const claim = state.claims.find(item => item.key === key);
-    const relatedPrs = matchingPrs(prs, repo, issue.number);
-    if (!eligible(issue, labels)) { outcomes.push({ issue: issue.number, status: 'ineligible' }); continue; }
-    if (relatedPrs.length) { outcomes.push({ issue: issue.number, status: 'existing-pr', prs: relatedPrs }); continue; }
-    const tasks = tasksByIssue.get(issue.number) ?? [];
-    if (tasks.length) { outcomes.push({ issue: issue.number, status: 'duplicate-task', tasks }); continue; }
     const idempotencyKey = claim?.idempotencyKey ?? crypto.createHash('sha256').update(key).digest('hex');
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(idempotencyKey)) throw new Error(`invalid idempotency key for ${key}`);
     const receipt = path.join(path.dirname(stateFile), 'issue-intake-receipts', `${idempotencyKey}.json`);
     if (claim?.receipt && path.resolve(claim.receipt) !== receipt) throw new Error(`claim receipt path mismatch for ${key}`);
-    if (claim?.status === 'complete') { outcomes.push({ issue: issue.number, status: 'complete', receipt }); continue; }
-    if (claim?.status === 'dispatching' || claim?.status === 'handoff-unknown' || fs.existsSync(receipt)) {
+    if (claim?.status === 'dispatching' || claim?.status === 'handoff-unknown' ||
+        (claim?.status !== 'complete' && fs.existsSync(receipt))) {
       let prior;
       try { prior = JSON.parse(fs.readFileSync(receipt, 'utf8')); } catch {}
       if (prior?.idempotencyKey === idempotencyKey && prior.repo?.toLowerCase() === repo.toLowerCase() && prior.issue === issue.number && prior.status === 'accepted') {
@@ -255,6 +250,12 @@ function intakeLocked(options) {
       blockedBy = issue.number;
       continue;
     }
+    if (!eligible(issue, labels)) { outcomes.push({ issue: issue.number, status: 'ineligible' }); continue; }
+    const relatedPrs = matchingPrs(prs, repo, issue.number);
+    if (relatedPrs.length) { outcomes.push({ issue: issue.number, status: 'existing-pr', prs: relatedPrs }); continue; }
+    const tasks = tasksByIssue.get(issue.number) ?? [];
+    if (tasks.length) { outcomes.push({ issue: issue.number, status: 'duplicate-task', tasks }); continue; }
+    if (claim?.status === 'complete') { outcomes.push({ issue: issue.number, status: 'complete', receipt }); continue; }
     const active = { key, repo, issue: issue.number, status: 'dispatching', idempotencyKey, receipt, ownerPid: process.pid, updatedAt: clock(), costNote: costReport ? { text: costReport, verified: false } : null };
     state.claims = state.claims.filter(item => item.key !== key).concat(active);
     saveState(stateFile, state);
@@ -347,10 +348,8 @@ function validateLocalPaths(taskRoot, stateFile, cwd = process.cwd()) {
     `${canonicalState}.lock.stale-${crypto.randomUUID()}`,
     `${canonicalState}.lock.released-${crypto.randomUUID()}`,
     `${canonicalState}.lock.reaper.released-${crypto.randomUUID()}`,
-    receiptDirectory,
   ]) checkDerived(target, '/owner.json');
-  checkDerived(receiptDirectory, '/receipt.json');
-  checkDerived(receiptDirectory, '/receipt.json.tmp');
+  checkDerived(receiptDirectory, '/');
   return repositoryRoot;
 }
 function main(argv) {
