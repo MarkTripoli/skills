@@ -221,7 +221,7 @@ test('ignored listing stays on pinned metadata during a .git path swap', t => {
   fs.renameSync(metadata, heldMetadata);
   fs.symlinkSync(path.join(alternate, '.git'), metadata);
   try {
-    result = spawnSync('python3', [helper, '-c', 'core.excludesFile=/dev/null', 'ls-files', '-z', '--others', '--ignored', '--exclude-standard'], {
+    result = spawnSync('python3', [helper, '--worktree-cwd', '-c', 'core.excludesFile=/dev/null', 'ls-files', '-z', '--others', '--ignored', '--exclude-standard'], {
       cwd: path.dirname(helper),
       encoding: null,
       maxBuffer: 1024 * 1024,

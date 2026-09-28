@@ -16,12 +16,11 @@ function assertRootPath(root) {
     throw new Error('repository root or Git metadata changed');
   }
 }
-function gitFromRoot(root, args, {binary = false} = {}) {
+function gitFromRoot(root, args, {binary = false, worktreeCwd = false} = {}) {
   assertRootPath(root);
   const env = {...process.env, GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1'};
   for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE']) delete env[key];
-  const helper = fileURLToPath(new URL('./git-from-root.py', import.meta.url));
-  const result = spawnSync('python3', [helper, ...args], {
+  const result = spawnSync('python3', [helper, ...(worktreeCwd ? ['--worktree-cwd'] : []), ...args], {
     cwd: path.dirname(fileURLToPath(import.meta.url)),
     encoding: binary ? null : 'utf8',
     maxBuffer: 16 * 1024 * 1024,
@@ -154,7 +153,7 @@ function* inputFiles(root, includeIgnored, budget) {
   yield* trackedEnvFiles(root, budget);
   if (includeIgnored) {
     assertRootPath(root);
-    const ignored = gitFromRoot(root, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard'], {binary: true});
+    const ignored = gitFromRoot(root, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard'], {binary: true, worktreeCwd: true});
     chargeScanBudget(budget, {bytes: ignored.length, work: 1});
     assertRootPath(root);
     let start = 0;
