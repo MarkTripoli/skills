@@ -40,12 +40,11 @@ const phaseArtifactTypes = Object.freeze({
   'review-code': 'code-review',
   'fix-code-review': 'code-review-fixes',
   'review-artifact-comments': 'comment-review',
-  'describe-pr': 'pr-description',
   'resolve-pr-reviews': 'pr-review',
-  'record-evidence': 'evidence',
   'iterate-evidence': 'evidence-iteration',
   'ci-commit': 'commit',
 });
+const hostedPhases = new Set(['record-evidence', 'describe-pr']);
 
 function taskPath(taskDir) {
   const root = fs.realpathSync(taskDir);
@@ -61,7 +60,7 @@ function artifact(root, file) {
 
 function phaseArtifact(root, state, current) {
   const expectedType = phaseArtifactTypes[state.last_skill];
-  if (!expectedType) throw new Error(`No artifact type is registered for active phase ${state.last_skill}`);
+  if (!expectedType) throw new Error(`No task-local artifact is registered for active phase ${state.last_skill}`);
   const text = fs.readFileSync(path.join(root, current.file), 'utf8');
   parseArtifactText(text, expectedType, current.file);
   if (indexFileExists(path.join(root, 'index.json'))) {
@@ -158,7 +157,8 @@ export function startFreshSession(taskDir, sessionId) {
   if (state.stopped || state.pending || state.phase) {
     throw new Error('Resolve the active phase and human gate before handing off its child session');
   }
-  if (state.steps > 0 && state.completed_step !== state.steps) {
+  const resumingPhase = state.steps > 0 && state.completed_step !== state.steps;
+  if (resumingPhase && state.context_boundary.action !== 'fresh-session') {
     throw new Error('Wait for the current child to finish and gate its artifact before retiring its session');
   }
   if (typeof sessionId !== 'string' || !sessionId.trim()) {
@@ -173,6 +173,7 @@ export function startFreshSession(taskDir, sessionId) {
     ...(state.context_boundary.retiredSessionIds ?? []),
     state.context_boundary.sessionId,
   ])];
+  if (resumingPhase) state.resume_step = state.steps;
   state.context_boundary = {
     action: 'awaiting-checkpoint',
     status: 'unknown',
@@ -197,7 +198,24 @@ export function begin(taskDir, skill) {
   if (state.pending) throw new Error('Resolve the pending human gate before dispatch');
   if (state.phase) throw new Error('Resume the addressable phase before dispatching another');
   if (!skill || typeof skill !== 'string') throw new Error('Skill name is required');
-  if (state.steps >= state.options.max_steps) throw new Error(`Reached max_steps=${state.options.max_steps}`);
+  if (state.resume_step === undefined && state.steps >= state.options.max_steps) throw new Error(`Reached max_steps=${state.options.max_steps}`);
+  if (state.resume_step !== undefined) {
+    if (state.resume_step !== state.steps || skill !== state.last_skill) {
+      throw new Error('Resume the checkpointed phase before dispatching another');
+    }
+    delete state.resume_step;
+    state.context_boundary = {
+      action: 'recheck-required',
+      status: 'unknown',
+      sessionId: state.context_boundary.sessionId,
+      retiredSessionIds: state.context_boundary.retiredSessionIds ?? [],
+      reason: 'a new live context metric is required before the next dispatch',
+    };
+    return save(root, state);
+  }
+  if (state.steps > 0 && hostedPhases.has(state.last_skill) && state.completed_step !== state.steps) {
+    throw new Error('Verify hosted phase proof before dispatching another phase');
+  }
   const expectedType = phaseArtifactTypes[skill];
   const prior = expectedType && indexFileExists(path.join(root, 'index.json')) ? currentArtifact(root, expectedType) : null;
   state.steps += 1;
@@ -221,7 +239,9 @@ export function gate(taskDir, file) {
   const state = inspect(root);
   if (!state) throw new Error('Initialize the task before gating');
   if (state.stopped) throw new Error('Human stopped this delivery');
+  if (hostedPhases.has(state.last_skill)) throw new Error('Hosted phase proof must be verified independently; no task-local artifact gate exists');
   if (state.phase) throw new Error('Finish the addressable phase before gating its artifact');
+  if (state.resume_step !== undefined) throw new Error('Resume the checkpointed phase before gating its artifact');
   const current = artifact(root, file);
   if (state.steps > 0) phaseArtifact(root, state, current);
   if (state.steps > 0 && indexFileExists(path.join(root, 'index.json'))) {
@@ -243,6 +263,25 @@ export function gate(taskDir, file) {
   state.pending = current;
   save(root, state);
   return { approved: false, replaced, ...current, steps: state.steps };
+}
+/** Consume an independently verified hosted publication decision, not a task-local receipt. */
+export function completeHostedPhase(taskDir, skill, proof) {
+  const root = taskPath(taskDir);
+  const state = inspect(root);
+  if (!state || state.stopped || state.pending || state.phase || state.resume_step !== undefined ||
+    !hostedPhases.has(skill) || state.last_skill !== skill || state.completed_step === state.steps) {
+    throw new Error('An active hosted-only phase with verified proof is required');
+  }
+  if (!proof || typeof proof.pullRequest !== 'string' || !/^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+$/.test(proof.pullRequest) ||
+    !/^[a-f0-9]{40}$/.test(proof.head ?? '') || proof.captureCurrent !== true ||
+    proof.captureHosted !== true || proof.commentVerified !== true ||
+    (skill === 'describe-pr' && (proof.bodyPublished !== true || proof.allowed !== true || proof.descriptionCurrent !== true ||
+      !/^[a-f0-9]{64}$/.test(proof.descriptionHash ?? '')))) {
+    throw new Error('Current hosted publication proof is required before completing this phase');
+  }
+  state.completed_step = state.steps;
+  state.hosted_proof = { step: state.steps, skill, url: proof.pullRequest, head: proof.head, descriptionHash: proof.descriptionHash ?? null };
+  return save(root, state);
 }
 
 export function answer(taskDir, file, hash, response, feedback = '') {
@@ -304,8 +343,8 @@ export function completedPhase(taskDir, handle, file) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    const { action, taskDir, options, skill, file, hash, response, feedback, handle, question, usage, sessionId } = JSON.parse(fs.readFileSync(0, 'utf8'));
-    const operations = { inspect: () => inspect(taskDir), initialize: () => initialize(taskDir, options), checkpointContext: () => checkpointContext(taskDir, usage), startFreshSession: () => startFreshSession(taskDir, sessionId), begin: () => begin(taskDir, skill), gate: () => gate(taskDir, file), answer: () => answer(taskDir, file, hash, response, feedback), completedRevision: () => completedRevision(taskDir, file), suspendPhase: () => suspendPhase(taskDir, skill, handle, question), answerPhase: () => answerPhase(taskDir, handle, response), completedPhase: () => completedPhase(taskDir, handle, file) };
+    const { action, taskDir, options, skill, file, hash, response, feedback, handle, question, usage, sessionId, proof } = JSON.parse(fs.readFileSync(0, 'utf8'));
+    const operations = { inspect: () => inspect(taskDir), initialize: () => initialize(taskDir, options), checkpointContext: () => checkpointContext(taskDir, usage), startFreshSession: () => startFreshSession(taskDir, sessionId), begin: () => begin(taskDir, skill), gate: () => gate(taskDir, file), completeHostedPhase: () => completeHostedPhase(taskDir, skill, proof), answer: () => answer(taskDir, file, hash, response, feedback), completedRevision: () => completedRevision(taskDir, file), suspendPhase: () => suspendPhase(taskDir, skill, handle, question), answerPhase: () => answerPhase(taskDir, handle, response), completedPhase: () => completedPhase(taskDir, handle, file) };
     if (!Object.hasOwn(operations, action)) throw new Error(`Unknown action: ${action}`);
     process.stdout.write(`${JSON.stringify(operations[action]())}\n`);
   } catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1; }

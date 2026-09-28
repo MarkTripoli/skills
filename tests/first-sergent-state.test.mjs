@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { initialize, inspect, begin, gate, answer, completedRevision, suspendPhase, answerPhase, completedPhase, checkpointContext, startFreshSession } from '../skills/delivery/agent-first-sergent/state.mjs';
+import { initialize, inspect, begin, gate, completeHostedPhase, answer, completedRevision, suspendPhase, answerPhase, completedPhase, checkpointContext, startFreshSession } from '../skills/delivery/agent-first-sergent/state.mjs';
 import { evaluateContextBoundary } from '../skills/delivery/route-model/context.mjs';
 import { initTaskArtifacts, recordArtifact, reserveArtifactIteration } from '../shared/task-artifacts.mjs';
 
@@ -227,15 +227,64 @@ test('repeated indexed implementation phase needs its own artifact before handof
   assert.equal(inspect(dir).completed_step, null);
   assert.equal(inspect(dir).pending, null);
   assert.throws(() => startFreshSession(dir, 'child-c'), /current child to finish/);
+  checkpointContext(dir, { sessionId: 'child-b', contextUsage: { tokens: 60, contextWindow: 100, percent: 60 } });
+  startFreshSession(dir, 'child-c');
+  assert.equal(inspect(dir).resume_step, 2);
+  assert.throws(() => begin(dir, 'review-code'), /live context metric/);
+  checkpointContext(dir, metric('child-c'));
+  assert.throws(() => begin(dir, 'review-code'), /Resume the checkpointed phase/);
+  begin(dir, 'implement-plan');
+  assert.equal(inspect(dir).steps, 2);
+  assert.equal(inspect(dir).phase_artifact_before.id, 'implementation.receipt.0001');
+  assert.throws(() => gate(dir, first), /has not recorded a new artifact iteration/);
   const second = implementation('Second implementation');
   assert.throws(() => gate(dir, first), /does not match the current implement-plan phase artifact/);
   const secondGate = gate(dir, second);
   assert.equal(secondGate.approved, false);
   assert.equal(inspect(dir).completed_step, 2);
-  assert.throws(() => startFreshSession(dir, 'child-c'), /active phase and human gate/);
   answer(dir, second, secondGate.hash, 'approve');
+  checkpointContext(dir, metric('child-c'));
+  startFreshSession(dir, 'child-d');
+  assert.equal(inspect(dir).context_boundary.sessionId, 'child-d');
+});
+
+test('hosted-only phases progress from verified publication proof without task-local receipts', (t) => {
+  const { dir, file } = fixture(t);
+  const metric = (sessionId) => ({ sessionId, contextUsage: { tokens: 20, contextWindow: 100, percent: 20 } });
+  const proof = {
+    pullRequest: 'https://github.com/example/project/pull/17',
+    head: 'a'.repeat(40),
+    captureCurrent: true,
+    captureHosted: true,
+    commentVerified: true,
+    bodyPublished: true,
+    descriptionCurrent: true,
+    descriptionHash: 'b'.repeat(64),
+    allowed: true,
+  };
+  initialize(dir, { ...options, max_steps: 3, context_policy: 'stop-at-60' });
+  checkpointContext(dir, metric('child-a'));
+  begin(dir, 'record-evidence');
+  assert.throws(() => gate(dir, file), /no task-local artifact gate/);
+  assert.throws(() => begin(dir, 'describe-pr'), /live context metric/);
+  checkpointContext(dir, metric('child-a'));
+  assert.throws(() => begin(dir, 'describe-pr'), /Verify hosted phase proof/);
+  assert.throws(() => startFreshSession(dir, 'child-b'), /current child to finish/);
+  assert.throws(() => completeHostedPhase(dir, 'record-evidence', { ...proof, captureHosted: false }), /Current hosted publication proof/);
+  completeHostedPhase(dir, 'record-evidence', { ...proof, allowed: false, bodyPublished: false, descriptionCurrent: false });
+  assert.equal(inspect(dir).completed_step, 1);
+  startFreshSession(dir, 'child-b');
+  checkpointContext(dir, metric('child-b'));
+  begin(dir, 'describe-pr');
+  assert.throws(() => gate(dir, file), /no task-local artifact gate/);
+  assert.throws(() => completeHostedPhase(dir, 'describe-pr', { ...proof, descriptionCurrent: false }), /Current hosted publication proof/);
+  assert.throws(() => completeHostedPhase(dir, 'record-evidence', proof), /active hosted-only phase/);
+  completeHostedPhase(dir, 'describe-pr', proof);
+  checkpointContext(dir, metric('child-b'));
   startFreshSession(dir, 'child-c');
   assert.equal(inspect(dir).context_boundary.sessionId, 'child-c');
+  assert.equal(inspect(dir).hosted_proof.step, 2);
+  assert.equal(inspect(dir).hosted_proof.descriptionHash, proof.descriptionHash);
 });
 
 test('context threshold requires the fresh child live metric before dispatch', (t) => {
@@ -264,14 +313,19 @@ test('context threshold requires the fresh child live metric before dispatch', (
   checkpointContext(dir, { sessionId: 'new-session', contextUsage: { tokens: 25, contextWindow: 100, percent: 25 } });
   begin(dir, 'create-plan');
   checkpointContext(dir, { sessionId: 'new-session', contextUsage: { tokens: 60, contextWindow: 100, percent: 60 } });
-  assert.throws(() => startFreshSession(dir, 'third-session'), /current child to finish/);
+  startFreshSession(dir, 'third-session');
+  assert.equal(inspect(dir).resume_step, 2);
+  checkpointContext(dir, { sessionId: 'third-session', contextUsage: { tokens: 10, contextWindow: 100, percent: 10 } });
+  begin(dir, 'create-plan');
+  assert.equal(inspect(dir).steps, 2);
   const pending = gate(dir, file);
   answer(dir, file, pending.hash, 'approve');
-  startFreshSession(dir, 'third-session');
   checkpointContext(dir, { sessionId: 'third-session', contextUsage: { tokens: 10, contextWindow: 100, percent: 10 } });
+  startFreshSession(dir, 'fourth-session');
+  checkpointContext(dir, { sessionId: 'fourth-session', contextUsage: { tokens: 10, contextWindow: 100, percent: 10 } });
   begin(dir, 'review-code');
-  assert.equal(inspect(dir).context_boundary.sessionId, 'third-session');
-  assert.deepEqual(inspect(dir).context_boundary.retiredSessionIds, ['old-session', 'new-session']);
+  assert.equal(inspect(dir).context_boundary.sessionId, 'fourth-session');
+  assert.deepEqual(inspect(dir).context_boundary.retiredSessionIds, ['old-session', 'new-session', 'third-session']);
 });
 test('context threshold without a child identity remains blocked', (t) => {
   const { dir } = fixture(t);
