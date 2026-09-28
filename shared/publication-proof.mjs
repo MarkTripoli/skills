@@ -314,11 +314,19 @@ function completeDescription(body) {
     /### Known limits\s*\n[\s\S]*?-\s+\S/im.test(human);
 }
 export function exactHeadChecks(response, sha) {
-  const runs = response?.check_runs;
-  if (!Array.isArray(runs) || response.total_count !== runs.length) return false;
+  const pages = Array.isArray(response) ? response : [response];
+  if (!pages.length || !pages.every(page => page && Number.isSafeInteger(page.total_count) &&
+      page.total_count >= 0 && Array.isArray(page.check_runs) && page.check_runs.length <= 100 &&
+      page.total_count === pages[0]?.total_count)) return false;
+  const count = pages[0].total_count;
+  if (pages.length !== Math.max(1, Math.ceil(count / 100)) ||
+      pages.some((page, index) => page.check_runs.length !== Math.min(100, count - index * 100))) return false;
   const required = new Set(['test', 'Conventional Commits']);
   const latest = new Map();
-  for (const run of runs) {
+  const ids = new Set();
+  for (const page of pages) for (const run of page.check_runs) {
+    if (!Number.isSafeInteger(run?.id) || ids.has(run.id)) return false;
+    ids.add(run.id);
     if (!required.has(run.name) || run.head_sha !== sha || run.app?.slug !== 'github-actions') continue;
     if (!latest.has(run.name) || run.id > latest.get(run.name).id) latest.set(run.name, run);
   }
@@ -338,7 +346,8 @@ export async function inspect({ taskDir, repo, prNumber, draftHostCapture = fals
   const verificationRequired = Boolean(verification) || /verification\s*:\s*required|verification is required|required verification/i.test(taskText);
   const pr = JSON.parse(command('gh', ['pr', 'view', String(prNumber), '--json', 'url,number,headRefOid,baseRefName,baseRefOid,isDraft,body'], repo));
   const owner = JSON.parse(command('gh', ['repo', 'view', '--json', 'nameWithOwner'], repo)).nameWithOwner;
-  const commitChecks = JSON.parse(command('gh', ['api', `repos/${owner}/commits/${pr.headRefOid}/check-runs?per_page=100`], repo));
+  const commitChecks = JSON.parse(command('gh', ['api', '--paginate', '--slurp',
+    `repos/${owner}/commits/${pr.headRefOid}/check-runs?per_page=100`], repo));
   const commitChecksCurrent = exactHeadChecks(commitChecks, pr.headRefOid);
   const bodyText = pr.body ?? '';
   const evidence = section(bodyText, 'Evidence');

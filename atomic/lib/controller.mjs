@@ -299,16 +299,53 @@ function requireAcceptanceEvidence(task, state, artifact) {
   return [...checks, ...acceptance];
 }
 function replayableVerificationCommand(command, id) {
-  if (/^\s*(?:true|false|:|echo|printf)(?:\s|$)/.test(command) ||
-      /^\s*(?:node|bun|python3?|ruby|perl)\b.*(?:^|\s)(?:-[ecp](?:\s|$)|--(?:eval|print)(?:=|\s|$))/.test(command)) {
+  const unsafe = () => { throw new Error(`${id} acceptance command cannot be safely replayed; use an isolated idempotent test instead`); };
+  const argv = [];
+  let word = '';
+  let started = false;
+  let quote = '';
+  const flush = () => {
+    if (started) { argv.push(word); word = ''; started = false; }
+  };
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i];
+    if (char === '\r' || char === '\n' || char === '\0') unsafe();
+    if (quote === "'") {
+      if (char === "'") quote = '';
+      else word += char;
+    } else if (char === '"') {
+      if (char === '"') quote = '';
+      else if (char === '$' || char === '`') unsafe();
+      else if (char === '\\') {
+        const next = command[++i];
+        if (!next || next === '\n' || next === '\r') unsafe();
+        word += '\\$`"'.includes(next) ? next : `\\${next}`;
+      } else word += char;
+    } else if (char === "'" || char === '"') { quote = char; started = true; }
+    else if (/\s/.test(char)) flush();
+    else if (char === '\\') {
+      const next = command[++i];
+      if (!next || next === '\n' || next === '\r') unsafe();
+      word += next; started = true;
+    } else if (';&|`$<>()*?[]{}'.includes(char) || (char === '#' && !started) ||
+        (char === '~' && !started)) unsafe();
+    else { word += char; started = true; }
+  }
+  if (quote) unsafe();
+  flush();
+  if (!argv.length || !argv[0]) unsafe();
+  const executable = path.posix.basename(argv[0]);
+  if (/^[A-Za-z_][A-Za-z_0-9]*=/.test(argv[0]) ||
+      ['curl', 'http', 'wget', 'sh', 'bash', 'zsh', 'env', 'command', 'exec', 'sudo', 'xargs'].includes(executable) ||
+      (executable === 'git' && ['push', 'reset', 'clean'].includes(argv[1])) ||
+      (['npm', 'pnpm', 'yarn', 'bun'].includes(executable) && ['migrate', 'deploy', 'publish'].includes(argv[1] === 'run' ? argv[2] : argv[1])) ||
+      ['rm', 'mv'].includes(executable)) unsafe();
+  if (['true', 'false', ':', 'echo', 'printf'].includes(executable) ||
+      (['node', 'bun', 'python', 'python3', 'ruby', 'perl'].includes(executable) &&
+        argv.slice(1).some(arg => /^-[ecp]|^--(?:eval|print)(?:=|$)/.test(arg)))) {
     throw new Error(`${id} acceptance command only manufactures a result; it does not exercise product behavior`);
   }
-  if (/[\\;&|`$<>\r\n]/.test(command) ||
-      /^\s*(?:sh|bash|zsh|\/bin\/(?:sh|bash|zsh))\s+-c\b/.test(command) ||
-      /\b(?:curl|http|wget)(?=\s|$|["'])/.test(command) ||
-      /^\s*(?:git\s+(?:push|reset|clean)|(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:migrate|deploy|publish)\b|rm\b|mv\b)/.test(command)) {
-    throw new Error(`${id} acceptance command cannot be safely replayed; use an isolated idempotent test instead`);
-  }
+  return argv;
 }
 function executeVerification(task, state, artifact, rows, step) {
   const beforeHead = git(task.cwd, ['rev-parse', 'HEAD']);
@@ -316,8 +353,8 @@ function executeVerification(task, state, artifact, rows, step) {
   for (const row of rows) {
     const command = row['decided by'].match(/^`([^`\n]+)`$/)?.[1];
     if (!command) throw new Error(`${artifact.file}: ${row.id} has no executable command; an artifact assertion is not proof`);
-    replayableVerificationCommand(command, row.id);
-    const run = spawnSync('/bin/sh', ['-c', command], {
+    const [bin, ...args] = replayableVerificationCommand(command, row.id);
+    const run = spawnSync(bin, args, {
       cwd: task.cwd, encoding: 'utf8', timeout: 600_000, maxBuffer: 16 * 1024 * 1024,
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
     });
@@ -351,11 +388,34 @@ function executeVerification(task, state, artifact, rows, step) {
   saveRecord(task, `${String(step).padStart(3, '0')}-verification-execution`, { artifact: artifact.file, hash: artifact.hash, head: beforeHead, revision: state.revision, evidence });
   return evidence;
 }
-function changedSourcePaths(task, head) {
+function reviewBase(task, sourceHead) {
+  const result = spawnSync('gh', ['pr', 'view', '--json', 'baseRefName,baseRefOid,headRefOid'], {
+    cwd: task.cwd, encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024,
+  });
+  if (result.error || result.status !== 0) {
+    const noPr = /no pull requests found for branch/i.test(result.stderr || '');
+    if (!noPr && (git(task.cwd, ['remote']).trim() || process.env.GH_REPO)) {
+      throw new Error(`Cannot resolve hosted PR review base: ${result.error?.message || result.stderr?.trim() || `exit ${result.status}`}`);
+    }
+  } else {
+    let pr;
+    try { pr = JSON.parse(result.stdout); }
+    catch { throw new Error('Hosted PR review base response is not valid JSON'); }
+    if (!pr?.baseRefName || !/^[0-9a-f]{40}$/i.test(pr.baseRefOid || '') ||
+        !/^[0-9a-f]{40}$/i.test(pr.headRefOid || '') ||
+        ![sourceHead, pr.headRefOid].includes(git(task.cwd, ['merge-base', sourceHead, pr.headRefOid], true))) {
+      throw new Error('Hosted PR source/base is missing or does not match the reviewed source lineage');
+    }
+    const ancestor = git(task.cwd, ['merge-base', sourceHead, pr.baseRefOid], true);
+    if (!ancestor) throw new Error('Hosted PR base commit is unavailable for independent review');
+    return { branch: pr.baseRefName, sha: ancestor, hosted: true };
+  }
   const taskText = fs.readFileSync(path.join(task.taskDir, 'task.md'), 'utf8');
   const base = taskText.match(/^base:\s*["']?([^"'\n]+)["']?\s*$/m)?.[1];
   const refs = [base, 'origin/HEAD', 'origin/main', 'main', 'origin/master', 'master'].filter(Boolean);
-  const ancestor = refs.map(ref => git(task.cwd, ['merge-base', head, ref], true)).find(Boolean);
+  return { branch: base || '', sha: refs.map(ref => git(task.cwd, ['merge-base', sourceHead, ref], true)).find(Boolean) || '', hosted: false };
+}
+function changedSourcePaths(task, head, ancestor) {
   const names = new Set([
     ...(ancestor ? git(task.cwd, ['diff', '--name-only', '-z', ancestor, head, '--', '.']).split('\0') : []),
     ...git(task.cwd, ['diff', '--name-only', '-z', head, '--', '.']).split('\0'),
@@ -365,11 +425,7 @@ function changedSourcePaths(task, head) {
   return new Set([...names].filter(name => name && name !== taskRoot && !name.startsWith(`${taskRoot}/`) &&
     name !== '.atomic' && !name.startsWith('.atomic/')));
 }
-function changedSourceLines(task, head, changed) {
-  const taskText = fs.readFileSync(path.join(task.taskDir, 'task.md'), 'utf8');
-  const base = taskText.match(/^base:\s*["']?([^"'\n]+)["']?\s*$/m)?.[1];
-  const ancestor = [base, 'origin/HEAD', 'origin/main', 'main', 'origin/master', 'master']
-    .filter(Boolean).map(ref => git(task.cwd, ['merge-base', head, ref], true)).find(Boolean);
+function changedSourceLines(task, head, changed, ancestor) {
   const untracked = new Set(git(task.cwd, ['ls-files', '--others', '--exclude-standard', '-z', '--', '.']).split('\0'));
   const lines = new Map();
   for (const file of changed) {
@@ -396,15 +452,19 @@ async function requireIndependentReview(ctx, task, state, artifact, step, stageS
   if (artifact.metadata.head_sha !== sourceHead || git(task.cwd, ['merge-base', sourceHead, head]) !== sourceHead) {
     throw new Error(`${artifact.file}: clean review is not pinned to exact source HEAD ${sourceHead}`);
   }
+  const base = reviewBase(task, sourceHead);
+  if (base.hosted && (artifact.metadata.base_branch !== base.branch || artifact.metadata.base_sha !== base.sha)) {
+    throw new Error(`${artifact.file}: clean review base differs from hosted PR ${base.branch} at ${base.sha}`);
+  }
   const risks = ['functional correctness', 'security and data integrity', 'acceptance oracle and test reachability'];
-  const changed = changedSourcePaths(task, sourceHead);
-  const changedLines = changedSourceLines(task, sourceHead, changed);
+  const changed = changedSourcePaths(task, sourceHead, base.sha);
+  const changedLines = changedSourceLines(task, sourceHead, changed, base.sha);
   let execution = verified ? state.proofs.verification?.executionEvidence || [] : [];
   const name = `${String(step).padStart(3, '0')}-independent-review`;
   const prompt = [
     `Independently review the changed implementation in ${task.cwd} against task ${path.join(task.taskDir, 'task.md')}. Do not edit files or publish anything.`,
-    `Pin reviewed source HEAD ${sourceHead} (current HEAD ${head} may include only the task artifact commit) and source revision ${state.revision}; inspect changed source paths ${JSON.stringify([...changed])}, actual controller-run acceptance commands and outputs ${JSON.stringify(execution)}, task and authoritative artifacts. For deleted paths cite the old-side deleted line number from the base diff; deletion-only work still needs a consequential review. Review acceptance items ${JSON.stringify(acceptance)} and risks ${JSON.stringify(risks)}.`,
-    `Return only a JSON object {"head":string,"revision":string,"acceptance":[{"item":string,"evidence":string}],"risks":[{"risk":string,"evidence":string}],"findings":[{"location":string,"problem":string}]}. Every acceptance item must be examined against actual changed implementation lines and an independently meaningful direct observation or reachable test assertion. A green but unrelated test is a finding, never acceptance proof. Cite a changed path:line plus a test assertion path:line where tests provide the oracle; include the controller-executed command and decisive output when verification ran. For opted-out verification, independently inspect acceptance behavior without pretending an absent oracle ran. Cover every risk with inspected changed path:line and concrete behavior. Report consequential findings; incomplete inspection cannot claim coverage.`,
+    `Pin reviewed source HEAD ${sourceHead} (current HEAD ${head} may include only the task artifact commit), source revision ${state.revision}, and review base ${base.branch || '(local fallback)'} at merge-base SHA ${base.sha || '(none)'}. Inspect changed source paths ${JSON.stringify([...changed])}, actual controller-run acceptance commands and outputs ${JSON.stringify(execution)}, task and authoritative artifacts. For deleted paths cite old-side deleted line numbers from this base diff. Review acceptance items ${JSON.stringify(acceptance)} and risks ${JSON.stringify(risks)}.`,
+    `Return only a JSON object {"head":string,"revision":string,"base_branch":string,"base_sha":string,"acceptance":[{"item":string,"evidence":string}],"risks":[{"risk":string,"evidence":string}],"findings":[{"location":string,"problem":string}]}. Every acceptance item must be examined against actual changed implementation lines and an independently meaningful direct observation or reachable test assertion. A green but unrelated test is a finding, never acceptance proof. Cite a changed path:line plus a test assertion path:line where tests provide the oracle; include the controller-executed command and decisive output when verification ran. For opted-out verification, independently inspect acceptance behavior without pretending an absent oracle ran. Cover every risk with inspected changed path:line and concrete behavior. Report consequential findings; incomplete inspection cannot claim coverage.`,
     `When verification is opted out, each acceptance entry MUST also include {"command":"an idempotent direct product probe","observed":"exit N; decisive output"}; the controller reruns the command and rejects claims without an observed result. Cite that command and its decisive output in evidence. No verification artifact is invented.`,
   ].join('\n\n');
   const result = await ctx.task(name, { prompt, context: 'fresh', cwd: task.cwd, model, maxOutput: { bytes: 16_384, lines: 160 } });
@@ -413,6 +473,7 @@ async function requireIndependentReview(ctx, task, state, artifact, step, stageS
   catch { throw new Error(`${artifact.file}: independent reviewer did not return a completed structured report`); }
   if (!verified && stageSession && result.sessionId && result.sessionId !== stageSession &&
       report?.head === sourceHead && report.revision === state.revision &&
+      (!base.hosted || (report.base_branch === base.branch && report.base_sha === base.sha)) &&
       Array.isArray(report.acceptance) && report.acceptance.length === acceptance.length &&
       report.acceptance.every(covered => typeof covered.command === 'string' && typeof covered.observed === 'string')) {
     const probes = acceptance.map((item, index) => {
@@ -428,7 +489,8 @@ async function requireIndependentReview(ctx, task, state, artifact, step, stageS
       /\b(?:observed|printed|returned|passed|failed|asserted|invoked|executed|confirmed|produces?|rejects?|preserves?|inspected)\b/i.test(evidence);
   };
   const complete = stageSession && result.sessionId && result.sessionId !== stageSession && report && !Array.isArray(report) &&
-    report.head === sourceHead && report.revision === state.revision && changed.size > 0 &&
+    report.head === sourceHead && report.revision === state.revision &&
+    (!base.hosted || (report.base_branch === base.branch && report.base_sha === base.sha)) && changed.size > 0 &&
     Array.isArray(report.acceptance) && report.acceptance.length === acceptance.length &&
     acceptance.every((item, index) => report.acceptance.some(covered => {
       const oracle = execution.find(row => row.id.toUpperCase() === `A${index + 1}`);
@@ -442,7 +504,7 @@ async function requireIndependentReview(ctx, task, state, artifact, step, stageS
   if (!complete || git(task.cwd, ['rev-parse', 'HEAD']) !== head || revision(task.cwd, task.taskRootRelative) !== state.revision) {
     throw new Error(`${artifact.file}: independent reviewer proof is missing, scope-incomplete, or not bound to exact HEAD`);
   }
-  saveRecord(task, `${name}-proof`, { artifact: artifact.file, hash: artifact.hash, reviewed_head: sourceHead, head, revision: state.revision, changed: [...changed], session: result.sessionId, execution, report });
+  saveRecord(task, `${name}-proof`, { artifact: artifact.file, hash: artifact.hash, reviewed_head: sourceHead, head, base, revision: state.revision, changed: [...changed], session: result.sessionId, execution, report });
   if (report.findings.length) throw new Error(`${artifact.file}: independent reviewer found consequential defects; clean review cannot advance`);
   return { head, session: result.sessionId };
 }

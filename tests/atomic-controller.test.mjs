@@ -315,21 +315,21 @@ function proofFixture() {
   const check = '| C1 | repository npm test | `npm test` | exit 0; 42 | pass |\n';
   const table = '| Id | Item | Decided by | Observed | Verdict |\n|---|---|---|---|---|\n';
   const verification = rows => `---\ntype: verification\nsummary: CLI checked\nstatus: passed\n---\n## Items\n\n${table}${rows}`;
-  const ctx = (rows, worker) => ({
+  const ctx = (rows, worker, reviewBase = '') => ({
     tool: async (name, _args, callback) => name.endsWith('-select-model') ? { model: 'test-model' } : callback(),
-    task: async name => {
+    task: async (name, args) => {
       if (name.endsWith('-verify-implementation')) {
         fs.writeFileSync(path.join(taskDir, '02-verification.md'), verification(rows));
         return { sessionId: 'verification-session', text: 'Verified.' };
       }
       if (name.endsWith('-review-code')) {
         const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
-        fs.writeFileSync(path.join(taskDir, '03-code-review.md'), `---\ntype: code-review\nstatus: clean\nsummary: Reviewed CLI\nhead_sha: ${head}\n---\n## Independent Review\n\n- dispatch: claimed complete\n\n## Critical and Required Findings\n\nNone.\n`);
+        fs.writeFileSync(path.join(taskDir, '03-code-review.md'), `---\ntype: code-review\nstatus: clean\nsummary: Reviewed CLI\nhead_sha: ${head}\n${reviewBase}---\n## Independent Review\n\n- dispatch: claimed complete\n\n## Critical and Required Findings\n\nNone.\n`);
         execFileSync('git', ['add', '-A', '.agents/tasks/acceptance'], { cwd: repo, stdio: 'ignore' });
         execFileSync('git', ['commit', '-m', 'docs(task): review artifact'], { cwd: repo, stdio: 'ignore' });
         return { sessionId: 'review-author-session', text: 'Clean.' };
       }
-      return worker(name);
+      return worker(name, args);
     },
   });
   return { repo, taskDir, task, before, options, row, check, ctx };
@@ -405,6 +405,11 @@ test('a claimed A-row pass cannot advance without controller-executed output', a
       String.raw`curl -X P\OST https://example.invalid/claim`,
       '/usr/bin/curl -X POST https://example.invalid/claim',
       '"/usr/bin/curl" -X POST https://example.invalid/claim',
+      "'/usr/bin/cu''rl' -X POST https://example.invalid/claim",
+      "'/usr/bin/ht''tp' POST https://example.invalid/claim",
+      'node $(curl https://example.invalid/claim)',
+      'node cli.mjs *',
+      'VALUE=1 node cli.mjs 21',
       "node cli.mjs 21; printf '42'",
     ]) {
       const replay = `| A1 | CLI doubles input 21. | \`${unsafe}\` | exit 0; 42 | pass |\n` +
@@ -422,6 +427,35 @@ test('a claimed A-row pass cannot advance without controller-executed output', a
       'verify-implementation', 9), /omit an acceptance input or outcome/);
     const noCheck = f.row('A1', 'CLI doubles input 21.', 21, 42) + f.row('A2', 'CLI doubles input 7.', 7, 14);
     await assert.rejects(() => runSkill(f.ctx(noCheck), f.task, f.before, f.options, 'verify-implementation', 5), /omitted repository checks: npm test/);
+  } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
+});
+
+test('verification runs literal quoted filesystem argv without invoking a shell', async () => {
+  const f = proofFixture();
+  try {
+    fs.copyFileSync(path.join(f.repo, 'cli.mjs'), path.join(f.repo, 'cli with spaces.mjs'));
+    const rows = '| A1 | CLI doubles input 21. | `node "cli with spaces.mjs" 21` | exit 0; 42 | pass |\n' +
+      f.row('A2', 'CLI doubles input 7.', 7, 14);
+    const verified = await runSkill(f.ctx(f.check + rows), f.task,
+      initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative)),
+      f.options, 'verify-implementation', 1);
+    assert.equal(verified.proofs.verification.executionEvidence[1].output, '42');
+  } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
+});
+
+test('composed network executable never reaches even an offline local stub', async () => {
+  const f = proofFixture();
+  try {
+    const bin = path.join(f.repo, 'bin');
+    fs.mkdirSync(bin);
+    const marker = path.join(f.repo, 'network-attempt.txt');
+    fs.writeFileSync(path.join(bin, 'curl'), `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(marker)}, 'invoked');\n`, { mode: 0o755 });
+    const before = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
+    const rows = `| A1 | CLI doubles input 21. | \`'bin/cu''rl' -X POST https://example.invalid/claim\` | exit 0; 42 | pass |\n` +
+      f.row('A2', 'CLI doubles input 7.', 7, 14);
+    await assert.rejects(() => runSkill(f.ctx(f.check + rows), f.task, before,
+      f.options, 'verify-implementation', 1), /cannot be safely replayed/);
+    assert.equal(fs.existsSync(marker), false);
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 
@@ -670,6 +704,49 @@ test('clean review requires a completed separate exact-HEAD reviewer; genuine ch
     assert.deepEqual(eligible(reviewed, f.options, 'oneshot', false), ['record-evidence']);
     assert.equal(fs.existsSync(path.join(f.taskDir, '.atomic-delivery', 'proof-run', '005-independent-review-proof.json')), true);
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
+});
+
+test('hosted independent review binds artifact and worker to the PR base rather than task fallback', async () => {
+  const f = proofFixture();
+  const originalPath = process.env.PATH;
+  try {
+    const sourceHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: f.repo, encoding: 'utf8' }).trim();
+    const hostedBase = execFileSync('git', ['rev-parse', 'HEAD^'], { cwd: f.repo, encoding: 'utf8' }).trim();
+    fs.writeFileSync(path.join(f.taskDir, 'task.md'), '# Task\nbase: main\n\n## Acceptance criteria\n\n- CLI doubles input 21.\n- CLI doubles input 7.\n');
+    const bin = path.join(f.repo, 'bin');
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, 'gh'), `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(JSON.stringify({
+      baseRefName: 'release', baseRefOid: hostedBase, headRefOid: sourceHead,
+    }))});\n`, { mode: 0o755 });
+    process.env.PATH = `${bin}:${originalPath}`;
+    const rows = f.check + f.row('A1', 'CLI doubles input 21.', 21, 42) + f.row('A2', 'CLI doubles input 7.', 7, 14);
+    const before = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
+    const verified = await runSkill(f.ctx(rows), f.task, before, f.options, 'verify-implementation', 1);
+    const report = (base_branch, base_sha) => (_name, args) => {
+      assert.match(args.prompt, /review base release at merge-base SHA/);
+      const head = execFileSync('git', ['rev-parse', 'HEAD^'], { cwd: f.repo, encoding: 'utf8' }).trim();
+      const evidence = 'cli.mjs:1 inspected added CLI file and invoked node cli.mjs 21; observed 42 and node cli.mjs 7; observed 14';
+      return { sessionId: 'independent-hosted-review', text: JSON.stringify({
+        head, revision: verified.revision, base_branch, base_sha,
+        acceptance: ['CLI doubles input 21.', 'CLI doubles input 7.'].map(item => ({ item, evidence })),
+        risks: ['functional correctness', 'security and data integrity', 'acceptance oracle and test reachability']
+          .map(risk => ({ risk, evidence })), findings: [],
+      }) };
+    };
+    const reviewer = (branch, sha) => f.ctx(rows, report(branch, sha),
+      `base_branch: ${branch}\nbase_sha: ${sha}\n`);
+    await assert.rejects(() => runSkill(reviewer('main', sourceHead), f.task, verified,
+      f.options, 'review-code', 2), /clean review base differs from hosted PR/);
+    await assert.rejects(() => runSkill(f.ctx(rows, report('main', sourceHead),
+      `base_branch: release\nbase_sha: ${hostedBase}\n`), f.task, verified,
+      f.options, 'review-code', 3), /scope-incomplete/);
+    const reviewed = await runSkill(reviewer('release', hostedBase), f.task, verified,
+      f.options, 'review-code', 4);
+    assert.equal(reviewed.latest['code-review'].status, 'clean');
+  } finally {
+    process.env.PATH = originalPath;
+    fs.rmSync(f.repo, { recursive: true, force: true });
+  }
 });
 
 function initGit(dir) {

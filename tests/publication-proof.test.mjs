@@ -36,7 +36,7 @@ function fixture({ legacy = false } = {}) {
   if (!legacy) initTaskArtifacts(taskDir);
   const bin = path.join(root, 'bin');
   fs.mkdirSync(bin);
-  fs.writeFileSync(path.join(bin, 'gh'), `#!/bin/sh\ncase "$1 $2" in\n  "pr view") printf '%s' "$GH_PR_JSON" ;;\n  "repo view") printf '%s' '{"nameWithOwner":"owner/repo"}' ;;\n  "api repos/owner/repo/issues/comments/123") printf '%s' "$GH_COMMENT_JSON" ;;\n  *) exit 2 ;;\nesac\n`);
+  fs.writeFileSync(path.join(bin, 'gh'), `#!/bin/sh\ncase "$1 $2" in\n  "pr view") printf '%s' "$GH_PR_JSON" ;;\n  "repo view") printf '%s' '{"nameWithOwner":"owner/repo"}' ;;\n  "api --paginate") if [ "$3" = "--slurp" ] && [ "$4" = "repos/owner/repo/commits/$GH_HEAD/check-runs?per_page=100" ]; then printf '%s' "$GH_CHECK_PAGES"; else exit 2; fi ;;\n  "api repos/owner/repo/issues/comments/123") printf '%s' "$GH_COMMENT_JSON" ;;\n  *) exit 2 ;;\nesac\n`);
   fs.chmodSync(path.join(bin, 'gh'), 0o755);
   const digests = [mp4, mkv].map(bytes => createHash('sha256').update(bytes).digest('hex'));
   const decoder = `#!${process.execPath}
@@ -74,7 +74,9 @@ const table = `| Test | Result | Capture | Cue |
 | Browser playback and assertion | passed | primary | 00:12 asserted player state |`;
 const body = (tested, head, capture = captureUrl, result = 'passed', recording = 'ui-video') => `## Purpose\n\nPublish the feature for reviewers.\n\n## Special things to note\n\n- No unusual migration.\n\n## Evidence\n\n${fields(tested, head, capture, result, recording)}\n- comment: ${commentUrl}\n\n### Recorded tests\n\n${recording === 'ui-video' ? table : table.replace('Browser playback and assertion | passed | primary | 00:12 asserted player state', 'Focused command returned expected output | passed | primary | output line 4: expected identifier')}\n\n## Change outline\n\n- Source is unchanged.\n\n## Human Review\n\n### Review targets\n\n- Check the observable behavior.\n\n### Verify\n\n- [ ] Confirm hosted capture and review.\n\n### Known limits\n\n- None.\n`;
 const comment = (tested, head, capture = captureUrl, result = 'passed', recording = 'ui-video') => ({ id: 123, html_url: commentUrl, body: fields(tested, head, capture, result, recording) });
-function proofCommand({ repo, taskDir, bin, fetchStub, extra = [], prHead, tested, baseHead = tested ?? prHead, baseBranch = 'main', draft = false, prBody = '', posted = null, decoderDisabled = false, frameMissing = false, mediaLog = '' }) {
+function proofCommand({ repo, taskDir, bin, fetchStub, extra = [], prHead, tested, baseHead = tested ?? prHead, baseBranch = 'main', draft = false, prBody = '', posted = null, decoderDisabled = false, frameMissing = false, mediaLog = '', checkPages }) {
+  const checks = checkPages ?? [{ total_count: 2, check_runs: ['test', 'Conventional Commits']
+    .map((name, index) => ({ id: index + 1, name, head_sha: prHead, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })) }];
   const script = new URL('../shared/publication-proof.mjs', import.meta.url).pathname;
   return JSON.parse(run(process.execPath, ['--import', fetchStub, script, taskDir, repo, '7', ...extra], repo, {
     ...process.env,
@@ -82,6 +84,8 @@ function proofCommand({ repo, taskDir, bin, fetchStub, extra = [], prHead, teste
     GH_PR_JSON: JSON.stringify({ url: 'https://github.com/owner/repo/pull/7', number: 7, headRefOid: prHead, baseRefName: baseBranch, baseRefOid: baseHead, isDraft: draft, body: prBody }),
     GH_COMMENT_JSON: JSON.stringify(posted),
     GH_TESTED_SHA: tested ?? prHead,
+    GH_HEAD: prHead,
+    GH_CHECK_PAGES: JSON.stringify(checks),
     DECODER_DISABLED: decoderDisabled ? '1' : '',
     FRAME_MISSING: frameMissing ? '1' : '',
     MEDIA_LOG: mediaLog,
@@ -124,6 +128,21 @@ test('hosted body and comment, not task-local evidence, authorize current review
   assert.equal(proofCommand({ ...data, posted: comment(data.tested, data.head, captureUrl, 'not passed') }).status, 'incomplete');
   assert.equal(proofCommand({ ...data, prBody: body(data.tested, data.head, captureUrl, 'not passed') }).status, 'incomplete');
   assert.equal(proofCommand({ ...data, posted: { ...data.posted, id: 999 } }).status, 'incomplete');
+});
+
+test('publication gate reads all exact-head check pages and rejects incomplete or later failing jobs', () => {
+  const data = completed();
+  const check = (id, name, conclusion = 'success', status = 'completed') => ({
+    id, name, head_sha: data.head, status, conclusion, app: { slug: 'github-actions' },
+  });
+  const first = [check(1, 'test'), check(2, 'Conventional Commits'),
+    ...Array.from({ length: 98 }, (_, index) => check(index + 3, `other-${index}`))];
+  const pages = second => [{ total_count: 101, check_runs: first },
+    { total_count: 101, check_runs: [second] }];
+  assert.equal(proofCommand({ ...data, checkPages: pages(check(101, 'test')) }).status, 'pass');
+  assert.equal(proofCommand({ ...data, checkPages: pages(check(101, 'test', 'failure')) }).status, 'incomplete');
+  assert.equal(proofCommand({ ...data, checkPages: pages(check(101, 'test', null, 'in_progress')) }).status, 'incomplete');
+  assert.equal(proofCommand({ ...data, checkPages: pages(check(101, 'test')).slice(0, 1) }).status, 'incomplete');
 });
 
 test('missing capture, wrong head, retargeted base and unreadable redirect fail closed', () => {
