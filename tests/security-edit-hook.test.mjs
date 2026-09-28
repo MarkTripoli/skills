@@ -44,6 +44,24 @@ test('successful write result scans saved Dockerfile bytes and reports advisory 
   const snapshot = calls.find(item => item.args[0] === '--format').args.at(-1);
   assert.equal(fs.existsSync(snapshot), false);
 });
+test('successful empty Trivy report without Results is complete without fetching a database', t => {
+  const cwd = workspace(t);
+  file(cwd, 'Dockerfile', 'FROM scratch\n');
+  file(cwd, 'trivy-cache/db/trivy.db', 'local fixture only');
+  const run = (bin, args) => {
+    if (args[0] === '--version') return { status: 0, stdout: `${bin} local` };
+    if (bin === 'hadolint') return { status: 0, stdout: '[]' };
+    if (bin === 'trivy') return { status: 0, stdout: '{"SchemaVersion":2,"ArtifactName":"Dockerfile","Metadata":{}}' };
+    assert.fail(`unexpected scanner ${bin}`);
+  };
+  const report = inspectEditedFile({ toolName: 'write', input: { path: 'Dockerfile' }, details: {}, content: 'Wrote file', isError: false }, {
+    cwd, env: { TRIVY_CACHE_DIR: path.join(cwd, 'trivy-cache') }, run,
+  });
+  const trivy = report.results[0].lanes.find(lane => lane.tool === 'trivy_fs');
+  assert.equal(trivy.coverage, 'complete');
+  assert.deepEqual(trivy.findings, []);
+});
+
 
 test('saved-file helper ignores project-local Python modules', t => {
   const cwd = workspace(t);
@@ -81,7 +99,7 @@ test('successful multi-file hashline edit scans saved files and follows MV desti
     const target = args.at(-1);
     seen.push({ bin, target, contents: fs.readFileSync(target, 'utf8') });
     if (bin === 'hadolint') return { status: 0, stdout: '[]' };
-    if (bin === 'actionlint') return { status: 0, stdout: '' };
+    if (bin === 'actionlint') return { status: 0, stdout: '[]\n' };
     assert.fail(`unexpected scanner ${bin}`);
   };
   const patch = [
@@ -299,7 +317,7 @@ test('Semgrep requires an explicit local rules path and sees completed workflow 
     assert.notEqual(args.at(-1), fs.realpathSync(target));
     assert.equal(fs.readFileSync(args.at(-1), 'utf8'), 'name: saved workflow\n');
     if (bin === 'semgrep') return { status: 0, stdout: JSON.stringify({ results: [], errors: [] }) };
-    if (bin === 'actionlint') return { status: 0, stdout: '' };
+    if (bin === 'actionlint') return { status: 0, stdout: '[]\n' };
     assert.fail(`unexpected scanner ${bin}`);
   };
   const report = inspectEditedFile({ toolName: 'edit', input: { filePath: '.github/workflows/build.yaml' }, details: { filePath: '.github/workflows/build.yaml' }, content: [{ type: 'text', text: 'Edited file: .github/workflows/build.yaml' }], isError: false }, {
@@ -310,6 +328,27 @@ test('Semgrep requires an explicit local rules path and sees completed workflow 
   const invocation = calls.find(call => call.bin === 'semgrep' && call.args[0] === 'scan');
   assert.ok(invocation.args.includes(rules));
   assert.equal(invocation.args.includes('p/default'), false);
+});
+test('actionlint JSON arrays distinguish a clean workflow, diagnostics, and interrupted partial scans', t => {
+  const cwd = workspace(t);
+  file(cwd, '.github/workflows/ci.yml', 'name: synthetic\n');
+  let result = { status: 0, stdout: '[]\n' };
+  const event = { toolName: 'write', input: { path: '.github/workflows/ci.yml' }, details: {}, content: 'Wrote file', isError: false };
+  const inspect = () => inspectEditedFile(event, { cwd, env: offlineEnv(cwd), run(bin, args) {
+    assert.equal(bin, 'actionlint');
+    return args[0] === '--version' ? { status: 0, stdout: 'actionlint local' } : result;
+  } }).results[0].lanes.find(lane => lane.tool === 'actionlint');
+  const clean = inspect();
+  assert.equal(clean.coverage, 'complete');
+  assert.deepEqual(clean.findings, []);
+  result = { status: 1, stdout: '[{"line":2,"kind":"expression","severity":"error"}]\n' };
+  const diagnostics = inspect();
+  assert.equal(diagnostics.coverage, 'complete');
+  assert.equal(diagnostics.findings[0].rule, 'expression');
+  result = { status: null, signal: 'SIGTERM', stdout: '[{"line":2,"kind":"expression","severity":"error"}]\n' };
+  const interrupted = inspect();
+  assert.equal(interrupted.coverage, 'incomplete');
+  assert.equal(interrupted.findings[0].rule, 'expression');
 });
 
 test('OMP tool_result reads saved file after success and skips scanner on error', () => {

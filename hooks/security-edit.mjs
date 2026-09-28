@@ -267,7 +267,7 @@ function lane(name, bin, args, file, cwd, run, parse) {
   let findings;
   try { findings = parse(result.stdout, file); }
   catch { return incomplete(name, 'tool output invalid'); }
-  return { tool: name, coverage: result.status === 0 || findings.length ? 'complete' : 'incomplete', findings };
+  return { tool: name, coverage: result.status === 0 || (result.status === 1 && (name === 'hadolint' || name === 'actionlint') && findings.length > 0) ? 'complete' : 'incomplete', findings };
 }
 
 function parseHadolint(stdout, file) {
@@ -276,11 +276,9 @@ function parseHadolint(stdout, file) {
   return rows.map(row => safeFinding('hadolint', file, row.line, row.code, row.level));
 }
 function parseActionlint(stdout, file) {
-  if (!stdout.trim()) return [];
-  return stdout.trim().split('\n').map(line => {
-    const row = JSON.parse(line);
-    return safeFinding('actionlint', file, row.line, row.kind, row.severity);
-  });
+  const rows = JSON.parse(stdout);
+  if (!Array.isArray(rows)) throw new Error('invalid output');
+  return rows.map(row => safeFinding('actionlint', file, row.line, row.kind, row.severity));
 }
 function parseSemgrep(stdout, file) {
   const report = JSON.parse(stdout);
@@ -318,8 +316,9 @@ function scanFile(file, { cwd, env, run }) {
     if (localFile(db)) {
       lanes.push(lane('trivy_fs', 'trivy', ['fs', '--format', 'json', '--scanners', 'vuln', '--skip-db-update', '--skip-java-db-update', '--skip-vex-repo-update', '--offline-scan', '--disable-telemetry', '--skip-version-check'], snapshot, cwd, run, stdout => {
         const report = JSON.parse(stdout);
-        if (!Array.isArray(report.Results)) throw new Error('invalid output');
-        return report.Results.flatMap(result => (result.Vulnerabilities || []).map(v => safeFinding('trivy_fs', snapshot, v.LineNumber, v.VulnerabilityID, v.Severity)));
+        const results = report.Results === undefined && report.SchemaVersion === 2 && typeof report.ArtifactName === 'string' && report.ArtifactName.length > 0 ? [] : report.Results;
+        if (!Array.isArray(results)) throw new Error('invalid output');
+        return results.flatMap(result => (result.Vulnerabilities || []).map(v => safeFinding('trivy_fs', snapshot, v.LineNumber, v.VulnerabilityID, v.Severity)));
       }));
     } else lanes.push(incomplete('trivy_fs', 'local vulnerability database unavailable; no download attempted'));
     lanes.push(incomplete('trivy_config', 'local Trivy checks bundle not verified; scanner not run'));
