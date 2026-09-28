@@ -98,7 +98,7 @@ test("a manifest created at publication wins the exclusive link", () => fixture(
   assert.deepEqual(fs.readdirSync(root).sort(), [".nvmrc", "package.json"]);
 }));
 
-test("cleanup does not unlink a replacement published after our manifest", () => fixture((root) => {
+test("a replacement published after the link fails closed without deleting it", () => fixture((root) => {
   fs.writeFileSync(path.join(root, ".nvmrc"), "22\n");
   const plan = createPlan(root);
   const link = fs.linkSync;
@@ -108,12 +108,39 @@ test("cleanup does not unlink a replacement published after our manifest", () =>
     fs.writeFileSync("package.json", "replacement manifest\n");
   };
   try {
-    assert.equal(applyPlan(root, plan).outcome, "applied");
+    assert.throws(() => applyPlan(root, plan), /publication changed/);
   } finally {
     fs.linkSync = link;
   }
   assert.equal(fs.readFileSync(path.join(root, "package.json"), "utf8"), "replacement manifest\n");
 }));
+
+for (const kind of ["file", "symlink"]) {
+  test(`a staged ${kind} swapped at publication cannot report success`, () => fixture((root) => {
+    fs.writeFileSync(path.join(root, ".nvmrc"), "22\n");
+    const plan = createPlan(root);
+    const foreign = path.join(root, "foreign");
+    const link = fs.linkSync;
+    let staged;
+    fs.linkSync = (from, to) => {
+      staged = from;
+      fs.writeFileSync(foreign, "foreign data\n");
+      fs.unlinkSync(from);
+      if (kind === "symlink") fs.symlinkSync(foreign, from);
+      else fs.writeFileSync(from, "foreign manifest\n");
+      return link(from, to);
+    };
+    try {
+      assert.throws(() => applyPlan(root, plan), /publication changed/);
+    } finally {
+      fs.linkSync = link;
+    }
+    assert.equal(fs.readFileSync(foreign, "utf8"), "foreign data\n");
+    assert.equal(fs.readFileSync(path.join(root, "package.json"), "utf8"),
+      kind === "symlink" ? "foreign data\n" : "foreign manifest\n");
+    assert.equal(fs.lstatSync(path.join(root, staged)).isSymbolicLink(), kind === "symlink");
+  }));
+}
 
 test("a parent swapped before directory open fails closed", () => fixture((root) => {
   const project = path.join(root, "project");
@@ -161,6 +188,80 @@ test("a swapped parent path cannot redirect publication outside the approved dir
   }
   assert.equal(fs.existsSync(path.join(outside, "package.json")), false);
   assert.equal(fs.readFileSync(path.join(moved, "package.json"), "utf8"), '{\n  "private": true\n}\n');
+}));
+
+test("an approved plan cannot publish into a replacement parent directory", () => fixture((root) => {
+  const parent = path.join(root, "parent");
+  const moved = path.join(root, "moved");
+  const foreignParent = path.join(root, "foreign-parent");
+  const project = path.join(parent, "project");
+  fs.mkdirSync(project, { recursive: true });
+  fs.mkdirSync(path.join(foreignParent, "project"), { recursive: true });
+  fs.writeFileSync(path.join(project, ".nvmrc"), "22\n");
+  fs.writeFileSync(path.join(foreignParent, "project", ".nvmrc"), "22\n");
+  const plan = createPlan(project);
+  fs.renameSync(parent, moved);
+  fs.renameSync(foreignParent, parent);
+  assert.throws(() => applyPlan(project, plan), /target changed/);
+  assert.equal(fs.existsSync(path.join(project, "package.json")), false);
+  assert.equal(fs.existsSync(path.join(moved, "project", "package.json")), false);
+}));
+
+test("a toggled intermediate symlink cannot redirect an approved plan", () => fixture((root) => {
+  const parent = path.join(root, "parent");
+  const moved = path.join(root, "moved");
+  const foreignParent = path.join(root, "foreign-parent");
+  const project = path.join(parent, "project");
+  fs.mkdirSync(project, { recursive: true });
+  fs.mkdirSync(path.join(foreignParent, "project"), { recursive: true });
+  fs.writeFileSync(path.join(project, ".nvmrc"), "22\n");
+  fs.writeFileSync(path.join(foreignParent, "project", ".nvmrc"), "22\n");
+  const plan = createPlan(project);
+  const open = fs.openSync;
+  fs.openSync = (file, flags, mode) => {
+    if (file === plan.project) {
+      fs.renameSync(parent, moved);
+      fs.symlinkSync(foreignParent, parent, "dir");
+    }
+    return open(file, flags, mode);
+  };
+  try {
+    assert.throws(() => applyPlan(project, plan), /target changed/);
+  } finally {
+    fs.openSync = open;
+  }
+  assert.equal(fs.existsSync(path.join(project, "package.json")), false);
+  assert.equal(fs.existsSync(path.join(moved, "project", "package.json")), false);
+}));
+
+test("replanning stays on the approved inode when its intermediate parent becomes a symlink", () => fixture((root) => {
+  const parent = path.join(root, "parent");
+  const moved = path.join(root, "moved");
+  const outside = path.join(root, "outside");
+  const project = path.join(parent, "project");
+  fs.mkdirSync(project, { recursive: true });
+  fs.mkdirSync(path.join(outside, "project"), { recursive: true });
+  fs.writeFileSync(path.join(project, ".nvmrc"), "22\n");
+  fs.writeFileSync(path.join(outside, "project", ".nvmrc"), "22\n");
+  const plan = createPlan(project);
+  const exists = fs.existsSync;
+  let swapped = false;
+  fs.existsSync = (file) => {
+    if (!swapped && file === ".nvmrc") {
+      swapped = true;
+      fs.renameSync(parent, moved);
+      fs.symlinkSync(outside, parent, "dir");
+    }
+    return exists(file);
+  };
+  try {
+    assert.equal(applyPlan(project, plan).outcome, "applied");
+  } finally {
+    fs.existsSync = exists;
+  }
+  assert.equal(swapped, true);
+  assert.equal(fs.existsSync(path.join(outside, "project", "package.json")), false);
+  assert.equal(fs.readFileSync(path.join(moved, "project", "package.json"), "utf8"), '{\n  "private": true\n}\n');
 }));
 
 test("Python signals appearing after planning invalidate approval", () => fixture((root) => {

@@ -65,16 +65,41 @@ function containsOnlyVersionMarkers(project) {
 }
 
 
-export function createPlan(root) {
+function withPinnedDirectory(root, use) {
   const project = normalizeProject(root);
-  const detection = detectProject(project);
+  if (typeof fs.constants.O_DIRECTORY !== "number" || typeof fs.constants.O_NOFOLLOW !== "number") {
+    throw new Error("Cannot securely open the target directory on this platform.");
+  }
+  const previousDirectory = process.cwd();
+  const directoryFd = fs.openSync(project, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+  try {
+    const pinned = fs.fstatSync(directoryFd);
+    if (!pinned.isDirectory()) throw new Error("Target must be a directory; refusing to write.");
+    process.chdir(project);
+    const cwd = fs.statSync(".");
+    if (cwd.dev !== pinned.dev || cwd.ino !== pinned.ino) {
+      throw new Error("Bootstrap target changed; refusing to write.");
+    }
+    return use(project, { dev: pinned.dev, ino: pinned.ino });
+  } finally {
+    try {
+      process.chdir(previousDirectory);
+    } finally {
+      fs.closeSync(directoryFd);
+    }
+  }
+}
+
+function planInPinnedDirectory(project, identity) {
+  const detection = detectProject(".");
   const canCreate = detection.status === "detected" && detection.stack === "node" &&
-    !fs.existsSync(path.join(project, "package.json")) && containsOnlyVersionMarkers(project);
+    !fs.existsSync("package.json") && containsOnlyVersionMarkers(".");
   return {
     version: 1,
     mode: canCreate ? "supported" : detection.status === "detected" ? "supported" : "unsupported",
     outcome: "planned",
     project,
+    identity,
     detected: detection.status === "detected" ? [{ stack: detection.stack, manager: detection.manager, manifest: detection.manifest }] : [],
     actions: canCreate ? [{ type: "create-file", path: "package.json", contents: '{\n  "private": true\n}\n' }] : [],
     explanation: canCreate
@@ -85,34 +110,22 @@ export function createPlan(root) {
   };
 }
 
+export function createPlan(root) {
+  return withPinnedDirectory(root, planInPinnedDirectory);
+}
+
 export function applyPlan(root, plan) {
-  const requested = normalizeProject(root);
-  if (plan.project !== requested || plan.mode !== "supported" || plan.actions.length !== 1 ||
-      plan.actions[0].path !== "package.json" || plan.actions[0].contents !== '{\n  "private": true\n}\n') {
-    throw new Error("No applicable bootstrap action.");
-  }
-  const targetInfo = fs.lstatSync(requested);
-  if (!targetInfo.isDirectory()) throw new Error("Target must be a directory; refusing to write.");
-  const current = createPlan(requested);
-  if (current.mode !== "supported" || JSON.stringify(current.actions) !== JSON.stringify(plan.actions)) {
-    throw new Error("Bootstrap plan is stale; refusing to write.");
-  }
-  // Node has no openat: pin the directory as cwd, and verify its inode before
-  // using relative names. A swapped parent path cannot redirect the write.
-  if (typeof fs.constants.O_DIRECTORY !== "number" || typeof fs.constants.O_NOFOLLOW !== "number") {
-    throw new Error("Cannot securely open the target directory on this platform.");
-  }
-  const previousDirectory = process.cwd();
-  const directoryFd = fs.openSync(requested, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
-  try {
-    const pinned = fs.fstatSync(directoryFd);
-    if (!pinned.isDirectory() || pinned.dev !== targetInfo.dev || pinned.ino !== targetInfo.ino) {
+  return withPinnedDirectory(root, (requested, identity) => {
+    if (plan.project !== requested || plan.mode !== "supported" || plan.actions.length !== 1 ||
+        plan.actions[0].path !== "package.json" || plan.actions[0].contents !== '{\n  "private": true\n}\n') {
+      throw new Error("No applicable bootstrap action.");
+    }
+    if (plan.identity?.dev !== identity.dev || plan.identity?.ino !== identity.ino) {
       throw new Error("Bootstrap target changed; refusing to write.");
     }
-    process.chdir(requested);
-    const cwd = fs.statSync(".");
-    if (cwd.dev !== pinned.dev || cwd.ino !== pinned.ino) {
-      throw new Error("Bootstrap target changed; refusing to write.");
+    const current = planInPinnedDirectory(requested, identity);
+    if (current.mode !== "supported" || JSON.stringify(current.actions) !== JSON.stringify(plan.actions)) {
+      throw new Error("Bootstrap plan is stale; refusing to write.");
     }
     // Write before publishing. An exclusive hard link publishes the complete
     // inode without overwriting a manifest created by another invocation.
@@ -127,10 +140,14 @@ export function applyPlan(root, plan) {
         throw new Error("Bootstrap staging file changed; refusing to write.");
       }
       fs.linkSync(staged, "package.json");
+      // The source name can be replaced between lstat and link; never report
+      // success for a different inode or remove another actor's published entry.
+      const published = fs.lstatSync("package.json");
+      if (!published.isFile() || published.dev !== created.dev || published.ino !== created.ino) {
+        throw new Error("Bootstrap publication changed; refusing to report success.");
+      }
     } finally {
       try {
-        fs.closeSync(fd);
-      } finally {
         if (created) {
           try {
             const entry = fs.lstatSync(staged);
@@ -139,16 +156,12 @@ export function applyPlan(root, plan) {
             if (error.code !== "ENOENT") throw error;
           }
         }
+      } finally {
+        fs.closeSync(fd);
       }
     }
-  } finally {
-    try {
-      process.chdir(previousDirectory);
-    } finally {
-      fs.closeSync(directoryFd);
-    }
-  }
-  return { ...plan, outcome: "applied" };
+    return { ...plan, outcome: "applied" };
+  });
 }
 
 function cli(argv) {
