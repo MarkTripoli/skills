@@ -183,6 +183,18 @@ test("First Sergent opt-in installs a real worker without Atomic or unrelated wo
   }
 });
 
+test("selective compliance-report install includes executable scanner triage dependency", async () => {
+  const home = tmpdir();
+  const installed = install({ targets: ["portable"], skillNames: ["compliance-report"], cwd: home, home, env });
+  assert.deepEqual(installed.names, ["compliance-report", "security-check"]);
+  const skills = destinations("portable", { home, env }).skills;
+  const adapter = path.join(skills, "security-check", "scripts", "compliance.mjs");
+  const {assessCompliance} = await import(pathToFileURL(adapter).href);
+  const result = assessCompliance({schema_version: 1, repository: "https://example.test/acme/project", revision: "a".repeat(40), findings: []});
+  assert.equal(result.coverage, "incomplete");
+  assert.equal(result.accounting.reported_findings, 0);
+});
+
 test("managed config edits preserve surrounding user configuration", () => {
   const original = 'model = "gpt-5"\n';
   const first = updateConfigBlock(original, '[agents.a]\nconfig_file = "./agents/a.toml"\n');

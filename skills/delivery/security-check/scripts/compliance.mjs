@@ -15,12 +15,15 @@ const LANE_TOOLS = {semgrep: 'semgrep', gitleaks: 'gitleaks', trivy_config: 'tri
 
 function laneFindingsMatch(scan) {
   if (!scan.lanes) return true;
-  const entries = Object.values(scan.lanes);
-  if (entries.some(lane => !Array.isArray(lane?.findings) || (lane.file_findings !== undefined && !Array.isArray(lane.file_findings)))) return false;
+  const entries = Object.entries(scan.lanes);
+  if (entries.some(([name, lane]) => !Array.isArray(lane?.findings) ||
+    lane.findings.some(finding => finding?.scanner !== name) ||
+    (lane.file_findings !== undefined && (!Array.isArray(lane.file_findings) ||
+      lane.file_findings.some(finding => finding?.scanner !== name))))) return false;
   const signatures = findings => findings.map(finding =>
     JSON.stringify(Object.entries(finding ?? {}).sort(([left], [right]) => left.localeCompare(right)))).sort();
-  return JSON.stringify(signatures(scan.findings)) === JSON.stringify(signatures(entries.flatMap(lane => lane.findings))) &&
-    JSON.stringify(signatures(scan.file_findings ?? [])) === JSON.stringify(signatures(entries.flatMap(lane => lane.file_findings ?? [])));
+  return JSON.stringify(signatures(scan.findings)) === JSON.stringify(signatures(entries.flatMap(([, lane]) => lane.findings))) &&
+    JSON.stringify(signatures(scan.file_findings ?? [])) === JSON.stringify(signatures(entries.flatMap(([, lane]) => lane.file_findings ?? [])));
 }
 
 function laneTools(scan) {

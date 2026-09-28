@@ -156,3 +156,20 @@ test('contradictory lane findings and missing lane arrays cannot claim clean inv
   delete lanes.semgrep.findings;
   assert.throws(() => assessCompliance(scan), /lane findings disagree/);
 });
+
+test('scanner identity must match source lane for located and line-less findings', () => {
+  const names = ['semgrep', 'gitleaks', 'trivy_config', 'trivy_fs', 'hadolint', 'actionlint'];
+  const lanes = Object.fromEntries(names.map(name => [name, {tool: {name: name.startsWith('trivy_') ? 'trivy' : name, status: 'ok'}, coverage: 'complete', findings: []}]));
+  const located = makeFinding('mislabeled', 'semgrep', 'javascript.example', 'src/a.js');
+  const scan = {schema_version: 1, repository, revision, coverage: 'complete', secret_coverage: 'complete', lanes, findings: [located]};
+  lanes.gitleaks.findings = [located];
+  assert.throws(() => assessCompliance(scan), /lane findings disagree/);
+  lanes.gitleaks.findings = [];
+  lanes.semgrep.findings = [located];
+  assert.equal(assessCompliance(scan).coverage, 'complete');
+  const unlocated = {repository, revision, scanner: 'trivy_fs', rule_id: 'CVE-2026-1234', path: 'src/a.js'};
+  scan.coverage = 'incomplete';
+  scan.file_findings = [unlocated];
+  lanes.hadolint.file_findings = [unlocated];
+  assert.throws(() => assessCompliance(scan), /lane findings disagree/);
+});
