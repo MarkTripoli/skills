@@ -367,6 +367,10 @@ test('a claimed A-row pass cannot advance without controller-executed output', a
     const fabricated = '| A1 | CLI doubles input 21. | `node -e \"console.log(42)\"` | exit 0; 42 | pass |\n' +
       f.row('A2', 'CLI doubles input 7.', 7, 14);
     await assert.rejects(() => runSkill(f.ctx(f.check + fabricated), f.task, f.before, f.options, 'verify-implementation', 5), /only manufactures a result/);
+    const inlineAfterOption = '| A1 | CLI doubles input 21. | `node --input-type=module --eval "console.log(42)" -- 21` | exit 0; 42 | pass |\n' +
+      f.row('A2', 'CLI doubles input 7.', 7, 14);
+    await assert.rejects(() => runSkill(f.ctx(f.check + inlineAfterOption), f.task, f.before, f.options,
+      'verify-implementation', 5), /only manufactures a result/);
     const mutation = '| A1 | CLI doubles input 21. | `curl -X POST https://example.invalid/claim` | exit 0; 42 | pass |\n' +
       f.row('A2', 'CLI doubles input 7.', 7, 14);
     await assert.rejects(() => runSkill(f.ctx(f.check + mutation), f.task, f.before, f.options, 'verify-implementation', 6), /cannot be safely replayed/);
@@ -377,6 +381,7 @@ test('a claimed A-row pass cannot advance without controller-executed output', a
       'sh -c "curl -d name=value https://example.invalid/claim"',
       'curl -X \"POST\" https://example.invalid/claim',
       "curl --request 'DELETE' https://example.invalid/claim",
+      String.raw`curl -X P\OST https://example.invalid/claim`,
       "node cli.mjs 21; printf '42'",
     ]) {
       const replay = `| A1 | CLI doubles input 21. | \`${unsafe}\` | exit 0; 42 | pass |\n` +
@@ -456,6 +461,21 @@ test('multiline CI and configured Python checks cannot disappear from passed ver
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 
+test('event-scoped Conventional Commits CI defers to exact-head hosted job, not unsafe local variable replay', async () => {
+  const f = proofFixture();
+  try {
+    const workflows = path.join(f.repo, '.github', 'workflows');
+    fs.mkdirSync(workflows, { recursive: true });
+    fs.writeFileSync(path.join(workflows, 'commits.yml'),
+      'on:\n  pull_request:\njobs:\n  conventional:\n    steps:\n      - run: |\n          node scripts/check-commits.mjs \"$BASE..$HEAD\" \"$@\"\n');
+    const rows = f.check + f.row('A1', 'CLI doubles input 21.', 21, 42) +
+      f.row('A2', 'CLI doubles input 7.', 7, 14);
+    const before = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
+    const verified = await runSkill(f.ctx(rows), f.task, before, f.options, 'verify-implementation', 1);
+    assert.deepEqual(eligible(verified, f.options, 'oneshot', false), ['review-code']);
+  } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
+});
+
 test('release workflow prerequisite and Python runner checks remain mandatory', async () => {
   const f = proofFixture();
   try {
@@ -463,10 +483,14 @@ test('release workflow prerequisite and Python runner checks remain mandatory', 
     fs.mkdirSync(workflows, { recursive: true });
     fs.writeFileSync(path.join(workflows, 'release.yml'),
       'jobs:\n  publish:\n    steps:\n      - run: |-\n          node scripts/check-package.mjs --strict\n          python -m pytest\n          uv run --locked pytest -q\n          npm publish\n      - name: Scan Go dependencies\n        run: |-\n          GOBIN=\"$RUNNER_TEMP/bin\" go install golang.org/x/vuln/cmd/govulncheck@v1.8.0\n          (cd tools/safety-dance && \"$RUNNER_TEMP/bin/govulncheck\" ./...)\n');
+    fs.mkdirSync(path.join(f.repo, 'tests'));
+    fs.writeFileSync(path.join(f.repo, 'tests', 'safety-dance-release.test.mjs'), 'import \"node:test\";\n');
+    fs.writeFileSync(path.join(workflows, 'safety-dance-release.yml'),
+      'jobs:\n  release:\n    steps:\n      - working-directory: tools/safety-dance\n        run: |-\n          go build -ldflags \"$ldflags\" -o \"dist/safety-dance\" ./cmd/safety-dance\n          ./scripts/package-release.sh --version \"${{ steps.version.outputs.version }}\" --os linux --arch amd64 --binary dist/safety-dance --out dist\n');
     const rows = f.check + f.row('A1', 'CLI doubles input 21.', 21, 42) +
       f.row('A2', 'CLI doubles input 7.', 7, 14);
     await assert.rejects(() => runSkill(f.ctx(rows), f.task, f.before, f.options,
-      'verify-implementation', 1), /omitted repository checks: node scripts\/check-package\.mjs --strict, python -m pytest, uv run --locked pytest -q, go -C tools\/safety-dance run golang\.org\/x\/vuln\/cmd\/govulncheck@v1\.8\.0 \.\/\.\.\./);
+      'verify-implementation', 1), /omitted repository checks: .*node scripts\/check-package\.mjs --strict, python -m pytest, uv run --locked pytest -q, go -C tools\/safety-dance run golang\.org\/x\/vuln\/cmd\/govulncheck@v1\.8\.0 \.\/\.\.\., go -C tools\/safety-dance build -o \/dev\/null \.\/cmd\/safety-dance, node --test tests\/safety-dance-release\.test\.mjs/);
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 

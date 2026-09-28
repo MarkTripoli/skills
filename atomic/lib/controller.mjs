@@ -220,12 +220,18 @@ function repositoryChecks(cwd) {
     if (!/\.ya?ml$/.test(name)) continue;
     const document = parseDocument(fs.readFileSync(path.join(workflows, name), 'utf8'), { uniqueKeys: true });
     if (document.errors.length) throw new Error(`Invalid CI workflow ${name}: ${document.errors[0].message}`);
-    const jobs = document.toJS()?.jobs || {};
+    const workflow = document.toJS();
+    const jobs = workflow?.jobs || {};
+    const eventScoped = Boolean(workflow?.on &&
+      (Object.hasOwn(workflow.on, 'pull_request') || Object.hasOwn(workflow.on, 'merge_group')));
     for (const job of Object.values(jobs)) for (const step of job.steps || []) {
       if (typeof step.run !== 'string') continue;
       const commandLines = step.run.split('\n').map(line => line.trim());
       for (const line of commandLines) {
         if (!line || line.startsWith('#')) continue;
+        // PR title and commit range are event inputs, not executable local
+        // literals. The hosted exact-HEAD Conventional Commits job checks them.
+        if (eventScoped && /^node scripts\/check-commits\.mjs "\$BASE\.\.\$HEAD" "\$@"$/.test(line)) continue;
         if (/\bgovulncheck\b/.test(line) && !/\bgo install\b/.test(line)) {
           const version = commandLines.join('\n').match(/\bgo install golang\.org\/x\/vuln\/cmd\/govulncheck@([A-Za-z0-9.+-]+)/)?.[1];
           const directory = line.match(/\(\s*cd\s+([^\s;)]+)\s*&&/)?.[1];
@@ -233,7 +239,21 @@ function repositoryChecks(cwd) {
           addWorkflow(name, `go -C ${directory} run golang.org/x/vuln/cmd/govulncheck@${version} ./...`);
         } else if (/^(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|typecheck|build|check)\b/.test(line)) addWorkflow(name, line);
         else if (/^(?:go (?:test|vet)|cargo (?:test|clippy)|pytest|python3? -m pytest|uv run (?:(?:--[\w-]+(?:=[^\s]+)?\s+)*)(?:pytest|python3? -m pytest|ruff|mypy)|ruff|mypy|make (?:test|lint|check)|swift test|\.\/gradlew test)\b/.test(line)) addWorkflow(name, line);
-        else {
+        else if (/^go build\b/.test(line)) {
+          const directory = step['working-directory'];
+          const source = line.match(/(\.\/cmd\/[A-Za-z0-9_/-]+)$/)?.[1];
+          if (!/^[A-Za-z0-9_./-]+$/.test(directory || '') || !source) {
+            throw new Error(`Cannot resolve CI release build in ${name}: ${line}`);
+          }
+          addWorkflow(name, `go -C ${directory} build -o /dev/null ${source}`);
+        } else if (/^\.\/scripts\/package-release\.sh\b/.test(line)) {
+          const directory = step['working-directory'];
+          const packageTest = `tests/${path.basename(directory || '')}-release.test.mjs`;
+          if (!/^[A-Za-z0-9_./-]+$/.test(directory || '') || !exists(packageTest)) {
+            throw new Error(`Cannot resolve CI release packaging check in ${name}: ${line}`);
+          }
+          addWorkflow(name, `node --test ${packageTest}`);
+        } else {
           const script = line.match(/^(?:node|python3?|bun)\s+(?!-[ecp]\b)([^\s"'$|;&]+\.(?:m?js|cjs|py))\b/);
           if (script && !/(?:deploy|release|publish|migrat|push)/i.test(script[1])) addWorkflow(name, line);
           else if (/^uv run\b/.test(line)) throw new Error(`Cannot resolve CI check in ${name}: ${line}`);
@@ -272,14 +292,12 @@ function requireAcceptanceEvidence(task, state, artifact) {
 }
 function replayableVerificationCommand(command, id) {
   if (/^\s*(?:true|false|:|echo|printf)(?:\s|$)/.test(command) ||
-      /^\s*(?:node|bun|python3?|ruby|perl)\s+(?:-[ecp]\b|--eval\b)/.test(command)) {
+      /^\s*(?:node|bun|python3?|ruby|perl)\b.*(?:^|\s)(?:-[ecp](?:\s|$)|--(?:eval|print)(?:=|\s|$))/.test(command)) {
     throw new Error(`${id} acceptance command only manufactures a result; it does not exercise product behavior`);
   }
-  if (/[;&|`$<>\r\n]/.test(command) ||
+  if (/[\\;&|`$<>\r\n]/.test(command) ||
       /^\s*(?:sh|bash|zsh|\/bin\/(?:sh|bash|zsh))\s+-c\b/.test(command) ||
-      /\b(?:curl|http|wget)\b/.test(command) &&
-      (/\b(?:POST|PUT|PATCH|DELETE)\b/i.test(command) ||
-        /(?:^|\s)(?:-[dFT]|--form(?:-string)?|--upload-file|--json|--data(?:-raw|-binary|-urlencode)?|--post-data|--post-file)(?:\S|\s|$)/i.test(command)) ||
+      /(?:^|\s)(?:curl|http|wget)(?:\s|$)/.test(command) ||
       /^\s*(?:git\s+(?:push|reset|clean)|(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:migrate|deploy|publish)\b|rm\b|mv\b)/.test(command)) {
     throw new Error(`${id} acceptance command cannot be safely replayed; use an isolated idempotent test instead`);
   }
