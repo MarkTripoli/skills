@@ -55,6 +55,21 @@ test('dry-run remains read-only, applies server label filter, and paginates beyo
   assert.deepEqual(fs.readdirSync(f.taskRoot), []);
 });
 
+test('dry-run offers the same repository-scoped idempotency key the handoff receives', t => {
+  const f = setup(t);
+  const preview = f.runCli(['--label=ready']);
+  assert.equal(preview.status, 0, preview.stderr);
+  const [{ idempotencyKey, status }] = JSON.parse(preview.stdout);
+  assert.equal(status, 'eligible');
+  assert.match(idempotencyKey, /^[a-f0-9]{64}$/);
+  const executed = f.runHandoff(['--label=ready']);
+  assert.equal(executed.status, 0, executed.stderr);
+  const args = JSON.parse(fs.readFileSync(executed.log, 'utf8'));
+  assert(args.includes(`--intake-key=${idempotencyKey}`));
+  const claim = JSON.parse(fs.readFileSync(f.stateFile, 'utf8')).claims[0];
+  assert.equal(claim.idempotencyKey, idempotencyKey);
+});
+
 test('bounded GH responses larger than the spawn default remain readable', t => {
   const rows = Array.from({ length: 25 }, (_, i) => ({ ...issue, number: i + 1, body: 'x'.repeat(50_000) }));
   const f = setup(t, rows);

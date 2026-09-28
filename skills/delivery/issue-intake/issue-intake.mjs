@@ -217,7 +217,7 @@ function dryRun(options) {
     if (existingPr.length) return { issue: issue.number, status: 'existing-pr', prs: existingPr };
     if (tasks.length) return { issue: issue.number, status: 'duplicate-task', tasks };
     if (claim?.status === 'complete') return { issue: issue.number, status: 'complete', receipt: claim.receipt };
-    return { issue: issue.number, status: 'eligible', idempotencyKey: claim?.idempotencyKey ?? key };
+    return { issue: issue.number, status: 'eligible', idempotencyKey: claim?.idempotencyKey ?? crypto.createHash('sha256').update(key).digest('hex') };
   });
 }
 function intakeLocked(options) {
