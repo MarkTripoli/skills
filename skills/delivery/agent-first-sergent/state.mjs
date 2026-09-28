@@ -103,8 +103,12 @@ export function checkpointContext(taskDir, usage) {
 export function startFreshSession(taskDir, sessionId) {
   const root = taskPath(taskDir);
   const state = inspect(root);
-  if (!state?.context_boundary || state.context_boundary.action !== 'fresh-session') {
-    throw new Error('No threshold context boundary is waiting for a fresh session');
+  if (!state?.context_boundary || (state.context_boundary.action !== 'fresh-session'
+    && !(state.steps > 0 && state.context_boundary.action === 'continue'))) {
+    throw new Error('No measured context boundary is waiting for a fresh session');
+  }
+  if (state.stopped || state.pending || state.phase) {
+    throw new Error('Resolve the active phase and human gate before handing off its child session');
   }
   if (typeof sessionId !== 'string' || !sessionId.trim()) {
     throw new Error('A fresh session identity is required to cross the context boundary');
