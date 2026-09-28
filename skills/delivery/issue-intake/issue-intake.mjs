@@ -67,7 +67,7 @@ function localTasks(roots, repo) {
   return matches;
 }
 function taskRoots(taskRoot, repositoryRoot) {
-  if (!repositoryRoot || resolvedPath(taskRoot) !== path.join(repositoryRoot, '.agents/tasks')) return [taskRoot];
+  if (!repositoryRoot || path.resolve(taskRoot) !== path.join(repositoryRoot, '.agents/tasks')) return [taskRoot];
   const inventory = spawnSync('git', ['-C', repositoryRoot, 'worktree', 'list', '--porcelain', '-z'], { encoding: 'utf8' });
   if (inventory.error || inventory.status !== 0 || !inventory.stdout?.endsWith('\0\0')) throw new Error('cannot safely inventory repository worktrees');
   const common = run('git', ['-C', repositoryRoot, 'rev-parse', '--git-common-dir']).trim();
@@ -97,7 +97,7 @@ function taskRoots(taskRoot, repositoryRoot) {
       throw new Error('cannot safely inventory repository worktrees');
     }
   }
-  if (!roots.includes(resolvedPath(taskRoot))) throw new Error('cannot safely inventory repository worktrees');
+  if (!roots.includes(path.resolve(taskRoot))) throw new Error('cannot safely inventory repository worktrees');
   return roots;
 }
 function readState(file) {
@@ -308,8 +308,12 @@ function resolvedPath(target) {
   let ancestor = target;
   while (true) {
     try {
-      fs.lstatSync(ancestor);
-      return path.join(fs.realpathSync(ancestor), ...missing.reverse());
+      const entry = fs.lstatSync(ancestor);
+      try { return path.join(fs.realpathSync(ancestor), ...missing.reverse()); }
+      catch (error) {
+        if (error.code === 'ENOENT' && entry.isSymbolicLink()) throw new Error(`dangling symbolic link: ${ancestor}`);
+        throw error;
+      }
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
       const parent = path.dirname(ancestor);
@@ -331,8 +335,11 @@ function validateLocalPaths(taskRoot, stateFile, cwd = process.cwd()) {
   const checkDerived = (target, probe) => {
     for (const candidate of new Set([target, resolvedPath(target)])) checkIgnored(candidate, probe);
   };
-  for (const target of new Set([taskRoot, resolvedPath(taskRoot)])) checkIgnored(target, '/');
+  for (const target of new Set([taskRoot, resolvedPath(taskRoot)])) {
+    checkIgnored(target, fs.existsSync(target) && fs.lstatSync(target).isSymbolicLink() ? '' : '/');
+  }
   for (const target of new Set([stateFile, canonicalState])) checkIgnored(target);
+  checkIgnored(path.dirname(canonicalState), '/');
   const receiptDirectory = path.join(path.dirname(canonicalState), 'issue-intake-receipts');
   for (const target of [
     `${canonicalState}.lock`,

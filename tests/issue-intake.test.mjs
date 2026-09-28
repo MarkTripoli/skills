@@ -186,6 +186,25 @@ test('default ignored task root finds sibling worktree tasks before claim or han
   assert.equal(JSON.parse(distinct.stdout)[0].status, 'eligible');
 });
 
+test('symlinked default task root still checks registered sibling worktrees', t => {
+  const f = setup(t);
+  const { target, sibling, taskRoot } = worktrees(f);
+  const actual = path.join(target, '.agents', 'private-tasks');
+  fs.mkdirSync(actual, { recursive: true });
+  fs.symlinkSync(actual, taskRoot, 'dir');
+  fs.writeFileSync(path.join(target, '.gitignore'), '.agents/tasks\n.agents/private-tasks/\n');
+  const task = path.join(sibling, '.agents/tasks', 'in-progress');
+  fs.mkdirSync(task, { recursive: true });
+  fs.writeFileSync(path.join(task, 'task.md'), '---\nrepository: acme/app\nissue: 7\n---\n');
+  const result = spawnSync(process.execPath, [
+    cliPath, '--repo=acme/app', '--task-root=.agents/tasks', `--state=${f.stateFile}`,
+    '--execute', '--handoff=nonexistent-handoff',
+  ], { cwd: target, env: f.env, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout)[0].status, 'duplicate-task');
+  assert.equal(fs.existsSync(f.stateFile), false);
+});
+
 test('bare-backed worktree inventory reaches sibling tasks before dispatch', t => {
   const f = setup(t);
   const seed = worktrees(f).target;
@@ -286,6 +305,13 @@ test('a state-file-only ignore does not expose derived lock and receipt artifact
   assert.match(exposedReceipts.stderr, /not ignored/);
   assert.equal(fs.existsSync(f.ghLog), false);
   assert.equal(fs.existsSync(stateFile), false);
+  fs.writeFileSync(ignore, '.agents/tasks/\n/claims.json\n/claims.json.lock*/\n/issue-intake-receipts/owner.json\n/issue-intake-receipts/receipt.json\n/issue-intake-receipts/receipt.json.tmp\n');
+  const selectivelyIgnored = launch(stateFile, true);
+  assert.notEqual(selectivelyIgnored.status, 0);
+  assert.match(selectivelyIgnored.stderr, /not ignored/);
+  assert.equal(fs.existsSync(stateFile), false);
+  assert.equal(fs.existsSync(f.ghLog), false);
+
 
   fs.writeFileSync(ignore, '.agents/tasks/\n/.intake/\n');
   const ignoredDirectoryState = path.join(target, '.intake', 'claims.json');
@@ -350,6 +376,21 @@ test('an existing state symlink shares claim, lock, and receipt identity with it
   assert.equal(canonical.status, 0, canonical.stderr);
   assert.equal(JSON.parse(canonical.stdout)[0].status, 'complete');
   assert.equal(fs.readFileSync(count, 'utf8'), 'x');
+});
+
+test('dangling state symlink rejects before a first handoff can split claims', t => {
+  const f = setup(t);
+  const alias = path.join(f.root, 'state-alias.json');
+  fs.symlinkSync(f.stateFile, alias);
+  const result = spawnSync(process.execPath, [
+    cliPath, '--repo=acme/app', `--task-root=${f.taskRoot}`, `--state=${alias}`,
+    '--execute', '--handoff=nonexistent-handoff',
+  ], { encoding: 'utf8', env: f.env });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /dangling symbolic link/);
+  assert.equal(fs.lstatSync(alias).isSymbolicLink(), true);
+  assert.equal(fs.existsSync(f.stateFile), false);
+  assert.equal(fs.existsSync(f.ghLog), false);
 });
 
 test('dispatch intent survives crash and is never handed off a second time automatically', t => {
