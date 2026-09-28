@@ -1,3 +1,4 @@
+import { buildReport } from "../skills/delivery/skill-usage-lifecycle/scripts/skill-usage-lifecycle.mjs";
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -35,6 +36,125 @@ function put(file, content) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, content);
 }
+
+test("usage lifecycle requires consented supported coverage reaching report time", () => {
+  const fixture = JSON.parse(fs.readFileSync(path.join(REPO, "tests/fixtures/skill-usage-lifecycle.json"), "utf8"));
+  const reportTime = Date.parse("2026-09-28T12:00:00Z");
+  const originalNow = Date.now;
+  Date.now = () => reportTime;
+  try {
+    const unknown = buildReport(fixture);
+    assert.equal(unknown.coverage.sufficient, false);
+    assert.deepEqual(unknown.suggestions.map(({ status }) => status), ["unknown", "unknown", "pinned"]);
+
+    const inventory = fixture.inventory.map((item) => ({ ...item, presentSince: "2025-12-01T00:00:00Z" }));
+    const historicalInput = {
+      ...fixture,
+      inventory,
+      coverage: {
+        complete: true,
+        source: "codex",
+        consent: true,
+        observedFrom: "2026-01-01T00:00:00Z",
+        observedThrough: "2026-02-01T00:00:00Z",
+      },
+    };
+    const historical = buildReport(historicalInput);
+    assert.equal(historical.coverage.sufficient, false);
+    assert.deepEqual(historical.suggestions.map(({ status }) => status), ["unknown", "unknown", "pinned"]);
+    const januaryUse = buildReport({ ...historicalInput, events: [
+      { name: inventory[0].name, version: inventory[0].version, outcome: "success", source: "codex",
+        consent: true, timestamp: "2026-01-15T00:00:00Z" },
+    ] });
+    assert.equal(januaryUse.suggestions[0].status, "unknown");
+
+    const future = buildReport({
+      ...fixture,
+      inventory,
+      coverage: {
+        complete: true,
+        source: "codex",
+        consent: true,
+        observedFrom: "2026-09-01T00:00:00Z",
+        observedThrough: "2999-02-01T00:00:00Z",
+      },
+    });
+    assert.equal(future.coverage.sufficient, false);
+    assert.deepEqual(future.suggestions.map(({ status }) => status), ["unknown", "unknown", "pinned"]);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("usage lifecycle requires continuous item presence and counts only timestamped use within current coverage", () => {
+  const reportTime = Date.parse("2026-09-28T12:00:00Z");
+  const originalNow = Date.now;
+  Date.now = () => reportTime;
+  try {
+    const coverage = {
+      complete: true,
+      consent: true,
+      source: "codex",
+      observedFrom: "2026-08-27T11:00:00Z",
+      observedThrough: "2026-09-28T11:00:00Z",
+    };
+    const old = { version: "1.0.0", presentSince: "2026-08-27T00:00:00Z" };
+    const input = {
+      coverage,
+      inventory: [
+        { ...old, name: "historical" },
+        { ...old, name: "covered" },
+        { ...old, name: "undated" },
+        { ...old, name: "invalid-date" },
+        { name: "new-install", version: "1.0.0", presentSince: "2026-09-28T00:00:00Z" },
+        { name: "too-recent", version: "1.0.0", presentSince: "2026-08-30T00:00:00Z" },
+        { name: "unproven", version: "1.0.0" },
+        { ...old, name: "pinned", pinned: true },
+        { ...old, name: "ignored", ignored: true },
+      ],
+      events: [
+        { name: "historical", version: "1.0.0", outcome: "success", source: "codex", consent: true, timestamp: "2026-08-26T23:59:59Z" },
+        { name: "covered", version: "1.0.0", outcome: "failure", source: "codex", consent: true, timestamp: "2026-09-15T00:00:00Z" },
+        { name: "undated", version: "1.0.0", outcome: "success", source: "codex", consent: true },
+        { name: "invalid-date", version: "1.0.0", outcome: "success", source: "codex", consent: true, timestamp: "2026-02-30T00:00:00Z" },
+      ],
+    };
+    const report = buildReport(input);
+    assert.equal(report.coverage.sufficient, true);
+    assert.deepEqual(report.suggestions.map(({ status }) => status), [
+      "stale-candidate", "active", "unknown", "unknown", "unknown", "unknown", "unknown", "pinned", "ignored",
+    ]);
+    const malformed = buildReport({ ...input, inventory: [
+      { ...old, name: "attempted-pin", pinned: "true" },
+      { ...old, name: "attempted-ignore", ignored: 1 },
+      { ...old, name: "explicitly-unpinned", pinned: false, ignored: false },
+    ] });
+    assert.deepEqual(malformed.suggestions.map(({ status }) => status), ["unknown", "unknown", "stale-candidate"]);
+
+    const outdated = buildReport({ ...input, coverage: { ...coverage, observedThrough: "2026-09-27T11:59:59Z" } });
+    assert.equal(outdated.coverage.sufficient, false);
+    assert.equal(outdated.suggestions[0].status, "unknown");
+
+    const withoutProvenance = buildReport({ ...input, coverage: { ...coverage, complete: false } });
+    assert.deepEqual(withoutProvenance.suggestions.map(({ status }) => status), [
+      "unknown", "unknown", "unknown", "unknown", "unknown", "unknown", "unknown", "pinned", "ignored",
+    ]);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("installed usage lifecycle skill includes a runnable report executable", () => {
+  const home = tmpdir("skills-lifecycle-install-");
+  const planned = install({ targets: ["portable"], skillNames: ["skill-usage-lifecycle"], project: true, cwd: home, home, env });
+  const destination = planned.steps.find((step) => step.kind === "skills").to;
+  const executable = path.join(destination, "skill-usage-lifecycle", "scripts", "skill-usage-lifecycle.mjs");
+  assert.ok(fs.existsSync(executable));
+  const result = spawnSync(process.execPath, [executable, path.join(REPO, "tests/fixtures/skill-usage-lifecycle.json")], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout).suggestions.map(({ status }) => status), ["unknown", "unknown", "pinned"]);
+  uninstall(planned, home);
+});
 
 test("skill validator ignores external reference URLs but rejects missing local references", () => {
   const root = tmpdir("skills-validator-test-");

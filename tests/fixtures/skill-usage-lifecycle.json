@@ -1,0 +1,18 @@
+{
+  "coverage": {
+    "complete": true,
+    "source": "unknown-runtime",
+    "consent": false,
+    "observedFrom": "2026-01-01T00:00:00Z",
+    "observedThrough": "2026-03-02T00:00:00Z"
+  },
+  "inventory": [
+    { "name": "unknown-skill", "version": "1.0.0" },
+    { "name": "stale-skill", "version": "2.0.0" },
+    { "name": "pinned-skill", "version": "3.0.0", "pinned": true }
+  ],
+  "events": [
+    { "source": "unknown-runtime", "consent": true, "name": "stale-skill", "version": "2.0.0", "outcome": "success" },
+    { "source": "codex", "consent": false, "name": "stale-skill", "version": "2.0.0", "outcome": "success" }
+  ]
+}
