@@ -42,21 +42,59 @@ function yamlScalar(raw) {
   }
   return value.replace(/\s+#.*$/, '').trim();
 }
-function taskMatches(root, repo, number) {
-  if (!fs.existsSync(root)) return [];
-  return fs.readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory()).flatMap(entry => {
-    const file = path.join(root, entry.name, 'task.md');
-    if (!fs.existsSync(file)) return [];
-    const text = fs.readFileSync(file, 'utf8');
-    const frontmatter = text.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1];
-    if (!frontmatter) return [];
-    const rawIssue = frontmatter.match(/^issue:\s*(.*)$/m)?.[1];
-    const taskIssue = rawIssue === undefined ? null : yamlScalar(rawIssue);
-    const issueMatches = taskIssue !== null && /^\d+$/.test(taskIssue) && Number(taskIssue) === number;
-    const rawRepo = frontmatter.match(/^repository:\s*(.*)$/m)?.[1];
-    const taskRepo = rawRepo === undefined ? null : yamlScalar(rawRepo);
-    return issueMatches && taskRepo?.toLowerCase() === repo.toLowerCase() ? [path.join(root, entry.name)] : [];
-  });
+function localTasks(roots, repo) {
+  const matches = new Map();
+  for (const root of roots) {
+    if (!fs.existsSync(root)) continue;
+    for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const directory = path.join(root, entry.name);
+      const file = path.join(directory, 'task.md');
+      if (!fs.existsSync(file)) continue;
+      const frontmatter = fs.readFileSync(file, 'utf8').match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1];
+      if (!frontmatter) continue;
+      const rawIssue = frontmatter.match(/^issue:\s*(.*)$/m)?.[1];
+      const taskIssue = rawIssue === undefined ? null : yamlScalar(rawIssue);
+      const rawRepo = frontmatter.match(/^repository:\s*(.*)$/m)?.[1];
+      const taskRepo = rawRepo === undefined ? null : yamlScalar(rawRepo);
+      if (!taskIssue || !/^\d+$/.test(taskIssue) || taskRepo?.toLowerCase() !== repo.toLowerCase()) continue;
+      const number = Number(taskIssue);
+      if (!Number.isSafeInteger(number)) continue;
+      if (!matches.has(number)) matches.set(number, []);
+      matches.get(number).push(directory);
+    }
+  }
+  return matches;
+}
+function taskRoots(taskRoot, repositoryRoot) {
+  if (!repositoryRoot || resolvedPath(taskRoot) !== path.join(repositoryRoot, '.agents/tasks')) return [taskRoot];
+  const inventory = spawnSync('git', ['-C', repositoryRoot, 'worktree', 'list', '--porcelain', '-z'], { encoding: 'utf8' });
+  if (inventory.error || inventory.status !== 0 || !inventory.stdout?.endsWith('\0\0')) throw new Error('cannot safely inventory repository worktrees');
+  const common = run('git', ['-C', repositoryRoot, 'rev-parse', '--git-common-dir']).trim();
+  const commonDir = fs.realpathSync(path.resolve(repositoryRoot, common));
+  const roots = [];
+  for (const record of inventory.stdout.slice(0, -2).split('\0\0')) {
+    const fields = record.split('\0');
+    if (!fields[0]?.startsWith('worktree ') || !fields[1]?.startsWith('HEAD ') || fields.some(field => field.startsWith('prunable '))) {
+      throw new Error('cannot safely inventory repository worktrees');
+    }
+    if (fields.includes('bare')) continue;
+    const worktree = fields[0].slice('worktree '.length);
+    try {
+      const actual = fs.realpathSync(worktree);
+      const details = run('git', ['-C', actual, 'rev-parse', '--show-toplevel', '--git-common-dir']).trim().split('\n');
+      if (details.length !== 2 || fs.realpathSync(details[0]) !== actual || fs.realpathSync(path.resolve(actual, details[1])) !== commonDir) {
+        throw new Error('worktree identity mismatch');
+      }
+      const root = path.join(actual, '.agents/tasks');
+      if (!inside(actual, resolvedPath(root))) throw new Error('task root escapes registered worktree');
+      roots.push(root);
+    } catch {
+      throw new Error('cannot safely inventory repository worktrees');
+    }
+  }
+  if (!roots.includes(resolvedPath(taskRoot))) throw new Error('cannot safely inventory repository worktrees');
+  return roots;
 }
 function readState(file) {
   try {
@@ -164,10 +202,11 @@ function writeReceipt(file, value, exclusive = false) {
 function dryRun(options) {
   const { issues, prs } = lookup(options);
   const state = readState(options.stateFile);
+  const tasksByIssue = localTasks(options.taskRoots, options.repo);
   return issues.map(issue => {
     const key = claimKey(options.repo, issue.number);
     const claim = state.claims.find(item => item.key === key);
-    const tasks = taskMatches(options.taskRoot, options.repo, issue.number);
+    const tasks = tasksByIssue.get(issue.number) ?? [];
     const existingPr = matchingPrs(prs, options.repo, issue.number);
     if (!eligible(issue, options.labels ?? [])) return { issue: issue.number, status: 'ineligible' };
     if (existingPr.length) return { issue: issue.number, status: 'existing-pr', prs: existingPr };
@@ -178,9 +217,10 @@ function dryRun(options) {
   });
 }
 function intakeLocked(options) {
-  const { repo, taskRoot, stateFile, labels = [], handoff, runGh = gh, runCommand = run, costReport = null, clock = now } = options;
+  const { repo, taskRoots: roots, stateFile, labels = [], handoff, runGh = gh, runCommand = run, costReport = null, clock = now } = options;
   const { issues, prs } = lookup({ repo, labels, runGh });
   const state = readState(stateFile);
+  let tasksByIssue = localTasks(roots, repo);
   const outcomes = [];
   let blockedBy = null;
   for (const issue of issues) {
@@ -190,7 +230,7 @@ function intakeLocked(options) {
     const relatedPrs = matchingPrs(prs, repo, issue.number);
     if (!eligible(issue, labels)) { outcomes.push({ issue: issue.number, status: 'ineligible' }); continue; }
     if (relatedPrs.length) { outcomes.push({ issue: issue.number, status: 'existing-pr', prs: relatedPrs }); continue; }
-    const tasks = taskMatches(taskRoot, repo, issue.number);
+    const tasks = tasksByIssue.get(issue.number) ?? [];
     if (tasks.length) { outcomes.push({ issue: issue.number, status: 'duplicate-task', tasks }); continue; }
     const idempotencyKey = claim?.idempotencyKey ?? crypto.createHash('sha256').update(key).digest('hex');
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(idempotencyKey)) throw new Error(`invalid idempotency key for ${key}`);
@@ -239,28 +279,52 @@ function intakeLocked(options) {
     active.status = 'complete'; active.ownerPid = null; active.updatedAt = clock();
     saveState(stateFile, state);
     outcomes.push({ issue: issue.number, status: 'handed-off', receipt });
+    tasksByIssue = localTasks(roots, repo);
   }
   return outcomes;
 }
 export function intake(options) {
-  if (options.dryRun !== false) return dryRun(options);
-  if (typeof options.handoff !== 'string' || !options.handoff.trim()) throw new Error('--execute requires --handoff; refusing before claim creation');
-  return withClaimLock(options.stateFile, options.staleMs ?? 30 * 60_000, () => intakeLocked(options));
+  const repositoryRoot = options.repositoryRoot ?? (options.taskRoot.endsWith(`${path.sep}.agents${path.sep}tasks`) ? checkoutRoot() : null);
+  const scoped = { ...options, taskRoots: taskRoots(options.taskRoot, repositoryRoot) };
+  if (options.dryRun !== false) return dryRun(scoped);
+  return withClaimLock(options.stateFile, options.staleMs ?? 30 * 60_000, () => intakeLocked(scoped));
 }
 function inside(parent, child) {
   const relative = path.relative(parent, child);
   return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
 }
-function validateLocalPaths(taskRoot, stateFile, cwd = process.cwd()) {
+function checkoutRoot(cwd = process.cwd()) {
   const git = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' });
-  if (git.status !== 0) throw new Error('issue intake requires a local Git checkout to validate task-root ownership');
-  const repositoryRoot = path.resolve(git.stdout.trim());
-  for (const target of [taskRoot, stateFile]) {
-    if (!inside(repositoryRoot, target)) continue;
-    const relative = path.relative(repositoryRoot, target);
-    const ignored = spawnSync('git', ['-C', repositoryRoot, 'check-ignore', '--quiet', '--no-index', '--', relative], { encoding: 'utf8' });
-    if (ignored.status !== 0) throw new Error(`${target} is inside the checkout but is not ignored; choose an ignored or external path`);
+  if (git.error || git.status !== 0 || !git.stdout.trim()) throw new Error('issue intake requires a local Git checkout to validate task-root ownership');
+  return fs.realpathSync(git.stdout.trim());
+}
+function resolvedPath(target) {
+  const missing = [];
+  let ancestor = target;
+  while (true) {
+    try {
+      fs.lstatSync(ancestor);
+      return path.join(fs.realpathSync(ancestor), ...missing.reverse());
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      const parent = path.dirname(ancestor);
+      if (parent === ancestor) throw error;
+      missing.push(path.basename(ancestor));
+      ancestor = parent;
+    }
   }
+}
+function validateLocalPaths(taskRoot, stateFile, cwd = process.cwd()) {
+  const repositoryRoot = checkoutRoot(cwd);
+  for (const target of [taskRoot, stateFile]) {
+    for (const candidate of new Set([target, resolvedPath(target)])) {
+      if (!inside(repositoryRoot, candidate)) continue;
+      const relative = path.relative(repositoryRoot, candidate) + (target === taskRoot ? '/' : '');
+      const ignored = spawnSync('git', ['-C', repositoryRoot, 'check-ignore', '--quiet', '--no-index', '--', relative], { encoding: 'utf8' });
+      if (ignored.error || ignored.status !== 0) throw new Error(`${target} is inside the checkout but is not ignored; choose an ignored or external path`);
+    }
+  }
+  return repositoryRoot;
 }
 function main(argv) {
   const values = Object.create(null);
@@ -284,8 +348,8 @@ function main(argv) {
   if (Boolean(values.execute) !== Boolean(values.handoff)) throw new Error('--execute requires --handoff, and --handoff requires --execute');
   const taskRoot = path.resolve(values['task-root']);
   const stateFile = path.resolve(values.state || path.join(os.homedir(), '.local/state/skills/issue-intake.json'));
-  validateLocalPaths(taskRoot, stateFile);
-  const result = intake({ repo: values.repo, taskRoot, stateFile, labels, dryRun: !values.execute, handoff: values.handoff || null, costReport: values['cost-report'] || null });
+  const repositoryRoot = validateLocalPaths(taskRoot, stateFile);
+  const result = intake({ repo: values.repo, taskRoot, stateFile, repositoryRoot, labels, dryRun: !values.execute, handoff: values.handoff || null, costReport: values['cost-report'] || null });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 let invokedDirectly = false;

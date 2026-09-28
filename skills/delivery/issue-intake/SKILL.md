@@ -19,7 +19,11 @@ node "$(dirname "$SKILL_FILE")/issue-intake.mjs" --repo=OWNER/REPO --task-root=.
 
 Dry-run is the default. Eligibility is deterministic: issue must be open and match every requested label. Labels are passed to `gh issue list` before pagination and rechecked locally. Queue order is ascending issue number; rows without a positive safe-integer issue number fail closed. Before proposing work, intake matches local tasks only when both `repository: OWNER/REPO` and `issue: N` occur in YAML frontmatter. It scans target-repository pull requests for local `#N`, canonical `OWNER/REPO#N`, or `https://github.com/OWNER/REPO/issues/N` references; external repository references do not match. Any related PR blocks recovery even when a local task exists. Listing is bounded at 1,000 items and subprocess output at 64 MiB; reaching either bound aborts rather than claiming complete coverage.
 
+For the target checkout's `.agents/tasks` root, duplicate lookup includes that root in every registered worktree of the same Git repository before dry-run eligibility or execute handoff. An uninspectable worktree inventory aborts instead of dispatching; an explicit different task root remains scoped to that path.
+
 The task root must be outside the checkout or Git-ignored inside it. Claim state defaults outside the checkout at `~/.local/state/skills/issue-intake.json`; override with `--state=PATH`, also outside or Git-ignored. State is repository-and-issue scoped. Existing schema-1 state fails closed and requires operator migration; it is never guessed across repositories.
+
+Path ownership checks follow existing symlinks and ancestors, including an existing parent of a not-yet-created state file. A symlink into an unignored checkout directory is refused before claims, locks, or receipts are written.
 
 ## Execute and recover
 

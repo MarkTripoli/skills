@@ -32,6 +32,17 @@ function setup(t, rows = [issue], prs = []) {
 }
 function stateWith(claims) { return { schema: 2, claims }; }
 function argsLog(file) { return fs.readFileSync(file, 'utf8').trim().split('\n').map(line => JSON.parse(line)); }
+function worktrees(f) {
+  const target = path.join(f.root, 'target');
+  const sibling = path.join(f.root, 'sibling');
+  fs.mkdirSync(target);
+  assert.equal(spawnSync('git', ['init', '-q', target]).status, 0);
+  fs.writeFileSync(path.join(target, '.gitignore'), '.agents/tasks/\n');
+  assert.equal(spawnSync('git', ['-C', target, 'add', '.gitignore']).status, 0);
+  assert.equal(spawnSync('git', ['-C', target, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'fixture']).status, 0);
+  assert.equal(spawnSync('git', ['-C', target, 'worktree', 'add', '--detach', '-q', sibling]).status, 0);
+  return { target, sibling, taskRoot: path.join(target, '.agents/tasks') };
+}
 
 test('dry-run remains read-only, applies server label filter, and paginates beyond 100', t => {
   const rows = Array.from({ length: 101 }, (_, i) => ({ ...issue, number: i + 1, title: `Issue ${i + 1}` }));
@@ -145,6 +156,79 @@ test('shared task roots and PR bodies stay scoped to canonical repository identi
   const targetPrs = [{ number: 5, title: 'Target reference', body: 'See acme/app#7', url: '' }];
   const target = setup(t, [issue], targetPrs);
   assert.equal(JSON.parse(target.runCli().stdout)[0].status, 'existing-pr');
+});
+
+test('default ignored task root finds sibling worktree tasks before claim or handoff', t => {
+  const f = setup(t);
+  const { target, sibling, taskRoot } = worktrees(f);
+  const task = path.join(sibling, '.agents/tasks', 'in-progress');
+  fs.mkdirSync(task, { recursive: true });
+  fs.writeFileSync(path.join(task, 'task.md'), '---\nrepository: acme/app\nissue: 7\n---\n');
+  const args = ['--repo=acme/app', '--task-root=.agents/tasks', `--state=${f.stateFile}`];
+  const launch = extra => spawnSync(process.execPath, [cliPath, ...args, ...extra], { cwd: target, env: f.env, encoding: 'utf8' });
+  const dry = launch([]);
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.deepEqual(JSON.parse(dry.stdout)[0], { issue: 7, status: 'duplicate-task', tasks: [fs.realpathSync(task)] });
+  const execute = launch(['--execute', '--handoff=nonexistent-handoff']);
+  assert.equal(execute.status, 0, execute.stderr);
+  const custom = spawnSync(process.execPath, [cliPath, '--repo=acme/app', `--task-root=${f.taskRoot}`, `--state=${f.stateFile}`], { cwd: target, env: f.env, encoding: 'utf8' });
+  assert.equal(custom.status, 0, custom.stderr);
+  assert.equal(JSON.parse(custom.stdout)[0].status, 'eligible');
+  assert.equal(JSON.parse(execute.stdout)[0].status, 'duplicate-task');
+  assert.equal(fs.existsSync(f.stateFile), false);
+  assert.equal(fs.existsSync(taskRoot), false);
+  fs.rmSync(task, { recursive: true });
+  const unrelated = path.join(f.root, 'unrelated', '.agents/tasks', 'other');
+  fs.mkdirSync(unrelated, { recursive: true });
+  fs.writeFileSync(path.join(unrelated, 'task.md'), '---\nrepository: acme/app\nissue: 7\n---\n');
+  const distinct = launch([]);
+  assert.equal(distinct.status, 0, distinct.stderr);
+  assert.equal(JSON.parse(distinct.stdout)[0].status, 'eligible');
+});
+
+test('uninspectable registered worktree aborts before dispatch', t => {
+  const f = setup(t);
+  const { target, sibling } = worktrees(f);
+  fs.unlinkSync(path.join(sibling, '.git'));
+  const result = spawnSync(process.execPath, [cliPath, '--repo=acme/app', '--task-root=.agents/tasks', `--state=${f.stateFile}`, '--execute', '--handoff=nonexistent-handoff'], { cwd: target, env: f.env, encoding: 'utf8' });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /cannot safely inventory repository worktrees/);
+  assert.equal(fs.existsSync(f.stateFile), false);
+});
+
+test('sibling task-root symlink outside its registered worktree aborts lookup', t => {
+  const f = setup(t);
+  const { target, sibling } = worktrees(f);
+  fs.mkdirSync(path.join(sibling, '.agents'));
+  fs.symlinkSync(f.taskRoot, path.join(sibling, '.agents/tasks'), 'dir');
+  const result = spawnSync(process.execPath, [cliPath, '--repo=acme/app', '--task-root=.agents/tasks', `--state=${f.stateFile}`], { cwd: target, env: f.env, encoding: 'utf8' });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /cannot safely inventory repository worktrees/);
+  assert.equal(fs.existsSync(f.ghLog), false);
+});
+
+test('symlinked task root and uncreated state parent cannot escape into unignored checkout', t => {
+  const f = setup(t);
+  const { target, taskRoot } = worktrees(f);
+  const unignored = path.join(target, 'unignored');
+  fs.mkdirSync(unignored);
+  const alias = path.join(f.root, 'alias');
+  fs.symlinkSync(unignored, alias, 'dir');
+  const launch = (root, state, extra = []) => spawnSync(process.execPath, [cliPath, '--repo=acme/app', `--task-root=${root}`, `--state=${state}`, ...extra], { cwd: target, env: f.env, encoding: 'utf8' });
+  const taskEscape = launch(alias, f.stateFile, ['--execute', '--handoff=nonexistent-handoff']);
+  assert.notEqual(taskEscape.status, 0);
+  assert.match(taskEscape.stderr, /not ignored/);
+  const stateEscape = launch(taskRoot, path.join(alias, 'new-parent', 'claims.json'), ['--execute', '--handoff=nonexistent-handoff']);
+  assert.notEqual(stateEscape.status, 0);
+  assert.match(stateEscape.stderr, /not ignored/);
+  assert.equal(fs.existsSync(path.join(unignored, 'new-parent')), false);
+  assert.equal(fs.existsSync(f.stateFile), false);
+  assert.equal(fs.existsSync(f.ghLog), false);
+  const ignoredState = path.join(taskRoot, 'claims.json');
+  const safe = launch(taskRoot, ignoredState);
+  assert.equal(safe.status, 0, safe.stderr);
+  assert.equal(JSON.parse(safe.stdout)[0].status, 'eligible');
+  assert.equal(fs.existsSync(ignoredState), false);
 });
 
 test('missing and invalid issue numbers fail before dispatch', t => {
