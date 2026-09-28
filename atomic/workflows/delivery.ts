@@ -8,6 +8,7 @@ import path from 'node:path';
 import { resolveSkillsDir } from '../lib/skill-storage.mjs';
 import { childBatches, childCompletionSnapshot, childJoinSummary, joinChildren } from '../lib/child-scheduler.mjs';
 import { hostedProof } from '../lib/hosted-proof.mjs';
+import { admitPlanWaves } from '../lib/plan-waves.mjs';
 
 const choices = (values: string[], fallback: string) => Type.Union(values.map(value => Type.Literal(value)), { default: fallback });
 const delivery = workflow({
@@ -135,6 +136,10 @@ const delivery = workflow({
         }
       }
       const candidates = forced ? [forced.skill] : eligible(state, taskInputs, task.mode, adaptive);
+      if (state.latest.plan && candidates.some(choice => !['iterate-plan', 'implement-plan', 'blocked'].includes(choice))) {
+        const admission = admitPlanWaves(state.latest.plan.text);
+        if (!admission.ok) return finish('blocked', `Current plan dependency/file-scope admission refused before downstream work: ${admission.error}`);
+      }
       if (!candidates.length) throw new Error('No eligible delivery transition; required evidence or workflow mode is invalid');
       const observation = boundaryState(task, state, candidates);
       const decision = await ctx.tool(`${steps}-choose-next`, { task_dir: task.taskDir, boundary: steps, forced: forced?.skill || null }, async () => {
@@ -208,9 +213,21 @@ const delivery = workflow({
       }
 
       const skill = decision.choice;
+      let dependencyWaves: string[][] | null = null;
+      if (skill === 'implement-plan') {
+        const admission = admitPlanWaves(state.latest.plan?.text || '');
+        if (!admission.ok) return finish('blocked', `Plan dependency/file-scope admission refused before implementation: ${admission.error}`);
+        dependencyWaves = admission.waves;
+      }
       const feedback = forced?.feedback || '';
       forced = null;
-      state = await runSkill(ctx, task, state, taskInputs, skill, ++steps, feedback);
+      const priorPlanHash = state.latest.plan?.hash;
+      const stageInputs = dependencyWaves ? { ...taskInputs, dependency_waves: dependencyWaves } : taskInputs;
+      state = await runSkill(ctx, task, state, stageInputs, skill, ++steps, feedback);
+      if (state.latest.plan && (skill === 'implement-plan' || state.latest.plan.hash !== priorPlanHash)) {
+        const finalAdmission = admitPlanWaves(state.latest.plan.text);
+        if (!finalAdmission.ok) return finish('blocked', `Plan dependency/file-scope admission refused after ${skill}: ${finalAdmission.error}`);
+      }
       const gate = await artifactGate(ctx, task, taskInputs, state, SKILLS[skill], `stage-${steps}`);
       state = gate.state;
       if (gate.stopped) return finish('blocked', `Human stopped after ${skill}. Task artifacts and native stage are retained.`);

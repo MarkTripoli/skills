@@ -36,6 +36,7 @@ Expand the structure outline into a detailed implementation plan with concrete e
 ## Plan Guidelines
 
 - Every phase must be independently testable.
+- Declare `**Depends on**` in every numbered phase (`-` or earlier phase numbers), and list every owned file with the template's **File** declaration. Missing dependency or file ownership blocks Atomic implementation admission.
 - Use specific file edits, target functions, and short code examples over broad descriptions.
 - Automated verification must be runnable commands.
 - Deferred human evidence is a plain bullet naming the evidence and where it is recorded; it never blocks a phase.

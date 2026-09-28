@@ -38,6 +38,11 @@ sha: [current commit]
 ---
 
 ## Phase 1: [Phase title]
+Repeat the `Depends on` declaration for every phase: use `-` for the first independent phase or earlier phase numbers such as `Phase 1` when ordering is required.
+**Depends on**: -
+
+Declare dependencies for every phase using `-` or earlier phase numbers, for example `**Depends on**: Phase 1`. Implementation admission requires this declaration; do not leave dependencies implicit.
+
 
 ### Goal
 
@@ -48,7 +53,10 @@ sha: [current commit]
 #### 1.1 [Area to modify]
 
 **File**: `path/to/file.ext`
+
 **Changes**: [Concrete edit and where it belongs.]
+**File**: `path/to/another-file.ext`
+
 
 ```diff
 + [specific code shape to add]
@@ -72,6 +80,10 @@ Omit this section when the phase has none.
 ---
 
 ## Phase 2: [Phase title]
+**Depends on**: Phase 1
+
+**File**: `path/to/phase-2-file.ext`
+
 
 [Repeat this structure.]
 
