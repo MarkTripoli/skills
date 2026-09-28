@@ -15,6 +15,8 @@ const MAX_RELATIONSHIPS = 5000;
 const MAX_GIT_OUTPUT = 20 * 1024 * 1024;
 const MAX_RELATIONSHIP_CANDIDATES = 50000;
 const MAX_SELECTOR_LABELS = 16;
+const REGEX_PREFIX_KEYWORDS = new Set(['return', 'throw', 'yield', 'await', 'case', 'delete', 'void', 'typeof', 'instanceof', 'in', 'of', 'else', 'do', 'default', 'new', 'extends']);
+const REGEX_LINE_TERMINATOR_KEYWORDS = new Set(['debugger', 'break', 'continue']);
 const skip = new Set(['node_modules', 'vendor', 'dist', 'build', '.next', 'coverage']);
 function git(args, cwd, input) {
   const env = {...process.env};
@@ -206,13 +208,21 @@ function sourceTokens(source) {
       push({type: 'string', value, start, end: i});
       continue;
     }
+    if (c === '<' && (source[i + 1] === '>' ||
+        (source[i + 1] === '/' ? /[A-Za-z]/.test(source[i + 2] ?? '') : /[A-Za-z]/.test(source[i + 1] ?? '')))) {
+      uncertain = true;
+      break;
+    }
     if (c === '/' && source[i + 1] !== '/' && source[i + 1] !== '*') {
       const previous = tokens.at(-1), beforePrevious = tokens.at(-2);
       const previousValue = previous?.type === 'string' ? null : previous?.value;
       if (([')', ']', '}'].includes(previousValue) && source.slice(previous.end, i).includes('\n')) ||
           previousValue === ']' || previousValue === '}') { uncertain = true; break; }
-      const regexPrefix = !previous || previous.controlClose ||
-        ['=', '(', '[', '{', ':', ',', ';', '!', '?', 'return', 'throw', 'yield', 'await', 'case', 'delete', 'void', 'typeof', 'instanceof', 'in', 'of', 'else', 'do', '+', '-', '*', '%', '^', '~', '&', '|', '<', '>'].includes(previousValue) ||
+      const keywordPrefix = REGEX_PREFIX_KEYWORDS.has(previousValue) && beforePrevious?.value !== '.';
+      const lineTerminatorPrefix = REGEX_LINE_TERMINATOR_KEYWORDS.has(previousValue) && beforePrevious?.value !== '.' &&
+        /[\r\n\u2028\u2029]/.test(source.slice(previous.end, i));
+      const regexPrefix = !previous || previous.controlClose || keywordPrefix || lineTerminatorPrefix ||
+        ['=', '(', '[', '{', ':', ',', ';', '!', '?', '+', '-', '*', '%', '^', '~', '&', '|', '<', '>'].includes(previousValue) ||
         (previousValue === '&' && beforePrevious?.value === '&') || previousValue === '/';
       if (regexPrefix) {
         i++;

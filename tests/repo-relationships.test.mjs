@@ -56,7 +56,7 @@ test('ignores regex literals and member-property NATS lookalikes', () => {
   const {base, create} = fixture();
   try {
     const publisher = create('publisher', {
-      'src/events.js': "import { connect } from 'nats';\nconst nc = await connect();\nnc.publish('orders.created', payload);\nif (ready && /nc.publish(\"orders.created\")/.test(source)) {}\nasync function waitForPattern() { await /nc.publish(\"orders.created\", payload)/.test(source); }\nfunction* patterns() { yield /nc.publish(\"orders.created\", payload)/; }\nother.nc.publish('orders.created', payload);\n",
+      'src/events.js': "import { connect } from 'nats';\nconst nc = await connect();\nnc.publish('orders.created', payload);\nif (ready && /nc.publish(\"orders.created\")/.test(source)) {}\nasync function waitForPattern() { await /nc.publish(\"orders.created\", payload)/.test(source); }\nfunction* patterns() { yield /nc.publish(\"orders.created\", payload)/; }\nfunction debugPattern() { debugger\n/nc.publish(\"orders.created\", payload)/.test(source); }\nfunction breakPattern() { while (ready) { break\n/nc.publish(\"orders.created\", payload)/.test(source); } }\nfunction continuePattern() { while (ready) { continue\n/nc.publish(\"orders.created\", payload)/.test(source); } }\nnew /nc.publish(\"orders.created\", payload)/;\nclass Derived extends /nc.publish(\"orders.created\", payload)/ {}\nexport default /nc.publish(\"orders.created\", payload)/;\nother.nc.publish('orders.created', payload);\n",
     });
     const subscriber = create('subscriber', {
       'src/events.js': "import { connect } from 'nats';\nconst nc = await connect();\nnc.subscribe('orders.created', handler);\n",
@@ -65,6 +65,27 @@ test('ignores regex literals and member-property NATS lookalikes', () => {
     assert.equal(report.coverage, 'complete');
     assert.equal(report.evidence.filter(edge => edge.repo === 'publisher' && edge.kind === 'nats-publish').length, 1);
     assert.equal(report.relationships.filter(edge => edge.kind === 'nats-subject' && edge.subject === 'orders.created').length, 1);
+  } finally { fs.rmSync(base, {recursive: true, force: true}); }
+});
+test('fails closed on JSX-like NATS files across source extensions', () => {
+  const {base, create} = fixture();
+  try {
+    const publisher = create('publisher', {
+      'src/view.jsx': "import { connect } from 'nats';\nconst nc = await connect();\nconst view = <><span>nc.publish(\"orders.fake\", payload)</span></>;\n",
+      'src/view.tsx': "import { connect } from 'nats';\nconst nc = await connect();\nconst view = <><span>nc.publish(\"orders.fake\", payload)</span></>;\n",
+      'src/view.js': "import { connect } from 'nats';\nconst nc = await connect();\nconst view = <span>nc.publish(\"orders.fake\", payload)</span>;\n",
+      'src/view.ts': "import { connect } from 'nats';\nconst nc = await connect();\nconst view = <span>nc.publish(\"orders.fake\", payload)</span>;\n",
+      'src/real.js': "import { connect } from 'nats';\nconst nc = await connect();\nnc.publish('orders.real', payload);\n",
+    });
+    const subscriber = create('subscriber', {
+      'src/events.js': "import { connect } from 'nats';\nconst nc = await connect();\nnc.subscribe('orders.real', handler);\nnc.subscribe('orders.fake', handler);\n",
+    });
+    const report = analyze([{name: 'publisher', root: publisher}, {name: 'subscriber', root: subscriber}]);
+    const natsPublishes = report.evidence.filter(edge => edge.repo === 'publisher' && edge.kind === 'nats-publish');
+    const natsRelations = report.relationships.filter(edge => edge.kind === 'nats-subject');
+    assert.equal(report.coverage, 'incomplete');
+    assert.deepEqual(natsPublishes.map(edge => edge.subject), ['orders.real']);
+    assert.deepEqual(natsRelations.map(edge => edge.subject), ['orders.real']);
   } finally { fs.rmSync(base, {recursive: true, force: true}); }
 });
 test('fails closed on typed arrow parameters shadowing NATS clients', () => {
