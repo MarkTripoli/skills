@@ -48,18 +48,22 @@ test('successful empty Trivy report without Results is complete without fetching
   const cwd = workspace(t);
   file(cwd, 'Dockerfile', 'FROM scratch\n');
   file(cwd, 'trivy-cache/db/trivy.db', 'local fixture only');
+  let trivyStdout = '{"SchemaVersion":2,"ArtifactName":"Dockerfile","Metadata":{}}';
   const run = (bin, args) => {
     if (args[0] === '--version') return { status: 0, stdout: `${bin} local` };
     if (bin === 'hadolint') return { status: 0, stdout: '[]' };
-    if (bin === 'trivy') return { status: 0, stdout: '{"SchemaVersion":2,"ArtifactName":"Dockerfile","Metadata":{}}' };
+    if (bin === 'trivy') return { status: 0, stdout: trivyStdout };
     assert.fail(`unexpected scanner ${bin}`);
   };
-  const report = inspectEditedFile({ toolName: 'write', input: { path: 'Dockerfile' }, details: {}, content: 'Wrote file', isError: false }, {
+  const scan = () => inspectEditedFile({ toolName: 'write', input: { path: 'Dockerfile' }, details: {}, content: 'Wrote file', isError: false }, {
     cwd, env: { TRIVY_CACHE_DIR: path.join(cwd, 'trivy-cache') }, run,
   });
+  const report = scan();
   const trivy = report.results[0].lanes.find(lane => lane.tool === 'trivy_fs');
   assert.equal(trivy.coverage, 'complete');
   assert.deepEqual(trivy.findings, []);
+  trivyStdout = '{"Results":[]}';
+  assert.equal(scan().results[0].lanes.find(lane => lane.tool === 'trivy_fs').coverage, 'incomplete');
 });
 
 

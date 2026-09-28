@@ -316,7 +316,8 @@ function scanFile(file, { cwd, env, run }) {
     if (localFile(db)) {
       lanes.push(lane('trivy_fs', 'trivy', ['fs', '--format', 'json', '--scanners', 'vuln', '--skip-db-update', '--skip-java-db-update', '--skip-vex-repo-update', '--offline-scan', '--disable-telemetry', '--skip-version-check'], snapshot, cwd, run, stdout => {
         const report = JSON.parse(stdout);
-        const results = report.Results === undefined && report.SchemaVersion === 2 && typeof report.ArtifactName === 'string' && report.ArtifactName.length > 0 ? [] : report.Results;
+        if (report.SchemaVersion !== 2 || typeof report.ArtifactName !== 'string' || !report.ArtifactName.trim()) throw new Error('invalid output');
+        const results = report.Results === undefined ? [] : report.Results;
         if (!Array.isArray(results)) throw new Error('invalid output');
         return results.flatMap(result => (result.Vulnerabilities || []).map(v => safeFinding('trivy_fs', snapshot, v.LineNumber, v.VulnerabilityID, v.Severity)));
       }));
