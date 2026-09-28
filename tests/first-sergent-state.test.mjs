@@ -160,6 +160,18 @@ test('context threshold requires the fresh child live metric before dispatch', (
   begin(dir, 'create-plan');
   assert.equal(inspect(dir).steps, 1);
   assert.equal(inspect(dir).context_boundary.sessionId, 'new-session');
+  checkpointContext(dir, { sessionId: 'old-session', contextUsage: { tokens: 20, contextWindow: 100, percent: 20 } });
+  assert.equal(inspect(dir).context_boundary.action, 'recheck-required');
+  assert.deepEqual(inspect(dir).context_boundary.retiredSessionIds, ['old-session']);
+  assert.throws(() => begin(dir, 'verify-implementation'));
+  checkpointContext(dir, { sessionId: 'new-session', contextUsage: { tokens: 25, contextWindow: 100, percent: 25 } });
+  begin(dir, 'verify-implementation');
+  checkpointContext(dir, { sessionId: 'new-session', contextUsage: { tokens: 60, contextWindow: 100, percent: 60 } });
+  startFreshSession(dir, 'third-session');
+  checkpointContext(dir, { sessionId: 'third-session', contextUsage: { tokens: 10, contextWindow: 100, percent: 10 } });
+  begin(dir, 'review-code');
+  assert.equal(inspect(dir).context_boundary.sessionId, 'third-session');
+  assert.deepEqual(inspect(dir).context_boundary.retiredSessionIds, ['old-session', 'new-session']);
 });
 test('context threshold without a child identity remains blocked', (t) => {
   const { dir } = fixture(t);

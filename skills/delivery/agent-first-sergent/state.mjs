@@ -67,30 +67,33 @@ export function checkpointContext(taskDir, usage) {
   const state = inspect(root);
   if (!state) throw new Error('Initialize the task before recording context');
   if ((state.options.context_policy ?? 'off') !== 'stop-at-60') return state;
-  const expectedSessionId = state.context_boundary?.action === 'awaiting-checkpoint'
-    ? state.context_boundary.sessionId
-    : null;
+  const prior = state.context_boundary;
+  const expectedSessionId = prior?.sessionId ?? null;
+  const retiredSessionIds = prior?.retiredSessionIds ?? [];
   const sessionId = typeof usage?.sessionId === 'string' && usage.sessionId.trim() ? usage.sessionId.trim() : null;
   const boundary = evaluateContextBoundary(usage);
-  if (expectedSessionId && boundary.status === 'unknown') {
+  const blockedAction = prior?.action === 'fresh-session' ? 'fresh-session' : 'recheck-required';
+  if (sessionId && retiredSessionIds.includes(sessionId)) {
     state.context_boundary = {
-      action: 'awaiting-checkpoint', status: 'unknown',
-      previousSessionId: state.context_boundary.previousSessionId,
-      sessionId: expectedSessionId,
-      reason: boundary.reason,
+      ...prior, action: blockedAction, status: 'unknown',
+      reason: 'live context metric belongs to a retired child session',
     };
     return save(root, state);
   }
   if (expectedSessionId && sessionId !== expectedSessionId) {
     state.context_boundary = {
-      action: 'awaiting-checkpoint', status: 'unknown',
-      previousSessionId: state.context_boundary.previousSessionId,
-      sessionId: expectedSessionId,
-      reason: 'live context metric does not match the fresh child session identity',
+      ...prior, action: blockedAction, status: 'unknown',
+      reason: 'live context metric does not match the current child session identity',
     };
     return save(root, state);
   }
-  state.context_boundary = { ...boundary, sessionId };
+  if (boundary.status === 'unknown') {
+    state.context_boundary = expectedSessionId
+      ? { ...prior, action: blockedAction, status: 'unknown', reason: boundary.reason }
+      : { ...boundary, action: 'stop', sessionId: null };
+    return save(root, state);
+  }
+  state.context_boundary = { ...boundary, sessionId, retiredSessionIds };
   if (!sessionId) {
     state.context_boundary = { ...state.context_boundary, action: 'stop', status: 'unknown', reason: 'live child session identity unavailable' };
   }
@@ -107,13 +110,19 @@ export function startFreshSession(taskDir, sessionId) {
     throw new Error('A fresh session identity is required to cross the context boundary');
   }
   const nextSessionId = sessionId.trim();
-  if (!state.context_boundary.sessionId || nextSessionId === state.context_boundary.sessionId) {
-    throw new Error('Fresh session identity must differ from the exhausted child session');
+  if (!state.context_boundary.sessionId || nextSessionId === state.context_boundary.sessionId
+    || (state.context_boundary.retiredSessionIds ?? []).includes(nextSessionId)) {
+    throw new Error('Fresh session identity must be new and differ from every retired child session');
   }
+  const retiredSessionIds = [...new Set([
+    ...(state.context_boundary.retiredSessionIds ?? []),
+    state.context_boundary.sessionId,
+  ])];
   state.context_boundary = {
     action: 'awaiting-checkpoint',
     status: 'unknown',
     previousSessionId: state.context_boundary.sessionId,
+    retiredSessionIds,
     sessionId: nextSessionId,
     reason: 'fresh child requires its own live context metric before dispatch',
   };
@@ -141,6 +150,7 @@ export function begin(taskDir, skill) {
       action: 'recheck-required',
       status: 'unknown',
       sessionId: state.context_boundary.sessionId,
+      retiredSessionIds: state.context_boundary.retiredSessionIds ?? [],
       reason: 'a new live context metric is required before the next dispatch',
     };
   }
