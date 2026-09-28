@@ -60,6 +60,20 @@ test('correlates equal values only across distinct repositories without leaking 
   assert.equal(JSON.stringify(report).includes('API_TOKEN'), false);
 });
 
+test('correlates quoted values despite distinct trailing comments without removing quoted hash bytes', t => {
+  const root = temp(t);
+  const secret = 'fixture-quoted-#-token';
+  const a = repo(root, 'one', {'.env': `PRIMARY="${secret}" # first owner\n`});
+  const b = repo(root, 'two', {'.env': `SECOND='${secret}' # second owner\n`});
+  const report = correlate([a, b]);
+  assert.equal(report.findings.length, 1);
+  assert.deepEqual(report.findings[0].locations, [
+    {repo_index: 0, path: '.env', line: 1},
+    {repo_index: 1, path: '.env', line: 1},
+  ]);
+  assert.equal(JSON.stringify(report).includes(secret), false);
+});
+
 test('does not report duplicates confined to one repository', t => {
   const root = temp(t);
   const a = repo(root, 'one', {'.env': 'A=private-repeat\nB=private-repeat\n'});
