@@ -165,6 +165,30 @@ test("a replaceable staging directory is rejected before attacker bytes can publ
   assert.deepEqual(fs.readdirSync(root), [".nvmrc"]);
 }));
 
+test("a target owned by another user cannot publish an attacker-controlled stage", () => fixture((root) => {
+  fs.writeFileSync(path.join(root, ".nvmrc"), "22\n");
+  const plan = createPlan(root);
+  const stat = fs.statSync;
+  const link = fs.linkSync;
+  let publicationAttempted = false;
+  fs.statSync = (file, ...args) => {
+    const result = stat(file, ...args);
+    return file === "." ? Object.assign(Object.create(Object.getPrototypeOf(result)), result, { uid: process.geteuid() + 1 }) : result;
+  };
+  fs.linkSync = (...args) => {
+    publicationAttempted = true;
+    return link(...args);
+  };
+  try {
+    assert.throws(() => applyPlan(root, plan), /permits replacement/);
+  } finally {
+    fs.statSync = stat;
+    fs.linkSync = link;
+  }
+  assert.equal(publicationAttempted, false);
+  assert.deepEqual(fs.readdirSync(root), [".nvmrc"]);
+}));
+
 test("a foreign staged inode at cleanup is left intact", () => fixture((root) => {
   fs.writeFileSync(path.join(root, ".nvmrc"), "22\n");
   const plan = createPlan(root);

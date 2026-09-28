@@ -128,9 +128,10 @@ export function applyPlan(root, plan) {
     if (current.mode !== "supported" || JSON.stringify(current.actions) !== JSON.stringify(plan.actions)) {
       throw new Error("Bootstrap plan is stale; refusing to write.");
     }
-    // A private stage is not protected if another user can rename its parent
-    // entry. Refuse publication in a group- or world-writable target.
-    if (fs.statSync(".").mode & 0o022) {
+    // A private stage is not protected if another user owns its parent entry
+    // or can rename it through group/world write permissions.
+    const target = fs.statSync(".");
+    if (target.uid !== process.geteuid() || (target.mode & 0o022)) {
       throw new Error("Bootstrap target permits replacement of staged files; refusing to write.");
     }
     // Stage on the approved filesystem inside a private directory. Other
