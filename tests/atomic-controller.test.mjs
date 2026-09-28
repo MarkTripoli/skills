@@ -308,6 +308,7 @@ function proofFixture() {
   const before = initialState(observeArtifacts(taskDir), revision(repo, task.taskRootRelative));
   const options = { verify: true, app_test: 'none', model: 'test-model', model_routing: 'fixed' };
   const row = (id, item, input, observed) => `| ${id} | ${item} | \`node cli.mjs ${input}\` | exit 0; ${observed} | pass |\n`;
+  const check = row('C1', 'repository CLI check', 21, 42);
   const table = '| Id | Item | Decided by | Observed | Verdict |\n|---|---|---|---|---|\n';
   const verification = rows => `---\ntype: verification\nsummary: CLI checked\nstatus: passed\n---\n## Items\n\n${table}${rows}`;
   const ctx = (rows, worker) => ({
@@ -327,22 +328,24 @@ function proofFixture() {
       return worker(name);
     },
   });
-  return { repo, taskDir, task, before, options, row, ctx };
+  return { repo, taskDir, task, before, options, row, check, ctx };
 }
 
 test('passed verification requires every task, plan, and receipt acceptance item, not merely A1', async () => {
   const f = proofFixture();
   try {
     const a1 = f.row('A1', 'CLI doubles input 21.', 21, 42);
-    await assert.rejects(() => runSkill(f.ctx(a1), f.task, f.before, f.options, 'verify-implementation', 1), /matching passed A-row/);
+    await assert.rejects(() => runSkill(f.ctx(f.check + a1), f.task, f.before, f.options, 'verify-implementation', 1), /matching passed A-row/);
     fs.writeFileSync(path.join(f.taskDir, '04-plan.md'), '---\ntype: plan\nsummary: complete plan\n---\n## Desired End State\n\n- CLI doubles input 0.\n\n## Phase 1\n- [x] Implement\n\n### Verify\n- [x] CLI doubles input 3.\n');
     fs.writeFileSync(path.join(f.taskDir, '01-implementation.md'), '---\ntype: implementation\nsummary: implemented\n---\n# Receipt\n\n### Verify\n- CLI doubles input 9.\n');
+    fs.writeFileSync(path.join(f.taskDir, '00-implementation-early.md'), '---\ntype: implementation\nsummary: earlier phase\n---\n# Receipt\n\n### Verify\n- CLI doubles input 11.\n');
     const planned = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
     const rows = a1 + f.row('A2', 'CLI doubles input 7.', 7, 14);
-    await assert.rejects(() => runSkill(f.ctx(rows), f.task, planned, f.options, 'verify-implementation', 2), /matching passed A-row/);
+    await assert.rejects(() => runSkill(f.ctx(f.check + rows), f.task, planned, f.options, 'verify-implementation', 2), /matching passed A-row/);
     const complete = rows + f.row('A3', 'CLI doubles input 0.', 0, 0) +
-      f.row('A4', 'CLI doubles input 3.', 3, 6) + f.row('A5', 'CLI doubles input 9.', 9, 18);
-    const accepted = await runSkill(f.ctx(complete), f.task, planned, f.options, 'verify-implementation', 3);
+      f.row('A4', 'CLI doubles input 3.', 3, 6) + f.row('A5', 'CLI doubles input 11.', 11, 22) +
+      f.row('A6', 'CLI doubles input 9.', 9, 18);
+    const accepted = await runSkill(f.ctx(f.check + complete), f.task, planned, f.options, 'verify-implementation', 3);
     assert.deepEqual(eligible(accepted, f.options, 'full', false), ['review-code']);
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
@@ -351,9 +354,16 @@ test('a claimed A-row pass cannot advance without controller-executed output', a
   const f = proofFixture();
   try {
     const rows = f.row('A1', 'CLI doubles input 21.', 7, 42) + f.row('A2', 'CLI doubles input 7.', 7, 14);
-    await assert.rejects(() => runSkill(f.ctx(rows), f.task, f.before, f.options, 'verify-implementation', 1), /not corroborated by execution/);
+    await assert.rejects(() => runSkill(f.ctx(f.check + rows), f.task, f.before, f.options, 'verify-implementation', 1), /not corroborated by execution/);
     const noCommand = '| A1 | CLI doubles input 21. | observed manually | exit 0; 42 | pass |\n' + f.row('A2', 'CLI doubles input 7.', 7, 14);
-    await assert.rejects(() => runSkill(f.ctx(noCommand), f.task, f.before, f.options, 'verify-implementation', 2), /no executable command/);
+    await assert.rejects(() => runSkill(f.ctx(f.check + noCommand), f.task, f.before, f.options, 'verify-implementation', 2), /no executable command/);
+    const fakeCheck = f.row('C1', 'repository CLI check', 21, 999) + f.row('A1', 'CLI doubles input 21.', 21, 42) +
+      f.row('A2', 'CLI doubles input 7.', 7, 14);
+    await assert.rejects(() => runSkill(f.ctx(fakeCheck), f.task, f.before, f.options, 'verify-implementation', 3), /C1 claimed pass is not corroborated/);
+    const echo = '| A1 | CLI doubles input 21. | `printf 42` | exit 0; 42 | pass |\n' + f.row('A2', 'CLI doubles input 7.', 7, 14);
+    await assert.rejects(() => runSkill(f.ctx(f.check + echo), f.task, f.before, f.options, 'verify-implementation', 4), /does not invoke an existing changed source entrypoint or behavior test file/);
+    const noCheck = f.row('A1', 'CLI doubles input 21.', 21, 42) + f.row('A2', 'CLI doubles input 7.', 7, 14);
+    await assert.rejects(() => runSkill(f.ctx(noCheck), f.task, f.before, f.options, 'verify-implementation', 5), /requires a recorded passing repository check C-row/);
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 
@@ -371,12 +381,25 @@ test('no acceptance promises still require execution of the recorded repository 
 test('clean review requires a completed separate exact-HEAD reviewer; genuine checks and review advance', async () => {
   const f = proofFixture();
   try {
-    const rows = f.row('A1', 'CLI doubles input 21.', 21, 42) + f.row('A2', 'CLI doubles input 7.', 7, 14);
+    const rows = f.check + f.row('A1', 'CLI doubles input 21.', 21, 42) + f.row('A2', 'CLI doubles input 7.', 7, 14);
     const verified = await runSkill(f.ctx(rows), f.task, f.before, f.options, 'verify-implementation', 1);
     let dispatches = 0;
     const unavailable = f.ctx(rows, () => { dispatches++; throw new Error('worker unavailable'); });
     await assert.rejects(() => runSkill(unavailable, f.task, verified, f.options, 'review-code', 2), /worker unavailable/);
     assert.equal(dispatches, 1);
+    const unrelated = f.ctx(rows, () => {
+      dispatches++;
+      const head = execFileSync('git', ['rev-parse', 'HEAD^'], { cwd: f.repo, encoding: 'utf8' }).trim();
+      const evidence = 'README.md:1 reviewed node cli.mjs 21 printed 42 and node cli.mjs 7 printed 14';
+      return { sessionId: 'different-but-irrelevant-reviewer', text: JSON.stringify({
+        head, revision: verified.revision,
+        acceptance: ['CLI doubles input 21.', 'CLI doubles input 7.'].map(item => ({ item, evidence })),
+        risks: ['functional correctness', 'security and data integrity', 'acceptance oracle and test reachability']
+          .map(risk => ({ risk, evidence })),
+        findings: [],
+      }) };
+    });
+    await assert.rejects(() => runSkill(unrelated, f.task, verified, f.options, 'review-code', 3), /scope-incomplete/);
     const reviewer = f.ctx(rows, () => {
       dispatches++;
       const output = execFileSync(process.execPath, ['cli.mjs', '21'], { cwd: f.repo, encoding: 'utf8' }).trim();
@@ -384,7 +407,7 @@ test('clean review requires a completed separate exact-HEAD reviewer; genuine ch
       assert.equal(execFileSync(process.execPath, ['cli.mjs', '7'], { cwd: f.repo, encoding: 'utf8' }).trim(), '14');
       const head = execFileSync('git', ['rev-parse', 'HEAD^'], { cwd: f.repo, encoding: 'utf8' }).trim();
       const sourceLine = fs.readFileSync(path.join(f.repo, 'cli.mjs'), 'utf8').split('\n')[0];
-      const evidence = `cli.mjs:1 ${sourceLine}; direct invocation printed 42 for input 21 and 14 for input 7`;
+      const evidence = `cli.mjs:1 ${sourceLine}; direct invocation node cli.mjs 21 printed 42 and node cli.mjs 7 printed 14`;
       return { sessionId: 'separate-reviewer-session', text: JSON.stringify({
         head, revision: verified.revision, acceptance: [
           { item: 'CLI doubles input 21.', evidence },
@@ -397,10 +420,10 @@ test('clean review requires a completed separate exact-HEAD reviewer; genuine ch
         ], findings: [],
       }) };
     });
-    const reviewed = await runSkill(reviewer, f.task, verified, f.options, 'review-code', 3);
-    assert.equal(dispatches, 2);
+    const reviewed = await runSkill(reviewer, f.task, verified, f.options, 'review-code', 4);
+    assert.equal(dispatches, 3);
     assert.deepEqual(eligible(reviewed, f.options, 'oneshot', false), ['record-evidence']);
-    assert.equal(fs.existsSync(path.join(f.taskDir, '.atomic-delivery', 'proof-run', '003-independent-review-proof.json')), true);
+    assert.equal(fs.existsSync(path.join(f.taskDir, '.atomic-delivery', 'proof-run', '004-independent-review-proof.json')), true);
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 

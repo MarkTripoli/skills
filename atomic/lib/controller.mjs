@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { digest, observeArtifacts, planProgress, requireFresh, section } from './artifacts.mjs';
+import { digest, observeArtifacts, planProgress, requireFresh, readArtifact, section } from './artifacts.mjs';
 import { git, revision, saveRecord } from './workspace.mjs';
 import { selectStageModel } from './models.mjs';
 import { currentHostedCapture, hostedProof } from './hosted-proof.mjs';
@@ -159,7 +159,10 @@ function acceptanceItems(task, state) {
   const taskItems = bullets(criteria);
   for (const line of taskItems.length ? taskItems : criteria.trim() ? [criteria.trim()] : []) add(line);
   for (const line of bullets(section(source?.text || '', 'Desired End State'))) add(line);
-  for (const artifact of [source, state.latest.implementation, state.latest.fix]) {
+  const receipts = state.artifactSeries
+    ? Object.values(state.artifactSeries).flatMap(series => series.iterations)
+    : Object.keys(state.hashes || {}).filter(file => path.dirname(file) === task.taskDir && /^\d{2,}-[a-z0-9-]+\.md$/.test(path.basename(file))).map(file => readArtifact(file));
+  for (const artifact of [source, ...receipts.filter(item => ['implementation', 'fix'].includes(item.type)), state.latest.implementation, state.latest.fix]) {
     if (!artifact) continue;
     const lines = artifact.text.split('\n');
     let verify = false;
@@ -187,21 +190,40 @@ function requireAcceptanceEvidence(task, state, artifact) {
   const promises = acceptanceItems(task, state);
   const rows = verificationRows(artifact);
   const acceptance = rows.filter(row => /^A/i.test(row.id));
+  const checks = rows.filter(row => /^C/i.test(row.id));
   const normalized = value => value.toLowerCase().replace(/[`*_\[\]]/g, '').replace(/\s+/g, ' ').trim();
-  if (!rows.length || acceptance.length !== promises.length || acceptance.some(row => !/^A[1-9]\d*$/i.test(row.id)) || promises.some((promise, index) => {
+  if (!rows.length || !checks.length || checks.some(row => !/^C[1-9]\d*$/i.test(row.id) || row.verdict.toLowerCase() !== 'pass') ||
+      new Set(checks.map(row => row.id.toUpperCase())).size !== checks.length) {
+    throw new Error(`${artifact.file}: passed verification requires a recorded passing repository check C-row`);
+  }
+  if (acceptance.length !== promises.length || acceptance.some(row => !/^A[1-9]\d*$/i.test(row.id)) || promises.some((promise, index) => {
     const row = acceptance.find(candidate => candidate.id.toUpperCase() === `A${index + 1}`);
     return !row || row.verdict.toLowerCase() !== 'pass' || !normalized(row.item).includes(normalized(promise));
   }) || new Set(acceptance.map(row => row.id.toUpperCase())).size !== acceptance.length) {
     throw new Error(`${artifact.file}: passed verification lacks a matching passed A-row for every upstream acceptance item (or has an unaccounted A-row)`);
   }
-  return rows.filter(row => /^[AC][1-9]\d*$/i.test(row.id) && row.verdict.toLowerCase() === 'pass');
+  return [...checks, ...acceptance];
+}
+function acceptanceOracleCommand(task, command, id, changed) {
+  if (/[;&|<>$`()]/.test(command)) throw new Error(`${id} acceptance command must directly invoke a behavior oracle, not shell expansion or command chaining`);
+  if (/^(?:(?:npm|pnpm|yarn|bun) (?:test|run (?:test|check|verify)(?::[a-z0-9_-]+)?)|go test|cargo test|pytest|python3? -m pytest)(?:\s|$)/.test(command)) return;
+  const match = command.match(/^(?:node|bun|python3?)\s+(?:--test\s+)?(\S+)(?:\s+.*)?$/);
+  const target = match?.[1];
+  const file = target && path.resolve(task.cwd, target);
+  const relative = file && path.relative(task.cwd, file);
+  const inside = relative && !relative.startsWith('..') && !path.isAbsolute(relative);
+  if (!inside || !fs.existsSync(file) || (!changed.has(relative) && !/(?:^|[./_-])test(?:s)?[./_-]/i.test(target))) {
+    throw new Error(`${id} acceptance command does not invoke an existing changed source entrypoint or behavior test file`);
+  }
 }
 function executeVerification(task, state, artifact, rows, step) {
   const beforeHead = git(task.cwd, ['rev-parse', 'HEAD']);
+  const changed = changedSourcePaths(task, beforeHead);
   const evidence = [];
   for (const row of rows) {
     const command = row['decided by'].match(/^`([^`\n]+)`$/)?.[1];
     if (!command) throw new Error(`${artifact.file}: ${row.id} has no executable command; an artifact assertion is not proof`);
+    if (row.id.toUpperCase().startsWith('A')) acceptanceOracleCommand(task, command, row.id, changed);
     const run = spawnSync('/bin/sh', ['-c', command], {
       cwd: task.cwd, encoding: 'utf8', timeout: 600_000, maxBuffer: 16 * 1024 * 1024,
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
@@ -213,17 +235,32 @@ function executeVerification(task, state, artifact, rows, step) {
       .replace(/^[\s:;,.—-]*(?:(?:stdout|output)\s*[:=]\s*)?/i, '')
       .replace(/^[`"']|[`"']$/g, '').trim() : '';
     if (run.error || run.status !== 0 || !exit ||
-      (row.id.toUpperCase().startsWith('A') && (!quoted || !actualLines.includes(quoted)))) {
+      (row.id.toUpperCase().startsWith('A') && !quoted) ||
+      (quoted && !actualLines.includes(quoted))) {
       throw new Error(`${artifact.file}: ${row.id} claimed pass is not corroborated by execution (${run.error?.message || `exit ${run.status}`}; ${output.slice(0, 300)})`);
     }
     const current = revision(task.cwd, task.taskRootRelative);
     if (current !== state.revision || git(task.cwd, ['rev-parse', 'HEAD']) !== beforeHead) {
       throw new Error(`${artifact.file}: ${row.id} changed the exact source revision while checking it`);
     }
-    evidence.push({ id: row.id, command, exit: run.status, observed: quoted, output_sha256: digest(output), head: beforeHead, revision: current });
+    evidence.push({ id: row.id, command, exit: run.status, observed: quoted, output_sha256: digest(output), output, head: beforeHead, revision: current });
   }
   saveRecord(task, `${String(step).padStart(3, '0')}-verification-execution`, { artifact: artifact.file, hash: artifact.hash, head: beforeHead, revision: state.revision, evidence });
   return evidence;
+}
+function changedSourcePaths(task, head) {
+  const taskText = fs.readFileSync(path.join(task.taskDir, 'task.md'), 'utf8');
+  const base = taskText.match(/^base:\s*["']?([^"'\n]+)["']?\s*$/m)?.[1];
+  const refs = [base, 'origin/HEAD', 'origin/main', 'main', 'origin/master', 'master'].filter(Boolean);
+  const ancestor = refs.map(ref => git(task.cwd, ['merge-base', head, ref], true)).find(Boolean);
+  const names = new Set([
+    ...(ancestor ? git(task.cwd, ['diff', '--name-only', '-z', ancestor, head, '--', '.']).split('\0') : []),
+    ...git(task.cwd, ['diff', '--name-only', '-z', head, '--', '.']).split('\0'),
+    ...git(task.cwd, ['ls-files', '--others', '--exclude-standard', '-z', '--', '.']).split('\0'),
+  ]);
+  const taskRoot = task.taskRootRelative || '.agents/tasks';
+  return new Set([...names].filter(name => name && name !== taskRoot && !name.startsWith(`${taskRoot}/`) &&
+    name !== '.atomic' && !name.startsWith('.atomic/') && fs.existsSync(path.join(task.cwd, name))));
 }
 async function requireIndependentReview(ctx, task, state, artifact, step, stageSession, acceptance, sourceHead, model) {
   const head = git(task.cwd, ['rev-parse', 'HEAD']);
@@ -231,27 +268,40 @@ async function requireIndependentReview(ctx, task, state, artifact, step, stageS
     throw new Error(`${artifact.file}: clean review is not pinned to exact source HEAD ${sourceHead}`);
   }
   const risks = ['functional correctness', 'security and data integrity', 'acceptance oracle and test reachability'];
+  const changed = changedSourcePaths(task, sourceHead);
+  const execution = state.proofs.verification?.executionEvidence || [];
   const name = `${String(step).padStart(3, '0')}-independent-review`;
   const prompt = [
     `Independently review the changed implementation in ${task.cwd} against task ${path.join(task.taskDir, 'task.md')}. Do not edit files or publish anything.`,
-    `Pin reviewed source HEAD ${sourceHead} (current HEAD ${head} may include only the task artifact commit) and source revision ${state.revision}; inspect the actual diff, task and authoritative artifacts. Review acceptance items ${JSON.stringify(acceptance)} and risks ${JSON.stringify(risks)}.`,
-    `Return only a JSON object {"head":string,"revision":string,"acceptance":[{"item":string,"evidence":string}],"risks":[{"risk":string,"evidence":string}],"findings":[{"location":string,"problem":string}]}. Include every assigned acceptance item with concrete changed path:line and observed behavior/test oracle; cover every assigned risk with concrete changed path:line and observation. Report all consequential findings. An unavailable or incomplete inspection must not claim coverage.`,
+    `Pin reviewed source HEAD ${sourceHead} (current HEAD ${head} may include only the task artifact commit) and source revision ${state.revision}; inspect changed source paths ${JSON.stringify([...changed])}, actual controller-run acceptance commands and outputs ${JSON.stringify(execution)}, task and authoritative artifacts. Review acceptance items ${JSON.stringify(acceptance)} and risks ${JSON.stringify(risks)}.`,
+    `Return only a JSON object {"head":string,"revision":string,"acceptance":[{"item":string,"evidence":string}],"risks":[{"risk":string,"evidence":string}],"findings":[{"location":string,"problem":string}]}. Each acceptance evidence must cite an actual changed path:line, the controller-executed command and its observed outcome. Each risk must cite a changed path:line and concrete inspected behavior. Report all consequential findings. An unavailable or incomplete inspection must not claim coverage.`,
   ].join('\n\n');
   const result = await ctx.task(name, { prompt, context: 'fresh', cwd: task.cwd, model, maxOutput: { bytes: 16_384, lines: 160 } });
   let report;
   try { report = JSON.parse(result.text); }
   catch { throw new Error(`${artifact.file}: independent reviewer did not return a completed structured report`); }
+  const inspected = evidence => {
+    const match = typeof evidence === 'string' && evidence.match(/(?:^|\s)([^\s:]+):([1-9]\d*)\b/);
+    if (!match || !changed.has(match[1]) || evidence.length < 40) return false;
+    const file = path.join(task.cwd, match[1]);
+    return Number(match[2]) <= fs.readFileSync(file, 'utf8').split('\n').length &&
+      /\b(?:observed|printed|returned|passed|failed|asserted|invoked|executed|confirmed|produces?|rejects?|preserves?|inspected)\b/i.test(evidence);
+  };
   const complete = stageSession && result.sessionId && result.sessionId !== stageSession && report && !Array.isArray(report) &&
-    report.head === sourceHead && report.revision === state.revision &&
+    report.head === sourceHead && report.revision === state.revision && changed.size > 0 &&
     Array.isArray(report.acceptance) && report.acceptance.length === acceptance.length &&
-    acceptance.every(item => report.acceptance.some(covered => covered.item === item && /[^\s:]+:\d+\b/.test(covered.evidence || ''))) &&
+    acceptance.every((item, index) => report.acceptance.some(covered => {
+      const oracle = execution.find(row => row.id.toUpperCase() === `A${index + 1}`);
+      return covered.item === item && inspected(covered.evidence) &&
+        oracle && covered.evidence.includes(oracle.command) && covered.evidence.includes(oracle.observed);
+    })) &&
     Array.isArray(report.risks) && report.risks.length === risks.length &&
-    risks.every(risk => report.risks.some(item => item.risk === risk && /[^\s:]+:\d+\b/.test(item.evidence || ''))) &&
+    risks.every(risk => report.risks.some(item => item.risk === risk && inspected(item.evidence))) &&
     Array.isArray(report.findings);
   if (!complete || git(task.cwd, ['rev-parse', 'HEAD']) !== head || revision(task.cwd, task.taskRootRelative) !== state.revision) {
     throw new Error(`${artifact.file}: independent reviewer proof is missing, scope-incomplete, or not bound to exact HEAD`);
   }
-  saveRecord(task, `${name}-proof`, { artifact: artifact.file, hash: artifact.hash, reviewed_head: sourceHead, head, revision: state.revision, session: result.sessionId, report });
+  saveRecord(task, `${name}-proof`, { artifact: artifact.file, hash: artifact.hash, reviewed_head: sourceHead, head, revision: state.revision, changed: [...changed], session: result.sessionId, report });
   if (report.findings.length) throw new Error(`${artifact.file}: independent reviewer found consequential defects; clean review cannot advance`);
   return { head, session: result.sessionId };
 }
@@ -304,7 +354,8 @@ export async function runSkill(ctx, task, state, inputs, skill, step, feedback =
     const executionRows = skill === 'verify-implementation' ? requireAcceptanceEvidence(task, state, artifact) : [];
     const codeRevision = revision(task.cwd, task.taskRootRelative);
     if (!mutations.has(skill) && state.revision !== codeRevision) throw new Error(`${skill} changed implementation files; its independent observation is invalid`);
-    if (skill === 'verify-implementation' && artifact.status === 'passed') executeVerification(task, state, artifact, executionRows, step);
+    const executionEvidence = skill === 'verify-implementation' && artifact.status === 'passed'
+      ? executeVerification(task, state, artifact, executionRows, step) : [];
     if (hostedStage) {
       const hosted = await hostedProof(task);
       if (!currentHostedCapture(hosted) || (skill === 'describe-pr' && !hosted.descriptionCurrent)) {
@@ -330,7 +381,7 @@ export async function runSkill(ctx, task, state, inputs, skill, step, feedback =
       if (afterProgress.remaining >= beforeProgress.remaining) recovery = makeRecovery(skill, newSource, beforeProgress, afterProgress, artifact, codeRevision);
     }
     const generation = state.generation + (mutations.has(skill) ? 1 : 0);
-    const next = { ...state, ...after, revision: codeRevision, generation, proofs: { ...state.proofs, [artifact.type]: { hash: artifact.hash, revision: codeRevision, generation, session: result.sessionId || name } } };
+    const next = { ...state, ...after, revision: codeRevision, generation, proofs: { ...state.proofs, [artifact.type]: { hash: artifact.hash, revision: codeRevision, generation, session: result.sessionId || name, ...(executionEvidence.length ? { executionEvidence } : {}) } } };
     if (recovery) next.recovery = recovery;
     if (recovery) saveRecord(task, `${name}-recovery`, recovery);
     saveRecord(task, name, { skill, artifact: artifact.file, hash: artifact.hash, revision: codeRevision, generation, session: result.sessionId ?? null, session_file: result.sessionFile ?? null, model: result.model ?? selection.model, selected_model: selection.model, model_selection: selection, modelAttempts: result.modelAttempts ?? null, model_attempts: result.modelAttempts ?? null, result: result.text, ...(recovery ? { recovery } : {}) });
