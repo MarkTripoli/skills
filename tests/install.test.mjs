@@ -397,6 +397,57 @@ test("video skills install by their canonical names without enabling workflow or
   assert.equal(fs.readFileSync(foreign, "utf8"), "keep unrelated resource\n");
 });
 
+
+test("project OMP installs reject symlinked skill and agent destinations before mutation", () => {
+  for (const destination of ["skills", "agents"]) {
+    const home = tmpdir("omp-project-install-home-");
+    const project = tmpdir("omp-project-install-project-");
+    const outside = tmpdir("omp-project-install-outside-");
+    const skillName = destination === "skills" ? "show-me" : "agent-implementer";
+    const link = path.join(project, ".omp", destination);
+    const sentinel = destination === "skills"
+      ? path.join(outside, skillName, "SKILL.md")
+      : path.join(outside, `${skillName}.md`);
+    put(sentinel, "external install sentinel\n");
+    fs.mkdirSync(path.dirname(link), { recursive: true });
+    fs.symlinkSync(outside, link, "dir");
+
+    const planned = plan({
+      targets: ["oh-my-pi"], skillNames: [skillName], project: true, cwd: project, home, env,
+    });
+    assert.throws(() => apply(planned, {
+      built: buildTrees(planned, tmpdir()), uninstall: false, home,
+    }), /refusing symlinked project destination/);
+
+    assert.equal(fs.readFileSync(sentinel, "utf8"), "external install sentinel\n");
+    assert.equal(fs.readlinkSync(link), outside);
+  }
+});
+
+test("project OMP hook uninstall refuses symlinked security and publication directories", () => {
+  for (const hook of ["security", "publication"]) {
+    const home = tmpdir("omp-project-uninstall-home-");
+    const project = tmpdir("omp-project-uninstall-project-");
+    const outside = tmpdir("omp-project-uninstall-outside-");
+    const name = hook === "security" ? "skills-security" : "skills-publication";
+    const entry = hook === "security" ? "hooks/security-edit.mjs" : "hooks/omp-publication.mjs";
+    const externalDirectory = path.join(outside, name);
+    const sentinel = path.join(externalDirectory, entry);
+    put(sentinel, "external hook sentinel\n");
+    const link = path.join(project, ".omp", "hooks", name);
+    fs.mkdirSync(path.dirname(link), { recursive: true });
+    fs.symlinkSync(externalDirectory, link, "dir");
+
+    const planned = plan({
+      targets: ["oh-my-pi"], skillNames: [], ompPublicationHook: true,
+      project: true, cwd: project, home, env, uninstall: true,
+    });
+    assert.throws(() => apply(planned, { built: new Map(), uninstall: true, home }), /refusing symlinked project destination/);
+
+    assert.equal(fs.readFileSync(sentinel, "utf8"), "external hook sentinel\n");
+    assert.equal(fs.readlinkSync(link), externalDirectory);
+  }
+});
 test("OMP hook installation preserves external files behind symlinked destinations", () => {
   for (const symlinkParent of [false, true]) {
     const home = tmpdir("omp-hook-safe-home-");

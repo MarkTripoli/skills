@@ -141,7 +141,7 @@ export function plan(options) {
   }
   if (atomic) steps.push({ target: 'atomic', kind: 'workflow', to: atomicDestination({ project, cwd, home, env }) });
   if (!atomic && targets.includes('codex') && !project && (targets.includes('pi') || targets.includes('oh-my-pi'))) notes.push('Pi and Oh My Pi also read ~/.agents/skills, where the Codex copy lives; their own skill directories are installed too, so a skill may appear twice by name in those runtimes');
-  return { steps, notes, names, requestedNames };
+  return { steps, notes, names, requestedNames, projectRoot: project ? path.resolve(cwd) : null };
 }
 
 export function short(file, home) { return file.startsWith(home) ? `~${file.slice(home.length)}` : file; }

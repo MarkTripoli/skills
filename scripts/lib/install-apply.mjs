@@ -156,6 +156,171 @@ function copyHookFiles(sets) {
   }
 }
 
+const SAFE_HOOK_REMOVE_SCRIPT = String.raw`import errno, json, os, stat, sys
+if not hasattr(os, 'O_NOFOLLOW') or not hasattr(os, 'O_DIRECTORY'):
+    raise SystemExit(1)
+root_fd = os.dup(3)
+
+def fail():
+    raise RuntimeError('unsafe OMP hook destination or secure removal unavailable')
+
+def path_parts(value):
+    if not value or value.startswith('/'):
+        fail()
+    parts = value.split('/')
+    if any(part in ('', '.', '..') for part in parts):
+        fail()
+    return parts
+
+def open_parent(parts):
+    fd = os.dup(root_fd)
+    for component in parts[:-1]:
+        try:
+            child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+        except FileNotFoundError:
+            os.close(fd)
+            return None
+        except OSError:
+            os.close(fd)
+            fail()
+        os.close(fd)
+        fd = child
+    return fd
+
+def check(parts, expected):
+    parent = open_parent(parts)
+    if parent is None:
+        return
+    try:
+        try:
+            info = os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        except OSError:
+            fail()
+        valid = stat.S_ISREG(info.st_mode) if expected == 'file' else stat.S_ISDIR(info.st_mode)
+        if not valid:
+            fail()
+    finally:
+        os.close(parent)
+
+def remove_file(parts):
+    parent = open_parent(parts)
+    if parent is None:
+        return
+    try:
+        check(parts, 'file')
+        try:
+            os.unlink(parts[-1], dir_fd=parent)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            fail()
+    finally:
+        os.close(parent)
+
+def remove_empty_dir(parts):
+    parent = open_parent(parts)
+    if parent is None:
+        return
+    try:
+        check(parts, 'directory')
+        try:
+            os.rmdir(parts[-1], dir_fd=parent)
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            if error.errno not in (errno.ENOTEMPTY, errno.EEXIST):
+                fail()
+    finally:
+        os.close(parent)
+
+try:
+    required = (os.open, os.stat, os.unlink, os.rmdir)
+    if not hasattr(os, 'supports_dir_fd') or any(function not in os.supports_dir_fd for function in required):
+        fail()
+    request = json.loads(sys.stdin.buffer.read())
+    files = [path_parts(value) for value in request['files']]
+    directories = [path_parts(value) for value in request['directories']]
+    for parts in files:
+        check(parts, 'file')
+    for parts in directories:
+        check(parts, 'directory')
+    for parts in files:
+        remove_file(parts)
+    for parts in directories:
+        remove_empty_dir(parts)
+except Exception:
+    sys.stderr.write(json.dumps({'error': 'unsafe OMP hook destination or secure removal unavailable'}))
+    sys.exit(1)
+finally:
+    os.close(root_fd)`;
+
+function hookSets(planned) {
+  return planned.steps.flatMap(step => {
+    if (step.kind === 'security-edit-hook') return [{ root: step.root, to: step.to, names: securityHookFiles, directories: ['hooks', ''] }];
+    if (step.kind === 'publication-hook') return [{ root: step.root, to: step.to, names: publicationFiles, directories: ['hooks', 'shared', ''] }];
+    return [];
+  });
+}
+
+function removeHookFiles(sets) {
+  const roots = new Set(sets.map(set => set.root));
+  if (roots.size !== 1) throw new Error('OMP hooks must share one trusted installation root');
+  const [root] = roots;
+  const paths = values => values.map(value => path.relative(root, value).split(path.sep).join('/'));
+  const files = paths(sets.flatMap(({ to, names }) => names.map(name => path.join(to, name))));
+  const directories = paths(sets.flatMap(({ to, directories: names }) => names.map(name => path.join(to, name))));
+  let rootFd;
+  try {
+    rootFd = fs.openSync(fs.realpathSync(root), fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY || 0) | (fs.constants.O_NOFOLLOW || 0));
+    const result = spawnSync('python3', ['-c', SAFE_HOOK_REMOVE_SCRIPT], {
+      input: JSON.stringify({ files, directories }), encoding: null, timeout: 30_000, maxBuffer: 1024 * 1024,
+      stdio: ['pipe', 'ignore', 'pipe', rootFd],
+    });
+    if (result.error?.code === 'ENOENT') throw new Error('Python 3 is required for safe OMP hook removal');
+    if (result.error || result.status !== 0) throw new Error('refusing unsafe OMP hook destination or secure removal unavailable');
+  } finally {
+    if (rootFd !== undefined) fs.closeSync(rootFd);
+  }
+}
+
+function preflightProjectDestinations(planned, uninstall) {
+  if (!planned.projectRoot) return;
+  const lexicalRoot = path.resolve(planned.projectRoot);
+  const root = fs.realpathSync(lexicalRoot);
+  const destinations = [];
+  for (const step of planned.steps) {
+    if (step.kind === 'skills') {
+      const names = uninstall ? (step.removeNames || step.names) : step.names;
+      destinations.push(...names.map(name => path.join(step.to, name)));
+    } else if (step.kind === 'agents') {
+      destinations.push(...step.names.map(name => path.join(step.to, `${name}.${step.format}`)));
+    } else if (step.kind === 'config') destinations.push(step.to);
+    else if (step.kind === 'security-edit-hook' || step.kind === 'publication-hook') {
+      destinations.push(...step.kind === 'security-edit-hook'
+        ? securityHookFiles.map(name => path.join(step.to, name))
+        : publicationFiles.map(name => path.join(step.to, name)));
+    } else if (step.kind === 'workflow') {
+      destinations.push(step.to, path.join(path.dirname(step.to), 'skills-delivery.mjs'));
+    }
+  }
+  for (const destination of destinations) {
+    const relative = path.relative(lexicalRoot, path.resolve(destination));
+    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      throw new Error(`refusing project destination outside its root: ${destination}`);
+    }
+    let current = root;
+    for (const component of relative.split(path.sep).filter(Boolean)) {
+      current = path.join(current, component);
+      let info;
+      try { info = fs.lstatSync(current); }
+      catch (error) { if (error.code === 'ENOENT') break; throw error; }
+      if (info.isSymbolicLink()) throw new Error(`refusing symlinked project destination: ${destination}`);
+    }
+  }
+}
+
 function copyDir(from, to) {
   fs.rmSync(to, { recursive: true, force: true });
   fs.mkdirSync(path.dirname(to), { recursive: true });
@@ -188,14 +353,10 @@ function selectedConfigBlock(text, block, names, uninstall) {
 }
 export function apply(planned, { built, uninstall, home }) {
   const done = [];
-  if (!uninstall) {
-    const hookSets = planned.steps.flatMap(step => {
-      if (step.kind === 'security-edit-hook') return [{ root: step.root, to: step.to, names: securityHookFiles }];
-      if (step.kind === 'publication-hook') return [{ root: step.root, to: step.to, names: publicationFiles }];
-      return [];
-    });
-    if (hookSets.length > 0) copyHookFiles(hookSets);
-  }
+  preflightProjectDestinations(planned, uninstall);
+  const hooks = hookSets(planned);
+  if (uninstall && hooks.length > 0) removeHookFiles(hooks);
+  else if (hooks.length > 0) copyHookFiles(hooks);
   for (const step of planned.steps) {
     const tree = built.get(step.target);
     switch (step.kind) {
@@ -220,28 +381,10 @@ export function apply(planned, { built, uninstall, home }) {
         done.push(`${uninstall ? 'updated selected workers in' : 'updated the workers block in'} ${short(step.to, home)}`); break;
       }
       case 'security-edit-hook': {
-        if (uninstall) {
-          for (const name of securityHookFiles) fs.rmSync(path.join(step.to, name), { force: true });
-        }
-        if (uninstall) {
-          for (const dir of ['hooks', '']) {
-            const target = path.join(step.to, dir);
-            if (fs.existsSync(target) && fs.readdirSync(target).length === 0) fs.rmdirSync(target);
-          }
-        }
         done.push(`${uninstall ? 'removed' : 'installed'} Oh My Pi edit-time security advisory ${short(path.join(step.to, 'hooks', 'security-edit.mjs'), home)}; register with omp --hook=<installed-path>`);
         break;
       }
       case 'publication-hook': {
-        if (uninstall) {
-          for (const name of publicationFiles) fs.rmSync(path.join(step.to, name), { force: true });
-        }
-        if (uninstall) {
-          for (const dir of ['hooks', 'shared', '']) {
-            const target = path.join(step.to, dir);
-            if (fs.existsSync(target) && fs.readdirSync(target).length === 0) fs.rmdirSync(target);
-          }
-        }
         done.push(`${uninstall ? 'removed' : 'installed'} optional OMP Bash publication guard ${short(path.join(step.to, 'hooks', 'omp-publication.mjs'), home)}; ${uninstall ? 'registration was not changed' : 'launch with omp --hook=<installed-path> and SKILLS_PUBLICATION_TASK_DIR=<absolute-task-dir>; only intercepted Bash calls are guarded (not direct shell or Codex)'}`); break;
       }
       case 'workflow': {
