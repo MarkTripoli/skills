@@ -1,12 +1,34 @@
+import fs from "node:fs";
+import path from "node:path";
+
 const JOIN_FIELDS = ["fixtureVersion", "model", "actualModel", "sourceRevision", "usageCoverage"];
 const MINIMUM_SAMPLES = 10;
+const COST_COMPONENTS = ["input", "output", "cacheRead", "cacheWrite"];
 
 function positiveInteger(value) {
   return Number.isSafeInteger(value) && value > 0;
 }
 
-function isRetainedReference(value) {
-  return typeof value === "string" && value.trim().length > 0 && /(?:\/|\\|^https?:\/\/)/.test(value.trim()) && !/^passed$/i.test(value.trim());
+function finiteNonNegative(value) {
+  return Number.isFinite(value) && value >= 0;
+}
+
+function resolveManifestPath(run) {
+  return typeof run?.rawOutput === "string" && run.rawOutput.trim()
+    ? path.resolve(run.rawOutput, "comparison-run.json")
+    : null;
+}
+
+function completeCost(run) {
+  const phases = Array.isArray(run.phases) && run.phases.length ? run.phases.map((phase) => phase.cost) : null;
+  const source = COST_COMPONENTS.every((field) => finiteNonNegative(run.metrics?.cost?.[field]))
+    ? run.metrics.cost
+    : phases?.every((cost) => cost && COST_COMPONENTS.every((field) => finiteNonNegative(cost[field])))
+      ? Object.fromEntries(COST_COMPONENTS.map((field) => [field, phases.reduce((sum, cost) => sum + cost[field], 0)]))
+      : null;
+  return source && finiteNonNegative(run.metrics?.cost?.total)
+    ? { total: run.metrics.cost.total, ...Object.fromEntries(COST_COMPONENTS.map((field) => [field, source[field]])) }
+    : null;
 }
 
 function recordedRunEvidence(run, side) {
@@ -19,27 +41,31 @@ function recordedRunEvidence(run, side) {
   if (run.actualModel !== undefined && (!Array.isArray(models) || models.length !== 1 || models[0] !== run.actualModel)) {
     problems.push(`${side}: observed model conflicts with coverage`);
   }
+  const manifestPath = resolveManifestPath(run);
+  const evidenceRef = typeof run.evidenceRef === "string" ? path.resolve(run.evidenceRef) : manifestPath;
+  const cost = completeCost(run);
   const normalized = {
-    runId: run.runId ?? run.rawOutput,
+    runId: manifestPath,
+    manifestPath,
     fixtureVersion: run.fixtureVersion ?? run.fixtureRevision,
     model: run.model,
     actualModel,
     sourceRevision: run.sourceRevision,
     usageCoverage: coverage?.complete === true ? "complete" : coverage?.complete === false ? "incomplete" : run.usageCoverage,
     sampleCount: run.sampleCount,
-    evidenceRef: run.evidenceRef ?? (typeof run.rawOutput === "string" ? `${run.rawOutput}/comparison-run.json` : null),
-    cost: Number.isFinite(run.metrics?.cost?.total) ? { amount: run.metrics.cost.total, currency: "USD", basis: run.metrics.cost_basis, source: run.metrics.cost_source } : null,
-    costEvents: coverage?.cost_events,
+    evidenceRef,
+    cost: cost ? { ...cost, currency: "USD", basis: run.metrics?.cost_basis, source: run.metrics?.cost_source } : null,
     usageEvents: coverage?.usage_events,
     measuredEvents: coverage?.turns,
+    tokens: run.metrics?.tokens,
   };
   for (const field of JOIN_FIELDS) {
     if (typeof normalized[field] !== "string" || !normalized[field].trim()) problems.push(`${side}: ${field} missing`);
   }
-  if (!isRetainedReference(normalized.runId)) problems.push(`${side}: distinct retained run identity missing`);
+  if (!manifestPath) problems.push(`${side}: retained manifest path missing`);
+  if (normalized.evidenceRef !== manifestPath) problems.push(`${side}: evidence reference does not identify its recorded manifest`);
   if (normalized.usageCoverage !== "complete") problems.push(`${side}: usage coverage is not complete`);
   if (!positiveInteger(normalized.sampleCount)) problems.push(`${side}: sampleCount must be a positive integer`);
-  if (!isRetainedReference(normalized.evidenceRef)) problems.push(`${side}: evidenceRef missing`);
   return { normalized, problems };
 }
 
@@ -53,7 +79,7 @@ export function auditEvalPair(beforeInput, afterInput, { minimumSamples = MINIMU
   const before = beforeResult.normalized;
   const after = afterResult.normalized;
   if (before && after) {
-    if (before.runId === after.runId) problems.push("before and after must be distinct retained runs");
+    if (before.manifestPath === after.manifestPath) problems.push("before and after resolve to the same retained manifest");
     if (problems.length === 0) {
       for (const field of JOIN_FIELDS) {
         if (before[field] !== after[field]) problems.push(`${field} mismatch`);
@@ -63,11 +89,14 @@ export function auditEvalPair(beforeInput, afterInput, { minimumSamples = MINIMU
   }
   const comparable = problems.length === 0;
   const qualityClaimsAllowed = Boolean(comparable && before?.sampleCount >= minimumSamples && after?.sampleCount >= minimumSamples);
-  const costEvidenceValid = (run) => run?.cost && Number.isFinite(run.cost.amount) && run.cost.amount >= 0 &&
+  const usageComplete = (run) => COST_COMPONENTS.every((field) => finiteNonNegative(run?.tokens?.[field]));
+  const costEvidenceValid = (run) => run?.cost && finiteNonNegative(run.cost.total) &&
+    COST_COMPONENTS.every((field) => finiteNonNegative(run.cost[field])) && usageComplete(run) &&
     positiveInteger(run.measuredEvents) && run.usageEvents === run.measuredEvents && run.costEvents === run.measuredEvents &&
     run.cost.currency === "USD" && run.cost.basis === "provider_billed_usd" && typeof run.cost.source === "string" && run.cost.source.trim();
   const savingsClaimsAllowed = Boolean(qualityClaimsAllowed && costEvidenceValid(before) && costEvidenceValid(after) &&
-    before.cost.currency === after.cost.currency && before.cost.basis === after.cost.basis);
+    before.cost.currency === after.cost.currency && before.cost.basis === after.cost.basis &&
+    before.cost.source === after.cost.source);
   return {
     qualityClaimsAllowed,
     claimsAllowed: qualityClaimsAllowed,
@@ -78,14 +107,30 @@ export function auditEvalPair(beforeInput, afterInput, { minimumSamples = MINIMU
   };
 }
 
+function retainedGradingEvidence(grading, audit, proposal) {
+  if (!Array.isArray(grading?.evidence)) return [];
+  return grading.evidence.flatMap((reference) => {
+    if (typeof reference !== "string" || !reference.trim() || /^https?:\/\//i.test(reference)) return [];
+    const file = path.resolve(reference);
+    try {
+      const artifact = JSON.parse(fs.readFileSync(file, "utf8"));
+      if (artifact.status !== "passed" || artifact.targetScenario !== proposal.targetScenario ||
+          artifact.expectedBehavior !== proposal.expectedBehavior || artifact.fixtureRevision !== audit.matched?.fixtureVersion) return [];
+      return [file];
+    } catch {
+      return [];
+    }
+  });
+}
+
 export function decideFeedback({ audit, proposal, grading, approval }) {
   const problems = [];
-  if (!audit?.qualityClaimsAllowed) problems.push("comparable evidence required");
+  if (!audit?.qualityClaimsAllowed || !audit.matched) problems.push("comparable evidence required");
   if (!proposal || typeof proposal.rule !== "string" || !proposal.rule.trim() || typeof proposal.rationale !== "string" || !proposal.rationale.trim()) problems.push("rule and rationale required");
   if (!proposal || typeof proposal.targetScenario !== "string" || !proposal.targetScenario.trim() || typeof proposal.expectedBehavior !== "string" || !proposal.expectedBehavior.trim()) problems.push("target scenario and expected behavior required");
-  const gradingEvidence = Array.isArray(grading?.evidence) ? grading.evidence.filter(isRetainedReference) : [];
-  if (!grading || grading.status !== "passed" || gradingEvidence.length === 0) problems.push("targeted grading evidence reference required");
   if (grading && proposal && (grading.targetScenario !== proposal.targetScenario || grading.expectedBehavior !== proposal.expectedBehavior)) problems.push("grading target does not match proposal");
+  const gradingEvidence = retainedGradingEvidence(grading, audit ?? {}, proposal ?? {});
+  if (!grading || grading.status !== "passed" || gradingEvidence.length === 0) problems.push("targeted grading artifact must exist and match fixture, scenario, and expected behavior");
   if (!approval || !["approved", "rejected"].includes(approval.decision) || typeof approval.actor !== "string" || !approval.actor.trim() || !Number.isFinite(Date.parse(approval.at)) || typeof approval.reversal !== "string" || !approval.reversal.trim()) problems.push("human decision, timestamp, actor, and reversal path required");
   if (problems.length) return { disposition: "held", problems, applied: false };
   return {
