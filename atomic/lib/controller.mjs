@@ -1,8 +1,9 @@
 import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { observeArtifacts, planProgress, requireFresh, section } from './artifacts.mjs';
-import { revision, saveRecord } from './workspace.mjs';
+import { digest, observeArtifacts, planProgress, requireFresh, section } from './artifacts.mjs';
+import { git, revision, saveRecord } from './workspace.mjs';
 import { selectStageModel } from './models.mjs';
 import { currentHostedCapture, hostedProof } from './hosted-proof.mjs';
 import {
@@ -140,25 +141,119 @@ function makeRecovery(skill, source, before, after, receipt, codeRevision) {
   };
 }
 function validProof(state, type, status) { return currentProof(state, type) && (!status || state.latest[type].status === status); }
-function requireAcceptanceEvidence(task, state, artifact) {
-  if (artifact.type !== 'verification' || artifact.status !== 'passed') return;
+function acceptanceItems(task, state) {
   const request = fs.readFileSync(path.join(task.taskDir, 'task.md'), 'utf8');
-  const criteria = section(request, 'Acceptance criteria').trim();
-  const source = state.latest.plan || state.latest['structure-outline'];
-  const hasVerifyItem = text => /(?:^|\n)### Verify\s*\n(?:(?!^#{1,3}\s).*\n)*?\s*[-*]\s+(?:\[[ xX]\]\s+)?\S/m.test(text || '');
-  const required = (criteria && !/^(?:none\.?|n\/a|not applicable)\.?$/i.test(criteria)) ||
-    /^\s*[-*]\s+\S/m.test(section(source?.text || '', 'Desired End State')) ||
-    [source, state.latest.implementation, state.latest.fix].some(item => hasVerifyItem(item?.text)) ||
-    (state.latest.reproduction && /\bRun:\s*\S/i.test(state.latest.reproduction.text));
-  if (!required) return;
-  const rows = section(artifact.text, 'Items').split('\n').filter(line => line.trim().startsWith('|'))
-    .map(line => line.split('|').slice(1, -1).map(cell => cell.trim().toLowerCase()));
-  const header = rows.shift() || [];
-  const id = header.indexOf('id');
-  const verdict = header.indexOf('verdict');
-  if (id < 0 || verdict < 0 || !rows.some(row => /^a[1-9]\d*$/.test(row[id] || '') && row[verdict] === 'pass')) {
-    throw new Error(`${artifact.file}: passed verification lacks an accepted A-row for required upstream acceptance evidence`);
+  const source = primarySource(state.latest);
+  const items = [];
+  const seen = new Set();
+  const add = text => {
+    const item = text.replace(/^\s*(?:[-*]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/, '').trim();
+    const key = item.toLowerCase().replace(/[`*_]/g, '').replace(/\s+/g, ' ');
+    if (item && !/^(?:none\.?|n\/a|not applicable)\.?$/i.test(item) && !seen.has(key)) {
+      seen.add(key);
+      items.push(item);
+    }
+  };
+  const bullets = text => text.split('\n').filter(line => /^\s*(?:[-*]|\d+[.)])\s+/.test(line));
+  const criteria = section(request, 'Acceptance criteria');
+  const taskItems = bullets(criteria);
+  for (const line of taskItems.length ? taskItems : criteria.trim() ? [criteria.trim()] : []) add(line);
+  for (const line of bullets(section(source?.text || '', 'Desired End State'))) add(line);
+  for (const artifact of [source, state.latest.implementation, state.latest.fix]) {
+    if (!artifact) continue;
+    const lines = artifact.text.split('\n');
+    let verify = false;
+    for (const line of lines) {
+      if (/^#{1,3}\s/.test(line)) verify = /^### Verify\s*$/i.test(line);
+      else if (verify && /^\s*[-*]\s+(?:\[[ xX]\]\s+)?\S/.test(line)) add(line);
+    }
   }
+  const reproduction = state.latest.reproduction?.text.match(/^\s*(?:[-*]\s*)?Run:\s*(.+)$/im);
+  if (reproduction) add(`Run: ${reproduction[1]}`);
+  return items;
+}
+function verificationRows(artifact) {
+  const table = section(artifact.text, 'Items').split('\n')
+    .filter(line => /^\s*\|/.test(line))
+    .map(line => line.split(/(?<!\\)\|/).slice(1, -1).map(cell => cell.trim()));
+  const header = table.shift()?.map(cell => cell.toLowerCase()) || [];
+  const columns = Object.fromEntries(['id', 'item', 'decided by', 'observed', 'verdict'].map(name => [name, header.indexOf(name)]));
+  if (Object.values(columns).some(index => index < 0)) throw new Error(`${artifact.file}: verification Items table lacks proof columns`);
+  return table.filter(row => !row.every(cell => /^-+$/.test(cell))).map(row =>
+    Object.fromEntries(Object.entries(columns).map(([name, index]) => [name, row[index] || ''])));
+}
+function requireAcceptanceEvidence(task, state, artifact) {
+  if (artifact.type !== 'verification' || artifact.status !== 'passed') return [];
+  const promises = acceptanceItems(task, state);
+  const rows = verificationRows(artifact);
+  const acceptance = rows.filter(row => /^A/i.test(row.id));
+  const normalized = value => value.toLowerCase().replace(/[`*_\[\]]/g, '').replace(/\s+/g, ' ').trim();
+  if (!rows.length || acceptance.length !== promises.length || acceptance.some(row => !/^A[1-9]\d*$/i.test(row.id)) || promises.some((promise, index) => {
+    const row = acceptance.find(candidate => candidate.id.toUpperCase() === `A${index + 1}`);
+    return !row || row.verdict.toLowerCase() !== 'pass' || !normalized(row.item).includes(normalized(promise));
+  }) || new Set(acceptance.map(row => row.id.toUpperCase())).size !== acceptance.length) {
+    throw new Error(`${artifact.file}: passed verification lacks a matching passed A-row for every upstream acceptance item (or has an unaccounted A-row)`);
+  }
+  return rows.filter(row => /^[AC][1-9]\d*$/i.test(row.id) && row.verdict.toLowerCase() === 'pass');
+}
+function executeVerification(task, state, artifact, rows, step) {
+  const beforeHead = git(task.cwd, ['rev-parse', 'HEAD']);
+  const evidence = [];
+  for (const row of rows) {
+    const command = row['decided by'].match(/^`([^`\n]+)`$/)?.[1];
+    if (!command) throw new Error(`${artifact.file}: ${row.id} has no executable command; an artifact assertion is not proof`);
+    const run = spawnSync('/bin/sh', ['-c', command], {
+      cwd: task.cwd, encoding: 'utf8', timeout: 600_000, maxBuffer: 16 * 1024 * 1024,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    });
+    const actualLines = `${run.stdout || ''}\n${run.stderr || ''}`.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    const output = actualLines.join(' ');
+    const exit = row.observed.match(/\b(?:exit(?:ed)?(?:\s+code)?|status)\s*[:=]?\s*0\b/i);
+    const quoted = exit ? row.observed.slice(exit.index + exit[0].length)
+      .replace(/^[\s:;,.—-]*(?:(?:stdout|output)\s*[:=]\s*)?/i, '')
+      .replace(/^[`"']|[`"']$/g, '').trim() : '';
+    if (run.error || run.status !== 0 || !exit ||
+      (row.id.toUpperCase().startsWith('A') && (!quoted || !actualLines.includes(quoted)))) {
+      throw new Error(`${artifact.file}: ${row.id} claimed pass is not corroborated by execution (${run.error?.message || `exit ${run.status}`}; ${output.slice(0, 300)})`);
+    }
+    const current = revision(task.cwd, task.taskRootRelative);
+    if (current !== state.revision || git(task.cwd, ['rev-parse', 'HEAD']) !== beforeHead) {
+      throw new Error(`${artifact.file}: ${row.id} changed the exact source revision while checking it`);
+    }
+    evidence.push({ id: row.id, command, exit: run.status, observed: quoted, output_sha256: digest(output), head: beforeHead, revision: current });
+  }
+  saveRecord(task, `${String(step).padStart(3, '0')}-verification-execution`, { artifact: artifact.file, hash: artifact.hash, head: beforeHead, revision: state.revision, evidence });
+  return evidence;
+}
+async function requireIndependentReview(ctx, task, state, artifact, step, stageSession, acceptance, sourceHead, model) {
+  const head = git(task.cwd, ['rev-parse', 'HEAD']);
+  if (artifact.metadata.head_sha !== sourceHead || git(task.cwd, ['merge-base', sourceHead, head]) !== sourceHead) {
+    throw new Error(`${artifact.file}: clean review is not pinned to exact source HEAD ${sourceHead}`);
+  }
+  const risks = ['functional correctness', 'security and data integrity', 'acceptance oracle and test reachability'];
+  const name = `${String(step).padStart(3, '0')}-independent-review`;
+  const prompt = [
+    `Independently review the changed implementation in ${task.cwd} against task ${path.join(task.taskDir, 'task.md')}. Do not edit files or publish anything.`,
+    `Pin reviewed source HEAD ${sourceHead} (current HEAD ${head} may include only the task artifact commit) and source revision ${state.revision}; inspect the actual diff, task and authoritative artifacts. Review acceptance items ${JSON.stringify(acceptance)} and risks ${JSON.stringify(risks)}.`,
+    `Return only a JSON object {"head":string,"revision":string,"acceptance":[{"item":string,"evidence":string}],"risks":[{"risk":string,"evidence":string}],"findings":[{"location":string,"problem":string}]}. Include every assigned acceptance item with concrete changed path:line and observed behavior/test oracle; cover every assigned risk with concrete changed path:line and observation. Report all consequential findings. An unavailable or incomplete inspection must not claim coverage.`,
+  ].join('\n\n');
+  const result = await ctx.task(name, { prompt, context: 'fresh', cwd: task.cwd, model, maxOutput: { bytes: 16_384, lines: 160 } });
+  let report;
+  try { report = JSON.parse(result.text); }
+  catch { throw new Error(`${artifact.file}: independent reviewer did not return a completed structured report`); }
+  const complete = stageSession && result.sessionId && result.sessionId !== stageSession && report && !Array.isArray(report) &&
+    report.head === sourceHead && report.revision === state.revision &&
+    Array.isArray(report.acceptance) && report.acceptance.length === acceptance.length &&
+    acceptance.every(item => report.acceptance.some(covered => covered.item === item && /[^\s:]+:\d+\b/.test(covered.evidence || ''))) &&
+    Array.isArray(report.risks) && report.risks.length === risks.length &&
+    risks.every(risk => report.risks.some(item => item.risk === risk && /[^\s:]+:\d+\b/.test(item.evidence || ''))) &&
+    Array.isArray(report.findings);
+  if (!complete || git(task.cwd, ['rev-parse', 'HEAD']) !== head || revision(task.cwd, task.taskRootRelative) !== state.revision) {
+    throw new Error(`${artifact.file}: independent reviewer proof is missing, scope-incomplete, or not bound to exact HEAD`);
+  }
+  saveRecord(task, `${name}-proof`, { artifact: artifact.file, hash: artifact.hash, reviewed_head: sourceHead, head, revision: state.revision, session: result.sessionId, report });
+  if (report.findings.length) throw new Error(`${artifact.file}: independent reviewer found consequential defects; clean review cannot advance`);
+  return { head, session: result.sessionId };
 }
 function currentHostedDescription(state) {
   const proof = state.proofs?.['hosted-description'];
@@ -192,18 +287,24 @@ export async function runSkill(ctx, task, state, inputs, skill, step, feedback =
     saveRecord(task, `${name}-model`, choice);
     return choice;
   }, { timeoutMs: 90_000 });
+  const sourceHead = skill === 'review-code' ? git(task.cwd, ['rev-parse', 'HEAD']) : null;
   const result = await ctx.task(name, {
     prompt, context: 'fresh', cwd: task.cwd,
     model: selection.model,
     maxOutput: { bytes: 16_384, lines: 160 },
   });
-  return ctx.tool(`${name}-observe`, { task_dir: task.taskDir, skill, context_policy: inputs.context_policy ?? 'off' }, async () => {
+  const observed = await ctx.tool(`${name}-observe`, { task_dir: task.taskDir, skill, context_policy: inputs.context_policy ?? 'off' }, async () => {
     const after = observeArtifacts(task.taskDir);
     const hostedStage = skill === 'record-evidence' || skill === 'describe-pr';
     const artifact = hostedStage ? null : requireFresh(state, after, SKILLS[skill], expectedArtifactIteration(state, SKILLS[skill]));
-    if (skill === 'verify-implementation') requireAcceptanceEvidence(task, state, artifact);
+    if (['verify-implementation', 'review-code'].includes(skill) && (
+      fs.readFileSync(path.join(task.taskDir, 'task.md'), 'utf8') !== taskRequest ||
+      ['plan', 'structure-outline', 'implementation', 'fix', 'reproduction'].some(type => state.latest[type]?.hash !== after.latest[type]?.hash)
+    )) throw new Error(`${skill} changed authoritative task, plan, or receipt while claiming independent proof`);
+    const executionRows = skill === 'verify-implementation' ? requireAcceptanceEvidence(task, state, artifact) : [];
     const codeRevision = revision(task.cwd, task.taskRootRelative);
     if (!mutations.has(skill) && state.revision !== codeRevision) throw new Error(`${skill} changed implementation files; its independent observation is invalid`);
+    if (skill === 'verify-implementation' && artifact.status === 'passed') executeVerification(task, state, artifact, executionRows, step);
     if (hostedStage) {
       const hosted = await hostedProof(task);
       if (!currentHostedCapture(hosted) || (skill === 'describe-pr' && !hosted.descriptionCurrent)) {
@@ -235,6 +336,10 @@ export async function runSkill(ctx, task, state, inputs, skill, step, feedback =
     saveRecord(task, name, { skill, artifact: artifact.file, hash: artifact.hash, revision: codeRevision, generation, session: result.sessionId ?? null, session_file: result.sessionFile ?? null, model: result.model ?? selection.model, selected_model: selection.model, model_selection: selection, modelAttempts: result.modelAttempts ?? null, model_attempts: result.modelAttempts ?? null, result: result.text, ...(recovery ? { recovery } : {}) });
     return next;
   });
+  if (skill === 'review-code' && observed.latest['code-review']?.status === 'clean') {
+    await requireIndependentReview(ctx, task, state, observed.latest['code-review'], step, result.sessionId, acceptanceItems(task, state), sourceHead, selection.model);
+  }
+  return observed;
 }
 
 export async function artifactGate(ctx, task, inputs, state, type, step) {
