@@ -357,6 +357,28 @@ for (const project of [false, true]) {
   });
 }
 
+test("partial Oh My Pi uninstall preserves shared security hook until full target removal", () => {
+  const home = tmpdir("omp-partial-uninstall-home-");
+  const cwd = tmpdir("omp-partial-uninstall-project-");
+  const options = { targets: ["oh-my-pi"], skillNames: ["show-me", "record-evidence"], cwd, home, env };
+  const skillDir = destinations("oh-my-pi", options).skills;
+  const securityHook = path.join(home, ".omp", "agent", "hooks", "skills-security", "hooks", "security-edit.mjs");
+  install(options);
+  assert.ok(fs.existsSync(securityHook));
+
+  const partial = plan({ ...options, skillNames: ["show-me"], uninstall: true });
+  assert.equal(partial.steps.some(step => step.kind === "security-edit-hook"), false);
+  apply(partial, { built: new Map(), uninstall: true, home });
+  assert.equal(fs.existsSync(path.join(skillDir, "show-me")), false);
+  assert.ok(fs.existsSync(path.join(skillDir, "record-evidence", "SKILL.md")));
+  assert.ok(fs.existsSync(securityHook));
+
+  const full = plan({ ...options, skillNames: [], uninstall: true });
+  assert.ok(full.steps.some(step => step.kind === "security-edit-hook"));
+  apply(full, { built: new Map(), uninstall: true, home });
+  assert.equal(fs.existsSync(securityHook), false);
+});
+
 test("video skills install by their canonical names without enabling workflow orchestration", () => {
   const home = tmpdir("video-skills-install-");
   const skillNames = ["video-iterative-development", "video-iterative-orchestration"];
@@ -375,6 +397,206 @@ test("video skills install by their canonical names without enabling workflow or
   assert.equal(fs.readFileSync(foreign, "utf8"), "keep unrelated resource\n");
 });
 
+
+test("project OMP installs reject symlinked skill and agent destinations before mutation", () => {
+  for (const destination of ["skills", "agents"]) {
+    const home = tmpdir("omp-project-install-home-");
+    const project = tmpdir("omp-project-install-project-");
+    const outside = tmpdir("omp-project-install-outside-");
+    const skillName = destination === "skills" ? "show-me" : "agent-implementer";
+    const link = path.join(project, ".omp", destination);
+    const sentinel = destination === "skills"
+      ? path.join(outside, skillName, "SKILL.md")
+      : path.join(outside, `${skillName}.md`);
+    put(sentinel, "external install sentinel\n");
+    fs.mkdirSync(path.dirname(link), { recursive: true });
+    fs.symlinkSync(outside, link, "dir");
+
+    const planned = plan({
+      targets: ["oh-my-pi"], skillNames: [skillName], project: true, cwd: project, home, env,
+    });
+    assert.throws(() => apply(planned, {
+      built: buildTrees(planned, tmpdir()), uninstall: false, home,
+    }), /refusing symlinked project destination/);
+
+    assert.equal(fs.readFileSync(sentinel, "utf8"), "external install sentinel\n");
+    assert.equal(fs.readlinkSync(link), outside);
+  }
+});
+
+test("project installer Python helpers ignore project-local json modules", () => {
+  const home = tmpdir("omp-project-python-home-");
+  const project = tmpdir("omp-project-python-project-");
+  const sentinel = path.join(tmpdir("omp-project-python-outside-"), "sentinel");
+  put(sentinel, "unchanged\n");
+  put(path.join(project, "json.py"), `open(${JSON.stringify(sentinel)}, 'w').write('imported\\n')\n`);
+  const planned = plan({ targets: ["oh-my-pi"], skillNames: ["show-me"], project: true, cwd: project, home, env });
+  const built = buildTrees(planned, tmpdir());
+  const originalCwd = process.cwd();
+  try {
+    process.chdir(project);
+    apply(planned, { built, uninstall: false, home });
+  } finally {
+    process.chdir(originalCwd);
+  }
+  assert.equal(fs.readFileSync(sentinel, "utf8"), "unchanged\n");
+  assert.ok(fs.existsSync(path.join(project, ".omp", "skills", "show-me", "SKILL.md")));
+});
+
+test("project OMP installs and uninstalls stay rooted across destination parent swaps", () => {
+  for (const uninstall of [false, true]) {
+    for (const destination of ["skills", "agents"]) {
+      const home = tmpdir("omp-project-race-home-");
+      const project = tmpdir("omp-project-race-project-");
+      const outside = tmpdir("omp-project-race-outside-");
+      const skillName = destination === "skills" ? "show-me" : "agent-implementer";
+      const targetRoot = path.join(project, ".omp", destination);
+      const savedRoot = `${targetRoot}-saved`;
+      const outsideSentinel = destination === "skills"
+        ? path.join(outside, skillName, "SKILL.md")
+        : path.join(outside, `${skillName}.md`);
+      fs.mkdirSync(targetRoot, { recursive: true });
+      const savedFile = destination === "skills"
+        ? path.join(targetRoot, skillName, "SKILL.md")
+        : path.join(targetRoot, `${skillName}.md`);
+      put(savedFile, "original project file\n");
+      put(outsideSentinel, "external sentinel\n");
+
+      const planned = plan({
+        targets: ["oh-my-pi"], skillNames: [skillName], project: true, cwd: project, home, env, uninstall,
+      });
+      const built = uninstall ? new Map() : buildTrees(planned, tmpdir());
+      const root = path.resolve(project);
+      const originalOpen = fs.openSync;
+      let swapped = false;
+      fs.openSync = function (target, ...args) {
+        const fd = originalOpen.call(fs, target, ...args);
+        if (!swapped && target === root) {
+          fs.renameSync(targetRoot, savedRoot);
+          fs.symlinkSync(outside, targetRoot, "dir");
+          swapped = true;
+        }
+        return fd;
+      };
+      try {
+        assert.throws(() => apply(planned, { built, uninstall, home }), /refusing symlinked project destination/);
+      } finally {
+        fs.openSync = originalOpen;
+      }
+
+      assert.equal(swapped, true);
+      assert.equal(fs.readFileSync(outsideSentinel, "utf8"), "external sentinel\n");
+      assert.equal(fs.readFileSync(savedFile.replace(targetRoot, savedRoot), "utf8"), "original project file\n");
+      assert.equal(fs.readlinkSync(targetRoot), outside);
+    }
+  }
+});
+
+test("project root replacement after opening fails closed before external mutation", () => {
+  const home = tmpdir("omp-project-root-race-home-");
+  const project = tmpdir("omp-project-root-race-project-");
+  const savedProject = `${project}-saved`;
+  temps.push(savedProject);
+  const outside = tmpdir("omp-project-root-race-outside-");
+  const sentinel = path.join(outside, ".omp", "skills", "show-me", "SKILL.md");
+  put(sentinel, "external root sentinel\n");
+  const planned = plan({ targets: ["oh-my-pi"], skillNames: ["show-me"], project: true, cwd: project, home, env });
+  const built = buildTrees(planned, tmpdir());
+  const originalOpen = fs.openSync;
+  let swapped = false;
+  fs.openSync = function (target, ...args) {
+    const fd = originalOpen.call(fs, target, ...args);
+    if (!swapped && target === project) {
+      fs.renameSync(project, savedProject);
+      fs.symlinkSync(outside, project, "dir");
+      swapped = true;
+    }
+    return fd;
+  };
+  try {
+    assert.throws(() => apply(planned, { built, uninstall: false, home }), /project root identity change/);
+  } finally {
+    fs.openSync = originalOpen;
+  }
+  assert.equal(swapped, true);
+  assert.equal(fs.readFileSync(sentinel, "utf8"), "external root sentinel\n");
+  assert.equal(fs.readlinkSync(project), outside);
+  assert.equal(fs.existsSync(path.join(savedProject, ".omp")), false);
+});
+
+test("project OMP hook uninstall refuses symlinked security and publication directories", () => {
+  for (const hook of ["security", "publication"]) {
+    const home = tmpdir("omp-project-uninstall-home-");
+    const project = tmpdir("omp-project-uninstall-project-");
+    const outside = tmpdir("omp-project-uninstall-outside-");
+    const name = hook === "security" ? "skills-security" : "skills-publication";
+    const entry = hook === "security" ? "hooks/security-edit.mjs" : "hooks/omp-publication.mjs";
+    const externalDirectory = path.join(outside, name);
+    const sentinel = path.join(externalDirectory, entry);
+    put(sentinel, "external hook sentinel\n");
+    const link = path.join(project, ".omp", "hooks", name);
+    fs.mkdirSync(path.dirname(link), { recursive: true });
+    fs.symlinkSync(externalDirectory, link, "dir");
+
+    const planned = plan({
+      targets: ["oh-my-pi"], skillNames: [], ompPublicationHook: true,
+      project: true, cwd: project, home, env, uninstall: true,
+    });
+    assert.throws(() => apply(planned, { built: new Map(), uninstall: true, home }), /refusing symlinked project destination/);
+
+    assert.equal(fs.readFileSync(sentinel, "utf8"), "external hook sentinel\n");
+    assert.equal(fs.readlinkSync(link), externalDirectory);
+  }
+});
+test("OMP hook installation preserves external files behind symlinked destinations", () => {
+  for (const symlinkParent of [false, true]) {
+    const home = tmpdir("omp-hook-safe-home-");
+    const project = tmpdir("omp-hook-safe-project-");
+    const outside = tmpdir("omp-hook-safe-outside-");
+    const planned = plan({
+      targets: ["oh-my-pi"], skillNames: ["show-me"], ompPublicationHook: true,
+      project: true, cwd: project, home, env,
+    });
+    const security = planned.steps.find(step => step.kind === "security-edit-hook");
+    const securitySentinel = path.join(outside, "skills-security", "hooks", "security-edit.mjs");
+    const publicationSentinel = path.join(outside, "skills-publication", "hooks", "omp-publication.mjs");
+    put(securitySentinel, "external security file\n");
+    put(publicationSentinel, "external publication file\n");
+    const tree = directory => fs.readdirSync(directory, { withFileTypes: true })
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .map(entry => [entry.name, entry.isDirectory() ? tree(path.join(directory, entry.name)) : null]);
+    const externalTree = tree(outside);
+
+    if (symlinkParent) {
+      fs.mkdirSync(path.dirname(path.dirname(security.to)), { recursive: true });
+      fs.symlinkSync(outside, path.dirname(security.to), "dir");
+    } else {
+      fs.mkdirSync(path.dirname(security.to), { recursive: true });
+      fs.symlinkSync(path.join(outside, "skills-security"), security.to, "dir");
+    }
+
+    assert.throws(() => apply(planned, { built: new Map(), uninstall: false, home }));
+    assert.equal(fs.readFileSync(securitySentinel, "utf8"), "external security file\n");
+    assert.equal(fs.readFileSync(publicationSentinel, "utf8"), "external publication file\n");
+    assert.deepEqual(tree(outside), externalTree);
+    const symlink = symlinkParent ? path.dirname(security.to) : security.to;
+    assert.equal(fs.readlinkSync(symlink), symlinkParent ? outside : path.join(outside, "skills-security"));
+  }
+});
+
+test("OMP hook installation atomically replaces a regular existing hook", () => {
+  const home = tmpdir("omp-hook-update-home-");
+  const project = tmpdir("omp-hook-update-project-");
+  const planned = plan({ targets: ["oh-my-pi"], skillNames: ["show-me"], project: true, cwd: project, home, env });
+  const security = planned.steps.find(step => step.kind === "security-edit-hook");
+  const target = path.join(security.to, "hooks", "security-edit.mjs");
+  put(target, "previous regular hook\n");
+
+  apply({ ...planned, steps: [security] }, { built: new Map(), uninstall: false, home });
+
+  assert.deepEqual(fs.readFileSync(target), fs.readFileSync(path.join(REPO, "hooks", "security-edit.mjs")));
+});
+
 test("optional OMP publication hook installs a self-contained guarded entry only when selected", () => {
   const home = tmpdir("omp-hook-home-");
   const project = tmpdir("omp-hook-project-");
@@ -382,7 +604,9 @@ test("optional OMP publication hook installs a self-contained guarded entry only
   assert.throws(() => plan({ targets: ["codex"], ompPublicationHook: true, cwd: project, home, env }), /requires the oh-my-pi target/);
   const ordinary = plan({ targets: ["oh-my-pi"], skillNames: ["show-me"], cwd: project, home, env });
   assert.equal(ordinary.steps.some(step => step.kind === "publication-hook"), false);
+  assert.ok(ordinary.steps.some(step => step.kind === "security-edit-hook"));
   assert.match(ordinary.notes.join("\\n"), /optional.*--omp-publication-hook/);
+  assert.match(ordinary.notes.join("\\n"), /Codex.*payload is unverified/);
 
   for (const projectScope of [false, true]) {
     const options = { targets: ["oh-my-pi"], skillNames: ["show-me"], ompPublicationHook: true, project: projectScope, cwd: project, home, env };
@@ -395,10 +619,14 @@ test("optional OMP publication hook installs a self-contained guarded entry only
     assert.ok(fs.existsSync(path.join(step.to, "shared", "publication-command.mjs")));
     assert.ok(fs.existsSync(path.join(step.to, "shared", "publication-proof.mjs")));
     assert.ok(fs.existsSync(path.join(step.to, "shared", "task-artifacts.mjs")));
+    const securityStep = planned.steps.find(item => item.kind === "security-edit-hook");
+    const securityEntry = path.join(securityStep.to, "hooks", "security-edit.mjs");
+    assert.ok(fs.existsSync(securityEntry));
     const foreign = path.join(step.to, "foreign");
     put(foreign, "keep\\n");
     uninstall(planned, home);
     assert.equal(fs.existsSync(entry), false);
+    assert.equal(fs.existsSync(securityEntry), false);
     assert.equal(fs.readFileSync(foreign, "utf8"), "keep\\n");
   }
 });

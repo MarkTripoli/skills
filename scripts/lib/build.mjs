@@ -7,6 +7,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { scanSkills } from "./layout.mjs";
 
@@ -84,10 +85,105 @@ function tomlMultiline(value) {
 
 const noDsStore = (src) => path.basename(src) !== ".DS_Store";
 
+function assertNoSymlinks(root) {
+  const rootInfo = fs.lstatSync(root);
+  if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory()) throw new Error(`refusing symlink in staged skill tree: ${root}`);
+  const pending = [root];
+  while (pending.length) {
+    const directory = pending.pop();
+    for (const name of fs.readdirSync(directory)) {
+      const entry = path.join(directory, name);
+      const info = fs.lstatSync(entry);
+      if (info.isSymbolicLink()) throw new Error(`refusing symlink in staged skill tree: ${entry}`);
+      if (info.isDirectory()) pending.push(entry);
+    }
+  }
+}
+
+const SAFE_TASK_ARTIFACT_COPY_SCRIPT = String.raw`import json, os, secrets, stat, sys
+if not hasattr(os, 'O_NOFOLLOW') or not hasattr(os, 'O_DIRECTORY'):
+    raise SystemExit(1)
+root_fd = os.dup(3)
+references_fd = None
+def fail():
+    raise RuntimeError('unsafe task-artifact helper destination')
+try:
+    required = (os.open, os.mkdir, os.stat, os.rename, os.unlink)
+    if not hasattr(os, 'supports_dir_fd') or any(function not in os.supports_dir_fd for function in required):
+        fail()
+    header, payload = sys.stdin.buffer.read().split(b'\n', 1)
+    entries = json.loads(header)
+    try:
+        os.mkdir('references', 0o755, dir_fd=root_fd)
+    except FileExistsError:
+        pass
+    references_fd = os.open('references', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root_fd)
+    offset = 0
+    for entry in entries:
+        name = entry['name']
+        size = entry['size']
+        if name not in ('task-artifacts.mjs', 'task-root.mjs') or not isinstance(size, int) or size < 0:
+            fail()
+        content = payload[offset:offset + size]
+        if len(content) != size:
+            fail()
+        offset += size
+        try:
+            current = os.stat(name, dir_fd=references_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            current = None
+        if current is not None and not stat.S_ISREG(current.st_mode):
+            fail()
+        temporary = '.' + name + '.' + secrets.token_hex(16)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        fd = os.open(temporary, flags, 0o600, dir_fd=references_fd)
+        try:
+            view = memoryview(content)
+            while view:
+                written = os.write(fd, view)
+                view = view[written:]
+            os.fchmod(fd, entry['mode'] & 0o777)
+            os.rename(temporary, name, src_dir_fd=references_fd, dst_dir_fd=references_fd)
+        except Exception:
+            try:
+                os.unlink(temporary, dir_fd=references_fd)
+            except OSError:
+                pass
+            raise
+        finally:
+            os.close(fd)
+    if offset != len(payload):
+        fail()
+except Exception:
+    sys.stderr.write('unsafe task-artifact helper destination or secure copy unavailable')
+    sys.exit(1)
+finally:
+    if references_fd is not None:
+        os.close(references_fd)
+    os.close(root_fd)`;
+
 export function copyTaskArtifactHelper(skillTarget) {
-  const references = path.join(skillTarget, "references");
-  fs.mkdirSync(references, { recursive: true });
-  for (const name of ["task-artifacts.mjs", "task-root.mjs"]) fs.copyFileSync(path.join(repoRoot, "shared", name), path.join(references, name));
+  assertNoSymlinks(skillTarget);
+  const names = ["task-artifacts.mjs", "task-root.mjs"];
+  const entries = names.map(name => {
+    const source = path.join(repoRoot, "shared", name);
+    return { name, mode: fs.statSync(source).mode & 0o777, bytes: fs.readFileSync(source) };
+  });
+  const manifest = Buffer.from(`${JSON.stringify(entries.map(({ name, mode, bytes }) => ({ name, mode, size: bytes.length })))}\n`);
+  const input = Buffer.concat([manifest, ...entries.map(entry => entry.bytes)]);
+  if (!fs.constants.O_DIRECTORY || !fs.constants.O_NOFOLLOW) throw new Error("secure task-artifact helper copy requires no-follow directory support");
+  let rootFd;
+  try {
+    rootFd = fs.openSync(skillTarget, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+    const result = spawnSync("python3", ["-I", "-c", SAFE_TASK_ARTIFACT_COPY_SCRIPT], {
+      input, encoding: null, timeout: 30_000, maxBuffer: 1024 * 1024,
+      stdio: ["pipe", "ignore", "pipe", rootFd],
+    });
+    if (result.error?.code === "ENOENT") throw new Error("Python 3 is required for safe task-artifact helper installation");
+    if (result.error || result.status !== 0) throw new Error("refusing symlinked task-artifact helper destination or secure copy unavailable");
+  } finally {
+    if (rootFd !== undefined) fs.closeSync(rootFd);
+  }
 }
 
 // Returns { skills: [names], workers }. `skillNames` narrows an installer build; omitted builds the collection.

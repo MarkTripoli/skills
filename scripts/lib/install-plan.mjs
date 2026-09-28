@@ -9,6 +9,24 @@ const TARGETS = [...RUNTIMES, 'portable'];
 const TARGET_LABEL = { 'claude-code': 'Claude Code', codex: 'Codex', 'oh-my-pi': 'Oh My Pi', pi: 'Pi', portable: 'Portable' };
 const SKILL_DEPENDENCIES = { deliver: ['agent-first-sergent'], 'agent-first-sergent': ['route-model', 'typed-judgment'], 'jev-ui': ['typed-judgment', 'record-evidence'], 'iterate-evidence': ['record-evidence'] };
 const BINARY = { 'claude-code': 'claude', codex: 'codex', 'oh-my-pi': 'omp', pi: 'pi' };
+function projectRootIdentity(root) {
+  if (!fs.constants.O_DIRECTORY || !fs.constants.O_NOFOLLOW) throw new Error('secure project installs require no-follow directory support');
+  let fd;
+  try {
+    fd = fs.openSync(path.resolve(root), fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+  try {
+    const info = fs.fstatSync(fd);
+    if (!info.isDirectory()) throw new Error('project root is not a directory');
+    return { dev: info.dev, ino: info.ino };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 
 function dependencyClosure(names) {
   const result = new Set(names);
@@ -102,7 +120,8 @@ export function atomicDestination({ project, cwd = process.cwd(), home = os.home
   return project ? path.join(cwd, '.atomic', 'workflows', 'skills-delivery') : path.resolve(agentDir, 'workflows', 'skills-delivery');
 }
 export function plan(options) {
-  const { targets, project = false, atomic = false, cwd = process.cwd(), home = os.homedir(), env = process.env } = options;
+  const { targets, project = false, atomic = false, uninstall = false, cwd = process.cwd(), home = os.homedir(), env = process.env } = options;
+  const rootIdentity = project ? projectRootIdentity(cwd) : null;
   const { skills } = scanSkills(path.join(repoRoot, 'skills'));
   const allNames = skills.map(skill => skill.name);
   const requestedNames = resolveSkillNames(options.skillNames ?? [], skills);
@@ -125,14 +144,23 @@ export function plan(options) {
     if (dest.config && workerNames.length) steps.push({ target, kind: 'config', to: dest.config, names: workerNames, complete: workerNames.length === allWorkerNames.length });
   }
   if (options.ompPublicationHook) {
-    const base = project ? path.join(cwd, '.omp', 'hooks') : path.join(home, '.omp', 'agent', 'hooks');
-    steps.push({ target: 'oh-my-pi', kind: 'publication-hook', to: path.join(base, 'skills-publication') });
+    const root = project ? cwd : home;
+    const base = project ? path.join(root, '.omp', 'hooks') : path.join(root, '.omp', 'agent', 'hooks');
+    steps.push({ target: 'oh-my-pi', kind: 'publication-hook', to: path.join(base, 'skills-publication'), root });
   } else if (targets.includes('oh-my-pi')) {
     notes.push('Oh My Pi publication guard is optional: pass --omp-publication-hook, then launch with --hook=<installed-path> and SKILLS_PUBLICATION_TASK_DIR=<absolute-task-dir>');
   }
+  if (targets.includes('oh-my-pi') && (!uninstall || requestedNames.length === allNames.length)) {
+    const root = project ? cwd : home;
+    const base = project ? path.join(root, '.omp', 'hooks') : path.join(root, '.omp', 'agent', 'hooks');
+    steps.push({ target: 'oh-my-pi', kind: 'security-edit-hook', to: path.join(base, 'skills-security'), root });
+    notes.push('Edit-time advisory hook is installed for Oh My Pi; register the printed path with omp --hook=<path>. Codex exposes stable hooks, but its edit callback payload is unverified here, so no Codex adapter is installed. Portable and other targets have no verified edit-hook adapter.');
+  } else if (targets.includes('codex')) {
+    notes.push('Codex stable hooks are available, but the edit callback payload is unverified here; no Codex advisory adapter is installed.');
+  }
   if (atomic) steps.push({ target: 'atomic', kind: 'workflow', to: atomicDestination({ project, cwd, home, env }) });
   if (!atomic && targets.includes('codex') && !project && (targets.includes('pi') || targets.includes('oh-my-pi'))) notes.push('Pi and Oh My Pi also read ~/.agents/skills, where the Codex copy lives; their own skill directories are installed too, so a skill may appear twice by name in those runtimes');
-  return { steps, notes, names, requestedNames };
+  return { steps, notes, names, requestedNames, projectRoot: project ? path.resolve(cwd) : null, projectRootIdentity: rootIdentity };
 }
 
 export function short(file, home) { return file.startsWith(home) ? `~${file.slice(home.length)}` : file; }
@@ -142,6 +170,7 @@ export function describe(step, home) {
     case 'agents': return `${step.target}: ${step.names.length} worker definitions -> ${short(step.to, home)}/agent-*.${step.format}`;
     case 'config': return `${step.target}: [agents.*] block -> ${short(step.to, home)}`;
     case 'publication-hook': return `oh-my-pi: optional Bash publication guard -> ${short(path.join(step.to, 'hooks', 'omp-publication.mjs'), home)} (register with omp --hook=<installed-path>; set SKILLS_PUBLICATION_TASK_DIR per task; direct shell and Codex are not guarded)`;
+    case 'security-edit-hook': return `oh-my-pi: local edit-time advisory -> ${short(path.join(step.to, 'hooks', 'security-edit.mjs'), home)} (register with omp --hook=<installed-path>; no edit blocking)`;
     case 'workflow': return `atomic: delivery workflow -> ${short(step.to, home)}/ and ${short(path.join(path.dirname(step.to), 'skills-delivery.mjs'), home)}`;
     default: return JSON.stringify(step);
   }

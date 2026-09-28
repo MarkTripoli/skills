@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { buildRuntime, TASK_ARTIFACT_DISTRIBUTION } from '../scripts/lib/build.mjs';
+import { buildRuntime, copyTaskArtifactHelper, TASK_ARTIFACT_DISTRIBUTION } from '../scripts/lib/build.mjs';
 import { buildTrees, plan } from '../scripts/install.mjs';
 
 const repo = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
@@ -28,6 +28,60 @@ test('portable build uses the same canonical artifact helper bytes', t => {
   const built = buildTrees(planned, path.join(root, 'build')).get('portable');
 
   assert.equal(fs.readFileSync(path.join(built, 'skills', 'create-plan', 'references', 'task-artifacts.mjs'), 'utf8'), canonical);
+});
+
+test('staged task-artifact helper rejects symlinks before touching external files', t => {
+  for (const kind of ['references-directory', 'helper-file']) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'task-artifacts-symlink-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const skill = path.join(root, 'skill');
+    const outside = path.join(root, 'outside');
+    const references = path.join(skill, 'references');
+    const sentinel = path.join(outside, 'task-artifacts.mjs');
+    fs.mkdirSync(outside);
+    fs.mkdirSync(skill);
+    fs.writeFileSync(sentinel, 'external sentinel\n');
+    if (kind === 'references-directory') fs.symlinkSync(outside, references, 'dir');
+    else {
+      fs.mkdirSync(references);
+      fs.symlinkSync(sentinel, path.join(references, 'task-artifacts.mjs'));
+    }
+
+    assert.throws(() => copyTaskArtifactHelper(skill), /refusing symlink/);
+    assert.equal(fs.readFileSync(sentinel, 'utf8'), 'external sentinel\n');
+  }
+});
+
+test('staged task-artifact copy resists a references directory swap', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'task-artifacts-race-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const skill = path.join(root, 'skill');
+  const references = path.join(skill, 'references');
+  const savedReferences = path.join(skill, 'references-saved');
+  const outside = path.join(root, 'outside');
+  const sentinel = path.join(outside, 'task-artifacts.mjs');
+  fs.mkdirSync(references, { recursive: true });
+  fs.mkdirSync(outside);
+  fs.writeFileSync(sentinel, 'external sentinel\n');
+  const originalOpen = fs.openSync;
+  let swapped = false;
+  fs.openSync = function (target, ...args) {
+    const fd = originalOpen.call(fs, target, ...args);
+    if (!swapped && target === skill) {
+      fs.renameSync(references, savedReferences);
+      fs.symlinkSync(outside, references, 'dir');
+      swapped = true;
+    }
+    return fd;
+  };
+  try {
+    assert.throws(() => copyTaskArtifactHelper(skill), /refusing symlinked task-artifact helper destination/);
+  } finally {
+    fs.openSync = originalOpen;
+  }
+  assert.equal(swapped, true);
+  assert.equal(fs.readFileSync(sentinel, 'utf8'), 'external sentinel\n');
+  assert.equal(fs.readlinkSync(references), outside);
 });
 
 test('raw and plugin skills retain an explicit safe manual fallback contract without copied helpers', () => {

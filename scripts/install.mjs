@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Installs independent skills and worker definitions, with an optional Atomic delivery workflow.
+// Installs independent skills, worker definitions, and native runtime advisory hooks.
 // Runs from a checkout (`node scripts/install.mjs`) or GitHub (`npx github:MarkTripoli/skills`).
 //
 // Usage: npx github:MarkTripoli/skills [target...] [--skill <name>...] [--project] [--dry-run] [--yes] [--atomic] [--uninstall] [--list]
@@ -11,6 +11,7 @@
 //   --atomic       also install the Atomic workflow and the full canonical skill collection
 //   --uninstall    remove what an earlier install put in place (same targets, skills, and scope)
 //   --omp-publication-hook  install optional Oh My Pi Bash guard; register it with omp --hook=<installed-path>
+//   oh-my-pi installs advisory edit hook; register the printed path with omp --hook=<path>
 //   --list         print the skills in the collection and stop
 // Exit 0 on success, 1 on error, 2 on usage error, cancellation, or declined confirmation.
 
@@ -64,7 +65,7 @@ async function main(argv) {
   const { targets, skillNames } = selection;
   let planned;
   try {
-    planned = plan({ targets, skillNames, project: args.project, atomic: args.atomic, ompPublicationHook: args.ompPublicationHook, cwd, home, env: process.env });
+    planned = plan({ targets, skillNames, project: args.project, atomic: args.atomic, uninstall: args.uninstall, ompPublicationHook: args.ompPublicationHook, cwd, home, env: process.env });
   } catch (error) {
     console.error(error.message);
     return 2;
