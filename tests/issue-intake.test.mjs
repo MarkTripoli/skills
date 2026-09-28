@@ -113,6 +113,30 @@ test('failed handoff leaves a durable unknown receipt and never relaunches', t =
   assert.deepEqual(fs.readdirSync(f.taskRoot), []);
 });
 
+test('a claim omitted from the filtered queue blocks later handoffs without changing its ambiguous receipt', t => {
+  const f = setup(t, [issue, { ...issue, number: 8 }]);
+  const failing = path.join(f.root, 'fail.sh');
+  fs.writeFileSync(failing, '#!/bin/sh\nexit 1\n'); fs.chmodSync(failing, 0o755);
+  const first = spawnSync(process.execPath, [
+    cliPath, '--repo=acme/app', `--task-root=${f.taskRoot}`, `--state=${f.stateFile}`,
+    '--label=ready', '--execute', `--handoff=${failing}`,
+  ], { encoding: 'utf8', env: f.env });
+  assert.equal(first.status, 0, first.stderr);
+  assert.deepEqual(JSON.parse(first.stdout).map(row => row.status), ['handoff-unknown', 'blocked-not-attempted']);
+  const before = fs.readFileSync(f.stateFile, 'utf8');
+  const receipt = JSON.parse(before).claims[0].receipt;
+  const receiptBefore = fs.readFileSync(receipt, 'utf8');
+  fs.writeFileSync(f.env.GH_BIN, `#!/usr/bin/env node\nimport fs from 'node:fs';\nconst args = process.argv.slice(2);\nif (process.env.GH_LOG) fs.appendFileSync(process.env.GH_LOG, JSON.stringify(args)+'\\n');\nprocess.stdout.write(JSON.stringify(args[0] === 'issue' ? ${JSON.stringify([{ ...issue, number: 8 }])} : []));\n`);
+  const second = f.runHandoff(['--label=ready']);
+  assert.equal(second.status, 0, second.stderr);
+  assert.deepEqual(JSON.parse(second.stdout).map(row => [row.issue, row.status, row.blockedBy]), [
+    [7, 'handoff-unknown', undefined], [8, 'blocked-not-attempted', 7],
+  ]);
+  assert.equal(fs.existsSync(second.log), false);
+  assert.equal(fs.readFileSync(f.stateFile, 'utf8'), before);
+  assert.equal(fs.readFileSync(receipt, 'utf8'), receiptBefore);
+});
+
 test('a failed handoff that wrote a task still blocks later issues until reconciled', t => {
   const f = setup(t, [issue, { ...issue, number: 8 }]);
   const failing = path.join(f.root, 'create-task-then-fail.sh');
@@ -457,6 +481,29 @@ test('accepted durable receipt repairs completion after state-write crash', t =>
   assert.equal(JSON.parse(result.stdout)[0].status, 'handed-off-recovered');
   assert.equal(fs.existsSync(result.log), false);
 });
+test('an accepted receipt recovers an omitted claim while other repositories stay untouched', t => {
+  const f = setup(t, [{ ...issue, number: 8 }]);
+  const id = 'stable-id';
+  const receipt = path.join(f.root, 'issue-intake-receipts', `${id}.json`);
+  fs.mkdirSync(path.dirname(receipt));
+  const accepted = JSON.stringify({ idempotencyKey: id, repo: 'acme/app', issue: 7, status: 'accepted' });
+  fs.writeFileSync(receipt, accepted);
+  const other = { key: 'other/repo#6', repo: 'other/repo', issue: 6, status: 'handoff-unknown', idempotencyKey: 'other-id' };
+  fs.writeFileSync(f.stateFile, JSON.stringify(stateWith([
+    other, { key: 'acme/app#7', repo: 'acme/app', issue: 7, status: 'dispatching', idempotencyKey: id, receipt },
+  ])));
+  const result = f.runHandoff();
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout).map(row => [row.issue, row.status]), [
+    [7, 'handed-off-recovered'], [8, 'handed-off'],
+  ]);
+  assert(fs.existsSync(result.log));
+  const state = JSON.parse(fs.readFileSync(f.stateFile, 'utf8'));
+  assert.deepEqual(state.claims.find(row => row.key === other.key), other);
+  assert.equal(state.claims.find(row => row.key === 'acme/app#7').status, 'complete');
+  assert.equal(fs.readFileSync(receipt, 'utf8'), accepted);
+});
+
 test('accepted receipt survives a state persistence failure after adapter success', t => {
   const f = setup(t);
   let receiptPath;

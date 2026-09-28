@@ -227,7 +227,31 @@ function intakeLocked(options) {
   let tasksByIssue = localTasks(roots, repo);
   const outcomes = [];
   let blockedBy = null;
+  // A filtered queue can omit an unresolved claim after its issue closes or loses a label.
+  // Reconcile persisted claims before considering any fresh handoff.
+  const reconciled = new Set();
+  for (const claim of state.claims.filter(item => item.repo?.toLowerCase() === repo.toLowerCase() &&
+      (item.status === 'dispatching' || item.status === 'handoff-unknown')).sort((a, b) => a.issue - b.issue)) {
+    const { issue: number, key } = claim;
+    const idempotencyKey = claim.idempotencyKey ?? crypto.createHash('sha256').update(key).digest('hex');
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(idempotencyKey)) throw new Error(`invalid idempotency key for ${key}`);
+    const receipt = path.join(path.dirname(stateFile), 'issue-intake-receipts', `${idempotencyKey}.json`);
+    if (claim.receipt && path.resolve(claim.receipt) !== receipt) throw new Error(`claim receipt path mismatch for ${key}`);
+    let prior;
+    try { prior = JSON.parse(fs.readFileSync(receipt, 'utf8')); } catch {}
+    if (prior?.idempotencyKey === idempotencyKey && prior.repo?.toLowerCase() === repo.toLowerCase() && prior.issue === number && prior.status === 'accepted') {
+      const completed = { ...claim, status: 'complete', receipt, ownerPid: null, updatedAt: clock() };
+      state.claims = state.claims.map(item => item === claim ? completed : item);
+      saveState(stateFile, state);
+      outcomes.push({ issue: number, status: 'handed-off-recovered', receipt });
+    } else {
+      outcomes.push({ issue: number, status: 'handoff-unknown', receipt });
+      if (blockedBy === null) blockedBy = number;
+    }
+    reconciled.add(key);
+  }
   for (const issue of issues) {
+    if (reconciled.has(claimKey(repo, issue.number))) continue;
     if (blockedBy !== null) { outcomes.push({ issue: issue.number, status: 'blocked-not-attempted', blockedBy }); continue; }
     const key = claimKey(repo, issue.number);
     const claim = state.claims.find(item => item.key === key);
