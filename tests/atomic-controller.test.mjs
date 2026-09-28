@@ -588,7 +588,7 @@ test('direct CI node --test commands remain mandatory replayable repository chec
     await assert.rejects(() => runSkill(f.ctx(f.check + acceptance), f.task, before, f.options,
       'verify-implementation', 1), /omitted repository checks: node --test tests\/unit\.test\.mjs/);
     const rows = f.check +
-      '| C2 | Direct Node CI test | `node --test tests/unit.test.mjs` | exit 0; ℹ pass 1 | pass |\n' + acceptance;
+      '| C2 | Direct Node CI test | `node --test tests/unit.test.mjs` | exit 0 | pass |\n' + acceptance;
     const verified = await runSkill(f.ctx(rows), f.task, before, f.options,
       'verify-implementation', 2);
     assert.deepEqual(verified.proofs.verification.executionEvidence.map(row => row.id),
