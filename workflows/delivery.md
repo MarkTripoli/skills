@@ -189,6 +189,7 @@ Artifact type be template frontmatter `type` for local planning, review, and ver
 | security-check | none | no | By hand on explicit request; opt-in Semgrep scan |
 | repo-relationships | none | no | By hand on explicit request; committed HEAD-only NATS, package, and Kubernetes citations |
 | credentials | none | no | By hand with selected repositories; opt-in committed HEAD correlation and owner-authorized ignored files |
+| model-endpoint-redteam | none | no | By hand on explicit request; dry-run by default, live requires exact local authorization |
 | fix-code-review | code-review-fixes | no | Repair review findings |
 | reproduce-bug | reproduction | yes | Bugfix before product edits |
 | fix-bug | fix | no | Bugfix after reproduction |
