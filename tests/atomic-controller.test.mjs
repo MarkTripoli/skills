@@ -76,6 +76,15 @@ test('plan implementation prompt binds work to admitted dependency waves', () =>
   assert.match(prompt, /dependencyWaves are ordered as 1, 2 → 3/);
   assert.match(prompt, /do not launch parallel workers/);
 });
+
+test('blocked verification for unproved acceptance cannot advance to review', () => {
+  const latest = {
+    implementation: artifact('implementation'),
+    verification: artifact('verification', 'blocked'),
+  };
+  const current = proved(latest, ['verification']);
+  assert.deepEqual(eligible(current, { verify: true, app_test: 'none' }, 'oneshot', false), ['blocked']);
+});
 test('fixed modes enforce preparation prerequisites and canonical design artifact types', () => {
   assert.deepEqual(eligible(state(), inputs, 'prd', false), ['create-research']);
   assert.deepEqual(eligible(state({ research: artifact('research') }), inputs, 'prd', false), ['create-prd']);
