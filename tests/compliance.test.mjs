@@ -38,7 +38,7 @@ test('compliance report preserves complete accounting, citation failures, risk e
 test('forged acceptance and missing lanes cannot produce complete coverage', () => {
   const finding = {...makeFinding('forged', 'semgrep', 'javascript.lang.security.audit.child-process-exec', 'src/app.js'), disposition: 'accepted'};
   const names = ['semgrep', 'gitleaks', 'trivy_config', 'trivy_fs', 'hadolint', 'actionlint'];
-  const lanes = Object.fromEntries(names.map(name => [name, {tool: {name, version: '1.0', status: 'ok'}, coverage: 'complete'}]));
+  const lanes = Object.fromEntries(names.map(name => [name, {tool: {name: name.startsWith('trivy_') ? 'trivy' : name, version: '1.0', status: 'ok'}, coverage: 'complete'}]));
   const complete = {schema_version: 1, repository, revision, coverage: 'complete', secret_coverage: 'complete', lanes, findings: [finding]};
   const report = assessCompliance(complete);
   assert.equal(report.findings[0].control_id, 'SEC-CODE-REVIEW');
@@ -59,7 +59,7 @@ test('forged acceptance and missing lanes cannot produce complete coverage', () 
 
 test('suppression retains its proof, duplicate IDs fail closed, and lane tool identity is bound', () => {
   const names = ['semgrep', 'gitleaks', 'trivy_config', 'trivy_fs', 'hadolint', 'actionlint'];
-  const lanes = Object.fromEntries(names.map(name => [name, {tool: {name, version: '1.0', status: 'ok'}, coverage: 'complete'}]));
+  const lanes = Object.fromEntries(names.map(name => [name, {tool: {name: name.startsWith('trivy_') ? 'trivy' : name, version: '1.0', status: 'ok'}, coverage: 'complete'}]));
   const finding = makeFinding('same-id', 'semgrep', 'javascript.example', 'src/app.js');
   const scan = {schema_version: 1, repository, revision, coverage: 'complete', secret_coverage: 'complete', lanes, findings: [finding]};
   const risk = {repository, rule_id: finding.rule_id, path: finding.path, reason: 'Remediation scheduled', expires: '2026-10-01'};
@@ -79,4 +79,53 @@ test('suppression retains its proof, duplicate IDs fail closed, and lane tool id
   const swapped = assessCompliance(scan);
   assert.equal(swapped.tool_coverage.find(item => item.name === 'hadolint').coverage, 'incomplete');
   assert.equal(swapped.coverage, 'incomplete');
+});
+
+test('actual Trivy binary identity permits complete six-lane scanner coverage', () => {
+  const names = ['semgrep', 'gitleaks', 'trivy_config', 'trivy_fs', 'hadolint', 'actionlint'];
+  const lanes = Object.fromEntries(names.map(name => [name, {tool: {name: name.startsWith('trivy_') ? 'trivy' : name, status: 'ok'}, coverage: 'complete'}]));
+  const report = assessCompliance({schema_version: 1, repository, revision, coverage: 'complete', secret_coverage: 'complete', lanes, findings: []});
+  assert.equal(report.coverage, 'complete');
+  assert.equal(report.tool_coverage.find(tool => tool.name === 'trivy_fs').coverage, 'complete');
+});
+
+test('line-less Trivy observations remain explicit unknown inventory, not zero findings', () => {
+  const report = assessCompliance({schema_version: 1, repository, revision, coverage: 'incomplete', secret_coverage: 'complete',
+    findings: [], file_findings: [{repository, revision, scanner: 'trivy_fs', rule_id: 'CVE-2026-1234', path: 'src/library.js', severity: 'HIGH', message: 'Finding reported by Trivy without a source line'}]});
+  assert.equal(report.accounting.input_findings, 1);
+  assert.equal(report.accounting.reported_findings, 1);
+  assert.equal(report.findings[0].disposition, 'unknown');
+  assert.equal(report.findings[0].citation_status, 'missing');
+  assert.equal(report.findings[0].location.path, 'src/library.js');
+});
+
+test('missing normalized IDs and malformed rules remain unknown instead of active or crashing', () => {
+  const noId = makeFinding('missing-id', 'semgrep', 'javascript.example', 'src/app.js');
+  delete noId.finding_id;
+  const badRule = makeFinding('numeric-rule', 'semgrep', 123, 'src/app.js');
+  const report = assessCompliance({schema_version: 1, repository, revision, findings: [noId, badRule]});
+  assert.deepEqual(report.findings.map(finding => finding.disposition), ['unknown', 'unknown']);
+  assert.ok(report.findings.every(finding => finding.citation_status === 'missing'));
+  assert.equal(report.coverage, 'incomplete');
+});
+
+test('historical Gitleaks location does not claim verified HEAD line citation', () => {
+  const secret = makeFinding('secret', 'gitleaks', 'generic-api-key', 'src/removed-secret.js');
+  const report = assessCompliance({schema_version: 1, repository, revision, findings: [secret]});
+  assert.equal(report.findings[0].citation, null);
+  assert.equal(report.findings[0].citation_status, 'historical-unverified');
+  assert.equal(report.findings[0].historical_location.path, secret.path);
+  assert.equal(report.findings[0].disposition, 'unknown');
+  assert.equal(report.coverage, 'incomplete');
+});
+
+test('rejected accepted-risk entries expose validation failure without suppressing an issue', () => {
+  const entry = makeFinding('risk', 'semgrep', 'javascript.example', 'src/app.js');
+  const report = assessCompliance({schema_version: 1, repository, revision, findings: [entry]}, {risks: [
+    {repository, rule_id: entry.rule_id, path: entry.path, reason: 'exception', expires: '2026-02-30'},
+  ], now: new Date('2026-02-01T00:00:00Z')});
+  assert.equal(report.findings[0].disposition, 'active');
+  assert.equal(report.accepted_risk_validation.coverage, 'incomplete');
+  assert.ok(report.accepted_risk_validation.errors.some(error => /expires/.test(error)));
+  assert.equal(report.coverage, 'incomplete');
 });
