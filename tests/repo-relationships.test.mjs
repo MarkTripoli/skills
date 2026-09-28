@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {execFileSync, spawnSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -26,7 +27,7 @@ test('matches literal cross-repository NATS subject and excludes unmatched subsc
   try {
     const publisher = create('publisher', {
       '.gitignore': 'ignored.js\n',
-      'src/events.js': "import { connect } from 'nats';\nconst client = await connect();\n// client.publish('comment.fake', payload);\nclient.publish('orders.created', payload);\nclient.publish('orders.deleted', payload);\nconst example = \"client.publish('string.fake', payload)\";\nother.publish('orders.created', payload);\n",
+      'src/events.js': "import { connect } from 'nats';\nconst client = await connect();\n// client.publish('comment.fake', payload);\nclient.publish('orders.created', payload);\nother.client.publish('orders.created', payload);\nif (enabled && /client.publish('orders.created', payload)/.test(text)) {}\nclient.publish('orders.deleted', payload);\nconst example = \"client.publish('string.fake', payload)\";\nother.publish('orders.created', payload);\n",
     });
     const subscriber = create('subscriber', {'src/handlers.js': "import { connect } from 'nats';\nconst client = await connect();\n// client.subscribe('comment.fake', handler);\nclient.subscribe('orders.created', handler);\nclient.subscribe('billing.paid', handler);\n"});
     const impostor = create('impostor', {'src/fake.js': "other.publish('orders.created', payload);\n"});
@@ -51,6 +52,21 @@ test('matches literal cross-repository NATS subject and excludes unmatched subsc
     assert.equal(report.repositories.some(repo => JSON.stringify(repo).includes('token')), false);
   } finally { fs.rmSync(base, {recursive: true, force: true}); }
 });
+test('ignores regex literals and member-property NATS lookalikes', () => {
+  const {base, create} = fixture();
+  try {
+    const publisher = create('publisher', {
+      'src/events.js': "import { connect } from 'nats';\nconst nc = await connect();\nnc.publish('orders.created', payload);\nif (ready && /nc.publish(\"orders.created\")/.test(source)) {}\nother.nc.publish('orders.created', payload);\n",
+    });
+    const subscriber = create('subscriber', {
+      'src/events.js': "import { connect } from 'nats';\nconst nc = await connect();\nnc.subscribe('orders.created', handler);\n",
+    });
+    const report = analyze([{name: 'publisher', root: publisher}, {name: 'subscriber', root: subscriber}]);
+    assert.equal(report.coverage, 'complete');
+    assert.equal(report.evidence.filter(edge => edge.repo === 'publisher' && edge.kind === 'nats-publish').length, 1);
+    assert.equal(report.relationships.filter(edge => edge.kind === 'nats-subject' && edge.subject === 'orders.created').length, 1);
+  } finally { fs.rmSync(base, {recursive: true, force: true}); }
+});
 test('CLI preserves analyzable HEAD snapshots for imported NATS sources', () => {
   const {base, create} = fixture();
   try {
@@ -62,6 +78,26 @@ test('CLI preserves analyzable HEAD snapshots for imported NATS sources', () => 
     assert.equal(report.coverage, 'complete');
     assert.deepEqual(report.skipped_roots, []);
     assert.equal(report.relationships.filter(edge => edge.kind === 'nats-subject' && edge.subject === 'snapshot.ready').length, 1);
+  } finally { fs.rmSync(base, {recursive: true, force: true}); }
+});
+test('CLI fingerprints remote path without exposing secret-like segments', () => {
+  const {base, create} = fixture();
+  try {
+    const publisher = create('publisher', {'src/events.js': 'export const publisher = true;\n'});
+    const subscriber = create('subscriber', {'src/events.js': 'export const subscriber = true;\n'});
+    execFileSync('git', ['remote', 'set-url', 'origin', 'https://host.invalid/fake-pat/private-repo.git'], {cwd: publisher, stdio: 'ignore'});
+    execFileSync('git', ['remote', 'set-url', 'origin', 'https://host.invalid/other/private-repo.git'], {cwd: subscriber, stdio: 'ignore'});
+    const result = spawnSync(process.execPath, [path.join(projectRoot, 'skills/delivery/repo-relationships/scripts/analyze.mjs'), '--repo', `publisher=${publisher}`, '--repo', `subscriber=${subscriber}`], {cwd: base, encoding: 'utf8'});
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.includes('fake-pat'), false);
+    assert.equal(result.stderr.includes('fake-pat'), false);
+    const report = JSON.parse(result.stdout);
+    const publisherOrigin = report.repositories.find(repo => repo.name === 'publisher').origin;
+    const subscriberOrigin = report.repositories.find(repo => repo.name === 'subscriber').origin;
+    const fingerprint = pathname => createHash('sha256').update(pathname).digest('hex');
+    assert.equal(publisherOrigin, `https://host.invalid#sha256=${fingerprint('/fake-pat/private-repo.git')}`);
+    assert.equal(subscriberOrigin, `https://host.invalid#sha256=${fingerprint('/other/private-repo.git')}`);
+    assert.notEqual(publisherOrigin, subscriberOrigin);
   } finally { fs.rmSync(base, {recursive: true, force: true}); }
 });
 
@@ -116,6 +152,17 @@ test('ignores Git replace refs when binding sources to reported HEAD', () => {
     assert.equal(report.repositories.find(repo => repo.name === 'publisher').head, original);
     assert.equal(report.relationships.some(edge => edge.kind === 'nats-subject' && edge.subject === 'original.subject'), true);
     assert.equal(report.relationships.some(edge => edge.kind === 'nats-subject' && edge.subject === 'replacement.subject'), false);
+  } finally { fs.rmSync(base, {recursive: true, force: true}); }
+});
+test('matches bounded NATS sources with deeply nested parentheses', () => {
+  const {base, create} = fixture();
+  try {
+    const nested = "if (" + '('.repeat(40000) + 'true' + ')'.repeat(40000) + ") {\nnc.publish('deep.subject', payload);\n}\n";
+    const publisher = create('publisher', {'src/events.js': "import { connect } from 'nats';\nconst nc = await connect();\n" + nested});
+    const subscriber = create('subscriber', {'src/events.js': "import { connect } from 'nats';\nconst nc = await connect();\nnc.subscribe('deep.subject', handler);\n"});
+    const report = analyze([{name: 'publisher', root: publisher}, {name: 'subscriber', root: subscriber}]);
+    assert.equal(report.coverage, 'complete');
+    assert.equal(report.relationships.filter(edge => edge.kind === 'nats-subject' && edge.subject === 'deep.subject').length, 1);
   } finally { fs.rmSync(base, {recursive: true, force: true}); }
 });
 
@@ -222,6 +269,17 @@ test('fails closed on controller metadata labels but accepts Pod labels', () => 
     assert.equal(report.coverage, 'complete');
   } finally { fs.rmSync(base, {recursive: true, force: true}); }
 });
+test('rejects non-string Kubernetes selector values before matching', () => {
+  const {base, create} = fixture();
+  try {
+    const service = create('service', {'deploy/service.yaml': 'apiVersion: v1\nkind: Service\nmetadata:\n  name: boolean-service\nspec:\n  selector:\n    app: true\n'});
+    const pod = create('pod', {'deploy/pod.yaml': 'apiVersion: v1\nkind: Pod\nmetadata:\n  name: boolean-pod\n  labels:\n    app: true\nspec: {}\n'});
+    const report = analyze([{name: 'service', root: service}, {name: 'pod', root: pod}]);
+    assert.equal(report.relationships.some(edge => edge.kind === 'kubernetes-selector-match'), false);
+    assert.equal(report.evidence.some(edge => edge.kind === 'kubernetes-declaration'), false);
+    assert.equal(report.coverage, 'incomplete');
+  } finally { fs.rmSync(base, {recursive: true, force: true}); }
+});
 
 test('rejects shadowed NATS symbols and ignores YAML block scalar code', () => {
   const {base, create} = fixture();
@@ -229,13 +287,18 @@ test('rejects shadowed NATS symbols and ignores YAML block scalar code', () => {
     const publisher = create('publisher', {'src/events.js': "import { connect } from 'nats';\nconst client = await connect();\nclient.publish('orders.created', payload);\n"});
     const subscriber = create('subscriber', {'src/events.js': "import { connect } from 'nats';\nconst client = await connect();\nclient.subscribe('orders.created', handler);\n"});
     const ambiguous = create('ambiguous', {
+      'src/shadow.ts': "import { connect } from 'nats';\nconst nc = await connect();\nfunction send(nc: Fake): void { nc.publish('orders.created', payload); }\n",
       'src/shadow.js': "import { connect } from 'nats';\nconst client = await connect();\nfunction consume(client) { client.subscribe('orders.created', handler); }\nfunction fake() { const connect = () => ({}); const client = connect(); client.subscribe('orders.created', handler); }\n",
       'deploy/workload.yaml': 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: safe-workload\n  annotations:\n    sample: |\n      import { connect } from "nats";\n      const fake = await connect();\n      fake.subscribe("orders.created", handler);\nspec:\n  template:\n    metadata:\n      labels:\n        app: safe\n',
     });
-    const report = analyze([{name: 'publisher', root: publisher}, {name: 'subscriber', root: subscriber}, {name: 'ambiguous', root: ambiguous}]);
+    const uncertain = create('uncertain', {
+      'src/regex.ts': "import { connect } from 'nats';\nconst nc = await connect();\nif (enabled && /unterminated nc.publish('orders.created', payload)\n",
+    });
+    const report = analyze([{name: 'publisher', root: publisher}, {name: 'subscriber', root: subscriber}, {name: 'ambiguous', root: ambiguous}, {name: 'uncertain', root: uncertain}]);
     assert.equal(report.relationships.filter(edge => edge.kind === 'nats-subject').length, 1);
-    assert.equal(report.relationships.some(edge => edge.kind === 'nats-subject' && (edge.from.repo === 'ambiguous' || edge.to.repo === 'ambiguous')), false);
-    assert.equal(report.evidence.some(edge => edge.repo === 'ambiguous' && edge.kind.startsWith('nats-')), false);
+    assert.equal(report.relationships.some(edge => edge.kind === 'nats-subject' && (edge.from.repo === 'ambiguous' || edge.to.repo === 'ambiguous' || edge.from.repo === 'uncertain' || edge.to.repo === 'uncertain')), false);
+    assert.equal(report.evidence.some(edge => ['ambiguous', 'uncertain'].includes(edge.repo) && edge.kind.startsWith('nats-')), false);
     assert.ok(report.skipped_roots.some(root => root.name === 'ambiguous' && root.coverage === 'incomplete'));
+    assert.ok(report.skipped_roots.some(root => root.name === 'uncertain' && root.coverage === 'incomplete'));
   } finally { fs.rmSync(base, {recursive: true, force: true}); }
 });

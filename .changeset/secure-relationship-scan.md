@@ -2,4 +2,4 @@
 "@marktripoli/skills": patch
 ---
 
-Harden repository relationship analysis against unsafe YAML mappings, misleading NATS matches, and incorrectly attributed Kubernetes labels.
+Harden repository relationship analysis by fingerprinting remote paths, rejecting unsafe YAML mappings and labels, and failing closed on ambiguous NATS source.

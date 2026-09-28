@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import {createHash} from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
@@ -28,7 +29,12 @@ function git(args, cwd, input) {
 }
 const safeOrigin = origin => {
   if (origin.length > 512) return null;
-  try { const url = new URL(origin.replace(/^git@([^:]+):/, 'ssh://git@$1/')); url.username = ''; url.password = ''; url.search = ''; url.hash = ''; return `${url.protocol}//${url.host}${url.pathname.replace(/\.git$/, '')}`; } catch { return null; }
+  try {
+    const url = new URL(origin.replace(/^git@([^:]+):/, 'ssh://git@$1/'));
+    if (!['https:', 'http:', 'ssh:'].includes(url.protocol)) return null;
+    const pathFingerprint = createHash('sha256').update(url.pathname).digest('hex');
+    return `${url.protocol}//${url.host}#sha256=${pathFingerprint}`;
+  } catch { return null; }
 };
 const safeLabel = value => typeof value === 'string' && value.length <= 120 && /^[A-Za-z0-9@][A-Za-z0-9@._/-]*$/.test(value) && !/(?:password|passwd|secret|token|credential|api[_-]?key)/i.test(value);
 const safeSubject = value => typeof value === 'string' && value.length <= 200 && /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*(?:\.\*|\.>)?$/.test(value) && !/(?:password|passwd|secret|token|credential|api[_-]?key|gh[pousr]_|sk-)/i.test(value);
@@ -152,44 +158,112 @@ function jsonPropertyLines(text, starts) {
   return locations;
 }
 function sourceTokens(source) {
-  const tokens = [];
+  const tokens = [], parens = [];
+  let uncertain = false;
+  const push = token => {
+    if (token.type === 'punct' && token.value === '(') parens.push(tokens.length);
+    else if (token.type === 'punct' && token.value === ')') {
+      const open = parens.pop();
+      token.controlClose = open !== undefined && tokens[open - 1]?.type === 'id' && ['if', 'while', 'for', 'with', 'switch', 'catch'].includes(tokens[open - 1]?.value);
+    }
+    tokens.push(token);
+  };
   for (let i = 0; i < source.length;) {
     const c = source[i];
     if (/\s/.test(c)) { i++; continue; }
     if (c === '/' && source[i + 1] === '/') { while (i < source.length && source[i] !== '\n') i++; continue; }
-    if (c === '/' && source[i + 1] === '*') { i += 2; while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) i++; i += 2; continue; }
-    if (c === '`') { i++; while (i < source.length) { if (source[i] === '\\') i += 2; else if (source[i++] === '`') break; } continue; }
-    if (c === "'" || c === '"') {
-      const start = i++, contentStart = i; let escaped = false;
-      while (i < source.length && source[i] !== c) { if (source[i] === '\\') { escaped = true; i++; } i++; }
-      const value = escaped ? null : source.slice(contentStart, i);
-      i++;
-      tokens.push({type: 'string', value, start});
+    if (c === '/' && source[i + 1] === '*') {
+      i += 2;
+      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) i++;
+      if (i === source.length) { uncertain = true; break; }
+      i += 2;
       continue;
     }
-    if (c === '/' && (!tokens.length || ['=', '(', '[', '{', ':', ',', ';', '!', '?', 'return', '=>'].includes(tokens.at(-1).value))) {
-      i++; let inClass = false;
+    if (c === '`') {
+      i++;
+      let closed = false, interpolated = false;
       while (i < source.length) {
         if (source[i] === '\\') { i += 2; continue; }
-        if (source[i] === '[') inClass = true;
-        else if (source[i] === ']') inClass = false;
-        else if (source[i] === '/' && !inClass) { i++; while (/[A-Za-z]/.test(source[i] ?? '')) i++; break; }
-        i++;
+        if (source[i] === '$' && source[i + 1] === '{') interpolated = true;
+        if (source[i++] === '`') { closed = true; break; }
       }
+      if (!closed || interpolated) { uncertain = true; break; }
       continue;
     }
+    if (c === "'" || c === '"') {
+      const start = i++, contentStart = i;
+      let escaped = false, closed = false;
+      while (i < source.length) {
+        if (source[i] === '\\') { escaped = true; i += 2; continue; }
+        if (source[i] === c) { closed = true; break; }
+        if (source[i] === '\n') break;
+        i++;
+      }
+      const value = closed && !escaped ? source.slice(contentStart, i) : null;
+      if (!closed) { uncertain = true; break; }
+      i++;
+      push({type: 'string', value, start, end: i});
+      continue;
+    }
+    if (c === '/' && source[i + 1] !== '/' && source[i + 1] !== '*') {
+      const previous = tokens.at(-1), beforePrevious = tokens.at(-2);
+      const previousValue = previous?.type === 'string' ? null : previous?.value;
+      if (([')', ']', '}'].includes(previousValue) && source.slice(previous.end, i).includes('\n')) ||
+          previousValue === ']' || previousValue === '}') { uncertain = true; break; }
+      const regexPrefix = !previous || previous.controlClose ||
+        ['=', '(', '[', '{', ':', ',', ';', '!', '?', 'return', 'throw', 'case', 'delete', 'void', 'typeof', 'instanceof', 'in', 'of', 'else', 'do', '+', '-', '*', '%', '^', '~', '&', '|', '<', '>'].includes(previousValue) ||
+        (previousValue === '&' && beforePrevious?.value === '&') || previousValue === '/';
+      if (regexPrefix) {
+        i++;
+        let inClass = false, closed = false;
+        while (i < source.length) {
+          if (source[i] === '\\') { i += 2; continue; }
+          if (source[i] === '[') inClass = true;
+          else if (source[i] === ']') inClass = false;
+          else if (source[i] === '/' && !inClass) { i++; closed = true; while (/[A-Za-z]/.test(source[i] ?? '')) i++; break; }
+          i++;
+        }
+        if (!closed) { uncertain = true; break; }
+        continue;
+      }
+    }
     const start = i;
-    if (/[A-Za-z_$]/.test(c)) { while (/[A-Za-z0-9_$]/.test(source[i] ?? '')) i++; tokens.push({type: 'id', value: source.slice(start, i), start}); }
-    else { tokens.push({type: 'punct', value: c, start}); i++; }
+    if (/[A-Za-z_$]/.test(c)) {
+      while (/[A-Za-z0-9_$]/.test(source[i] ?? '')) i++;
+      push({type: 'id', value: source.slice(start, i), start, end: i});
+    } else {
+      push({type: 'punct', value: c, start, end: i + 1});
+      i++;
+    }
   }
-  return tokens;
+  return {tokens, uncertain};
+}
+function tokenPairs(tokens) {
+  const pairs = new Int32Array(tokens.length);
+  pairs.fill(-1);
+  const stack = [];
+  let uncertain = false;
+  const openings = {'(': ')', '[': ']', '{': '}'};
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i].type !== 'punct') continue;
+    const value = tokens[i].value;
+    if (openings[value]) stack.push(i);
+    else if ([')', ']', '}'].includes(value)) {
+      const open = stack.at(-1);
+      if (open === undefined || openings[tokens[open].value] !== value) { uncertain = true; continue; }
+      stack.pop();
+      pairs[open] = i;
+      pairs[i] = open;
+    }
+  }
+  return {pairs, uncertain: uncertain || stack.length > 0};
 }
 function tokenScopes(tokens) {
   const scopes = new Array(tokens.length), parents = [-1], stack = [0];
   for (let i = 0; i < tokens.length; i++) {
-    if (tokens[i].value === '}' && stack.length > 1) stack.pop();
+    if (tokens[i].type === 'punct' && tokens[i].value === '}' && stack.length > 1) stack.pop();
     scopes[i] = stack.at(-1);
-    if (tokens[i].value === '{') {
+    if (tokens[i].type === 'punct' && tokens[i].value === '{') {
       const child = parents.length;
       parents.push(stack.at(-1));
       stack.push(child);
@@ -198,10 +272,11 @@ function tokenScopes(tokens) {
   return {scopes, parents};
 }
 function natsSubjects(source, limit = MAX_EVIDENCE, starts = lineStarts(source)) {
-  const tokens = sourceTokens(source), {scopes, parents} = tokenScopes(tokens);
+  const scanned = sourceTokens(source), tokens = scanned.tokens, paired = tokenPairs(tokens), {scopes, parents} = tokenScopes(tokens);
+  const {pairs} = paired;
   const connectFunctions = new Map(), namespaces = new Map(), clients = new Map(), result = [];
   let truncated = false, ambiguous = false, hasNatsBinding = false;
-  const value = (i, v) => tokens[i]?.value === v;
+  const value = (i, v) => tokens[i]?.type !== 'string' && tokens[i]?.value === v;
   const register = (bindings, name, index, scope = scopes[index]) => {
     if (!name || tokens[index]?.type !== 'id') { ambiguous = true; return; }
     if (bindings.has(name) && bindings.get(name).index !== index) ambiguous = true;
@@ -217,7 +292,7 @@ function natsSubjects(source, limit = MAX_EVIDENCE, starts = lineStarts(source))
   for (let i = 0; i < tokens.length; i++) {
     if (value(i, 'import')) {
       let from = i + 1;
-      while (from < tokens.length && !value(from, 'from') && tokens[from].value !== ';') from++;
+      while (from < tokens.length && !value(from, 'from') && !value(from, ';')) from++;
       if (!value(from, 'from')) continue;
       const bindings = tokens.slice(i + 1, from);
       if (tokens[from + 1]?.value === 'nats' && bindings[0]?.value !== 'type') {
@@ -249,7 +324,10 @@ function natsSubjects(source, limit = MAX_EVIDENCE, starts = lineStarts(source))
       }
     }
   }
-  if (!hasNatsBinding) return {matches: result, truncated, ambiguous: false};
+  const mayReferenceNats = /\bfrom\s*['"]nats['"]|\brequire\s*\(\s*['"]nats['"]/.test(source);
+  if (!hasNatsBinding && !mayReferenceNats) return {matches: result, truncated, ambiguous: false};
+  if (scanned.uncertain || paired.uncertain) return {matches: result, truncated, ambiguous: true};
+  if (!hasNatsBinding) return {matches: result, truncated, ambiguous: true};
   const allowed = new Set([...connectFunctions.values(), ...namespaces.values()].map(binding => binding.index));
   for (let i = 0; i + 4 < tokens.length; i++) {
     if (!value(i, 'const') || tokens[i + 1]?.type !== 'id' || !value(i + 2, '=')) continue;
@@ -269,36 +347,28 @@ function natsSubjects(source, limit = MAX_EVIDENCE, starts = lineStarts(source))
   for (const binding of clients.values()) allowed.add(binding.index);
   const candidates = new Set([...connectFunctions.keys(), ...namespaces.keys(), ...clients.keys()]);
   const isCandidate = index => tokens[index]?.type === 'id' && candidates.has(tokens[index].value) && !allowed.has(index);
-  const matchingClose = (open, left, right) => {
-    let depth = 0;
-    for (let index = open; index < tokens.length; index++) {
-      if (value(index, left)) depth++;
-      else if (value(index, right) && --depth === 0) return index;
-    }
-    return -1;
-  };
   for (let i = 0; i < tokens.length; i++) {
-    if (['const', 'let', 'var'].includes(tokens[i].value)) {
+    if (tokens[i].type === 'id' && ['const', 'let', 'var'].includes(tokens[i].value)) {
       if (isCandidate(i + 1)) ambiguous = true;
       if (value(i + 1, '{') || value(i + 1, '[')) {
-        const close = matchingClose(i + 1, tokens[i + 1].value, tokens[i + 1].value === '{' ? '}' : ']');
+        const close = pairs[i + 1];
         for (let j = i + 2; j >= 0 && j < close; j++) if (isCandidate(j)) ambiguous = true;
       }
     }
     if ((value(i, 'function') || value(i, 'class')) && isCandidate(i + 1 + Number(value(i + 1, '*')))) ambiguous = true;
     if (value(i, '(')) {
-      const close = matchingClose(i, '(', ')');
+      const close = pairs[i];
       if (close < 0) continue;
       const previous = tokens[i - 1]?.value;
       const next = tokens[close + 1]?.value;
-      const parameterList = next === '=>' || value(i - 1, 'function') || value(i - 1, 'catch') ||
+      const parameterList = next === '=>' || next === ':' || value(i - 1, 'function') || value(i - 1, 'catch') ||
         (next === '{' && tokens[i - 1]?.type === 'id' && !['if', 'while', 'for', 'switch', 'with'].includes(previous));
       if (parameterList) for (let j = i + 1; j < close; j++) if (isCandidate(j)) ambiguous = true;
     }
     if (isCandidate(i) && value(i + 1, '=>')) ambiguous = true;
     if (value(i, 'import')) {
       let from = i + 1;
-      while (from < tokens.length && !value(from, 'from') && tokens[from].value !== ';') from++;
+      while (from < tokens.length && !value(from, 'from') && !value(from, ';')) from++;
       if (value(from, 'from') && tokens[from + 1]?.value !== 'nats') {
         for (let j = i + 1; j < from; j++) if (isCandidate(j)) ambiguous = true;
       }
@@ -306,8 +376,9 @@ function natsSubjects(source, limit = MAX_EVIDENCE, starts = lineStarts(source))
   }
   if (ambiguous) return {matches: result, truncated, ambiguous: true};
   for (let i = 0; i + 5 < tokens.length; i++) {
+    if (tokens[i].type !== 'id') continue;
     const client = clients.get(tokens[i].value);
-    if (!client || !value(i + 1, '.') || !['publish', 'subscribe'].includes(tokens[i + 2]?.value) ||
+    if (!client || value(i - 1, '.') || !value(i + 1, '.') || !['publish', 'subscribe'].includes(tokens[i + 2]?.value) ||
         !value(i + 3, '(') || tokens[i + 4]?.type !== 'string' || !tokens[i + 4].value || !safeSubject(tokens[i + 4].value) ||
         ![',', ')'].includes(tokens[i + 5]?.value)) continue;
     if (!visible(client, scopes[i])) { ambiguous = true; continue; }
@@ -370,7 +441,7 @@ function codeEdges(repo, files, maxEdges = MAX_EVIDENCE) {
           const selector = kind === 'Service' ? (spec.selector ?? {}) :
             kind === 'Pod' ? (resource.metadata?.labels ?? {}) : (spec.template?.metadata?.labels ?? {});
           if (!safeLabel(name) || !selector || typeof selector !== 'object' || Array.isArray(selector) || Object.keys(selector).length > MAX_SELECTOR_LABELS ||
-              Object.entries(selector).some(([key, value]) => !safeLabel(key) || !safeLabel(String(value)))) { incomplete = true; continue; }
+              Object.entries(selector).some(([key, value]) => !safeLabel(key) || typeof value !== 'string' || !safeLabel(value))) { incomplete = true; continue; }
           const kindNode = doc.get('kind', true);
           if (!kindNode?.range) { incomplete = true; continue; }
           emit({kind: 'kubernetes-declaration', repo: repo.name, resource_kind: kind, name, selector, source: {path: file.path, line: lineAt(starts, kindNode.range[0])}});
