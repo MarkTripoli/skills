@@ -1,4 +1,5 @@
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,18 +10,19 @@ import { artifacts, failures, handoff, newest, placeholders } from "./lib.mjs";
 import { recordSecurityAssessment } from "./security-assessment.mjs";
 import { gradeEvidenceScenario, isEvidenceScenario, snapshotEvidenceSources } from "./iterate-evidence.mjs";
 import { metricsForOutput } from "./metrics.mjs";
-import { fingerprintDirectory, fingerprintEvalSource } from "./evidence.mjs";
+import { fingerprintDirectory, fingerprintEvalSource, RUNNER_SOURCES } from "./evidence.mjs";
 import { auditEvalPair } from "./feedback.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 const repoRoot = path.resolve(here, "..");
-const resultsRoot = path.join(here, "results");
+const resultsRoot = path.resolve(process.env.SKILLS_EVAL_RESULTS_ROOT ?? path.join(here, "results"));
 const scenariosDir = path.join(here, "scenarios");
 const fixturesDir = path.join(here, "fixtures");
 const guidanceFiles = ["WRITING.md", "CONVENTIONS.md"];
 
 const args = process.argv.slice(2);
+const gradeJson = args.includes("--grade-json");
 if (args[0] === "--compare") {
   if (args.length !== 3) {
     console.error("usage: node evals/run.mjs --compare <solo-run> <delivery-run>");
@@ -39,7 +41,7 @@ if (args[0] === "--compare") {
   const fields = (run) => ({
     acceptance: run?.ok === true ? "passed" : run?.ok === false ? "failed" : "incomplete",
     model: run?.model ?? "unknown",
-    actualModel: run?.metrics?.coverage?.models?.length === 1 ? run.metrics.coverage.models[0] : "unknown",
+    actualModel: run?.actualModel ?? (run?.metrics?.coverage?.models?.length === 1 ? run.metrics.coverage.models[0] : "unknown"),
     wallTimeSeconds: Number.isFinite(run?.wallTimeSeconds) ? run.wallTimeSeconds : "unknown",
     spend: "unknown",
     estimatedCost: "unknown",
@@ -105,8 +107,17 @@ if (!Number.isFinite(maxMinutes) || maxMinutes <= 0) {
   console.error("--max-time needs a positive number of minutes");
   process.exit(2);
 }
+const sampleCount = flagValue("--samples") === null ? 1 : Number(flagValue("--samples"));
+if (!Number.isSafeInteger(sampleCount) || sampleCount < 1 || sampleCount > 100) {
+  console.error("--samples needs an integer from 1 to 100");
+  process.exit(2);
+}
 const gradeDir = flagValue("--grade");
-const names = args.filter((a, i) => !a.startsWith("--") && !["--max-time", "--grade", "--model"].includes(args[i - 1]));
+if (gradeJson && (gradeDir === null || args.length < 4)) {
+  console.error("usage: node evals/run.mjs --grade-json --grade <run-root> <scenario>");
+  process.exit(2);
+}
+const names = args.filter((a, i) => !a.startsWith("--") && !["--max-time", "--grade", "--model", "--samples"].includes(args[i - 1]));
 
 const git = (cwd, ...argv) => execFileSync("git", argv, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 
@@ -120,6 +131,7 @@ function loadScenarios() {
   if (missing.length) throw new Error(`unknown scenario${missing.length > 1 ? "s" : ""}: ${missing.join(", ")}`);
   return Promise.all(files.map(async (f) => ({ name: f, ...(await import(pathToFileURL(path.join(scenariosDir, `${f}.mjs`)))).default })));
 }
+const scenarios = await loadScenarios();
 
 function copyFixtures(scenario, dest, sourceRoot) {
   fs.cpSync(path.join(sourceRoot, "repo-cli"), dest, { recursive: true });
@@ -141,6 +153,13 @@ function snapshotScenarioSources(scenarios, dist) {
   fs.mkdirSync(destination, { recursive: true });
   for (const scenario of scenarios) {
     fs.copyFileSync(path.join(scenariosDir, `${scenario.name}.mjs`), path.join(destination, `${scenario.name}.mjs`));
+  }
+  const runnerDestination = path.join(dist, "eval-sources", "runner");
+  fs.mkdirSync(runnerDestination, { recursive: true });
+  for (const { source, snapshot } of RUNNER_SOURCES) {
+    const target = path.join(runnerDestination, snapshot);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(path.join(repoRoot, source), target);
   }
 }
 // A throwaway git repository holding the fixture codebase, the worker definitions, and the task directory.
@@ -278,8 +297,8 @@ function grade(phase, ctx, exitCode) {
 }
 
 function report(scenario, label, seconds, problems) {
-  console.log(`[${scenario}] ${label}: ${problems.length === 0 ? "ok" : "FAIL"}${seconds === null ? "" : ` (${seconds}s)`}`);
-  for (const p of problems) console.log(`    - ${p.split("\n").join("\n      ")}`);
+  if (!gradeJson) console.log(`[${scenario}] ${label}: ${problems.length === 0 ? "ok" : "FAIL"}${seconds === null ? "" : ` (${seconds}s)`}`);
+  if (!gradeJson) for (const p of problems) console.log(`    - ${p.split("\n").join("\n      ")}`);
 }
 
 function templateFor(skillsDir, phase) {
@@ -304,7 +323,7 @@ async function runScenario(scenario, runDir, dist) {
   const fixtureSnapshotRevision = fingerprintDirectory(path.join(dist, "fixtures"));
   const sourceRevision = fingerprintEvalSource(dist, scenario.name, fixtureSnapshotRevision);
   const resultDir = path.join(runDir, scenario.name);
-  const result = { name: scenario.name, repo, phases: [], ok: true, model: model ?? "omp-default", fixtureRevision: fixtureSha, fixtureVersion: fixtureSnapshotRevision, sourceRevision, fixtureSnapshotRevision, wallTimeSeconds: 0, metrics: { wall_ms: 0, tokens: {}, cost: null, cost_basis: null, cost_source: null, coverage: { complete: true, turns: 0, usage_events: 0, cost_events: 0, models: [] } } };
+  const result = { name: scenario.name, executionId: crypto.randomUUID(), repo, phases: [], ok: true, model: model ?? "omp-default", fixtureRevision: fixtureSha, fixtureVersion: fixtureSnapshotRevision, sourceRevision, fixtureSnapshotRevision, wallTimeSeconds: 0, metrics: { wall_ms: 0, tokens: {}, cost: null, cost_basis: null, cost_source: null, coverage: { complete: true, turns: 0, usage_events: 0, cost_events: 0, models: [] } } };
 
   for (const [index, phase] of scenario.phases.entries()) {
     const label = `${index + 1}-${phase.skill}`;
@@ -321,6 +340,7 @@ async function runScenario(scenario, runDir, dist) {
     const metrics = metricsForOutput(stdout, wallMs);
     const answer = metrics.answer ?? "";
     fs.writeFileSync(path.join(out, "answer.md"), answer);
+    fs.writeFileSync(path.join(out, "omp.jsonl"), stdout);
     fs.writeFileSync(path.join(out, "stderr.log"), stderr);
     if (fs.existsSync(taskDir)) fs.cpSync(taskDir, path.join(out, "task"), { recursive: true });
     const ctx = { live: true, repo, codeRoot: repo, taskDir, fixtureSha, before, template, answer, artifact: newest(taskDir, phase.artifactType), artifacts: artifacts(taskDir) };
@@ -337,12 +357,12 @@ async function runScenario(scenario, runDir, dist) {
     aggregate.coverage.usage_events += metrics.coverage.usage_events;
     aggregate.coverage.cost_events += metrics.coverage.cost_events;
     aggregate.coverage.models = [...new Set([...aggregate.coverage.models, ...metrics.coverage.models])];
-    result.phases.push({ phase: label, wall_ms: wallMs, tokens: metrics.tokens, cost: metrics.cost, cost_basis: metrics.cost_basis, cost_source: metrics.cost_source, coverage: metrics.coverage, ok: problems.length === 0, problems });
+    result.phases.push({ phase: label, exitCode: code, wall_ms: wallMs, tokens: metrics.tokens, cost: metrics.cost, cost_basis: metrics.cost_basis, cost_source: metrics.cost_source, coverage: metrics.coverage, ok: problems.length === 0, problems });
     report(scenario.name, label, Math.round(wallMs / 1000), problems);
     if (problems.length) { result.ok = false; break; }
   }
+  result.actualModel = result.metrics.coverage.models.length === 1 ? result.metrics.coverage.models[0] : null;
   if (result.ok && !keep) {
-    fs.rmSync(repo, { recursive: true, force: true });
     result.repo = null;
   } else console.log(`[${scenario.name}] repository kept at ${repo}`);
   result.rawOutput = path.relative(repoRoot, resultDir);
@@ -359,13 +379,13 @@ async function gradeScenario(scenario, runDir) {
   const resultDir = path.join(runDir, scenario.name);
   const result = { name: scenario.name, repo: null, phases: [], ok: true, graded: true };
   if (!fs.existsSync(resultDir)) {
-    console.log(`[${scenario.name}] no recording under ${path.relative(repoRoot, runDir)}; skipped`);
+    if (!gradeJson) console.log(`[${scenario.name}] no recording under ${path.relative(repoRoot, runDir)}; skipped`);
     return { ...result, skipped: true };
   }
   const pinnedDist = path.join(runDir, ".dist");
   const sourceRoot = path.join(pinnedDist, "fixtures");
   if (!fs.existsSync(sourceRoot)) {
-    console.log(`[${scenario.name}] source snapshot missing under ${path.relative(repoRoot, pinnedDist)}; skipped`);
+    if (!gradeJson) console.log(`[${scenario.name}] source snapshot missing under ${path.relative(repoRoot, pinnedDist)}; skipped`);
     return { ...result, skipped: true };
   }
   const codeRoot = fs.mkdtempSync(path.join(os.tmpdir(), `skills-eval-grade-${scenario.name}-`));
@@ -375,8 +395,10 @@ async function gradeScenario(scenario, runDir) {
       const label = `${index + 1}-${phase.skill}`;
       const out = path.join(resultDir, label);
       const taskDir = path.join(out, "task");
-      if (!fs.existsSync(path.join(out, "answer.md"))) {
-        console.log(`[${scenario.name}] ${label}: not recorded`);
+      if (!fs.existsSync(path.join(out, "answer.md")) || !fs.existsSync(path.join(taskDir, "task.md"))) {
+        result.ok = false;
+        result.phases.push({ phase: `${index + 1}-${phase.skill}`, seconds: null, ok: false, problems: ["phase output not recorded"] });
+        if (!gradeJson) console.log(`[${scenario.name}] ${index + 1}-${phase.skill}: not recorded`);
         break;
       }
       const previous = index === 0 ? null : path.join(resultDir, `${index}-${scenario.phases[index - 1].skill}`, "task");
@@ -395,7 +417,7 @@ async function gradeScenario(scenario, runDir) {
       const problems = grade(phase, ctx, 0);
       result.phases.push({ phase: label, seconds: null, ok: problems.length === 0, problems });
       report(scenario.name, label, null, problems);
-      if (problems.length) result.ok = false;
+      if (problems.length) { result.ok = false; break; }
     }
   } finally {
     fs.rmSync(codeRoot, { recursive: true, force: true });
@@ -403,8 +425,11 @@ async function gradeScenario(scenario, runDir) {
   return result;
 }
 
-const scenarios = await loadScenarios();
-fs.mkdirSync(resultsRoot, { recursive: true });
+if (gradeDir === null && sampleCount > 1 && scenarios.some(isEvidenceScenario)) {
+  console.error("--samples > 1 is not supported for evidence scenarios; no evaluation was started");
+  process.exit(2);
+}
+if (!gradeJson) fs.mkdirSync(resultsRoot, { recursive: true });
 
 let results;
 if (gradeDir !== null) {
@@ -414,15 +439,13 @@ if (gradeDir !== null) {
     console.error(`no run at ${runDir}`);
     process.exit(2);
   }
-  console.log(`re-grading ${fs.realpathSync(runDir)} with the current checks`);
+  if (!gradeJson) console.log(`re-grading ${fs.realpathSync(runDir)} with the current checks`);
   results = [];
   for (const s of scenarios) results.push(await gradeScenario(s, runDir));
 } else {
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "").replace("T", "-");
   const runDir = path.join(resultsRoot, stamp);
   fs.mkdirSync(runDir, { recursive: true });
-  // The built tree and source snapshots are private to this run (a concurrent run must not rebuild
-  // the skills or change the guidance a running session is reading) and stay with its recordings.
   const dist = path.join(runDir, ".dist");
   if (scenarios.some((scenario) => !isEvidenceScenario(scenario))) {
     const { buildRuntime } = await import("../scripts/lib/build.mjs");
@@ -434,12 +457,52 @@ if (gradeDir !== null) {
   const latest = path.join(resultsRoot, "latest");
   fs.rmSync(latest, { force: true });
   fs.symlinkSync(stamp, latest);
-  console.log(`skills built at ${path.relative(repoRoot, dist)}; running ${scenarios.map((s) => s.name).join(", ")} with ${maxMinutes} minutes per phase; recordings in ${path.relative(repoRoot, runDir)}`);
-  results = await Promise.all(scenarios.map((s) => runScenario(s, runDir, dist)));
+  if (!gradeJson) console.log(`skills built at ${path.relative(repoRoot, dist)}; running ${scenarios.map((s) => s.name).join(", ")} with ${maxMinutes} minutes per phase; recordings in ${path.relative(repoRoot, runDir)}`);
+  results = [];
+  for (const scenario of scenarios) {
+    const samples = [];
+    for (let index = 1; index <= sampleCount; index++) {
+      const sampleRoot = sampleCount === 1
+        ? runDir
+        : path.join(runDir, scenario.name, `sample-${String(index).padStart(2, "0")}`);
+      const sampleDist = sampleCount === 1 ? dist : path.join(sampleRoot, ".dist");
+      if (sampleCount > 1) {
+        fs.mkdirSync(sampleRoot, { recursive: true });
+        fs.cpSync(dist, sampleDist, { recursive: true });
+      }
+      samples.push(await runScenario(scenario, sampleRoot, sampleDist));
+    }
+    if (sampleCount === 1) {
+      results.push(samples[0]);
+      continue;
+    }
+    const cohortDir = path.join(runDir, scenario.name);
+    const sampleRuns = samples.map((sample) => path.relative(cohortDir, path.resolve(repoRoot, sample.rawOutput)));
+    const cohort = {
+      name: scenario.name,
+      rawOutput: path.relative(repoRoot, cohortDir),
+      sampleRuns,
+      sampleCount: sampleRuns.length,
+      ok: samples.every((sample) => sample.ok),
+      model: samples[0]?.model,
+      actualModel: samples[0]?.actualModel,
+      fixtureRevision: samples[0]?.fixtureRevision,
+      fixtureVersion: samples[0]?.fixtureVersion,
+      fixtureSnapshotRevision: samples[0]?.fixtureSnapshotRevision,
+      sourceRevision: samples[0]?.sourceRevision,
+    };
+    fs.mkdirSync(cohortDir, { recursive: true });
+    fs.writeFileSync(path.join(cohortDir, "comparison-run.json"), `${JSON.stringify(cohort, null, 2)}\n`);
+    results.push(cohort);
+  }
   fs.writeFileSync(path.join(runDir, "summary.json"), JSON.stringify(results, null, 2));
-}
 
-const graded = results.filter((r) => !r.skipped);
-const failed = graded.filter((r) => !r.ok);
-console.log(`\n${graded.length - failed.length}/${graded.length} scenarios passed${results.length > graded.length ? ` (${results.length - graded.length} not recorded)` : ""}`);
-process.exit(failed.length ? 1 : 0);
+}
+if (gradeJson) {
+  console.log(JSON.stringify(results));
+} else {
+  const graded = results.filter((r) => !r.skipped);
+  const failed = graded.filter((r) => !r.ok);
+  console.log(`\n${graded.length - failed.length}/${graded.length} scenarios passed${results.length > graded.length ? ` (${results.length - graded.length} not recorded)` : ""}`);
+}
+process.exit(results.some((r) => r.skipped || !r.ok) ? 1 : 0);

@@ -1,8 +1,10 @@
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
-import { fingerprintDirectory, fingerprintEvalSource } from "./evidence.mjs";
+import { fingerprintDirectory, fingerprintEvalSource, RUNNER_SOURCES } from "./evidence.mjs";
+import { metricsForOutput } from "./metrics.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -35,6 +37,66 @@ function loadRetainedManifest(input, side) {
     return { problems: [`${side}: retained comparison manifest missing or invalid`] };
   }
 }
+function regradeRun(run, manifestPath, side, problems) {
+  if (run.kind === "solo") {
+    try {
+      const outputDir = path.dirname(manifestPath);
+      const phase = run.phases?.[0];
+      const phaseDir = path.join(outputDir, "1-solo-verification");
+      const answer = fs.readFileSync(path.join(phaseDir, "answer.md"), "utf8");
+      const stdout = fs.readFileSync(path.join(phaseDir, "omp.jsonl"), "utf8");
+      const runtime = fs.readFileSync(path.join(phaseDir, "runtime.txt"), "utf8").trim();
+      const repoRuntime = fs.readFileSync(path.join(run.repo, "dist", "runtime.txt"), "utf8").trim();
+      const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: run.repo, encoding: "utf8" }).trim();
+      const changed = execFileSync("git", ["diff", "--name-only", run.fixtureRevision], { cwd: run.repo, encoding: "utf8" }).trim();
+      const observed = metricsForOutput(stdout, phase?.wall_ms ?? null);
+      const gradeProblems = [
+        ...(run.ompExitCode === 0 ? [] : [`omp exited ${run.ompExitCode}`]),
+        ...(answer.trim() ? [] : ["solo answer was empty"]),
+        ...(/npm run build -- RUNTIME=node/.test(answer) ? [] : ["answer omitted the required npm run build -- RUNTIME=node command"]),
+        ...(/built for node/.test(answer) ? [] : ["answer omitted observed built for node output"]),
+        ...(!/npm run build[^\n`]*usage[^\n]*\|\s*fail/i.test(answer) ? [] : ["answer treated a bare build usage error as a product failure"]),
+        ...(runtime === "built for node" && runtime === repoRuntime ? [] : [`build output was ${JSON.stringify(runtime)}`]),
+        ...(head === run.fixtureRevision && !changed ? [] : ["solo run changed tracked source or committed a new revision"]),
+      ];
+      if (observed.answer !== answer || !phase || phase.phase !== "1-solo-verification" ||
+          !isDeepStrictEqual(phase.problems, gradeProblems) || !isDeepStrictEqual(run.problems, gradeProblems)) {
+        problems.push(`${side}: solo result differs from independent retained-output grading`);
+      }
+      const graded = { ok: gradeProblems.length === 0, phases: [{ phase: "1-solo-verification", ok: gradeProblems.length === 0, problems: gradeProblems }] };
+      if (run.ok !== graded.ok) problems.push(`${side}: run.ok differs from independent regrading`);
+      return graded;
+    } catch {
+      problems.push(`${side}: retained solo build and answer evidence could not be regraded`);
+      return null;
+    }
+  }
+  const outputDir = path.dirname(manifestPath);
+  const runRoot = path.dirname(outputDir);
+  const result = spawnSync(process.execPath, [
+    path.join(repoRoot, "evals", "run.mjs"), "--grade-json", "--grade", runRoot, run.name,
+  ], { cwd: repoRoot, encoding: "utf8" });
+  if (result.error || !result.stdout) {
+    problems.push(`${side}: retained outputs could not be regraded by the pinned scenario`);
+    return null;
+  }
+  try {
+    const graded = JSON.parse(result.stdout).find((candidate) => candidate.name === run.name);
+    if (!graded || graded.skipped || !Array.isArray(graded.phases)) {
+      problems.push(`${side}: retained outputs could not be regraded by the pinned scenario`);
+      return null;
+    }
+    if (!Array.isArray(run.phases) || run.phases.length !== graded.phases.length ||
+        run.phases.some((phase, index) => phase.phase !== graded.phases[index]?.phase)) {
+      problems.push(`${side}: retained phase identifiers differ from pinned scenario regrading`);
+    }
+    return graded;
+  } catch {
+    problems.push(`${side}: retained outputs produced an invalid regrade result`);
+    return null;
+  }
+}
+
 
 function retainedOutcomeRows(run, manifestPath, side) {
   const problems = [];
@@ -44,7 +106,7 @@ function retainedOutcomeRows(run, manifestPath, side) {
     try {
       return fs.statSync(candidate).isDirectory() && fs.readdirSync(candidate).length > 0 &&
         fingerprintDirectory(candidate) === run.fixtureSnapshotRevision &&
-        (run.fixtureVersion === undefined || run.fixtureVersion === run.fixtureSnapshotRevision);
+        run.fixtureVersion === run.fixtureSnapshotRevision;
     } catch {
       return false;
     }
@@ -55,62 +117,99 @@ function retainedOutcomeRows(run, manifestPath, side) {
     try { sourceRevision = fingerprintEvalSource(path.dirname(fixtureSnapshot), run.name, fixtureSnapshotRevision); } catch { /* Missing pinned source input is reported below. */ }
   }
   if (!fixtureSnapshot) problems.push(`${side}: pinned fixture snapshot missing or does not match its recorded revision`);
-  if (!Array.isArray(run.phases) || run.phases.length === 0) {
-    return { rows: [], problems: [...problems, `${side}: retained phase outcome rows missing`] };
+  if (!sourceRevision || sourceRevision !== run.sourceRevision) problems.push(`${side}: pinned source fingerprint missing or does not match its recorded revision`);
+  if (fixtureSnapshot && sourceRevision && typeof run.name === "string" && /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(run.name)) {
+    try {
+      const sourceRoot = path.dirname(fixtureSnapshot);
+      const pinnedScenario = path.join(sourceRoot, "eval-sources", "scenarios", `${run.name}.mjs`);
+      const currentScenario = path.join(repoRoot, "evals", "scenarios", `${run.name}.mjs`);
+      if (!fs.readFileSync(pinnedScenario).equals(fs.readFileSync(currentScenario))) problems.push(`${side}: pinned scenario source differs from current grader source`);
+      for (const { source, snapshot } of RUNNER_SOURCES) {
+        const pinned = path.join(sourceRoot, "eval-sources", "runner", snapshot);
+        const current = path.join(repoRoot, source);
+        if (!fs.readFileSync(pinned).equals(fs.readFileSync(current))) problems.push(`${side}: pinned runner source ${source} differs from current grader source`);
+      }
+    } catch { problems.push(`${side}: pinned evaluator source is unavailable to the grader`); }
   }
-  const seen = new Set();
+  if (typeof run.name !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(run.name)) {
+    problems.push(`${side}: scenario name missing or invalid`);
+    return { rows: [], problems, fixtureSnapshotRevision, sourceRevision };
+  }
+  if (!fixtureSnapshot || !sourceRevision || sourceRevision !== run.sourceRevision ||
+      problems.some((problem) => problem.includes("pinned evaluator source") || problem.includes("pinned scenario source") || problem.includes("pinned runner source"))) {
+    return { rows: [], problems, fixtureSnapshotRevision, sourceRevision };
+  }
+  if (!Array.isArray(run.phases) || run.phases.length === 0) {
+    return { rows: [], problems: [...problems, `${side}: retained phase outcome rows missing`], fixtureSnapshotRevision, sourceRevision };
+  }
+  const graded = regradeRun(run, manifestPath, side, problems);
   const rows = [];
-  for (const phase of run.phases) {
+  const seen = new Set();
+  for (const [index, phase] of run.phases.entries()) {
     const label = phase?.phase;
     if (typeof label !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(label) || seen.has(label)) {
       problems.push(`${side}: invalid or duplicate phase outcome identifier`);
       continue;
     }
     seen.add(label);
-    const answer = path.join(outputDir, label, "answer.md");
-    const task = path.join(outputDir, label, "task", "task.md");
+    const phaseDir = path.join(outputDir, label);
+    let observed;
     try {
-      if (fs.statSync(answer).size === 0 || fs.statSync(task).size === 0) throw new Error("empty outcome artifact");
+      const stdout = fs.readFileSync(path.join(phaseDir, "omp.jsonl"), "utf8");
+      observed = metricsForOutput(stdout, phase.wall_ms ?? null);
+      if (!observed.answer || observed.answer !== fs.readFileSync(path.join(phaseDir, "answer.md"), "utf8")) throw new Error("answer/output mismatch");
+      if (!fs.readFileSync(path.join(phaseDir, "task", "task.md"), "utf8").trim()) throw new Error("task snapshot empty");
     } catch {
-      problems.push(`${side}: retained answer and task snapshot required for ${label}`);
+      problems.push(`${side}: retained answer, task, and raw OMP output required for ${label}`);
     }
-    if (typeof phase.ok !== "boolean" || !Array.isArray(phase.problems) || (phase.ok && phase.problems.length !== 0) || (!phase.ok && phase.problems.length === 0)) {
-      problems.push(`${side}: inconsistent retained grading outcome for ${label}`);
+    if (!observed || !isDeepStrictEqual(phase.coverage, observed.coverage) ||
+        !isDeepStrictEqual(phase.tokens, observed.tokens) || !isDeepStrictEqual(phase.cost, observed.cost) ||
+        phase.cost_basis !== observed.cost_basis || phase.cost_source !== observed.cost_source) {
+      problems.push(`${side}: recorded usage or cost differs from raw OMP output for ${label}`);
     }
-    const coverage = phase.coverage;
-    const models = coverage?.models;
+    const gradedPhase = graded?.phases[index];
+    const phasePassed = phase.exitCode === 0 && gradedPhase?.ok === true;
+    if (phase.ok !== phasePassed ||
+        (phase.ok && (!Array.isArray(phase.problems) || phase.problems.length !== 0)) ||
+        (!phase.ok && (!Array.isArray(phase.problems) || phase.problems.length === 0))) {
+      problems.push(`${side}: phase ${label} outcome differs from independent regrading and process status`);
+    }
+    const coverage = observed?.coverage ?? null;
     if (coverage?.complete !== true || !positiveInteger(coverage.turns) || coverage.usage_events !== coverage.turns ||
-        coverage.cost_events !== coverage.turns || !Array.isArray(models) || models.length !== 1 ||
-        typeof models[0] !== "string" || !models[0].trim() || models[0].startsWith("unknown/")) {
+        coverage.cost_events !== coverage.turns || !Array.isArray(coverage.models) || coverage.models.length !== 1 ||
+        typeof coverage.models[0] !== "string" || !coverage.models[0].trim() || coverage.models[0].startsWith("unknown/")) {
       problems.push(`${side}: incomplete usage coverage for ${label}`);
     }
     rows.push({
       id: `${run.name}/${label}`,
       phase: label,
-      passed: phase.ok === true,
+      passed: phasePassed,
       coverage,
-      cost: phase.cost,
-      costBasis: phase.cost_basis,
-      costSource: phase.cost_source,
+      cost: observed?.cost ?? null,
+      costBasis: observed?.cost_basis ?? null,
+      costSource: observed?.cost_source ?? null,
     });
   }
-  if (typeof run.name !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(run.name)) problems.push(`${side}: scenario name missing or invalid`);
-  return { rows, problems, fixtureSnapshotRevision };
+  if (run.ok !== (rows.length === run.phases.length && rows.every((row) => row.passed))) {
+    problems.push(`${side}: run.ok differs from independent phase outcomes`);
+  }
+  return { rows, problems, fixtureSnapshotRevision, sourceRevision };
 }
 
-function recordedRunEvidence(input, side) {
-  const loaded = loadRetainedManifest(input, side);
-  if (!loaded.run) return { normalized: null, problems: loaded.problems };
-  const run = loaded.run;
-  const problems = [...loaded.problems];
-  if (typeof run.name !== "string" || !run.name.trim()) problems.push(`${side}: scenario name missing`);
+function singleRunEvidence(run, manifestPath, side) {
+  const problems = [];
+  if (typeof run.name !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(run.name)) problems.push(`${side}: scenario name missing or invalid`);
   if (typeof run.model !== "string" || !run.model.trim()) problems.push(`${side}: configured model missing`);
   if (!/^[a-f0-9]{40}$/i.test(run.fixtureRevision ?? "")) problems.push(`${side}: fixture revision missing or invalid`);
   if (!/^[a-f0-9]{64}$/i.test(run.sourceRevision ?? "")) problems.push(`${side}: source revision missing or invalid`);
-  const retained = retainedOutcomeRows(run, loaded.manifestPath, side);
+  if (typeof run.executionId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(run.executionId)) {
+    problems.push(`${side}: runner execution identity missing or invalid`);
+  }
+  const retained = retainedOutcomeRows(run, manifestPath, side);
   problems.push(...retained.problems);
   const models = [...new Set(retained.rows.flatMap((row) => Array.isArray(row.coverage?.models) ? row.coverage.models : []))].sort();
-  if (models.length !== 1) problems.push(`${side}: phases do not have one consistent observed model`);
+  const actualModel = models.length === 1 ? models[0] : null;
+  if (!actualModel || run.actualModel !== actualModel) problems.push(`${side}: observed actual model missing or mismatched`);
   const phaseTurns = retained.rows.reduce((sum, row) => sum + (Number.isSafeInteger(row.coverage?.turns) ? row.coverage.turns : 0), 0);
   const phaseUsageEvents = retained.rows.reduce((sum, row) => sum + (Number.isSafeInteger(row.coverage?.usage_events) ? row.coverage.usage_events : 0), 0);
   const phaseCostEvents = retained.rows.reduce((sum, row) => sum + (Number.isSafeInteger(row.coverage?.cost_events) ? row.coverage.cost_events : 0), 0);
@@ -120,30 +219,123 @@ function recordedRunEvidence(input, side) {
       !isDeepStrictEqual([...aggregate.models].sort(), models)) {
     problems.push(`${side}: aggregate usage coverage does not reconcile with retained phase rows`);
   }
-  return {
-    normalized: {
-      runId: loaded.manifestPath,
-      manifestPath: loaded.manifestPath,
-      fixtureVersion: run.fixtureVersion ?? run.fixtureSnapshotRevision ?? run.fixtureRevision,
-      fixtureSnapshotRevision: retained.fixtureSnapshotRevision,
-      model: run.model,
-      sourceRevision: run.sourceRevision,
-      usageCoverage: retained.rows.length > 0 && retained.rows.every((row) => row.coverage?.complete === true) ? "complete" : "incomplete",
-      rows: retained.rows,
-    },
-    run,
-    problems,
+  const costRows = retained.rows;
+  const costTotal = costRows.every((row) => row.costBasis === "model_rate_estimate_usd" && row.costSource === ESTIMATED_COST_SOURCE &&
+      Number.isFinite(row.cost?.total) && row.cost.total >= 0)
+    ? costRows.reduce((sum, row) => sum + row.cost.total, 0)
+    : null;
+  if (costTotal === null || !Number.isFinite(run.metrics?.cost?.total) ||
+      Math.abs(costTotal - run.metrics.cost.total) > Math.max(1e-9, costTotal * 1e-9)) {
+    problems.push(`${side}: aggregate estimated cost does not reconcile with raw phase usage`);
+  }
+  const normalized = {
+    runId: manifestPath,
+    manifestPath,
+    fixtureVersion: run.fixtureVersion,
+    fixtureSnapshotRevision: retained.fixtureSnapshotRevision,
+    model: run.model,
+    actualModel,
+    sourceRevision: retained.sourceRevision,
+    usageCoverage: aggregate?.complete === true ? "complete" : "incomplete",
+    rows: [{
+      id: run.executionId,
+      passed: run.ok === true,
+      coverage: aggregate,
+      cost: costTotal === null ? null : { total: costTotal },
+      costBasis: costTotal === null ? null : "model_rate_estimate_usd",
+      costSource: costTotal === null ? null : ESTIMATED_COST_SOURCE,
+    }],
   };
+  return { normalized, run, problems };
 }
 
-function estimatedCost(run) {
-  const phases = run.phases;
-  if (!Array.isArray(phases) || phases.length === 0 ||
-      phases.some((phase) => phase.cost_basis !== "model_rate_estimate_usd" || phase.cost_source !== ESTIMATED_COST_SOURCE ||
-        !Number.isFinite(phase.cost?.total) || phase.cost.total < 0)) return null;
-  const total = phases.reduce((sum, phase) => sum + phase.cost.total, 0);
-  if (!Number.isFinite(run.metrics?.cost?.total) || Math.abs(total - run.metrics.cost.total) > Math.max(1e-9, total * 1e-9)) return null;
-  return total;
+function recordedRunEvidence(input, side) {
+  const loaded = loadRetainedManifest(input, side);
+  if (!loaded.run) return { normalized: null, problems: loaded.problems };
+  const root = loaded.run;
+  if (!Array.isArray(root.sampleRuns)) {
+    const single = singleRunEvidence(root, loaded.manifestPath, side);
+    single.problems.unshift(...loaded.problems);
+    return single;
+  }
+  const problems = [...loaded.problems];
+  const cohortDir = path.dirname(loaded.manifestPath);
+  let realRoot;
+  try { realRoot = fs.realpathSync(cohortDir); }
+  catch { return { normalized: null, problems: [...problems, `${side}: sample cohort directory missing`] }; }
+  if (path.resolve(repoRoot, root.rawOutput) !== realRoot || root.sampleRuns.length === 0) {
+    problems.push(`${side}: sample cohort root or sample list invalid`);
+  }
+  const samples = [];
+  const executionIds = new Set();
+  const manifestPaths = new Set();
+  let firstSampleEvidence = null;
+  for (const [index, reference] of root.sampleRuns.entries()) {
+    if (typeof reference !== "string" || !reference.trim() || path.isAbsolute(reference)) {
+      problems.push(`${side}: sample reference invalid`);
+      continue;
+    }
+    const sampleDir = path.resolve(cohortDir, reference);
+    if (!sampleDir.startsWith(`${cohortDir}${path.sep}`)) {
+      problems.push(`${side}: sample reference escapes cohort directory`);
+      continue;
+    }
+    try {
+      const realSampleDir = fs.realpathSync(sampleDir);
+      if (!realSampleDir.startsWith(`${realRoot}${path.sep}`) || manifestPaths.has(realSampleDir)) {
+        problems.push(`${side}: duplicate or external sample run`);
+        continue;
+      }
+      const manifestPath = path.join(realSampleDir, "comparison-run.json");
+      const child = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+      if (typeof child.rawOutput !== "string" || path.resolve(repoRoot, child.rawOutput) !== realSampleDir ||
+          Array.isArray(child.sampleRuns)) {
+        problems.push(`${side}: nested or misbound sample run`);
+        continue;
+      }
+      const evidence = singleRunEvidence(child, manifestPath, side);
+      problems.push(...evidence.problems);
+      if (executionIds.has(child.executionId)) problems.push(`${side}: repeated runner execution identity`);
+      executionIds.add(child.executionId);
+      manifestPaths.add(realSampleDir);
+      if (!evidence.normalized || evidence.normalized.rows.length !== 1) continue;
+      if (firstSampleEvidence) {
+        for (const field of JOIN_FIELDS) {
+          if (evidence.normalized[field] !== firstSampleEvidence.normalized[field]) problems.push(`${side}: sample ${field} mismatch`);
+        }
+        if (child.name !== firstSampleEvidence.run.name) problems.push(`${side}: sample scenario mismatch`);
+      } else {
+        firstSampleEvidence = evidence;
+      }
+      samples.push({
+        ...evidence.normalized.rows[0],
+        id: `sample-${String(index + 1).padStart(2, "0")}`,
+      });
+    } catch {
+      problems.push(`${side}: sample run manifest missing or invalid`);
+    }
+  }
+  if (firstSampleEvidence && root.name !== firstSampleEvidence.run.name) problems.push(`${side}: cohort scenario does not match its retained samples`);
+  const normalized = firstSampleEvidence ? {
+    runId: loaded.manifestPath,
+    manifestPath: loaded.manifestPath,
+    fixtureVersion: firstSampleEvidence.normalized.fixtureVersion,
+    fixtureSnapshotRevision: firstSampleEvidence.normalized.fixtureSnapshotRevision,
+    model: firstSampleEvidence.normalized.model,
+    actualModel: firstSampleEvidence.normalized.actualModel,
+    sourceRevision: firstSampleEvidence.normalized.sourceRevision,
+    usageCoverage: samples.every((sample) => sample.coverage?.complete === true) ? "complete" : "incomplete",
+    rows: samples,
+  } : null;
+  return { normalized, run: root, problems };
+}
+
+function estimatedCost(evidence) {
+  const rows = evidence?.rows;
+  if (!Array.isArray(rows) || rows.length === 0 ||
+      rows.some((row) => row.costBasis !== "model_rate_estimate_usd" || row.costSource !== ESTIMATED_COST_SOURCE ||
+        !Number.isFinite(row.cost?.total) || row.cost.total < 0)) return null;
+  return rows.reduce((sum, row) => sum + row.cost.total, 0);
 }
 
 export function auditEvalPair(beforeInput, afterInput, { minimumSamples = MINIMUM_SAMPLES } = {}) {
@@ -163,8 +355,8 @@ export function auditEvalPair(beforeInput, afterInput, { minimumSamples = MINIMU
       }
       const beforeIds = before.rows.map((row) => row.id).sort();
       const afterIds = after.rows.map((row) => row.id).sort();
-      if (!isDeepStrictEqual(beforeIds, afterIds)) problems.push("retained phase outcome sample identifiers mismatch");
-      if (beforeIds.length < minimumSamples || afterIds.length < minimumSamples) problems.push(`sample count below minimum ${minimumSamples}`);
+      if (!isDeepStrictEqual(beforeIds, afterIds)) problems.push("retained execution sample identifiers mismatch");
+      if (beforeIds.length < minimumSamples || afterIds.length < minimumSamples) problems.push(`sample count below minimum ${minimumSamples} separately executed outcomes`);
     }
   }
   const comparable = problems.length === 0;
@@ -177,15 +369,15 @@ export function auditEvalPair(beforeInput, afterInput, { minimumSamples = MINIMU
   const beforePassed = sampleOutcomes.filter((row) => row.beforePassed).length;
   const afterPassed = sampleOutcomes.filter((row) => row.afterPassed).length;
   const qualityEvidence = comparable ? {
-    interpretation: "descriptive matched-phase pass rates; not a causal estimate",
+    interpretation: "descriptive matched execution pass rates; not a causal estimate",
     sampleCount: sampleOutcomes.length,
     before: { passed: beforePassed, total: sampleOutcomes.length, rate: beforePassed / sampleOutcomes.length },
     after: { passed: afterPassed, total: sampleOutcomes.length, rate: afterPassed / sampleOutcomes.length },
     rateDelta: (afterPassed - beforePassed) / sampleOutcomes.length,
     sampleOutcomes,
   } : null;
-  const beforeEstimatedUsd = beforeResult.run ? estimatedCost(beforeResult.run) : null;
-  const afterEstimatedUsd = afterResult.run ? estimatedCost(afterResult.run) : null;
+  const beforeEstimatedUsd = estimatedCost(before);
+  const afterEstimatedUsd = estimatedCost(after);
   const estimatedCostEvidence = beforeEstimatedUsd !== null && afterEstimatedUsd !== null && comparable
     ? { beforeUsd: beforeEstimatedUsd, afterUsd: afterEstimatedUsd, differenceUsd: afterEstimatedUsd - beforeEstimatedUsd, basis: "model_rate_estimate_usd" }
     : null;
@@ -220,8 +412,8 @@ function retainedGradingOutcome(grading, audit, proposal) {
       const recorded = recordedRunEvidence(run, "grading");
       const rows = recorded.normalized?.rows ?? [];
       if (path.basename(file) !== "comparison-run.json" || recorded.problems.length > 0 || rows.length === 0 ||
-          !rows.every((row) => row.passed) || run.name !== grading.targetScenario ||
-          (run.fixtureVersion ?? run.fixtureSnapshotRevision) !== audit.matched?.fixtureVersion ||
+          Array.isArray(run.sampleRuns) || run.ok !== true || !rows.every((row) => row.passed) ||
+          run.name !== grading.targetScenario || run.fixtureVersion !== audit.matched?.fixtureVersion ||
           run.sourceRevision !== audit.matched?.sourceRevision ||
           grading.targetScenario !== proposal.targetScenario || grading.expectedBehavior !== proposal.expectedBehavior) return [];
       return [file];

@@ -33,6 +33,7 @@
     "./skills/delivery/credentials",
     "./skills/delivery/deliver",
     "./skills/delivery/describe-pr",
+    "./skills/delivery/eval-feedback",
     "./skills/delivery/fix-bug",
     "./skills/delivery/fix-code-review",
     "./skills/delivery/gather-sources",

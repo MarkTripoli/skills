@@ -5,6 +5,14 @@ import path from "node:path";
 function isEnvironmentFile(name) {
   return name === ".env" || name.startsWith(".env.");
 }
+// Every local module that can affect recording or regrading is copied under runner/.
+export const RUNNER_SOURCES = [
+  "acme-chain.mjs", "evidence-flows.mjs", "evidence.mjs", "feedback.mjs", "iterate-evidence-hooks.mjs",
+  "iterate-evidence.mjs", "lib.mjs", "metrics.mjs", "record-solo.mjs", "run.mjs",
+  "security-assessment.mjs", "worker-gate.mjs",
+].map((file) => ({ source: `evals/${file}`, snapshot: file })).concat([
+  { source: "scripts/check-commits.mjs", snapshot: "scripts/check-commits.mjs" },
+]);
 
 export function fingerprintDirectories(roots) {
   const hash = crypto.createHash("sha256");
@@ -39,6 +47,7 @@ export function fingerprintDirectory(root) {
 export function fingerprintEvalSource(dist, scenario, fixtureSnapshotRevision = fingerprintDirectory(path.join(dist, "fixtures"))) {
   const sources = fingerprintDirectories([
     { label: "scenario", root: path.join(dist, "eval-sources", "scenarios", `${scenario}.mjs`) },
+    { label: "runner", root: path.join(dist, "eval-sources", "runner") },
     { label: "agents", root: path.join(dist, "agents") },
     { label: "shared", root: path.join(dist, "shared") },
   ]);
