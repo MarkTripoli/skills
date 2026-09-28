@@ -618,6 +618,24 @@ function preflightProjectDestinations(planned, uninstall, rootFd) {
     }
     return relative.split(path.sep).join('/');
   });
+  const pinned = fs.fstatSync(rootFd);
+  let lexicalInfo;
+  try { lexicalInfo = fs.lstatSync(lexicalRoot); }
+  catch { throw new Error('refusing project root identity change during preflight'); }
+  if (lexicalInfo.isSymbolicLink() || !lexicalInfo.isDirectory() || lexicalInfo.dev !== pinned.dev || lexicalInfo.ino !== pinned.ino) {
+    throw new Error('refusing project root identity change during preflight');
+  }
+  for (const destination of destinations) {
+    const relative = path.relative(lexicalRoot, path.resolve(destination));
+    let current = lexicalRoot;
+    for (const component of relative.split(path.sep).filter(Boolean)) {
+      current = path.join(current, component);
+      let info;
+      try { info = fs.lstatSync(current); }
+      catch (error) { if (error.code === 'ENOENT') break; throw error; }
+      if (info.isSymbolicLink()) throw new Error(`refusing symlinked project destination: ${destination}`);
+    }
+  }
   const result = spawnSync('python3', ['-I', '-c', SAFE_PROJECT_PREFLIGHT_SCRIPT], {
     input: JSON.stringify(relativePaths), encoding: null, timeout: 30_000, maxBuffer: 1024 * 1024,
     stdio: ['pipe', 'ignore', 'pipe', rootFd],
@@ -662,10 +680,11 @@ function openProjectRoot(planned) {
   if (!fs.constants.O_DIRECTORY || !fs.constants.O_NOFOLLOW) throw new Error('secure project installs require no-follow directory support');
   let fd;
   try {
+    const expected = planned.projectRootIdentity;
+    if (!expected) throw new Error('project root identity unavailable at planning');
     fd = fs.openSync(path.resolve(planned.projectRoot), flags);
     const actual = fs.fstatSync(fd);
-    const expected = planned.projectRootIdentity;
-    if (!actual.isDirectory() || !expected || actual.dev !== expected.dev || actual.ino !== expected.ino) {
+    if (!actual.isDirectory() || actual.dev !== expected.dev || actual.ino !== expected.ino) {
       throw new Error('project root identity changed since planning');
     }
     return fd;

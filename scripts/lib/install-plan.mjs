@@ -10,9 +10,14 @@ const TARGET_LABEL = { 'claude-code': 'Claude Code', codex: 'Codex', 'oh-my-pi':
 const SKILL_DEPENDENCIES = { deliver: ['agent-first-sergent'], 'agent-first-sergent': ['route-model', 'typed-judgment'], 'jev-ui': ['typed-judgment', 'record-evidence'], 'iterate-evidence': ['record-evidence'] };
 const BINARY = { 'claude-code': 'claude', codex: 'codex', 'oh-my-pi': 'omp', pi: 'pi' };
 function projectRootIdentity(root) {
-  const flags = fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW;
   if (!fs.constants.O_DIRECTORY || !fs.constants.O_NOFOLLOW) throw new Error('secure project installs require no-follow directory support');
-  const fd = fs.openSync(path.resolve(root), flags);
+  let fd;
+  try {
+    fd = fs.openSync(path.resolve(root), fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
   try {
     const info = fs.fstatSync(fd);
     if (!info.isDirectory()) throw new Error('project root is not a directory');
