@@ -2,9 +2,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { evaluateContextBoundary } from '../route-model/context.mjs';
-import { currentArtifact, indexFileExists, parseArtifactText } from '../../../shared/task-artifacts.mjs';
+const installedArtifacts = new URL('./references/task-artifacts.mjs', import.meta.url);
+const { currentArtifact, indexFileExists, parseArtifactText } = await import(
+  fs.existsSync(fileURLToPath(installedArtifacts))
+    ? installedArtifacts : new URL('../../../shared/task-artifacts.mjs', import.meta.url)
+);
 
 const filename = '.first-sergent-state.json';
 const allowedGates = new Set(['all', 'plan', 'pr', 'none']);
@@ -44,14 +48,18 @@ const phaseArtifactTypes = Object.freeze({
   'iterate-evidence': 'evidence-iteration',
   'ci-commit': 'commit',
 });
+const taskArtifactTypes = [...new Set(Object.values(phaseArtifactTypes))];
 const hostedPhases = new Set(['record-evidence', 'describe-pr']);
 const planGatedPhases = new Set([
   'create-design-discussion', 'iterate-design-discussion', 'create-prd', 'iterate-prd',
   'create-tdd', 'iterate-tdd', 'create-structure-outline', 'iterate-structure-outline',
   'create-plan', 'iterate-plan', 'create-epic-plan', 'reproduce-bug',
 ]);
-const needsLocalApproval = (state) => state.options.gates === 'all' ||
-  (state.options.gates === 'plan' && planGatedPhases.has(state.last_skill));
+const planGatedTypes = new Set([...planGatedPhases].map((skill) => phaseArtifactTypes[skill]));
+const needsLocalApproval = (state, artifactType) => state.options.gates === 'all' ||
+  (state.options.gates === 'plan' && (state.steps === 0
+    ? planGatedTypes.has(artifactType)
+    : planGatedPhases.has(state.last_skill)));
 
 function taskPath(taskDir) {
   const root = fs.realpathSync(taskDir);
@@ -64,6 +72,21 @@ function artifact(root, file) {
   if (!resolved.startsWith(`${root}${path.sep}`) || resolved === path.join(root, 'task.md')) throw new Error('Artifact must be inside the task directory');
   return { file: path.relative(root, resolved), hash: digest(fs.readFileSync(resolved)) };
 }
+function revisionArtifactType(root, current) {
+  const text = fs.readFileSync(path.join(root, current.file), 'utf8');
+  if (!/^---\r?\n/.test(text)) {
+    parseArtifactText(text, 'pr-description', current.file);
+    return 'pr-description';
+  }
+  for (const type of taskArtifactTypes) {
+    try {
+      parseArtifactText(text, type, current.file);
+      return type;
+    } catch { /* Another registered artifact type may match. */ }
+  }
+  throw new Error('Revision requires a recognized task artifact type');
+}
+
 
 function phaseArtifact(root, state, current) {
   const expectedType = phaseArtifactTypes[state.last_skill];
@@ -81,7 +104,7 @@ function phaseArtifact(root, state, current) {
 function legacyArtifacts(root) {
   const before = {};
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-    if (entry.isFile() && /^\d{2}-.*\.md$/.test(entry.name)) {
+    if (entry.isFile() && /^\d{2,}-.*\.md$/.test(entry.name)) {
       before[entry.name] = digest(fs.readFileSync(path.join(root, entry.name)));
     }
   }
@@ -106,6 +129,13 @@ export function inspect(taskDir) {
   if (!fs.existsSync(file)) return null;
   const state = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (state?.version !== 1 || !Number.isSafeInteger(state.steps) || state.steps < 0 || !state.options || !allowedGates.has(state.options.gates) || (state.options.transport !== undefined && !allowedTransports.has(state.options.transport)) || (state.options.quota_mode !== undefined && !allowedQuotaModes.has(state.options.quota_mode)) || (state.options.quota_mode === 'agent-router' && state.options.transport !== 'herdr') || (state.options.context_policy !== undefined && !allowedContextPolicies.has(state.options.context_policy)) || !state.options.workflow || !Number.isSafeInteger(state.options.max_steps) || state.options.max_steps < 1 || !state.approvals || typeof state.approvals !== 'object' || Array.isArray(state.approvals)) throw new Error(`Invalid First Sergent state: ${file}`);
+  if (state.context_boundary?.previousSessionId &&
+    !(state.context_boundary.retiredSessionIds ?? []).includes(state.context_boundary.previousSessionId)) {
+    state.context_boundary.retiredSessionIds = [
+      ...(state.context_boundary.retiredSessionIds ?? []), state.context_boundary.previousSessionId,
+    ];
+    save(root, state);
+  }
   // An approval recorded against a path/hash is not tied to a dispatch. In
   // particular, approvals from other phases cannot prove this phase finished.
   // A missing dispatch snapshot must be replayed against the current iteration.
@@ -128,6 +158,17 @@ export function inspect(taskDir) {
     if (state.completed_step === state.steps) state.legacy_resume_completed = true;
     state.phase_legacy_before = legacyArtifacts(root);
     if (state.completed_step !== state.steps) state.legacy_replay = true;
+    save(root, state);
+  }
+  if (state.revision && (!Number.isSafeInteger(state.revision.step) || !state.revision.phaseType)) {
+    const priorHash = state.phase_indexed
+      ? state.phase_artifact_before?.hash : state.phase_legacy_before?.[state.revision.file];
+    const dispatched = !state.legacy_replay && state.steps > 0 && priorHash === state.revision.hash;
+    state.revision.step = Number.isSafeInteger(state.revision.step)
+      ? state.revision.step : (dispatched ? state.steps - 1 : state.steps);
+    state.revision.phaseType ??= phaseArtifactTypes[state.last_skill] ??
+      revisionArtifactType(root, state.revision);
+    if (!state.revision_required) state.revision_required = state.revision.file;
     save(root, state);
   }
   return state;
@@ -181,7 +222,8 @@ export function checkpointContext(taskDir, usage) {
       : { ...boundary, action: 'stop', sessionId: null };
     return save(root, state);
   }
-  state.context_boundary = { ...boundary, sessionId, retiredSessionIds };
+  state.context_boundary = { ...boundary, sessionId, retiredSessionIds,
+    ...(prior?.previousSessionId ? { previousSessionId: prior.previousSessionId } : {}) };
   if (!sessionId) {
     state.context_boundary = { ...state.context_boundary, action: 'stop', status: 'unknown', reason: 'live child session identity unavailable' };
   }
@@ -202,7 +244,11 @@ export function startFreshSession(taskDir, sessionId) {
     throw new Error('Resolve the active phase and human gate before handing off its child session');
   }
   const resumingPhase = state.steps > 0 && state.completed_step !== state.steps;
-  if (resumingPhase && state.context_boundary?.action !== 'fresh-session' && !replay) {
+  const revisionPhase = resumingPhase && !replay && Boolean(
+    (state.revision && state.revision_required && state.revision.step === state.steps) ||
+    (state.hosted_revision && state.hosted_revision.step === state.steps)
+  );
+  if (resumingPhase && state.context_boundary?.action !== 'fresh-session' && !replay && !revisionPhase) {
     throw new Error('Wait for the current child to finish and gate its artifact before retiring its session');
   }
   if (typeof sessionId !== 'string' || !sessionId.trim()) {
@@ -214,14 +260,15 @@ export function startFreshSession(taskDir, sessionId) {
     || (state.context_boundary?.retiredSessionIds ?? []).includes(nextSessionId)) {
     throw new Error('Fresh session identity must be new and differ from every retired child session');
   }
-  if (resumingPhase) state.resume_step = state.steps;
+  if (state.steps > 0 && (!resumingPhase || revisionPhase)) state.next_phase_session_id = nextSessionId;
+  if (resumingPhase && !revisionPhase) state.resume_step = state.steps;
   if (!state.context_boundary) {
     state.replay_session_id = nextSessionId;
     return save(root, state);
   }
   const retiredSessionIds = [...new Set([
     ...(state.context_boundary.retiredSessionIds ?? []),
-    state.context_boundary.sessionId,
+    ...(state.context_boundary.sessionId ? [state.context_boundary.sessionId] : []),
   ])];
   state.context_boundary = {
     action: 'awaiting-checkpoint',
@@ -246,14 +293,41 @@ export function begin(taskDir, skill) {
   if (state.context_boundary && state.context_boundary.action !== 'continue') throw new Error('Start a fresh session at the saved context boundary before dispatch');
   if (state.pending) throw new Error('Resolve the pending human gate before dispatch');
   if (state.phase) throw new Error('Resume the addressable phase before dispatching another');
+  const fixingReview = state.revision?.phaseType === 'code-review' &&
+    state.last_skill === 'review-code' && skill === 'fix-code-review';
+  if (state.review_recheck_required && skill !== 'review-code' &&
+    !(state.resume_step !== undefined && skill === state.last_skill) &&
+    !(state.revision?.phaseType === 'code-review-fixes' && skill === 'fix-code-review')) {
+    throw new Error('Review the code again after fixing review findings');
+  }
+  if (state.revision_required && state.resume_step === undefined && (!state.revision ||
+    (state.steps > 0 && phaseArtifactTypes[skill] !== phaseArtifactTypes[state.last_skill] && !fixingReview))) {
+    throw new Error('Gate the requested artifact revision before dispatching another phase');
+  }
   if (!skill || typeof skill !== 'string') throw new Error('Skill name is required');
   if (state.legacy_replay && state.resume_step === undefined) {
     throw new Error('Replay the legacy phase in a fresh child session before dispatching another');
   }
   if (state.resume_step === undefined && state.steps >= state.options.max_steps) throw new Error(`Reached max_steps=${state.options.max_steps}`);
+  const expectedType = phaseArtifactTypes[skill];
+  const indexed = indexFileExists(path.join(root, 'index.json'));
   if (state.resume_step !== undefined) {
     if (state.resume_step !== state.steps || skill !== state.last_skill) {
       throw new Error('Resume the checkpointed phase before dispatching another');
+    }
+    if (state.legacy_replay) {
+      state.phase_indexed = indexed;
+      if (state.revision && state.revision.step === state.steps) {
+        state.revision.replayStep = state.steps;
+      }
+      if (indexed) {
+        const prior = expectedType ? currentArtifact(root, expectedType) : null;
+        state.phase_artifact_before = prior ? { id: prior.id, hash: prior.sha256 } : null;
+        state.phase_legacy_before = null;
+      } else {
+        state.phase_legacy_before = legacyArtifacts(root);
+      }
+      delete state.legacy_replay;
     }
     delete state.resume_step;
     if (state.context_boundary) {
@@ -267,20 +341,27 @@ export function begin(taskDir, skill) {
     }
     return save(root, state);
   }
-  if (state.steps > 0 && hostedPhases.has(state.last_skill) && state.completed_step !== state.steps) {
+  const revisingHosted = Boolean(state.hosted_revision && state.last_skill === 'describe-pr' && skill === 'describe-pr');
+  if (state.steps > 0 && hostedPhases.has(state.last_skill) && state.completed_step !== state.steps && !revisingHosted) {
     throw new Error('Verify hosted phase proof before dispatching another phase');
   }
-  const expectedType = phaseArtifactTypes[skill];
-  const prior = expectedType && indexFileExists(path.join(root, 'index.json')) ? currentArtifact(root, expectedType) : null;
+  if ((state.options.context_policy ?? 'off') === 'stop-at-60' && state.steps > 0 &&
+    state.next_phase_session_id !== state.context_boundary.sessionId) {
+    throw new Error('Register a fresh child session and its live context metric before the next phase');
+  }
+  const prior = expectedType && indexed ? currentArtifact(root, expectedType) : null;
   state.steps += 1;
   state.completed_step = null;
   state.last_skill = skill;
+  if (skill === 'review-code') state.review_recheck_required = false;
   state.phase_artifact_before = prior ? { id: prior.id, hash: prior.sha256 } : null;
-  state.phase_legacy_before = expectedType && !indexFileExists(path.join(root, 'index.json'))
+  state.phase_indexed = indexed;
+  state.phase_legacy_before = expectedType && !indexed
     ? legacyArtifacts(root) : null;
   delete state.legacy_resume_completed;
   state.hosted_approval = null;
-  state.hosted_revision = null;
+  if (!revisingHosted) state.hosted_revision = null;
+  delete state.next_phase_session_id;
   if ((state.options.context_policy ?? 'off') === 'stop-at-60') {
     state.context_boundary = {
       action: 'recheck-required',
@@ -301,7 +382,24 @@ export function gate(taskDir, file) {
   if (hostedPhases.has(state.last_skill)) throw new Error('Hosted phase proof must be verified independently; no task-local artifact gate exists');
   if (state.phase) throw new Error('Finish the addressable phase before gating its artifact');
   if (state.resume_step !== undefined) throw new Error('Resume the checkpointed phase before gating its artifact');
+  if (state.steps > 0 && state.phase_indexed !== undefined &&
+    state.phase_indexed !== indexFileExists(path.join(root, 'index.json'))) {
+    throw new Error('Artifact index mode changed since dispatch');
+  }
   const current = artifact(root, file);
+  if (state.legacy_replay && state.pending) {
+    if (state.phase_indexed) phaseArtifact(root, state, current);
+    else if (state.pending.file !== current.file) {
+      throw new Error('Refresh the pending legacy gate for its original artifact');
+    }
+    const replaced = state.pending.file !== current.file || state.pending.hash !== current.hash;
+    state.pending = current;
+    save(root, state);
+    return { approved: false, replaced, ...current, steps: state.steps };
+  }
+  if (state.revision_required && !state.phase_indexed && state.revision_required !== current.file) {
+    throw new Error('Gate the requested artifact revision, not another artifact');
+  }
   if (state.steps > 0) phaseArtifact(root, state, current);
   if (state.steps > 0 && indexFileExists(path.join(root, 'index.json'))) {
     if (!Object.hasOwn(state, 'phase_artifact_before')) throw new Error('Active phase has no artifact snapshot from dispatch');
@@ -310,19 +408,22 @@ export function gate(taskDir, file) {
       throw new Error('Active phase has not recorded a new artifact iteration');
     }
   }
+  if (state.legacy_replay) throw new Error('Replay the legacy phase in a fresh child session before gating its artifact');
   if (state.steps > 0 && state.phase_legacy_before !== null && state.phase_legacy_before !== undefined) {
-    if (!/^\d{2}-.*\.md$/.test(current.file)) throw new Error('Legacy phase artifact must be a numbered task-root file');
+    if (!/^\d{2,}-.*\.md$/.test(current.file)) throw new Error('Legacy phase artifact must be a numbered task-root file');
     if (state.phase_legacy_before[current.file] === current.hash && !state.legacy_resume_completed) {
       throw new Error('Active phase has not produced a fresh legacy artifact');
     }
   }
   if (state.pending?.kind === 'hosted') throw new Error('A hosted description is awaiting a human decision');
-  if (state.pending && state.pending.file !== current.file) throw new Error('A different artifact is awaiting a human decision');
-  const replaced = Boolean(state.pending && state.pending.hash !== current.hash);
+  if (state.pending && state.pending.file !== current.file && !state.phase_indexed) throw new Error('A different artifact is awaiting a human decision');
+  const replaced = Boolean(state.pending && (state.pending.file !== current.file || state.pending.hash !== current.hash));
   if (state.revision?.file === current.file && state.revision.hash === current.hash) throw new Error('The requested revision has not changed the artifact');
   if (state.steps > 0) state.completed_step = state.steps;
-  if (state.legacy_replay) delete state.legacy_replay;
-  if (!needsLocalApproval(state) || state.approvals[current.file] === current.hash) {
+  const artifactType = state.steps === 0 && state.options.gates === 'plan'
+    ? revisionArtifactType(root, current) : null;
+  if (!needsLocalApproval(state, artifactType) || state.approvals[current.file] === current.hash) {
+    state.revision_required = false;
     if (state.pending) state.pending = null;
     save(root, state);
     return { approved: true, ...current, steps: state.steps };
@@ -353,6 +454,9 @@ export function completeHostedPhase(taskDir, skill, proof) {
     throw error;
   }
   const current = { kind: 'hosted', step: state.steps, url: proof.pullRequest, hash: proof.descriptionHash, head: proof.head };
+  if (state.hosted_revision && state.steps <= state.hosted_revision.step) {
+    throw new Error('Dispatch the hosted revision in a new matching phase before completing it');
+  }
   if (skill === 'describe-pr' && ['pr', 'all'].includes(state.options.gates)) {
     if (state.hosted_revision && state.hosted_revision.hash === current.hash) {
       throw new Error('The requested hosted description revision has not changed');
@@ -417,12 +521,25 @@ export function answer(taskDir, file, hash, response, feedback = '') {
   if (state?.pending?.kind === 'hosted') throw new Error('Use answerHostedPhase with current hosted proof');
   if (!state?.pending) throw new Error('No human gate is pending');
   const current = artifact(root, file);
+  if (state.phase_indexed) {
+    if (!indexFileExists(path.join(root, 'index.json'))) throw new Error('Artifact index mode changed since dispatch');
+    phaseArtifact(root, state, current);
+  }
   if (state.pending.file !== current.file || state.pending.hash !== current.hash || state.pending.hash !== hash) throw new Error('Stale gate: reviewed hash differs from the pending artifact');
   if (!['approve', 'revise', 'stop'].includes(response)) throw new Error('Expected approve, revise or stop');
   if (response === 'revise' && !feedback.trim()) throw new Error('Revision requires nonempty feedback');
   if (response === 'stop') state.stopped = true;
-  if (response === 'approve') state.approvals[current.file] = current.hash;
-  if (response === 'revise') state.revision = { ...current, feedback };
+  if (response === 'approve') {
+    state.approvals[current.file] = current.hash;
+    if (state.revision_required && !state.revision &&
+      (state.phase_indexed || state.revision_required === current.file)) state.revision_required = false;
+  }
+  if (response === 'revise') {
+    state.revision = { ...current, feedback, step: state.steps,
+      phaseType: phaseArtifactTypes[state.last_skill] ?? revisionArtifactType(root, current) };
+    state.revision_required = current.file;
+    state.completed_step = null;
+  }
   state.pending = null;
   return save(root, state);
 }
@@ -431,8 +548,23 @@ export function completedRevision(taskDir, file) {
   const root = taskPath(taskDir);
   const state = inspect(root);
   if (!state?.revision) throw new Error('No revision is pending');
+  const fixingReview = state.revision.phaseType === 'code-review' &&
+    state.last_skill === 'fix-code-review' && state.steps > state.revision.step;
+  if (!Number.isSafeInteger(state.revision.step) ||
+    !(state.steps > state.revision.step || state.revision.replayStep === state.steps) ||
+    !state.revision.phaseType ||
+    (phaseArtifactTypes[state.last_skill] !== state.revision.phaseType && !fixingReview) ||
+    state.completed_step === state.steps) {
+    throw new Error('Dispatch the matching revision phase before completing its artifact');
+  }
   const current = artifact(root, file);
-  if (current.file !== state.revision.file || current.hash === state.revision.hash) throw new Error('Revision did not change the reviewed artifact');
+  if ((!state.phase_indexed && current.file !== state.revision.file && !fixingReview) ||
+    current.hash === state.revision.hash) throw new Error('Revision did not change the reviewed artifact');
+  phaseArtifact(root, state, current);
+  if (fixingReview) {
+    state.revision_required = current.file;
+    state.review_recheck_required = true;
+  }
   state.revision = null;
   return save(root, state);
 }
