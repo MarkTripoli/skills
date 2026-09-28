@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 // Read-only project stack detection and explicitly approved minimal Node bootstrap.
-import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -127,12 +126,15 @@ export function applyPlan(root, plan) {
     if (current.mode !== "supported" || JSON.stringify(current.actions) !== JSON.stringify(plan.actions)) {
       throw new Error("Bootstrap plan is stale; refusing to write.");
     }
-    // Write before publishing. An exclusive hard link publishes the complete
-    // inode without overwriting a manifest created by another invocation.
-    const staged = `.package.json.${randomUUID()}`;
-    const fd = fs.openSync(staged, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o644);
+    // Stage on the approved filesystem inside a private directory. Other
+    // users cannot replace the source between the ownership check and cleanup.
+    // An exclusive hard link publishes the complete inode without overwriting.
+    const stagingDir = fs.mkdtempSync(".package-staging-");
+    const staged = path.join(stagingDir, "package.json");
+    let fd;
     let created;
     try {
+      fd = fs.openSync(staged, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o644);
       created = fs.fstatSync(fd);
       fs.writeFileSync(fd, plan.actions[0].contents, "utf8");
       const entry = fs.lstatSync(staged);
@@ -151,13 +153,17 @@ export function applyPlan(root, plan) {
         if (created) {
           try {
             const entry = fs.lstatSync(staged);
-            if (entry.dev === created.dev && entry.ino === created.ino) fs.unlinkSync(staged);
+            if (entry.dev !== created.dev || entry.ino !== created.ino) {
+              throw new Error("Bootstrap staging file changed; refusing to remove.");
+            }
+            fs.unlinkSync(staged);
           } catch (error) {
             if (error.code !== "ENOENT") throw error;
           }
         }
+        fs.rmdirSync(stagingDir);
       } finally {
-        fs.closeSync(fd);
+        if (fd !== undefined) fs.closeSync(fd);
       }
     }
     return { ...plan, outcome: "applied" };

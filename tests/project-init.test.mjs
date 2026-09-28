@@ -131,7 +131,7 @@ for (const kind of ["file", "symlink"]) {
       return link(from, to);
     };
     try {
-      assert.throws(() => applyPlan(root, plan), /publication changed/);
+      assert.throws(() => applyPlan(root, plan), /(?:publication|staging file) changed/);
     } finally {
       fs.linkSync = link;
     }
@@ -141,6 +141,65 @@ for (const kind of ["file", "symlink"]) {
     assert.equal(fs.lstatSync(path.join(root, staged)).isSymbolicLink(), kind === "symlink");
   }));
 }
+
+test("a shared target cannot replace the protected stage at cleanup", () => fixture((root) => {
+  fs.chmodSync(root, 0o777);
+  fs.writeFileSync(path.join(root, ".nvmrc"), "22\n");
+  const plan = createPlan(root);
+  const unlink = fs.unlinkSync;
+  let cleanupReached = false;
+  let replaced = false;
+  fs.unlinkSync = (file) => {
+    cleanupReached = true;
+    // An actor without ownership can replace a public stage just before
+    // unlink, but cannot enter a mode-0700 staging directory.
+    if (fs.statSync(path.dirname(file)).mode & 0o002) {
+      unlink(file);
+      fs.writeFileSync(file, "foreign staged data\n");
+      replaced = true;
+    }
+    return unlink(file);
+  };
+  try {
+    assert.equal(applyPlan(root, plan).outcome, "applied");
+  } finally {
+    fs.unlinkSync = unlink;
+  }
+  assert.equal(cleanupReached, true);
+  assert.equal(replaced, false);
+  assert.deepEqual(fs.readdirSync(root).sort(), [".nvmrc", "package.json"]);
+  assert.equal(fs.readFileSync(path.join(root, "package.json"), "utf8"), '{\n  "private": true\n}\n');
+}));
+
+test("a foreign staged inode at cleanup is left intact", () => fixture((root) => {
+  fs.writeFileSync(path.join(root, ".nvmrc"), "22\n");
+  const plan = createPlan(root);
+  const link = fs.linkSync;
+  const lstat = fs.lstatSync;
+  let staged;
+  let replaced = false;
+  fs.linkSync = (from, to) => {
+    staged = from;
+    return link(from, to);
+  };
+  fs.lstatSync = (file, options) => {
+    if (file === staged && fs.existsSync("package.json") && !replaced) {
+      fs.unlinkSync(staged);
+      fs.writeFileSync(staged, "foreign staged data\n");
+      replaced = true;
+    }
+    return lstat(file, options);
+  };
+  try {
+    assert.throws(() => applyPlan(root, plan), /staging file changed/);
+  } finally {
+    fs.linkSync = link;
+    fs.lstatSync = lstat;
+  }
+  assert.equal(replaced, true);
+  assert.equal(fs.readFileSync(path.join(root, staged), "utf8"), "foreign staged data\n");
+  assert.equal(fs.readFileSync(path.join(root, "package.json"), "utf8"), '{\n  "private": true\n}\n');
+}));
 
 test("a parent swapped before directory open fails closed", () => fixture((root) => {
   const project = path.join(root, "project");
