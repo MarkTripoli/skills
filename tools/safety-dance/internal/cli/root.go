@@ -63,7 +63,7 @@ func NewRoot() *cobra.Command {
 	root := &cobra.Command{Use: "safety-dance", SilenceUsage: true, SilenceErrors: true, RunE: launchDefault}
 	root.SetOut(output)
 	root.Version = buildinfo.CurrentVersion()
-	root.AddCommand(newInit(), newRun(), newStatus(), newRespond(), newAbort(), newLogs(), newDaemon(), newWizard(), newTUI())
+	root.AddCommand(newInit(), newRun(), newRunReport(), newStats(), newStatus(), newRespond(), newAbort(), newLogs(), newDaemon(), newWizard(), newTUI())
 	return root
 
 }

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -97,10 +98,9 @@ func (a *acpxAgent) runOnce(ctx context.Context, opts RunOpts) (*Result, error) 
 
 	var usage TokenUsage
 	text, stdoutErr, err := parseAcpxJSONEvents(ctx, started.stdout, opts.OnChunk, &usage)
-	// Estimate before any return, not just the success one: acpx can report an
-	// input-only usage event and then fail, and a reported usage with no output
-	// count would otherwise record the text it did stream as a reported zero.
-	if usage.OutputTokens == 0 {
+	// An estimate can help local accounting, but is not a provider-reported
+	// counter. Keep absent output unknown when the invocation is persisted.
+	if !usage.OutputTokensReported {
 		usage.OutputTokens = estimateAcpxTokens(len(text))
 	}
 	if err != nil {
@@ -255,6 +255,9 @@ type acpxUsageFields struct {
 	CachedWriteTokensCamel        int `json:"cachedWriteTokens"`
 	reported                      bool
 	cacheCreationReported         bool
+	inputReported                 bool
+	outputReported                bool
+	cacheReadReported             bool
 }
 
 // parseAcpxJSONEvents streams acpx's JSON events and returns the assistant
@@ -320,12 +323,13 @@ func acpxUpdateUsage(update acpxSessionUpdate) TokenUsage {
 		usage.InputTokens = update.Used
 	}
 	usage.Reported = usage.Reported || update.usedReported || update.Used != 0
+	usage.InputTokensReported = usage.InputTokensReported || update.usedReported || update.Used != 0
 	return usage
 }
 
 func acpxUsageFieldsToTokenUsage(fields acpxUsageFields) TokenUsage {
 	return TokenUsage{
-		Reported: fields.reported || acpxUsageFieldsHaveValues(fields),
+		Reported: fields.reported || acpxUsageFieldsHavePrimaryValues(fields),
 		CacheCreationReported: fields.cacheCreationReported || acpxFirstPositive(
 			fields.CacheCreationInputTokens,
 			fields.CacheWriteInputTokens,
@@ -335,6 +339,7 @@ func acpxUsageFieldsToTokenUsage(fields acpxUsageFields) TokenUsage {
 			fields.CacheWriteTokensCamel,
 			fields.CachedWriteTokensCamel,
 		) > 0,
+		InputTokensReported: fields.inputReported || fields.InputTokens > 0 || fields.InputTokensCamel > 0,
 		InputTokens: acpxFirstPositive(
 			fields.InputTokens,
 			fields.InputTokensCamel,
@@ -343,6 +348,7 @@ func acpxUsageFieldsToTokenUsage(fields acpxUsageFields) TokenUsage {
 			fields.OutputTokens,
 			fields.OutputTokensCamel,
 		),
+		OutputTokensReported: fields.outputReported || fields.OutputTokens > 0 || fields.OutputTokensCamel > 0,
 		CacheReadTokens: acpxFirstPositive(
 			fields.CacheReadInputTokens,
 			fields.CacheReadTokens,
@@ -352,6 +358,11 @@ func acpxUsageFieldsToTokenUsage(fields acpxUsageFields) TokenUsage {
 			fields.CacheReadTokensCamel,
 			fields.CachedReadTokensCamel,
 		),
+		CacheReadTokensReported: fields.cacheReadReported || acpxFirstPositive(
+			fields.CacheReadInputTokens, fields.CacheReadTokens, fields.CachedInputTokens,
+			fields.CacheReadInputTokensCamel, fields.CachedInputTokensCamel,
+			fields.CacheReadTokensCamel, fields.CachedReadTokensCamel,
+		) > 0,
 		CacheCreationTokens: acpxFirstPositive(
 			fields.CacheCreationInputTokens,
 			fields.CacheWriteInputTokens,
@@ -385,7 +396,7 @@ func markAcpxUsagePresence(line []byte, msg *acpxJSONMessage) {
 		return
 	}
 	markAcpxUsageFields(raw.Params.Update, &msg.Params.Update.acpxUsageFields)
-	if _, ok := update["used"]; ok {
+	if used, ok := update["used"]; ok && string(bytes.TrimSpace(used)) != "null" {
 		msg.Params.Update.usedReported = true
 	}
 	if meta, ok := update["_meta"]; ok {
@@ -406,31 +417,40 @@ func markAcpxUsageFields(raw json.RawMessage, fields *acpxUsageFields) {
 	if json.Unmarshal(raw, &values) != nil {
 		return
 	}
-	usageKeys := []string{"input_tokens", "output_tokens", "cache_read_input_tokens", "cache_read_tokens", "cached_input_tokens", "inputTokens", "outputTokens", "cacheReadInputTokens", "cachedInputTokens", "cacheReadTokens", "cachedReadTokens"}
-	cacheKeys := []string{"cache_creation_input_tokens", "cache_write_input_tokens", "cache_write_tokens", "cacheCreationInputTokens", "cacheCreationTokens", "cacheWriteTokens", "cachedWriteTokens"}
-	for _, key := range usageKeys {
-		if _, ok := values[key]; ok {
-			fields.reported = true
+	for key, value := range values {
+		if string(bytes.TrimSpace(value)) == "null" {
+			continue
 		}
-	}
-	for _, key := range cacheKeys {
-		if _, ok := values[key]; ok {
-			fields.reported = true
+		switch key {
+		case "input_tokens", "inputTokens":
+			fields.reported, fields.inputReported = true, true
+		case "output_tokens", "outputTokens":
+			fields.reported, fields.outputReported = true, true
+		case "cache_read_input_tokens", "cache_read_tokens", "cached_input_tokens",
+			"cacheReadInputTokens", "cachedInputTokens", "cacheReadTokens", "cachedReadTokens":
+			fields.reported, fields.cacheReadReported = true, true
+		case "cache_creation_input_tokens", "cache_write_input_tokens", "cache_write_tokens",
+			"cacheCreationInputTokens", "cacheCreationTokens", "cacheWriteTokens", "cachedWriteTokens":
 			fields.cacheCreationReported = true
 		}
 	}
 }
 
-func acpxUsageFieldsHaveValues(fields acpxUsageFields) bool {
-	fields.reported = false
-	fields.cacheCreationReported = false
-	return fields != (acpxUsageFields{})
+func acpxUsageFieldsHavePrimaryValues(fields acpxUsageFields) bool {
+	return fields.InputTokens > 0 || fields.InputTokensCamel > 0 ||
+		fields.OutputTokens > 0 || fields.OutputTokensCamel > 0 ||
+		fields.CacheReadInputTokens > 0 || fields.CacheReadTokens > 0 || fields.CachedInputTokens > 0 ||
+		fields.CacheReadInputTokensCamel > 0 || fields.CachedInputTokensCamel > 0 ||
+		fields.CacheReadTokensCamel > 0 || fields.CachedReadTokensCamel > 0
 }
 
 func acpxMaxUsage(a, b TokenUsage) TokenUsage {
 	return TokenUsage{
 		Reported:              a.Reported || b.Reported,
 		CacheCreationReported: a.CacheCreationReported || b.CacheCreationReported,
+		InputTokensReported:   a.InputTokensReported || b.InputTokensReported,
+		OutputTokensReported:  a.OutputTokensReported || b.OutputTokensReported,
+		CacheReadTokensReported: a.CacheReadTokensReported || b.CacheReadTokensReported,
 		InputTokens:           max(a.InputTokens, b.InputTokens),
 		OutputTokens:          max(a.OutputTokens, b.OutputTokens),
 		CacheReadTokens:       max(a.CacheReadTokens, b.CacheReadTokens),

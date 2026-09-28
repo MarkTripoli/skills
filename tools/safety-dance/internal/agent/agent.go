@@ -268,6 +268,12 @@ type TokenUsage struct {
 	OutputTokens        int
 	CacheReadTokens     int
 	CacheCreationTokens int
+	// Per-counter flags distinguish partial provider usage from observed zero.
+	// When all are false, Reported retains the legacy meaning that all primary
+	// token counters were reported.
+	InputTokensReported     bool
+	OutputTokensReported    bool
+	CacheReadTokensReported bool
 	// ReasoningTokens is the output tokens the model spent on hidden reasoning,
 	// when the provider reports it separately. Zero when not reported.
 	ReasoningTokens int
@@ -276,8 +282,8 @@ type TokenUsage struct {
 	ReasoningReported     bool
 	Reported              bool
 	CacheCreationReported bool
-}
 
+}
 // InvocationWorkload is the bounded size of the change an invocation works
 // over: changed files and net changed lines. It carries no paths or content.
 type InvocationWorkload struct {
@@ -1279,6 +1285,9 @@ func (u *TokenUsage) Add(other TokenUsage) {
 	u.CacheCreationTokens += other.CacheCreationTokens
 	u.ReasoningTokens += other.ReasoningTokens
 	u.ReasoningReported = u.ReasoningReported || other.ReasoningReported
+	u.InputTokensReported = u.InputTokensReported || other.InputTokensReported
+	u.OutputTokensReported = u.OutputTokensReported || other.OutputTokensReported
+	u.CacheReadTokensReported = u.CacheReadTokensReported || other.CacheReadTokensReported
 	u.Reported = u.Reported || other.Reported
 	u.CacheCreationReported = u.CacheCreationReported || other.CacheCreationReported
 }
