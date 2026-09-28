@@ -38,7 +38,9 @@ if (!Number.isSafeInteger(sampleCount) || sampleCount < 1 || sampleCount > 100 |
 }
 function usableDeliveryRun(run, directory) {
   const dist = path.join(path.dirname(directory), ".dist");
-  if (run.sampleRuns || run.name !== "verify-required-arguments" || run.model !== model ||
+  if (run.sampleRuns || run.kind !== "delivery" || run.phases?.length !== 1 ||
+      run.phases[0]?.phase !== "1-verify-implementation" ||
+      run.name !== "verify-required-arguments" || run.model !== model ||
       !run.repo || !fs.existsSync(run.repo) || !/^[a-f0-9]{40}$/.test(run.fixtureRevision ?? "") ||
       !/^[a-f0-9]{64}$/.test(run.sourceRevision ?? "") || !/^[a-f0-9]{64}$/.test(run.fixtureSnapshotRevision ?? "") ||
       run.fixtureVersion !== run.fixtureSnapshotRevision ||
@@ -116,7 +118,7 @@ execFileSync("git", ["checkout", "--detach", "-q", delivery.fixtureRevision], { 
 const revision = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repository, encoding: "utf8" }).trim();
 const outputDist = path.join(output, ".dist");
 fs.mkdirSync(outputDist, { recursive: true });
-for (const snapshot of ["fixtures", "agents", "shared", "eval-sources"]) {
+for (const snapshot of ["fixtures", "agents", "skills", "shared", "eval-sources"]) {
   fs.cpSync(path.join(deliveryDist, snapshot), path.join(outputDist, snapshot), { recursive: true });
 }
 const fixtureSnapshot = path.join(outputDist, "fixtures");

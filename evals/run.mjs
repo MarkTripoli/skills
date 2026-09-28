@@ -38,8 +38,8 @@ if (args[0] === "--compare") {
       return null;
     }
   };
-  const fields = (run) => ({
-    acceptance: run?.ok === true ? "passed" : run?.ok === false ? "failed" : "incomplete",
+  const fields = (run, acceptance) => ({
+    acceptance,
     model: run?.model ?? "unknown",
     actualModel: run?.actualModel ?? (run?.metrics?.coverage?.models?.length === 1 ? run.metrics.coverage.models[0] : "unknown"),
     wallTimeSeconds: Number.isFinite(run?.wallTimeSeconds) ? run.wallTimeSeconds : "unknown",
@@ -52,13 +52,14 @@ if (args[0] === "--compare") {
   });
   const soloRun = read(args[1]);
   const deliveryRun = read(args[2]);
-  const solo = fields(soloRun);
-  const delivery = fields(deliveryRun);
-  const fixtureMatched = solo.fixtureVersion !== "unknown" && solo.fixtureVersion === delivery.fixtureVersion;
+  const qualityAudit = auditEvalPair(soloRun, deliveryRun);
+  const solo = fields(soloRun, qualityAudit.beforeAcceptance);
+  const delivery = fields(deliveryRun, qualityAudit.afterAcceptance);
+  const fixtureMatched = solo.fixtureVersion !== "unknown" && solo.fixtureVersion === delivery.fixtureVersion &&
+    solo.fixtureRevision !== "unknown" && solo.fixtureRevision === delivery.fixtureRevision;
   const modelMatched = solo.model !== "unknown" && solo.model === delivery.model &&
     solo.actualModel !== "unknown" && solo.actualModel === delivery.actualModel;
   const spendComparable = false;
-  const qualityAudit = auditEvalPair(soloRun, deliveryRun);
   const estimatedCostComparable = qualityAudit.estimatedCostEvidence !== null;
   const estimatedCostEvidence = qualityAudit.estimatedCostEvidence;
   console.log(JSON.stringify({
@@ -331,7 +332,7 @@ async function runScenario(scenario, runDir, dist) {
   const fixtureSnapshotRevision = fingerprintDirectory(path.join(dist, "fixtures"));
   const sourceRevision = fingerprintEvalSource(dist, scenario.name, fixtureSnapshotRevision);
   const resultDir = path.join(runDir, scenario.name);
-  const result = { name: scenario.name, executionId: crypto.randomUUID(), repo, phases: [], ok: true, model: model ?? "omp-default", fixtureRevision: fixtureSha, fixtureVersion: fixtureSnapshotRevision, sourceRevision, fixtureSnapshotRevision, wallTimeSeconds: 0, metrics: { wall_ms: 0, tokens: {}, cost: null, cost_basis: null, cost_source: null, coverage: { complete: true, turns: 0, usage_events: 0, cost_events: 0, models: [] } } };
+  const result = { name: scenario.name, kind: "delivery", executionId: crypto.randomUUID(), repo, phases: [], ok: true, model: model ?? "omp-default", fixtureRevision: fixtureSha, fixtureVersion: fixtureSnapshotRevision, sourceRevision, fixtureSnapshotRevision, wallTimeSeconds: 0, metrics: { wall_ms: 0, tokens: {}, cost: null, cost_basis: null, cost_source: null, coverage: { complete: true, turns: 0, usage_events: 0, cost_events: 0, models: [] } } };
 
   for (const [index, phase] of scenario.phases.entries()) {
     const label = `${index + 1}-${phase.skill}`;
@@ -351,6 +352,13 @@ async function runScenario(scenario, runDir, dist) {
     fs.writeFileSync(path.join(out, "omp.jsonl"), stdout);
     fs.writeFileSync(path.join(out, "stderr.log"), stderr);
     if (fs.existsSync(taskDir)) fs.cpSync(taskDir, path.join(out, "task"), { recursive: true });
+    if (scenario.name === "verify-required-arguments") {
+      try {
+        fs.copyFileSync(path.join(repo, "dist", "runtime.txt"), path.join(out, "runtime.txt"));
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+    }
     const ctx = { live: true, repo, codeRoot: repo, taskDir, fixtureSha, before, template, answer, artifact: newest(taskDir, phase.artifactType), artifacts: artifacts(taskDir) };
     const problems = grade(phase, ctx, code);
     result.wallTimeSeconds += Math.round(wallMs / 1000);
@@ -365,12 +373,18 @@ async function runScenario(scenario, runDir, dist) {
     aggregate.coverage.usage_events += metrics.coverage.usage_events;
     aggregate.coverage.cost_events += metrics.coverage.cost_events;
     aggregate.coverage.models = [...new Set([...aggregate.coverage.models, ...metrics.coverage.models])];
-    result.phases.push({ phase: label, exitCode: code, wall_ms: wallMs, tokens: metrics.tokens, cost: metrics.cost, cost_basis: metrics.cost_basis, cost_source: metrics.cost_source, coverage: metrics.coverage, ok: problems.length === 0, problems });
+    result.phases.push({ phase: label, exitCode: code, wall_ms: wallMs, tokens: metrics.tokens, cost: metrics.cost, cost_basis: metrics.cost_basis, cost_source: metrics.cost_source, coverage: metrics.coverage, ok: problems.length === 0, problems, gitProblems: problems.filter((problem) => problem.startsWith("git: ")) });
     report(scenario.name, label, Math.round(wallMs / 1000), problems);
     if (problems.length) { result.ok = false; break; }
   }
   result.actualModel = result.metrics.coverage.models.length === 1 ? result.metrics.coverage.models[0] : null;
   if (result.ok && !keep) {
+    // Keep the reachable Git objects, not the fixture worktree: offline grading can
+    // recheck the artifact commit and original task against this bundle.
+    execFileSync("git", ["bundle", "create", path.join(resultDir, "git-proof.bundle"), "HEAD"], {
+      cwd: repo, stdio: ["ignore", "pipe", "pipe"],
+    });
+    fs.rmSync(repo, { recursive: true, force: true });
     result.repo = null;
   } else console.log(`[${scenario.name}] repository kept at ${repo}`);
   result.rawOutput = path.relative(repoRoot, resultDir);
@@ -383,7 +397,7 @@ async function runScenario(scenario, runDir, dist) {
 // the previous phase's copy is the "before" snapshot, and `path:line` pointers resolve against a fresh
 // copy of the fixtures. No model, no git.
 async function gradeScenario(scenario, runDir) {
-  if (isEvidenceScenario(scenario)) return gradeEvidenceScenario(scenario, runDir);
+  if (isEvidenceScenario(scenario)) return gradeEvidenceScenario(scenario, runDir, { quiet: gradeJson });
   const resultDir = path.join(runDir, scenario.name);
   const result = { name: scenario.name, repo: null, phases: [], ok: true, graded: true };
   if (!fs.existsSync(resultDir)) {
@@ -488,6 +502,7 @@ if (gradeDir !== null) {
     const sampleRuns = samples.map((sample) => path.relative(cohortDir, path.resolve(repoRoot, sample.rawOutput)));
     const cohort = {
       name: scenario.name,
+      kind: "delivery",
       rawOutput: path.relative(repoRoot, cohortDir),
       sampleRuns,
       sampleCount: sampleRuns.length,

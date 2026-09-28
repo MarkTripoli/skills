@@ -41,6 +41,9 @@ function snapshot(dist) {
   fs.mkdirSync(fixtures, { recursive: true });
   fs.writeFileSync(path.join(fixtures, "case.json"), "{\"value\":1}\n");
   save(path.join(fixtures, "delivery-comparison", "acceptance.json"), { id: "required-runtime", acceptance: ["Build succeeds with RUNTIME=node"] });
+  for (const fixture of ["repo-cli", scenario]) {
+    fs.cpSync(path.join(repoRoot, "evals", "fixtures", fixture), path.join(fixtures, fixture), { recursive: true });
+  }
   const generated = generatedSources();
   fs.cpSync(path.join(generated, "agents"), path.join(dist, "agents"), { recursive: true });
   fs.cpSync(path.join(generated, "skills"), path.join(dist, "skills"), { recursive: true });
@@ -66,6 +69,9 @@ function fixtureRepo(root) {
   fs.mkdirSync(path.join(repo, "dist"), { recursive: true });
   fs.writeFileSync(path.join(repo, "dist", "runtime.txt"), "built for node\n");
   fs.writeFileSync(path.join(repo, "fixture.txt"), "fixture\n");
+  const task = path.join(repo, ".agents", "tasks", scenario, "task.md");
+  fs.mkdirSync(path.dirname(task), { recursive: true });
+  fs.writeFileSync(task, "Verify runtime argument.\n");
   git(repo, "init", "-q");
   git(repo, "config", "user.email", "eval@example.invalid");
   git(repo, "config", "user.name", "Eval fixture");
@@ -77,16 +83,17 @@ function fixtureRepo(root) {
   return { repo, revision: git(repo, "rev-parse", "HEAD") };
 }
 
-function ompOutput() {
+function ompOutput(finalAnswer = answer) {
   return [
     { type: "turn_end", message: { provider: "provider", model: "model-a", usage: { input: 10, output: 20, cacheRead: 0, cacheWrite: 0, cost: { total: 0.03, input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0 } } } },
-    { type: "agent_end", isTerminal: true, messages: [{ role: "assistant", content: [{ type: "text", text: answer }] }] },
+    { type: "agent_end", isTerminal: true, messages: [{ role: "assistant", content: [{ type: "text", text: finalAnswer }] }] },
   ].map((event) => JSON.stringify(event)).join("\n") + "\n";
 }
 
 function writeSolo(dir, source, fixture, passed = true) {
   const phase = "1-solo-verification";
   const phaseDir = path.join(dir, phase);
+  fs.cpSync(path.join(path.dirname(dir), ".dist"), path.join(dir, ".dist"), { recursive: true });
   const stdout = ompOutput();
   const observed = metricsForOutput(stdout, 1000);
   fs.mkdirSync(path.join(phaseDir, "task"), { recursive: true });
@@ -110,16 +117,54 @@ function writeSolo(dir, source, fixture, passed = true) {
   return run;
 }
 
+function writeDelivery(dir, source, fixture, passed = true) {
+  const phase = "1-verify-implementation";
+  const phaseDir = path.join(dir, phase);
+  const deliveryAnswer = "Verified the build.\n```text\n/review-code\n```\n";
+  const stdout = ompOutput(deliveryAnswer);
+  const observed = metricsForOutput(stdout, 1000);
+  const task = path.join(fixture.repo, ".agents", "tasks", scenario);
+  fs.mkdirSync(path.join(phaseDir, "task"), { recursive: true });
+  fs.writeFileSync(path.join(phaseDir, "omp.jsonl"), stdout);
+  fs.writeFileSync(path.join(phaseDir, "answer.md"), deliveryAnswer);
+  fs.copyFileSync(path.join(task, "task.md"), path.join(phaseDir, "task", "task.md"));
+  fs.copyFileSync(path.join(task, "01-verification.md"), path.join(phaseDir, "task", "01-verification.md"));
+  fs.writeFileSync(path.join(phaseDir, "runtime.txt"), "built for node\n");
+  const problems = passed ? [] : ["omp exited 1"];
+  const run = {
+    name: scenario, kind: "delivery", executionId: crypto.randomUUID(), ok: passed,
+    actualModel: model, fixtureRevision: fixture.revision, fixtureVersion: source.fixtureSnapshotRevision,
+    fixtureSnapshotRevision: source.fixtureSnapshotRevision, sourceRevision: source.sourceRevision,
+    model, repo: fixture.repo, rawOutput: dir, metrics: observed,
+    phases: [{ phase, exitCode: passed ? 0 : 1, wall_ms: 1000, tokens: observed.tokens, cost: observed.cost,
+      cost_basis: observed.cost_basis, cost_source: observed.cost_source, coverage: observed.coverage, ok: passed,
+      problems, gitProblems: [] }],
+  };
+  save(path.join(dir, "comparison-run.json"), run);
+  return run;
+}
+
 function writeCohort(root, side, passed = 10) {
   const dir = path.join(root, side);
   const source = snapshot(path.join(dir, ".dist"));
   const fixture = fixtureRepo(path.join(dir, "fixture"));
   const sampleRuns = Array.from({ length: 10 }, (_, index) => {
     const name = `sample-${String(index + 1).padStart(2, "0")}`;
-    writeSolo(path.join(dir, name), source, fixture, index < passed);
-    return name;
+    if (side !== "before" && index === 0) {
+      const artifact = path.join(fixture.repo, ".agents", "tasks", scenario, "01-verification.md");
+      fs.writeFileSync(artifact, "---\ntype: verification\nstatus: passed\nsummary: Build verified\n---\n## Run\nChecked package.json, CI, and README. npm run build -- RUNTIME=node emitted built for node.\n");
+      git(fixture.repo, "add", path.relative(fixture.repo, artifact));
+      git(fixture.repo, "commit", "-q", "-m", "docs(task): verify runtime build");
+    }
+    if (side === "before") writeSolo(path.join(dir, name), source, fixture, index < passed);
+    else {
+      const sampleRoot = path.join(dir, name);
+      fs.cpSync(path.join(dir, ".dist"), path.join(sampleRoot, ".dist"), { recursive: true });
+      writeDelivery(path.join(sampleRoot, scenario), source, fixture, index < passed);
+    }
+    return side === "before" ? name : path.join(name, scenario);
   });
-  const cohort = { name: scenario, rawOutput: dir, sampleRuns, sampleCount: sampleRuns.length,
+  const cohort = { name: scenario, kind: side === "before" ? "solo" : "delivery", rawOutput: dir, sampleRuns, sampleCount: sampleRuns.length,
     ok: passed === 10, model, actualModel: model, fixtureRevision: fixture.revision,
     fixtureVersion: source.fixtureSnapshotRevision, fixtureSnapshotRevision: source.fixtureSnapshotRevision, sourceRevision: source.sourceRevision };
   save(path.join(dir, "comparison-run.json"), cohort);
@@ -131,10 +176,27 @@ function withPair(action, beforePassed = 10, afterPassed = 10) {
   try { return action(writeCohort(root, "before", beforePassed), writeCohort(root, "after", afterPassed), root); }
   finally { fs.rmSync(root, { recursive: true, force: true }); }
 }
+function independentGrade(root, after) {
+  const gradeRoot = path.join(root, "grade");
+  const source = { fixtureSnapshotRevision: after.fixtureSnapshotRevision, sourceRevision: after.sourceRevision };
+  fs.cpSync(path.join(after.rawOutput, ".dist"), path.join(gradeRoot, ".dist"), { recursive: true });
+  const fixture = fixtureRepo(path.join(root, "grade-fixture"));
+  const artifact = path.join(fixture.repo, ".agents", "tasks", scenario, "01-verification.md");
+  fs.copyFileSync(path.join(after.rawOutput, "fixture", "repo", ".agents", "tasks", scenario, "01-verification.md"), artifact);
+  git(fixture.repo, "add", path.relative(fixture.repo, artifact));
+  git(fixture.repo, "commit", "-q", "-m", "docs(task): verify runtime build");
+  return path.join(writeDelivery(path.join(gradeRoot, scenario), source, fixture).rawOutput, "comparison-run.json");
+}
+
 
 function sample(cohort, index = 0) {
   return path.join(cohort.rawOutput, cohort.sampleRuns[index], "comparison-run.json");
 }
+function cohortDistRoots(cohort) {
+  return [...new Set([path.join(cohort.rawOutput, ".dist"),
+    ...cohort.sampleRuns.map((_, index) => path.join(path.dirname(path.dirname(sample(cohort, index))), ".dist"))])];
+}
+
 
 function editSample(cohort, action, index = 0) {
   const file = sample(cohort, index);
@@ -166,9 +228,43 @@ test("matched independent retained outcomes support descriptive quality, never b
     assert.equal(audit.qualityEvidence.rateDelta, 0.4);
     assert.equal(audit.estimatedCostEvidence.basis, "model_rate_estimate_usd");
     assert.equal(audit.savingsClaimsAllowed, false);
+    const command = [path.join(repoRoot, "evals", "run.mjs"), "--compare", before.rawOutput, after.rawOutput];
+    const compared = spawnSync(process.execPath, command, { cwd: repoRoot, encoding: "utf8" });
+    assert.equal(compared.status, 0, compared.stderr);
+    const report = JSON.parse(compared.stdout);
+    assert.equal(report.solo.acceptance, "failed");
+    assert.equal(report.delivery.acceptance, "failed");
+    after.ok = true;
+    save(path.join(after.rawOutput, "comparison-run.json"), after);
+    const forged = JSON.parse(spawnSync(process.execPath, command, { cwd: repoRoot, encoding: "utf8" }).stdout);
+    assert.equal(forged.delivery.acceptance, "incomplete");
+    assert.equal(forged.qualityClaimsAllowed, false);
     assert.equal(audit.costEvidence, null);
   }, 4, 8);
 });
+test("comparison and recorder require retained solo-before and delivery-after identities", () => {
+  withPair((before, after) => {
+    assert.equal(auditEvalPair(before, after).qualityClaimsAllowed, true);
+    editSample(after, (run) => { run.kind = "solo"; });
+    const audit = auditEvalPair(before, after);
+    assert.equal(audit.qualityClaimsAllowed, false);
+    assert.ok(audit.problems.some((problem) => problem.includes("retained delivery kind and phase")));
+  });
+  withPair((before, after) => {
+    editSample(after, (run) => { run.phases[0].phase = "1-solo-verification"; });
+    assert.equal(auditEvalPair(before, after).qualityClaimsAllowed, false);
+  });
+  withPair((before, after) => {
+    editSample(before, (run) => { run.kind = "delivery"; });
+    assert.equal(auditEvalPair(before, after).qualityClaimsAllowed, false);
+  });
+  withPair((before, after) => {
+    after.kind = "solo";
+    save(path.join(after.rawOutput, "comparison-run.json"), after);
+    assert.equal(auditEvalPair(before, after).qualityClaimsAllowed, false);
+  });
+});
+
 
 test("caller metadata, missing samples, and reused execution identities cannot mint cohorts", () => {
   withPair((before, after) => {
@@ -187,6 +283,23 @@ test("caller metadata, missing samples, and reused execution identities cannot m
     editSample(after, (run) => { run.executionId = first.executionId; }, 1);
     assert.ok(auditEvalPair(before, after).problems.some((problem) => problem.includes("repeated runner execution identity")));
   });
+  withPair((before, after) => {
+    const first = JSON.parse(fs.readFileSync(sample(before), "utf8"));
+    editSample(after, (run) => { run.executionId = first.executionId; });
+    const audit = auditEvalPair(before, after);
+    assert.equal(audit.qualityClaimsAllowed, false);
+    assert.ok(audit.problems.some((problem) => problem.includes("before and after reuse a runner execution identity")));
+  });
+  withPair((before, after) => {
+    before.fixtureRevision = after.fixtureRevision = "0".repeat(40);
+    save(path.join(before.rawOutput, "comparison-run.json"), before);
+    save(path.join(after.rawOutput, "comparison-run.json"), after);
+    const audit = auditEvalPair(before, after);
+    assert.equal(audit.qualityClaimsAllowed, false);
+    assert.ok(audit.problems.some((problem) => problem.includes("cohort fixture or source pins differ")));
+    const grading = { status: "passed", targetScenario: scenario, expectedBehavior: proposal.expectedBehavior, evidence: [sample(after)] };
+    assert.equal(decideFeedback({ before, after, proposal, grading }).disposition, "held");
+  });
 });
 
 test("fixture, scenario, runner, and transitive grader source must remain pinned", () => {
@@ -194,12 +307,21 @@ test("fixture, scenario, runner, and transitive grader source must remain pinned
     "eval-sources/runner/acme-chain.mjs", "eval-sources/runner/scripts/check-commits.mjs",
     "skills/verify-implementation/SKILL.md", "agents/agent-implementer.md", "shared/WRITING.md"]) {
     withPair((before, after) => {
-      fs.appendFileSync(path.join(after.rawOutput, ".dist", relative), "tampered\n");
+      for (const dist of cohortDistRoots(after)) fs.appendFileSync(path.join(dist, relative), "tampered\n");
       const audit = auditEvalPair(before, after);
       assert.equal(audit.qualityClaimsAllowed, false, relative);
       assert.ok(audit.problems.some((problem) => problem.includes("pinned") || problem.includes("fingerprint")), relative);
     });
   }
+});
+
+test("solo source pin is checked at the snapshot consumed by its retained execution", () => {
+  withPair((before, after) => {
+    fs.appendFileSync(path.join(path.dirname(sample(before)), ".dist", "fixtures", "case.json"), "tampered\n");
+    const audit = auditEvalPair(before, after);
+    assert.equal(audit.qualityClaimsAllowed, false);
+    assert.ok(audit.problems.some((problem) => problem.includes("before: pinned fixture snapshot missing")));
+  });
 });
 
 test("pinned skills, agents, and guidance must match current generated sources", () => {
@@ -213,7 +335,7 @@ test("pinned skills, agents, and guidance must match current generated sources",
     withPair((before, after) => {
       const dist = path.join(after.rawOutput, ".dist");
       const initialRevision = after.sourceRevision;
-      fs.appendFileSync(path.join(dist, relative), "\n// previous version\n");
+      for (const root of cohortDistRoots(after)) fs.appendFileSync(path.join(root, relative), "\n// previous version\n");
       const revision = fingerprintEvalSource(dist, scenario, after.fixtureSnapshotRevision);
       assert.notEqual(revision, initialRevision, relative);
       for (let index = 0; index < after.sampleRuns.length; index++) {
@@ -231,7 +353,7 @@ test("pinned skills, agents, and guidance must match current generated sources",
 test("a self-consistent old grader snapshot cannot be regraded with changed current code", () => {
   withPair((before, after) => {
     const dist = path.join(after.rawOutput, ".dist");
-    fs.appendFileSync(path.join(dist, "eval-sources", "runner", "scripts", "check-commits.mjs"), "\n// prior grading rule\n");
+    for (const root of cohortDistRoots(after)) fs.appendFileSync(path.join(root, "eval-sources", "runner", "scripts", "check-commits.mjs"), "\n// prior grading rule\n");
     const revision = fingerprintEvalSource(dist, scenario, after.fixtureSnapshotRevision);
     for (let index = 0; index < after.sampleRuns.length; index++) {
       editSample(after, (run) => { run.sourceRevision = revision; }, index);
@@ -249,39 +371,190 @@ test("raw OMP usage, independently regraded outcome, and runtime proof bind each
     assert.ok(auditEvalPair(before, after).problems.some((problem) => problem.includes("aggregate usage coverage")));
   });
   withPair((before, after) => {
-    editSample(after, (run) => { run.ok = false; run.phases[0].ok = false; run.problems = ["forged failure"]; run.phases[0].problems = ["forged failure"]; });
-    assert.ok(auditEvalPair(before, after).problems.some((problem) => problem.includes("independent retained-output grading")));
+    editSample(after, (run) => { run.ok = false; run.phases[0].ok = false; run.phases[0].problems = ["forged failure"]; });
+    assert.ok(auditEvalPair(before, after).problems.some((problem) => problem.includes("offline grading and retained live proof")));
   });
   withPair((before, after) => {
-    fs.rmSync(path.join(path.dirname(sample(after)), "1-solo-verification", "omp.jsonl"));
+    fs.rmSync(path.join(path.dirname(sample(after)), "1-verify-implementation", "omp.jsonl"));
     assert.ok(auditEvalPair(before, after).problems.some((problem) => problem.includes("raw OMP output")));
   });
 });
-
-test("feedback is pending human review only with an independently retained passing grade", () => {
+test("a missing solo build output counts as a failed retained execution", () => {
   withPair((before, after) => {
-    const grading = { status: "passed", targetScenario: scenario, expectedBehavior: proposal.expectedBehavior, evidence: [sample(after)] };
-    assert.equal(before.fixtureRevision, after.fixtureRevision);
-    const result = decideFeedback({ before, after, proposal, grading, approval: { decision: "approved", actor: "caller" } });
-    assert.equal(result.disposition, "pending-human-review", result.problems?.join("; "));
-    assert.equal(result.applied, false);
-    const held = decideFeedback({ before, after, proposal, grading: { ...grading, evidence: [] } });
-    assert.equal(held.disposition, "held");
+    fs.rmSync(path.join(before.rawOutput, "fixture", "repo", "dist", "runtime.txt"));
+    const gradeProblems = ["build output was null", "solo run changed tracked source or committed a new revision"];
+    for (let index = 0; index < before.sampleRuns.length; index++) {
+      const phaseDir = path.join(path.dirname(sample(before, index)), "1-solo-verification");
+      fs.rmSync(path.join(phaseDir, "runtime.txt"));
+      editSample(before, (run) => {
+        run.ok = false;
+        run.problems = gradeProblems;
+        run.phases[0].ok = false;
+        run.phases[0].problems = gradeProblems;
+      }, index);
+    }
+    before.ok = false;
+    save(path.join(before.rawOutput, "comparison-run.json"), before);
+    const audit = auditEvalPair(before, after);
+    assert.equal(audit.qualityClaimsAllowed, true, audit.problems.join("; "));
+    assert.equal(audit.qualityEvidence.before.passed, 0);
+    assert.equal(audit.beforeAcceptance, "failed");
   });
 });
 
-test("grading evidence must match the fixture revision of both paired runs", () => {
+
+test("feedback requires an independent executed delivery grade, not either comparison leg", () => {
+  withPair((before, after, root) => {
+    const grading = { status: "passed", targetScenario: scenario, expectedBehavior: proposal.expectedBehavior, evidence: [sample(after)] };
+    assert.equal(before.fixtureRevision, after.fixtureRevision);
+    assert.equal(decideFeedback({ before, after, proposal, grading }).disposition, "held");
+    assert.equal(decideFeedback({ before, after, proposal, grading: { ...grading, evidence: [sample(before)] } }).disposition, "held");
+    grading.evidence = [independentGrade(root, after)];
+    const result = decideFeedback({ before, after, proposal, grading, approval: { decision: "approved", actor: "caller" } });
+    assert.equal(result.disposition, "pending-human-review", result.problems?.join("; "));
+    assert.equal(result.applied, false);
+    assert.equal(decideFeedback({ before, after, proposal, grading: { ...grading, evidence: [] } }).disposition, "held");
+    const gradeFile = grading.evidence[0];
+    const forgedGrade = JSON.parse(fs.readFileSync(gradeFile, "utf8"));
+    forgedGrade.kind = "solo";
+    save(gradeFile, forgedGrade);
+    assert.equal(decideFeedback({ before, after, proposal, grading }).disposition, "held");
+  });
+});
+
+test("recorded live-only git failures are audited against the retained delivery repository", () => {
+  const recordFailure = (after, gitProblems) => {
+    for (let index = 0; index < after.sampleRuns.length; index++) {
+      editSample(after, (run) => {
+        run.ok = false;
+        run.phases[0].ok = false;
+        run.phases[0].gitProblems = gitProblems;
+        run.phases[0].problems = gitProblems;
+      }, index);
+    }
+    after.ok = false;
+    save(path.join(after.rawOutput, "comparison-run.json"), after);
+  };
+  withPair((before, after) => {
+    fs.writeFileSync(path.join(after.rawOutput, "fixture", "repo", "dirty.txt"), "untracked\n");
+    recordFailure(after, ["git: repository left dirty:\n?? dirty.txt"]);
+    const audit = auditEvalPair(before, after);
+    assert.equal(audit.qualityClaimsAllowed, true, audit.problems.join("; "));
+    assert.equal(audit.afterAcceptance, "failed");
+    assert.equal(audit.qualityEvidence.after.passed, 0);
+  });
+  withPair((before, after) => {
+    const repo = path.join(after.rawOutput, "fixture", "repo");
+    const extra = path.join(repo, ".agents", "tasks", scenario, "extra.md");
+    fs.writeFileSync(extra, "Unrelated commit\n");
+    git(repo, "add", path.relative(repo, extra));
+    git(repo, "commit", "-q", "-m", "docs(task): unrelated changes");
+    recordFailure(after, [`git: HEAD does not commit produced artifact .agents/tasks/${scenario}/01-verification.md (changed: .agents/tasks/${scenario}/extra.md)`]);
+    const audit = auditEvalPair(before, after);
+    assert.equal(audit.qualityClaimsAllowed, true, audit.problems.join("; "));
+    assert.equal(audit.afterAcceptance, "failed");
+  });
+  withPair((before, after) => {
+    recordFailure(after, ["git: repository left dirty:\n?? forged.txt"]);
+    const audit = auditEvalPair(before, after);
+    assert.equal(audit.qualityClaimsAllowed, false);
+    assert.ok(audit.problems.some((problem) => problem.includes("recorded live git proof differs")));
+  });
+});
+
+test("cleaned delivery Git bundles prove success; forged repo-null success cannot erase a failed run", () => {
+  withPair((before, after) => {
+    for (let index = 0; index < after.sampleRuns.length; index++) {
+      const output = path.dirname(sample(after, index));
+      git(path.join(after.rawOutput, "fixture", "repo"), "bundle", "create", path.join(output, "git-proof.bundle"), "HEAD");
+      editSample(after, (run) => { run.repo = null; }, index);
+    }
+    fs.rmSync(path.join(after.rawOutput, "fixture", "repo"), { recursive: true, force: true });
+    const accepted = auditEvalPair(before, after);
+    assert.equal(accepted.qualityClaimsAllowed, true, accepted.problems.join("; "));
+    assert.equal(accepted.afterAcceptance, "passed");
+    fs.rmSync(path.join(path.dirname(sample(after)), "git-proof.bundle"));
+    const missing = auditEvalPair(before, after);
+    assert.equal(missing.qualityClaimsAllowed, false);
+    assert.ok(missing.problems.some((problem) => problem.includes("Git proof missing or invalid")));
+  });
+  withPair((before, after) => {
+    fs.writeFileSync(path.join(after.rawOutput, "fixture", "repo", "dirty.txt"), "untracked\n");
+    editSample(after, (run) => {
+      run.repo = null;
+      run.ok = true;
+      run.phases[0].ok = true;
+      run.phases[0].problems = [];
+      run.phases[0].gitProblems = [];
+    });
+    const forged = auditEvalPair(before, after);
+    assert.equal(forged.qualityClaimsAllowed, false);
+    assert.ok(forged.problems.some((problem) => problem.includes("Git proof missing or invalid")));
+  });
+});
+
+test("the audited source root is exactly the source root consumed by regrading", () => {
+  withPair((before, after) => {
+    const output = path.dirname(sample(after));
+    const source = path.join(path.dirname(output), ".dist");
+    fs.cpSync(source, path.join(output, ".dist"), { recursive: true });
+    fs.appendFileSync(path.join(source, "fixtures", "case.json"), "tampered\n");
+    const audit = auditEvalPair(before, after);
+    assert.equal(audit.qualityClaimsAllowed, false);
+    assert.ok(audit.problems.some((problem) => problem.includes("pinned fixture snapshot missing")));
+  });
+});
+
+test("the fixture commit reconstructs a genuine first-phase task mutation, not a forged failure", () => {
+  const baselineProblem = "task.md: an earlier file was modified by this phase";
+  withPair((before, after) => {
+    const repo = path.join(after.rawOutput, "fixture", "repo");
+    const relative = `.agents/tasks/${scenario}/task.md`;
+    fs.appendFileSync(path.join(repo, relative), "changed by phase\n");
+    const gitProblem = `git: repository left dirty:\n${git(repo, "status", "--porcelain")}`;
+    for (let index = 0; index < after.sampleRuns.length; index++) {
+      const output = path.dirname(sample(after, index));
+      fs.appendFileSync(path.join(output, "1-verify-implementation", "task", "task.md"), "changed by phase\n");
+      editSample(after, (run) => {
+        run.ok = false;
+        run.phases[0].ok = false;
+        run.phases[0].gitProblems = [gitProblem];
+        run.phases[0].problems = [baselineProblem, gitProblem];
+      }, index);
+    }
+    after.ok = false;
+    save(path.join(after.rawOutput, "comparison-run.json"), after);
+    const audit = auditEvalPair(before, after);
+    assert.equal(audit.qualityClaimsAllowed, true, audit.problems.join("; "));
+    assert.equal(audit.afterAcceptance, "failed");
+    assert.equal(audit.qualityEvidence.after.passed, 0);
+  });
+  withPair((before, after) => {
+    editSample(after, (run) => {
+      run.ok = false;
+      run.phases[0].ok = false;
+      run.phases[0].problems = [baselineProblem];
+    });
+    after.ok = false;
+    save(path.join(after.rawOutput, "comparison-run.json"), after);
+    const forged = auditEvalPair(before, after);
+    assert.equal(forged.qualityClaimsAllowed, false);
+    assert.ok(forged.problems.some((problem) => problem.includes("offline grading and retained live proof")));
+  });
+});
+
+test("different fixture commits block quality comparisons and feedback", () => {
   withPair((before, after) => {
     advanceFixture(after);
     assert.notEqual(before.fixtureRevision, after.fixtureRevision);
     const audit = auditEvalPair(before, after);
-    assert.equal(audit.qualityClaimsAllowed, true, audit.problems.join("; "));
+    assert.equal(audit.qualityClaimsAllowed, false);
     for (const evidence of [sample(before), sample(after)]) {
       const grading = { status: "passed", targetScenario: scenario, expectedBehavior: proposal.expectedBehavior, evidence: [evidence] };
       const result = decideFeedback({ before, after, proposal, grading });
       assert.equal(result.disposition, "held", evidence);
       assert.equal(result.applied, false);
-      assert.ok(result.problems.some((problem) => problem.includes("executed grading run")), evidence);
+      assert.ok(result.problems.some((problem) => problem.includes("comparable retained phase outcomes")), evidence);
     }
   });
 });
@@ -325,7 +598,7 @@ process.stdout.write(${JSON.stringify(ompOutput())});
     delivery.sampleRuns[9] = delivery.sampleRuns[0];
     save(manifest, delivery);
     reject(delivery.rawOutput);
-    delivery.sampleRuns[9] = "sample-10";
+    delivery.sampleRuns[9] = path.join("sample-10", scenario);
     save(manifest, delivery);
     fs.rmSync(last);
     reject(delivery.rawOutput);
@@ -344,6 +617,8 @@ process.stdout.write(${JSON.stringify(ompOutput())});
     alterLast((run) => { run.fixtureRevision = "0".repeat(40); });
     alterLast((run) => { run.repo = path.join(root, "missing-fixture-repo"); });
     alterLast((run) => { run.ok = false; });
+    alterLast((run) => { run.kind = "solo"; });
+    alterLast((run) => { run.phases[0].phase = "1-solo-verification"; });
     delivery.sourceRevision = "0".repeat(64);
     save(manifest, delivery);
     reject(delivery.rawOutput);
@@ -354,7 +629,7 @@ process.stdout.write(${JSON.stringify(ompOutput())});
     delivery.sampleRuns[9] = "alias";
     save(manifest, delivery);
     reject(delivery.rawOutput);
-    delivery.sampleRuns[9] = "sample-10";
+    delivery.sampleRuns[9] = path.join("sample-10", scenario);
     save(manifest, delivery);
     fs.rmSync(alias);
     const { result, out } = record(delivery.rawOutput);
@@ -363,6 +638,9 @@ process.stdout.write(${JSON.stringify(ompOutput())});
     const solo = JSON.parse(fs.readFileSync(path.join(out, "comparison-run.json"), "utf8"));
     assert.equal(solo.sampleRuns.length, 10);
     assert.equal(solo.ok, true);
+    assert.equal(fs.existsSync(path.join(out, "sample-01", ".dist", "skills")), true);
+    const audit = auditEvalPair(solo, delivery);
+    assert.equal(audit.qualityClaimsAllowed, true, audit.problems.join("; "));
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -423,12 +701,11 @@ test("solo recorder retains the initial HEAD, final HEAD proof, and fixture snap
     const output = path.join(deliveryRoot, scenario);
     const source = snapshot(path.join(deliveryRoot, ".dist"));
     const fixture = fixtureRepo(path.join(root, "fixture"));
-    const delivery = {
-      name: scenario, repo: fixture.repo, rawOutput: output, model, fixtureRevision: fixture.revision,
-      fixtureVersion: source.fixtureSnapshotRevision, fixtureSnapshotRevision: source.fixtureSnapshotRevision,
-      sourceRevision: source.sourceRevision,
-    };
-    save(path.join(output, "comparison-run.json"), delivery);
+    const artifact = path.join(fixture.repo, ".agents", "tasks", scenario, "01-verification.md");
+    fs.writeFileSync(artifact, "---\ntype: verification\nstatus: passed\nsummary: Build verified\n---\n## Run\nChecked package.json, CI, and README. npm run build -- RUNTIME=node emitted built for node.\n");
+    git(fixture.repo, "add", path.relative(fixture.repo, artifact));
+    git(fixture.repo, "commit", "-q", "-m", "docs(task): verify runtime build");
+    writeDelivery(output, source, fixture);
     const bin = path.join(root, "bin");
     fs.mkdirSync(bin);
     const omp = path.join(bin, "omp");

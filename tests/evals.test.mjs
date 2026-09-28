@@ -29,6 +29,35 @@ test("only the evidence companion opts out of document runner defaults", () => {
   assert.equal(isEvidenceScenario({ name: "iterate-evidence", phases: [{ skill: "verify-implementation" }] }), false);
 });
 
+test("evidence CLI grades missing and failed recordings as one JSON array without human logs", t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "evidence-grade-json-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const script = new URL("../evals/run.mjs", import.meta.url).pathname;
+  const grade = (...flags) => spawnSync(process.execPath, [script, ...flags, "--grade", root, "iterate-evidence"], { encoding: "utf8" });
+  const missing = grade("--grade-json");
+  assert.equal(missing.status, 1, missing.stderr);
+  const missingResults = JSON.parse(missing.stdout);
+  assert.equal(missingResults.length, 1);
+  assert.equal(missingResults[0].name, "iterate-evidence");
+  assert.equal(missingResults[0].ok, false);
+  assert.ok(missingResults[0].phases[0].problems.some(problem => problem.includes("retention/setup:")));
+
+  const out = path.join(root, "iterate-evidence", "1-iterate-evidence");
+  fs.mkdirSync(out, { recursive: true });
+  fs.writeFileSync(path.join(out, "setup-error.json"), JSON.stringify({ error: "recording failed" }));
+  const failed = grade("--grade-json");
+  assert.equal(failed.status, 1, failed.stderr);
+  const failedResults = JSON.parse(failed.stdout);
+  assert.equal(failedResults.length, 1);
+  assert.ok(failedResults[0].phases[0].problems.some(problem => problem.includes("recording failed")));
+
+  const human = grade();
+  assert.equal(human.status, 1, human.stderr);
+  assert.match(human.stdout, /\[iterate-evidence\] saved evidence: FAIL/);
+  assert.match(human.stdout, /recording failed/);
+  assert.match(human.stdout, /0\/1 scenarios passed/);
+});
+
 test("repair authorization catches forbidden changes even when a later commit restores them", () => {
   const commits = [
     { sha: "first", subject: "test: alter expectation", paths: ["spec.md"] },
