@@ -227,7 +227,7 @@ test('descriptor-pinned Git listing finds nested ignored environment files', t =
   }
   assert.equal(result.error, undefined);
   assert.equal(result.status, 0);
-  assert.equal(result.stdout.toString('utf8'), 'nested/.env.secret\\0');
+  assert.equal(result.stdout.toString('utf8'), 'nested/.env.secret\0');
 });
 
 test('ignored listing stays on pinned metadata during a .git path swap', t => {
