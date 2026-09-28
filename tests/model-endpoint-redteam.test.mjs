@@ -6,7 +6,7 @@ import path from 'node:path';
 import {run, appendAudit, MAX_RESPONSE_BYTES, DEFAULT_AUDIT_FILE, PROBES} from '../skills/delivery/model-endpoint-redteam/scripts/probe.mjs';
 import {createHash} from 'node:crypto';
 
-const root=fs.mkdtempSync(path.join(os.tmpdir(),'model-redteam-'));
+const root=fs.mkdtempSync(path.join(os.homedir(),'.model-redteam-'));
 const authFile=path.join(root,'authorization.json');
 const endpoint='https://203.0.113.9/v1/chat';
 const writeAuthorization=(expires,pathname='/v1/chat',authorizedAt=new Date(Date.now()-60_000).toISOString())=>fs.writeFileSync(authFile,JSON.stringify({schema_version:1,origin:'https://203.0.113.9',path:pathname,operator:'fixture operator',authorized_at:authorizedAt,expires}));
@@ -96,6 +96,25 @@ test('validation probe sends malformed chat-completions fields',async()=>{
  writeAuthorization('2099-01-01T00:00:00Z','/v1/chat/completions');
  const result=await run(liveOptions({url:target,probes:['validation']}),{fetchImpl:async(_url,init)=>{const body=JSON.parse(init.body);assert.equal(body.model,'fixture-model');assert.equal(body.messages,null);assert.equal(body.temperature,'not-a-number');return goodResponse();}});
  assert.equal(result.status,'incomplete');assert.equal(result.probes[0].status,'received_unassessed');
+ writeAuthorization('2099-01-01T00:00:00Z');
+});
+test('expected validation 400 is received unassessed while ordinary 400 still fails and retries',async()=>{
+ const target='https://203.0.113.9/v1/chat/completions';
+ writeAuthorization('2099-01-01T00:00:00Z','/v1/chat/completions');
+ const result=await run(liveOptions({url:target,probes:['validation','schema'],retries:1}),{
+  fetchImpl:async()=>new Response(JSON.stringify({error:{message:'invalid messages'}}),{status:400}),
+  sleep:async()=>{}
+ });
+ assert.equal(result.probes[0].status,'received_unassessed');
+ assert.equal(result.probes[0].assessment_status,'incomplete');
+ assert.equal(result.probes[0].http_status,400);
+ assert.equal(result.probes[0].attempts,1);
+ assert.equal(result.probes[0].failed_attempts,0);
+ assert.match(result.probes[0].evidence.response_sha256,/^sha256:[a-f0-9]{64}$/);
+ assert.equal(result.probes[1].status,'failed');
+ assert.equal(result.probes[1].attempts,2);
+ assert.equal(result.failed_attempts,2);
+ assert.equal(result.status,'failed');
  writeAuthorization('2099-01-01T00:00:00Z');
 });
 

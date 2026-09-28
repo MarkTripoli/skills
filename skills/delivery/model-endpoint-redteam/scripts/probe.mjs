@@ -179,7 +179,7 @@ export async function run(suppliedOptions,{fetchImpl=fetch,sleep=ms=>new Promise
           try{response=await fetchImpl(options.url,{method:'POST',redirect:'manual',signal:controller.signal,headers:{'content-type':'application/json'},body:request.body});if(response.status>=300&&response.status<400)throw Error('redirect refused');parsed=await readBoundedResponse(response);}finally{clearTimeout(timer);}
           result.evidence={response_sha256:parsed.responseSha,response_class:response.ok?'received':'http-error'};
           result.http_status=response.status;
-          if(response.ok){result.status='received_unassessed';result.assessment_status='incomplete';attemptStatus='received_unassessed';if(result.failed_attempts){result.recovered_after_failure=true;delete result.error;}}else{result.status='failed';result.error='Endpoint returned non-success HTTP status';attemptFailed=true;}
+          if(response.ok||(name==='validation'&&response.status===400)){result.status='received_unassessed';result.assessment_status='incomplete';attemptStatus='received_unassessed';if(result.failed_attempts){result.recovered_after_failure=true;delete result.error;}}else{result.status='failed';result.error='Endpoint returned non-success HTTP status';attemptFailed=true;}
         }catch{result.status='failed';result.error='Request failed';attemptFailed=true;}
       }
       if(attemptFailed){failedAttempts++;result.failed_attempts++;}
