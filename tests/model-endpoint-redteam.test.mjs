@@ -133,6 +133,15 @@ test('unsupported timer delays are rejected before fetch',async()=>{
  assert.equal(calls,0);
 });
 
+test('noninteger timer and attempt options are rejected before fetch',async()=>{
+ let calls=0;
+ const invalid=[{maxAttempts:Number.NaN},{retries:Number.NaN},{timeoutMs:Number.NaN},{rateMs:Number.NaN},{maxAttempts:1.5},{retries:0.5},{timeoutMs:1.5},{rateMs:100.5}];
+ for(const override of invalid){
+  await assert.rejects(run(liveOptions({probes:['recon'],...override}),{fetchImpl:async()=>{calls++;return goodResponse();}}),/Invalid/);
+ }
+ assert.equal(calls,0);
+});
+
 test('zero pacing interval is rejected',async()=>{
  let calls=0;
  await assert.rejects(run(liveOptions({probes:['recon'],rateMs:0}),{fetchImpl:async()=>{calls++;return goodResponse();}}));

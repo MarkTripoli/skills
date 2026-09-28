@@ -45,6 +45,7 @@ function validate(o) {
   const rawHost=authority.startsWith('[')?authority.slice(1,authority.indexOf(']')):authority.split(':',1)[0];
   if(o.live&&!net.isIP(rawHost))throw Error('Live targets must use an IP-literal host; hostname connection pinning is unsupported');
   if(!Array.isArray(o.probes)||!o.probes.length||o.probes.some(p=>typeof p!=='string'||!PROBE_PAYLOADS[p])||new Set(o.probes).size!==o.probes.length)throw Error('Unknown, duplicate, or empty probe selection');
+  for(const key of ['maxAttempts','retries','timeoutMs','rateMs'])if(!Number.isSafeInteger(o[key])||o[key]<0)throw Error(`Invalid ${key}`);
   if(o.maxAttempts<1||o.timeoutMs<1||o.maxAttempts>100||o.retries>10||o.rateMs<1||o.timeoutMs>MAX_TIMER_DELAY_MS||o.rateMs>MAX_TIMER_DELAY_MS)throw Error('Attempt, retry, timeout, or rate bound exceeded');
 }
 function readAuthorization(options,now=new Date()) {
