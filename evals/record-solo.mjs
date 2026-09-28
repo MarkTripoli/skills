@@ -7,6 +7,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { metricsForOutput } from "./metrics.mjs";
 import { fingerprintDirectory, fingerprintEvalSource } from "./evidence.mjs";
+import { validateRetainedDeliveryCohort } from "./feedback.mjs";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const value = (flag) => {
@@ -35,18 +36,34 @@ if (!Number.isSafeInteger(sampleCount) || sampleCount < 1 || sampleCount > 100 |
   console.error("sample count must be 1–100 and match the delivery cohort");
   process.exit(2);
 }
+function usableDeliveryRun(run, directory) {
+  const dist = path.join(path.dirname(directory), ".dist");
+  if (run.sampleRuns || run.name !== "verify-required-arguments" || run.model !== model ||
+      !run.repo || !fs.existsSync(run.repo) || !/^[a-f0-9]{40}$/.test(run.fixtureRevision ?? "") ||
+      !/^[a-f0-9]{64}$/.test(run.sourceRevision ?? "") || !/^[a-f0-9]{64}$/.test(run.fixtureSnapshotRevision ?? "") ||
+      run.fixtureVersion !== run.fixtureSnapshotRevision ||
+      !run.rawOutput || path.resolve(evaluatorRoot, run.rawOutput) !== directory) return false;
+  try {
+    execFileSync("git", ["cat-file", "-e", `${run.fixtureRevision}^{commit}`], { cwd: run.repo, stdio: "ignore" });
+    return fingerprintDirectory(path.join(dist, "fixtures")) === run.fixtureSnapshotRevision &&
+      fingerprintEvalSource(dist, run.name, run.fixtureSnapshotRevision) === run.sourceRevision;
+  } catch { return false; }
+}
 if (sampleCount > 1) {
+  const cohortValidation = validateRetainedDeliveryCohort(delivery, { sampleCount, model });
+  if (path.resolve(deliveryDir) !== deliveryOutput || cohortValidation.problems.length > 0) {
+    console.error(`delivery cohort invalid: ${cohortValidation.problems.join("; ") || "delivery directory aliases its retained manifest"}`);
+    process.exit(2);
+  }
   if (fs.existsSync(output)) {
     console.error(`refusing to overwrite recorded run: ${output}`);
     process.exit(2);
   }
-  const deliverySamples = Array.isArray(delivery.sampleRuns)
-    ? delivery.sampleRuns.map((relative) => path.resolve(deliveryOutput, relative))
-    : Array(sampleCount).fill(path.resolve(deliveryDir));
-  if (deliverySamples.some((candidate) => (Array.isArray(delivery.sampleRuns) &&
-      (!deliveryOutput || !candidate.startsWith(`${deliveryOutput}${path.sep}`))) ||
-      !fs.existsSync(path.join(candidate, "comparison-run.json")))) {
-    console.error("delivery cohort contains a missing or external sample run");
+  const deliverySamples = cohortValidation.sampleDirs;
+  if (deliverySamples.some((directory) => !usableDeliveryRun(
+    JSON.parse(fs.readFileSync(path.join(directory, "comparison-run.json"), "utf8")), directory
+  ))) {
+    console.error("delivery cohort contains a child without a retained fixture repository or usable pinned sources");
     process.exit(2);
   }
   fs.mkdirSync(output, { recursive: true });
@@ -83,13 +100,7 @@ if (sampleCount > 1) {
   process.exit(allPassed ? 0 : 1);
 }
 const deliveryDist = deliveryOutput ? path.join(path.dirname(deliveryOutput), ".dist") : null;
-if (delivery.sampleRuns || delivery.name !== "verify-required-arguments" || delivery.model !== model ||
-    !delivery.repo || !fs.existsSync(delivery.repo) || !/^[a-f0-9]{40}$/.test(delivery.fixtureRevision ?? "") ||
-    !/^[a-f0-9]{64}$/.test(delivery.sourceRevision ?? "") || !/^[a-f0-9]{64}$/.test(delivery.fixtureSnapshotRevision ?? "") ||
-    delivery.fixtureVersion !== delivery.fixtureSnapshotRevision || !deliveryOutput ||
-    deliveryOutput !== path.resolve(deliveryDir) ||
-    fingerprintDirectory(path.join(deliveryDist, "fixtures")) !== delivery.fixtureSnapshotRevision ||
-    fingerprintEvalSource(deliveryDist, delivery.name, delivery.fixtureSnapshotRevision) !== delivery.sourceRevision) {
+if (!deliveryOutput || deliveryOutput !== path.resolve(deliveryDir) || !usableDeliveryRun(delivery, deliveryOutput)) {
   console.error("delivery run must retain matching source and fixture snapshots, its fixture repository, and the same explicit model");
   process.exit(2);
 }

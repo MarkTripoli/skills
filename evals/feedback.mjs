@@ -232,6 +232,7 @@ function singleRunEvidence(run, manifestPath, side) {
     runId: manifestPath,
     manifestPath,
     fixtureVersion: run.fixtureVersion,
+    fixtureRevision: run.fixtureRevision,
     fixtureSnapshotRevision: retained.fixtureSnapshotRevision,
     model: run.model,
     actualModel,
@@ -282,11 +283,15 @@ function recordedRunEvidence(input, side) {
     }
     try {
       const realSampleDir = fs.realpathSync(sampleDir);
-      if (!realSampleDir.startsWith(`${realRoot}${path.sep}`) || manifestPaths.has(realSampleDir)) {
-        problems.push(`${side}: duplicate or external sample run`);
+      if (realSampleDir !== sampleDir || !realSampleDir.startsWith(`${realRoot}${path.sep}`) || manifestPaths.has(realSampleDir)) {
+        problems.push(`${side}: duplicate, symlinked, or external sample run`);
         continue;
       }
       const manifestPath = path.join(realSampleDir, "comparison-run.json");
+      if (fs.realpathSync(manifestPath) !== manifestPath) {
+        problems.push(`${side}: symlinked sample run manifest`);
+        continue;
+      }
       const child = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
       if (typeof child.rawOutput !== "string" || path.resolve(repoRoot, child.rawOutput) !== realSampleDir ||
           Array.isArray(child.sampleRuns)) {
@@ -303,6 +308,7 @@ function recordedRunEvidence(input, side) {
         for (const field of JOIN_FIELDS) {
           if (evidence.normalized[field] !== firstSampleEvidence.normalized[field]) problems.push(`${side}: sample ${field} mismatch`);
         }
+        if (child.fixtureRevision !== firstSampleEvidence.run.fixtureRevision) problems.push(`${side}: sample fixture revision mismatch`);
         if (child.name !== firstSampleEvidence.run.name) problems.push(`${side}: sample scenario mismatch`);
       } else {
         firstSampleEvidence = evidence;
@@ -320,6 +326,7 @@ function recordedRunEvidence(input, side) {
     runId: loaded.manifestPath,
     manifestPath: loaded.manifestPath,
     fixtureVersion: firstSampleEvidence.normalized.fixtureVersion,
+    fixtureRevision: firstSampleEvidence.normalized.fixtureRevision,
     fixtureSnapshotRevision: firstSampleEvidence.normalized.fixtureSnapshotRevision,
     model: firstSampleEvidence.normalized.model,
     actualModel: firstSampleEvidence.normalized.actualModel,
@@ -328,6 +335,33 @@ function recordedRunEvidence(input, side) {
     rows: samples,
   } : null;
   return { normalized, run: root, problems };
+}
+
+// Validate one retained delivery cohort before the paid solo recorder starts any child.
+export function validateRetainedDeliveryCohort(input, { sampleCount, model }) {
+  const { normalized, run, problems: evidenceProblems } = recordedRunEvidence(input, "delivery");
+  const problems = [...evidenceProblems];
+  if (!Array.isArray(run?.sampleRuns) || !Number.isSafeInteger(sampleCount) ||
+      sampleCount < MINIMUM_SAMPLES || run.sampleRuns.length !== sampleCount ||
+      run.sampleCount !== sampleCount || normalized?.rows.length !== sampleCount) {
+    problems.push(`delivery: requires exactly ${sampleCount} retained samples (at least ${MINIMUM_SAMPLES})`);
+  }
+  if (run?.name !== "verify-required-arguments" || normalized?.model !== model ||
+      normalized?.actualModel !== model || run.model !== model || run.actualModel !== model) {
+    problems.push("delivery: scenario or explicit requested model mismatch");
+  }
+  if (normalized && (run.fixtureVersion !== normalized.fixtureVersion ||
+      run.fixtureRevision !== normalized.fixtureRevision ||
+      run.fixtureSnapshotRevision !== normalized.fixtureSnapshotRevision ||
+      run.sourceRevision !== normalized.sourceRevision)) {
+    problems.push("delivery: cohort fixture or source pins differ from its children");
+  }
+  return {
+    problems,
+    sampleDirs: problems.length === 0
+      ? run.sampleRuns.map((reference) => path.resolve(path.dirname(normalized.manifestPath), reference))
+      : [],
+  };
 }
 
 function estimatedCost(evidence) {

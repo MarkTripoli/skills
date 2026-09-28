@@ -213,6 +213,86 @@ test("feedback is pending human review only with an independently retained passi
   });
 });
 
+test("solo recorder rejects an invalid delivery cohort before output creation or OMP invocation", () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "feedback-solo-cohort-")));
+  try {
+    const delivery = writeCohort(root, "delivery");
+    const manifest = path.join(delivery.rawOutput, "comparison-run.json");
+    const last = sample(delivery, 9);
+    const originalLast = fs.readFileSync(last);
+    const bin = path.join(root, "bin");
+    fs.mkdirSync(bin);
+    const marker = path.join(root, "omp-invoked");
+    const omp = path.join(bin, "omp");
+    fs.writeFileSync(omp, `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(marker)}, "invoked\\n");
+fs.mkdirSync("dist", { recursive: true });
+fs.writeFileSync("dist/runtime.txt", "built for node\\n");
+process.stdout.write(${JSON.stringify(ompOutput())});
+`);
+    fs.chmodSync(omp, 0o755);
+    const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
+    let index = 0;
+    const record = (input, samples = 10) => {
+      const out = path.join(root, `solo-${++index}`);
+      const result = spawnSync(process.execPath, [path.join(repoRoot, "evals", "record-solo.mjs"),
+        "--delivery", input, "--out", out, "--model", model, "--samples", String(samples)],
+      { cwd: repoRoot, env, encoding: "utf8" });
+      return { result, out };
+    };
+    const reject = (input, samples = 10) => {
+      const { result, out } = record(input, samples);
+      assert.equal(result.status, 2, result.stderr);
+      assert.equal(fs.existsSync(out), false);
+      assert.equal(fs.existsSync(marker), false);
+    };
+    reject(path.dirname(last), 10); // A single delivery cannot be replayed ten times.
+    reject(delivery.rawOutput, 9);
+    delivery.sampleRuns[9] = delivery.sampleRuns[0];
+    save(manifest, delivery);
+    reject(delivery.rawOutput);
+    delivery.sampleRuns[9] = "sample-10";
+    save(manifest, delivery);
+    fs.rmSync(last);
+    reject(delivery.rawOutput);
+    fs.writeFileSync(last, originalLast);
+    const firstRun = JSON.parse(fs.readFileSync(sample(delivery), "utf8"));
+    const alterLast = (change) => {
+      const run = JSON.parse(originalLast);
+      change(run);
+      save(last, run);
+      reject(delivery.rawOutput);
+      fs.writeFileSync(last, originalLast);
+    };
+    alterLast((run) => { run.executionId = firstRun.executionId; });
+    alterLast((run) => { run.model = "provider/other"; });
+    alterLast((run) => { run.sourceRevision = "0".repeat(64); });
+    alterLast((run) => { run.fixtureRevision = "0".repeat(40); });
+    alterLast((run) => { run.repo = path.join(root, "missing-fixture-repo"); });
+    alterLast((run) => { run.ok = false; });
+    delivery.sourceRevision = "0".repeat(64);
+    save(manifest, delivery);
+    reject(delivery.rawOutput);
+    delivery.sourceRevision = firstRun.sourceRevision;
+    save(manifest, delivery);
+    const alias = path.join(delivery.rawOutput, "alias");
+    fs.symlinkSync(path.dirname(last), alias, "dir");
+    delivery.sampleRuns[9] = "alias";
+    save(manifest, delivery);
+    reject(delivery.rawOutput);
+    delivery.sampleRuns[9] = "sample-10";
+    save(manifest, delivery);
+    fs.rmSync(alias);
+    const { result, out } = record(delivery.rawOutput);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(fs.readFileSync(marker, "utf8").trim().split("\n").length, 10);
+    const solo = JSON.parse(fs.readFileSync(path.join(out, "comparison-run.json"), "utf8"));
+    assert.equal(solo.sampleRuns.length, 10);
+    assert.equal(solo.ok, true);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("unsupported evidence cohorts reject before creating results or launching paid OMP", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "feedback-no-paid-cohort-"));
   try {
