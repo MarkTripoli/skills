@@ -38,6 +38,7 @@ const safeOrigin = origin => {
 };
 const safeLabel = value => typeof value === 'string' && value.length <= 120 && /^[A-Za-z0-9@][A-Za-z0-9@._/-]*$/.test(value) && !/(?:password|passwd|secret|token|credential|api[_-]?key)/i.test(value);
 const safeSubject = value => typeof value === 'string' && value.length <= 200 && /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*(?:\.\*|\.>)?$/.test(value) && !/(?:password|passwd|secret|token|credential|api[_-]?key|gh[pousr]_|sk-)/i.test(value);
+const safeNamespace = value => typeof value === 'string' && value.length <= 63 && /^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$/.test(value);
 function safeYamlMappings(node, seen = new Set()) {
   if (!node || typeof node !== 'object') return true;
   if (node.constructor?.name === 'Alias') return false;
@@ -211,7 +212,7 @@ function sourceTokens(source) {
       if (([')', ']', '}'].includes(previousValue) && source.slice(previous.end, i).includes('\n')) ||
           previousValue === ']' || previousValue === '}') { uncertain = true; break; }
       const regexPrefix = !previous || previous.controlClose ||
-        ['=', '(', '[', '{', ':', ',', ';', '!', '?', 'return', 'throw', 'case', 'delete', 'void', 'typeof', 'instanceof', 'in', 'of', 'else', 'do', '+', '-', '*', '%', '^', '~', '&', '|', '<', '>'].includes(previousValue) ||
+        ['=', '(', '[', '{', ':', ',', ';', '!', '?', 'return', 'throw', 'yield', 'await', 'case', 'delete', 'void', 'typeof', 'instanceof', 'in', 'of', 'else', 'do', '+', '-', '*', '%', '^', '~', '&', '|', '<', '>'].includes(previousValue) ||
         (previousValue === '&' && beforePrevious?.value === '&') || previousValue === '/';
       if (regexPrefix) {
         i++;
@@ -277,6 +278,7 @@ function natsSubjects(source, limit = MAX_EVIDENCE, starts = lineStarts(source))
   const connectFunctions = new Map(), namespaces = new Map(), clients = new Map(), result = [];
   let truncated = false, ambiguous = false, hasNatsBinding = false;
   const value = (i, v) => tokens[i]?.type !== 'string' && tokens[i]?.value === v;
+  const valuePair = (i, first, second) => value(i, first) && value(i + 1, second);
   const register = (bindings, name, index, scope = scopes[index]) => {
     if (!name || tokens[index]?.type !== 'id') { ambiguous = true; return; }
     if (bindings.has(name) && bindings.get(name).index !== index) ambiguous = true;
@@ -361,11 +363,11 @@ function natsSubjects(source, limit = MAX_EVIDENCE, starts = lineStarts(source))
       if (close < 0) continue;
       const previous = tokens[i - 1]?.value;
       const next = tokens[close + 1]?.value;
-      const parameterList = next === '=>' || next === ':' || value(i - 1, 'function') || value(i - 1, 'catch') ||
+      const parameterList = valuePair(close + 1, '=', '>') || next === ':' || value(i - 1, 'function') || value(i - 1, 'catch') ||
         (next === '{' && tokens[i - 1]?.type === 'id' && !['if', 'while', 'for', 'switch', 'with'].includes(previous));
       if (parameterList) for (let j = i + 1; j < close; j++) if (isCandidate(j)) ambiguous = true;
     }
-    if (isCandidate(i) && value(i + 1, '=>')) ambiguous = true;
+    if (isCandidate(i) && valuePair(i + 1, '=', '>')) ambiguous = true;
     if (value(i, 'import')) {
       let from = i + 1;
       while (from < tokens.length && !value(from, 'from') && !value(from, ';')) from++;
@@ -438,13 +440,14 @@ function codeEdges(repo, files, maxEdges = MAX_EVIDENCE) {
           const kind = resource.kind, spec = resource.spec;
           if (!['Service', 'Deployment', 'StatefulSet', 'DaemonSet', 'Pod'].includes(kind) || !spec) { incomplete = true; continue; }
           const name = String(resource.metadata?.name ?? 'unnamed');
+          const namespace = resource.metadata?.namespace === undefined ? 'default' : resource.metadata.namespace;
           const selector = kind === 'Service' ? (spec.selector ?? {}) :
             kind === 'Pod' ? (resource.metadata?.labels ?? {}) : (spec.template?.metadata?.labels ?? {});
-          if (!safeLabel(name) || !selector || typeof selector !== 'object' || Array.isArray(selector) || Object.keys(selector).length > MAX_SELECTOR_LABELS ||
+          if (!safeLabel(name) || !safeNamespace(namespace) || !selector || typeof selector !== 'object' || Array.isArray(selector) || Object.keys(selector).length > MAX_SELECTOR_LABELS ||
               Object.entries(selector).some(([key, value]) => !safeLabel(key) || typeof value !== 'string' || !safeLabel(value))) { incomplete = true; continue; }
           const kindNode = doc.get('kind', true);
           if (!kindNode?.range) { incomplete = true; continue; }
-          emit({kind: 'kubernetes-declaration', repo: repo.name, resource_kind: kind, name, selector, source: {path: file.path, line: lineAt(starts, kindNode.range[0])}});
+          emit({kind: 'kubernetes-declaration', repo: repo.name, resource_kind: kind, name, namespace, selector, source: {path: file.path, line: lineAt(starts, kindNode.range[0])}});
         } catch { incomplete = true; }
       }
     }
@@ -504,13 +507,13 @@ export function analyze(inputs) {
     const k8s = evidence.filter(edge => edge.kind === 'kubernetes-declaration'), workloadsByLabel = new Map();
     let candidates = 0;
     for (const workload of k8s) if (workload.resource_kind !== 'Service') for (const [key, value] of Object.entries(workload.selector ?? {})) {
-      const label = JSON.stringify([key, value]);
+      const label = JSON.stringify([workload.namespace, key, value]);
       add(workloadsByLabel, label, workload);
     }
     for (const service of k8s) if (service.resource_kind === 'Service') {
       const selector = service.selector ?? {}, entries = Object.entries(selector);
       if (!entries.length) continue;
-      for (const [workloadRepo, workloads] of workloadsByLabel.get(JSON.stringify(entries[0])) ?? []) {
+      for (const [workloadRepo, workloads] of workloadsByLabel.get(JSON.stringify([service.namespace, ...entries[0]])) ?? []) {
         if (workloadRepo === service.repo) continue;
         for (const workload of workloads) {
           if (++candidates > MAX_RELATIONSHIP_CANDIDATES) { relationTruncated = true; break relationSearch; }

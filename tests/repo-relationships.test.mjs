@@ -56,7 +56,7 @@ test('ignores regex literals and member-property NATS lookalikes', () => {
   const {base, create} = fixture();
   try {
     const publisher = create('publisher', {
-      'src/events.js': "import { connect } from 'nats';\nconst nc = await connect();\nnc.publish('orders.created', payload);\nif (ready && /nc.publish(\"orders.created\")/.test(source)) {}\nother.nc.publish('orders.created', payload);\n",
+      'src/events.js': "import { connect } from 'nats';\nconst nc = await connect();\nnc.publish('orders.created', payload);\nif (ready && /nc.publish(\"orders.created\")/.test(source)) {}\nasync function waitForPattern() { await /nc.publish(\"orders.created\", payload)/.test(source); }\nfunction* patterns() { yield /nc.publish(\"orders.created\", payload)/; }\nother.nc.publish('orders.created', payload);\n",
     });
     const subscriber = create('subscriber', {
       'src/events.js': "import { connect } from 'nats';\nconst nc = await connect();\nnc.subscribe('orders.created', handler);\n",
@@ -65,6 +65,21 @@ test('ignores regex literals and member-property NATS lookalikes', () => {
     assert.equal(report.coverage, 'complete');
     assert.equal(report.evidence.filter(edge => edge.repo === 'publisher' && edge.kind === 'nats-publish').length, 1);
     assert.equal(report.relationships.filter(edge => edge.kind === 'nats-subject' && edge.subject === 'orders.created').length, 1);
+  } finally { fs.rmSync(base, {recursive: true, force: true}); }
+});
+test('fails closed on typed arrow parameters shadowing NATS clients', () => {
+  const {base, create} = fixture();
+  try {
+    const publisher = create('publisher', {
+      'src/events.ts': "import { connect } from 'nats';\nconst nc = await connect();\nnc.publish('orders.created', payload);\nconst forward = (nc: Fake) => { nc.publish('orders.created', payload); };\n",
+    });
+    const subscriber = create('subscriber', {
+      'src/events.ts': "import { connect } from 'nats';\nconst nc = await connect();\nnc.subscribe('orders.created', handler);\n",
+    });
+    const report = analyze([{name: 'publisher', root: publisher}, {name: 'subscriber', root: subscriber}]);
+    assert.equal(report.coverage, 'incomplete');
+    assert.equal(report.evidence.some(edge => edge.repo === 'publisher' && edge.kind === 'nats-publish'), false);
+    assert.equal(report.relationships.some(edge => edge.kind === 'nats-subject' && edge.subject === 'orders.created'), false);
   } finally { fs.rmSync(base, {recursive: true, force: true}); }
 });
 test('CLI preserves analyzable HEAD snapshots for imported NATS sources', () => {
@@ -266,7 +281,39 @@ test('fails closed on controller metadata labels but accepts Pod labels', () => 
     const matches = report.relationships.filter(edge => edge.kind === 'kubernetes-selector-match');
     assert.equal(matches.length, 1);
     assert.equal(matches[0].to.name, 'labeled-pod');
+    assert.equal(matches[0].from.namespace, 'default');
+    assert.equal(matches[0].to.namespace, 'default');
     assert.equal(report.coverage, 'complete');
+  } finally { fs.rmSync(base, {recursive: true, force: true}); }
+});
+test('matches Kubernetes selectors only within the same namespace', () => {
+  const {base, create} = fixture();
+  try {
+    const crossService = create('cross-service', {
+      'deploy/service.yaml': 'apiVersion: v1\nkind: Service\nmetadata:\n  name: cross-service\n  namespace: alpha\nspec:\n  selector:\n    app: api\n',
+    });
+    const crossPod = create('cross-pod', {
+      'deploy/pod.yaml': 'apiVersion: v1\nkind: Pod\nmetadata:\n  name: cross-pod\n  namespace: beta\n  labels:\n    app: api\nspec: {}\n',
+    });
+    const sameService = create('same-service', {
+      'deploy/service.yaml': 'apiVersion: v1\nkind: Service\nmetadata:\n  name: same-service\n  namespace: alpha\nspec:\n  selector:\n    app: same\n',
+    });
+    const samePod = create('same-pod', {
+      'deploy/pod.yaml': 'apiVersion: v1\nkind: Pod\nmetadata:\n  name: same-pod\n  namespace: alpha\n  labels:\n    app: same\nspec: {}\n',
+    });
+    const report = analyze([
+      {name: 'cross-service', root: crossService},
+      {name: 'cross-pod', root: crossPod},
+      {name: 'same-service', root: sameService},
+      {name: 'same-pod', root: samePod},
+    ]);
+    const matches = report.relationships.filter(edge => edge.kind === 'kubernetes-selector-match');
+    assert.equal(matches.length, 1);
+    assert.equal(matches[0].from.name, 'same-service');
+    assert.equal(matches[0].to.name, 'same-pod');
+    assert.equal(matches[0].from.namespace, 'alpha');
+    assert.equal(matches[0].to.namespace, 'alpha');
+    assert.equal(report.evidence.filter(edge => edge.kind === 'kubernetes-declaration').every(edge => typeof edge.namespace === 'string'), true);
   } finally { fs.rmSync(base, {recursive: true, force: true}); }
 });
 test('rejects non-string Kubernetes selector values before matching', () => {
