@@ -100,7 +100,7 @@ test('issue lookup recognizes only task frontmatter, not body text', t => {
   const task = path.join(dir, 'task.md');
   fs.writeFileSync(task, '---\nslug: body-only\n---\nRequest mentions issue: 7\n');
   assert.equal(JSON.parse(f.runCli().stdout)[0].status, 'eligible');
-  fs.writeFileSync(task, '---\nslug: body-only\nrepository: acme/app # canonical repository\nissue: 7\n---\nBody.\n');
+  fs.writeFileSync(task, '---\nslug: body-only\nrepository: acme/app # canonical repository\nissue: 7 # linked ticket\n---\nBody.\n');
   assert.equal(JSON.parse(f.runCli().stdout)[0].status, 'duplicate-task');
   const execute = f.runHandoff();
   assert.equal(JSON.parse(execute.stdout)[0].status, 'duplicate-task');
@@ -110,7 +110,7 @@ test('issue lookup recognizes only task frontmatter, not body text', t => {
   assert.equal(JSON.parse(f.runCli(['--repo=acme/#app']).stdout)[0].status, 'duplicate-task');
 });
 test('shared task roots and PR bodies stay scoped to canonical repository identity', t => {
-  const externalPrs = [{ number: 4, title: 'External references', body: 'other/repo#7 and https://github.com/other/repo/issues/7', url: '' }];
+  const externalPrs = [{ number: 4, title: 'External references', body: 'other/repo#7 and https://github.com/other/repo/issues/7 and https://github.com/other/acme/app#7', url: '' }];
   const f = setup(t, [issue], externalPrs);
   const dir = path.join(f.taskRoot, 'other-repo-task'); fs.mkdirSync(dir);
   fs.writeFileSync(path.join(dir, 'task.md'), '---\nrepository: other/repo\nissue: 7\n---\n');
@@ -171,6 +171,30 @@ test('accepted durable receipt repairs completion after state-write crash', t =>
   const result = f.runHandoff();
   assert.equal(JSON.parse(result.stdout)[0].status, 'handed-off-recovered');
   assert.equal(fs.existsSync(result.log), false);
+});
+test('accepted receipt survives a state persistence failure after adapter success', t => {
+  const f = setup(t);
+  let receiptPath;
+  const options = {
+    repo: 'acme/app',
+    taskRoot: f.taskRoot,
+    stateFile: f.stateFile,
+    dryRun: false,
+    handoff: 'fake-adapter',
+    runGh: args => JSON.stringify(args[0] === 'issue' ? [issue] : []),
+    runCommand: (_command, args) => {
+      receiptPath = args.find(arg => arg.startsWith('--receipt=')).slice('--receipt='.length);
+      fs.unlinkSync(f.stateFile);
+      fs.mkdirSync(f.stateFile);
+    },
+  };
+  assert.throws(() => intake(options));
+  const accepted = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+  assert.equal(accepted.status, 'accepted');
+  fs.rmSync(f.stateFile, { recursive: true, force: true });
+  const recovered = intake({ ...options, runCommand: () => assert.fail('accepted handoff must not run again') });
+  assert.equal(recovered[0].status, 'handed-off-recovered');
+  assert.equal(JSON.parse(fs.readFileSync(receiptPath, 'utf8')).status, 'accepted');
 });
 
 test('simultaneous stale-lock contenders cannot replace the new live owner lock', async t => {

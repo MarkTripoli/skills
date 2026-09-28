@@ -50,7 +50,9 @@ function taskMatches(root, repo, number) {
     const text = fs.readFileSync(file, 'utf8');
     const frontmatter = text.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1];
     if (!frontmatter) return [];
-    const issueMatches = new RegExp(`^issue:\\s*["']?${number}["']?\\s*$`, 'm').test(frontmatter);
+    const rawIssue = frontmatter.match(/^issue:\s*(.*)$/m)?.[1];
+    const taskIssue = rawIssue === undefined ? null : yamlScalar(rawIssue);
+    const issueMatches = taskIssue !== null && /^\d+$/.test(taskIssue) && Number(taskIssue) === number;
     const rawRepo = frontmatter.match(/^repository:\s*(.*)$/m)?.[1];
     const taskRepo = rawRepo === undefined ? null : yamlScalar(rawRepo);
     return issueMatches && taskRepo?.toLowerCase() === repo.toLowerCase() ? [path.join(root, entry.name)] : [];
@@ -143,7 +145,7 @@ function listPullRequests(repo, runGh) {
 }
 function matchingPrs(prs, repo, number) {
   const escapedRepo = repo.split('/').map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('/');
-  const reference = new RegExp(`(?:(?<![\\w./-])#${number}\\b|(?<![\\w.-])${escapedRepo}#${number}\\b|https?://github\\.com/${escapedRepo}/issues/${number}\\b)`, 'i');
+  const reference = new RegExp(`(?:(?<![\\w./-])#${number}\\b|(?<![\\w./-])${escapedRepo}#${number}\\b|https?://github\\.com/${escapedRepo}(?:#${number}\\b|/issues/${number}\\b))`, 'i');
   return prs.filter(pr => reference.test(`${pr.title ?? ''}\n${pr.body ?? ''}\n${pr.url ?? ''}`));
 }
 function lookup(options) {
@@ -214,17 +216,25 @@ function intakeLocked(options) {
     try {
       writeReceipt(receipt, { idempotencyKey, repo, issue: issue.number, status: 'dispatching', recordedAt: clock(), costNote: active.costNote }, true);
       runCommand(handoff, args);
-      writeReceipt(receipt, { idempotencyKey, repo, issue: issue.number, status: 'accepted', recordedAt: clock(), costNote: active.costNote });
-      active.status = 'complete'; active.ownerPid = null; active.updatedAt = clock();
-      saveState(stateFile, state);
-      outcomes.push({ issue: issue.number, status: 'handed-off', receipt });
     } catch (error) {
+      let prior;
+      try { prior = JSON.parse(fs.readFileSync(receipt, 'utf8')); } catch {}
+      if (prior?.idempotencyKey === idempotencyKey && prior.repo?.toLowerCase() === repo.toLowerCase() && prior.issue === issue.number && prior.status === 'accepted') {
+        active.status = 'complete'; active.ownerPid = null; active.updatedAt = clock();
+        saveState(stateFile, state);
+        outcomes.push({ issue: issue.number, status: 'handed-off-recovered', receipt });
+        continue;
+      }
       try { writeReceipt(receipt, { idempotencyKey, repo, issue: issue.number, status: 'unknown', recordedAt: clock(), error: error.message, costNote: active.costNote }); } catch {}
       active.status = 'handoff-unknown'; active.ownerPid = null; active.error = error.message; active.updatedAt = clock();
       saveState(stateFile, state);
       outcomes.push({ issue: issue.number, status: 'handoff-unknown', receipt, error: error.message });
       break;
     }
+    writeReceipt(receipt, { idempotencyKey, repo, issue: issue.number, status: 'accepted', recordedAt: clock(), costNote: active.costNote });
+    active.status = 'complete'; active.ownerPid = null; active.updatedAt = clock();
+    saveState(stateFile, state);
+    outcomes.push({ issue: issue.number, status: 'handed-off', receipt });
   }
   return outcomes;
 }
