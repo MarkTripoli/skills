@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { evaluateContextBoundary } from '../route-model/context.mjs';
-import { currentArtifact, indexFileExists, parseArtifactText } from '../../../shared/task-artifacts.mjs';
+import { currentArtifact, indexFileExists, parseArtifactText, readArtifactIndex } from '../../../shared/task-artifacts.mjs';
 
 const filename = '.first-sergent-state.json';
 const allowedGates = new Set(['all', 'plan', 'pr', 'none']);
@@ -89,6 +89,24 @@ export function inspect(taskDir) {
   if (!fs.existsSync(file)) return null;
   const state = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (state?.version !== 1 || !Number.isSafeInteger(state.steps) || state.steps < 0 || !state.options || !allowedGates.has(state.options.gates) || (state.options.transport !== undefined && !allowedTransports.has(state.options.transport)) || (state.options.quota_mode !== undefined && !allowedQuotaModes.has(state.options.quota_mode)) || (state.options.quota_mode === 'agent-router' && state.options.transport !== 'herdr') || (state.options.context_policy !== undefined && !allowedContextPolicies.has(state.options.context_policy)) || !state.options.workflow || !Number.isSafeInteger(state.options.max_steps) || state.options.max_steps < 1 || !state.approvals || typeof state.approvals !== 'object' || Array.isArray(state.approvals)) throw new Error(`Invalid First Sergent state: ${file}`);
+  // Legacy indexed runs have no dispatch snapshot. Only distinct, indexed,
+  // approved iterations can establish a completed step; otherwise preserve the
+  // current iteration as the baseline so a repeated phase cannot reuse it.
+  if (state.steps > 0 && !hostedPhases.has(state.last_skill) && indexFileExists(path.join(root, 'index.json'))
+    && (!Object.hasOwn(state, 'phase_artifact_before') || !Object.hasOwn(state, 'completed_step'))) {
+    const type = phaseArtifactTypes[state.last_skill];
+    const record = type ? currentArtifact(root, type) : null;
+    const index = readArtifactIndex(root);
+    const approvedIterations = Object.values(index.artifactSeries).flatMap(series => series.iterations)
+      .filter(iteration => state.approvals[iteration.path] === iteration.sha256).length;
+    const approved = record && state.approvals[record.path] === record.sha256 &&
+      approvedIterations >= state.steps && !state.pending && !state.revision;
+    if (!Object.hasOwn(state, 'completed_step')) state.completed_step = approved ? state.steps : null;
+    if (!Object.hasOwn(state, 'phase_artifact_before')) {
+      state.phase_artifact_before = record ? { id: record.id, hash: record.sha256 } : null;
+    }
+    save(root, state);
+  }
   return state;
 }
 
@@ -222,6 +240,8 @@ export function begin(taskDir, skill) {
   state.completed_step = null;
   state.last_skill = skill;
   state.phase_artifact_before = prior ? { id: prior.id, hash: prior.sha256 } : null;
+  state.hosted_approval = null;
+  state.hosted_revision = null;
   if ((state.options.context_policy ?? 'off') === 'stop-at-60') {
     state.context_boundary = {
       action: 'recheck-required',
@@ -247,10 +267,11 @@ export function gate(taskDir, file) {
   if (state.steps > 0 && indexFileExists(path.join(root, 'index.json'))) {
     if (!Object.hasOwn(state, 'phase_artifact_before')) throw new Error('Active phase has no artifact snapshot from dispatch');
     const record = currentArtifact(root, phaseArtifactTypes[state.last_skill]);
-    if (record && record.id === state.phase_artifact_before?.id) {
+    if (record && record.id === state.phase_artifact_before?.id && state.completed_step !== state.steps) {
       throw new Error('Active phase has not recorded a new artifact iteration');
     }
   }
+  if (state.pending?.kind === 'hosted') throw new Error('A hosted description is awaiting a human decision');
   if (state.pending && state.pending.file !== current.file) throw new Error('A different artifact is awaiting a human decision');
   const replaced = Boolean(state.pending && state.pending.hash !== current.hash);
   if (state.revision?.file === current.file && state.revision.hash === current.hash) throw new Error('The requested revision has not changed the artifact');
@@ -264,14 +285,53 @@ export function gate(taskDir, file) {
   save(root, state);
   return { approved: false, replaced, ...current, steps: state.steps };
 }
-/** Consume an independently verified hosted publication decision, not a task-local receipt. */
+/** Consume current hosted publication proof; PR approval is a distinct human decision. */
 export function completeHostedPhase(taskDir, skill, proof) {
   const root = taskPath(taskDir);
   const state = inspect(root);
-  if (!state || state.stopped || state.pending || state.phase || state.resume_step !== undefined ||
-    !hostedPhases.has(skill) || state.last_skill !== skill || state.completed_step === state.steps) {
+  if (!state || state.stopped || state.phase || state.resume_step !== undefined ||
+    !hostedPhases.has(skill) || state.last_skill !== skill ||
+    (state.completed_step === state.steps && skill !== 'describe-pr') ||
+    (state.pending && state.pending.kind !== 'hosted')) {
     throw new Error('An active hosted-only phase with verified proof is required');
   }
+  try {
+    verifyHostedProof(skill, proof);
+  } catch (error) {
+    if (skill === 'describe-pr' && state.completed_step === state.steps) {
+      state.completed_step = null;
+      state.hosted_approval = null;
+      state.pending = null;
+      save(root, state);
+    }
+    throw error;
+  }
+  const current = { kind: 'hosted', step: state.steps, url: proof.pullRequest, hash: proof.descriptionHash, head: proof.head };
+  if (skill === 'describe-pr' && ['pr', 'all'].includes(state.options.gates)) {
+    if (state.hosted_revision && state.hosted_revision.hash === current.hash) {
+      throw new Error('The requested hosted description revision has not changed');
+    }
+    const approved = state.hosted_approval?.step === current.step &&
+      state.hosted_approval.url === current.url && state.hosted_approval.hash === current.hash &&
+      state.hosted_approval.head === current.head;
+    if (!approved) {
+      const replaced = Boolean(state.pending?.kind === 'hosted' && !sameHosted(state.pending, current));
+      state.completed_step = null;
+      state.hosted_approval = null;
+      state.pending = current;
+      save(root, state);
+      return { approved: false, replaced, ...current };
+    }
+    state.pending = null;
+    state.hosted_revision = null;
+  }
+  state.completed_step = state.steps;
+  state.hosted_proof = { step: state.steps, skill, url: proof.pullRequest, head: proof.head, descriptionHash: proof.descriptionHash ?? null };
+  save(root, state);
+  return { approved: true, ...current };
+}
+
+function verifyHostedProof(skill, proof) {
   if (!proof || typeof proof.pullRequest !== 'string' || !/^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+$/.test(proof.pullRequest) ||
     !/^[a-f0-9]{40}$/.test(proof.head ?? '') || proof.captureCurrent !== true ||
     proof.captureHosted !== true || proof.commentVerified !== true ||
@@ -279,14 +339,36 @@ export function completeHostedPhase(taskDir, skill, proof) {
       !/^[a-f0-9]{64}$/.test(proof.descriptionHash ?? '')))) {
     throw new Error('Current hosted publication proof is required before completing this phase');
   }
-  state.completed_step = state.steps;
-  state.hosted_proof = { step: state.steps, skill, url: proof.pullRequest, head: proof.head, descriptionHash: proof.descriptionHash ?? null };
+}
+
+function sameHosted(left, right) {
+  return left.step === right.step && left.url === right.url && left.hash === right.hash && left.head === right.head;
+}
+
+export function answerHostedPhase(taskDir, proof, hash, response, feedback = '') {
+  const root = taskPath(taskDir);
+  const state = inspect(root);
+  if (!state?.pending || state.pending.kind !== 'hosted' || state.last_skill !== 'describe-pr' || state.stopped) {
+    throw new Error('No hosted human gate is pending');
+  }
+  verifyHostedProof('describe-pr', proof);
+  const current = { kind: 'hosted', step: state.steps, url: proof.pullRequest, hash: proof.descriptionHash, head: proof.head };
+  if (!sameHosted(state.pending, current) || hash !== current.hash) {
+    throw new Error('Stale hosted gate: reviewed description hash or PR URL differs from current proof');
+  }
+  if (!['approve', 'revise', 'stop'].includes(response)) throw new Error('Expected approve, revise or stop');
+  if (response === 'revise' && (typeof feedback !== 'string' || !feedback.trim())) throw new Error('Revision requires nonempty feedback');
+  if (response === 'stop') state.stopped = true;
+  if (response === 'approve') state.hosted_approval = current;
+  if (response === 'revise') state.hosted_revision = { ...current, feedback };
+  state.pending = null;
   return save(root, state);
 }
 
 export function answer(taskDir, file, hash, response, feedback = '') {
   const root = taskPath(taskDir);
   const state = inspect(root);
+  if (state?.pending?.kind === 'hosted') throw new Error('Use answerHostedPhase with current hosted proof');
   if (!state?.pending) throw new Error('No human gate is pending');
   const current = artifact(root, file);
   if (state.pending.file !== current.file || state.pending.hash !== current.hash || state.pending.hash !== hash) throw new Error('Stale gate: reviewed hash differs from the pending artifact');
@@ -344,7 +426,7 @@ export function completedPhase(taskDir, handle, file) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const { action, taskDir, options, skill, file, hash, response, feedback, handle, question, usage, sessionId, proof } = JSON.parse(fs.readFileSync(0, 'utf8'));
-    const operations = { inspect: () => inspect(taskDir), initialize: () => initialize(taskDir, options), checkpointContext: () => checkpointContext(taskDir, usage), startFreshSession: () => startFreshSession(taskDir, sessionId), begin: () => begin(taskDir, skill), gate: () => gate(taskDir, file), completeHostedPhase: () => completeHostedPhase(taskDir, skill, proof), answer: () => answer(taskDir, file, hash, response, feedback), completedRevision: () => completedRevision(taskDir, file), suspendPhase: () => suspendPhase(taskDir, skill, handle, question), answerPhase: () => answerPhase(taskDir, handle, response), completedPhase: () => completedPhase(taskDir, handle, file) };
+    const operations = { inspect: () => inspect(taskDir), initialize: () => initialize(taskDir, options), checkpointContext: () => checkpointContext(taskDir, usage), startFreshSession: () => startFreshSession(taskDir, sessionId), begin: () => begin(taskDir, skill), gate: () => gate(taskDir, file), completeHostedPhase: () => completeHostedPhase(taskDir, skill, proof), answerHostedPhase: () => answerHostedPhase(taskDir, proof, hash, response, feedback), answer: () => answer(taskDir, file, hash, response, feedback), completedRevision: () => completedRevision(taskDir, file), suspendPhase: () => suspendPhase(taskDir, skill, handle, question), answerPhase: () => answerPhase(taskDir, handle, response), completedPhase: () => completedPhase(taskDir, handle, file) };
     if (!Object.hasOwn(operations, action)) throw new Error(`Unknown action: ${action}`);
     process.stdout.write(`${JSON.stringify(operations[action]())}\n`);
   } catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1; }

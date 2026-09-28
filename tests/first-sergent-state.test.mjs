@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { initialize, inspect, begin, gate, completeHostedPhase, answer, completedRevision, suspendPhase, answerPhase, completedPhase, checkpointContext, startFreshSession } from '../skills/delivery/agent-first-sergent/state.mjs';
+import { initialize, inspect, begin, gate, completeHostedPhase, answerHostedPhase, answer, completedRevision, suspendPhase, answerPhase, completedPhase, checkpointContext, startFreshSession } from '../skills/delivery/agent-first-sergent/state.mjs';
 import { evaluateContextBoundary } from '../skills/delivery/route-model/context.mjs';
 import { initTaskArtifacts, recordArtifact, reserveArtifactIteration } from '../shared/task-artifacts.mjs';
 
@@ -279,12 +279,159 @@ test('hosted-only phases progress from verified publication proof without task-l
   assert.throws(() => gate(dir, file), /no task-local artifact gate/);
   assert.throws(() => completeHostedPhase(dir, 'describe-pr', { ...proof, descriptionCurrent: false }), /Current hosted publication proof/);
   assert.throws(() => completeHostedPhase(dir, 'record-evidence', proof), /active hosted-only phase/);
-  completeHostedPhase(dir, 'describe-pr', proof);
+  const pending = completeHostedPhase(dir, 'describe-pr', proof);
+  assert.equal(pending.approved, false);
+  assert.equal(pending.url, proof.pullRequest);
+  assert.equal(pending.hash, proof.descriptionHash);
+  assert.throws(() => startFreshSession(dir, 'child-c'), Error);
+  assert.equal(inspect(dir).pending.hash, pending.hash);
+  answerHostedPhase(dir, proof, pending.hash, 'approve');
+  assert.equal(completeHostedPhase(dir, 'describe-pr', proof).approved, true);
   checkpointContext(dir, metric('child-b'));
   startFreshSession(dir, 'child-c');
   assert.equal(inspect(dir).context_boundary.sessionId, 'child-c');
   assert.equal(inspect(dir).hosted_proof.step, 2);
   assert.equal(inspect(dir).hosted_proof.descriptionHash, proof.descriptionHash);
+});
+
+test('hosted description approval binds URL, hash, head, and independently refreshed proof', (t) => {
+  const { dir, file } = fixture(t);
+  const proof = {
+    pullRequest: 'https://github.com/example/project/pull/17',
+    head: 'a'.repeat(40),
+    captureCurrent: true, captureHosted: true, commentVerified: true,
+    bodyPublished: true, descriptionCurrent: true, descriptionHash: 'b'.repeat(64), allowed: true,
+  };
+  initialize(dir, { ...options, gates: 'pr', max_steps: 3 });
+  begin(dir, 'describe-pr');
+  const pending = completeHostedPhase(dir, 'describe-pr', proof);
+  assert.equal(inspect(dir).completed_step, null);
+  assert.throws(() => begin(dir, 'review-code'), /pending human gate/);
+  assert.throws(() => answer(dir, file, pending.hash, 'approve'), /answerHostedPhase/);
+  assert.throws(() => answerHostedPhase(dir, { ...proof, descriptionCurrent: false }, pending.hash, 'approve'), /Current hosted publication proof/);
+  const changed = { ...proof, descriptionHash: 'c'.repeat(64) };
+  assert.throws(() => answerHostedPhase(dir, changed, pending.hash, 'approve'), /Stale hosted gate/);
+  assert.equal(completeHostedPhase(dir, 'describe-pr', changed).replaced, true);
+  assert.throws(() => answerHostedPhase(dir, changed, pending.hash, 'approve'), /Stale hosted gate/);
+  assert.throws(() => answerHostedPhase(dir, { ...changed, pullRequest: 'https://github.com/example/project/pull/18' }, changed.descriptionHash, 'approve'), /Stale hosted gate/);
+  answerHostedPhase(dir, changed, changed.descriptionHash, 'approve');
+  assert.equal(inspect(dir).completed_step, null);
+  assert.equal(completeHostedPhase(dir, 'describe-pr', changed).approved, true);
+  const drift = { ...changed, head: 'd'.repeat(40) };
+  assert.equal(completeHostedPhase(dir, 'describe-pr', drift).approved, false);
+  assert.equal(inspect(dir).completed_step, null);
+  assert.throws(() => begin(dir, 'review-code'), /pending human gate/);
+  answerHostedPhase(dir, drift, drift.descriptionHash, 'approve');
+  assert.equal(completeHostedPhase(dir, 'describe-pr', drift).approved, true);
+  assert.throws(() => completeHostedPhase(dir, 'describe-pr', { ...drift, descriptionCurrent: false }), /Current hosted publication proof/);
+  assert.equal(inspect(dir).completed_step, null);
+  assert.equal(completeHostedPhase(dir, 'describe-pr', drift).approved, false);
+  answerHostedPhase(dir, drift, drift.descriptionHash, 'approve');
+  completeHostedPhase(dir, 'describe-pr', drift);
+  begin(dir, 'review-code');
+  begin(dir, 'describe-pr');
+  assert.equal(completeHostedPhase(dir, 'describe-pr', drift).approved, false);
+});
+
+test('hosted revisions require changed body and stop remains terminal', (t) => {
+  const { dir } = fixture(t);
+  const proof = {
+    pullRequest: 'https://github.com/example/project/pull/17', head: 'a'.repeat(40),
+    captureCurrent: true, captureHosted: true, commentVerified: true,
+    bodyPublished: true, descriptionCurrent: true, descriptionHash: 'b'.repeat(64), allowed: true,
+  };
+  initialize(dir, options);
+  begin(dir, 'describe-pr');
+  completeHostedPhase(dir, 'describe-pr', proof);
+  assert.throws(() => answerHostedPhase(dir, proof, proof.descriptionHash, 'revise', ' '), /nonempty feedback/);
+  answerHostedPhase(dir, proof, proof.descriptionHash, 'revise', 'Explain the rollout');
+  assert.equal(inspect(dir).hosted_revision.feedback, 'Explain the rollout');
+  assert.throws(() => completeHostedPhase(dir, 'describe-pr', proof), /revision has not changed/);
+  const revised = { ...proof, descriptionHash: 'c'.repeat(64) };
+  completeHostedPhase(dir, 'describe-pr', revised);
+  answerHostedPhase(dir, revised, revised.descriptionHash, 'stop');
+  assert.equal(inspect(dir).stopped, true);
+  assert.throws(() => completeHostedPhase(dir, 'describe-pr', revised), /active hosted-only phase/);
+});
+
+test('none and plan policies complete hosted descriptions without approval prompts', (t) => {
+  const { dir } = fixture(t);
+  const proof = {
+    pullRequest: 'https://github.com/example/project/pull/17', head: 'a'.repeat(40),
+    captureCurrent: true, captureHosted: true, commentVerified: true,
+    bodyPublished: true, descriptionCurrent: true, descriptionHash: 'b'.repeat(64), allowed: true,
+  };
+  for (const gates of ['none', 'plan']) {
+    const task = path.join(dir, gates);
+    fs.mkdirSync(task);
+    fs.writeFileSync(path.join(task, 'task.md'), '---\nslug: sample\n---\nOriginal user request\n');
+    initialize(task, { ...options, gates });
+    begin(task, 'describe-pr');
+    assert.equal(completeHostedPhase(task, 'describe-pr', proof).approved, true);
+    assert.equal(inspect(task).pending, null);
+    assert.equal(inspect(task).completed_step, 1);
+  }
+});
+
+test('legacy indexed completed phase resumes while next repeated phase requires new iteration', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'first-sergent-legacy-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'sample');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, 'task.md'), '---\nslug: sample\n---\nOriginal user request\n');
+  initTaskArtifacts(dir);
+  initialize(dir, { ...options, context_policy: 'stop-at-60' });
+  const metric = (sessionId) => ({ sessionId, contextUsage: { tokens: 20, contextWindow: 100, percent: 20 } });
+  checkpointContext(dir, metric('child-a'));
+  begin(dir, 'implement-plan');
+  const allocation = reserveArtifactIteration(dir, 'implementation', 'receipt');
+  const staging = path.join(dir, allocation.writePath);
+  fs.writeFileSync(staging, '---\ntype: implementation\nsummary: First implementation\n---\nFirst implementation\n');
+  const first = path.join(dir, recordArtifact(dir, 'implementation', 'receipt', 'implementation', staging).path);
+  const pending = gate(dir, first);
+  answer(dir, first, pending.hash, 'approve');
+  const stateFile = path.join(dir, '.first-sergent-state.json');
+  const old = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+  delete old.phase_artifact_before;
+  delete old.completed_step;
+  fs.writeFileSync(stateFile, JSON.stringify(old));
+  assert.equal(inspect(dir).completed_step, 1);
+  assert.equal(gate(dir, first).approved, true);
+  checkpointContext(dir, metric('child-a'));
+  startFreshSession(dir, 'child-b');
+  checkpointContext(dir, metric('child-b'));
+  begin(dir, 'implement-plan');
+  const repeatedLegacy = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+  delete repeatedLegacy.phase_artifact_before;
+  delete repeatedLegacy.completed_step;
+  fs.writeFileSync(stateFile, JSON.stringify(repeatedLegacy));
+  assert.equal(inspect(dir).completed_step, null);
+  assert.throws(() => gate(dir, first), /has not recorded a new artifact iteration/);
+  assert.equal(inspect(dir).completed_step, null);
+  checkpointContext(dir, { sessionId: 'child-b', contextUsage: { tokens: 60, contextWindow: 100, percent: 60 } });
+  startFreshSession(dir, 'child-c');
+  assert.equal(inspect(dir).resume_step, 2);
+});
+
+test('legacy indexed unapproved phase snapshots existing artifact without accepting it', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'first-sergent-legacy-active-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'sample');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, 'task.md'), '---\nslug: sample\n---\nOriginal user request\n');
+  initTaskArtifacts(dir);
+  initialize(dir, options);
+  begin(dir, 'implement-plan');
+  const allocation = reserveArtifactIteration(dir, 'implementation', 'receipt');
+  const staging = path.join(dir, allocation.writePath);
+  fs.writeFileSync(staging, '---\ntype: implementation\nsummary: First implementation\n---\nFirst implementation\n');
+  const first = path.join(dir, recordArtifact(dir, 'implementation', 'receipt', 'implementation', staging).path);
+  const old = inspect(dir);
+  delete old.phase_artifact_before;
+  delete old.completed_step;
+  fs.writeFileSync(path.join(dir, '.first-sergent-state.json'), JSON.stringify(old));
+  assert.equal(inspect(dir).completed_step, null);
+  assert.throws(() => gate(dir, first), /has not recorded a new artifact iteration/);
 });
 
 test('context threshold requires the fresh child live metric before dispatch', (t) => {
