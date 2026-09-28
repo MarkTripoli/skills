@@ -91,6 +91,8 @@ Pick sequence below. `auto` pick again after each saved result. Explicit workflo
 
 Run `gather-sources` first when the request names material outside the repository. Every PR-producing chain runs `record-evidence` after review and before `describe-pr`, independent of `gates`, `verify`, or `app_test`. UI behavior uses actual live video; CLI uses a captured terminal session; API/performance uses captured probe output; agent behavior uses the real tool-call/response transcript. Hosted proof in the PR description and distinct comment binds the tested code revision, result, capture URL, and current PR head; missing, stale, unreadable, or mismatched proof blocks publication.
 
+Optional `/test-health` analyzes targeted changed-line and branch coverage; a numeric baseline-versus-HEAD delta requires fresh executed commands in pinned, clean source worktrees. Duplicate counters and unbound or stale LCOV remain unknown, not passing coverage proof.
+
 ## Gates and native controls
 
 - `all`: review artifact and implementation edges.

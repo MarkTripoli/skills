@@ -1,0 +1,20 @@
+{
+  "invalid_lcov": {
+    "nonnumeric_line_count": "SF:src/changed.py\nDA:1,NaN\nend_of_record\n",
+    "path_outside_repository": "SF:../outside.py\nDA:1,1\nend_of_record\n",
+    "missing_record_terminator": "SF:src/changed.py\nDA:1,1\n"
+  },
+  "coverage_unknown": {
+    "status": "unknown",
+    "reason": "coverage data unavailable",
+    "percent": null
+  },
+  "coverage_false_green": {
+    "status": "incomplete"
+  },
+  "mutation_outcomes": {
+    "no_tests": "no tests found",
+    "timeout": "timeout",
+    "killed": "killed"
+  }
+}
