@@ -156,7 +156,7 @@ test('ordinary next-phase handoff admits a fresh child only after the prior live
   const pending = gate(dir, file);
   assert.throws(() => startFreshSession(dir, 'child-b'), /active phase and human gate/);
   answer(dir, file, pending.hash, 'approve');
-  assert.equal(initialize(dir, { ...options, max_steps: 3, context_policy: 'stop-at-60' }).completed_step, 1);
+  assert.equal(inspect(dir).completed_step, 1);
 
   startFreshSession(dir, 'child-b');
   assert.equal(inspect(dir).context_boundary.action, 'awaiting-checkpoint');
