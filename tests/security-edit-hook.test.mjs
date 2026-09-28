@@ -118,6 +118,43 @@ test('absolute alias paths resolve inside the canonical repository root', t => {
   assert.deepEqual(calls.map(item => item.args[0]), ['--version', '--format']);
 });
 
+test('nested parent swap to an external symlink fails closed before scanning', t => {
+  const cwd = workspace(t);
+  const nested = path.join(cwd, 'nested');
+  const savedDirectory = path.join(cwd, 'nested-saved');
+  file(cwd, 'nested/Dockerfile', 'FROM repository bytes\n');
+  const outside = fs.mkdtempSync(path.join(path.dirname(cwd), `${path.basename(cwd)}-outside-`));
+  const outsideDocker = file(outside, 'Dockerfile', 'FROM outside bytes\n');
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  const root = fs.realpathSync(cwd);
+  const originalOpen = fs.openSync;
+  let swapped = false;
+  fs.openSync = function (target, ...args) {
+    const fd = originalOpen.call(fs, target, ...args);
+    if (!swapped && target === root) {
+      fs.renameSync(nested, savedDirectory);
+      fs.symlinkSync(outside, nested, 'dir');
+      swapped = true;
+    }
+    return fd;
+  };
+  let report;
+  let scannerCalls = 0;
+  try {
+    report = inspectEditedFile({
+      toolName: 'write', input: { path: 'nested/Dockerfile' }, details: {},
+      content: 'Wrote file', isError: false,
+    }, { cwd, env: offlineEnv(cwd), run() { scannerCalls += 1; throw new Error('scanner must not run'); } });
+  } finally {
+    fs.openSync = originalOpen;
+  }
+  assert.equal(swapped, true);
+  assert.equal(report.results.length, 0);
+  assert.match(report.lanes[0].reason, /secure repository file snapshot/);
+  assert.equal(scannerCalls, 0);
+  assert.equal(fs.readFileSync(outsideDocker, 'utf8'), 'FROM outside bytes\n');
+});
+
 test('scanner reads a bounded snapshot after an in-root symlink changes', t => {
   const cwd = workspace(t);
   const target = file(cwd, 'cfg/image.txt', 'FROM saved repository bytes\n');

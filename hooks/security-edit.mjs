@@ -16,8 +16,129 @@ const localFile = value => {
 };
 const EDIT_TOOLS = new Set(['write', 'edit']);
 const MAX_SNAPSHOT_BYTES = 5 * 1024 * 1024;
-const inside = (root, file) => file !== root && !path.relative(root, file).startsWith(`..${path.sep}`) && path.relative(root, file) !== '..' && !path.isAbsolute(path.relative(root, file));
 const isEnvironmentFile = file => /(^|\/)\.env(?:\.|$)/i.test(file);
+const SECURE_READ_SCRIPT = String.raw`import json, os, stat, sys
+root_path = os.path.normpath(sys.argv[1])
+relative = sys.argv[2]
+aliases = json.loads(sys.argv[4])
+maximum = int(sys.argv[3])
+root_fd = os.dup(3)
+fds = [root_fd]
+resolved = []
+work = relative.split('/')
+links = 0
+result_bytes = None
+result_relative = None
+environment_file = False
+
+def is_environment(parts):
+    return any(part.lower() == '.env' or part.lower().startswith('.env.') for part in parts)
+
+def changed(reason='secure repository read failed'):
+    raise RuntimeError(reason)
+
+def read_file(fd):
+    before = os.fstat(fd)
+    if not stat.S_ISREG(before.st_mode):
+        changed('changed path is not a regular file')
+    if before.st_size > maximum:
+        changed('changed file exceeds the 5 MiB scan snapshot limit')
+    chunks = []
+    remaining = before.st_size
+    while remaining:
+        chunk = os.read(fd, min(65536, remaining))
+        if not chunk:
+            changed()
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    if os.read(fd, 1):
+        changed()
+    after = os.fstat(fd)
+    current = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+    latest = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+    if current != latest:
+        changed()
+    return b''.join(chunks)
+
+try:
+    if relative.startswith('/') or not relative:
+        changed()
+    while work:
+        component = work.pop(0)
+        if component in ('', '.'):
+            continue
+        if component == '..':
+            if len(fds) == 1:
+                changed('changed file resolves outside the repository')
+            os.close(fds.pop())
+            resolved.pop()
+            continue
+        final = not work
+        flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)
+        if final:
+            flags |= getattr(os, 'O_NONBLOCK', 0)
+        else:
+            flags |= getattr(os, 'O_DIRECTORY', 0)
+        try:
+            child = os.open(component, flags, dir_fd=fds[-1])
+        except OSError:
+            try:
+                target = os.readlink(component, dir_fd=fds[-1])
+            except OSError:
+                changed()
+            links += 1
+            if links > 40:
+                changed()
+            if target.startswith('/'):
+                target = os.path.normpath(target)
+                relative_target = None
+                for alias in aliases:
+                    try:
+                        if os.path.commonpath((alias, target)) == alias:
+                            relative_target = os.path.relpath(target, alias)
+                            break
+                    except ValueError:
+                        pass
+                if relative_target is None:
+                    changed('changed file resolves outside the repository')
+                target = relative_target
+                for descriptor in fds[1:]:
+                    os.close(descriptor)
+                fds = fds[:1]
+                resolved = []
+                work = ([] if target == '.' else target.split('/')) + work
+            else:
+                work = target.split('/') + work
+            continue
+        if final:
+            actual = resolved + [component]
+            result_relative = '/'.join(actual)
+            if is_environment(actual):
+                environment_file = True
+                os.close(child)
+            else:
+                try:
+                    result_bytes = read_file(child)
+                finally:
+                    os.close(child)
+            break
+        fds.append(child)
+        resolved.append(component)
+    if result_relative is None:
+        changed()
+    sys.stderr.write(json.dumps({'relative': result_relative, 'environment': environment_file}))
+    if result_bytes is not None:
+        sys.stdout.buffer.write(result_bytes)
+except Exception as error:
+    message = str(error) if isinstance(error, RuntimeError) else 'secure repository read failed'
+    sys.stderr.write(json.dumps({'error': message}))
+    sys.exit(1)
+finally:
+    for descriptor in fds:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass`;
 
 function successfulResult(event) {
   return event?.isError === false;
@@ -84,63 +205,50 @@ function fileNames(event) {
 
 function authorizedRelative(root, lexical) {
   let ancestor = path.dirname(lexical);
-  let relative = null;
+  let authorized = null;
   while (true) {
     try {
-      if (fs.realpathSync(ancestor) === root) relative = path.relative(ancestor, lexical).split(path.sep).join('/');
+      if (fs.realpathSync(ancestor) === root) authorized = {
+        relative: path.relative(ancestor, lexical).split(path.sep).join('/'),
+        aliasRoot: ancestor,
+      };
     } catch {}
     const parent = path.dirname(ancestor);
-    if (parent === ancestor) return relative;
+    if (parent === ancestor) return authorized;
     ancestor = parent;
   }
 }
-function savedFile(root, name) {
+
+function secureRead(root, rootFd, relative, aliases) {
+  const result = spawnSync('python3', ['-c', SECURE_READ_SCRIPT, root, relative, String(MAX_SNAPSHOT_BYTES), JSON.stringify(aliases)], {
+    encoding: null,
+    timeout: 30_000,
+    maxBuffer: MAX_SNAPSHOT_BYTES + 4096,
+    stdio: ['ignore', 'pipe', 'pipe', rootFd],
+  });
+  if (result.error?.code === 'ENOENT') return { reason: 'Python 3 is required for secure saved-file snapshots' };
+  let metadata;
+  try { metadata = JSON.parse(result.stderr.toString('utf8')); }
+  catch { return { reason: 'secure repository file snapshot metadata was invalid' }; }
+  if (result.error || result.status !== 0) {
+    return { reason: `secure repository file snapshot failed: ${metadata.error || 'secure repository read failed'}` };
+  }
+  if (metadata.environment || isEnvironmentFile(metadata.relative)) return { reason: 'environment files are not scanned' };
+  if (typeof metadata.relative !== 'string' || !Buffer.isBuffer(result.stdout) || result.stdout.length > MAX_SNAPSHOT_BYTES) {
+    return { reason: 'secure repository file snapshot was invalid' };
+  }
+  return { bytes: result.stdout };
+}
+
+function savedFile(root, rootFd, name) {
   const lexical = path.resolve(root, name);
-  let real;
-  try { real = fs.realpathSync(lexical); }
-  catch {
-    if (!inside(root, lexical)) return { reason: 'changed path is outside the repository' };
-    return { reason: 'changed file is missing after tool completion' };
-  }
-  if (!inside(root, real)) return { reason: 'changed file resolves outside the repository' };
-  let parent;
-  try { parent = fs.realpathSync(path.dirname(lexical)); }
-  catch { return { reason: 'changed file is unavailable after tool completion' }; }
-  if (parent !== root && !inside(root, parent)) return { reason: 'changed path is outside the repository' };
-  const relative = authorizedRelative(root, lexical);
-  if (!relative) return { reason: 'changed path is outside the repository' };
-  const targetRelative = path.relative(root, real).split(path.sep).join('/');
-  if (isEnvironmentFile(relative) || isEnvironmentFile(targetRelative)) return { path: relative, relative, reason: 'environment files are not scanned' };
-  let fd;
-  try {
-    fd = fs.openSync(real, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
-    const before = fs.fstatSync(fd, { bigint: true });
-    if (!before.isFile()) return { relative, reason: 'changed path is not a regular file' };
-    if (before.size > BigInt(MAX_SNAPSHOT_BYTES)) return { relative, reason: 'changed file exceeds the 5 MiB scan snapshot limit' };
-    const bytes = Buffer.alloc(Number(before.size));
-    let offset = 0;
-    while (offset < bytes.length) {
-      const count = fs.readSync(fd, bytes, offset, bytes.length - offset, offset);
-      if (!count) break;
-      offset += count;
-    }
-    const extra = Buffer.alloc(1);
-    const after = fs.fstatSync(fd, { bigint: true });
-    const currentPath = fs.realpathSync(real);
-    if (!inside(root, currentPath)) return { relative, reason: 'changed file resolves outside the repository' };
-    const current = fs.statSync(currentPath, { bigint: true });
-    if (offset !== bytes.length || fs.readSync(fd, extra, 0, 1, bytes.length) !== 0
-      || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size
-      || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs
-      || before.dev !== current.dev || before.ino !== current.ino) {
-      return { relative, reason: 'changed file changed while preparing its scan snapshot' };
-    }
-    return { path: real, relative, bytes };
-  } catch {
-    return { relative, reason: 'changed file cannot be read' };
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
-  }
+  const authorized = authorizedRelative(root, lexical);
+  if (!authorized || !authorized.relative) return { reason: 'changed path is outside the repository' };
+  const { relative } = authorized;
+  if (isEnvironmentFile(relative)) return { path: relative, relative, reason: 'environment files are not scanned' };
+  const snapshot = secureRead(root, rootFd, relative, [...new Set([root, authorized.aliasRoot])]);
+  if (snapshot.reason) return { path: relative, relative, reason: snapshot.reason };
+  return { path: relative, relative, bytes: snapshot.bytes };
 }
 
 function invoke(run, bin, args, cwd) {
@@ -224,19 +332,30 @@ function scanFile(file, { cwd, env, run }) {
 export function inspectEditedFile(event, { cwd = process.cwd(), env = process.env, run = spawnSync } = {}) {
   if (!EDIT_TOOLS.has(event?.toolName)) return { coverage: 'incomplete', results: [], lanes: [incomplete('dispatch', 'unsupported edit tool')] };
   if (!successfulResult(event)) return { coverage: 'incomplete', results: [], lanes: [incomplete('dispatch', 'tool_result did not report successful completion')] };
-  const root = fs.realpathSync(cwd);
-  const paths = fileNames(event);
-  if (!paths.length) return { coverage: 'incomplete', results: [], lanes: [incomplete('dispatch', 'successful tool_result contained no changed file paths')] };
-  const results = [];
-  const failed = [];
-  for (const name of paths) {
-    const file = savedFile(root, name);
-    if (!file.path) { failed.push(incomplete('dispatch', `${file.reason}: ${name}`)); continue; }
-    if (file.reason) { failed.push(incomplete('dispatch', `${file.reason}: ${file.path}`)); continue; }
-    results.push(scanFile(file, { cwd: root, env, run }));
+  let root;
+  let rootFd;
+  try {
+    root = fs.realpathSync(cwd);
+    rootFd = fs.openSync(root, fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY || 0) | (fs.constants.O_NOFOLLOW || 0));
+  } catch {
+    return { coverage: 'incomplete', results: [], lanes: [incomplete('dispatch', 'repository root descriptor is unavailable')] };
   }
-  const coverage = failed.length || results.some(item => item.coverage !== 'complete') ? 'incomplete' : 'complete';
-  return { coverage, results, lanes: failed };
+  try {
+    const paths = fileNames(event);
+    if (!paths.length) return { coverage: 'incomplete', results: [], lanes: [incomplete('dispatch', 'successful tool_result contained no changed file paths')] };
+    const results = [];
+    const failed = [];
+    for (const name of paths) {
+      const file = savedFile(root, rootFd, name);
+      if (!file.path) { failed.push(incomplete('dispatch', `${file.reason}: ${name}`)); continue; }
+      if (file.reason) { failed.push(incomplete('dispatch', `${file.reason}: ${file.path}`)); continue; }
+      results.push(scanFile(file, { cwd: root, env, run }));
+    }
+    const coverage = failed.length || results.some(item => item.coverage !== 'complete') ? 'incomplete' : 'complete';
+    return { coverage, results, lanes: failed };
+  } finally {
+    fs.closeSync(rootFd);
+  }
 }
 export default function securityEditHook(pi, options = {}) {
   pi.on('tool_result', event => {

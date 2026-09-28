@@ -125,14 +125,16 @@ export function plan(options) {
     if (dest.config && workerNames.length) steps.push({ target, kind: 'config', to: dest.config, names: workerNames, complete: workerNames.length === allWorkerNames.length });
   }
   if (options.ompPublicationHook) {
-    const base = project ? path.join(cwd, '.omp', 'hooks') : path.join(home, '.omp', 'agent', 'hooks');
-    steps.push({ target: 'oh-my-pi', kind: 'publication-hook', to: path.join(base, 'skills-publication') });
+    const root = project ? cwd : home;
+    const base = project ? path.join(root, '.omp', 'hooks') : path.join(root, '.omp', 'agent', 'hooks');
+    steps.push({ target: 'oh-my-pi', kind: 'publication-hook', to: path.join(base, 'skills-publication'), root });
   } else if (targets.includes('oh-my-pi')) {
     notes.push('Oh My Pi publication guard is optional: pass --omp-publication-hook, then launch with --hook=<installed-path> and SKILLS_PUBLICATION_TASK_DIR=<absolute-task-dir>');
   }
   if (targets.includes('oh-my-pi') && (!uninstall || requestedNames.length === allNames.length)) {
-    const base = project ? path.join(cwd, '.omp', 'hooks') : path.join(home, '.omp', 'agent', 'hooks');
-    steps.push({ target: 'oh-my-pi', kind: 'security-edit-hook', to: path.join(base, 'skills-security') });
+    const root = project ? cwd : home;
+    const base = project ? path.join(root, '.omp', 'hooks') : path.join(root, '.omp', 'agent', 'hooks');
+    steps.push({ target: 'oh-my-pi', kind: 'security-edit-hook', to: path.join(base, 'skills-security'), root });
     notes.push('Edit-time advisory hook is installed for Oh My Pi; register the printed path with omp --hook=<path>. Codex exposes stable hooks, but its edit callback payload is unverified here, so no Codex adapter is installed. Portable and other targets have no verified edit-hook adapter.');
   } else if (targets.includes('codex')) {
     notes.push('Codex stable hooks are available, but the edit callback payload is unverified here; no Codex advisory adapter is installed.');

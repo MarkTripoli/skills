@@ -397,6 +397,49 @@ test("video skills install by their canonical names without enabling workflow or
   assert.equal(fs.readFileSync(foreign, "utf8"), "keep unrelated resource\n");
 });
 
+test("OMP hook installation preserves external files behind symlinked destinations", () => {
+  for (const symlinkParent of [false, true]) {
+    const home = tmpdir("omp-hook-safe-home-");
+    const project = tmpdir("omp-hook-safe-project-");
+    const outside = tmpdir("omp-hook-safe-outside-");
+    const planned = plan({
+      targets: ["oh-my-pi"], skillNames: ["show-me"], ompPublicationHook: true,
+      project: true, cwd: project, home, env,
+    });
+    const security = planned.steps.find(step => step.kind === "security-edit-hook");
+    const securitySentinel = path.join(outside, "skills-security", "hooks", "security-edit.mjs");
+    const publicationSentinel = path.join(outside, "skills-publication", "hooks", "omp-publication.mjs");
+    put(securitySentinel, "external security file\n");
+    put(publicationSentinel, "external publication file\n");
+
+    if (symlinkParent) {
+      fs.mkdirSync(path.dirname(path.dirname(security.to)), { recursive: true });
+      fs.symlinkSync(outside, path.dirname(security.to), "dir");
+    } else {
+      fs.mkdirSync(path.dirname(security.to), { recursive: true });
+      fs.symlinkSync(path.join(outside, "skills-security"), security.to, "dir");
+    }
+
+    assert.throws(() => apply(planned, { built: new Map(), uninstall: false, home }), /refusing unsafe OMP hook destination/);
+    assert.equal(fs.readFileSync(securitySentinel, "utf8"), "external security file\n");
+    assert.equal(fs.readFileSync(publicationSentinel, "utf8"), "external publication file\n");
+    assert.equal(fs.existsSync(path.join(project, ".omp", "hooks", "skills-publication")), false);
+  }
+});
+
+test("OMP hook installation atomically replaces a regular existing hook", () => {
+  const home = tmpdir("omp-hook-update-home-");
+  const project = tmpdir("omp-hook-update-project-");
+  const planned = plan({ targets: ["oh-my-pi"], skillNames: ["show-me"], project: true, cwd: project, home, env });
+  const security = planned.steps.find(step => step.kind === "security-edit-hook");
+  const target = path.join(security.to, "hooks", "security-edit.mjs");
+  put(target, "previous regular hook\n");
+
+  apply({ ...planned, steps: [security] }, { built: new Map(), uninstall: false, home });
+
+  assert.deepEqual(fs.readFileSync(target), fs.readFileSync(path.join(REPO, "hooks", "security-edit.mjs")));
+});
+
 test("optional OMP publication hook installs a self-contained guarded entry only when selected", () => {
   const home = tmpdir("omp-hook-home-");
   const project = tmpdir("omp-hook-project-");
