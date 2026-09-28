@@ -198,9 +198,12 @@ export function begin(taskDir, skill) {
   if (state.phase) throw new Error('Resume the addressable phase before dispatching another');
   if (!skill || typeof skill !== 'string') throw new Error('Skill name is required');
   if (state.steps >= state.options.max_steps) throw new Error(`Reached max_steps=${state.options.max_steps}`);
+  const expectedType = phaseArtifactTypes[skill];
+  const prior = expectedType && indexFileExists(path.join(root, 'index.json')) ? currentArtifact(root, expectedType) : null;
   state.steps += 1;
   state.completed_step = null;
   state.last_skill = skill;
+  state.phase_artifact_before = prior ? { id: prior.id, hash: prior.sha256 } : null;
   if ((state.options.context_policy ?? 'off') === 'stop-at-60') {
     state.context_boundary = {
       action: 'recheck-required',
@@ -221,6 +224,13 @@ export function gate(taskDir, file) {
   if (state.phase) throw new Error('Finish the addressable phase before gating its artifact');
   const current = artifact(root, file);
   if (state.steps > 0) phaseArtifact(root, state, current);
+  if (state.steps > 0 && indexFileExists(path.join(root, 'index.json'))) {
+    if (!Object.hasOwn(state, 'phase_artifact_before')) throw new Error('Active phase has no artifact snapshot from dispatch');
+    const record = currentArtifact(root, phaseArtifactTypes[state.last_skill]);
+    if (record && record.id === state.phase_artifact_before?.id) {
+      throw new Error('Active phase has not recorded a new artifact iteration');
+    }
+  }
   if (state.pending && state.pending.file !== current.file) throw new Error('A different artifact is awaiting a human decision');
   const replaced = Boolean(state.pending && state.pending.hash !== current.hash);
   if (state.revision?.file === current.file && state.revision.hash === current.hash) throw new Error('The requested revision has not changed the artifact');

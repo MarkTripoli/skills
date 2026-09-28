@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { initialize, inspect, begin, gate, answer, completedRevision, suspendPhase, answerPhase, completedPhase, checkpointContext, startFreshSession } from '../skills/delivery/agent-first-sergent/state.mjs';
 import { evaluateContextBoundary } from '../skills/delivery/route-model/context.mjs';
+import { initTaskArtifacts, recordArtifact, reserveArtifactIteration } from '../shared/task-artifacts.mjs';
 
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'first-sergent-state-'));
@@ -193,6 +194,48 @@ test('ordinary next-phase handoff admits a fresh child only after the prior live
   assert.equal(inspect(dir).completed_step, 2);
   assert.equal(gate(dir, tdd).approved, true);
   assert.throws(() => startFreshSession(dir, 'child-a'), /retired child session/);
+});
+
+test('repeated indexed implementation phase needs its own artifact before handoff', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'first-sergent-indexed-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'sample');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, 'task.md'), '---\nslug: sample\n---\nOriginal user request\n');
+  initTaskArtifacts(dir);
+  const implementation = (summary) => {
+    const allocation = reserveArtifactIteration(dir, 'implementation', 'receipt');
+    const staging = path.join(dir, allocation.writePath);
+    fs.writeFileSync(staging, `---\ntype: implementation\nsummary: ${summary}\n---\n${summary}\n`);
+    return path.join(dir, recordArtifact(dir, 'implementation', 'receipt', 'implementation', staging).path);
+  };
+  const metric = (sessionId) => ({ sessionId, contextUsage: { tokens: 20, contextWindow: 100, percent: 20 } });
+  initialize(dir, { ...options, context_policy: 'stop-at-60' });
+  checkpointContext(dir, metric('child-a'));
+  begin(dir, 'implement-plan');
+  assert.equal(inspect(dir).phase_artifact_before, null);
+  const first = implementation('First implementation');
+  const firstGate = gate(dir, first);
+  answer(dir, first, firstGate.hash, 'approve');
+  checkpointContext(dir, metric('child-a'));
+  startFreshSession(dir, 'child-b');
+  checkpointContext(dir, metric('child-b'));
+  begin(dir, 'implement-plan');
+  assert.equal(inspect(dir).phase_artifact_before.id, 'implementation.receipt.0001');
+  checkpointContext(dir, metric('child-b'));
+  assert.throws(() => gate(dir, first), /has not recorded a new artifact iteration/);
+  assert.equal(inspect(dir).completed_step, null);
+  assert.equal(inspect(dir).pending, null);
+  assert.throws(() => startFreshSession(dir, 'child-c'), /current child to finish/);
+  const second = implementation('Second implementation');
+  assert.throws(() => gate(dir, first), /does not match the current implement-plan phase artifact/);
+  const secondGate = gate(dir, second);
+  assert.equal(secondGate.approved, false);
+  assert.equal(inspect(dir).completed_step, 2);
+  assert.throws(() => startFreshSession(dir, 'child-c'), /active phase and human gate/);
+  answer(dir, second, secondGate.hash, 'approve');
+  startFreshSession(dir, 'child-c');
+  assert.equal(inspect(dir).context_boundary.sessionId, 'child-c');
 });
 
 test('context threshold requires the fresh child live metric before dispatch', (t) => {
