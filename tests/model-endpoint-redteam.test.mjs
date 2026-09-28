@@ -3,7 +3,8 @@ import test from 'node:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {run, appendAudit, MAX_RESPONSE_BYTES, DEFAULT_AUDIT_FILE} from '../skills/delivery/model-endpoint-redteam/scripts/probe.mjs';
+import {run, appendAudit, MAX_RESPONSE_BYTES, DEFAULT_AUDIT_FILE, PROBES} from '../skills/delivery/model-endpoint-redteam/scripts/probe.mjs';
+import {createHash} from 'node:crypto';
 
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'model-redteam-'));
 const authFile=path.join(root,'authorization.json');
@@ -42,6 +43,27 @@ test('live run pins getter-backed URL and copied probe selection',async()=>{
  assert.equal(reads,1);assert.equal(fetchUrl,endpoint);assert.deepEqual(result.selected_probes,['recon']);
  const start=JSON.parse(fs.readFileSync(options.audit,'utf8').split('\n')[0]);
  assert.equal(start.origin,'https://203.0.113.9');
+});
+
+test('live hostnames are rejected before any fetch',async()=>{
+ const hostnameAuth=path.join(root,'hostname-authorization.json');
+ fs.writeFileSync(hostnameAuth,JSON.stringify({schema_version:1,origin:'https://probe.example',path:'/v1/chat',operator:'fixture operator',authorized_at:new Date(Date.now()-60_000).toISOString(),expires:'2099-01-01T00:00:00Z'}));
+ let calls=0;
+ await assert.rejects(run(liveOptions({url:'https://probe.example/v1/chat',authorization:hostnameAuth,probes:['recon']}),{fetchImpl:async()=>{calls++;return goodResponse();}}),/IP-literal host/);
+ assert.equal(calls,0);
+ const aliasAuth=path.join(root,'numeric-alias-authorization.json');
+ fs.writeFileSync(aliasAuth,JSON.stringify({schema_version:1,origin:'https://127.0.0.1',path:'/v1/chat',operator:'fixture operator',authorized_at:new Date(Date.now()-60_000).toISOString(),expires:'2099-01-01T00:00:00Z'}));
+ await assert.rejects(run(liveOptions({url:'https://2130706433/v1/chat',authorization:aliasAuth,probes:['recon']}),{fetchImpl:async()=>{calls++;return goodResponse();}}),/IP-literal host/);
+ assert.equal(calls,0);
+});
+
+test('probe payload and digest stay pinned across retries',async()=>{
+ const options=liveOptions({probes:['recon']}),original=PROBES.recon,bodies=[];let calls=0;
+ try{
+  const result=await run(options,{sleep:async()=>{},monotonicNow:()=>0,fetchImpl:async(_url,init)=>{calls++;bodies.push(init.body);if(calls===1){PROBES.recon='mutated during retry';throw Error('synthetic retry');}return goodResponse();}});
+  assert.equal(calls,2);assert.equal(bodies[0],bodies[1]);assert.equal(JSON.parse(bodies[0]).input,original);
+  assert.equal(result.probes[0].probe_sha256,`sha256:${createHash('sha256').update(original).digest('hex')}`);
+ }finally{PROBES.recon=original;}
 });
 
 test('live authorization ignores caller-supplied historical clock',async()=>{
