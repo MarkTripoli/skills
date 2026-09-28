@@ -366,6 +366,12 @@ test('a claimed A-row pass cannot advance without controller-executed output', a
     await assert.rejects(() => runSkill(f.ctx(fakeCheck), f.task, f.before, f.options, 'verify-implementation', 3), /C1 claimed pass is not corroborated/);
     const echo = '| A1 | CLI doubles input 21. | `printf 42` | exit 0; 42 | pass |\n' + f.row('A2', 'CLI doubles input 7.', 7, 14);
     await assert.rejects(() => runSkill(f.ctx(f.check + echo), f.task, f.before, f.options, 'verify-implementation', 4), /only manufactures a result/);
+    const fabricated = '| A1 | CLI doubles input 21. | `node -e \"console.log(42)\"` | exit 0; 42 | pass |\n' +
+      f.row('A2', 'CLI doubles input 7.', 7, 14);
+    await assert.rejects(() => runSkill(f.ctx(f.check + fabricated), f.task, f.before, f.options, 'verify-implementation', 5), /only manufactures a result/);
+    const mutation = '| A1 | CLI doubles input 21. | `curl -X POST https://example.invalid/claim` | exit 0; 42 | pass |\n' +
+      f.row('A2', 'CLI doubles input 7.', 7, 14);
+    await assert.rejects(() => runSkill(f.ctx(f.check + mutation), f.task, f.before, f.options, 'verify-implementation', 6), /cannot be safely replayed/);
     const noCheck = f.row('A1', 'CLI doubles input 21.', 21, 42) + f.row('A2', 'CLI doubles input 7.', 7, 14);
     await assert.rejects(() => runSkill(f.ctx(noCheck), f.task, f.before, f.options, 'verify-implementation', 5), /omitted repository checks: npm test/);
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
@@ -385,10 +391,64 @@ test('no discovered repository check still permits direct acceptance probes', as
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 
+test('multiline CI and configured Python checks cannot disappear from passed verification', async () => {
+  const f = proofFixture();
+  try {
+    fs.mkdirSync(path.join(f.repo, '.github', 'workflows'), { recursive: true });
+    fs.mkdirSync(path.join(f.repo, 'scripts'));
+    fs.writeFileSync(path.join(f.repo, '.github', 'workflows', 'checks.yml'),
+      'jobs:\n  proof:\n    steps:\n      - run: |\n          node scripts/check-cli.mjs \"$CHECK_INPUT\"\n');
+    fs.writeFileSync(path.join(f.repo, 'scripts', 'check-cli.mjs'),
+      'import { execFileSync } from \"node:child_process\";\nif (execFileSync(process.execPath, [\"cli.mjs\", process.argv[2]], { encoding: \"utf8\" }).trim() !== \"42\") process.exit(1);\nconsole.log(\"checked 42\");\n');
+    const rows = f.row('A1', 'CLI doubles input 21.', 21, 42) + f.row('A2', 'CLI doubles input 7.', 7, 14);
+    const before = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
+    await assert.rejects(() => runSkill(f.ctx(f.check + rows), f.task, before, f.options, 'verify-implementation', 1),
+      /omitted repository checks: node scripts\/check-cli\.mjs/);
+    const ci = '| C2 | multiline CI source check | `node scripts/check-cli.mjs 21` | exit 0; checked 42 | pass |\n';
+    const verified = await runSkill(f.ctx(f.check + ci + rows), f.task, before, f.options, 'verify-implementation', 2);
+    assert.deepEqual(eligible(verified, f.options, 'oneshot', false), ['review-code']);
+    fs.writeFileSync(path.join(f.repo, 'pyproject.toml'), '[project]\nname = \"fixture\"\n');
+    const metadataOnly = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
+    await runSkill(f.ctx(f.check + ci.replace('multiline CI source check', 'CI source check with metadata-only Python') + rows),
+      f.task, metadataOnly, f.options, 'verify-implementation', 3);
+    fs.appendFileSync(path.join(f.repo, 'pyproject.toml'), '[tool.ruff]\nline-length = 88\n[tool.mypy]\nstrict = true\n');
+    const configured = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
+    await assert.rejects(() => runSkill(f.ctx(f.check + ci.replace('multiline CI source check', 'CI source check with Python tools') + rows),
+      f.task, configured, f.options, 'verify-implementation', 4),
+      /omitted repository checks: ruff check \., mypy \./);
+  } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
+});
+
+test('a genuine expected-error exit and a silent filesystem predicate are acceptance evidence', async () => {
+  const f = proofFixture();
+  try {
+    fs.writeFileSync(path.join(f.repo, 'errors.mjs'), 'console.error(\"invalid argument\"); process.exit(2);\n');
+    fs.writeFileSync(path.join(f.taskDir, 'task.md'), '# Task\n\n## Acceptance criteria\n\n- Invalid argument exits 2.\n- A package manifest exists.\n');
+    const before = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
+    const rows = '| A1 | Invalid argument exits 2. | `node errors.mjs bad` | exit 2; invalid argument | pass |\n' +
+      '| A2 | A package manifest exists. | `test -f package.json` | exit 0 | pass |\n';
+    const verified = await runSkill(f.ctx(f.check + rows), f.task, before, f.options, 'verify-implementation', 1);
+    assert.deepEqual(verified.proofs.verification.executionEvidence.map(row => [row.id, row.exit]),
+      [['C1', 0], ['A1', 2], ['A2', 0]]);
+  } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
+});
+
 test('verification opt-out can review independent acceptance evidence without invented execution', async () => {
   const f = proofFixture();
   try {
     const options = { ...f.options, verify: false };
+    const unproved = f.ctx('', () => {
+      const head = execFileSync('git', ['rev-parse', 'HEAD^'], { cwd: f.repo, encoding: 'utf8' }).trim();
+      const evidence = 'cli.mjs:2 inspected argument conversion and output in the changed implementation';
+      return { sessionId: 'review-without-independent-observation', text: JSON.stringify({
+        head, revision: f.before.revision,
+        acceptance: ['CLI doubles input 21.', 'CLI doubles input 7.'].map(item => ({ item, evidence })),
+        risks: ['functional correctness', 'security and data integrity', 'acceptance oracle and test reachability']
+          .map(risk => ({ risk, evidence })),
+        findings: [],
+      }) };
+    });
+    await assert.rejects(() => runSkill(unproved, f.task, f.before, options, 'review-code', 1), /scope-incomplete/);
     const reviewer = f.ctx('', () => {
       const head = execFileSync('git', ['rev-parse', 'HEAD^'], { cwd: f.repo, encoding: 'utf8' }).trim();
       assert.equal(execFileSync(process.execPath, ['cli.mjs', '21'], { cwd: f.repo, encoding: 'utf8' }).trim(), '42');
@@ -402,9 +462,40 @@ test('verification opt-out can review independent acceptance evidence without in
         findings: [],
       }) };
     });
-    const reviewed = await runSkill(reviewer, f.task, f.before, options, 'review-code', 1);
+    const reviewed = await runSkill(reviewer, f.task, f.before, options, 'review-code', 2);
     assert.equal(reviewed.latest['code-review'].status, 'clean');
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
+});
+
+test('deletion-only source diffs still admit independent review of old-side changed lines', async () => {
+  const f = proofFixture();
+  const installed = fs.mkdtempSync(path.join(os.tmpdir(), 'atomic-installed-review-'));
+  try {
+    fs.mkdirSync(path.join(installed, 'review-code'));
+    fs.writeFileSync(path.join(installed, 'review-code', 'SKILL.md'), '# review-code\n');
+    fs.rmSync(f.task.skillsDir, { recursive: true, force: true });
+    f.task.skillsDir = installed;
+    fs.rmSync(path.join(f.repo, 'package.json'));
+    fs.rmSync(path.join(f.repo, 'cli.mjs'));
+    fs.writeFileSync(path.join(f.taskDir, 'task.md'), '# Task\n\nRemove the obsolete CLI.\n');
+    const before = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
+    const reviewer = f.ctx('', () => {
+      const head = execFileSync('git', ['rev-parse', 'HEAD^'], { cwd: f.repo, encoding: 'utf8' }).trim();
+      assert.equal(fs.existsSync(path.join(f.repo, 'cli.mjs')), false);
+      const evidence = 'cli.mjs:2 inspected the deleted old-side CLI implementation and observed the obsolete path absent';
+      return { sessionId: 'independent-deletion-review', text: JSON.stringify({
+        head, revision: before.revision, acceptance: [],
+        risks: ['functional correctness', 'security and data integrity', 'acceptance oracle and test reachability']
+          .map(risk => ({ risk, evidence })),
+        findings: [],
+      }) };
+    });
+    const reviewed = await runSkill(reviewer, f.task, before, { ...f.options, verify: false }, 'review-code', 1);
+    assert.equal(reviewed.latest['code-review'].status, 'clean');
+  } finally {
+    fs.rmSync(installed, { recursive: true, force: true });
+    fs.rmSync(f.repo, { recursive: true, force: true });
+  }
 });
 
 test('no acceptance promises still require execution of the recorded repository check', async () => {
