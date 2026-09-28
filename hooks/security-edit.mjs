@@ -90,7 +90,8 @@ try:
             if links > 40:
                 changed()
             if target.startswith('/'):
-                target = os.path.normpath(target)
+                # Canonicalize spelling for containment only; reopen from root_fd below.
+                target = os.path.realpath(os.path.normpath(target))
                 relative_target = None
                 for alias in aliases:
                     try:

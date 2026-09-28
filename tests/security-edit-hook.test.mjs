@@ -118,6 +118,39 @@ test('absolute alias paths resolve inside the canonical repository root', t => {
   assert.deepEqual(calls.map(item => item.args[0]), ['--version', '--format']);
 });
 
+test('absolute symlink aliases are canonicalized only for confined descriptor reads', t => {
+  const cwd = workspace(t);
+  const target = file(cwd, 'cfg/image.txt', 'FROM saved through Darwin alias\n');
+  const canonicalRoot = fs.realpathSync(cwd);
+  let aliasRoot;
+  if (process.platform === 'darwin' && canonicalRoot.startsWith('/private/')) {
+    aliasRoot = canonicalRoot.slice('/private'.length);
+  } else {
+    aliasRoot = path.join(path.dirname(cwd), `${path.basename(cwd)}-alias`);
+    fs.symlinkSync(canonicalRoot, aliasRoot, 'dir');
+    t.after(() => fs.rmSync(aliasRoot, { force: true }));
+  }
+  const aliasTarget = path.join(aliasRoot, 'cfg/image.txt');
+  assert.equal(fs.realpathSync(aliasTarget), fs.realpathSync(target));
+  fs.symlinkSync(aliasTarget, path.join(cwd, 'Dockerfile'));
+  let scannerCalls = 0;
+  const report = inspectEditedFile({
+    toolName: 'write', input: { path: 'Dockerfile' }, details: {},
+    content: 'Wrote file', isError: false,
+  }, {
+    cwd, env: offlineEnv(cwd),
+    run(bin, args) {
+      if (args[0] === '--version') return { status: 0, stdout: 'hadolint local' };
+      scannerCalls += 1;
+      assert.equal(fs.readFileSync(args.at(-1), 'utf8'), 'FROM saved through Darwin alias\n');
+      return { status: 0, stdout: '[]' };
+    },
+  });
+  assert.equal(report.results[0].file, 'Dockerfile');
+  assert.equal(report.results[0].lanes.find(lane => lane.tool === 'hadolint').coverage, 'complete');
+  assert.equal(scannerCalls, 1);
+});
+
 test('nested parent swap to an external symlink fails closed before scanning', t => {
   const cwd = workspace(t);
   const nested = path.join(cwd, 'nested');

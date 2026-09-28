@@ -411,6 +411,10 @@ test("OMP hook installation preserves external files behind symlinked destinatio
     const publicationSentinel = path.join(outside, "skills-publication", "hooks", "omp-publication.mjs");
     put(securitySentinel, "external security file\n");
     put(publicationSentinel, "external publication file\n");
+    const tree = directory => fs.readdirSync(directory, { withFileTypes: true })
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .map(entry => [entry.name, entry.isDirectory() ? tree(path.join(directory, entry.name)) : null]);
+    const externalTree = tree(outside);
 
     if (symlinkParent) {
       fs.mkdirSync(path.dirname(path.dirname(security.to)), { recursive: true });
@@ -423,7 +427,9 @@ test("OMP hook installation preserves external files behind symlinked destinatio
     assert.throws(() => apply(planned, { built: new Map(), uninstall: false, home }), /refusing unsafe OMP hook destination/);
     assert.equal(fs.readFileSync(securitySentinel, "utf8"), "external security file\n");
     assert.equal(fs.readFileSync(publicationSentinel, "utf8"), "external publication file\n");
-    assert.equal(fs.existsSync(path.join(project, ".omp", "hooks", "skills-publication")), false);
+    assert.deepEqual(tree(outside), externalTree);
+    const symlink = symlinkParent ? path.dirname(security.to) : security.to;
+    assert.equal(fs.readlinkSync(symlink), symlinkParent ? outside : path.join(outside, "skills-security"));
   }
 });
 
