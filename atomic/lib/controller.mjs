@@ -405,6 +405,18 @@ function replayableVerificationCommand(command, id, cwd) {
   const packageSafe = localCheckScripts.has(packageScript) &&
     (!packageArgs.length || (packageScript === 'build' &&
       packageArgs.join('\0') === '--\0--runtime\0codex'));
+  const readOnlyScript = file => {
+    if (!localFile(file)) return false;
+    const relative = file.replace(/^\.\//, '');
+    if (/^tests\/[^/]+\.(?:[cm]?js|py|rb)$/.test(relative) ||
+        /^scripts\/(?:check-[a-z0-9-]+|validate)\.(?:[cm]?js|py|rb)$/.test(relative)) return true;
+    if (executable !== 'node') return false;
+    try {
+      const manifest = JSON.parse(fs.readFileSync(path.join(replayCwd, 'package.json'), 'utf8'));
+      const testedEntrypoint = /^node ([A-Za-z0-9_./-]+\.(?:[cm]?js))(?:\s|$)/.exec(manifest.scripts?.test)?.[1];
+      return relative === testedEntrypoint?.replace(/^\.\//, '');
+    } catch { return false; }
+  };
   const uvCommandIndex = executable === 'uv'
     ? argv.findIndex((arg, index) => index > 1 && !arg.startsWith('-')) : -1;
   const uvCommand = argv[uvCommandIndex];
@@ -418,15 +430,15 @@ function replayableVerificationCommand(command, id, cwd) {
           (argv[2] === 'unittest' && argv.length !== 3) ||
           (argv[2] === 'ruff' && !ruffArgs(argv.slice(3))) ||
           (argv[2] === 'mypy' && !mypyArgs(argv.slice(3)))
-        : !localFile(argv[1]))) ||
+        : !readOnlyScript(argv[1]))) ||
       (executable === 'ruff' && !ruffArgs(argv.slice(1))) ||
       (executable === 'mypy' && !mypyArgs(argv.slice(1))) ||
       (executable === 'pytest' && !pytestArgs(argv.slice(1))) ||
       (['node', 'ruby', 'perl'].includes(executable) &&
-        (!localFile(argv[1] === '--test' || argv[1] === '--check' ? argv[2] : argv[1]) &&
-          !(executable === 'node' && argv[1] === '--test' && argv.length === 2) ||
-          (executable === 'node' && argv[1] === '--test' && !argv.slice(2).every(arg => localFile(arg))) ||
-          (argv[1] === '--check' && argv.length !== 3))) ||
+        (!((executable === 'node' && argv[1] === '--test' &&
+            (argv.length === 2 || argv.slice(2).every(arg => localFile(arg)))) ||
+           (executable === 'node' && argv[1] === '--check' && argv.length === 3 && localFile(argv[2])) ||
+           readOnlyScript(argv[1])))) ||
       (executable === 'uv' && (argv[1] !== 'run' ||
         !argv.slice(2, uvCommandIndex).every(arg => ['--locked', '--offline'].includes(arg)) ||
         !(localPythonModules.has(uvCommand) ||
@@ -479,6 +491,14 @@ function executeVerification(task, state, artifact, rows, step) {
         throw new Error(`${artifact.file}: ${row.id} has no decisive output or executable boolean predicate`);
       }
       const tokens = [...(row.item || '').matchAll(/(?<!\d)\d+(?:\.\d+)?(?!\d)/g)].map(match => match[0]);
+      const input = /\binput\s+(\d+(?:\.\d+)?)\b/i.exec(row.item || '')?.[1];
+      if (input && ['node', 'python', 'python3', 'ruby', 'perl'].includes(bin) &&
+          /\.(?:[cm]?js|py|rb)$/.test(args[0] || '') && args[1] !== input) {
+        throw new Error(`${artifact.file}: ${row.id} acceptance command did not exercise the claimed input`);
+      }
+      if (bin === 'test' && !(row.item || '').includes(args[1])) {
+        throw new Error(`${artifact.file}: ${row.id} boolean predicate did not test the named acceptance target`);
+      }
       const claimed = `${command} ${quoted} ${/\b(?:exit(?:s|ed)?|status)\b/i.test(row.item || '') ? `exit ${exit?.[1] || ''}` : ''}`;
       if (tokens.some(token => !new RegExp(`(?<![\\d.])${token.replace('.', '\\.')}(?![\\d.])`).test(claimed))) {
         throw new Error(`${artifact.file}: ${row.id} command and observed result omit an acceptance input or outcome`);

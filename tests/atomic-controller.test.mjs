@@ -445,9 +445,20 @@ test('a claimed A-row pass cannot advance without controller-executed output', a
     const unrelated = '| A1 | CLI doubles input 21. | `node cli.mjs 7` | exit 0; 14 | pass |\n' +
       f.row('A2', 'CLI doubles input 7.', 7, 14);
     await assert.rejects(() => runSkill(f.ctx(f.check + unrelated), f.task, f.before, f.options,
-      'verify-implementation', 9), /omit an acceptance input or outcome/);
+      'verify-implementation', 9), /did not exercise the claimed input/);
+    const unusedInput = '| A1 | CLI doubles input 21. | `node cli.mjs 7 21` | exit 0; 14 | pass |\n' +
+      f.row('A2', 'CLI doubles input 7.', 7, 14);
+    await assert.rejects(() => runSkill(f.ctx(f.check + unusedInput), f.task, f.before, f.options,
+      'verify-implementation', 10), /did not exercise the claimed input/);
+    fs.mkdirSync(path.join(f.repo, 'scripts'));
+    fs.writeFileSync(path.join(f.repo, 'scripts', 'install.mjs'), 'console.log("42");\n');
+    const installerState = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
+    const installer = '| A1 | CLI doubles input 21. | `node scripts/install.mjs all --yes --uninstall` | exit 0; 42 | pass |\n' +
+      f.row('A2', 'CLI doubles input 7.', 7, 14);
+    await assert.rejects(() => runSkill(f.ctx(f.check + installer), f.task, installerState, f.options,
+      'verify-implementation', 11), /cannot be safely replayed/);
     const noCheck = f.row('A1', 'CLI doubles input 21.', 21, 42) + f.row('A2', 'CLI doubles input 7.', 7, 14);
-    await assert.rejects(() => runSkill(f.ctx(noCheck), f.task, f.before, f.options, 'verify-implementation', 5), /omitted repository checks: npm test/);
+    await assert.rejects(() => runSkill(f.ctx(noCheck), f.task, installerState, f.options, 'verify-implementation', 5), /omitted repository checks: npm test/);
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 
@@ -492,8 +503,9 @@ test('required package build checks use a supported runtime instead of an unexec
 test('verification runs literal quoted filesystem argv without invoking a shell', async () => {
   const f = proofFixture();
   try {
-    fs.copyFileSync(path.join(f.repo, 'cli.mjs'), path.join(f.repo, 'cli with spaces.mjs'));
-    const rows = '| A1 | CLI doubles input 21. | `node "cli with spaces.mjs" 21` | exit 0; 42 | pass |\n' +
+    fs.mkdirSync(path.join(f.repo, 'tests'));
+    fs.copyFileSync(path.join(f.repo, 'cli.mjs'), path.join(f.repo, 'tests', 'cli with spaces.mjs'));
+    const rows = '| A1 | CLI doubles input 21. | `node "tests/cli with spaces.mjs" 21` | exit 0; 42 | pass |\n' +
       f.row('A2', 'CLI doubles input 7.', 7, 14);
     const verified = await runSkill(f.ctx(f.check + rows), f.task,
       initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative)),
@@ -527,7 +539,10 @@ test('no discovered repository check still permits direct acceptance probes', as
   const f = proofFixture();
   try {
     fs.rmSync(path.join(f.repo, 'package.json'));
-    const rows = f.row('A1', 'CLI doubles input 21.', 21, 42) + f.row('A2', 'CLI doubles input 7.', 7, 14);
+    fs.mkdirSync(path.join(f.repo, 'tests'));
+    fs.copyFileSync(path.join(f.repo, 'cli.mjs'), path.join(f.repo, 'tests', 'cli.mjs'));
+    const rows = (f.row('A1', 'CLI doubles input 21.', 21, 42) +
+      f.row('A2', 'CLI doubles input 7.', 7, 14)).replaceAll('node cli.mjs', 'node tests/cli.mjs');
     const verified = await runSkill(f.ctx(rows), f.task,
       initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative)),
       f.options, 'verify-implementation', 1);
@@ -723,23 +738,29 @@ test('a CI step working directory is bound to its replayed backend test rather t
 test('a genuine expected-error exit and a silent filesystem predicate are acceptance evidence', async () => {
   const f = proofFixture();
   try {
-    fs.writeFileSync(path.join(f.repo, 'errors.mjs'), 'console.error(\"invalid argument\"); process.exit(2);\n');
-    fs.writeFileSync(path.join(f.taskDir, 'task.md'), '# Task\n\n## Acceptance criteria\n\n- Invalid argument exits 2.\n- A package manifest exists.\n');
+    fs.mkdirSync(path.join(f.repo, 'tests'));
+    fs.writeFileSync(path.join(f.repo, 'tests', 'errors.mjs'), 'console.error("invalid argument"); process.exit(2);\n');
+    fs.writeFileSync(path.join(f.taskDir, 'task.md'), '# Task\n\n## Acceptance criteria\n\n- Invalid argument exits 2.\n- package.json exists.\n');
+    fs.writeFileSync(path.join(f.repo, 'README.md'), 'unrelated file\n');
     const before = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
-    const rows = '| A1 | Invalid argument exits 2. | `node errors.mjs bad` | exit 2; invalid argument | pass |\n' +
-      '| A2 | A package manifest exists. | `test -f package.json` | exit 0 | pass |\n';
+    const rows = '| A1 | Invalid argument exits 2. | `node tests/errors.mjs bad` | exit 2; invalid argument | pass |\n' +
+      '| A2 | package.json exists. | `test -f package.json` | exit 0 | pass |\n';
     const verified = await runSkill(f.ctx(f.check + rows), f.task, before, f.options, 'verify-implementation', 1);
     assert.deepEqual(verified.proofs.verification.executionEvidence.map(row => [row.id, row.exit]),
       [['C1', 0], ['A1', 2], ['A2', 0]]);
+    const unrelatedFile = '| A1 | Invalid argument exits 2. | `node tests/errors.mjs bad` | exit 2; invalid argument | pass |\n' +
+      '| A2 | package.json exists. | `test -f README.md` | exit 0 | pass |\n';
+    await assert.rejects(() => runSkill(f.ctx(f.check + unrelatedFile), f.task, before,
+      f.options, 'verify-implementation', 2), /did not test the named acceptance target/);
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 
 test('a failed boolean file predicate cannot pass as acceptance evidence', async () => {
   const f = proofFixture();
   try {
-    fs.writeFileSync(path.join(f.taskDir, 'task.md'), '# Task\n\n## Acceptance criteria\n\n- Missing manifest exists.\n');
+    fs.writeFileSync(path.join(f.taskDir, 'task.md'), '# Task\n\n## Acceptance criteria\n\n- missing.json exists.\n');
     const before = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
-    const row = '| A1 | Missing manifest exists. | `test -f missing.json` | exit 1 | pass |\n';
+    const row = '| A1 | missing.json exists. | `test -f missing.json` | exit 1 | pass |\n';
     await assert.rejects(() => runSkill(f.ctx(f.check + row), f.task, before, f.options, 'verify-implementation', 1),
       /claimed pass is not corroborated/);
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
