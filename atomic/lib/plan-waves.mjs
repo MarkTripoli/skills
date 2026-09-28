@@ -16,13 +16,17 @@ function visiblePlanLines(text) {
   let fence = null;
   const visible = [];
   for (const line of String(text).split(/\r?\n/)) {
-    const marker = line.match(/^\s*(`{3,}|~{3,})(.*)$/);
+    if (!fence && /^(?: {4,}| {0,3}\t)/.test(line) && line.trim()) {
+      visible.push('');
+      continue;
+    }
+    const marker = line.match(/^( {0,3})(`{3,}|~{3,})(.*)$/);
     if (!fence) {
-      if (marker) fence = { character: marker[1][0], length: marker[1].length };
+      if (marker) fence = { character: marker[2][0], length: marker[2].length };
       visible.push(marker ? '' : line);
       continue;
     }
-    const closes = marker && marker[1][0] === fence.character && marker[1].length >= fence.length && /^\s*$/.test(marker[2]);
+    const closes = marker && marker[2][0] === fence.character && marker[2].length >= fence.length && /^\s*$/.test(marker[3]);
     if (closes) fence = null;
     visible.push('');
   }

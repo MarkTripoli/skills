@@ -25,6 +25,14 @@ test('plan-wave admission matches planProgress headings and ignores fenced examp
   assert.deepEqual(admitPlanWaves(`${phase('## Phase 1', '-', 'src/a.ts')}\n\`\`\`md\n## Phase 2: Example\n**Depends on**: -\n**File**: \`src/a.ts\`\n\`\`\``), { ok: true, waves: [['1']] });
   const nestedFence = `${phase('## Phase 1', '-', 'src/a.ts')}\n\`\`\`\`markdown\n\`\`\`js\n**File**: \`src/b.ts\`\n\`\`\`\n\`\`\`\`\n${phase('## Phase 2', '-', 'src/b.ts')}`;
   assert.deepEqual(admitPlanWaves(nestedFence), { ok: true, waves: [['1', '2']] });
+  const indentedOwner = `${phase('## Phase 1', '-', 'src/a.ts')}\n\n    **File**: \`src/b.ts\`\n${phase('## Phase 2', '-', 'src/b.ts')}`;
+  assert.deepEqual(admitPlanWaves(indentedOwner), { ok: true, waves: [['1', '2']] });
+  const indentedFenceCloser = [
+    phase('## Phase 1', '-', 'src/a.ts').trimEnd(), '````markdown', '    ````',
+    '### Phase 9: Example', '**Depends on**: -', '**File**: `src/a.ts`',
+    '````', phase('## Phase 2', '-', 'src/b.ts').trimEnd(),
+  ].join('\n');
+  assert.deepEqual(admitPlanWaves(indentedFenceCloser), { ok: true, waves: [['1', '2']] });
   assert.match(admitPlanWaves(`## Phase 1: First\n\n**File**: \`src/a.ts\``).error, /Depends on/);
   assert.match(admitPlanWaves(`${phase('## Phase 1: First', 'Phase 2', 'src/a.ts')}\n${phase('## Phase 2: Second', '-', 'src/b.ts')}`).error, /appears later/);
   assert.match(admitPlanWaves(`${phase('## Phase 1: First', 'Phase 2', 'src/a.ts')}\n${phase('## Phase 2: Second', 'Phase 1', 'src/b.ts')}`).error, /cycle/);
