@@ -226,9 +226,13 @@ function repositoryChecks(cwd) {
   if (exists('Package.swift')) add('swift test');
   if (exists('build.gradle') || exists('build.gradle.kts')) add('./gradlew test');
   const workflows = path.join(cwd, '.github', 'workflows');
-  const addWorkflow = (name, command) => {
+  const addWorkflow = (name, command, directory = '.') => {
     if (/\$\{?[\w]|[;&|`]/.test(command)) throw new Error(`Cannot safely replay dynamic or chained CI check in ${name}: ${command}`);
-    add(command);
+    if (directory !== '.' && (!/^[A-Za-z0-9._/-]+$/.test(directory) ||
+        directory.startsWith('/') || directory.split('/').some(part => !part || part === '.' || part === '..'))) {
+      throw new Error(`Cannot safely replay CI working directory in ${name}: ${directory}`);
+    }
+    add(directory === '.' ? command : `at ${directory}: ${command}`);
   };
   if (fs.existsSync(workflows)) for (const name of fs.readdirSync(workflows)) {
     if (!/\.ya?ml$/.test(name)) continue;
@@ -240,6 +244,8 @@ function repositoryChecks(cwd) {
       (Object.hasOwn(workflow.on, 'pull_request') || Object.hasOwn(workflow.on, 'merge_group')));
     for (const job of Object.values(jobs)) for (const step of job.steps || []) {
       if (typeof step.run !== 'string') continue;
+      const workingDirectory = step['working-directory'] ?? job.defaults?.run?.['working-directory'] ??
+        workflow.defaults?.run?.['working-directory'] ?? '.';
       const commandLines = step.run.split('\n').map(line => line.trim());
       for (const line of commandLines) {
         if (!line || line.startsWith('#')) continue;
@@ -250,9 +256,9 @@ function repositoryChecks(cwd) {
           const version = commandLines.join('\n').match(/\bgo install golang\.org\/x\/vuln\/cmd\/govulncheck@([A-Za-z0-9.+-]+)/)?.[1];
           const directory = line.match(/\(\s*cd\s+([^\s;)]+)\s*&&/)?.[1];
           if (!version || !directory) throw new Error(`Cannot resolve CI vulnerability check in ${name}: ${line}`);
-          addWorkflow(name, `go -C ${directory} run golang.org/x/vuln/cmd/govulncheck@${version} ./...`);
-        } else if (/^(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|typecheck|build|check)\b/.test(line)) addWorkflow(name, line);
-        else if (/^(?:go (?:test|vet)|cargo (?:test|clippy)|pytest|python3? -m pytest|uv run (?:(?:--[\w-]+(?:=[^\s]+)?\s+)*)(?:pytest|python3? -m pytest|ruff|mypy)|ruff|mypy|make (?:test|lint|check)|swift test|\.\/gradlew test)\b/.test(line)) addWorkflow(name, line);
+          addWorkflow(name, `go -C ${directory} run golang.org/x/vuln/cmd/govulncheck@${version} ./...`, workingDirectory);
+        } else if (/^(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|typecheck|build|check)\b/.test(line)) addWorkflow(name, line, workingDirectory);
+        else if (/^(?:go (?:test|vet)|cargo (?:test|clippy)|pytest|python3? -m pytest|uv run (?:(?:--[\w-]+(?:=[^\s]+)?\s+)*)(?:pytest|python3? -m pytest|ruff|mypy)|ruff|mypy|make (?:test|lint|check)|swift test|\.\/gradlew test)\b/.test(line)) addWorkflow(name, line, workingDirectory);
         else if (/^go build\b/.test(line)) {
           const directory = step['working-directory'];
           const source = line.match(/(\.\/cmd\/[A-Za-z0-9_/-]+)$/)?.[1];
@@ -269,10 +275,10 @@ function repositoryChecks(cwd) {
           addWorkflow(name, `node --test ${packageTest}`);
         } else if (/^node --test(?:\s|$)/.test(line)) {
           // CI's direct Node test invocation is required proof, not optional prose.
-          addWorkflow(name, line);
+          addWorkflow(name, line, workingDirectory);
         } else {
           const script = line.match(/^(?:node|python3?|bun)\s+(?!-[ecp]\b)([^\s"'$|;&]+\.(?:m?js|cjs|py))\b/);
-          if (script && !/(?:deploy|release|publish|migrat|push)/i.test(script[1])) addWorkflow(name, line);
+          if (script && !/(?:deploy|release|publish|migrat|push)/i.test(script[1])) addWorkflow(name, line, workingDirectory);
           else if (/^uv run\b/.test(line)) throw new Error(`Cannot resolve CI check in ${name}: ${line}`);
         }
       }
@@ -346,6 +352,19 @@ function replayableVerificationCommand(command, id, cwd) {
     argv.push(word);
   }
   if (!argv.length || !argv[0]) unsafe();
+  let replayCwd = cwd;
+  if (argv[0] === 'at') {
+    const directory = argv[1]?.match(/^([A-Za-z0-9._/-]+):$/)?.[1];
+    if (!directory || directory.startsWith('/') || directory.split('/').some(part => !part || part === '.' || part === '..') ||
+        argv.length < 3) unsafe();
+    const target = path.resolve(cwd, directory);
+    try {
+      if (!fs.lstatSync(target).isDirectory() ||
+          !fs.realpathSync(target).startsWith(`${fs.realpathSync(cwd)}${path.sep}`)) unsafe();
+    } catch { unsafe(); }
+    replayCwd = target;
+    argv.splice(0, 2);
+  }
   const executable = path.posix.basename(argv[0]);
   if (['true', 'false', ':', 'echo', 'printf'].includes(executable) ||
       (['node', 'bun', 'python', 'python3', 'ruby', 'perl'].includes(executable) &&
@@ -356,10 +375,12 @@ function replayableVerificationCommand(command, id, cwd) {
     if (!filename || filename.startsWith('-') || path.isAbsolute(filename) ||
         filename.split('/').includes('..')) return false;
     try {
-      const file = path.resolve(cwd, filename);
+      const file = path.resolve(replayCwd, filename);
       const stat = fs.lstatSync(file);
+      const real = fs.realpathSync(file);
+      const root = fs.realpathSync(replayCwd);
       return (stat.isFile() || (directory && stat.isDirectory())) &&
-        fs.realpathSync(file).startsWith(`${fs.realpathSync(cwd)}${path.sep}`);
+        (real === root || real.startsWith(`${root}${path.sep}`));
     } catch { return false; }
   };
   const localExecutable = argv[0] === './gradlew' && localFile(argv[0]);
@@ -371,19 +392,35 @@ function replayableVerificationCommand(command, id, cwd) {
   const goScanner = goDirectory && goAction === 'run' && argv.length === 6 &&
     /^golang\.org\/x\/vuln\/cmd\/govulncheck@v\d+\.\d+\.\d+$/.test(argv[4]) &&
     argv[5] === './...';
+  const goArgs = argv.slice(goDirectory ? 4 : 2);
+  const goPackages = goArgs.length > 0 && goArgs.every(arg => arg === './...' ||
+    (arg.startsWith('./') && localFile(path.join(goDirectory, arg), true)));
+  const goBuild = goAction === 'build' && goArgs.length === 3 && goArgs[0] === '-o' &&
+    goArgs[1] === '/dev/null' && goArgs[2].startsWith('./cmd/') &&
+    localFile(path.join(goDirectory, goArgs[2]), true);
+  const ruffArgs = args => args.length === 2 && args[0] === 'check' && localFile(args[1], true);
+  const mypyArgs = args => args.length === 1 && localFile(args[0], true);
+  const packageScript = argv[1] === 'run' ? argv[2] : argv[1];
+  const packageArgs = argv.slice(argv[1] === 'run' ? 3 : 2);
+  const packageSafe = localCheckScripts.has(packageScript) &&
+    (!packageArgs.length || (packageScript === 'build' &&
+      packageArgs.join('\0') === '--\0--runtime\0codex'));
   const uvCommandIndex = executable === 'uv'
     ? argv.findIndex((arg, index) => index > 1 && !arg.startsWith('-')) : -1;
   const uvCommand = argv[uvCommandIndex];
   if (/^[A-Za-z_][A-Za-z_0-9]*=/.test(argv[0]) ||
       (!localVerificationTools.has(executable) && !localExecutable) ||
       (argv[0].includes('/') && !localExecutable) ||
-      (['npm', 'pnpm', 'yarn', 'bun'].includes(executable) &&
-        !localCheckScripts.has(argv[1] === 'run' ? argv[2] : argv[1])) ||
+      (['npm', 'pnpm', 'yarn', 'bun'].includes(executable) && !packageSafe) ||
       (['python', 'python3'].includes(executable) && (argv[1] === '-m'
         ? !localPythonModules.has(argv[2]) ||
           (argv[2] === 'pytest' && !pytestArgs(argv.slice(3))) ||
-          (argv[2] === 'unittest' && argv.length !== 3)
+          (argv[2] === 'unittest' && argv.length !== 3) ||
+          (argv[2] === 'ruff' && !ruffArgs(argv.slice(3))) ||
+          (argv[2] === 'mypy' && !mypyArgs(argv.slice(3)))
         : !localFile(argv[1]))) ||
+      (executable === 'ruff' && !ruffArgs(argv.slice(1))) ||
+      (executable === 'mypy' && !mypyArgs(argv.slice(1))) ||
       (executable === 'pytest' && !pytestArgs(argv.slice(1))) ||
       (['node', 'ruby', 'perl'].includes(executable) &&
         (!localFile(argv[1] === '--test' || argv[1] === '--check' ? argv[2] : argv[1]) &&
@@ -398,17 +435,22 @@ function replayableVerificationCommand(command, id, cwd) {
             localPythonModules.has(argv[uvCommandIndex + 2]))) ||
         (uvCommand === 'pytest' && !pytestArgs(argv.slice(uvCommandIndex + 1))) ||
         (['python', 'python3'].includes(uvCommand) && argv[uvCommandIndex + 2] === 'pytest' &&
-          !pytestArgs(argv.slice(uvCommandIndex + 3))))) ||
+          !pytestArgs(argv.slice(uvCommandIndex + 3))) ||
+        (uvCommand === 'ruff' && !ruffArgs(argv.slice(uvCommandIndex + 1))) ||
+        (uvCommand === 'mypy' && !mypyArgs(argv.slice(uvCommandIndex + 1))) ||
+        (['python', 'python3'].includes(uvCommand) &&
+          ((argv[uvCommandIndex + 2] === 'ruff' && !ruffArgs(argv.slice(uvCommandIndex + 3))) ||
+           (argv[uvCommandIndex + 2] === 'mypy' && !mypyArgs(argv.slice(uvCommandIndex + 3))))))) ||
       (executable === 'go' && ((goDirectory && !localFile(goDirectory, true)) ||
-        (!['test', 'vet', 'build'].includes(goAction) && !goScanner))) ||
-      (executable === 'cargo' && !['test', 'clippy', 'check', 'build'].includes(argv[1])) ||
-      (executable === 'gradlew' && !['test', 'check', 'lint'].includes(argv[1])) ||
-      (executable === 'make' && !localCheckScripts.has(argv[1])) ||
+        !((['test', 'vet'].includes(goAction) && goPackages) || goBuild || goScanner))) ||
+      (executable === 'cargo' && (!['test', 'clippy', 'check', 'build'].includes(argv[1]) || argv.length !== 2)) ||
+      (executable === 'gradlew' && (!localExecutable || !['test', 'check', 'lint'].includes(argv[1]) || argv.length !== 2)) ||
+      (executable === 'make' && (!localCheckScripts.has(argv[1]) || argv.length !== 2)) ||
       (executable === 'test' && (argv.length !== 3 ||
         !['-f', '-d', '-e', '-s'].includes(argv[1]) ||
         path.isAbsolute(argv[2]) || argv[2].split('/').includes('..'))) ||
-      (executable === 'swift' && argv[1] !== 'test')) unsafe();
-  return argv;
+      (executable === 'swift' && (argv[1] !== 'test' || argv.length !== 2))) unsafe();
+  return { argv, cwd: replayCwd };
 }
 function executeVerification(task, state, artifact, rows, step) {
   const beforeHead = git(task.cwd, ['rev-parse', 'HEAD']);
@@ -420,9 +462,10 @@ function executeVerification(task, state, artifact, rows, step) {
   for (const row of rows) {
     const command = row['decided by'].match(/^`([^`\n]+)`$/)?.[1];
     if (!command) throw new Error(`${artifact.file}: ${row.id} has no executable command; an artifact assertion is not proof`);
-    const [bin, ...args] = replayableVerificationCommand(command, row.id, task.cwd);
+    const { argv, cwd } = replayableVerificationCommand(command, row.id, task.cwd);
+    const [bin, ...args] = argv;
     const run = spawnSync(bin, args, {
-      cwd: task.cwd, encoding: 'utf8', timeout: 600_000, maxBuffer: 16 * 1024 * 1024,
+      cwd, encoding: 'utf8', timeout: 600_000, maxBuffer: 16 * 1024 * 1024,
       env: replayEnv,
     });
     const actualLines = `${run.stdout || ''}\n${run.stderr || ''}`.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
@@ -432,7 +475,7 @@ function executeVerification(task, state, artifact, rows, step) {
       .replace(/^[\s:;,.—-]*(?:(?:stdout|output)\s*[:=]\s*)?/i, '')
       .replace(/^[`"']|[`"']$/g, '').trim() : '';
     if (row.id.toUpperCase().startsWith('A')) {
-      if (!quoted && !/^\s*(?:test\s|[\[]\s)/.test(command)) {
+      if (!quoted && bin !== 'test') {
         throw new Error(`${artifact.file}: ${row.id} has no decisive output or executable boolean predicate`);
       }
       const tokens = [...(row.item || '').matchAll(/(?<!\d)\d+(?:\.\d+)?(?!\d)/g)].map(match => match[0]);
@@ -443,6 +486,7 @@ function executeVerification(task, state, artifact, rows, step) {
     }
     if (run.error || !exit || run.status !== Number(exit[1]) ||
       (row.id.toUpperCase().startsWith('C') && run.status !== 0) ||
+      (bin === 'test' && run.status !== 0) ||
       (quoted && !actualLines.includes(quoted))) {
       throw new Error(`${artifact.file}: ${row.id} claimed pass is not corroborated by execution (${run.error?.message || `exit ${run.status}`}; ${output.slice(0, 300)})`);
     }

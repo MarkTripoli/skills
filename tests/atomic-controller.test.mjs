@@ -666,6 +666,60 @@ test('the pinned Go CI scanner check replays only its literal argv through an of
   }
 });
 
+test('writable check arguments cannot execute even offline local command stubs', async () => {
+  const f = proofFixture();
+  const originalPath = process.env.PATH;
+  try {
+    const moduleDir = path.join(f.repo, 'tools', 'safety-dance');
+    fs.mkdirSync(path.join(moduleDir, 'cmd', 'safety-dance'), { recursive: true });
+    const bin = path.join(f.repo, 'bin');
+    fs.mkdirSync(bin);
+    const marker = path.join(f.repo, 'unsafe-command-executed');
+    for (const command of ['go', 'ruff', 'cargo']) {
+      fs.writeFileSync(path.join(bin, command), `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(marker)}, 'invoked');\n`, { mode: 0o755 });
+    }
+    process.env.PATH = `${bin}${path.delimiter}${originalPath}`;
+    const before = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
+    for (const command of [
+      'go -C tools/safety-dance build -o /tmp/unrelated-build ./cmd/safety-dance',
+      'ruff format .',
+      'cargo test --target-dir /tmp/unrelated-build',
+      'npm test -- --prefix /tmp/unrelated-project',
+    ]) {
+      const row = `| A1 | CLI doubles input 21. | \`${command}\` | exit 0; 42 | pass |\n`;
+      await assert.rejects(() => runSkill(f.ctx(f.check + row + f.row('A2', 'CLI doubles input 7.', 7, 14)),
+        f.task, before, f.options, 'verify-implementation', 1), /cannot be safely replayed/);
+      assert.equal(fs.existsSync(marker), false);
+    }
+  } finally {
+    process.env.PATH = originalPath;
+    fs.rmSync(f.repo, { recursive: true, force: true });
+  }
+});
+
+test('a CI step working directory is bound to its replayed backend test rather than the root', async () => {
+  const f = proofFixture();
+  try {
+    const backend = path.join(f.repo, 'backend');
+    fs.mkdirSync(backend);
+    fs.writeFileSync(path.join(backend, 'backend.test.mjs'),
+      `import test from 'node:test'; import assert from 'node:assert/strict'; test('backend working directory', () => assert.equal(process.cwd(), import.meta.dirname));\n`);
+    const workflows = path.join(f.repo, '.github', 'workflows');
+    fs.mkdirSync(workflows, { recursive: true });
+    fs.writeFileSync(path.join(workflows, 'backend.yml'),
+      'jobs:\n  test:\n    steps:\n      - working-directory: backend\n        run: node --test backend.test.mjs\n');
+    const rows = f.check +
+      '| C2 | backend suite | `at backend: node --test backend.test.mjs` | exit 0 | pass |\n' +
+      f.row('A1', 'CLI doubles input 21.', 21, 42) + f.row('A2', 'CLI doubles input 7.', 7, 14);
+    const before = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
+    const verified = await runSkill(f.ctx(rows), f.task, before, f.options, 'verify-implementation', 1);
+    assert.match(verified.proofs.verification.executionEvidence.find(row => row.id === 'C2').output, /backend working directory/);
+    const staleRows = rows.replace('at backend: node --test backend.test.mjs', 'node --test backend.test.mjs');
+    await assert.rejects(() => runSkill(f.ctx(staleRows), f.task, before, f.options, 'verify-implementation', 2),
+      /omitted repository checks: at backend: node --test backend.test.mjs/);
+  } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
+});
+
 test('a genuine expected-error exit and a silent filesystem predicate are acceptance evidence', async () => {
   const f = proofFixture();
   try {
@@ -677,6 +731,17 @@ test('a genuine expected-error exit and a silent filesystem predicate are accept
     const verified = await runSkill(f.ctx(f.check + rows), f.task, before, f.options, 'verify-implementation', 1);
     assert.deepEqual(verified.proofs.verification.executionEvidence.map(row => [row.id, row.exit]),
       [['C1', 0], ['A1', 2], ['A2', 0]]);
+  } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
+});
+
+test('a failed boolean file predicate cannot pass as acceptance evidence', async () => {
+  const f = proofFixture();
+  try {
+    fs.writeFileSync(path.join(f.taskDir, 'task.md'), '# Task\n\n## Acceptance criteria\n\n- Missing manifest exists.\n');
+    const before = initialState(observeArtifacts(f.taskDir), revision(f.repo, f.task.taskRootRelative));
+    const row = '| A1 | Missing manifest exists. | `test -f missing.json` | exit 1 | pass |\n';
+    await assert.rejects(() => runSkill(f.ctx(f.check + row), f.task, before, f.options, 'verify-implementation', 1),
+      /claimed pass is not corroborated/);
   } finally { fs.rmSync(f.repo, { recursive: true, force: true }); }
 });
 
