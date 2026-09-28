@@ -46,8 +46,7 @@ If user asks to keep working through questions: read TDD fully, identify unresol
 - Preserve ambiguity disposition: label each consequential item as source-backed inference or stakeholder choice, name its owner and acceptance impact, cite inference sources, and keep unresolved choices open and non-authoritative.
 
 6. **Update PRD or mockups if technical findings affect product behavior**: If decision changes UX/scope/availability/states/permissions/workflow, update product artifact when present.
-
-7. **Stop and ask next**: After applying feedback, stop. State change, ask what next, offer next decision if unresolved areas remain. Never move to another change without user direction.
+7. **Stop and ask next**: After applying feedback, stop. State the change, ask what to work on next, and offer the next decision if unresolved areas remain. Never move to another change without user direction.
 
 ## System Design Iteration
 
@@ -69,4 +68,4 @@ If a PRD exists, use it for product requirements, user flows, and mockups. Do no
 
 If driven by a feedback file the user names: read it fully, work one item or related group at a time, verify factual corrections, treat new choices as open decisions (ask exactly one question). Apply each change, or say why it was not applied. Feedback items are collaboration inputs, not a second source of hidden requirements. Fold accepted content into TDD.
 
-8. **Finish when user is done**: Record the new iteration through the conventions' Recording an artifact flow, then follow `references/tdd_final_answer.md` exactly. Fill `{artifact_link}` and `{artifact_file}` with the canonical task-root-relative path. Commit that path and `index.json` explicitly as `docs(task): tdd artifact`.
+8. **Finish when user is done**: Do not finalize or offer `/create-plan` while `### Ambiguity Disposition` has an unresolved consequential stakeholder choice or either design review gate lacks explicit approval. Ask the named owner the next architecture or failure-path decision question, wait, then record the resolved choice and acceptance impact in the next immutable TDD iteration. Repeat one decision at a time. Only when every consequential choice is resolved and both design review gates are approved, record the new iteration and follow `references/tdd_final_answer.md` exactly. Fill `{artifact_link}` and `{artifact_file}` with the canonical task-root-relative path. Commit that path and `index.json` explicitly as `docs(task): tdd artifact`.

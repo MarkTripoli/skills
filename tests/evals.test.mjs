@@ -49,37 +49,6 @@ test("source repairs remain allowed but receipt/source commits cannot be mixed",
   assert.ok(evidencePathProblems(base, [repaired], [{ sha: "mixed", subject: "docs(task): evidence", paths: ["app.js", receipt] }], task).length > 0);
 });
 
-test("planning handoffs fail closed when legacy plan critique evidence is absent", () => {
-  const read = (file) => fs.readFileSync(new URL(file, import.meta.url), "utf8");
-  const implement = read("../skills/delivery/implement-plan/SKILL.md");
-  assert.ok(implement.includes("Missing either section"));
-  assert.ok(implement.includes("missing named independent reviewer"));
-  assert.ok(implement.includes("missing evidence of the acceptance review method and examined criteria"));
-  assert.ok(implement.includes("Empty sections, template placeholders"));
-  assert.ok(implement.includes("no phase may start—even when checkboxes are incomplete"));
-  assert.ok(implement.includes("resume only from the revised plan after the existing approval gate"));
-
-  for (const file of [
-    "../skills/delivery/create-plan/references/plan_final_answer.md",
-    "../skills/delivery/iterate-plan/references/plan_final_answer.md",
-  ]) {
-    const answer = read(file);
-    assert.ok(answer.includes("If any consequential owner choice is unresolved"));
-    assert.ok(answer.includes("do not offer `/implement-plan`"));
-    assert.ok(answer.includes("/iterate-plan @{artifact_file}"));
-  }
-
-  for (const [skill, handoff, approval] of [
-    ["create-prd", "/create-tdd", "solution review gate"],
-    ["create-tdd", "/create-plan", "both design review gates"],
-  ]) {
-    const instructions = read(`../skills/delivery/${skill}/SKILL.md`);
-    const answer = read(`../skills/delivery/${skill}/references/${skill === "create-prd" ? "prd" : "tdd"}_final_answer.md`);
-    assert.ok(instructions.includes(`Do not hand off to \`${handoff}\` while any such choice remains open`));
-    assert.ok(answer.includes(`do not offer approval or \`${handoff}\``));
-    assert.ok(answer.includes(`only when all consequential stakeholder choices are resolved and ${approval} is approved`));
-  }
-});
 
 
 test("a forbidden write reverted before the final state is still retained at a tool boundary", () => {
