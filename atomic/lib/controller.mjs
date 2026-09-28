@@ -298,7 +298,14 @@ function requireAcceptanceEvidence(task, state, artifact) {
   }
   return [...checks, ...acceptance];
 }
-function replayableVerificationCommand(command, id) {
+const localVerificationTools = new Set([
+  'node', 'bun', 'python', 'python3', 'ruby', 'perl', 'npm', 'pnpm', 'yarn',
+  'go', 'cargo', 'pytest', 'uv', 'ruff', 'mypy', 'make', 'swift', 'gradlew', 'test',
+]);
+const localPythonModules = new Set(['pytest', 'unittest', 'ruff', 'mypy']);
+const localCheckScripts = new Set(['test', 'lint', 'typecheck', 'build', 'check']);
+
+function replayableVerificationCommand(command, id, cwd) {
   const unsafe = () => { throw new Error(`${id} acceptance command cannot be safely replayed; use an isolated idempotent test instead`); };
   if (/[\r\n\0]/.test(command)) unsafe();
   const argv = [];
@@ -331,18 +338,36 @@ function replayableVerificationCommand(command, id) {
   }
   if (!argv.length || !argv[0]) unsafe();
   const executable = path.posix.basename(argv[0]);
-  if (/^[A-Za-z_][A-Za-z_0-9]*=/.test(argv[0]) ||
-      ['curl', 'http', 'wget', 'gh', 'glab', 'git', 'ssh', 'scp', 'sftp', 'ftp', 'rsync',
-        'aws', 'az', 'gcloud', 'wrangler', 'kubectl', 'docker', 'podman', 'npx', 'pip', 'pip3', 'uvx',
-        'sh', 'bash', 'zsh', 'env', 'command', 'exec', 'sudo', 'xargs'].includes(executable) ||
-      (['npm', 'pnpm', 'yarn', 'bun'].includes(executable) &&
-        !['test', 'lint', 'typecheck', 'build', 'check'].includes(argv[1] === 'run' ? argv[2] : argv[1])) ||
-      ['rm', 'mv'].includes(executable)) unsafe();
   if (['true', 'false', ':', 'echo', 'printf'].includes(executable) ||
       (['node', 'bun', 'python', 'python3', 'ruby', 'perl'].includes(executable) &&
         argv.slice(1).some(arg => /^-[ecp]|^--(?:eval|print)(?:=|$)/.test(arg)))) {
     throw new Error(`${id} acceptance command only manufactures a result; it does not exercise product behavior`);
   }
+  const localExecutable = argv[0].startsWith('./') && !argv[0].split('/').includes('..') && (() => {
+    try {
+      const file = path.resolve(cwd, argv[0]);
+      const root = fs.realpathSync(cwd);
+      return fs.lstatSync(file).isFile() && fs.realpathSync(file).startsWith(`${root}${path.sep}`);
+    } catch { return false; }
+  })();
+  const uvCommand = executable === 'uv' ? argv.find((arg, index) => index > 1 && !arg.startsWith('-')) : null;
+  if (/^[A-Za-z_][A-Za-z_0-9]*=/.test(argv[0]) ||
+      (!localVerificationTools.has(executable) && !localExecutable) ||
+      (argv[0].includes('/') && !localExecutable) ||
+      (['npm', 'pnpm', 'yarn', 'bun'].includes(executable) &&
+        !localCheckScripts.has(argv[1] === 'run' ? argv[2] : argv[1])) ||
+      (['python', 'python3'].includes(executable) && argv.includes('-m') &&
+        !localPythonModules.has(argv[argv.indexOf('-m') + 1])) ||
+      (executable === 'uv' && (argv[1] !== 'run' ||
+        !(localPythonModules.has(uvCommand) ||
+          (['python', 'python3'].includes(uvCommand) &&
+            localPythonModules.has(argv[argv.indexOf('-m') + 1]))))) ||
+      (executable === 'go' && !['test', 'vet', 'build'].includes(argv[1] === '-C' ? argv[3] : argv[1])) ||
+      (executable === 'make' && !localCheckScripts.has(argv[1])) ||
+      (executable === 'test' && (argv.length !== 3 ||
+        !['-f', '-d', '-e', '-s'].includes(argv[1]) ||
+        path.isAbsolute(argv[2]) || argv[2].split('/').includes('..'))) ||
+      (executable === 'swift' && argv[1] !== 'test')) unsafe();
   return argv;
 }
 function executeVerification(task, state, artifact, rows, step) {
@@ -351,7 +376,7 @@ function executeVerification(task, state, artifact, rows, step) {
   for (const row of rows) {
     const command = row['decided by'].match(/^`([^`\n]+)`$/)?.[1];
     if (!command) throw new Error(`${artifact.file}: ${row.id} has no executable command; an artifact assertion is not proof`);
-    const [bin, ...args] = replayableVerificationCommand(command, row.id);
+    const [bin, ...args] = replayableVerificationCommand(command, row.id, task.cwd);
     const run = spawnSync(bin, args, {
       cwd: task.cwd, encoding: 'utf8', timeout: 600_000, maxBuffer: 16 * 1024 * 1024,
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
