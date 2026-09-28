@@ -40,13 +40,14 @@ def main():
                     return 2
             finally:
                 os.close(selected_git_fd)
+            os.environ["GIT_WORK_TREE"] = work_tree
             os.environ["GIT_DIR"] = relative_git_dir
             os.environ["GIT_COMMON_DIR"] = relative_git_dir
         else:
             os.fchdir(4)
             os.environ["GIT_DIR"] = "."
             os.environ["GIT_COMMON_DIR"] = "."
-        os.environ["GIT_WORK_TREE"] = os.path.join(fd_root, "3")
+            os.environ["GIT_WORK_TREE"] = os.path.join(fd_root, "3")
         os.environ["GIT_NO_LAZY_FETCH"] = "1"
         os.environ["GIT_NO_REPLACE_OBJECTS"] = "1"
         os.execvp("git", ["git", *args])
