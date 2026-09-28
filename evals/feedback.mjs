@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 const JOIN_FIELDS = ["fixtureVersion", "model", "actualModel", "sourceRevision", "usageCoverage"];
 const MINIMUM_SAMPLES = 10;
@@ -19,6 +20,21 @@ function resolveManifestPath(run) {
     : null;
 }
 
+function loadRetainedManifest(run, side) {
+  const manifestPath = resolveManifestPath(run);
+  if (!manifestPath) return { problems: [`${side}: retained manifest path missing`] };
+  try {
+    const retained = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    const callerSnapshot = JSON.parse(JSON.stringify(run));
+    if (!isDeepStrictEqual(retained, callerSnapshot) || resolveManifestPath(retained) !== manifestPath) {
+      return { problems: [`${side}: caller evidence differs from retained manifest`] };
+    }
+    return { manifestPath, run: retained, problems: [] };
+  } catch {
+    return { manifestPath, problems: [`${side}: retained comparison manifest missing or invalid`] };
+  }
+}
+
 function completeCost(run) {
   const phases = Array.isArray(run.phases) && run.phases.length ? run.phases.map((phase) => phase.cost) : null;
   const source = COST_COMPONENTS.every((field) => finiteNonNegative(run.metrics?.cost?.[field]))
@@ -31,9 +47,11 @@ function completeCost(run) {
     : null;
 }
 
-function recordedRunEvidence(run, side) {
-  if (!run || typeof run !== "object") return { problems: [`${side}: evidence missing`] };
-  const problems = [];
+function recordedRunEvidence(input, side) {
+  const loaded = loadRetainedManifest(input, side);
+  if (!loaded.run) return { normalized: null, problems: loaded.problems };
+  const run = loaded.run;
+  const problems = [...loaded.problems];
   if (run.ok !== true) problems.push(`${side}: recorded eval did not pass`);
   const coverage = run.metrics?.coverage;
   const models = coverage?.models;
@@ -41,7 +59,7 @@ function recordedRunEvidence(run, side) {
   if (run.actualModel !== undefined && (!Array.isArray(models) || models.length !== 1 || models[0] !== run.actualModel)) {
     problems.push(`${side}: observed model conflicts with coverage`);
   }
-  const manifestPath = resolveManifestPath(run);
+  const manifestPath = loaded.manifestPath;
   const evidenceRef = typeof run.evidenceRef === "string" ? path.resolve(run.evidenceRef) : manifestPath;
   const cost = completeCost(run);
   const normalized = {
@@ -63,7 +81,6 @@ function recordedRunEvidence(run, side) {
   for (const field of JOIN_FIELDS) {
     if (typeof normalized[field] !== "string" || !normalized[field].trim()) problems.push(`${side}: ${field} missing`);
   }
-  if (!manifestPath) problems.push(`${side}: retained manifest path missing`);
   if (normalized.evidenceRef !== manifestPath) problems.push(`${side}: evidence reference does not identify its recorded manifest`);
   if (normalized.usageCoverage !== "complete") problems.push(`${side}: usage coverage is not complete`);
   if (!positiveInteger(normalized.sampleCount)) problems.push(`${side}: sampleCount must be a positive integer`);
@@ -124,21 +141,23 @@ function retainedGradingEvidence(grading, audit, proposal) {
   });
 }
 
-export function decideFeedback({ audit, proposal, grading, approval }) {
+export function decideFeedback({ before, after, minimumSamples, proposal, grading, approval }) {
+  const audit = auditEvalPair(before, after, { minimumSamples });
   const problems = [];
-  if (!audit?.qualityClaimsAllowed || !audit.matched) problems.push("comparable evidence required");
+  if (!audit.qualityClaimsAllowed || !audit.matched) problems.push("comparable evidence required");
   if (!proposal || typeof proposal.rule !== "string" || !proposal.rule.trim() || typeof proposal.rationale !== "string" || !proposal.rationale.trim()) problems.push("rule and rationale required");
   if (!proposal || typeof proposal.targetScenario !== "string" || !proposal.targetScenario.trim() || typeof proposal.expectedBehavior !== "string" || !proposal.expectedBehavior.trim()) problems.push("target scenario and expected behavior required");
   if (grading && proposal && (grading.targetScenario !== proposal.targetScenario || grading.expectedBehavior !== proposal.expectedBehavior)) problems.push("grading target does not match proposal");
-  const gradingEvidence = retainedGradingEvidence(grading, audit ?? {}, proposal ?? {});
+  const gradingEvidence = retainedGradingEvidence(grading, audit, proposal ?? {});
   if (!grading || grading.status !== "passed" || gradingEvidence.length === 0) problems.push("targeted grading artifact must exist and match fixture, scenario, and expected behavior");
   if (!approval || !["approved", "rejected"].includes(approval.decision) || typeof approval.actor !== "string" || !approval.actor.trim() || !Number.isFinite(Date.parse(approval.at)) || typeof approval.reversal !== "string" || !approval.reversal.trim()) problems.push("human decision, timestamp, actor, and reversal path required");
-  if (problems.length) return { disposition: "held", problems, applied: false };
+  if (problems.length) return { disposition: "held", problems, applied: false, audit };
   return {
     disposition: approval.decision,
     applied: false,
     proposal: { rule: proposal.rule, rationale: proposal.rationale, targetScenario: proposal.targetScenario, expectedBehavior: proposal.expectedBehavior },
     grading: { status: grading.status, targetScenario: grading.targetScenario, expectedBehavior: grading.expectedBehavior, evidence: gradingEvidence },
     approval: { decision: approval.decision, actor: approval.actor, at: approval.at, reversal: approval.reversal },
+    audit,
   };
 }
