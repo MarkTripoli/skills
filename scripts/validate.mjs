@@ -17,7 +17,7 @@ const rootIndex = args.indexOf("--root");
 const root = rootIndex === -1 ? repoRoot : path.resolve(args[rootIndex + 1] ?? "");
 const generated = root !== repoRoot;
 
-const EXPECTED_SKILL_COUNT = 53;
+const EXPECTED_SKILL_COUNT = 54;
 const SHARED_LINKS = {
   "shared/WRITING.md": "https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md",
   "shared/CONVENTIONS.md": "https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md",
@@ -55,6 +55,8 @@ const ANSWER_INVENTORY = {
   "fix-code-review/references/code_review_fixes_answer.md": "review-code",
   "fix-bug/references/fix_answer.md": "review-code",
   "gather-sources/references/sources_final_answer.md": SOURCES_VARIANTS,
+  "group-review/references/group_review_decisions_answer.md": TERMINAL_ANSWER,
+  "group-review/references/group_review_posted_answer.md": TERMINAL_ANSWER,
   "herd-next/references/herd_next_answer.md": TERMINAL_ANSWER,
   "herd-next/references/herd_next_skipped_answer.md": TERMINAL_ANSWER,
   "implement-outline/references/implementation_final_answer.md": "verify-implementation",
