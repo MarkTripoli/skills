@@ -57,8 +57,9 @@ Reply with the table of requests found: number, title, source to target, size, p
    - `git grep -il -E '<ticket keys>|<epic key>|<feature name>' <ref> -- '*.md' '*.mdx' '*.rst' '*.txt'` finds documents that name the work.
    - Look up every document path that a ticket, epic, or request description cites (for example `feature-docs/02-tdd.md`) by its basename across these refs, because citations often point at another folder or repository.
    Read the matches that describe the feature or the modules the requests change, and skip unrelated specs and generated files. Record each document read, with the ref it came from, in `context.md`. A cited document that is in no ref goes on the unreachable list.
-6. Record every source read, with its connector, and every unreachable source in `context.md`.
-7. Do a first read of each request diff and note leads: files no ticket covers, permission or transaction changes, duplicated content, fields nothing writes, and code that contradicts a repository document.
+6. Collect the repository's review rules from the target branch: `.code-review/` when it exists (start with its `README.md` or index, which says how the rules apply and what is out of scope), plus the convention files those rules point to, such as `.cursor/rules/*.mdc`, `AGENTS.md`, `CLAUDE.md`, or an engineering guidelines document. Read the target branch's copy, because a request cannot relax the rules it is reviewed against; when a request changes a rule file, note that change as a lead. For each request, list the rule files whose topic its diff touches (migrations, queries, concurrency, background tasks, tests), so each worker reads only those.
+7. Record every source read, with its connector, and every unreachable source in `context.md`.
+8. Do a first read of each request diff and note leads: files no ticket covers, permission or transaction changes, duplicated content, fields nothing writes, and code that contradicts a repository document.
 
 Write `<workspace>/context.md` from [context_template.md](references/context_template.md). It is the only requirements input workers receive.
 

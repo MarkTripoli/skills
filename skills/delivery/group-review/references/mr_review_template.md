@@ -23,6 +23,7 @@ summary: "State the reviewed request, the highest-risk result, and what the auth
 - ticket and acceptance criteria:
 - product rules applied:
 - repository documents read (path and ref):
+- review rules applied (rule file: matched, exception holds, or not triggered):
 
 ## Change Profile
 

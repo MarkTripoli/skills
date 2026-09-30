@@ -25,4 +25,5 @@ Use it when the finding depends on context the author has and the reviewers lack
 - When the real location is outside the diff, anchor on the nearest added line that shows the problem and name the real `path:line` in the body.
 - Link related comments by request number (`the same applies in !3339`), never by id.
 - Keep test-gap comments to the criterion, the missing check, and the suggested test.
+- When a repository review rule backs the finding, link the rule file (`.code-review/query-count-tests.md`) so the author sees it is the repository's rule, not the reviewer's preference.
 - No praise, no severity labels, no text addressed to an agent.

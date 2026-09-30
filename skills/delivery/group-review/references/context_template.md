@@ -25,6 +25,18 @@ summary: "Name the request set, the requirement sources read and missed, and the
 - user HEAD:
 - worktree root:
 
+## Repository review rules
+
+Read from `<remote>/<target>`. Rules are heuristics unless the repository says they gate.
+
+- rule index: `.code-review/README.md` (how rules apply, what is out of scope), or None.
+- convention files the rules cite:
+
+| Request | Rule files that apply | Why (topic the diff touches) |
+|---|---|---|
+
+- rule files a request changes: None.
+
 ## Stack and pinned SHAs
 
 | Request | Ticket | Source branch (head) | Target branch | Base SHA |
