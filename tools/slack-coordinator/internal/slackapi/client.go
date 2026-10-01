@@ -266,13 +266,13 @@ func (c *Client) postManifest(ctx context.Context, method, configToken string, f
 		if body.Error == "" {
 			body.Error = "unknown_error"
 		}
-	}
-	details := make([]string, 0, len(body.Errors))
-	for _, e := range body.Errors {
-		details = append(details, e.Pointer+": "+e.Message)
-	}
-	if len(details) > 0 {
-		return ManifestResult{}, fmt.Errorf("%s: %s (%s)", method, body.Error, strings.Join(details, "; "))
+		details := make([]string, 0, len(body.Errors))
+		for _, e := range body.Errors {
+			details = append(details, e.Pointer+": "+e.Message)
+		}
+		if len(details) > 0 {
+			return ManifestResult{}, fmt.Errorf("%s: %s (%s)", method, body.Error, strings.Join(details, "; "))
+		}
 		return ManifestResult{}, fmt.Errorf("%s: %s", method, body.Error)
 	}
 	return ManifestResult{AppID: body.AppID, InstallURL: body.InstallURL}, nil
