@@ -1,6 +1,6 @@
 The system design needs human review before program design.
 
-Review artifact: {artifact_link}
+Saved for review: {artifact_link}
 
 Check:
 - {review_check}

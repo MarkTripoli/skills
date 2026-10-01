@@ -1,6 +1,6 @@
 The program design needs human review before implementation structuring.
 
-Review artifact: {artifact_link}
+Saved for review: {artifact_link}
 
 Check:
 - {review_check}

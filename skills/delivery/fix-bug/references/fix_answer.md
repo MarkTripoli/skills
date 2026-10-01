@@ -12,5 +12,5 @@ Next action:
 Open a new session in {run_location}, then run:
 
 ```text
-/review-code
+{next_command}
 ```

@@ -164,3 +164,22 @@ test('record handles PR descriptions without frontmatter', t => {
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.json.summary, 'Ship portable indexing.');
 });
+
+test('CLIs dispatch through executable symlinks and remain safe to import with a non-file argv', t => {
+  const { root, taskDir } = fixture(t, 'aliased-entrypoint');
+  const entrypoint = path.join(root, 'helper-alias.mjs');
+  fs.symlinkSync(helper, entrypoint);
+  const result = spawnSync(process.execPath, [entrypoint, 'init', taskDir], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).task, 'aliased-entrypoint');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(taskDir, 'index.json'), 'utf8')).generation, 0);
+
+  const publicationAlias = path.join(root, 'publication-alias.mjs');
+  fs.symlinkSync(fileURLToPath(new URL('../shared/publication-proof.mjs', import.meta.url)), publicationAlias);
+  const invalidPublication = spawnSync(process.execPath, [publicationAlias], { encoding: 'utf8' });
+  assert.equal(invalidPublication.status, 1, 'a missing-argument publication call must not silently succeed');
+
+  const imported = spawnSync(process.execPath, ['--input-type=module', '-e', `await import(${JSON.stringify(new URL('../shared/task-artifacts.mjs', import.meta.url).href)}); console.log('import-only');`, path.join(root, 'missing-entrypoint')], { encoding: 'utf8' });
+  assert.equal(imported.status, 0, imported.stderr);
+  assert.equal(imported.stdout, 'import-only\n');
+});

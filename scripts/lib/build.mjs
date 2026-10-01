@@ -17,6 +17,22 @@ export const RUNTIMES = ["claude-code", "codex", "oh-my-pi", "pi"];
 // Worker definition format per runtime; pi has no worker mechanism, so its tree carries none.
 export const WORKER_FORMAT = { "claude-code": "md", "oh-my-pi": "md", codex: "toml" };
 
+export const WORKER_MODEL_RUNTIMES = ["claude-code", "oh-my-pi", "codex"];
+export const PINNED_WORKERS = ["agent-implementer", "agent-outline-implementer"];
+const CLAUDE_ALIAS = /^(fable|opus|sonnet|haiku)(\[[^\]]*\])?$/;
+const CLAUDE_FAMILY = /^(fable|opus|sonnet|haiku)(?![a-z])/i;
+export function runtimeModel(runtime, id) {
+  if (runtime === "claude-code") {
+    const bare = id.replace(/^anthropic\//, "");
+    return /^claude-/.test(bare) || CLAUDE_ALIAS.test(bare) ? bare : null;
+  }
+  if (runtime === "codex") {
+    const bare = id.replace(/^(openai|openai-codex)\//, "");
+    return /claude/i.test(bare) || CLAUDE_FAMILY.test(bare) || bare.includes("/") ? null : bare;
+  }
+  return WORKER_MODEL_RUNTIMES.includes(runtime) ? id : null;
+}
+
 const manualIndexMutation = Object.freeze({
   schema: 'skills.task-index/v1', validate: 'full-existing-index-and-relative-nonsymlink-artifact-path',
   allocation: 'reserve-generation-and-next-contiguous-four-digit', staging: '.artifact-staging/<uuid>.md',
@@ -31,8 +47,8 @@ export const TASK_ARTIFACT_DISTRIBUTION = Object.freeze({
   plugin: Object.freeze({ mode: 'manual-index-mutation', contract: manualIndexMutation }),
   runtime: Object.freeze({ mode: 'adjacent-helper', required: false }),
   portable: Object.freeze({ mode: 'adjacent-helper', required: false }),
-  atomic: Object.freeze({ mode: 'adjacent-helper', required: true }),
 });
+export const ADJACENT_HELPERS = Object.freeze(["task-artifacts.mjs", "task-root.mjs", "publication-proof.mjs", "publication-proof-policy.mjs"]);
 
 export function parseAdapter(content, file) {
   const title = /^# (.+)$/m.exec(content)?.[1]?.trim();
@@ -87,11 +103,11 @@ const noDsStore = (src) => path.basename(src) !== ".DS_Store";
 export function copyTaskArtifactHelper(skillTarget) {
   const references = path.join(skillTarget, "references");
   fs.mkdirSync(references, { recursive: true });
-  for (const name of ["task-artifacts.mjs", "task-root.mjs"]) fs.copyFileSync(path.join(repoRoot, "shared", name), path.join(references, name));
+  for (const name of ADJACENT_HELPERS) fs.copyFileSync(path.join(repoRoot, "shared", name), path.join(references, name));
 }
 
 // Returns { skills: [names], workers }. `skillNames` narrows an installer build; omitted builds the collection.
-export function buildRuntime(runtime, dest, { skillNames } = {}) {
+export function buildRuntime(runtime, dest, { skillNames, workerModel = null } = {}) {
   if (!RUNTIMES.includes(runtime)) throw new Error(`unknown runtime "${runtime}"; choose one of ${RUNTIMES.join(", ")}`);
   const runtimeFile = path.join(repoRoot, "runtimes", `${runtime}.md`);
   if (!fs.existsSync(runtimeFile)) throw new Error(`missing runtime adapter ${path.relative(repoRoot, runtimeFile)}`);
@@ -104,6 +120,7 @@ export function buildRuntime(runtime, dest, { skillNames } = {}) {
   const unknown = requested ? [...requested].filter((name) => !available.has(name)) : [];
   if (unknown.length) throw new Error(`unknown skill${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}`);
   const selected = requested ? layout.skills.filter((skill) => requested.has(skill.name)) : layout.skills;
+  const selectedNames = new Set(selected.map((skill) => skill.name));
 
   fs.rmSync(dest, { recursive: true, force: true });
   fs.mkdirSync(path.join(dest, "skills"), { recursive: true });
@@ -121,6 +138,7 @@ export function buildRuntime(runtime, dest, { skillNames } = {}) {
     if (lines.length < 7 || lines[6] !== "") throw new Error(`${name}/SKILL.md: expected line 6 to be the shared sentence followed by a blank line`);
     const inserted = [...lines.slice(0, 6), "", `Runtime: ${adapter.title}.`, adapter.notes, ...lines.slice(6)];
     fs.writeFileSync(path.join(target, "SKILL.md"), inserted.join("\n"));
+    relinkSkillTree({ targetDir: target, sourceDir: source, destSkills: path.join(dest, "skills"), skills: layout.skills, selected: selectedNames });
 
     if (runtime === "codex") {
       fs.mkdirSync(path.join(target, "agents"), { recursive: true });
@@ -129,11 +147,14 @@ export function buildRuntime(runtime, dest, { skillNames } = {}) {
 
     if (!name.startsWith("agent-") || !WORKER_FORMAT[runtime]) continue;
     workers += 1;
-    const body = skill.body.trim();
+    const workerDir = path.join(dest, "agents");
+    const relinked = mapInstalledLinks(skill.body.trim(), { fromDir: source, toDir: WORKER_FORMAT[runtime] === "md" ? workerDir : null, destSkills: path.join(dest, "skills"), skills: layout.skills, selected: selectedNames });
+    const body = [`Runtime: ${adapter.title}.`, adapter.notes, "", relinked].join("\n");
+    const pin = workerModel && PINNED_WORKERS.includes(name) ? runtimeModel(runtime, workerModel) : null;
     if (WORKER_FORMAT[runtime] === "md") {
-      fs.writeFileSync(path.join(dest, "agents", `${name}.md`), ["---", `name: ${name}`, `description: ${skill.description}`, "---", "", body, ""].join("\n"));
+      fs.writeFileSync(path.join(dest, "agents", `${name}.md`), ["---", `name: ${name}`, ...(pin ? [`model: ${quote(pin)}`] : []), `description: ${skill.description}`, "---", "", body, ""].join("\n"));
     } else {
-      fs.writeFileSync(path.join(dest, "agents", `${name}.toml`), [`name = ${quote(name)}`, `description = ${quote(skill.description)}`, `developer_instructions = ${tomlMultiline(body)}`, ""].join("\n"));
+      fs.writeFileSync(path.join(dest, "agents", `${name}.toml`), [`name = ${quote(name)}`, `description = ${quote(skill.description)}`, ...(pin ? [`model = ${quote(pin)}`] : []), `developer_instructions = ${tomlMultiline(body)}`, ""].join("\n"));
       snippet.push(`[agents.${name}]`, `config_file = "./agents/${name}.toml"`, "");
     }
   }
@@ -141,4 +162,45 @@ export function buildRuntime(runtime, dest, { skillNames } = {}) {
   if (runtime === "codex") fs.writeFileSync(path.join(dest, "config.snippet.toml"), snippet.join("\n"));
 
   return { skills: selected.map((skill) => skill.name), workers };
+}
+
+// Plugin workers remain in the repository, so their links can reach canonical files.
+export function rewriteRelativeLinks(body, fromDir, toDir) {
+  return body.replace(/(\]\()([^)\s#]+)(#[^)\s]*)?(\))/g, (whole, open, target, anchor = "", close) => {
+    if (/^([a-z][a-z0-9+.-]*:|\/)/i.test(target)) return whole;
+    const resolved = path.resolve(fromDir, target);
+    if (!fs.existsSync(resolved)) return whole;
+    return `${open}${path.relative(toDir, resolved).split(path.sep).join("/")}${anchor}${close}`;
+  });
+}
+
+const PUBLISHED = "https://github.com/MarkTripoli/skills/blob/main";
+export function mapInstalledLinks(text, { fromDir, toDir, destSkills, skills, selected }) {
+  return text.replace(/(\]\()([^)\s#]+)(#[^)\s]*)?(\))/g, (whole, open, target, anchor = "", close) => {
+    if (/^([a-z][a-z0-9+.-]*:|\/)/i.test(target)) return whole;
+    const resolved = path.resolve(fromDir, target);
+    if (!fs.existsSync(resolved)) return whole;
+    const owner = skills.find((skill) => resolved === skill.dir || resolved.startsWith(skill.dir + path.sep));
+    if (owner && selected.has(owner.name) && toDir) {
+      const installed = path.join(destSkills, owner.name, path.relative(owner.dir, resolved));
+      return `${open}${path.relative(toDir, installed).split(path.sep).join("/")}${anchor}${close}`;
+    }
+    const relative = path.relative(repoRoot, resolved);
+    if (relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return whole;
+    return `${open}${PUBLISHED}/${relative.split(path.sep).join("/")}${anchor}${close}`;
+  });
+}
+
+export function relinkSkillTree({ targetDir, sourceDir, destSkills, skills, selected }) {
+  const visit = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) visit(file);
+      else if (entry.isFile() && entry.name.endsWith(".md")) {
+        const source = path.join(sourceDir, path.relative(targetDir, file));
+        fs.writeFileSync(file, mapInstalledLinks(fs.readFileSync(file, "utf8"), { fromDir: path.dirname(source), toDir: path.dirname(file), destSkills, skills, selected }));
+      }
+    }
+  };
+  visit(targetDir);
 }

@@ -5,6 +5,7 @@ platform:
 pull_request:
 base_sha:
 head_sha:
+revision:
 status: pending
 summary: "State what this review round resolved and what still prevents approval."
 ---
@@ -17,6 +18,7 @@ summary: "State what this review round resolved and what still prevents approval
 - base and head:
 - approval state:
 - required checks:
+- checked head and check-run IDs/statuses:
 
 ## Review Threads
 

@@ -18,8 +18,6 @@
 //   feedback-intent [text|@file|-]               revise | proceed | stop
 //   slug [request|@file|-]                       the chosen directory slug
 //   tier [text|@file|-]                          small | medium | large
-//   autonomy [text|@file|-]                      none | pr | plan | all (how much the request wants a human involved)
-//   compose [task-dir|text|@file|-]              run | skip per optional delivery phase, with the reason and the autonomy level
 //   grade-steps [--kind screen|command|diff] <steps.json>   one pass | fail | unclear per observed step
 //   rerank --query <text|@file|-> <candidates.json>   candidates ordered by how well they answer the query
 //   coverage <questions.json> <artifact.md>      answered | partial | missing per research question
@@ -47,7 +45,7 @@ const WORKFLOWS = {
   lean: "A feature with a known shape that needs a short structure outline and phased implementation, but no research or design discussion; or the request asks for an outline-first or lean approach.",
   full: "Work that needs research and a design discussion before planning: unclear requirements, several possible approaches, or a cross-cutting or architectural change.",
   prd: "Product work that needs a requirements document and a technical design first, or the request asks for a PRD or TDD.",
-  epic: "A large initiative to split into several independent child tasks, each delivered as its own pull request.",
+  epic: "A large initiative to split into several independent child tasks, each delivered as its own merge request.",
 };
 
 class Unavailable extends Error {}
@@ -345,7 +343,7 @@ const SPLITS = {
   none: "No split applies: the child is already one unit of work.",
 };
 
-// Sizing bars, set from a calibration run over eight children, four of them one pull request each and four
+// Sizing bars, set from a calibration run over eight children, four of them one merge request each and four
 // oversize: the structural tests separated at 0.65 against 0.52, so a pass needs 0.60 and a clear fail sits
 // under 0.40. The effort question answers lower for every child because the model cannot see the codebase
 // (0.54 to 0.67 for the small ones, 0.06 to 0.22 for the oversize ones), so it carries its own two bars.
@@ -360,12 +358,12 @@ async function sizeChildren(file) {
     const it = `the child task \`children[${i}]\` (named \`children[${i}].name\`, described in \`children[${i}].prompt\`)`;
     questions[`obligation_${i}`] = noul(`${it} asks one thing of the system: one actor, one behavior, and one measurable pass criterion, stated in \`children[${i}].acceptance\` when it has them. Naming the files to change, the tests to write, or the documentation to update is part of that one obligation. Two unrelated behaviors, or wording such as "and also", is more than one.`);
     questions[`vertical_${i}`] = noul(`${it} ends at behavior a user or a calling program can exercise once it merges, crossing whatever storage, service, contract, and client layers that behavior needs. A change that stops at one layer boundary and leaves nothing exercisable does not.`);
-    questions[`one_day_${i}`] = noul(`An engineer who knows this codebase implements ${it}, proves it with a test or an observation, and opens the pull request within one working day.`);
+    questions[`one_day_${i}`] = noul(`An engineer who knows this codebase implements ${it}, proves it with a test or an observation, and opens the merge request within one working day.`);
     questions[`merge_safe_${i}`] = noul(`Merging ${it} on its own leaves the product releasable: it finishes the behavior it changes, or its path stays additive, unreachable until later work, or behind a flag whose default keeps today's behavior. A child that half-changes a behavior another child must finish does not.`);
     if (Array.isArray(child.acceptance) && child.acceptance.length) {
       questions[`criteria_${i}`] = noul(`Every sentence in \`children[${i}].acceptance\` names observable state (a status code, stored record, emitted event, exit code, or rendered value) that a command, request, or observation decides, states one behavior, and avoids unmeasurable words such as fast, secure, user-friendly, or works correctly.`);
     }
-    questions[`split_${i}`] = choice(`Assuming ${it} is too large for one pull request and must be split, which split applies`, SPLITS);
+    questions[`split_${i}`] = choice(`Assuming ${it} is too large for one merge request and must be split, which split applies`, SPLITS);
   });
   const answers = await systemOne({ children }, questions);
   const rows = children.map((child, i) => {
@@ -477,108 +475,6 @@ async function tier(text) {
   const a = answers.complexity;
   const level = a.confidence >= 0.5 ? Number(argmax(a.probabilities)) : 2;
   return { text: TIERS[level], json: { tier: TIERS[level], score: a.score, confidence: a.confidence, probabilities: a.probabilities } };
-}
-
-// How much human involvement a request asks for; `compose` reuses the same criteria for its own
-// autonomy question so the two commands answer it identically.
-const INVOLVEMENT = {
-  none: "Do it without checking in: just do it, hands-off, fully automatic, no review needed, do not wait for me",
-  pr: "Only show the finished result: review the pull request, tell me when it is done, check with me at the end",
-  plan: "Review the plan or design before the build starts, but not every step after that",
-  all: "Stay involved along the way: approve each step, keep me in the loop, check with me as you go",
-  unspecified: "Says nothing about how much to check in",
-};
-
-// How much human involvement the request asks for, from none (hands-off) to all (every gate). Unattended
-// is the risky direction, so `none` needs the decisive bar and `pr`/`plan` the confident one; anything
-// less, or nothing said, is `all`, the default for a gated delivery.
-async function autonomy(text) {
-  const request = textArg(text);
-  const answers = await systemOne({ request }, { involvement: choice("How much does the `request` want a person involved while the work is done", INVOLVEMENT) });
-  const a = answers.involvement;
-  const level = a.choice === "none" ? (a.confidence >= T.decisive ? "none" : "all") : a.choice === "pr" || a.choice === "plan" ? (a.confidence >= T.confident ? a.choice : "all") : "all";
-  return { text: level, json: { autonomy: level, suggested: a.choice, confidence: a.confidence, probabilities: a.probabilities } };
-}
-
-// One noul per optional phase, phrased "necessary", so a skip needs a confidently low probability: the
-// floor is the canonical full chain and the judgment may only remove a phase. Each noul is paired with a
-// choice that supplies the artifact's one-line reason, the shape `sizeChildren` already uses; the reason
-// for a phase that runs is computed and discarded, which is what buys the single round trip.
-// Each instruction is a necessity test, not a description of the phase: it names the condition that makes
-// the phase necessary and the evidence in the `task` and `artifacts` that shows it, so a request that
-// already carries that evidence scores low instead of landing mid-band. 1.4 measures the wording.
-const PHASES = {
-  // Measured against tests/fixtures/compose-samples.json by evals/compose-probe.mjs (1.4). Plain
-  // location (which file holds an already-quoted string, an already-named flag) is excluded so a
-  // model does not read every code-touching task as research; only content or logic the `task`
-  // withholds counts.
-  research: "This phase means reading unfamiliar code to learn how something already works, because that understanding would change what the correct edit is. It does not mean locating which file contains an already-quoted string or an already-named flag: that is a location search, not research, and does not change what the edit says.",
-  // Formatting a value inside one already-identified spot is excluded so a one-line edit does not
-  // read as a design decision merely because it touches code.
-  design: "Before implementation starts, someone must choose among more than one reasonable way to build this, or must reconcile the change with more than one module or a shared interface other code depends on. Deciding how to word or format a value inside one already-identified spot is not this.",
-  prd: "Who this is for, what they must be able to do, or how it should behave in cases the `task` leaves open is still undecided: the `task` states a goal or an outcome rather than a change.",
-  tdd: "A contract must be fixed before anyone can plan: the change adds or reshapes types, an interface, a stored shape, an error path, or configuration that other code or another team calls.",
-  plan: "Implementation needs an ordered written plan first: the change spans several files or steps that must land in a set order and be verified separately.",
-  outline: "A structure outline fits better than a plan: the approach is already settled and what is missing is only which files to add or change, in what order.",
-  review_each_phase: "The implementation needs reviewing after every phase rather than once at the end: it touches a trust boundary, data that can be lost, or code many callers depend on.",
-  app_test: "The change must be driven through the running application by hand to be believed: it alters what a person sees or does, and no automated check covers that.",
-};
-// Explicit true/false anchors for the two phases the acceptance criterion measures (research, design);
-// without them the model's answer clustered mid-band on the samples that should skip (1.4's tuning
-// loop). The other six phases are unmeasured by any live sample and keep a bare instruction.
-const PHASE_CRITERIA = {
-  research: {
-    true: "The correct edit depends on understanding current logic, data flow, or a contract the task leaves unexplained, not just on finding where it lives.",
-    false: "The task already states the exact before/after text or the exact desired behavior; only its location, not its content or logic, is unstated.",
-  },
-  design: {
-    true: "Several different approaches could reasonably be taken and the task leaves the choice open, or the change touches more than one module or a shared interface other code depends on.",
-    false: "The task is a single, obvious edit confined to one narrow spot, with only one sensible way to make it and no shared interface changed.",
-  },
-};
-const REASONS = {
-  stated: "The `task` already states what this phase would establish",
-  covered: "An artifact already in `artifacts` establishes it",
-  small: "The change is too small and too bounded for this phase to change the outcome",
-  open: "What this phase establishes is still open",
-};
-
-// `task.md` plus one `{file, type, summary}` per artifact already in the directory, so the same command
-// answers differently at each boundary. A path that is not a directory, `@file`, `-`, or plain text is
-// read as the task text with no artifacts. `execution-plan` artifacts are excluded (ADV-002): each one
-// is this same boundary judgment's own prior verdict, not evidence, and a re-judgment that reads its
-// own earlier answer back as an artifact summary could anchor on it instead of judging afresh.
-export function composeState(argument) {
-  const dir = argument && !argument.startsWith("@") && argument !== "-" && fs.existsSync(argument) && fs.statSync(argument).isDirectory() ? argument : null;
-  if (!dir) return { task: textArg(argument ?? "-"), artifacts: [] };
-  const task = fs.existsSync(path.join(dir, "task.md")) ? fs.readFileSync(path.join(dir, "task.md"), "utf8") : "";
-  const artifacts = fs.readdirSync(dir).filter((name) => /^\d{2}-.*\.md$/.test(name)).sort().map((file) => {
-    const front = /^---\n([\s\S]*?)\n---/.exec(fs.readFileSync(path.join(dir, file), "utf8"))?.[1] ?? "";
-    return { file, type: /^type: *(.+)$/m.exec(front)?.[1]?.trim() ?? "", summary: /^summary: *"?([\s\S]*?)"?$/m.exec(front)?.[1]?.trim() ?? "" };
-  }).filter((entry) => entry.type !== "execution-plan");
-  return { task, artifacts };
-}
-
-async function compose(argument) {
-  const state = composeState(argument);
-  const questions = {};
-  for (const [phase, instructions] of Object.entries(PHASES)) {
-    questions[phase] = noul(instructions, PHASE_CRITERIA[phase]);
-    questions[`why_${phase}`] = choice(`Why is the \`${phase}\` phase unnecessary or necessary for this task`, REASONS);
-  }
-  questions.autonomy = choice("How much does the `task` want a person involved while the work is done", INVOLVEMENT);
-  const answers = await systemOne(state, questions);
-  const phases = Object.keys(PHASES).map((phase) => {
-    const p = answers[phase].noul;
-    const why = answers[`why_${phase}`];
-    return { phase, verdict: p <= T.no ? "skip" : "run", probability: Number(p.toFixed(2)), bar: T.no, reason: REASONS[why.choice], reason_confidence: why.confidence };
-  });
-  const a = answers.autonomy;
-  const level = a.choice === "none" ? (a.confidence >= T.decisive ? "none" : "all") : a.choice === "pr" || a.choice === "plan" ? (a.confidence >= T.confident ? a.choice : "all") : "all";
-  return {
-    text: [...phases.map((row) => `${row.phase}\t${row.verdict}\t${row.probability}`), `autonomy\t${level}\t${a.confidence}`].join("\n"),
-    json: { phases, autonomy: level, autonomy_suggested: a.choice, autonomy_confidence: a.confidence, artifacts: state.artifacts.map((entry) => entry.file) },
-  };
 }
 
 // `--kind screen` (default) grades what a screen showed after a step; `--kind command` grades what a
@@ -713,8 +609,6 @@ async function main(argv) {
     case "feedback-intent": result = await feedbackIntent(rest[0] ?? "-"); break;
     case "slug": result = await slug(rest[0] ?? "-"); break;
     case "tier": result = await tier(rest[0] ?? "-"); break;
-    case "autonomy": result = await autonomy(rest[0] ?? "-"); break;
-    case "compose": result = await compose(rest[0] ?? "-"); break;
     case "grade-steps": { const kind = flag(rest, "--kind") ?? "screen"; need(1, "<steps.json>"); result = await gradeSteps(rest[0], kind); break; }
     case "rerank": result = await rerank(rest); break;
     case "coverage": need(2, "<questions.json> <artifact.md>"); result = await coverage(rest[0], rest[1]); break;

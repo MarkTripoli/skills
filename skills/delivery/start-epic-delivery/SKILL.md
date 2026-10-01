@@ -7,11 +7,11 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 # Epic Delivery Start
 
-You turn an approved epic plan into one task directory per child and tell the user which children can start now. Running this skill records approval of the epic plan.
+Approved epic plan → one task directory per child; tell user which children start now. Running skill = records epic plan approval.
 
 ## Steps
 
-1. **Locate the task directory and read `task.md`** per the conventions. The epic's slug is the parent slug for every child.
+1. **Locate the task directory and read `task.md`** per conventions. Epic slug = parent slug for all children.
 
 2. **Read the epic branch**: `git rev-parse --abbrev-ref HEAD`. Stop when it prints `HEAD`, `main`, or `master`: the epic must use its own branch because children base their code worktrees on it. Tell the user to create the epic branch with `git switch -c epic-<epic slug>` before rerunning this skill. Record the current name as `<epic branch>`. Child task files stay local and must be copied into each child worktree at handoff.
 
@@ -23,7 +23,7 @@ You turn an approved epic plan into one task directory per child and tell the us
 
 6. **Create child task directories**. For each child, write `<task-root>/<child slug>/task.md` with the existing frontmatter/body contract, and initialize a valid empty `index.json` beside it. Child tasks are indexed from creation; never copy the epic's artifact history into them.
 
-7. **Compute waves**. Wave 1 is every child with no dependencies. Wave N+1 is every child whose dependencies are all in waves 1 to N. Every child lands in exactly one wave; a child whose dependencies never resolve is a violation from step 4.
+7. **Compute waves**. Wave 1 = no dependencies. Wave N+1 = all dependencies in waves 1..N. Each child exactly one wave; never-resolving dependencies = step 4 violation.
 
 8. **Open one GitHub issue per child**. Run this step only when authenticated to the GitHub origin (`gh auth status`); otherwise record the existing Known limits line. Process waves in order so dependency issue numbers are known. For each child, create the issue with `gh issue create`, including its title, prompt, acceptance criteria, dependency issue numbers (or `none`), epic reference, and `Task directory: <task-root>/<child slug>`. Add the returned issue number to that child's `task.md`; continue after an individual issue failure and report each failure in Known limits.
 

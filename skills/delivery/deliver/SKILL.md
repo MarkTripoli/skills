@@ -1,112 +1,74 @@
 ---
 name: deliver
-description: Run for /deliver requests, for `/deliver --run <run-id>`, or when a request needs a delivery chain. Offer optional First Sergent liaison or keep the existing Atomic/manual route.
+description: Run for /deliver requests, or /deliver <task-dir> to resume. One orchestrator session plans, delegates each unit of work to a builder, has a fresh reviewer on the strongest model check it, and stops on a named condition.
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
 
 # Deliver
 
-Choose a delivery chain and review policy. Atomic is optional; every phase also works independently in Claude Code, Codex, Oh My Pi, Pi, or a portable installation. This entry skill opens or routes the task, rather than implementing it.
+Orchestrate decisions, delegation, verification and records; builders and reviewers execute. Report decisions and results. Phase skills also work standalone.
 
-## 1. Take the request or reconnect
+## Inputs
 
-For `--run <run-id>`, use Atomic's native `/workflow status <run-id>` and `/workflow connect <run-id>` in Atomic. Read the reported state and artifact paths plus the saved `<task_dir>/.atomic-delivery/<run-id>/inputs.json` when available. A recorded `liaison: first-sergent` identifies an opted-in Atomic run; a missing marker means legacy delivery. A connection inspects the existing run; it does not approve a gate or resume paused work. Outside Atomic, give those native commands as inline text for the user to enter there. Never fabricate a run id or start a replacement run. Use `references/deliver_atomic_answer.md` for an active run and `references/deliver_ended_answer.md` for a terminal result.
+Take the request verbatim without the leading `/deliver`; empty means ask for it. An existing task directory resumes: read `task.md` (`## Status`, `## Decisions`), the plan's `## Progress`, and `node <skills-dir>/deliver/contract.mjs status <task-dir>`, rerun the `## Status` unblock check, and continue at the first incomplete step. A path missing from this checkout resolves through `git worktree list`; never open a duplicate task.
 
-Otherwise take the request verbatim, stripping a leading `/deliver`. Ask for the request when it is empty. If the argument names an existing task directory, read its `task.md` before routing: use its original body, saved workflow, gates, and liaison choice; keep the task directory, branch, and artifacts. Do not classify a path-shaped task directory as request text or open a duplicate task. Its `liaison: first-sergent` marker rehydrates the choice; an explicit opt-out wins. For a new task, its first line is the title. Honor an explicit manual/no-workflow request even when Atomic is installed.
+`gates` is `plan` (default: the human approves the plan, and any design discussion, PRD or TDD the workflow produces) or `none` (unattended). Old `all` and `mr` read as `plan`. `none` needs an explicit request that says not to ask; it covers implementation choices, commits, pushes, PR creation, pipeline repairs and review replies inside the task, never merging, deployment or Jira changes. An explicit workflow or gate in the request wins.
 
-## 2. Route the request
+## Setup
 
-For a new request, where available pass only the request on stdin to these helpers, installed beside this skill (`skills/delivery` in a checkout). An existing task keeps its saved workflow and gates; skip fresh classification unless the user explicitly requests `resolve-reviews` or `epic-wave`.
+Read [task setup](references/task_setup.md) and open the task: worktree, `task.md` with `## Delivery brief`, `## Status` and `## Decisions`, Jira refinement, one Slack run, workflow choice. Task files are local and ignored; never stage them. Read [tool approvals](references/tool_approval.md) only when unattended work is requested or a permission prompt appears.
 
-- `node <skills dir>/typed-judgment/judge.mjs route-workflow --json -` returns `{workflow, suggested, confidence, probabilities}`. Below 0.8 confidence, `workflow` is already `full`.
-- `node <skills dir>/typed-judgment/judge.mjs autonomy --json -` returns `{autonomy, suggested, confidence}`. Map `autonomy` directly to the `gates` value `all`, `none`, `plan`, or `pr`; do not expand it into a comma-separated list.
+Decide from repository evidence; ask only for unreachable information or access. Record material assumptions.
 
-An explicitly named workflow or gate policy wins. The helper does not return `program`: choose it when the request names it, or when a `prd` request contains `prd` or `requirements` and also `epic`, `children`, `issues`, or `pull requests`.
+## Plan
 
-| Workflow | Use when | First manual action |
-|---|---|---|
-| `oneshot` | Small change, stated expected behavior, verification available. | Implement, verify, and commit the requested change; then `/review-code`, `/record-evidence`, `/describe-pr`. |
-| `bugfix` | Observed behavior differs from expected and needs a reproduction. | `/reproduce-bug` |
-| `lean` | Shape is clear, with several files and an ordering. | `/create-research-questions` |
-| `full` | Competing approaches, cross-module impact, migration, or interface design. | `/create-research-questions` |
-| `prd` | Product requirements, users, or edge behavior need definition. | `/create-research` |
-| `epic` | Several independently mergeable deliverables. | `/create-research-questions` |
-| `program` | Product definition followed by epic children. | `/create-research` |
-| `resolve-reviews` | An existing pull request needs review threads resolved. | `/resolve-pr-reviews` |
-| `epic-wave` | An existing epic has ready children to continue. | Read its epic-delivery receipt and open each ready child's first skill. |
+Delegate read-only research to child workers (`agent-codebase-locator`, `-analyzer`, `-pattern-finder`, `-web-search-researcher`), then plan at the workflow's depth (task setup table; phases sized by `shared/SLICING.md`). Every plan artifact, including a oneshot plan written on request, gets a fresh read-only plan reviewer who checks it against the request; run the review check on its record. Under `gates=plan`, stop `needs-human` with the plan for approval; on resume, continue only when `## Decisions` holds the owner's dated approval line. Size again after research; an oversized PR becomes an epic.
 
-If the helper is absent or exits nonzero, choose from this table and use `gates: all` unless the request explicitly chooses another policy. Say once that judgments were skipped. Do not require Node, a key, or a sibling skill to route manually.
+## Build
 
-When confidence is below 0.8, the top two probabilities differ by less than 0.2, or two chains fit equally, ask one question naming those choices and the proposed gates. Otherwise continue without asking. Route on the request, not repository exploration.
-## 3. Offer the First Sergent
+For each plan phase:
 
-For a new non-`oneshot` delivery, ask once before opening the task or launching a workflow: **Use First Sergent for this delivery?** Choices: **Yes, one chat liaison** (a separate orchestrator runs the chain and reports only decisions/results) or **No, existing delivery** (the current Atomic or manual handoff). Recommend yes for long chains and no for a short bugfix; explicit user choice wins. A `oneshot` defaults to no without a prompt, but an explicit First Sergent request opts in. A continuing task with `liaison: first-sergent` keeps its selection without asking again.
+1. A builder (`agent-implementer`, or `implement-plan` standalone) implements it, runs targeted checks and commits with explicit paths.
+2. A slice reviewer (`agent-implementation-reviewer`) starts fresh and read-only. Its assignment is `task.md`, the plan phase, the acceptance criteria and `<phase-base>..HEAD`. Never give it the builder's transcript or your summary of it.
+3. The reviewer writes a review record from `agent-implementation-reviewer/references/review_record_template.md`. Run `node <skills-dir>/deliver/contract.mjs review <task-dir> <record>`. A failing check means the review does not count: rerun the reviewer, never edit its record.
+4. `approve`: record a new immutable plan iteration with the phase checked and append a dated `## Progress` line (phase, commit, verdict). Reapprove the exact successor at plan checkpoint, read-only. `changes`: return the findings to the builder, who answers each `fixed` or `disputed: <evidence>` in a new commit; the next round judges only earlier findings, those answers and `git diff <previous reviewed_commit>..HEAD`.
 
-With **no**, use section 4 or 5 unchanged. Do not add quota or context controls to the legacy `/deliver` path. With **yes**, the current chat is a liaison, not a phase runner: relay the original request, selected workflow and gates, existing task directory, and later user feedback to one orchestrator. Keep the original task request and worktree; never create a second task. Summarize only observed progress, evidence, decisions, and blockers. Do not dispatch phases, compact their sessions, or treat a chat reply as a gate approval.
+Blocking means an unmet acceptance criterion, wrong behavior, security, data loss or a broken check. Everything else is `follow-up`. Stop `no-progress` when the check reports `progress: false`, and `needs-human` when it reports `limit_reached` (3 rounds). The next reviewer judges a `disputed` answer first; only a dispute it keeps blocking stops `needs-human`, where the owner may record `accepted-limit` in `## Decisions`.
 
-- **Atomic selected:** check `/workflow inputs delivery`, pass `liaison=first-sergent`, and forward the user's explicit `transport`, `quota_mode`, `quota_*`, and `context_policy` values without changing `off` opt-outs. The native `delivery` controller routes stage models, starts fresh sessions, owns lifecycle, and records durable artifacts. Its native awaiting-input gate does not wake the liaison; for gated work prefer the manual backend, or inspect and answer the exact pending prompt through `/deliver --run <run-id>`.
-- **Manual selected:** before spawning, route `phase: "agent-first-sergent"` through the installed `route-model/route-model.mjs`. This unknown/tool-oriented role stays on economy. Pass the exact selected model only when the host supports native model selection; otherwise report `Recommendation only: <model>; not enforced by this transport.` Delegate the installed `agent-first-sergent` worker with the original request or existing task directory, workflow, gates, skills directory, transport, quota mode, context policy, and exact model profile. Its default `quota_mode=off` and `context_policy=off` preserve ordinary behavior; an explicit user policy is forwarded unchanged. It owns task/worktree reuse, the complete phase chain, fresh child sessions, model selection, feedback, and cleanup.
+After a failed evidence inspection, reserve one attempt with `contract.mjs repair-begin <task-dir> <attempt-id>`, pass that id to the builder (which must not reserve again), and call `repair-complete` after.
 
-Quota mode is opt-in. Native OMP mode filters the exact candidate list before JEV from `omp usage --json`; provider filtering does not select an account, and account binding plus report freshness must be proven. The snapshot is not a concurrency reservation. External `agent-router` has no safe production caller in this repository: the upstream CLI's real `router run TASK --json --usage --no-enrich` output does not prove the exact phase prompt, task worktree, and caller account binding, so the explicitly selected Herdr path reports externally blocked rather than launching or using dry-run.
+## Final
 
-`context_policy=stop-at-60` accepts only live `contextUsage={tokens,contextWindow,percent}` plus an actual child session identity from the managed transport. At or above 60%, checkpoint and start a different fresh session; without the metric or identity, stop at the boundary. Atomic's documented `ctx.task` API has no live child monitor, so Atomic blocks before stage dispatch. Never use compaction as a phase handoff or claim enforcement for a transport that does not expose live child context.
+On HEAD, run the repository checks and prove the acceptance criteria with `verify-implementation` and `review-code` as two fresh reviewers in parallel, on the strongest model (checkpoint `final`; their `code-review` and `verification` records pass the same `review` check, and findings go to a builder through `fix-code-review`). Record evidence per [the evidence commands](../record-evidence/references/delivery_contract.md): the policy and, for existing behavior, a baseline from a temporary worktree at the base commit, then `record-evidence` and inspection with `iterate-evidence`. UI work records only requested policy-scoped devices; a surface that cannot run is `untested` with a reason.
 
-## 4. Optional Atomic launch
+## Publish
 
-Use this branch only when Atomic and the collection's registered `delivery` workflow are available and orchestration is wanted. Check `/workflow list` and `/workflow inputs delivery` in Atomic first. A binary alone does not establish that the workflow is installed. Installation is opt-in with `--atomic`; normal skill installation has no workflow dependency.
+Publication needs `contract.mjs status` to list nothing missing except `Hosted PR description`, report no problems and no `stop`. Run `describe-pr`; it creates or updates the GitHub PR. Preserve strict current-head hosted capture bytes, recorded passing tests/cues, same-PR evidence comment and full-body readback, plus configured publication hooks. Contract status never bypasses that gate. Never merge.
 
+## Follow-up
 
-Start through Atomic's native command surface:
+Watch the current-head pipeline and review threads. Repair failures and actionable comments with the same builder and reviewer pairs, and `resolve-pr-reviews` for threads; refresh evidence when the UI changed. Stop when required checks are green and no actionable thread remains; report approval separately.
 
-```text
-/workflow delivery request="<request>" workflow=<workflow> gates=<gates>
-```
+## Stop conditions
 
-Encode string inputs as JSON strings, preserving quotes, newlines, and backslashes. This is a command entered in Atomic, not a shell subcommand. From another coding runtime, present it inline for the user to enter in Atomic; report that launch is pending, not running. Do not type it into an unrelated agent prompt. When a native workflow tool is available, inspect its installed input contract and launch semantics before using it; do not invent shell equivalents.
+Stop on exactly one, write it to `## Status`, and reply with [the answer template](references/deliver_answer.md):
 
-The registered inputs are:
+- `done`: acceptance criteria met, checks green, PR published and followed up.
+- `needs-human: <question>`: a gate, a disputed finding, or a requirement only the human can settle.
+- `blocked: <prerequisite>; unblock check: <command>`: clear environmental blockers within the task's authority first. `/deliver <task-dir>` reruns the check and continues.
+- `no-progress: <evidence>`: the review check reports it, or the same failure repeats after a fix.
 
-| Input | Type and default |
-|---|---|
-| `request` | Required string. |
-| `task_dir` | Optional existing task-directory string. |
-| `skills_dir` | Optional skill root; defaults to portable `~/.agents/skills`. Project installs use the project's `.agents/skills`; pass that absolute path. |
-| `workflow` | `auto` by default; also `oneshot`, `lean`, `full`, `prd`, `bugfix`, `epic`, `program`, `resolve-reviews`, `epic-wave`. |
-| `gates` | `all` by default; also `none`, `plan`, `pr`. |
-| `liaison` | `none` by default; `first-sergent` records opt-in for run reconnect without changing any phase or gate. |
-| `model` | `openai-codex/gpt-5.6-luna-fast` by default; ordinary economical baseline and mandatory for every code-writing or unknown phase. Explicit values are honored. |
-| `model_routing` | `auto` by default; `auto` asks JEV whether the ordinary model or `reasoning_model` is adequate for eligible non-writing stages, while `fixed` selects `model` directly with no JEV call. |
-| `reasoning_model` | `openai-codex/gpt-5.6-sol` by default; compatibility escalation candidate for eligible stages. |
-| `available_models` | Optional legacy exact model identifiers supplied by the caller. Omission preserves the two configured candidates. |
-| `model_candidates` | Optional exact `{model,cost,description}` objects consumed by the portable `route-model` helper. |
-| `app_test` | `none` by default; also `web`, `ios`, `android`. |
-| `app_target` | Optional URL, bundle id, package, or application path string. |
-| `verify` | Boolean, default `true`. |
-| `max_steps` | Number, default `40`. |
-| `branch` | Optional task branch string. |
-| `base` | Optional merge-target branch string. |
+No file holds a terminal flag. The owner extends an exhausted evidence-repair allowance with `repair-extension +N: <reason>` in `## Decisions`.
 
-Pass an existing task directory rather than opening a duplicate task. Resolve it, read `<task_dir>/task.md`, and preserve its `slug`, request body, `workflow`, and `base` metadata; do not classify the directory path as request text or overwrite `task.md`. Reuse its branch and merge target. `resolve-reviews` and `epic-wave` continue the saved task without changing those fields. Supply application inputs only when requested. Headless execution requires `gates=none`; approvals require an interactive Atomic session. An explicit workflow does not disable stage-model JEV; use `model_routing=fixed` when the run must be JEV-free.
+## Model roles
 
-Atomic owns run state and approvals. Inspect with `/workflow status <run-id>`; open the graph and answer pending prompts with `/workflow connect <run-id>`. Use `/workflow pause <run-id>` to pause, `/workflow quit <run-id>` to stop gracefully while preserving resumability, and `/workflow resume <run-id>` to continue saved work. Quit is not deletion or abandonment. Never interpret an ordinary chat reply or a phase's manual command fence as an Atomic approval. Never add a polling steward, shell response command, or automated Herdr gate pane.
+Read an existing model profile with route-model; never create one implicitly. Use its strongest candidate for orchestration and reviews and economy for builders, unless the owner names another model. Start builders per [model enforcement](references/model_enforcement.md). Record observed reviewer models or unobserved: <requested>; never claim an unobserved model. With no profile, say no model was enforced; independence rests on fresh context.
 
-Reply with `references/deliver_atomic_answer.md`, filling only observed run information. When no run was launched, state the prerequisite or pending native command instead of a run id. Every new skill stage gets a fresh context; resuming an interrupted active stage may restore that stage's own session. Completed phases pass artifacts, not conversation.
+## Fallbacks
 
-## 5. Manual fallback
-
-Use this branch when Atomic is absent, its `delivery` workflow is unavailable, or the user chooses manual operation. All gates are human reviews between independent skill sessions; `gates=none` does not make a manual chain advance automatically.
-
-For a new task, derive its slug from the title: lowercase, replace punctuation with spaces, drop `a an the to of for in on and or with that this add make create please fix bug`, and join the first four remaining words with `-`. Fall back to the first four original words, then `task`. Use `-2`, `-3`, and so on for collisions. Branches for `epic` and `program` use `epic-<slug>`.
-
-Resolve `<task-root>` from repository-root `AGENTS.md`/`CLAUDE.md` per the conventions, then open the task worktree before writing `<task-root>/<slug>/task.md`. Respect worktree exceptions and an explicit existing task directory. Set `slug`, `title`, `workflow`, `gates`, `routed_by: deliver`, `created`, and `route_confidence`; preserve the request as the body. Initialize a valid empty `index.json` beside `task.md`. Keep both files local and ignored; do not stage them. An existing task reuses the same worktree and local artifacts across sessions.
-
-An existing task reuses its directory, branch, and artifacts. For `epic-wave`, read the epic-delivery receipt and dependency merge state; follow `start-epic-delivery`'s manual child handoffs without recreating child directories. Optional automated child launching belongs to the Atomic workflow, not this skill.
-
-Before the first manual handoff, route the first phase with the portable helper, for example `printf '%s\n' '{"skillsDir":"<skills-dir>","phase":"<next-skill>","cwd":"<project>"}' | node <skills-dir>/route-model/route-model.mjs --candidates <json-file> --economy <model>`. It uses explicit candidates when supplied, then `SKILLS_MODEL_CANDIDATES_FILE`, then `<project>/.agents/model-candidates.json`. The profile shape is `{economy,candidates,routing?}` and candidates are ordered weakest to strongest. Report `Recommendation only: <model>` because manual copy-paste cannot enforce a model. If no valid profile exists, direct Claude Code, Oh My Pi, Pi, or portable users to `/configure-model-routing`; direct Codex users to `$configure-model-routing`. Then state that no model was enforced.
-
-Reply with `references/deliver_hand_answer.md`. Fill the chain from [workflows/delivery.md](https://github.com/MarkTripoli/skills/blob/main/workflows/delivery.md), including mandatory `/record-evidence` **after** review and **before** `/describe-pr` for every PR-producing route (oneshot, bugfix, epic child, Atomic and manual). UI needs live video; each other required surface needs its original CLI terminal, API/performance probe, or agent transcript. Host one original capture per required surface from scratch outside the task root, with tested SHA, substantive passing results and timestamp/output-line cues in the full PR body; separate same-PR comment repeats all capture types/URLs and revision fields. Failed or required-untested behavior never counts as passed. Review feedback changing behavior recaptures and updates both. Fill the task location from observed state and the actual next phase.
+Without subagents, build inline and print a fresh-session handoff for each review: the worktree, the reviewer role, its assignment and `/deliver <task-dir>` to resume. Only the orchestrator sends Slack `run event` and `run check`. Without `node`, say review and evidence checks did not run; only a claim of sealed evidence is then blocked.
 
 ## References
 
-Read from this skill directory: `references/deliver_atomic_answer.md`, `references/deliver_ended_answer.md`, `references/deliver_hand_answer.md`.
+Read from the skill directory: `references/task_setup.md`, `references/tool_approval.md`, `references/model_enforcement.md`, `references/deliver_answer.md`.

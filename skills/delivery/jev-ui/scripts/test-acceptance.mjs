@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 const isolated=()=>fs.mkdtempSync(path.join(os.tmpdir(),'jev-acceptance-offline-'));
-import {parseArgs,evidenceStartArgs,preserveTerminalStatus,runAcceptance,AUTHORIZED,independentPostconditions,assertionEvents,validateGreenEvidence} from './acceptance.mjs';
+import {parseArgs,evidenceStartArgs,preserveTerminalStatus,runAcceptance,createRecorder,AUTHORIZED,independentPostconditions,assertionEvents,validateGreenEvidence} from './acceptance.mjs';
 
 test('requires explicit authorized native target',()=>{
   assert.throws(()=>parseArgs(['--surface','android']),/authorized android/);
@@ -19,6 +19,39 @@ test('recording errors cannot turn a non-green receipt green',()=>{
   assert.equal(preserveTerminalStatus({status:'passed'},{error:'recorder lost'}).status,'blocked');
   assert.equal(preserveTerminalStatus({status:'failed'},{error:'recorder lost'}).status,'failed');
   assert.throws(()=>preserveTerminalStatus({status:'green'}),/terminal status/);
+});
+test('browser acceptance sends approximate pre-command record boundary to recorder marker',async()=>{
+  const order=[]; let marker;
+  const live={recordStart:async()=>{order.push('record-start');},recordStop:async()=>{},close:async()=>{}};
+  const recorder={start:async()=>({session:'/tmp/session'}),annotate:async()=>{},stop:async(_session,_exit,_video,options)=>{marker=options?.videoStartedAt;assert.match(options.browserRecordBoundary.meaning,/approximate.*not first encoded frame/);return {verified:false}}};
+  const result=await runAcceptance({config:{surface:'browser',evidenceDir:isolated()},session:live,recorder,controller:async()=>{order.push('controller');return {status:'blocked',reason:'test'}}});
+  assert.equal(result.status,'blocked');
+  assert.equal(order[0],'record-start');
+  assert.equal(typeof marker,'number');
+  assert.ok(marker>0);
+});
+
+test('browser capture keeps a passing observed assertion on screen briefly before stopping',async()=>{
+  const calls=[];let annotatedAt;
+  const live={id:'fixture-session',recordStart:async()=>{},recordStop:async()=>{calls.push('browserStop');assert.ok(Date.now()-annotatedAt>=450)},close:async()=>{}};
+  const recorder={start:async()=>({session:'/tmp/session'}),annotate:async(_session,type)=>{if(type==='assertion'){annotatedAt=Date.now();calls.push('assertion')}},stop:async()=>{calls.push('recorderStop');return {session:'/tmp/session',manifest:'/tmp/manifest.json',report:'/tmp/report.md',video:'/tmp/evidence.mp4',verified:true,assertions:{passed:1,failed:0}}}};
+  const result=await runAcceptance({config:{surface:'browser',evidenceDir:isolated()},session:live,recorder,controller:async()=>({status:'passed',target:{id:'fixture-session'},decisions:[{model:'jev-test',usage:{total_tokens:1}}],expectedPostconditions:['Confirmed'],observations:[{target:{id:'fixture-session'},elements:[{role:'status',value:'Confirmed'}]}]})});
+  assert.equal(result.status,'passed',JSON.stringify(result));assert.deepEqual(calls,['assertion','browserStop','recorderStop']);
+});
+
+test('recorder stop imports only the approximate start marker',async()=>{
+  const dir=isolated(),argsFile=path.join(dir,'args.json'),script=path.join(dir,'recorder.py');
+  fs.writeFileSync(script,`import json,sys\nopen(${JSON.stringify(argsFile)}, 'w').write(json.dumps(sys.argv[1:]))\nprint('{}')\n`);
+  await createRecorder({executable:script}).stop({session:'/tmp/session'},{},'/tmp/video.mp4',{videoStartedAt:10});
+  const args=JSON.parse(fs.readFileSync(argsFile,'utf8'));
+  assert.ok(args.includes('--video-started-at'));assert.ok(args.includes('10'));
+  assert.ok(!args.includes('--video-stopped-at'));
+});
+
+test('failed browser recordStart still attempts recordStop and recorder cleanup',async()=>{
+  const calls=[];const live={recordStart:async()=>{calls.push('recordStart');throw Error('partial start')},recordStop:async()=>calls.push('recordStop'),close:async()=>{}};
+  const result=await runAcceptance({config:{surface:'browser',evidenceDir:isolated()},session:live,recorder:{start:async()=>({session:'/tmp/session'}),stop:async()=>{calls.push('recorderStop')}},controller:async()=>{throw Error('must not run')}});
+  assert.equal(result.status,'blocked');assert.deepEqual(calls,['recordStart','recordStop','recorderStop']);
 });
 test('acceptance passes limits, target and recorder status without rewriting failures',async()=>{
   const calls=[];

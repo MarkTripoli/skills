@@ -7,16 +7,17 @@ stop_reason: none
 limit: 3
 consumed_rounds: 0
 branch: "[observed branch, or not applicable outside Git]"
-current_application_revision: "[Revision ledger identity, distinct from receipt commit]"
+current_application_revision: "[Revision ledger identity, distinct from the local receipt file]"
+repair_attempt: "[saved repair attempt ID, or none]"
+revision: "[exact contract source fingerprint]"
+evidence_sha256: "[current sealed numbered evidence receipt hash]"
 ---
 
 # Evidence Iteration Receipt
 
 For an indexed task, record this as the next immutable `evidence.iteration` through the collection's Recording an artifact flow. On continuation, copy the current iteration into the newly allocated staging successor before appending; record every durable boundary as another successor. A legacy task without `index.json` keeps its numbered receipt under the collection's legacy rule. Fill every field from observations, using `None.`, `unknown`, or `not applicable` with a reason instead of invented values. Remove unneeded example rows. Change current frontmatter, finding summaries, and final coverage only in a staged successor; append supporting observations, transitions, round history, authorizations, and stop decisions without deleting earlier results. This series is loop state, not a companion JSON store.
 
-`status`: `in-progress` | `passed` | `blocked` | `failed` — these are the ONLY valid values; any other string (e.g. `completed`, `done`, `all-resolved`, or prose) is invalid and will be rejected by the grader. `stop_reason`: `none` while active/interrupted | `success` | `blocker` | `no-progress` | `exhaustion` when terminal — these are the ONLY valid values; any other string is invalid. `limit` and `consumed_rounds` are nonnegative integers. A reserved round consumes allowance before delegation or mutation; baseline consumes zero. While active, frontmatter's consumed number selects the matching numbered round, whose scoped record owns repair state, not the last historical heading. Apply the skill's [reservation boundary](../SKILL.md#4-reserve-and-complete-one-repair-round) before action, including continuation.
-
-**Frontmatter is append/update-only.** At reservation, update only `status`, `stop_reason`, and `consumed_rounds`; retain every other field — `type`, `limit`, `task`, `summary`, `branch`, and `current_application_revision` — unchanged and present. The entire frontmatter block must always include every previously established field. Never remove, replace with a different field, or collapse existing fields. Rewriting a frontmatter block that omits any prior field is wrong even if the intent is to update a single value.
+`status`: `in-progress` | `passed` | `blocked` | `failed`. `stop_reason`: `none` | `success` | `blocker` | `no-progress` | `exhaustion`. Mirror saved shared state and preserve the original limit and consumed count. Initial inspection consumes zero; a source-changing repair reserves allowance before edits or delegation. Resume the existing attempt's first incomplete action.
 
 **Initial-zero frame per session.** For every recording session — baseline and each repair pass — open the initial application state before the first action as a separately named frame (the initial-zero count before any interaction) as a distinct viewer call. This is required alongside the per-flow action result frames; do not infer the starting state from a fresh page or a probe.
 
@@ -67,7 +68,7 @@ Record the applicable source/value for every category. Missing categories are `u
 
 ## Revision ledger
 
-Append every application identity used for checks or capture. A dirty tree is never identified by base SHA alone. Keep receipt-only commits separate from these identities.
+Append every application identity used for checks or capture. A dirty tree is never identified by base SHA alone. Receipt file updates do not alter these identities.
 
 | Revision ID | Application SHA or base SHA | Dirty patch path/hash and relevant untracked hashes; non-Git snapshot if needed | Served build/deployment | Loaded identity verification: method, time, result/evidence | Environment |
 | --- | --- | --- | --- | --- | --- |
@@ -132,6 +133,7 @@ Baseline is capture and inspection at consumed `0`, not a repair reservation. Ap
 | --- | --- | --- | --- | --- | --- |
 | Repair | [state] | [time] | [edits/paths or bounded delegation] | [revision/result] | [patch/trace] |
 | Checks | [state] | [time] | [each exact command; add rows as needed] | [revision, exit code, observed outcome] | [stdout/stderr/output paths] |
+| Delivery verification/review | [state] | [time] | [fresh required skill/check commands, or standalone not applicable] | [current revision and artifact statuses] | [verification/review receipt paths] |
 | Serve/capture | [state] | [time] | [loaded identity check and recording commands] | [revision/result] | [new session references] |
 | Pixel inspection | [state] | [time] | [viewer/extraction] | [observed results] | [inspection references] |
 | Reconciliation | [state] | [time] | [compare unchanged expectations] | [resolution/result] | [finding/coverage history] |
@@ -150,7 +152,7 @@ Baseline is capture and inspection at consumed `0`, not a repair reservation. Ap
 | initial-zero | [this round] | [session ID] | [exact path] | [trace/tool call ref] | [yes — opened before this row] |
 | [flow name] | [this round] | [session ID] | [exact path] | [trace/tool call ref] | [yes — opened before this row] |
 
-Total opened: [N]. Required: [1 initial + M flows] = [N]. Count matches: [yes — required before writing any coverage row; a row for a flow with no opened frame in this list is a false claim].
+Total opened: [N]. Required: [S initial frames, one per session, plus M required flow samples] = [N]. Unopened required samples: [None. or explicit blocked gap]. Non-UI targets instead cite read output and decisive lines.
 
 ## Guardrails
 
@@ -160,7 +162,7 @@ Total opened: [N]. Required: [1 initial + M flows] = [N]. Count matches: [yes �
 
 ## Final coverage
 
-Keep this seven-column schema for every terminal outcome: passed, failed, or blocked. List every required target and regression flow/configuration separately at the actual latest application revision. Bind each verdict to its evidence/checks and finding IDs; state unavailable values and reasons in their cells. Prior passing evidence is history if its revision differs. Untested is never passed. Each row's inspected evidence must cite the specific extracted frame that was individually opened for that flow by name; a contact sheet or composite view opening does not supply per-flow evidence.
+Keep this seven-column schema for passed, failed, and blocked outcomes. List every required target/regression configuration at the actual current revision. UI rows cite individually opened recorded samples; non-UI rows cite read capture output and decisive lines. Missing current proof is untested and blocks completion; prior proof remains history.
 
 | Flow/configuration | Target or regression | Latest revision | Recorded session and inspected evidence | Required checks/state probes | Result: passed/failed/untested | Reason and limits |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -185,6 +187,6 @@ Before saving the terminal result, apply the skill's finalization boundary and t
 - Next incomplete step: [repair / checks / capture / inspection / reconciliation; or None. after terminal; no pending round step after completion]
 - Evidence availability: [local-only retained paths or verified posting links; unavailable material]
 - Posting confirmation, when required: [destination, reopen/playback result, or blocker; otherwise requester-only]
-- Artifact/source commit separation: [receipt commit and source commits separately, pending parent ownership, or uncommitted outside Git]
+- Artifact/source separation: [receipt remains local; source commits separately; pending parent ownership; or outside Git]
 - Known limits: [uninspected configurations, temporal/sample limits, unverified guardrail comparisons, or None.]
-- Required next prerequisite: [specific action or None.; no scheduled skill handoff]
+- Required next prerequisite: [specific action or None.; delivery mode names the next skill from the receipt state, standalone has no scheduled handoff]

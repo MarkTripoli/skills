@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Keeps the Claude Code plugin in step with the collection: copies package.json's version into
-// .claude-plugin/plugin.json, lists every non-worker skill directory in its `skills` array, and regenerates
+// .claude-plugin/plugin.json, lists every skill directory (workers included) in its `skills` array, and regenerates
 // agents/<agent-*>.md (Claude Code's agent format, picked up from the default `agents/` directory) from the
 // worker skills. Runs as part of `npm run version`, right after `changeset version`. With --check it changes
 // nothing and exits 1 when anything is out of date.
@@ -8,7 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseSkill, repoRoot } from "./lib/build.mjs";
+import { parseSkill, repoRoot, rewriteRelativeLinks } from "./lib/build.mjs";
 import { scanSkills } from "./lib/layout.mjs";
 
 const check = process.argv.includes("--check");
@@ -29,13 +29,13 @@ const workers = layout.skills.filter((s) => s.name.startsWith("agent-"));
 const expectedPlugin = {
   ...plugin,
   version,
-  skills: layout.skills.filter((s) => !s.name.startsWith("agent-")).map((s) => `./${path.relative(repoRoot, s.dir).split(path.sep).join("/")}`),
+  skills: layout.skills.map((s) => `./${path.relative(repoRoot, s.dir).split(path.sep).join("/")}`),
 };
 delete expectedPlugin.agents;
 const expectedAgents = new Map(
   workers.map((s) => {
     const skill = parseSkill(path.join(s.dir, "SKILL.md"));
-    return [`${s.name}.md`, ["---", `name: ${s.name}`, `description: ${skill.description}`, "---", "", skill.body.trim(), ""].join("\n")];
+    return [`${s.name}.md`, ["---", `name: ${s.name}`, `description: ${skill.description}`, "---", "", rewriteRelativeLinks(skill.body, s.dir, agentsDir).trim(), ""].join("\n")];
   }),
 );
 

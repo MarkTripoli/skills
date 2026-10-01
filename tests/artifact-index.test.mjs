@@ -10,7 +10,7 @@ import {
   serializeArtifactIndex,
   validateArtifactIndex,
   writeArtifactIndex,
-} from '../atomic/lib/artifacts.mjs';
+} from '../shared/task-artifacts.mjs';
 import { initTaskArtifacts, readArtifactIndex } from '../shared/task-artifacts.mjs';
 
 const taskDirs = [];
@@ -248,7 +248,7 @@ test('invalid JSON, dangling files, hash mismatches, and metadata mismatches fai
   }
 });
 
-test('dangling index symlinks fail closed in init, read, and Atomic observation', () => {
+test('dangling index symlinks fail closed in init, read, and artifact observation', () => {
   const taskDir = taskFixture('dangling-index-symlink');
   fs.symlinkSync(path.join(taskDir, 'missing-index.json'), path.join(taskDir, 'index.json'));
 

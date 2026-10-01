@@ -1,6 +1,6 @@
 The design discussion needs human review before it can advance.
 
-Review artifact: {artifact_link}
+Saved for review: {artifact_link}
 
 Check:
 - {review_check}

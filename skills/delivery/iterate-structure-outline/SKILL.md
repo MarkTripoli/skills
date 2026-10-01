@@ -13,7 +13,7 @@ If no artifact is named, use current `planning.structure` from `index.json`. Fee
 
 ## Initial Check
 
-If no feedback and no artifact target, ask and wait:
+If no feedback, no artifact target, and no newer `jira-refinement` Planning impact, ask and wait:
 
 ```text
 I can revise the structure outline now. Send the phase, scope, validation, or open-question change you want handled first.
@@ -26,8 +26,8 @@ I can revise the structure outline now. Send the phase, scope, validation, or op
 3. **Verify user input**: Do not accept corrections blindly. Use direct reads or child research to confirm file paths, patterns, validation commands.
 4. **Start child research when a missing fact would change the artifact**: Start a child worker for role `agent-codebase-locator` (files and tests), `agent-codebase-analyzer` (behavior), `agent-codebase-pattern-finder` (local precedents), or `agent-web-search-researcher` (external docs) with the assignment (see the conventions' Child workers section); wait for it; read its final message. Use only findings you have read from the worker's final message. Do not rely on hidden background work. Wait for each child and read its final message before using it.
 5. **Process feedback**: Reorganize phases when requested or when verification shows split is wrong. Update scope and What we're not doing. Remove answered open questions; incorporate answer into relevant phase. Keep frontmatter and major sections. Each phase should remain vertical slice crossing layers. A phase should include the layers and checks needed for a verifiable increment. Avoid batching by layer. Do not make Phase N depend on Phase N+1.
-6. **Update document**: Copy current outline to the next `planning.structure` iteration and edit that new file; never edit a recorded iteration. A legacy task without `index.json` follows the conventions' in-place rule.
-7. **Final answer**: Record the new iteration through the conventions' Recording an artifact flow and respond with `references/structure_outline_final_answer.md` exactly. Fill `{artifact_link}` and `{artifact_file}` with the canonical task-root-relative path. Commit that path and `index.json` explicitly as `docs(task): structure-outline artifact`.
+6. **Update document**: Edit same path. Rework Implementation Overview. Update phase overviews, change outlines, test changes, validation steps, Open Questions. Keep trees small with proper glyphs. Use diff notation only when it clarifies changes. After confirmed Jira refinement deltas are represented, update its `Plan reconciliation` line to `applied in <outline path>`; write `needs-human: <question>` there if any confirmed required delta remains unresolved. Save both artifacts locally; never stage or commit task files.
+7. **Final answer**: Save the file and respond with `references/structure_outline_final_answer.md` exactly; fill `{artifact_link}` with a relative Markdown link to the saved file, `[<task-root>/<slug>/artifacts/planning/structure/<NNNN>.md](.agents/tasks/<slug>/<task-root>/<slug>/artifacts/planning/structure/<NNNN>.md)`, fill `{artifact_file}` with the saved file's name only (the template carries the `@`; name this artifact and no other file, never a path), and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. Add no prose before or after the template.
 
 ## Phase Validation
 

@@ -42,7 +42,8 @@ sha: [current commit]
 
 #### [Feature or flow title]
 
-[Behavior and edge cases.]
+- WHEN [trigger], the [system] shall [observable response]. [Source pointer when converting.]
+- IF [edge case], THEN the [system] shall [observable response]. [Source pointer when converting.]
 
 [mockup-{description}.html](mockup-{description}.html)
 

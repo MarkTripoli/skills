@@ -92,14 +92,14 @@ Critical path: w1 -> w2 -> w4 -> v1 -> g1
 
 ### Execution DAG
 
-[How this work will be executed: the phases ahead, which pause for approval, what runs unattended, and what verification and review follow. When `index.json` has a current `orchestration.execution` artifact, embed its Mermaid flowchart here and name the phases it dropped with their probabilities. Otherwise describe the fixed chain from `task.md` and workflows/delivery.md, with no flowchart or probabilities.]
+[How this work will be executed: the phases ahead, which pause for approval, what runs unattended, and what verification and review follow. Describe the fixed workflow chain from task.md and workflows/delivery.md as a Mermaid flowchart, including human gates, independent review, baseline/current capture, inspection and publication. No routing probabilities.]
 
 ```mermaid
 flowchart TD
-  research["research"] --> design["design discussion<br/>gate: design"]
+  research["research"] --> design["design discussion<br/>gate: plan"]
   design --> plan["plan<br/>gate: plan"]
-  plan --> implement["implement<br/>gate: phases"]
-  implement --> verify["verify"] --> review["review loop"] --> pr["pr<br/>gate: pr"]
+  plan --> implement["implement"]
+  implement --> verify["verify"] --> review["review loop"] --> mr["mr"]
 ```
 
 ## Human Review

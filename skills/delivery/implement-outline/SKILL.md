@@ -25,19 +25,21 @@ The current phase is the first phase whose checkboxes are not all checked. The r
 
 When artifacts disagree, the structure outline wins; mention the conflict in the child assignment or user report.
 
+Capture baseline evidence when the task's evidence policy needs it, from a temporary `git worktree add <tmp> <base-sha>` if implementation has begun (pass `baseline_commit`). It never blocks dispatching an implementer. Give workers the policy and baseline paths when they exist. `node <skills-dir>/deliver/contract.mjs status <task-dir>` reports artifact currency and what publication lacks; optional for manual work.
+
 ### Progress tracking
 
 The outline implementer never writes task artifacts. Its final message ends with a `## Progress Markers Earned` section listing each validation checkbox or phase marker earned by an automated check that ran and passed. For an indexed task, this skill copies the current outline into the next `planning.structure` iteration and applies updates there; it never edits a recorded iteration. A legacy task without `index.json` follows the conventions' in-place rule:
 
 - Validation checkboxes move from open to checked only when a recorded passing command backs them.
-- A phase title is marked complete only after all automated validation passes and the phase commit exists.
+- A phase title is marked complete only after all automated validation passes.
 - Every other checkbox and marker stays open. Continue phase resolution from the updated file.
 
 ## Workflow
 
 ### 1. Start the outline implementer child worker
 
-Start a child worker for role `agent-outline-implementer` with the assignment for the current phase: the phase number and the paths to the outline and companion documents, not their contents (see the conventions' Child workers section); wait for it; read its final message.
+Start a child worker for role `agent-outline-implementer` with the assignment for the current phase: the phase number and the paths to the outline and companion documents, not their contents (see the conventions' Child workers section); wait for it; read its final message. Model roles follow `deliver`'s Model roles; record the observed worker model or that selection was unavailable.
 
 The final message is the deliverable. Compare it to the outline before reporting success, and use only findings you have read from the worker's final message, verified against the repository. Then apply its `## Progress Markers Earned` section to the outline per Progress tracking.
 
@@ -45,7 +47,9 @@ The final message is the deliverable. Compare it to the outline before reporting
 
 After a numeric phase passes automated verification, record the updated outline iteration first, then record the next immutable `implementation.receipt` from `references/implementation_template.md`. Set `completed_phase` to the highest outline phase the receipt proves complete. Populate `Human Review` with exact review targets, checks, and known limits. Save a receipt at every numeric phase boundary.
 
-Read `references/implementation_phase_final_answer.md` when another numeric phase remains. Fill `{artifact_link}` with the receipt's canonical task-root-relative path; its final command invokes this skill with the current outline path. Read `references/implementation_final_answer.md` only after the terminal phase. In both answers, populate `Check` from the receipt's `Human Review` section and keep the final command fence last.
+Record the policy/baseline paths, actual phase, remaining verification/review/evidence, and first incomplete action. Finish all code staging and commits before recording the source revision; later source changes invalidate it.
+
+Read `references/implementation_phase_final_answer.md` when another numeric phase remains. Fill `{artifact_link}` with a relative Markdown link to the receipt, `[<task-root>/<slug>/artifacts/implementation/receipt/<NNNN>.md](.agents/tasks/<slug>/<task-root>/<slug>/artifacts/implementation/receipt/<NNNN>.md)`; its final command invokes this skill with the same outline. Read `references/implementation_final_answer.md` only after the terminal phase. In both answers, populate `Check` from the receipt's `Human Review` section and keep the final command fence last.
 
 After the child finishes and automated checks have passed or failed, report the phase:
 
@@ -68,7 +72,7 @@ If automated checks failed, report the failure and either fix it or ask for dire
 
 ### 3. Commit and continue
 
-When every automated validation checkbox in the phase is checked with a recorded passing result, create a focused commit with a Conventional Commits subject and start the next phase without waiting. Use explicit `git add <path>` commands for code paths; never mix task artifacts into the code commit. Commit the outline iteration, receipt, and `index.json` separately with explicit paths as `docs(task): implementation artifact`.
+When every automated validation checkbox in the phase is checked with a recorded passing result, create a focused commit with a Conventional Commits subject and start the next phase without waiting. Use explicit `git add <path>` commands for code paths; never mix task artifacts into the code commit.
 
 ### 4. Repeat for the next phase
 
@@ -116,6 +120,6 @@ Record the next immutable `implementation.receipt` iteration through the convent
 When all outline phases are complete, automated checks pass, and any phase with `human-gated: true` received its recorded confirmation:
 
 1. Save any changed task artifacts in the task directory.
-2. Commit all remaining repository work before the PR handoff. Use the `/ci-commit` conventions: inspect the diff, stage explicit code paths, keep task artifacts in their own `docs(task): implementation artifact` commit, and write a validated Conventional Commits message.
+2. Commit remaining code changes before the PR handoff using the `/ci-commit` conventions: inspect the diff and stage explicit code paths, excluding the resolved task root. Keep task artifacts local and uncommitted.
 3. Read `references/implementation_final_answer.md`.
 4. Respond using that template only. Fill `{artifact_link}` with the receipt's canonical task-root-relative path and keep the single fenced `text` command for `/verify-implementation` last.

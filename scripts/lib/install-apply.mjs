@@ -1,12 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { buildRuntime, copyTaskArtifactHelper, repoRoot } from './build.mjs';
+import { buildRuntime, copyTaskArtifactHelper, relinkSkillTree, repoRoot } from './build.mjs';
 import { scanSkills } from './layout.mjs';
 import { short } from './install-plan.mjs';
+import { MARK_BEGIN, MARK_END, managedRange, configBlocks, currentRetiredItems } from './install-retirement.mjs';
 
-const MARK_BEGIN = '# >>> MarkTripoli/skills workers (managed by the installer; edits inside are overwritten)';
-const MARK_END = '# <<< MarkTripoli/skills workers';
 const noDsStore = src => path.basename(src) !== '.DS_Store';
 const publicationFiles = ['hooks/omp-publication.mjs', 'shared/publication-command.mjs', 'shared/publication-proof.mjs', 'shared/publication-proof-policy.mjs', 'shared/task-artifacts.mjs', 'shared/task-root.mjs'];
 
@@ -24,21 +22,24 @@ export function updateConfigBlock(text, block) {
   const separator = before === '' || before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
   return `${before}${separator}${body}${after}`;
 }
-function configBlocks(block) {
-  const sections = new Map(); let name = null; let lines = [];
-  const commit = () => { if (name) sections.set(name, lines.join('\n').trim()); };
-  for (const line of block.trim().split('\n')) {
-    const heading = /^\[agents\.([^\]]+)\]$/.exec(line);
-    if (heading) { commit(); name = heading[1]; lines = [line]; } else if (name) lines.push(line);
-  }
-  commit(); return sections;
-}
 function selectedConfigBlock(text, block, names, uninstall) {
-  const begin = text.indexOf(MARK_BEGIN); const end = text.indexOf(MARK_END);
-  const managed = begin !== -1 && end > begin ? text.slice(begin + MARK_BEGIN.length, end) : '';
-  const merged = configBlocks(managed); const incoming = configBlocks(block);
-  for (const name of names) { if (uninstall) merged.delete(name); else if (incoming.has(name)) merged.set(name, incoming.get(name)); }
-  return updateConfigBlock(text, [...merged.values()].join('\n\n') || null);
+  const range = managedRange(text);
+  if (!range) return uninstall ? text : updateConfigBlock(text, block);
+  let body = text.slice(range.bodyStart, range.bodyEnd);
+  const incoming = configBlocks(block); const selected = new Set(names); const found = new Set();
+  const headers = [...body.matchAll(/^\[([^\]\n]+)\][ \t]*$/gm)];
+  for (let index = headers.length - 1; index >= 0; index--) {
+    const header = headers[index]; const name = header[1].startsWith('agents.') ? header[1].slice(7) : null;
+    if (!selected.has(name)) continue;
+    found.add(name);
+    const replacement = uninstall ? '' : `${incoming.get(name) || ''}\n\n`;
+    body = body.slice(0, header.index) + replacement + body.slice(headers[index + 1]?.index ?? body.length);
+  }
+  if (!uninstall) for (const name of names) if (!found.has(name) && incoming.has(name)) {
+    body = `${body.trimEnd()}\n\n${incoming.get(name)}\n`;
+  }
+  if (!body.trim()) return updateConfigBlock(text, null);
+  return text.slice(0, range.bodyStart) + body + text.slice(range.bodyEnd);
 }
 export function apply(planned, { built, uninstall, home }) {
   const done = [];
@@ -51,17 +52,20 @@ export function apply(planned, { built, uninstall, home }) {
           if (uninstall) fs.rmSync(to, { recursive: true, force: true }); else copyDir(path.join(tree, 'skills', name), to);
         }
         done.push(`${uninstall ? 'removed' : 'wrote'} ${(uninstall ? (step.removeNames || step.names) : step.names).length} skills under ${short(step.to, home)}`); break;
-      case 'agents':
-        for (const name of step.names) {
+      case 'agents': {
+        const names = uninstall ? (step.removeNames || step.names) : step.names;
+        for (const name of names) {
           const to = path.join(step.to, `${name}.${step.format}`);
           if (uninstall) fs.rmSync(to, { force: true }); else { fs.mkdirSync(step.to, { recursive: true }); fs.copyFileSync(path.join(tree, 'agents', `${name}.${step.format}`), to); }
         }
-        done.push(`${uninstall ? 'removed' : 'wrote'} ${step.names.length} worker definitions under ${short(step.to, home)}`); break;
+        done.push(`${uninstall ? 'removed' : 'wrote'} ${names.length} worker definitions under ${short(step.to, home)}`); break;
+      }
       case 'config': {
         if (uninstall && !fs.existsSync(step.to)) break;
+        if (uninstall && step.removeNames?.length === 0) break;
         const existing = fs.existsSync(step.to) ? fs.readFileSync(step.to, 'utf8') : '';
         const block = uninstall ? '' : fs.readFileSync(path.join(tree, 'config.snippet.toml'), 'utf8');
-        const updated = step.complete !== false ? updateConfigBlock(existing, uninstall ? null : block) : selectedConfigBlock(existing, block, step.names, uninstall);
+        const updated = selectedConfigBlock(existing, block, uninstall ? (step.removeNames || step.names) : step.names, uninstall);
         if (uninstall && updated.trim() === '') fs.rmSync(step.to, { force: true }); else { fs.mkdirSync(path.dirname(step.to), { recursive: true }); fs.writeFileSync(step.to, updated); }
         done.push(`${uninstall ? 'updated selected workers in' : 'updated the workers block in'} ${short(step.to, home)}`); break;
       }
@@ -79,18 +83,17 @@ export function apply(planned, { built, uninstall, home }) {
         }
         done.push(`${uninstall ? 'removed' : 'installed'} optional OMP Bash publication guard ${short(path.join(step.to, 'hooks', 'omp-publication.mjs'), home)}; ${uninstall ? 'registration was not changed' : 'launch with omp --hook=<installed-path> and SKILLS_PUBLICATION_TASK_DIR=<absolute-task-dir>; only intercepted Bash calls are guarded (not direct shell or Codex)'}`); break;
       }
-      case 'workflow': {
-        const entry = path.join(path.dirname(step.to), 'skills-delivery.mjs');
-        if (uninstall) { fs.rmSync(entry, { force: true }); fs.rmSync(step.to, { recursive: true, force: true }); }
-        else {
-          copyDir(path.join(repoRoot, 'atomic'), step.to);
-          fs.mkdirSync(path.join(step.to, 'shared'), { recursive: true });
-          for (const name of ['task-artifacts.mjs', 'task-root.mjs', 'publication-proof.mjs', 'publication-proof-policy.mjs']) fs.copyFileSync(path.join(repoRoot, 'shared', name), path.join(step.to, 'shared', name));
-          const yamlRoot = path.dirname(fileURLToPath(import.meta.resolve('yaml/package.json')));
-          copyDir(yamlRoot, path.join(step.to, 'node_modules', 'yaml'));
-          fs.writeFileSync(entry, "export { default } from './skills-delivery/workflows/delivery.ts';\n");
+      case 'retire': {
+        const current = currentRetiredItems(step);
+        for (const item of step.items) {
+          if (!current.includes(item)) { done.push(`kept ${item.label} ${item.path}: ownership or contents changed after planning`); continue; }
+          if (item.config) {
+            const text = fs.readFileSync(item.path, 'utf8');
+            fs.writeFileSync(item.path, selectedConfigBlock(text, '', item.config, true));
+          } else fs.rmSync(item.path, { recursive: true, force: true });
+          done.push(`removed ${item.label} ${item.path}`);
         }
-        done.push(`${uninstall ? 'removed' : 'wrote'} Atomic delivery workflow and entry under ${short(path.dirname(step.to), home)}`); break;
+        break;
       }
       default: throw new Error(`unknown step ${step.kind}`);
     }
@@ -99,15 +102,17 @@ export function apply(planned, { built, uninstall, home }) {
 }
 export function buildTrees(planned, work) {
   const built = new Map(); const selected = new Set(planned.names);
-  for (const target of new Set(planned.steps.filter(step => step.kind !== 'workflow').map(step => step.target))) {
+  for (const target of new Set(planned.steps.filter(step => step.kind !== 'retire' && step.kind !== 'publication-hook').map(step => step.target))) {
     const dest = path.join(work, target);
     if (target === 'portable') {
       fs.mkdirSync(path.join(dest, 'skills'), { recursive: true });
-      for (const skill of scanSkills(path.join(repoRoot, 'skills')).skills) if (selected.has(skill.name)) {
+      const catalog = scanSkills(path.join(repoRoot, 'skills')).skills;
+      for (const skill of catalog) if (selected.has(skill.name)) {
         const skillTarget = path.join(dest, 'skills', skill.name);
         fs.cpSync(skill.dir, skillTarget, { recursive: true, filter: noDsStore }); copyTaskArtifactHelper(skillTarget);
+        relinkSkillTree({ targetDir: skillTarget, sourceDir: skill.dir, destSkills: path.join(dest, 'skills'), skills: catalog, selected });
       }
-    } else buildRuntime(target, dest, { skillNames: planned.names });
+    } else buildRuntime(target, dest, { skillNames: planned.names, workerModel: planned.workerModel });
     built.set(target, dest);
   }
   return built;

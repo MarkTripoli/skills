@@ -3,11 +3,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { plan, apply, buildTrees, destinations, atomicDestination, detectTargets, parseArgs, promptSelections, updateConfigBlock } from "../scripts/install.mjs";
-import { scanSkills } from "../scripts/lib/layout.mjs";
+import { plan, apply, buildTrees, destinations, detectTargets, parseArgs, promptSelections, updateConfigBlock } from "../scripts/install.mjs";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
-import { resolveSkillsDir } from "../atomic/lib/skill-storage.mjs";
 
 const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const env = { PATH: "" };
@@ -87,12 +85,9 @@ test("destinations honor runtime overrides globally but stay local in project sc
   assert.deepEqual(destinations("claude-code", { home, env: overrides }), { skills: "/cc/skills", agents: "/cc/agents" });
   assert.deepEqual(destinations("codex", { home, env: overrides }), { skills: "/h/.agents/skills", agents: "/cx/agents", config: "/cx/config.toml" });
   assert.deepEqual(destinations("pi", { home, env }), { skills: "/h/.pi/agent/skills" });
-  assert.equal(atomicDestination({ home, env }), "/h/.atomic/agent/workflows/skills-delivery");
-  assert.equal(atomicDestination({ home, env: overrides }), "/aa/workflows/skills-delivery");
 
-  const local = plan({ targets: ["claude-code", "codex", "oh-my-pi", "pi", "portable"], atomic: true, project: true, cwd: "/p", home, env: overrides });
+  const local = plan({ targets: ["claude-code", "codex", "oh-my-pi", "pi", "portable"], project: true, cwd: "/p", home, env: overrides });
   assert.ok(local.steps.every((step) => step.to.startsWith("/p/")));
-  assert.equal(local.steps.find((step) => step.kind === "workflow").to, "/p/.atomic/workflows/skills-delivery");
   assert.equal(local.steps.some((step) => step.kind === "config"), false);
   assert.equal(local.steps.filter((step) => step.kind === "skills" && step.to === "/p/.agents/skills").length, 1);
 });
@@ -105,21 +100,6 @@ test("standalone defaults only plan selected runtime skills and workers", () => 
   assert.equal(both.steps.filter((step) => step.to === "/h/.agents/skills").length, 1);
 });
 
-test("Atomic is opt-in and rejects partial skill selection before writing", () => {
-  const home = tmpdir();
-  const args = parseArgs(["pi", "--atomic", "--skill", "show-me", "--yes"]);
-  assert.throws(() => plan({ ...args, home, cwd: home, env }), /--atomic requires all skills/);
-  assert.deepEqual(fs.readdirSync(home), []);
-  const full = plan({ ...parseArgs(["pi", "--atomic", "--skill", "*"]), home, cwd: home, env });
-  assert.equal(full.steps.find((step) => step.kind === "workflow").to, path.join(home, ".atomic", "agent", "workflows", "skills-delivery"));
-  assert.equal(full.steps.find((step) => step.target === "portable").to, path.join(home, ".agents", "skills"));
-  const installed = install({ ...parseArgs(["pi", "--atomic", "--skill", "*"]), home, cwd: home, env });
-  const workflow = installed.steps.find(step => step.kind === "workflow").to;
-  for (const helper of ["publication-proof.mjs", "publication-proof-policy.mjs", "task-artifacts.mjs", "task-root.mjs"]) {
-    assert.ok(fs.existsSync(path.join(workflow, "shared", helper)));
-  }
-  uninstall(installed, home);
-});
 
 test("a selected skill installs and uninstalls independently in every target", () => {
   for (const target of ["claude-code", "codex", "oh-my-pi", "pi", "portable"]) {
@@ -158,7 +138,7 @@ test("partial Codex worker changes preserve other skills and worker configuratio
   assert.equal(fs.readFileSync(configFile, "utf8"), 'model = "gpt-5"\n');
 });
 
-test("First Sergent opt-in installs a real worker without Atomic or unrelated worker removal", () => {
+test("deliver installs its companions without unrelated worker removal", () => {
   for (const target of ["claude-code", "codex", "oh-my-pi", "pi", "portable"]) {
     const home = tmpdir();
     const skillDir = destinations(target, { home, env }).skills;
@@ -166,14 +146,10 @@ test("First Sergent opt-in installs a real worker without Atomic or unrelated wo
     const liaison = install({ targets: [target], skillNames: ["deliver"], cwd: home, home, env });
     assert.ok(fs.existsSync(path.join(skillDir, "deliver", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(skillDir, "route-model", "route-model.mjs")));
-    assert.ok(fs.existsSync(path.join(skillDir, "typed-judgment", "judge.mjs")));
-    assert.ok(fs.existsSync(path.join(skillDir, "agent-first-sergent", "SKILL.md")));
-    assert.ok(fs.existsSync(path.join(skillDir, "agent-first-sergent", "state.mjs")));
     assert.equal(fs.existsSync(path.join(home, ".atomic")), false);
     const worker = destinations(target, { home, env }).agents;
     if (worker) {
       const ext = target === "codex" ? "toml" : "md";
-      assert.ok(fs.existsSync(path.join(worker, `agent-first-sergent.${ext}`)));
       assert.ok(fs.existsSync(path.join(worker, `agent-implementer.${ext}`)));
     }
     uninstall(liaison, home);
@@ -194,80 +170,7 @@ test("managed config edits preserve surrounding user configuration", () => {
   assert.equal(updateConfigBlock(first, null), original);
 });
 
-test("Atomic installs canonical full skills and workflow sources beside unrelated files", () => {
-  const home = tmpdir();
-  const agentDir = path.join(home, "custom-agent");
-  const options = { targets: ["claude-code", "codex", "oh-my-pi", "pi"], atomic: true, cwd: home, home, env: { ...env, ATOMIC_CODING_AGENT_DIR: agentDir } };
-  const foreignSkill = path.join(home, ".agents", "skills", "mine", "SKILL.md");
-  const foreignWorkflow = path.join(agentDir, "workflows", "mine", "index.ts");
-  const foreignState = path.join(agentDir, "sessions", "existing.json");
-  put(foreignSkill, "my skill\n");
-  put(foreignWorkflow, "my workflow\n");
-  put(foreignState, "my session\n");
-  const planned = install(options);
-  const skillsDir = path.join(home, ".agents", "skills");
-  const canonical = scanSkills(path.join(REPO, "skills")).skills;
-  assert.deepEqual(fs.readdirSync(skillsDir).sort(), [...canonical.map((skill) => skill.name), "mine"].sort());
-  for (const skill of canonical) {
-    assert.equal(fs.readFileSync(path.join(skillsDir, skill.name, "SKILL.md"), "utf8"), fs.readFileSync(path.join(skill.dir, "SKILL.md"), "utf8"));
-  }
-  const workflowRoot = atomicDestination(options);
-  const entry = path.join(path.dirname(workflowRoot), "skills-delivery.mjs");
-  assert.ok(fs.existsSync(entry));
-  const workflow = path.join(workflowRoot, "workflows", "delivery.ts");
-  assert.ok(fs.existsSync(path.join(workflowRoot, "lib")));
-  assert.ok(fs.existsSync(path.join(home, ".codex", "agents", "agent-implementer.toml")));
 
-  // Selecting one ordinary skill removes that skill even if the optional workflow remains installed.
-  uninstall(plan({ targets: ["codex"], skillNames: ["create-plan"], home, cwd: home, env }), home);
-  assert.equal(fs.existsSync(path.join(skillsDir, "create-plan")), false);
-  assert.ok(fs.existsSync(workflow));
-  assert.ok(fs.existsSync(entry));
-  assert.ok(fs.existsSync(path.join(skillsDir, "show-me", "SKILL.md")));
-
-  uninstall(planned, home);
-  assert.deepEqual(fs.readdirSync(skillsDir), ["mine"]);
-  assert.equal(fs.existsSync(workflowRoot), false);
-  assert.equal(fs.existsSync(entry), false);
-  assert.equal(fs.readFileSync(foreignSkill, "utf8"), "my skill\n");
-  assert.equal(fs.readFileSync(foreignWorkflow, "utf8"), "my workflow\n");
-  assert.equal(fs.readFileSync(foreignState, "utf8"), "my session\n");
-  assert.equal(fs.existsSync(path.join(home, ".codex", "config.toml")), false);
-  uninstall(planned, home);
-  assert.equal(fs.existsSync(path.join(home, ".codex", "config.toml")), false);
-});
-test("isolated Atomic install parses frontmatter through its copied YAML dependency", async () => {
-  const home = tmpdir();
-  const options = { targets: ["portable"], atomic: true, cwd: home, home, env };
-  install(options);
-  const workflowRoot = atomicDestination(options);
-  const parser = await import(`${pathToFileURL(path.join(workflowRoot, "lib", "artifacts.mjs")).href}?isolated=${Date.now()}`);
-  const parsed = parser.frontmatter("---\nslug: isolated-parser\nworkflow: full\n---\nParse this task.\n");
-  assert.equal(parsed.metadata.slug, "isolated-parser");
-  assert.equal(parsed.metadata.workflow, "full");
-  assert.equal(parsed.body, "Parse this task.");
-});
-
-test("project Atomic install and uninstall never mutate home or overridden global directories", () => {
-  const root = tmpdir();
-  const home = path.join(root, "home");
-  const cwd = path.join(root, "project");
-  fs.mkdirSync(home);
-  fs.mkdirSync(cwd);
-  const untouched = path.join(home, "sentinel");
-  put(untouched, "unchanged\n");
-  const options = { targets: ["claude-code", "codex", "oh-my-pi", "pi"], atomic: true, project: true, cwd, home, env: { ...env, CLAUDE_CONFIG_DIR: path.join(home, "claude"), CODEX_HOME: path.join(home, "codex"), ATOMIC_CODING_AGENT_DIR: path.join(home, "atomic") } };
-  const planned = install(options);
-  assert.ok(fs.existsSync(path.join(cwd, ".agents", "skills", "create-plan", "SKILL.md")));
-  assert.ok(fs.existsSync(path.join(cwd, ".atomic", "workflows", "skills-delivery", "workflows", "delivery.ts")));
-  assert.ok(fs.existsSync(path.join(cwd, ".atomic", "workflows", "skills-delivery.mjs")));
-  assert.deepEqual(fs.readdirSync(home), ["sentinel"]);
-  uninstall(planned, home);
-  assert.deepEqual(fs.readdirSync(home), ["sentinel"]);
-  assert.equal(fs.readFileSync(untouched, "utf8"), "unchanged\n");
-  assert.equal(fs.existsSync(path.join(cwd, ".atomic", "workflows", "skills-delivery")), false);
-  assert.equal(fs.existsSync(path.join(cwd, ".atomic", "workflows", "skills-delivery.mjs")), false);
-});
 
 test("route-model installs independently and falls back economically without typed-judgment", async () => {
   const home = tmpdir();
@@ -281,19 +184,6 @@ test("route-model installs independently and falls back economically without typ
   uninstall(planned, home);
 });
 
-test("Atomic skill directory precedence is explicit then project then user", () => {
-  const root = tmpdir();
-  const home = path.join(root, "home");
-  const project = path.join(root, "project");
-  const projectSkills = path.join(project, ".agents", "skills");
-  fs.mkdirSync(home);
-  fs.mkdirSync(projectSkills, { recursive: true });
-
-  assert.equal(resolveSkillsDir("custom/skills", project, home), path.join(project, "custom", "skills"));
-  assert.equal(resolveSkillsDir(undefined, project, home), projectSkills);
-  fs.rmSync(projectSkills, { recursive: true });
-  assert.equal(resolveSkillsDir(undefined, project, home), path.join(home, ".agents", "skills"));
-});
 
 test("selected jev-ui installs as a portable consumer outside the repository", async () => {
   const home = tmpdir("jev-ui-install-test-");
@@ -365,7 +255,8 @@ test("video skills install by their canonical names without enabling workflow or
   put(foreign, "keep unrelated resource\n");
 
   const planned = install({ targets: ["portable"], skillNames, cwd: home, home, env });
-  assert.deepEqual(planned.names, skillNames);
+  assert.ok(planned.names.includes("agent-implementation-reviewer"));
+  assert.ok(planned.names.includes("feature-conformance"));
   for (const name of skillNames) assert.ok(fs.existsSync(path.join(skillDir, name, "SKILL.md")));
   assert.equal(fs.existsSync(path.join(home, ".atomic")), false);
   assert.equal(fs.readFileSync(foreign, "utf8"), "keep unrelated resource\n");

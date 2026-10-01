@@ -1,14 +1,13 @@
 #!/usr/bin/env node
-// Installs independent skills and worker definitions, with an optional Atomic delivery workflow.
+// Installs independent skills and worker definitions, and retires recognized legacy resources.
 // Runs from a checkout (`node scripts/install.mjs`) or GitHub (`npx github:MarkTripoli/skills`).
 //
-// Usage: npx github:MarkTripoli/skills [target...] [--skill <name>...] [--project] [--dry-run] [--yes] [--atomic] [--uninstall] [--list]
+// Usage: npx github:MarkTripoli/skills [target...] [--skill <name>...] [--project] [--dry-run] [--yes] [--uninstall] [--list]
 //   target   claude-code | codex | oh-my-pi | pi | portable | all   (interactive when omitted)
 //   --skill, -s    install one named skill; repeat for more (`*` selects all)
 //   --project      install into the current project instead of the home directory
 //   --dry-run      print what would change and stop
 //   --yes          skip menus and confirmation; use detected runtimes and every skill when unspecified
-//   --atomic       also install the Atomic workflow and the full canonical skill collection
 //   --uninstall    remove what an earlier install put in place (same targets, skills, and scope)
 //   --omp-publication-hook  install optional Oh My Pi Bash guard; register it with omp --hook=<installed-path>
 //   --list         print the skills in the collection and stop
@@ -22,14 +21,14 @@ import { fileURLToPath } from "node:url";
 import { repoRoot } from "./lib/build.mjs";
 import { scanSkills } from "./lib/layout.mjs";
 import { apply, buildTrees, updateConfigBlock } from './lib/install-apply.mjs';
-import { atomicDestination, describe, destinations, detectTargets, parseArgs, plan, promptSelections, resolveSkillNames } from './lib/install-plan.mjs';
+import { describe, destinations, detectTargets, parseArgs, plan, promptSelections, resolveSkillNames } from './lib/install-plan.mjs';
 
-export { apply, atomicDestination, buildTrees, destinations, detectTargets, parseArgs, plan, promptSelections, resolveSkillNames, updateConfigBlock };
+export { apply, buildTrees, destinations, detectTargets, parseArgs, plan, promptSelections, resolveSkillNames, updateConfigBlock };
 
 async function main(argv) {
   const args = parseArgs(argv);
   const version = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8")).version;
-  const usage = "usage: npx github:MarkTripoli/skills [claude-code|codex|oh-my-pi|pi|portable|all ...] [--skill <name> ...] [--project] [--dry-run] [--yes] [--atomic] [--omp-publication-hook] [--uninstall] [--list]";
+  const usage = "usage: npx github:MarkTripoli/skills [claude-code|codex|oh-my-pi|pi|portable|all ...] [--skill <name> ...] [--project] [--dry-run] [--yes] [--omp-publication-hook] [--uninstall] [--list]";
   if (args.help) {
     console.log(usage);
     return 0;
@@ -64,7 +63,7 @@ async function main(argv) {
   const { targets, skillNames } = selection;
   let planned;
   try {
-    planned = plan({ targets, skillNames, project: args.project, atomic: args.atomic, ompPublicationHook: args.ompPublicationHook, cwd, home, env: process.env });
+    planned = plan({ targets, skillNames, project: args.project, ompPublicationHook: args.ompPublicationHook, cwd, home, env: process.env, uninstall: args.uninstall });
   } catch (error) {
     console.error(error.message);
     return 2;
@@ -99,8 +98,7 @@ async function main(argv) {
     fs.rmSync(work, { recursive: true, force: true });
   }
   if (!args.uninstall) {
-    if (args.atomic) console.log("Done. Open Atomic to run the delivery workflow. Skills remain usable independently (docs/cheatsheet.md).");
-    else console.log("Done. Start a new session; run a skill as /<name> (Codex: $<name>) for a task directory.");
+    console.log("Done. Start a new session; run a skill as /<name> (Codex: $<name>) for a task directory.");
     if (targets.includes("codex")) console.log("Codex: skills are invoked as $<name>.");
   }
   return 0;

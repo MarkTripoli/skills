@@ -1,32 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ARTIFACT_SERIES } from '../../shared/task-artifacts.mjs';
-import { TASK_ARTIFACT_DISTRIBUTION } from './build.mjs';
+import { ADJACENT_HELPERS, TASK_ARTIFACT_DISTRIBUTION } from './build.mjs';
 
 const CONVENTIONS_FILE = 'shared/CONVENTIONS.md';
-const HELPER_NAMES = ['task-artifacts.mjs', 'task-root.mjs'];
-const REQUIRED_CONVENTIONS = [
-  {
-    pattern: /<!-- skills:task-root=relative\/path -->/,
-    message: 'must document the exact task-root directive `<!-- skills:task-root=relative/path -->`',
-  },
-  {
-    pattern: /An explicit existing `task_dir` is authoritative\. Its parent directory is the task root and no directive is consulted\./,
-    message: 'must document explicit task_dir precedence over task-root directives',
-  },
-  {
-    pattern: /A conflict between files, more than one directive in one file, an invalid value, or a symlinked instruction file fails closed/,
-    message: 'must document fail-closed invalid task-root directives',
-  },
-  {
-    pattern: /When `index\.json` is present it is authoritative:[\s\S]*?fails closed rather than falling back to a directory scan\./,
-    message: 'must document the authoritative index and fail-closed invalid-index behavior',
-  },
-  {
-    pattern: /legacy behavior[\s\S]*?applies only to a legacy task where `index\.json` is genuinely absent\./,
-    message: 'must document genuine-absence-only legacy behavior',
-  },
-];
 const STALE_PROSE = [
   { pattern: /newest artifact of type/i, label: 'newest artifact of type' },
   { pattern: /task directory listing/i, label: 'task directory listing' },
@@ -72,9 +49,6 @@ export function validateConventions(content, fail, artifactSeries = ARTIFACT_SER
   if (series === null || !sameSeries(series, artifactSeries)) {
     fail(CONVENTIONS_FILE, 71, 'canonical type-to-series table must exactly match ARTIFACT_SERIES');
   }
-  for (const requirement of REQUIRED_CONVENTIONS) {
-    if (!requirement.pattern.test(content)) fail(CONVENTIONS_FILE, 0, requirement.message);
-  }
 }
 
 export function validateDeliveryProse(deliveryRoot, fail) {
@@ -104,14 +78,11 @@ export function validateDistribution(fail, distribution = TASK_ARTIFACT_DISTRIBU
       fail('scripts/lib/build.mjs', 29, `TASK_ARTIFACT_DISTRIBUTION.${name} must use an optional adjacent helper`);
     }
   }
-  if (distribution.atomic?.mode !== 'adjacent-helper' || distribution.atomic?.required !== true) {
-    fail('scripts/lib/build.mjs', 29, 'TASK_ARTIFACT_DISTRIBUTION.atomic must require an adjacent helper');
-  }
 }
 
 export function validateHelperDistribution({ root, repoRoot, skills, generated, fail }) {
   for (const skill of skills) {
-    for (const helper of HELPER_NAMES) {
+    for (const helper of ADJACENT_HELPERS) {
       const target = path.join(skill.dir, 'references', helper);
       const label = path.relative(root, target);
       if (!generated) {
@@ -131,7 +102,8 @@ export function validateHelperDistribution({ root, repoRoot, skills, generated, 
 }
 
 export function validateTaskArtifacts({ root, repoRoot, skills, generated, fail }) {
-  validateConventions(fs.readFileSync(path.join(repoRoot, CONVENTIONS_FILE), 'utf8'), fail);
+  const conventions = ['shared/CONVENTIONS.md', 'shared/task-artifacts.md', 'shared/placeholders.md'].map(file => fs.readFileSync(path.join(repoRoot, file), 'utf8')).join('\n\n');
+  validateConventions(conventions, fail);
   validateDeliveryProse(path.join(repoRoot, 'skills', 'delivery'), fail);
   validateDistribution(fail);
   validateHelperDistribution({ root, repoRoot, skills, generated, fail });

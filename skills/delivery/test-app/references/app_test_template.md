@@ -5,6 +5,7 @@ summary: "[Two to four sentences: what was tested and on which surface, the stat
 status: passed | failed | blocked
 kind: web | ios | android
 target: "[URL, bundle id, package, or path launched; empty when blocked before launch]"
+revision: "[exact contract source fingerprint]"
 ---
 
 # App Test
@@ -12,6 +13,8 @@ target: "[URL, bundle id, package, or path launched; empty when blocked before l
 ## Launch
 
 - Revision: [`git rev-parse HEAD` and branch]
+- Loaded build verification: [observed method/output and identity]
+- Delivery checkpoint: [policy/baseline paths, actual phase, remaining recording/inspection/publication]
 - Launched with: [`<exact command or URL>`]
 - Driven with: [`agent-browser`, Playwright, Puppeteer, Maestro, idb, or adb]
 - Graded by: [typed-judgment helper, or own judgment because the helper was unavailable; model `<model>`, tokens `<n>` in / `<m>` out, or `unavailable`]

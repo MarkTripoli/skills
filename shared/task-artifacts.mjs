@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import crypto from 'node:crypto'; import fs from 'node:fs'; import path from 'node:path'; import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { resolveTaskRoot } from './task-root.mjs';
 
 export { DEFAULT_TASK_ROOT, normalizeTaskRoot, parseTaskRootDirectives, resolveTaskRoot } from './task-root.mjs';
@@ -13,11 +14,23 @@ export const ARTIFACT_SERIES = Object.freeze({
   'code-review-fixes': ['review', 'fixes'], 'pr-description': ['pull-request', 'description'], 'pr-review': ['pull-request', 'review'], evidence: ['evidence', 'recording'],
   'execution-plan': ['orchestration', 'execution'], commit: ['delivery', 'commit'], 'evidence-iteration': ['evidence', 'iteration'],
   'comment-review': ['review', 'comments'],
+  'plan-review': ["review", "plan"],
+  'slice-review': ["review", "slice"],
+  'final-review': ["review", "final"],
+  'evidence-baseline': ["evidence", "baseline"],
+  'group-review': ["review", "group"],
+  'visual-reference': ["design", "visual"],
+  'feature-contract': ["design", "contract"],
+  'feature-conformance': ["review", "conformance"],
+  'jira-refinement': ["research", "jira"],
+  'delivery-disposition': ["delivery", "disposition"],
+  'submission-closure': ["delivery", "closure"],
+  'jira-breakdown': ['planning', 'jira'], 'jira-story-start': ['implementation', 'jira'], 'qa-readiness': ['review', 'qa'],
 });
 
 const semanticName = /^[a-z0-9]+(?:-[a-z0-9]+)*$/; const digestPattern = /^[a-f0-9]{64}$/;
 const rootKeys = new Set(['$schema', 'schemaVersion', 'task', 'generation', 'artifactSeries']); const seriesKeys = new Set(['current', 'iterations']);
-const iterationKeys = new Set(['id', 'iteration', 'path', 'sha256', 'type', 'status', 'summary', 'supersedes']); const artifactStatuses = Object.freeze({ reproduction: ['reproduced', 'not-reproduced'], verification: ['passed', 'failed', 'blocked'], 'code-review': ['clean', 'findings', 'blocked'], 'app-test': ['passed', 'failed', 'blocked'], 'pr-review': ['approved', 'pending', 'blocked'], evidence: ['passed', 'untested', 'failed', 'blocked'], 'evidence-iteration': ['in-progress', 'passed', 'blocked', 'failed'] });
+const iterationKeys = new Set(['id', 'iteration', 'path', 'sha256', 'type', 'status', 'summary', 'supersedes']); const artifactStatuses = Object.freeze({ 'jira-breakdown': ['draft', 'applied'], 'jira-story-start': ['draft', 'applied'], 'qa-readiness': ['passed', 'blocked'], 'jira-refinement': ['draft', 'applied'], 'plan-review': ['approve', 'changes'], 'slice-review': ['approve', 'changes'], 'final-review': ['approve', 'changes'], 'evidence-baseline': ['passed', 'failed', 'blocked', 'untested'], 'group-review': ['findings', 'clean'], reproduction: ['reproduced', 'not-reproduced'], verification: ['passed', 'failed', 'blocked'], 'code-review': ['clean', 'findings', 'blocked'], 'app-test': ['passed', 'failed', 'blocked'], 'pr-review': ['approved', 'pending', 'blocked'], evidence: ['passed', 'untested', 'failed', 'blocked'], 'evidence-iteration': ['in-progress', 'passed', 'blocked', 'failed'] });
 
 function object(value, label) { if (value === null || Array.isArray(value) || typeof value !== 'object') throw new Error(`Artifact index ${label} must be an object`); return value; }
 function keys(value, allowed, label) {
@@ -26,7 +39,7 @@ function keys(value, allowed, label) {
 function text(value, label) { if (typeof value !== 'string' || !value.trim()) throw new Error(`Artifact index ${label} must be a non-empty string`); }
 function validateArtifactStatus(type, status, file) {
   const allowed = artifactStatuses[type]; if (allowed && !allowed.includes(status)) throw new Error(`${file}: invalid ${type} status ${status}`);
-  if (!allowed && Object.hasOwn(ARTIFACT_SERIES, type) && status !== null) throw new Error(`${file}: ${type} status must be null`);
+  if (!allowed && Object.hasOwn(ARTIFACT_SERIES, type) && !['feature-contract', 'feature-conformance', 'jira-refinement', 'delivery-disposition', 'submission-closure', 'visual-reference'].includes(type) && status !== null) throw new Error(`${file}: ${type} status must be null`);
 }
 function validateRecord(record, identity, position, identities, paths) {
   object(record, `${identity} iteration ${position + 1}`); keys(record, iterationKeys, `${identity} iteration ${position + 1}`);
@@ -151,10 +164,10 @@ export function validateArtifactSemantics(type, status, body, file = 'artifact')
   if (!['verification', 'app-test'].includes(type) || status !== 'passed') return;
   const heading = type === 'verification' ? 'Items' : 'Steps';
   const allowed = type === 'verification' ? new Set(['pass', 'fail', 'untested']) : new Set(['pass', 'fail', 'unreachable']);
-  const rows = section(body, heading).split('\n').filter(line => line.trim().startsWith('|')).map(line => line.split('|').slice(1, -1).map(cell => cell.trim().toLowerCase()));
+  const rows = section(body, heading).split('\n').filter(line => line.trim().startsWith('|')).map(line => line.split(/(?<!\\)\|/).slice(1, -1).map(cell => cell.trim().toLowerCase()));
   const header = rows.shift();
   if (!header || !header.includes('verdict')) throw new Error(`${file}: passed evidence requires a ${heading} verdict table`);
-  const verdict = header.indexOf('verdict'); const actual = rows.filter(row => row.length && !row.every(cell => /^-+$/.test(cell)));
+  const verdict = header.indexOf('verdict'); const actual = rows.filter(row => row.length && !row.every(cell => /^:?-+:?$/.test(cell)));
   if (!actual.length || actual.some(row => !row[verdict] || !allowed.has(row[verdict])) || actual.some(row => row[verdict] !== 'pass')) throw new Error(`${file}: passed status contradicts evidence verdicts`);
 }
 export function parseArtifactText(text, expectedType, file = 'artifact') {
@@ -246,13 +259,89 @@ export function currentArtifact(taskDir, type) {
   const { identity } = semanticSeries(type); const index = readArtifactIndex(taskDir); const series = index.artifactSeries[identity]; return series?.iterations.find(record => record.id === series.current) ?? null;
 }
 
+export function observeArtifacts(taskDir, problems, unproven = {}) {
+  const latest = {}, hashes = {};
+  const parse = (file, type, record) => {
+    const parsed = readArtifactScalars(file, type);
+    return { ...record, file: path.resolve(file), text: parsed.text, type: parsed.type, status: parsed.status, summary: parsed.summary, hash: record?.sha256 ?? crypto.createHash('sha256').update(parsed.text).digest('hex') };
+  };
+  if (indexFileExists(path.join(taskDir, 'index.json'))) {
+    try {
+      const index = readArtifactIndex(taskDir), artifactSeries = {};
+      for (const [identity, series] of Object.entries(index.artifactSeries)) {
+        const iterations = series.iterations.map(record => parse(path.join(taskDir, record.path), record.type, record));
+        const current = iterations.find(record => record.id === series.current);
+        if (latest[current.type]) throw new Error(`Duplicate current artifact type ${current.type}`);
+        latest[current.type] = current;
+        for (const artifact of iterations) hashes[artifact.file] = artifact.hash;
+        artifactSeries[identity] = { iterations, current };
+      }
+      return { index, artifactSeries, latest, hashes };
+    } catch (error) {
+      if (!problems) throw error;
+      problems.push(`index.json: ${error.message}`); unproven.index = 'index.json';
+      return { latest: {}, hashes: {} };
+    }
+  }
+  const names = fs.readdirSync(taskDir).filter(name => /^\d{2,}-[a-z0-9-]+\.md$/.test(name) || name === 'pr-description.md').sort((a, b) => Number.parseInt(a) - Number.parseInt(b) || a.localeCompare(b));
+  for (const name of names) {
+    const file = path.join(taskDir, name);
+    let type = name === 'pr-description.md' ? 'pr-description' : null;
+    try {
+      type ||= /^type:[ \t]*([^\r\n]+)/m.exec(fs.readFileSync(file, 'utf8'))?.[1]?.replace(/^['"]|['"]$/g, '').trim();
+      const artifact = parse(file, type);
+      latest[type] = artifact; delete unproven[type]; hashes[artifact.file] = artifact.hash;
+    } catch (error) {
+      if (!problems) throw error;
+      problems.push(`${name}: ${error.message}`);
+      type ||= Object.keys(ARTIFACT_SERIES).filter(known => name.replace(/^\d+-/, '').startsWith(`${known}-`)).sort((a, b) => b.length - a.length)[0];
+      if (type) { delete latest[type]; unproven[type] = name; }
+    }
+  }
+  return { latest, hashes };
+}
+
 function runCli(argv) {
   const [command, ...args] = argv; if (command === 'init' && args.length === 1) return initTaskArtifacts(args[0]); if (command === 'allocate' && args.length === 3) return reserveArtifactIteration(args[0], args[1], args[2]);
   if (command === 'record' && args.length === 5) return recordArtifact(args[0], args[1], args[2], args[3], args[4]); if (command === 'current' && args.length === 2) return currentArtifact(args[0], args[1]);
   if (command === 'root' && args.length === 1) return resolveTaskRoot(args[0]);
   throw new Error('Usage: task-artifacts.mjs init <task-dir> | allocate <task-dir> <kind> <variant> | record <task-dir> <kind> <variant> <type> <artifact-path> | current <task-dir> <type> | root <repo-root>');
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && fs.existsSync(process.argv[1]) && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) {
   try { process.stdout.write(`${JSON.stringify(runCli(process.argv.slice(2)))}\n`); }
   catch (error) { process.stderr.write(`${String(error?.message ?? error).slice(0, 800)}\n`); process.exitCode = 1; }
+}
+
+function revisionGit(cwd, args) { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024 }).trim(); }
+const revisionSha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+function revisionFail(message) { throw new Error(message); }
+export function sourceRevision(taskDir) {
+  let cwd;
+  try { cwd = revisionGit(taskDir, ['rev-parse', '--show-toplevel']); } catch {
+    const resolved = path.resolve(taskDir);
+    const taskRoot = path.dirname(resolved);
+    const root = path.dirname(taskRoot);
+    const files = [];
+    const visit = directory => {
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+        const full = path.join(directory, entry.name);
+        if (full === taskRoot || ['.git', 'node_modules'].includes(entry.name)) continue;
+        if (entry.isDirectory()) visit(full);
+        else files.push([path.relative(root, full), entry.isSymbolicLink() ? fs.readlinkSync(full) : revisionSha(fs.readFileSync(full))]);
+      }
+    };
+    visit(root);
+    return revisionSha(JSON.stringify(files));
+  }
+  const taskRoot = path.relative(fs.realpathSync(cwd), path.dirname(fs.realpathSync(taskDir))).split(path.sep).join('/');
+  if (!taskRoot || taskRoot.startsWith('..')) revisionFail('Task directory must be inside the repository');
+  const excluded = ['.', `:(exclude,top,literal)${taskRoot}`];
+  // HEAD plus tracked diff, so staging is invisible; a new file counts once staged or committed, a never-staged file is not seen.
+  let head;
+  try { head = revisionGit(cwd, ['rev-parse', 'HEAD']); } catch {
+    // Unborn branch: no HEAD to diff against, so the index listing stands in.
+    return revisionSha(JSON.stringify([revisionGit(cwd, ['ls-files', '-s', '--', ...excluded]), revisionGit(cwd, ['diff', '--binary', '--', ...excluded])]));
+  }
+  const diff = revisionGit(cwd, ['diff', 'HEAD', '--binary', '--', ...excluded]);
+  return revisionSha(JSON.stringify([head, diff]));
 }

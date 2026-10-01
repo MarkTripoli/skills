@@ -1,6 +1,6 @@
 # Context management
 
-Run each step in a new session. Its saved task document, called an **artifact**, carries facts to the next step. Atomic does this for you; when running skills by hand, open the new session yourself.
+Run each step in a new session. Its saved task document, called an **artifact**, carries facts to the next step. Open the new session yourself.
 
 ## Why phases, not one long session
 
@@ -23,11 +23,11 @@ flowchart LR
 ```
 
 - **Phase:** one skill in one fresh session. It reads `task.md` and selected artifacts, does its work, saves one artifact, prints its reply, and stops.
-- **Artifact:** a saved Markdown document under `<task-root>/<slug>/`, where `<task-root>` is configured by repository instructions and defaults to `.agents/tasks`. It carries `type` and `summary` frontmatter. A later phase reads selected artifacts in full and `summary` from the others.
-- **Transition:** Atomic chooses the next skill from the request and saved artifacts. A manual handoff names the next skill in its command fence and asks for a new session.
-- **Gate:** Atomic's native prompt asks a person to review an artifact. Feedback starts the matching revision skill in a fresh stage. Running the next manual command records approval.
+- **Artifact:** a digest-validated immutable Markdown iteration under `<task-root>/<slug>/artifacts/<kind>/<variant>/`. It carries `type` and `summary` frontmatter. A later phase reads selected artifacts in full and `summary` from the others.
+- **Transition:** A manual handoff names the next skill in its command fence and asks for a new session.
+- **Gate:** A person reviews an artifact. Feedback goes to the matching `iterate-*` skill in a fresh session. Running the next manual command records approval.
 
-See [shared/CONVENTIONS.md](../shared/CONVENTIONS.md), especially "Phase isolation and context budget", and [workflows/delivery.md](../workflows/delivery.md) for controller inputs and gates.
+See [shared/CONVENTIONS.md](../shared/CONVENTIONS.md), especially "Phase isolation and context budget", and [workflows/delivery.md](../workflows/delivery.md) for workflow choices.
 
 ### What one phase is allowed to read
 
@@ -45,20 +45,11 @@ When a skill needs to explore code, a worker returns a focused report with `path
 
 Research and implementation phases may use roles such as `agent-codebase-locator` and `agent-implementer`. Each worker receives the assignment, reads what it needs, and returns one structured message. The phase verifies any claim it uses. Workers do not write task artifacts; the parent applies their report.
 
-Portable installs perform worker roles in the same session and say so in the reply; that is **not** a fresh worker boundary. Agent-specific installs may expose delegated workers. Changing `skills_dir` does not change which agent runs Atomic's steps.
-## First Sergent and fresh workers
-
-Optional `/deliver` First Sergent keeps a chat liaison separate from its delivery backend. Atomic remains the native controller and starts each phase with fresh context; its graph opens on launch and its awaiting-input gate does not wake the liaison. On a manual path, `agent-first-sergent` owns phase/session transitions only on a host with delegated fresh workers; otherwise follow ordinary manual new-session commands. A nested worker receives the task and selected artifacts, not the liaison conversation. Task-local state records the context checkpoint and the old child session identity; crossing a threshold requires a different observed child session identity, not a flag flip.
-
-When `context_policy=stop-at-60`, a managed Oh My Pi transport may provide live `contextUsage` from its RPC `get_state` response. The accepted fields are `tokens`, `contextWindow`, and `percent`; `percent >= 60` saves the current artifact and starts a child session with a different identity. If the metric or identity is absent, the policy stops. Standard Atomic `ctx.task` exposes no documented live child context monitor, so Atomic blocks before dispatch rather than estimating or claiming universal 60% enforcement.
-
-Atomic gate feedback must answer the exact native pending prompt; intercom steering or liaison chat does not approve a gate. Manual in-phase questions and action-time confirmations need a resumable child session, not an outer artifact gate. Manual Herdr use is possible only on explicit selection inside Herdr (`HERDR_ENV=1`), with cleanup limited to panes this delivery opened. The upstream router's Herdr launch is externally blocked here because no documented result proves prompt, worktree, and account binding.
+Portable installs perform worker roles in the same session and say so in the reply; that is **not** a fresh worker boundary. Agent-specific installs may expose delegated workers.
 
 ## Fresh context per phase
 
-Atomic uses `context: "fresh"` for each skill run, including revisions, implementation, verification, and review. New sessions receive feedback through their prompt and saved documents, not the previous conversation.
-
-By hand, open a new session yourself:
+Run each skill in a fresh session, including revisions, implementation, verification, and review. New sessions receive feedback through their prompt and saved documents, not the previous conversation. Open a new session yourself:
 
 | Runtime | New session | See context usage | Compaction | Subagents |
 |---|---|---|---|---|
@@ -80,15 +71,22 @@ The collection treats these as warning signs that a session is losing track:
 - drops a stated constraint or repeats an answered question;
 - loses its numbered step or starts a phase over;
 - summarizes instead of citing `path:line`; or
-- reports usage past half the window before the phase is complete.
+- reports measured usage at the configured context threshold before the phase is complete.
 
-When `context_policy=stop-at-60` is enabled, the native live metric and current child identity are the only accepted measurements. The first unavailable metric or identity, or a threshold boundary, saves the artifact and stops; the next worker must report a different session identity. The ordinary policy remains unchanged when the option is off.
+On the first sign, persist the current artifact and next incomplete action. Phases print the fresh-session handoff and stop. Interactive phases save after each accepted change. These collection rules complement host auto-compaction; they do not claim to configure or trigger a host compaction API.
+
+1. Stop giving new instructions in that session.
+2. Confirm the artifact is saved. If the reply is not printed, say: `Save the artifact in its current state and print the final answer from the template.`
+3. Open a new session.
+4. Run the next command, or `/iterate-<phase> @<artifact file>` with the remaining feedback.
+
+Compaction is not a replacement for a verified checkpoint and a fresh phase boundary.
 
 ## For skill authors
 
 - Read only `task.md` and selected artifacts; use workers for codebase exploration.
 - Save the artifact before printing the reply. A handoff ends with `Next action:`, `Open a new session in {run_location}, then run:`, and one command fence. A terminal reply has no fence.
 - Stop on the first degradation sign and hand off from the saved file.
-- Keep controller contracts in Atomic stage prompts and helpers, not ordinary skills. Preserve the standalone human reply and artifact-first behavior.
+- Keep executable delivery prerequisites in the shared contract used by delivery skills. Ordinary skills call its guard at delivery boundaries while retaining their standalone human reply and artifact-first behavior.
 
 `npm test` checks reply shape, next-action labels, new-session instructions, shared links, and banned tokens for every skill.

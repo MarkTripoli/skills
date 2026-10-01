@@ -1,6 +1,6 @@
 The PRD needs human review before technical design.
 
-Review artifact: {artifact_link}
+Saved for review: {artifact_link}
 
 Check:
 - {review_check}

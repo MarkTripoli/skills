@@ -1,221 +1,163 @@
 # Delivery workflow
 
-Atomic run skill for you with optional `delivery` workflow. Each step run one skill in new session, save task doc — call **artifact**. You can run every skill by hand, no Atomic.
-`/deliver` can optionally use **First Sergent** as a chat liaison for a separate delivery backend. On the first non-oneshot start it asks, “Use First Sergent for this delivery?” Answer **no** for the existing manual handoffs or Atomic workflow. A oneshot skips the question by default but accepts an explicit opt-in. This choice does not replace the workflow chains below or turn chat into an approval gate.
-
-
-Pick fixed `workflow` for known sequence, or `workflow=auto` so JEV pick next step. JEV be TypeSafe service that read request and saved docs. Source: `atomic/workflows/delivery.ts` and `atomic/lib/`; skills: `skills/delivery/<name>/`. Portable `route-model` skill own candidate validation and JEV model pick for every harness; Atomic hand off to it.
-
-## Install and launch
-
-Install Atomic with [official guide](https://docs.bastani.ai/getting-started/installation), set provider creds, then install this optional integration:
-
-```sh
-npx github:MarkTripoli/skills portable --atomic --yes
-# Or install skills and workflow only in this repository:
-npx github:MarkTripoli/skills portable --atomic --project --yes
-```
-
-`--atomic` install all skills and workflow. Without it, installer put in skills and runtime worker defs only. Pick single skills — never add Atomic dependency.
-
-Workflow stuff live under `<Atomic agentDir>/workflows/skills-delivery/` (default `~/.atomic/agent/workflows/skills-delivery/`, respect `ATOMIC_CODING_AGENT_DIR`) or project `.atomic/workflows/skills-delivery/`, with discovery entry beside them. Workflow read complete portable skill install: explicit `skills_dir` when given; else task-worktree `.agents/skills` beat user `~/.agents/skills`.
-
-Start Atomic from target repo. These be **Atomic chat commands**, not shell args to tack after `atomic`:
+`/deliver` is one orchestrator session. It plans, delegates each unit of work to a builder, has a fresh-context reviewer on the strongest configured model check the result, and stops on a named condition. Every skill also runs by hand in its own session and saves task artifacts locally.
 
 ```text
-/workflow reload
-/workflow list
-/workflow inputs delivery
-/workflow delivery request="Add a --verbose flag to the CLI" workflow=oneshot gates=all branch=verbose-flag
+/deliver <request | task-dir>             orchestrator: this session, strong model
+  setup     worktree, task.md brief, Jira refinement, one Slack run
+  plan      read-only research workers -> plan -> plan reviewer -> human gate when gates=plan
+  build     per plan phase: builder implements, checks, commits
+            -> slice reviewer (fresh, read-only) -> approve | findings
+            repeat until approve, 3 rounds, or no progress
+  final     repo checks + evidence; verify-implementation and review-code reviewers on HEAD
+  publish   describe-pr, gh pr create, evidence links
+  follow-up CI failures and review threads -> the same builder/reviewer pairs
+  stop      done | needs-human <question> | blocked <prerequisite + unblock check> | no-progress <evidence>
 ```
 
-See [Atomic workflow operations](https://docs.bastani.ai/workflows/operations) and [Atomic authoring](https://docs.bastani.ai/workflows/authoring). Find workflow not prove live delivery run happen.
-## Optional First Sergent at `/deliver`
+`/deliver <task-dir>` resumes from `task.md`, the plan's `## Progress` and `contract.mjs status`. Reviewers write records checked by `contract.mjs review` (commit is HEAD, tracked files unchanged, status matches findings, blocking findings cite evidence, blocking ids shrink between rounds). Without subagents the orchestrator builds inline and prints a fresh-session handoff for each review.
 
-Choose **yes** at the first non-oneshot `/deliver` prompt, or explicitly request First Sergent for a oneshot. **No** keeps the legacy path. To continue an opted-in manual task, invoke `/deliver` with its existing task directory: `task.md` records `liaison: first-sergent` in frontmatter while retaining the original request body, branch, worktree, and artifacts. The liaison rehydrates from that record rather than opening a duplicate task.
+`/deliver` picks the workflow from the request and the [size check](../shared/SLICING.md). Skills: `skills/delivery/<name>/`. Portable `route-model` skill owns candidate validation + JEV model pick, all harnesses.
 
-The liaison communicates with a **separate backend**, not a second implementation in the chat session. Manual `agent-first-sergent` is the default opted-in path when a delegated fresh-worker transport is available, including for human review gates. An explicitly selected Atomic backend uses the native `delivery` controller; pass `liaison=first-sergent` so its run inputs record the choice without altering stages. Atomic opens its native graph on launch; return to main chat for liaison messages. Atomic awaiting-input gates do not wake that liaison, so use the manual backend for gated work or initiate `/deliver --run <run-id>` for an exact native status and answer.
-
-On the manual path, `agent-first-sergent` owns phase/session lifecycle, artifact-backed handoffs, review and repair loops, and the task's existing Slack thread. A local `.first-sergent-state.json` beside `task.md` retains effective options, attempt count, pending artifact SHA-256, and approvals across worker replacement; it is private worktree state, not a committed artifact. In-phase questions and action-time confirmations require an addressable child session. Without delegated fresh workers or bidirectional child messaging, use ordinary manual new-session commands instead.
-
-Quota mode is explicit. `quota_mode=omp` runs the native `omp usage --json` snapshot and filters exact candidates before JEV; provider-level filtering does not choose an account. Each matched report must have fresh `fetchedAt` data and one explicit account binding. Stale, unknown, exhausted, mixed-account, missing-provider, and insufficient-headroom results stop instead of falling back. The snapshot is not a concurrency reservation or lock, so concurrent runs re-read at the dispatch boundary or stop. `quota_mode=agent-router` has no safe production caller here: the upstream CLI's real `router run TASK --json --usage --no-enrich` launch does not prove the exact phase prompt, task worktree, and caller account binding, so the selected Herdr path reports externally blocked rather than launching.
-
-When `context_policy=stop-at-60`, a managed transport must expose native `contextUsage={tokens,contextWindow,percent}` and an actual child session identity. A boundary at or above 60% checkpoints and starts a different fresh session; an unavailable metric or identity stops at the boundary. Standard Atomic `ctx.task` exposes no documented live child context monitor, so Atomic blocks before stage dispatch instead of claiming posthoc 60% enforcement. Compaction is not a phase handoff.
-
-Herdr is an optional transport only when explicitly selected and the session is inside Herdr (`HERDR_ENV=1`). Close only panes this delivery created. First Sergent does not require Herdr or invent a tmux adapter. See [setup](../docs/getting-started.md#use-optional-first-sergent) and [context boundaries](../docs/context-management.md#first-sergent-and-fresh-workers).
-
-
-## Inputs
-
-Use bare `key=value` tokens, not shell `--input` flags. Atomic parse JSON, so `verify=false` be boolean and `max_steps=40` be number.
-
-| Input | Type/default | Meaning |
-|---|---|---|
-| `request` | required string | Wanted outcome; keep creds out |
-| `task_dir` | optional string | Reuse existing task; keep its `task.md`, `index.json`, `slug`, `workflow`, `base`, branch, artifacts. Parent dir be authoritative task root |
-| `skills_dir` | optional string | Complete portable skill root; see install paths above |
-| `workflow` | string, `auto` | `auto`, `oneshot`, `lean`, `full`, `prd`, `bugfix`, `epic`, `program`, `resolve-reviews`, or `epic-wave` |
-| `gates` | string, `all` | `all`, `none`, `plan`, or `pr`; no comma list |
-| `liaison` | string, `none` | `none` or `first-sergent`; records Atomic opt-in for reconnect, leaves phases and gates unchanged |
-| `transport` | string, `native` | `native` or explicit `herdr`; Herdr requires `HERDR_ENV=1` |
-| `quota_mode` | string, `off` | `off`, `omp`, or `agent-router`; portable routing stays unchanged while off |
-| `quota_command` | optional string | OMP executable when `quota_mode=omp`; raw usage stays local |
-| `quota_max_age_ms` | optional number | Maximum age for the OMP `generatedAt` snapshot |
-| `quota_required_headroom` | optional fraction | Minimum remaining quota fraction for each exact candidate |
-| `context_policy` | string, `off` | `off` or `stop-at-60`; missing live child context blocks at the boundary |
-| `model` | string, `openai-codex/gpt-5.6-luna-fast` | Ordinary model; must have for code-writing and unknown phases |
-| `model_routing` | string, `auto` | `auto` ask JEV if eligible non-writing phase need `reasoning_model`; `fixed` pick `model`, no JEV call |
-| `app_test` | string, `none` | `none`, `web`, `ios`, or `android` |
-| `app_target` | optional string | URL, bundle id, package, or app path for UI test |
-| `verify` | boolean, `true` | Run own implementation verify before review |
-| `max_steps` | number, `40` | Cap fresh skill sessions, revisions and repairs too |
-| `branch` | optional string | Branch for new task worktree |
-| `base` | optional string | Base branch for task worktree and pull request |
+When unattended work is requested or a prompt appears, `/deliver` runs a **tool-approval preflight** in the invoking harness. It reports the live no-prompt/auto mode when the host exposes it; when the active mode cannot be verified, it warns and gives the harness-specific check and opt-in launch command. It never reads a config file as proof of the active session or changes permissions. See [the quick-start checks](../docs/cheatsheet.md#tool-approval-preflight) and the [tool approvals](../skills/delivery/deliver/references/tool_approval.md).
 
 ## Workflow choices and manual chains
 
-Pick sequence below. `auto` pick again after each saved result. Explicit workflow not turn off auto model pick; also set `model_routing=fixed` to dodge JEV routing. Code-writing and unknown steps always use `model`. Only `verify=false` turn off own verify; ask for app test apart with `app_test`.
+The chain names the phase skills the orchestrator delegates, in order; run by hand, the same order applies. Every chain records evidence before any PR description.
 
 | Choice | Chain | Use when |
 |---|---|---|
-| `auto` | Judge next phase at artifact edges; after review run record-evidence → describe-pr | Evidence should pick research, design, planning |
-| `oneshot` | Small implementation → verify-implementation → review loop → record-evidence → describe-pr | Change fully spelled out |
-| `lean` | create-research-questions → create-research → create-structure-outline → implement-outline → verify-implementation → review loop → record-evidence → describe-pr | Shape known; many files need ordered work |
-| `full` | create-research-questions → create-research → create-design-discussion → create-structure-outline → create-plan → implement-plan → verify-implementation → review loop → record-evidence → describe-pr | Designs fight or modules cross lines |
-| `prd` | create-research → create-prd → create-tdd → create-structure-outline → create-plan → implement-plan → verify-implementation → review loop → record-evidence → describe-pr | Need product and technical design |
-| `bugfix` | reproduce-bug → fix-bug → verify-implementation → review loop → record-evidence → describe-pr | Seen behavior differ from wanted behavior |
-| `epic` | Research → create-epic-plan → start-epic-delivery → ready children, each with record-evidence before its PR description | Deliverables merge on own and have deps |
-| `program` | Research → create-prd → create-tdd → create-epic-plan → start-epic-delivery → ready children, each with record-evidence before its PR description | Needs span initiative of child pull requests |
-| `resolve-reviews` | resolve-pr-reviews → recapture and update description/comment when behavior changes | Existing task and PR need review feedback handled |
-| `epic-wave` | Recheck existing epic deps and run ready children with evidence before each child PR | Next wave come after prereq merges |
+| `oneshot` | baseline → task-only implementation → verify-implementation → review loop → record-evidence → iterate-evidence → describe-pr | Change fully specified |
+| `lean` | create-research-questions → create-research → create-structure-outline → baseline → implement-outline → verify-implementation → review loop → record-evidence → iterate-evidence → describe-pr | Shape known; many files need ordered work |
+| `full` | create-research-questions → create-research → create-design-discussion → create-structure-outline → create-plan → baseline → implement-plan → verify-implementation → review loop → record-evidence → iterate-evidence → describe-pr | Designs conflict or cross modules |
+| `prd` | create-research → create-prd → create-tdd → create-structure-outline → create-plan → baseline → implement-plan → verify-implementation → review loop → record-evidence → iterate-evidence → describe-pr | Need product + technical design |
+| `bugfix` | baseline → reproduce-bug → fix-bug → verify-implementation → review loop → record-evidence → iterate-evidence → describe-pr | Seen behavior ≠ wanted |
+| `epic` | Research → create-epic-plan → start-epic-delivery → ready children (each baseline, implementation, verification, review, recording, inspection, publication) | Deliverables merge alone, have deps |
+| `program` | Research → create-prd → create-tdd → create-epic-plan → start-epic-delivery → ready children with the same complete contract | Initiative span many child PRs |
+| `resolve-reviews` | Original baseline → resolve-pr-reviews → current verification/app test/review → record-evidence → iterate-evidence → update describe-pr and separate PR comment | Existing task + PR need review feedback handled |
+| `epic-wave` | Recheck epic deps, run ready children through capture and PR publication | Next wave after prereq merges |
 
-Run `gather-sources` first when the request names material outside the repository. Every PR-producing chain runs `record-evidence` after review and before `describe-pr`, independent of `gates`, `verify`, or `app_test`. UI behavior uses actual live video; CLI uses a captured terminal session; API/performance uses captured probe output; agent behavior uses the real tool-call/response transcript. Hosted proof in the PR description and distinct comment binds the tested code revision, result, capture URL, and current PR head; missing, stale, unreadable, or mismatched proof blocks publication.
+`baseline` means `/record-evidence --baseline`; an already sealed original baseline is reused. Prepare the task's evidence policy early: identify existing versus new behavior, required surfaces and target flows. Existing UI behavior requires an authentic pre-change recording, which may be captured at any time from a temporary worktree at the base commit; new behavior explicitly omits it. A required surface that cannot be captured stays `untested` with a reason and blocks ready publication; record the prerequisite and list it in Known limits.
 
-## Gates and native controls
+The final recording proves the current implementation and is inspected against those same targets. Existing UI behavior also requires the labeled `BEFORE`/`AFTER` composite. CLI, API and agent-only changes use captured output or transcripts, not manufactured video. Cross-device recording is required only when the task's surface contract requires it.
 
-- `all`: review artifact and implementation edges.
-- `plan`: review design discussion, PRD, TDD, plan, structure outline, epic plan, reproduction edges.
-- `pr`: review only pull request description.
-- `none`: show no human UI prompts. Only headless mode that work.
+### Executable delivery status
 
-A **gate** be approval step. Connect to run, read saved doc and its checks and limits, then answer prompt. Ask for changes start new revision session. Only person can approve.
+Use the installed contract, not a worker's closing paragraph, to inspect what is left:
 
-```text
-/workflow status
-/workflow status <run-id>
-/workflow connect <run-id>
-/workflow pause <run-id>
-/workflow quit <run-id>
-/workflow resume <run-id>
+```sh
+node <skills-dir>/deliver/contract.mjs status <task-directory>
 ```
 
-`connect` open graph and waiting prompts. `pause` hold resumable work. `quit` pause nice and keep durable progress; it not delete task. `resume` use Atomic saved run state when there. Use exact run id Atomic show. Do not make up shell `approve`, `reject`, `wait`, or `connect` commands.
+`status` reports each artifact type's digest-validated current semantic file, status, revision and currency, per-file problems, and what publication still lacks. It is read-only and never refuses a phase.
 
-Headless dispatch cannot answer human prompt, `ctx.ui` not there. Set `gates=none` before launch. Missing JEV creds and blocked artifacts stay errors or blockers; they not skip required checks.
+`evidence-policy.json` fixes the capture scope; later surfaces are appended with a reason. `seal` validates an immutable indexed provenance receipt against real files and fetched hosted bytes; `inspect` binds the recorded review to the same source and capture hashes. The helper stores revision-bound sidecars in `.delivery-evidence/` and the repair allowance in `.delivery-state.json`; an exhausted allowance is a `stop` in `status` that the owner clears with `repair-extension +N: <reason>` in `task.md` `## Decisions`. Keep these task-local files with the artifacts when handing off. Editing Markdown after sealing requires a fresh validated binding, not changing a status word.
 
-## Controller decisions and JEV
+`gather-sources` first when request names outside material. `record-evidence` is required for every delivered PR, including oneshot, bugfix, and epic children. UI requires a live interaction video; CLI needs a captured terminal session, API/performance a reproducible probe output, agent behavior its input/tool/output transcript. Record an immutable `evidence.recording` provenance receipt bound to the tested revision and source head; a failed or missing capture blocks PR publication. Authenticated Chrome-and-Android product proof: `video-iterative-development`; `video-iterative-orchestration` for Jira-epic, multi-worktree loop. Jira mode: pick Stories under epic, implementation to agent-owned Subtasks when needed, Story-level acceptance to QA, not Subtasks. KIT: standalone [`jira-issue-hierarchy`](../skills/jira-issue-hierarchy/SKILL.md) owns [local policy and issue bodies](../skills/jira-issue-hierarchy/references/jira-issue-templates/README.md) for upfront Epic/Story breakdown, Story-start Sub-tasks, and QA readiness. Jira orchestration starts from existing Epic and installs that skill as a dependency.
 
-Controller use `skills/delivery/typed-judgment/judge.mjs` through its System One/`ask` integration. Cred order be `TYPESAFE_API_KEY`, then file named by `TYPESAFE_API_KEY_FILE`, then `~/.config/typesafe/api_key`. Keep key outside repo. The [typed-judgment skill](../skills/delivery/typed-judgment/SKILL.md) write down timeout, retry, evidence rules.
+For `/deliver` feature requests, the standing brief in `task.md` carries: agent-owned routine decisions grounded in repository examples; a new worktree from refreshed `origin/main` unless the request specifies a base; a read-only [`jira-issue-refinement`](../skills/jira-issue-refinement/SKILL.md) pass before planning for Jira-backed work; real videos plus screenshots for the requested UI surfaces in the PR's `## UI Evidence`; and current-head pipeline/discussion follow-up through `/resolve-pr-reviews`. The refinement artifact separates confirmed functional specifications and QA steps from proposals, and its Planning impact is reconciled with an existing plan or outline before implementation. Jira description writes require explicit approval by ticket key. The brief also records a sizing decision from `shared/SLICING.md`: an estimated single PR near 10,000 hand-written changed lines or failing the one-day/reviewability tests becomes a small set of independently mergeable child PRs through `/create-epic-plan`. Explicit unattended authorization sets `gates=none` and covers in-scope repair, push, and review replies. When `slack-coordinator` is configured, `slack_run_id` in `task.md` carries one thread and owner gate across stages; direct feature-thread mode is separate.
 
-`workflow=auto` need JEV for phase pick. `model_routing=auto` stand apart and be default too, so pick explicit workflow not make run JEV-free. `model_routing=fixed` pick caller `model` straight and skip JEV for stage-model pick; missing creds or service being down cannot touch that fixed model path. Single skills keep their written deterministic fallback when own judgment be optional. Atomic write down picked model, and native stages write down real `modelAttempts`.
+## Gates
 
-`execution-plan` artifact (series `orchestration.execution`) write down controller phase decisions. Research and design artifacts stay boss; stage talk not cross-stage memory. `max_steps` cap all skill sessions, failing review or revision loops too. Blocked phase report its missing prereq and be not successful completion.
+`gates` values: `plan` (default) and `none`; older `all` and `mr` read as `plan`.
+
+- `plan`: the human approves the plan (or the structure outline or epic plan), recorded as a dated owner line in `task.md` `## Decisions`. Design discussion, PRD and TDD reviews stay human gates when the workflow uses them.
+- `none`: no human review between skills. Only for explicitly authorized unattended work.
+
+Tool approvals are separate from these delivery **human gates**: full-access/auto tool mode does not select `gates=none`. Run by hand, each skill handoff still requires the next invocation.
+
+**Gate** = approval step. Read saved doc + checks + limits. Request changes → new revision session. Only human approve.
+
+Missing JEV creds + blocked artifacts stay errors/blockers; no skip required checks.
+
+
+## Typed judgments and JEV
+
+Skills call `skills/delivery/typed-judgment/judge.mjs` via System One/`ask` integration. Cred order: `TYPESAFE_API_KEY`, then file named by `TYPESAFE_API_KEY_FILE`, then `~/.config/typesafe/api_key`. Key outside repo. [typed-judgment skill](../skills/delivery/typed-judgment/SKILL.md) document timeout, retry, evidence rules.
+
+Skills keep a deterministic fallback when their judgment is optional. Research + design artifacts authoritative; chat is not cross-session memory. Blocked phase report missing prereq; not success.
 
 ## Verification, app testing, and review
 
-Implementation run one plan phase or outline step per fresh stage. Controller read saved artifacts, not stage prose claim. Every skill and revision use `context: "fresh"`.
+Builders implement one plan phase or outline step at a time and read saved artifacts, not prose claims. Plan or outline unreadable: record the error and run `iterate-plan` or `iterate-structure-outline`; never restart planning from an older document.
 
-If current plan or outline cannot be read, workflow write down error and run `iterate-plan` or `iterate-structure-outline`. It not use older doc or restart planning. Revision must bring back numbered phases and usable checklists.
+Code changes need a fresh verification and review. Reviewers are independent: fresh context, strongest model unless one is named, write a record with `reviewed_commit` and `reviewer_model`. Blocking findings are limited to unmet acceptance criteria, wrong behavior, security, data loss or broken checks; everything else is `follow-up`. Round two and later judge only earlier findings, the builder's `fixed` or `disputed` answers and the fix diff, so a review loop ends on approval, three rounds or no progress instead of running on.
 
-If implementation step save new report but not move checklist, workflow write down stalled work instead of taking success:
-
-- Before/after compare decide this, not report wording.
-- Record hold report, source filenames and hashes, reason. Next choices be only `iterate-plan`, `iterate-implementation`, or `blocked`.
-- Revised plan may clear record even if remaining item count stay same. Implementation repair that still make no progress cannot.
-
-Code changes need new verify and review. Completion need truthful implementation report to swap out stalled-work report.
-
-Unless `verify=false`, `verify-implementation` runs repo checks and promised acceptance items. Turned-on `test-app` works the real app. Failures go to `iterate-implementation`, then new verify or app-test stage. `review-code` and `fix-code-review` repeat till clean, blocked, or capped by `max_steps`. After review, `record-evidence` captures real behavior at the code revision in scratch space outside the task directory and publishes a hosted capture and distinct PR comment. Missing, failed, or stale hosted proof cannot advance to the PR description. These checks come before publication. See [verification](../docs/verification.md) and [app testing](../docs/app-testing.md).
+`verify-implementation` runs repo checks + promised acceptance items itself. `test-app` exercises the real app when the task asks for it. Failures → `iterate-implementation`, then fresh verify or app-test. `review-code` + `fix-code-review` repeat until clean, three rounds, or no progress. Then `record-evidence` captures the current behavior, uploads and verifies the direct hosted capture, and records the next `evidence.recording` metadata iteration; `describe-pr` includes the direct URL in its required Evidence section and posts the same URL in a separate PR comment. A local file path, assertion-only report, failed capture, or stale revision blocks publication. Behavior-changing review feedback requires a fresh capture and updates to both destinations. See [verification](../docs/verification.md), [app testing](../docs/app-testing.md).
 
 ## Task, artifact, and worktree ownership
 
-Task be `<task-root>/<slug>/`: `task.md`, authoritative `index.json`, immutable iteration under `artifacts/<kind>/<variant>/` for planning, review, and verification metadata. Task root default `.agents/tasks`, follow repo `<!-- skills:task-root=... -->`; controller resolve at selected base and fail when checked-out root disagree. Task root is ignored local worktree state, not committed project history. Revision record next series iteration, never edit recorded one. Captures, evidence receipts, and PR-description files never live in the task root; only the hosted PR body, distinct comment, and direct capture URL are publication proof. [Collection conventions](../shared/CONVENTIONS.md) set exact formats, manual record contract, legacy no-index exception and source commit ownership.
+Task = `<task-root>/<slug>/task.md` plus authoritative `index.json` and immutable semantic iterations. The default root is `.agents/tasks`; explicit task directories/configured roots follow the shared contract. Invalid indexes fail closed; only genuinely absent indexes use legacy numbered files. Raw captures stay outside the task root; provenance metadata stays local. The final PR description exists only as the hosted body. [Collection conventions](../shared/CONVENTIONS.md) own exact selection, revision, and commit rules.
 
-New task get own lasting worktree and branch. Explicit existing `task_dir` reuse task, index, artifacts; parent dir be authoritative task root. Keep manual sessions going in checkout and branch printed in handoff. Code commits stage explicit source paths; never stage task files. Workflow operation never allow committing unrelated staged work.
+New task gets its own worktree + branch `<dev-name>/<issue-key-if-known>-<short-description>`; slug = worktree/task-dir name. Existing branches reused as-is. An existing task directory reuses task + artifacts. Manual sessions continue in the same checkout + branch from handoff. Code commits stage explicit code paths and never include `.agents/tasks/` files. Never commit unrelated staged work.
 
-Atomic own run state. User own task branches, artifacts, worktrees. Pausing, quitting, uninstalling skills, or swapping controller not allow deleting task records or cancelled-run worktrees. Old engine checkpoints be not Atomic checkpoints; keep going from kept artifacts in new `delivery` run when need.
+User own task branches, artifacts, worktrees. Uninstall never permits deleting task records or cancelled-run worktrees.
 
 ## Epics
 
-An **epic** split work into child tasks that each merge apart. Each child need `workflow`, `depends_on`, acceptance criteria, prompt. `start-epic-delivery` make their task dirs and GitHub issues when access there. See [task-sizing rules](../shared/SLICING.md).
+**Epic** split work into child tasks, each merge separate. Each child need `workflow`, `depends_on`, acceptance criteria, prompt. `start-epic-delivery` create task dirs + GitHub issues when access; child branches use issue number when available. See [task-sizing rules](../shared/SLICING.md).
 
-Ready children run in separate worktrees. A dependency is complete only after its PR targeting the epic branch has merged, its merge commit is present in the parent, and the local native completion agrees with the PR's reviewed head, hosted capture, distinct evidence comment, and final body. A PR description alone is not proof. Task files stay ignored; keep the child worktree and its local receipts until the epic joins. The workflow does not merge PRs: merge them separately, then run `workflow=epic-wave` with the same epic `task_dir`.
-
-```text
-/workflow delivery request="Build usage billing" workflow=program branch=epic-billing gates=plan
-/workflow delivery request="Run the next ready wave" workflow=epic-wave task_dir=.agents/tasks/billing gates=none
-/workflow delivery request="Address the PR feedback" workflow=resolve-reviews task_dir=.agents/tasks/billing-client branch=billing-client
-```
-
-Examples use default `.agents/tasks`; substitute configured root when `skills:task-root` directive set one.
+Ready children run in separate worktrees. Each child PR follows its own review → record-evidence → iterate-evidence → describe-pr chain, with a capture and comment bound to that child's source revision. Prerequisite branches must be merged into the epic branch; PR descriptions do not prove merge. Merge PRs separately, then run `epic-wave` with the same epic task directory.
 
 ## Phase table
 
-Artifact type be template frontmatter `type` for local planning, review, and verification only. Publication stages write hosted proof instead of task artifacts. Human gates count only when turned on; every skill work by hand too. Worker-role skills sit apart in source tree.
+Artifact type = template frontmatter `type`. Human gates count only when enabled. Worker-role skills separate in source tree.
 
 | Skill | Artifact type | Human gate | Runs in |
 |---|---|---|---|
+| jira-issue-refinement | jira-refinement | Jira write only | Read-only `/deliver` preflight or standalone existing-ticket rewrite |
 | gather-sources | sources | no | By hand before chain; outside source digest |
 | create-research-questions | research-questions | no | Research |
 | iterate-research-questions | research-questions | optional | Research revision or by hand |
 | create-research | research | no | Research |
 | iterate-research | research | optional | Research revision or by hand |
-| create-design-discussion | design-discussion | yes | Full or auto design |
+| create-design-discussion | design-discussion | yes | Full design |
 | iterate-design-discussion | design-discussion | yes | Design feedback |
-| create-prd | design-prd | yes | PRD, program, or auto |
+| create-prd | design-prd | yes | PRD or program |
 | iterate-prd | design-prd | yes | PRD feedback |
-| create-tdd | design-tdd | yes | PRD, program, or auto |
+| create-tdd | design-tdd | yes | PRD or program |
 | iterate-tdd | design-tdd | yes | TDD feedback |
-| create-structure-outline | structure-outline | yes | Lean or auto planning |
+| create-structure-outline | structure-outline | yes | Lean planning |
 | iterate-structure-outline | structure-outline | yes | Outline feedback |
-| create-plan | plan | yes | Full, PRD, or auto planning |
+| create-plan | plan | yes | Full or PRD planning |
 | iterate-plan | plan | yes | Plan feedback |
-| create-epic-plan | epic-plan | yes | Epic or program; revise its plan too |
+| create-epic-plan | epic-plan | yes | Epic or program; revise plan too |
 | start-epic-delivery | epic-delivery | no | Epic or program child prep |
-| implement-plan | implementation | yes | One plan phase per stage |
-| implement-outline | implementation | yes | One outline step per stage |
-| iterate-implementation | implementation | yes | Implementation feedback and repairs |
+| implement-plan | implementation | yes | One plan phase per session |
+| implement-outline | implementation | yes | One outline step per session |
+| iterate-implementation | implementation | yes | Implementation feedback + repairs |
 | review-code | code-review | no | Review loop |
-| security-check | none | no | By hand on explicit request; opt-in Semgrep scan |
+| group-review | group-review | yes | By hand; review another author's related PRs against Jira and product docs, post approved inline comments |
 | fix-code-review | code-review-fixes | no | Repair review findings |
 | reproduce-bug | reproduction | yes | Bugfix before product edits |
 | fix-bug | fix | no | Bugfix after reproduction |
-| record-evidence | hosted capture and PR comment | no | Required after review; recapture after behavior-changing reviews |
+| record-evidence | evidence | no | After review, before every PR description; UI video or captured CLI/API/agent proof |
 | iterate-evidence | evidence-iteration | no | Own authorized capture, inspect, repair loop |
-| video-iterative-development | none | no | By hand; authenticated API and frontend delivery with browser and Android evidence |
-| video-iterative-orchestration | none | no | By hand; dependency-aware implementation orchestration with isolated worktrees and delivery gates |
-| deliver | none | no | Own entry point; optional Atomic handoff |
-| configure-model-routing | none | no | By hand or model-invoked; make and check shared candidate profile |
+| video-iterative-development | none | no | By hand; authenticated Chrome-and-Android E2E delivery |
+| video-iterative-orchestration | none | no | By hand; Jira-epic E2E delivery orchestration |
+| agent-slack-control-plane | none | no | Optional by-hand status + steering companion |
+| deliver | none | no | Own entry point; the single orchestrator |
+| configure-model-routing | none | no | By hand or model-invoked; create + check shared candidate profile |
 | herd-next | none | no | By hand inside Herdr; stage next session |
-| verify-implementation | verification | no | Before review unless `verify=false`; by hand too |
-| test-app | app-test | no | When `app_test` turned on; by hand too |
-| typed-judgment | none | no | Optional skill judgments and controller JEV routing |
-| jev-ui | none | no | By hand; capped browser and Android control |
-| describe-pr | hosted PR body | yes | Final PR description and its revisions |
+| verify-implementation | verification | no | Before review |
+| test-app | app-test | no | When the task asks for app testing |
+| typed-judgment | none | no | Optional skill judgments |
+| jev-ui | none | no | By hand; capped browser + Android control |
+| describe-pr | pr-description | yes | Final PR description + revisions |
 | resolve-pr-reviews | pr-review | no | Existing PR review round |
 | ci-commit | commit | no | By hand; explicit-path commit conventions |
 | review-artifact-comments | comment-review | no | By hand; artifact feedback |
 | show-me | show-me | no | By hand; visual explanation |
 | safety-dance | none | no | By hand |
-| slack-coordinator | none | no | By hand; one Slack thread per run |
+| security-check | none | no | Explicit opt-in Semgrep scan with accepted-risk handling |
 
 ## Running skills by hand
 
-Call `/<skill> @<artifact or task directory>` in Claude Code, OMP, Pi, or other compatible host; use `$<skill>` in Codex. Single skill need no Atomic install, no running controller. Unless exception hit, task conventions open worktree for new task. Later phases use that checkout and branch.
+Call `/<skill> @<artifact or task directory>` in Claude Code, OMP, Pi, or compatible host; `$<skill>` in Codex. Unless exception, task conventions open worktree for new task. Later phases use that checkout + branch.
 
-`iterate-evidence` on own put together `record-evidence` for explicitly authorized, capped repair loop. It save one append-only receipt and look at newly recorded pixels before settling findings. Atomic controller not schedule it. Install it with [repository installer](../docs/getting-started.md#inspect-and-repair-recorded-behavior) so recorder dependency come along; record-only requests still use `record-evidence`.
+`iterate-evidence` combines the installed recorder with an authorized, capped inspect/repair loop. The shared delivery contract keeps the repair allowance across new sessions and continuation. Independent invocation remains available; a record-only request does not authorize product edits. Install through the [repository installer](../docs/getting-started.md#inspect-and-repair-recorded-behavior) so executable companion dependencies accompany the selected skill.
 
-Use phase table as guide, not demand to install every phase. Manual handoff name saved artifact and end with:
+Phase table = guide, not must-install-all. Manual PR handoff includes `/record-evidence` after `/review-code` and any fixes, before `/describe-pr`; `oneshot` implementation and bugfix follow the same order. A passed receipt is not a published PR until the strict GitHub publication gate verifies original hosted captures, successful recorded commands, passing per-test cues, tested/current-head SHAs, the full body and a distinct same-PR comment. Optional custom hooks still run. Manual handoff names the saved artifact and ends with:
 
 ````markdown
 Next action:
@@ -226,4 +168,4 @@ Open a new session in {run_location}, then run:
 ```
 ````
 
-Running next phase write down approval in manual chain. To revise first, start new session with right `iterate-*` skill and feedback. Terminal reply have no command fence. Atomic use same artifacts and give controller context in its stage prompt; standalone human invocation contract stay same.
+Running next phase = approval in manual chain. Revise first → new session with right `iterate-*` skill + feedback. Terminal reply no command fence.

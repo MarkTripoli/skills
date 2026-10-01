@@ -1,31 +1,28 @@
 # Cheat sheet
 
-First time? Use [getting started](getting-started.md). Full workflow: [delivery reference](../workflows/delivery.md).
+First time? [getting started](getting-started.md). Full workflow: [delivery reference](../workflows/delivery.md).
 
 ## Install
 
-Use the repository installer (Node 20.12 or newer):
+Need Node 20.12+. Terminal:
 
 ```sh
-npx github:MarkTripoli/skills --list
-npx github:MarkTripoli/skills --skill create-plan --yes
+npx github:MarkTripoli/skills
 npx github:MarkTripoli/skills codex --skill create-plan --yes
-npx github:MarkTripoli/skills portable --atomic --project --yes
+npx github:MarkTripoli/skills portable --project --yes
 ```
-
-`--list` prints available skills and exits. Omit `--yes` in a terminal to choose interactively.
 
 | Option | Effect |
 |---|---|
-| `claude-code`, `codex`, `oh-my-pi`, `pi`, `portable`, `all` | Pick agent. `portable` = plain skill file. `all` = pick all four |
-| `--skill <name>`, `-s <name>` | Pick skill. Repeat for more, or `'*'` for all |
-| `--atomic` | Add extra workflow. Need all skill + Atomic installed apart |
-| `--project` | Install in this repo |
+| `claude-code`, `codex`, `oh-my-pi`, `pi`, `portable`, `all` | Pick agent. `portable` = plain skill file. `all` = all four |
+| `--skill <name>`, `-s <name>` | Pick skill. Repeat for more, or `'*'` all |
+| `--project` | Install in repo |
 | `--global` | Install for user. Default |
 | `--dry-run` | Show change, no write |
-| `--yes`, `-y` | Skip menu + confirm. Default to found agent + all skill |
-| `--uninstall` | Remove picked managed file. Add `--atomic` for workflow too |
-| `--list`, `--help` | List available skills or show usage, then stop |
+| `--yes`, `-y` | Skip menu + confirm. Default: found agent + all skill |
+| `--uninstall` | Remove picked managed file |
+| (every install, `--uninstall`) | Remove retired collection resources only when exact packaged historical fingerprints match; links, names and headers alone never establish ownership. Recheck fingerprints on apply; keep edited/unknown files, extra tree content and symlinks with notes. Sweep every runtime at the selected scope; dry-run lists actions. |
+| `--list`, `--help` | List skill or usage, stop |
 
 Uninstall no kill task doc or worktree.
 
@@ -35,107 +32,101 @@ Uninstall no kill task doc or worktree.
 /configure-model-routing
 ```
 
-Use this model-called skill when no good candidate profile exist. Codex users invoke `$configure-model-routing`; other harness invoke `/configure-model-routing`. It write project profile or user file named by `SKILLS_MODEL_CANDIDATES_FILE`, then check it with `route-model`.
+Model-called skill. Use when no usable candidate profile exists. Codex users invoke `$configure-model-routing`; other harnesses use `/configure-model-routing`. Write project profile or user file named by `SKILLS_MODEL_CANDIDATES_FILE`, check with `route-model`.
 
 
-For allowed recorded look-and-fix, install companion plus recorder dependency:
+Recorded look-and-fix: install companion + recorder dependency:
 
 ```sh
 npx github:MarkTripoli/skills oh-my-pi --skill iterate-evidence --project --yes
 ```
 
-Then run `/iterate-evidence @<task-directory-or-iteration-receipt>` with wanted behavior + fix power. Default: three fix round. `0`: look only. Picked uninstall take companion, leave recorder. Use this repo installer for dependency closure. Plain skill copy no guarantee it. See [the independent loop](getting-started.md#inspect-and-repair-recorded-behavior).
-
+Run `/iterate-evidence @<task-directory-or-iteration-receipt>` with wanted behavior + fix power. Default three fix round. `0`: look only. Picked uninstall take companion, leave recorder. Repo installer for dependency closure; plain skill copy no guarantee. See [the independent loop](getting-started.md#inspect-and-repair-recorded-behavior).
 ### File locations
 
 | Agent | User skills | User workers |
 |---|---|---|
 | Claude Code | `~/.claude/skills/` | `~/.claude/agents/` |
-| Codex | `~/.agents/skills/` | `~/.codex/agents/` plus managed config block |
+| Codex | `~/.agents/skills/` | `~/.codex/agents/` + managed config block |
 | Oh My Pi | `~/.omp/agent/skills/` | `~/.omp/agent/agents/` |
-| Pi | `~/.pi/agent/skills/` | Worker role run in same session |
-| Portable | `~/.agents/skills/` | Worker role run in same session |
+| Pi | `~/.pi/agent/skills/` | Worker role same session |
+| Portable | `~/.agents/skills/` | Worker role same session |
 
-Project skill use `.claude/skills/`, `.agents/skills/`, `.omp/skills/`, or `.pi/skills/`. Claude Code + Oh My Pi also use local `agents/` dir. Codex project installer skip worker + user config. Install without `--project` for those.
-
-Atomic install `workflows/skills-delivery/` and brother `skills-delivery.mjs` under `~/.atomic/agent/`, or `.atomic/` for project install. `ATOMIC_CODING_AGENT_DIR` change user root. Workflow read all portable skill from `~/.agents/skills`, project `.agents/skills`, or your `skills_dir` input.
+Project skill: `.claude/skills/`, `.agents/skills/`, `.omp/skills/`, or `.pi/skills/`. Claude Code + Oh My Pi also local `agents/` dir. Codex project install skip worker + user config; install without `--project` for those.
 
 ### Other install methods
 
 - Claude Code plugin: `/plugin marketplace add MarkTripoli/skills`, then `/plugin install marktripoli-skills@marktripoli`.
-- [skills.sh](https://skills.sh/MarkTripoli/skills): `npx skills@latest add MarkTripoli/skills` install skill only.
+- [skills CLI](https://skills.sh): `npx skills@latest add github:MarkTripoli/skills` skill only.
 - Pinned release: `npx github:MarkTripoli/skills#v<version>`.
-- Checkout: `node scripts/install.mjs`. Build runtime file under `dist/` with `npm run build -- --runtime <claude-code|codex|oh-my-pi|pi>`; installer own portable output.
+- Checkout: `node scripts/install.mjs`. Build `dist/` with `npm run build -- --runtime <claude-code|codex|oh-my-pi|pi|portable>`.
 
-## New delivery skills
+Updating this checkout does not refresh installed skills. After changing delivery, refresh the complete chain from the checkout rather than copying only `deliver`:
 
-- [`video-iterative-development`](../skills/delivery/video-iterative-development/SKILL.md): scope authenticated backend/API and frontend changes to the required layers; verify changed contracts and real user-visible flows with reviewable evidence.
-- [`video-iterative-orchestration`](../skills/delivery/video-iterative-orchestration/SKILL.md): coordinate ordered, dependency-aware requirements through isolated worktrees, durable state, recovery, and delivery gates.
-- [`agent-slack-control-plane`](../skills/delivery/agent-slack-control-plane/SKILL.md): describes sparse feature updates and explicitly enabled work-item-run visibility and steering. Skill installation alone does not enable automatic task threading or install the separate Slack daemon.
+```sh
+node scripts/install.mjs oh-my-pi codex --yes
+```
+
+Start a new agent session afterward. Existing sessions retain their loaded instructions. The installer preserves unrelated skills, configuration outside its managed worker block, task artifacts, and worktrees.
+
+## Jira issue bodies
+
+KIT new feature: use standalone [`jira-issue-hierarchy`](../skills/jira-issue-hierarchy/SKILL.md) and its [local policy and Markdown bodies](../skills/jira-issue-hierarchy/references/jira-issue-templates/README.md). Plan Epic + Story first; Sub-task at Story work start. QA review Story. `video-iterative-orchestration` installs and reads this skill when delivering Jira work.
+
+For a single `/deliver` ticket, [jira-issue-refinement](../skills/jira-issue-refinement/SKILL.md) reads the live issue and context before planning, saves confirmed functional specifications, QA steps, open questions, and exact plan deltas in a task artifact, and leaves Jira unchanged. An existing plan or outline is revised before implementation. A description rewrite requires separate approval for each ticket. Use the stronger model for planning/orchestration and delegated economy-model workers for bounded execution. Apply [SLICING.md](../shared/SLICING.md) before implementation; split a near-10,000-line or otherwise unreviewable PR into a small number of independent child PRs. When configured, `slack-coordinator` starts one run and its saved `slack_run_id` carries status and owner input across stages. UI delivery calls for tablet and mobile video plus screenshots in the PR's `## UI Evidence`, then current-head pipeline and review follow-up.
+
+## Tool approval preflight
+
+When unattended work is requested or a prompt appears, `/deliver` checks the invoking session and reports `no-prompt`, `prompts possible`, or `unknown`. It **warns and continues** when the live mode is not exposed; a config file or a second CLI process cannot certify this session. The skill never switches permissions. Opt into full access only in a trusted, externally isolated environment:
+
+| Harness | Check the live session | Opt in to no-prompt tools for a new session |
+|---|---|---|
+| Claude Code | CLI footer or `/permissions` | `claude --permission-mode auto` for background safety review; `claude --dangerously-skip-permissions` for bypass |
+| Codex | `/status` (`Full Access` requires both no sandbox and `never` approval) | `codex --sandbox danger-full-access --ask-for-approval never`; `codex --approve-for-me` uses automatic review but keeps workspace-write limits |
+| Oh My Pi | `/settings` → Interaction → Approvals, including per-tool policies | `omp --approval-mode yolo` (ACP: `omp acp --yolo`) |
+| Pi | Core Pi has no per-call approval mode; check permission extensions if installed | Core needs no switch; configure any prompting extension through its own controls (`pi --approve` is project trust, not tool approval) |
+
+Auto tool decisions do not advance manual phase handoffs. Profile `routing: auto` is model selection, not approval. Explicit tool/organization policies can still deny or prompt.
+
 
 ## Manual phases
 
 ```text
 /create-research-questions
-/create-research @<task-root>/<slug>/artifacts/research/questions/0001.md
-/create-design-discussion @<task-root>/<slug>/artifacts/research/primary/0001.md
-/create-plan @<task-root>/<slug>/artifacts/design/discussion/0001.md
-/implement-plan @<task-root>/<slug>/artifacts/planning/plan/0001.md
+/create-research @01-research-questions-example.md
+/create-design-discussion @02-research-example.md
+/create-plan @03-design-discussion-example.md
+/record-evidence @<task-directory>
+/implement-plan @04-plan-example.md
 /verify-implementation
 /review-code
+/record-evidence @<task-directory>
 /describe-pr
 ```
 
-Run each in **new session**, in checkout + branch named by last reply. Use its real file name, not these example. Codex use `$skill-name`. To change doc, use its `iterate-*` skill with feedback.
-## `/deliver` with optional First Sergent
+Each **new session**, in checkout + branch named by last reply. New branch: `<dev-name>/<issue-key-if-known>-<short-description>`; reuse existing. Real file name, not example. Codex: `$skill-name`. Change doc: its `iterate-*` skill + feedback.
+
+The first recording invocation prepares the evidence policy and captures the authentic baseline before implementation when existing behavior changes. The second captures and inspects the result at the current revision. New behavior needs no fabricated baseline. Follow the saved contract's next action rather than running every example command unconditionally.
+
+## `/deliver`
 
 ```text
 /deliver Add a diagnostic --verbose flag across the CLI
 ```
 
-First non-oneshot start: answer “Use First Sergent for this delivery?” **yes** for a separate backend and chat liaison; **no** keeps the existing manual/Atomic path. Oneshot defaults to no question; explicitly request First Sergent to opt in. Codex: `$deliver`. Resume with the observed task worktree/directory, not a new request. The default opted-in backend needs delegated fresh workers; in-phase questions need an addressable child. Explicit Atomic opt-in opens its graph and records `liaison=first-sergent`; return to chat. Its awaiting-input gate does not wake the liaison, so use manual worker gates or initiate `/deliver --run <run-id>` to relay the exact pending answer. Headless Atomic needs `gates=none`. Opted-in quota/context controls default to `off` and honor explicit user policies; legacy `/deliver` does not inherit them. OMP provider filtering requires fresh reports and one account binding but creates no concurrency reservation. The upstream Herdr router has no safe production caller here, so `agent-router` is externally blocked. Atomic `stop-at-60` blocks before dispatch because documented `ctx.task` has no live child context monitor.
-
-
-## Atomic launch
-
-After [Atomic setup](getting-started.md#add-optional-atomic-orchestration), run these in Atomic chat:
-
-```text
-/workflow reload
-/workflow list
-/workflow inputs delivery
-/workflow delivery request="Add a --verbose flag" workflow=oneshot model_routing=fixed branch=verbose-flag gates=all
-```
-
-Use `key=value`, not `--input`. Clear `workflow` **and** `model_routing=fixed` dodge JEV, the thing that pick step or model. See [workflow choices](../workflows/delivery.md#workflow-choices-and-manual-chains), [all inputs](../workflows/delivery.md#inputs), and [model selection](model-routing.md).
-
-## Atomic inspect and steer
-
-```text
-/workflow status
-/workflow status <run-id>
-/workflow connect <run-id>
-/workflow pause <run-id>
-/workflow quit <run-id>
-/workflow resume <run-id>
-```
-
-`connect` open approval prompt. `quit` keep resumable work. It no kill it. Run without interactive screen need `gates=none`. See [control rules](../workflows/delivery.md#gates-and-native-controls).
+`/deliver` is one orchestrator session: it picks the workflow from the request and the [size check](../shared/SLICING.md), plans, delegates each unit of work to a builder, and has a fresh reviewer on the strongest model check it. It stops on `done`, `needs-human`, `blocked` or `no-progress`; `/deliver <task-dir>` resumes. Without subagents it builds inline and prints a fresh-session handoff for each review. Codex: `$deliver`. `gates` is `plan` (default: stop for plan approval) or `none`; older `all` and `mr` read as `plan`. See [workflow choices](../workflows/delivery.md#workflow-choices-and-manual-chains), [model selection](model-routing.md).
 
 ## Existing tasks, PR feedback, and epic waves
 
-```text
-/workflow delivery request="Continue implementation" workflow=lean task_dir=.agents/tasks/example
-/workflow delivery request="Address PR feedback" workflow=resolve-reviews task_dir=.agents/tasks/example
-/workflow delivery request="Start ready children" workflow=epic-wave task_dir=.agents/tasks/example-epic gates=none
-```
-
-These use default task root. Repo may set another with `<!-- skills:task-root=relative/path -->`; explicit existing `task_dir` stay boss. Child task wait for prereq branch to merge. Pull request text no prove merge.
+Resume with `/deliver <task-dir>` in the task's original worktree, or run a phase by hand on its saved task directory: `/implement-plan @<plan>` for implementation, `/resolve-pr-reviews` for PR feedback, `/start-epic-delivery @<epic-plan>` for ready epic children. Create child worktrees from the epic branch, then copy each child's `<task-root>/<child slug>/` directory from the epic worktree into that child worktree. Child tasks wait for prerequisite branch merges. PR text does not prove merge.
 
 ## Where things live
 
-- Skills: `skills/delivery/<name>/SKILL.md`, `skills/show-me/`, and `skills/slack-coordinator/`.
-- Workflow: `atomic/workflows/delivery.ts`; helper: `atomic/lib/`.
-- Task doc: `<task-root>/<slug>/task.md`, `index.json`, and immutable `artifacts/<kind>/<variant>/<NNNN>.md` file on task branch. Existing task without `index.json` keep legacy numbered file and never silently migrate.
+- Skills: `skills/delivery/<name>/SKILL.md`, `skills/show-me/`, `skills/slack-coordinator/`. Slack daemon built + installed apart; see [Slack coordinator](slack-coordinator.md).
+- Task doc: `<task-root>/<slug>/task.md`, authoritative `index.json` and immutable semantic artifacts, local to the worktree. Default root `.agents/tasks`; configured roots and explicit existing task directories follow the shared contract.
 
-Worktree belong to owner. No kill old or dead-run worktree as install cleanup.
+Worktree belong owner. No kill old/dead-run worktree as install cleanup.
+
+GitHub delivery needs authenticated `gh` for the origin repository; `/resolve-pr-reviews` handles review threads. Existing GitHub Actions and releases remain authoritative.
+
+Security scanning remains explicit opt-in through [`security-check`](../skills/delivery/security-check/SKILL.md), not a new mandatory delivery gate.

@@ -2,9 +2,12 @@
 type: implementation
 completed_phase: [positive integer]
 summary: "[Two to four sentences stating what the completed phase proves and what the next phase must consume.]"
+revision: "[exact contract source fingerprint]"
 ---
 
 # Implementation Iteration Receipt
+
+For task-only implementation, omit `completed_phase` and leave the plan/outline source empty; do not invent a numbered phase.
 
 ## Source
 - task:
@@ -15,6 +18,10 @@ summary: "[Two to four sentences stating what the completed phase proves and wha
 - branch:
 - previous implementation point:
 - relevant diff:
+- policy/baseline checkpoint:
+- consumed / authorized repairs:
+- current phase / remaining verification, review, evidence:
+- last completed action / next incomplete action:
 
 ## Changes Made
 -

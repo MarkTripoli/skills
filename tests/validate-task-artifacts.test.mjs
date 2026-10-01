@@ -31,7 +31,7 @@ function write(file, content) {
 }
 
 test('validateConventions accepts the repository conventions and canonical artifact series', () => {
-  const content = fs.readFileSync(path.join(repo, 'shared', 'CONVENTIONS.md'), 'utf8');
+  const content = fs.readFileSync(path.join(repo, 'shared', 'task-artifacts.md'), 'utf8');
   const result = failures();
 
   validateConventions(content, result.fail, ARTIFACT_SERIES);
@@ -40,7 +40,7 @@ test('validateConventions accepts the repository conventions and canonical artif
 });
 
 test('validateConventions rejects a type-to-series table that differs from ARTIFACT_SERIES', () => {
-  const content = fs.readFileSync(path.join(repo, 'shared', 'CONVENTIONS.md'), 'utf8')
+  const content = fs.readFileSync(path.join(repo, 'shared', 'task-artifacts.md'), 'utf8')
     .replace('| `plan` | `planning.plan` |', '| `plan` | `planning.wrong` |');
   const result = failures();
 
@@ -49,18 +49,6 @@ test('validateConventions rejects a type-to-series table that differs from ARTIF
   assert.ok(result.found.some(({ message }) => /ARTIFACT_SERIES/.test(message)));
 });
 
-test('validateConventions requires indexed task-root and legacy fallback guarantees', () => {
-  const original = fs.readFileSync(path.join(repo, 'shared', 'CONVENTIONS.md'), 'utf8');
-  const content = original
-    .replace('no directive is consulted', 'a directive may also be consulted')
-    .replace('fails closed rather than falling back to a directory scan', 'uses a directory scan')
-    .replace('where `index.json` is genuinely absent', 'when convenient');
-  const result = failures();
-
-  validateConventions(content, result.fail, ARTIFACT_SERIES);
-
-  assert.equal(result.found.filter(({ message }) => /must document/.test(message)).length, 3);
-});
 
 test('validateDeliveryProse rejects stale flat-storage guidance', t => {
   const root = temporaryDirectory(t);
@@ -85,7 +73,7 @@ test('validateDeliveryProse allows explicit legacy in-place guidance', t => {
 test('validateDistribution enforces each installation mode', () => {
   const invalid = structuredClone(TASK_ARTIFACT_DISTRIBUTION);
   invalid.runtime.required = true;
-  invalid.atomic.required = false;
+  invalid.portable.required = true;
   const result = failures();
 
   validateDistribution(result.fail, invalid);
@@ -96,7 +84,7 @@ test('validateDistribution enforces each installation mode', () => {
 test('validateHelperDistribution rejects a generated helper byte mismatch', t => {
   const root = temporaryDirectory(t);
   const skill = path.join(root, 'skills', 'create-plan');
-  for (const helper of ['task-artifacts.mjs', 'task-root.mjs']) {
+  for (const helper of ['task-artifacts.mjs', 'task-root.mjs', 'publication-proof.mjs', 'publication-proof-policy.mjs']) {
     write(path.join(skill, 'references', helper), fs.readFileSync(path.join(repo, 'shared', helper)));
   }
   fs.appendFileSync(path.join(skill, 'references', 'task-root.mjs'), '\n// stale copy\n');

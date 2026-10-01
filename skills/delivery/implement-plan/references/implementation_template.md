@@ -2,6 +2,7 @@
 type: implementation
 completed_phase: [positive integer]
 summary: "[Two to four sentences stating what the completed phase proves and what the next phase must consume.]"
+revision: "[exact contract source fingerprint]"
 ---
 
 # Implementation Receipt
@@ -10,6 +11,9 @@ summary: "[Two to four sentences stating what the completed phase proves and wha
 - task:
 - plan artifact:
 - phase range:
+- policy/baseline checkpoint:
+- current phase / remaining verification, review, evidence:
+- last completed action / next incomplete action:
 
 ## Child Workers
 - implementer:
@@ -28,7 +32,7 @@ summary: "[Two to four sentences stating what the completed phase proves and wha
 - [evidence item and pointer, recorded not executed, or None]
 
 ## Commit Handoff
-State whether the phase commit was created after green automated checks, or name the blocker.
+State whether the code phase commit was created after green automated checks, or name the blocker. Task artifacts stay local and uncommitted.
 
 ## Human Review
 

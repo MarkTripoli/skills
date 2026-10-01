@@ -1,30 +1,31 @@
 ---
 name: record-evidence
-description: Run for /record-evidence requests and before every delivery PR. Capture live UI video or actual CLI, API/performance, or agent-session output; record revision-bound results and publish hosted evidence in the PR description and a separate comment.
+description: Record authentic pre-mutation baselines with /record-evidence --baseline and inspected current evidence before publication. Capture only task-scoped UI video, terminal output, API probes, or agent transcripts; seal revision-bound receipts and verified hosted captures.
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
 
 # Record Evidence
 
-Record actual behavior against the current code revision before any delivery PR is published. This phase is mandatory after implementation, verification, app testing, and code review for manual and Atomic delivery, including oneshot, bugfix, and each epic child PR. Repeat it after review feedback changes behavior. A failed assertion, missing capture, or unverified revision blocks `/describe-pr`: repair the change and recapture. Outside a task the skill stands alone.
+Record the behavior against the delivered revision. UI evidence is a live video of the interaction, not assertions alone; CLI, API/performance, and agent behavior require captured terminal sessions, probe output, or tool-call transcripts with the observed result. The PR description and a distinct PR comment both link directly to the verified hosted capture.
 
-For UI work, record the live session as video with the steps below. For non-UI work, capture the real terminal session, API/performance probe output, or agent transcript showing the command or tool call and its observed result. An assertion list without captured behavior is not evidence.
+Delivery has two capture boundaries: `/record-evidence --baseline` before the first source or check mutation, and `/record-evidence` after current verification and review. Both use the same recorder. Final recording hands off to `/iterate-evidence` for the bounded inspection/repair gate, never directly to publication. Outside delivery, recording remains standalone and grants no repair authority.
 
 ## Inputs
 
-- **Test targets** (required): behaviors or flows to verify, phrased as testable statements.
-- **Surfaces**: UI screen/device/browser, CLI terminal, API/performance probe, or agent session. Derive all required surfaces from changed behavior and acceptance criteria, not source file extensions. Record at least one authentic capture per required surface; compose related UI devices into a single inspectable video when appropriate.
-- **PR / issue** (optional outside a task): a task PR ultimately needs every hosted capture in its full description and a distinct same-PR comment. A standalone recording needs no PR; a supplied tracker issue receives a link to the already hosted capture.
+- **Test targets** (required): behaviors or flows to verify, phrased as testable statements; in a task derive them from the change and acceptance criteria when not supplied.
+- **Surfaces** (default: the changed behavior): live UI uses a desktop screen, Android emulator or device, iOS simulator, or headless browser; non-UI uses a captured terminal session, API/performance probe output, or agent tool transcript.
+- **PR / issue** (optional outside a task): where to post. Every delivery PR requires a direct hosted capture URL in its description and a distinct comment, including when the PR is created after capture.
+- **Mode**: `--baseline` freezes delivery policy and captures existing behavior before mutation. Default captures the implemented revision. A task that delivers an PR requires both receipts, including oneshot, bugfix, and epic children.
 
 ## Where evidence lives
 
-Capture into temporary scratch storage outside the configured task root; never save or upload the recording, report, receipt, description, frames, or raw transcript from `.agent/tasks/` or `.agents/tasks/`. The durable review evidence is each directly hosted recording plus concise per-test observations in the full PR description and separate PR comment. A standalone request has its hosted recording and answer without a fabricated PR/comment.
+Capture into external scratch outside the resolved task root. Durable `evidence.baseline`/`evidence.recording` iterations contain provenance metadata only; allocate, stage and record through the conventions. Never upload task files, reports or receipts. Retain baseline/current original captures and samples through inspection and repair; remove scratch after delivery completes with verified hosted PR readback.
+- Existing UI uses authentic `BEFORE` and current `AFTER` sessions, composed with those labels and `--no-align`. Existing non-UI retains failing/baseline and current original output.
+- New behavior needs an explicit policy exemption, never a fabricated baseline.
+- The PR body and distinct same-PR comment are durable publication proof, not local receipts.
 
-UI recorder sessions produce `evidence.mp4`, `report.md`, `manifest.json`, `capture/`, `frames/`, and `events.jsonl` in scratch storage. Non-UI sessions keep the original captured transcript or probe output, invocation, environment, exit status, and a scratch report until hosted inspection succeeds.
-
-For a task PR, the full body and separate comment bind `- result: passed`, tested full SHA, current-head full SHA and each `recording` type/`capture` URL pair. The body also has a `### Recorded tests` table (`| Test | Result | Capture | Cue |`), with one substantive passed row per capture (`primary` for a sole unlabeled pair), timestamps or output-line cues, and honest caveats. A failed or required-untested test blocks passed publication. Missing, stale, unreadable or mismatched proof blocks readiness.
-
+UI sessions contain `evidence.mp4`, `report.md`, `manifest.json`, raw footage under `capture/`, and `events.jsonl`. Extract bounded review frames for required state claims. Non-UI sessions retain the actual input, output, exit status, and reproducible command in addition to `report.md`. A prose report is not a capture.
 
 ## The recorder
 
@@ -38,11 +39,11 @@ For a task PR, the full body and separate comment bind `- result: passed`, teste
 | `start --output DIR --title T [--source S] [--target X] [--label L] ...` | Starts the recorder under a supervisor; prints the session path. |
 | `narrate SESSION... --message M [--hold S]` | Timestamps a narration line (up to 280 chars) shown until the next one. |
 | `annotate SESSION... --type setup\|test_start\|assertion [--result passed\|failed\|untested] --message M` | Timestamps a test event (up to 80 chars). Several sessions at once share one message. |
-| `stop SESSION [--caveats TEXT] [--video FILE]` | Stops the recorder, corrects timestamps, burns the overlay, writes `report.md` and `manifest.json`, prints `"verified": true`. |
-| `render SESSION [--layout overlay\|panel] [--no-narration] [--no-cards]` | Re-renders from the raw capture with other overlay options. |
-| `frames SESSION` | Extracts one PNG per test event into `frames/` for review. |
-| `pair [SESSION] --before @N\|SECONDS --after @N\|SECONDS --out pair.png [--caption TEXT]` | Builds a labeled before/after image from two moments of the raw capture (`@N` is the Nth test event) or from two PNGs (`--before-file`, `--after-file`). |
-| `compose --output DIR SESSION... [--label L]... [--direction h\|v] [--no-align] [--caveats TEXT]` | Stacks finalized sessions side by side, aligned by wall clock, with one shared narration track and merged results. |
+| `stop SESSION [--caveats TEXT] [--video FILE] [--max-height N]` | Stops the recorder, corrects timestamps, burns the overlay, writes `report.md` and `manifest.json`, prints `"verified": true`. Final media defaults to 720 pixels high; `--max-height 0` keeps native height. |
+| `render SESSION [--layout overlay\|panel] [--no-narration] [--no-cards] [--max-height N]` | Re-renders from the raw capture with other overlay options; defaults to 720 pixels high and accepts `--max-height 0` for native height. |
+| `frames SESSION` | Extracts one bounded PNG per selected test event into `frames/` for review when needed. |
+| `pair [SESSION] --before @N\|SECONDS --after @N\|SECONDS --out pair.png [--caption TEXT]` | Builds a bounded labeled before/after image from two moments of the raw capture (`@N` is the Nth test event) or two PNG files (`--before-file`, `--after-file`). |
+| `compose --output DIR SESSION... [--label L]... [--direction h\|v] [--size N] [--max-height N] [--max-width N] [--no-align] [--caveats TEXT]` | Stacks finalized sessions side by side, aligned by wall clock, with one shared narration track and merged results. Defaults to 720 pixels high and a 1920-pixel width limit. |
 
 Sources (`--source auto` picks the first available in this order):
 
@@ -61,18 +62,25 @@ Crash safety: ffmpeg captures write MPEG-TS, so a killed recorder still yields p
 Timing: video zero is the recorder's real start (first bytes written, or its own "Recording started" line), not the moment `start` returned. `adb screenrecord` and `simctl recordVideo` emit frames only while the display changes; their timestamps stay correct mid-recording, and when the screen is static at the end the last frame is held to the true stop time. Both corrections appear under Notes in the report and as `timing` in `manifest.json`.
 
 ## Steps
+Steps 1–6 apply to UI recording. Non-UI work uses [captured output](#non-ui-changes-still-need-captured-evidence), inspects that output, and joins step 7. It needs neither ffmpeg nor a synthetic video.
 
-### 0. Locate the task and bind the revision
+### 0. Freeze or load the delivery boundary
 
-Locate the task and read `task.md` and current indexed `implementation.receipt` and `planning.plan` or `planning.structure` when applicable. Include bug reproduction and review-feedback targets. Record the tested code commit SHA, branch, and PR head SHA when a PR exists. If uncommitted behavior-changing files are under test, commit them before capture; record the exact deployment/build identity for a remote surface. A later artifact-only commit may move the PR head without changing the tested behavior; compare the tested revision with the publication head and recapture if any behavior-changing code differs.
+In a task, read `task.md` and the selected plan, outline, reproduction, or implementation artifact. For delivery, read [the evidence commands](references/delivery_contract.md). Optionally run `status` to see what publication still lacks. Standalone recording derives targets from the request and skips sealing.
 
-### 1. Check the UI toolchain when recording video
+With `--baseline`, derive stable surface IDs, targets, expectations, and `existing`/`new` classifications from the approved task. Save the policy through the helper. Capture existing behavior now (best before product edits; after edits, capture it from a temporary `git worktree add <tmp> <base-sha>` and pass that SHA as `baseline_commit`), inspect it, and record and seal the next `evidence.baseline` metadata iteration. A bug's authentic failing result is a valid baseline, not failed recording. New-only work still saves policy plus the explicit exemption receipt; no fabricated old screen. Reproduction may reuse the captured failure when its source, environment, targets, and hashes match.
+
+Without `--baseline`, load that sealed policy and baseline and capture the current source/build. A missing baseline is captured from the base commit in a temporary worktree, never by resetting the checkout or backdating a receipt. A new repair capture never replaces the original baseline. A surface that cannot be captured is recorded `untested` with a reason.
+
+Record source identity using the helper and prove the running build loaded it with observed process/build/deployment output. Record the environment and exact probe. HEAD alone does not identify dirty source or a stale server.
+
+### 1. Check the toolchain
 
 ```bash
 python3 $EVIDENCE doctor
 ```
 
-Read `capture_sources` and `overlay_ready` before choosing a UI path. No overlay backend: install Pillow, or keep assertions in `report.md` and disclose that the video has no burned-in text. For non-UI work, use the capture path in step 4 instead of requiring ffmpeg or a screen source.
+Read `capture_sources` and `overlay_ready` before choosing a path. No overlay backend: install Pillow, or continue and keep the assertion list in `report.md` as the record (the video then carries no burned-in text; the report says so).
 
 ### 2. Prepare each surface
 
@@ -83,63 +91,71 @@ Follow `references/device_setup.md` for the exact commands. In short:
 - **iOS**: `boot ios "<name>" --headless`, `xcrun simctl install`, `xcrun simctl launch`. Drive with Maestro, `idb ui tap`, or XCUITest; `simctl` has no tap command.
 - **Browser without a display**: write the Playwright `record.mjs` from the reference and run it right after `start --source external`.
 
-### 3. Start one UI recording per surface
+### 3. Start one session per surface
 
 ```bash
 python3 $EVIDENCE start \
-  --output <scratch-dir>/<surface> \
+  --output <external-scratch>/<surface> \
   --title "<what is being verified>" \
-  --source android --target emulator-5554 --label "Android" \
+  --source <screen|android|ios|external> --label "<policy surface>" \
   --commit "$(git rev-parse HEAD)" --branch "$(git branch --show-current)" \
   --environment "<OS / browser / device / deployment>"
 ```
 
-Keep the printed `session` path (`SESSION=...`). Use the same `--title` and distinct `--label` values for sessions you will compose. Add a `setup` annotation describing the starting state.
+Keep the printed session path. Baseline mode records only the original `BEFORE` session; final mode records only the current `AFTER` session and references the saved baseline. Net-new work records one current-state session. Use policy targets and meaningful assertions; record starting state before the first interaction. Select only requested surfaces: web-only work does not boot Android or iOS merely because `doctor` detects them.
 
-### 4. Test live, capturing each assertion
+### 4. Test live, narrating and asserting
 
-For UI work, perform every interaction on the live surface while recording. Work at a watchable pace: let the UI settle after each action so the state change is visible.
+Perform every interaction on the live surface; the recording is that session. Work at a watchable pace: let the UI settle after each action so the state change is on video.
 
-- Before each UI step, `narrate` what the viewer is about to see and why it matters; read `references/narration_guide.md` for voice and timing.
-- At each named UI test, `annotate --type test_start --message "It should ..."`.
-- After each UI check, look at the screen, then `annotate --type assertion --result passed|failed|untested --message "..."`.
-- Multi-device: pass every session path to the same `narrate` or `annotate` call when the statement applies to all of them; call per session when it does not.
+- Before each step, `narrate` what the viewer is about to see and why it matters, in one or two sentences. Read `references/narration_guide.md` for voice and timing.
+- At each named test, `annotate --type test_start --message "It should ..."`.
+- After each check, look at the screen, then `annotate --type assertion --result passed|failed|untested --message "..."`.
+- Multi-device: pass every session path to the same `narrate` or `annotate` call when the statement applies to all of them; call per session when it does not. In a composite, pane-specific narration lines given within 3 s of each other share one footer entry, each prefixed with its pane label.
 - When `doctor` lists an input tool for a surface (Maestro, idb, adb), use it. Mark a flow `untested` only when no actuator can drive it, or when driving it needs data you must not record.
 
-For a CLI, start a terminal recorder such as `script` or `asciinema` before invoking the actual changed command. Save the resulting terminal transcript or recording, including the command, output, exit status, and a real success/failure transition; note the terminal/OS and tested revision in `report.md`. For an API or performance change, capture the executable probe, request parameters, response or error, status and measured values in `probe-output.txt`; include before/after measurements when the claim is comparative. For agent behavior, export the actual session excerpt showing the tool call, response, and outcome, with timestamps and revision. Preserve raw captured output rather than replacing it with a paraphrase. Redact secrets before hosting while retaining the result needed to verify the behavior.
-For an interactive `script` transcript, type the changed command, then **immediately** type `printf 'exit=%s\n' "$?"` before any other shell command; retain its actual `exit=0` output and substantive command output. The terminal session's final shell exit code alone does not prove the changed command passed. A direct `script` invocation with a captured `[COMMAND="..."]` and matching `[COMMAND_EXIT_CODE="0"]` also binds the outcome. Include the tested SHA in the captured text.
+Assertion rules: one assertion per meaningful state change; use "Precondition: ..." for starting state; keep messages high-signal (the recorder rejects over 80 characters); a test that cannot run is `untested` with the reason, never skipped silently; the timestamp records when you asserted, not whether it was true.
 
-One assertion per meaningful state change. A test that cannot run is `untested` with the reason, never skipped silently. Any failed required assertion blocks publication.
-
-### 5. Stop and inspect UI recording; inspect non-UI captures
+### 5. Stop and review
 
 ```bash
 python3 $EVIDENCE stop "$SESSION" --caveats "<untested items and why; timing notes; or None.>"
 python3 $EVIDENCE frames "$SESSION"
 ```
 
-`stop` prints `"verified": true` on success. `finalization_failed`: fix the reported cause and run `stop` again (it does not signal the recorder twice). `recorder_lost`: follow the printed instruction. Open every PNG in `frames/` and confirm the state and the label are visible at each assertion; when timestamps look shifted, check `timing.offset_applied` in `manifest.json` and re-run `render` or, for external videos, `stop --force --video ... --video-offset S`. Fill Caveats with `--caveats` or edit `report.md`; the placeholder must not survive.
+`verified: true` proves media finalization, not correct behavior. Read [inspection acceptance](../iterate-evidence/references/inspection_acceptance.md), then open each required target's recorded state and the initial state of each session. Inspect intervals rather than sparse stills for temporal claims. Save exact sample paths, hashes, timestamps, observed pixels, and viewer/tool trace references. For non-UI evidence, read the retained output and cite decisive lines. Missing viewing capability blocks the affected proof.
 
-For non-UI work, close the terminal recorder and inspect the saved transcript, probe output, or agent export. Confirm the invoked command/tool call, real output, exit status, expected transitions, and secret redactions remain legible. Check the report against the capture; synthetic assertions or terminal output copied into a report without its original capture fail this step.
+On `finalization_failed` or `recorder_lost`, preserve the failure and name the repair/access prerequisite. For shifted timestamps, use manifest timing and rerender the same footage, or correct external import with observed offset. A rerender is not a new capture. Keep the original media and explain the correction.
 
-### 6. Compose multi-device UI recordings when applicable
+### 6. Compose the required comparison
 
 ```bash
-python3 $EVIDENCE compose --output "$TMPDIR/evidence-composite" \
-  "$ANDROID" "$IOS" --label "Android" --label "iPhone 17" \
-  --caveats "<per-pane caveats>"
+python3 $EVIDENCE compose --output <external-scratch>/composite \
+  "$BEFORE" "$AFTER" --label "BEFORE" --label "AFTER" \
+  --no-align --caveats "<per-session caveats>"
 ```
 
-Panes align by wall clock (a pane that started later shows a dark hold first); `--no-align` starts all at zero. Each pane keeps its own test chip, toasts, and tally in the header above it; narration merges into the footer (identical lines from several panes appear once; different lines within 3 s appear together with pane prefixes); the summary card lists every test prefixed with its pane label. Review `frames` on the composite as in step 5.
+Existing UI final evidence uses this comparison, selecting the original sealed baseline and current session for the same surface. `--no-align` starts both at their own zero; wall-clock alignment would insert the entire development gap. Inspect the resulting composite and its `BEFORE`/`AFTER` labels before upload. Baseline mode and new-only work skip this step.
 
-### 7. Record and publish the evidence
+Cross-device composition is separate and only applies when the task requires several devices. Keep surface identities, source sessions, and per-pane results; do not substitute a cross-device montage for the required before/after comparison. Review frames stay local.
 
-- Inspect the scratch report for tested SHA, environment, exact invocation/interaction, per-test results and timestamp/output-line cue, caveats, and original capture filename. The report is scratch for drafting, not a published artifact or proof by itself.
-- Upload the actual video or original terminal/API/agent transcript for **each required surface** to a supported direct host: GitHub user-attachments (via authenticated PR editor/comment upload) or a raw gist. `gh pr comment` cannot attach a local video. Open the hosted object and inspect its bytes/content: UI must play as live video, not a screenshot; text must preserve the original invocation, tested SHA, successful exit/status/outcome, and observed output. A URL, MIME header, HTML page, screenshot, or self-declared result alone is insufficient. Other hosts require explicit gate support; tell the requester rather than claim readiness.
-- Hosted proof must be retrieved completely with HTTP 200 (not a byte-range response): the publication gate caps original text captures at **8 MiB** and UI videos at **128 MiB**. Over-limit or interrupted downloads are incomplete, never prefix proof. UI video also requires locally available `ffprobe` and `ffmpeg` and at least one actually decoded video frame; missing tools/media fail incomplete. CLI, API, and agent transcripts do **not** require video tools. Include the real command/request, observed output (including short responses such as `OK`, `[]`, or `true`), and final successful exit/status; for a `script` transcript retain its `Script done ... [COMMAND_EXIT_CODE="0"]` trailer. Keep large captures under the caps or split them by distinct tested surfaces.
-- For a task PR, publish matching result, tested/current-head SHAs, and every recording/capture pair in a **separate PR comment and full PR body**. Use `- recording: <type>`/`- capture: <URL>` for one surface; for mixed surfaces use paired `- recording <label>: <type>`/`- capture <label>: <URL>` with distinct lowercase-hyphenated labels. The unlabeled pair is normalized to `primary`, so never combine an unlabeled `recording` or `capture` with its explicitly labeled `primary` counterpart. Include the same direct URLs/types in both locations, a `- comment: <permalink on this PR>` in the body, and the Recorded tests table with passing row per label (`primary` for unlabeled). `/describe-pr` completes the full body and readback; a pending comment is only for a draft. Read back the exact comment and final body; never treat a wrong-PR permalink as proof.
-- If the PR does not yet exist and only an attachment can host the capture, create a draft PR as an upload container following `/describe-pr`. Compare head to tested revision; only metadata-only movement can retain the capture, and behavior changes require recapture. Any failed assertion, upload/inspection failure, or missing required capture blocks ready publication and `/describe-pr`.
-- If a tracker issue was supplied, post the **already hosted** direct capture links and brief observed results there, then read the issue comment back. Do not upload task data. For a standalone request without a PR, host and inspect the captures, send URLs/results directly to the requester, attach the hosted URLs to a supplied issue if any, and finish without inventing a PR description or comment.
+The default composite is sized for review screens: `compose` uses a 720-pixel maximum output height and caps a default horizontal composite at 1920 pixels wide. `--max-height` overrides the height; `--max-height 0` keeps native height and removes the default width cap unless `--max-width` is set. `--size` explicitly overrides default pane sizing, and `--max-width` changes or disables (`0`) the width bound.
+
+For a `/deliver` UI task, capture each requested policy-scoped device as a real session, with start, changed-state and final screenshots. Record device name and viewport. A cross-device composite may supplement those sessions, but cannot replace either. If a required surface cannot be exercised, mark it `untested` with the reason; incomplete required proof blocks ready publication and belongs in Known limits. The PR description's `## UI Evidence` section must contain the direct media URLs; a comment alone is insufficient.
+
+### 7. Host the capture and record provenance
+
+Read [the strict publication proof policy](https://github.com/MarkTripoli/skills/blob/main/shared/publication-proof-policy.md) before hosting. Preserve tested/current-head full SHAs, substantive passing recorded tests/cues, paired recording types/direct capture URLs in the full PR body and distinct same-PR comment. Original text must include the real invocation, observed stdout (including Node stdout, `OK`, `[]` or `true`), tested SHA and final successful exit/status. A preliminary success never overrides a trailing failure. For interactive script captures, immediately run `printf 'exit=%s\n' "$?"` after the changed command; the shell trailer alone does not prove it passed. Text readback caps at 8 MiB, UI at 128 MiB with ffprobe/ffmpeg frame decode; fetch complete HTTP 200 bytes, never a prefix. Existing custom publication hooks still run.
+
+
+1. Save `report.md` with tested source/build, environment, commands/interactions, observed results and timestamps or output lines, device/viewport and capture filenames when relevant, and limits. Include the result line, per-test table, narration transcript, and caveats. Standalone recording stops at its report and requested attachment procedure; steps 2–6 are delivery checkpoints only.
+2. Record the immutable indexed receipt from `references/evidence_template.md`. Baseline uses `type: evidence-baseline`; final uses `type: evidence`. List each requested device session and its video and screenshot paths and direct URLs. Retain failed and blocked outcomes; `untested` results keep their reason.
+3. Build the JSON record in [the contract reference](references/delivery_contract.md) from actual files and observations. In baseline mode, seal it now; no upload is required. Final mode first completes step 4.
+4. For final delivery, upload each required surface's video and representative screenshots to an authorized host with direct links. An authenticated PR upload box or another host returning direct URLs can be used; `gh pr comment` cannot attach local media. Remove any placeholder upload comment. Open every direct file URL and inspect playback/readability; retain that observation in the finished receipt. Add the URLs/local captures to the input and run `seal`, which computes hashes and verifies hosted bytes, media, policy, and revision. A comment permalink, upload response, or URL string alone is insufficient.
+5. On a missing capture without a reason, missing inspection, or revision mismatch, save the blocker and stop. Unreadable, redirected-to-login, mismatched or incomplete hosted bytes block sealing and ready publication; record the exact prerequisite. A failed behavior result retains its recording and routes to bounded repair; do not repair product source inside this skill.
+6. Keep returned seal details in the reply without changing the sealed receipt. Baseline hands back to the caller; final hands off to `/iterate-evidence`. Only successful current-revision inspection supports `/describe-pr`.
+
+`describe-pr` later publishes the selected direct URLs in both the PR description and a distinct comment, then verifies both. Leave the sealed evidence receipt unchanged; publication links belong in the PR description. A standalone recording posts only to explicitly requested destinations, reopens them, and has no automatic delivery handoff. Attach the same video to the tracker issue with a one-line result when the task requests it, and send the report and recording to the requester when requested.
 
 ## No computer-use tools? Drive another way
 
@@ -150,12 +166,17 @@ The recording rule holds unchanged; only the input mechanism differs.
 - **iOS simulator**: Maestro (`maestro test flow.yaml`), `idb ui tap`, or the app's own UI tests; `xcrun simctl io <udid> screenshot` for looking.
 - **Browser**: Playwright with `recordVideo`, imported through the `external` source.
 
-## When UI video is unavailable
+## No GUI at all
 
-Headless emulators and simulators can still record video; browsers record through Playwright (`external`). If no video path can capture a changed UI, report the missing recorder or access permission and block PR publication until it is available. Screenshots may supplement but cannot replace the live video. CLI, API, performance, and agent-session work instead use their original terminal output, measured probe, or transcript from step 4.
+Emulators and simulators run headless and record video: `boot ... --headless` then the steps above. Browsers record through Playwright (`external`). If UI video cannot be captured, repair the recorder or access; screenshots and assertions alone do not satisfy UI evidence. A non-UI change instead uses the real terminal or probe output below, with captured input, output, exit status, and revision.
 
+## Non-UI changes still need captured evidence
 
-For a bug fix, retain actual pre-fix failure and post-fix success in scratch for inspection and include both observations in hosted proof; when the before/after material cannot fit the selected recording, host an additional authentic capture. A UI pair of frames may supplement but never replace live video; CLI/API fixes need original failing/passing runs. Bind post-fix success to tested SHA.
+- **CLI**: create `<external-scratch>/cli/`, then start `script -q <external-scratch>/cli/terminal-session.txt` (or the platform's equivalent terminal recorder). Type the changed command against real inputs, immediately type `printf 'exit=%s\n' "$?"`, and exit the recorder. Keep the command, stdout/stderr, exit status, and before/after behavior relevant to acceptance in the transcript; inspect it for readable output and secrets before upload. Cite its output lines in `report.md`.
+- **API / performance**: run a repeatable probe and save its real requests, responses, exit status, and measured numbers (such as request counts per phase or latency before and after) as `probe-output.txt`; include the probe command or script and environment.
+- **Rendering / canvas / shader**: capture rendered frames and pixel assertions (diff values), review by eye, and save as PNGs; interactive UI also requires live video.
+- **Agent behavior**: capture the actual agent input, tool call, tool response, and observable outcome in a redacted `agent-transcript.txt`, with source run identification.
+- **Bug fixes**: capture the real failure before fixing product or check source, then the current passing behavior. A `pair` image can supplement but never replace an existing UI's live before/after composite.
 
 ## Guardrails
 
@@ -164,18 +185,21 @@ For a bug fix, retain actual pre-fix failure and post-fix success in scratch for
 - Never record a screen showing secrets, tokens, customer data, or payment details; mark that flow `untested` and say why.
 - Narration describes what the viewer sees and what it proves; it never claims what the screen does not show.
 - When verifying a fix, show or reference the old failure alongside the new success.
-- Always state the exact tested code commit, branch, and PR head when present; recapture after a behavior-changing head update.
+- Always state the exact commit, branch, or deployment tested against.
 
 ## Capture hygiene
 
 - Confirm the server or build you probe is yours: `lsof -i :<port>` (or `ss -ltnp "sport = :<port>"`), then `ps -p <pid> -o args=`; on devices, `adb shell dumpsys package <id> | grep versionName` or `xcrun simctl get_app_container <udid> <bundle>`.
 - Evidence complements the repository's checks (typecheck, build, tests); it never replaces them.
-- Scratch captures and reports are deleted after hosted readback; no task-local evidence receipt or recording is created or committed.
+- Evidence directories remain ignored; their recordings are not committed.
 
 ## Final response
 
-Choose the situation's template; list **all** hosted capture URLs, tested SHA, current head if a PR exists, each test's result and cue, caveats, and issue/comment links only when those exist. Scratch reports are inspected and removed after hosted readback, never cited as links.
+Choose the template by situation and use it only:
 
-- Task success with every required behavior passed and hosted captures inspected: `references/evidence_final_answer.md`; hand off to `/describe-pr` after publication/readback (or state that the draft awaits final publication by `/describe-pr`).
-- Task failure or capture/revision/host blocker: `references/evidence_failed_answer.md` when a plan exists, with `/iterate-implementation` next for implementation failure; for oneshot/bugfix, report the exact blocker and repair command/phase without handing off to `/describe-pr`.
-- Standalone without a task or PR: `references/evidence_standalone_answer.md`; host and return the capture/results and optional issue comment, with no fabricated PR/comment and no next phase.
+- Delivery baseline sealed: use `references/evidence_baseline_answer.md`, filling `{next_command}` with `/iterate-implementation` (task-only) or the plan's implementation skill. Report the policy, baseline receipt, inspected targets/exemptions, and source revision. If called inside a mutation skill, return the checkpoint to that caller before it dispatches any edits.
+- Delivery final sealed: `references/evidence_final_answer.md` hands off to `/iterate-evidence` for inspection, including captured failures. The default repair allowance is three; this skill consumes none.
+- Missing capture/inspection/hosting/baseline: report the exact blocked prerequisite and saved partial artifacts, without a publication handoff.
+- Standalone: `references/evidence_standalone_answer.md`, with observed state and requested attachment action only.
+
+`{artifact_link}` is the full task-root-relative canonical receipt path selected through index.json. `{report_link}` is a relative Markdown link to `report.md` of the session (or the composite), relative to the repository root, or to the current directory when there is no task directory. `{summary}` is the receipt's `summary`.

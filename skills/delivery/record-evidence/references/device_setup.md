@@ -33,7 +33,7 @@ Record:
 python3 $EVIDENCE start --output <dir>/android --source android --target $SERIAL --label "Android" --title "..." ...
 ```
 
-Notes: `screenrecord` only emits frames when the display changes; the recorder holds the last frame to the real stop time and reports it. `--geometry 720x1600` asks the device for a smaller recording when the default is too heavy.
+The source capture dimensions and final evidence dimensions are separate. `--geometry WxH` controls the captured region/device size; it does not change the final-render limit. `stop` and `render` default to `--max-height 720`, proportionally downscaling the rendered output while leaving raw capture unchanged. Pass another `--max-height N` to override it, or `--max-height 0` to keep native output dimensions. For example, `stop --max-height 1080` keeps taller rendered media than the default.
 
 ## iOS simulator
 
@@ -66,7 +66,7 @@ Notes: `simctl recordVideo` writes the file only when it stops, and like `screen
 
 ## Desktop screen
 
-- macOS: grant Screen Recording to the terminal or agent host app (System Settings, Privacy & Security). `doctor` lists screen indexes; `--screen-index N` picks one. Retina captures are large; `stop --max-height 1440` downsizes the render.
+- macOS: grant Screen Recording to the terminal or agent host app (System Settings, Privacy & Security). `doctor` lists screen indexes; `--screen-index N` picks one. Retina captures are large; final renders default to 720 pixels high. `stop --max-height 1440` raises the final limit; `stop --max-height 0` keeps native output height.
 - Linux X11 / XWayland: `DISPLAY` set (and `XAUTHORITY` when recording over SSH into a desktop session, usually `~/.Xauthority`); `xdpyinfo` or `xrandr` supplies the screen size, or pass `--geometry WxH`. Verified on Ubuntu 22.04 with Xorg and a static ffmpeg build in `~/bin` (no root needed).
 - Linux Wayland: `wf-recorder` on `PATH` and a wlr-screencopy compositor (Sway, Hyprland, river, Wayfire, labwc, dwl, niri). GNOME and KDE Wayland are not capturable this way. `doctor` names the missing piece. Known limits: wf-recorder does not build against ffmpeg 9 (checked September 2026), and a compositor with no connected monitor (`hyprctl -j monitors` prints `[]`) has nothing to capture; in both cases capture X11 windows through XWayland or record the browser with Playwright.
 
@@ -118,5 +118,7 @@ await browser.close();
 Note the argument order: the recorder wants `annotate SESSION --type ...`, and `note()` appends the session last, which argparse accepts. Confirm the server you hit is your build (`lsof -i :3000`, then `ps -p <pid> -o args=`) before recording.
 
 ## Multiple devices at once
+
+Final media sizing is independent of source capture geometry. `compose` defaults to a maximum 720-pixel output height and, for horizontal composites, a 1920-pixel total-width limit. Both preserve aspect ratio. `--max-height N` changes the height limit; `--max-height 0` keeps native height and removes the default width limit unless `--max-width` is set. An explicit `--size` overrides default pane sizing, and `--max-width N` changes the width limit (`0` keeps native width). Generated `frames` and `pair` PNGs default to at most 1920×720; `frames --max-width N --max-height M` changes those bounds, and `pair --height N` changes its height bound.
 
 Start one session per device with the same `--title` and distinct `--label`; annotate all of them in one call when the statement applies to every device (`narrate "$A" "$B" --message ...`), or one when it does not. After `stop` on each, `compose --output <dir>/composite "$A" "$B" --label ... --label ...` builds the side-by-side with a shared narration track. Panes align by wall clock; `--no-align` starts them together. `--direction v` stacks vertically; `--size` sets the pane height (or width for `v`).

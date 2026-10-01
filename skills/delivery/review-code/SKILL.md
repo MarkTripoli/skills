@@ -13,6 +13,8 @@ Review the complete code change without editing product code. Output is a durabl
 
 Locate the task directory and read `task.md` per the conventions (create one from the request when none exists). Read `@file` args fully. Read `references/code_review_template.md`, `code_review_findings_answer.md`, `code_review_clean_answer.md`, `code_review_blocked_answer.md`.
 
+For delivery, require current verification when configured. Save the source fingerprint as `revision`; a changed source tree makes an older clean review historical. `node <skills-dir>/deliver/contract.mjs status <task-dir>` reports artifact currency and what publication lacks; optional for manual work.
+
 ## Pin scope
 
 Determine merge target: existing pull request base, else `base:` from `task.md`, else repository default branch. Record base branch, merge-base SHA, HEAD SHA, working changes, and commits after merge base. Review committed/working-tree changes against merge base. Files under the configured task root and unrelated changes are not review subjects. Stop if base unresolved. Empty or incomplete scope is not clean.
@@ -23,7 +25,7 @@ Read `task.md`/`ticket.md` and current indexed implementation source (prefer `pl
 
 When `task.md` lists acceptance criteria, decide each one against the diff and tests. A criterion the change does not prove is a major-severity finding; a criterion the change contradicts is critical. When `review.verification` has a current iteration, read its items table first: a criterion recorded as `pass` with a command and quoted output is proven; `fail` and `untested` items are findings to confirm.
 
-Before allocating a new review, when `review.code` has a current iteration, read only that iteration's `### CR-...` heading lines. Record each in `## Previous Round` as `fixed`, `still open`, or `declined`, decided from the current diff and current `review.fixes` evidence, never from the prior reviewer's reasoning. Raise still-open entries again with new identifiers.
+When the validated index holds the prior review.code iteration, read only the `### CR-...` heading lines under its `## Critical and Required Findings`, and no finding body. Record each one in `## Previous Round` as `fixed`, `still open`, or `disputed`, decided from the current diff and the fix round's recorded reason, never from the previous reviewer's reasoning. A `still open` entry is raised again under `## Critical and Required Findings` with a new identifier so the gate counts it. Round two and later judge only earlier findings, the builder's dispositions (`fixed` or `disputed: <evidence>`), and regressions in `git diff <previous reviewed_commit>..HEAD`; a new issue outside that diff is an advisory (`follow-up`).
 
 ## Review
 
@@ -46,8 +48,7 @@ Classify each finding on three axes (CodeRabbit vocabulary; no live integration)
 - Severity: critical | major | minor | trivial | info (guidance, not a problem).
 - Category: Functional correctness | Security and privacy | Data integrity and integration | Performance and scalability | Stability and availability | Maintainability and code quality.
 
-Gate on Severity: critical or major set `findings`. minor, trivial, and info are Advisories and do not prevent `clean`.
-Migration from the old scale: Critical -> critical; Required -> major; Optional -> minor; Nit -> trivial (Type Nitpick); FYI -> info.
+Gate on Severity: critical or major set `findings`. minor, trivial, and info are Advisories and do not prevent `clean`. CR- findings are `blocking`; ADV- findings are `follow-up`. Only an unmet acceptance criterion, wrong behavior, security, data loss, or a broken check may be critical or major; readability and architecture concerns are advisories unless they cause one of those.
 
 Lead with highest-leverage. Prefer proven to weak. Structural: name smallest fix (collapse branches, separate orchestration/policy, move to owner, reuse helper, explicit boundary, delete pass-through, extract module).
 
@@ -65,13 +66,13 @@ Verify tests/build/manual/screenshots. Green checks alone are not sufficient.
 
 ## Save
 
-Allocate the next `review.code` iteration through the conventions' Recording an artifact flow and write the template to its staging path. Set `findings` when actionable remain, `clean` when none, `blocked` when the gate failed. Blocked is not clean. Do not record it yet.
+Allocate the next immutable iteration through the conventions. Write `<task-root>/<slug>/artifacts/review/code/<NNNN>.md` using the template. Record `checkpoint: final`, `reviewed_commit` = HEAD, `reviewer_model` as the observed model (or `unobserved: <requested>`) and `round`; `contract.mjs review <task-dir> <file>` checks the record (clean is approve, findings is changes). Set `findings` when actionable remain, `clean` when none, `blocked` when a gate failed; blocked is not clean. Save the review locally in the task directory without staging, committing, or pushing it.
 
 Then run `node <skills dir>/typed-judgment/judge.mjs axis-coverage <the staged file> --json`, where `<skills dir>` is the directory that holds this skill (in a checkout, `skills/delivery`). Record each row's verdict, level, and confidence on that axis's `helper coverage` line, and the stderr provenance line under the heading. An axis that comes back `skipped` or `asserted` was not examined against the pinned scope: examine it, rewrite that section with evidence from the changed code or the reason the axis does not apply, save again, and run the command once more. Run it at most twice and record what the second run says. A finding the second pass turns up is a finding like any other and can change the status. Exit 3, no `node`, no `TYPESAFE_API_KEY`, or an `unclear` row: write `unavailable` on the lines it would have filled, decide those axes yourself, and say under `## Review Limits` that judgments were skipped.
 
 Record the staged document once as the next immutable `review.code` iteration.
 
-Commit its canonical path and `index.json` explicitly as `docs(task): code-review artifact`.
+Keep all task records local; never stage or commit them.
 
 ## Next
 
