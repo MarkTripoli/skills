@@ -14,11 +14,12 @@ export const request = `Add an \`acme-status\` channel to notifyctl that posts a
 // A fact must share a meaningful Markdown paragraph with a pointer into the saved document or the
 // sources artifact. Paragraphs may wrap across lines and be any length; a pointer in a separate
 // bibliography paragraph does not cite the fact.
-const POINTER = /(?:acme-status-api\.md|01-sources-[a-z0-9-]+\.md|sources artifact)/i;
+const POINTER = /(?:acme-status-api\.md|\d{2}-sources-[a-z0-9-]+\.md|artifacts\/research\/sources\/\d{4}\.md|research\.sources\.\d{4}|sources artifact)/i;
 const sameParagraph = (fact, pointer = POINTER) => ({
   test: (text) => paragraphs(text, new RegExp(fact, "i")).some((paragraph) => pointer.test(paragraph)),
+  toString: () => `a paragraph that states ${fact} and points at the saved document or the sources artifact`,
 });
-const cited = (fact) => sameParagraph(fact);
+export const cited = (fact) => sameParagraph(fact);
 
 export function researchPhases(researchNext) {
   return [

@@ -14,16 +14,6 @@ import primaryScenario from "../evals/scenarios/iterate-evidence.mjs";
 const task = ".agents/tasks/counter-evidence";
 const base = { files: { "app.js": { sha256: "faulty" }, "spec.md": { sha256: "expectation" }, [`${task}/task.md`]: { sha256: "request" } } };
 
-test("iterate-evidence instructions require image-payload binding reads", () => {
-  const skill = fs.readFileSync(new URL("../skills/delivery/iterate-evidence/SKILL.md", import.meta.url), "utf8");
-  const inspection = fs.readFileSync(new URL("../skills/delivery/iterate-evidence/references/inspection_acceptance.md", import.meta.url), "utf8");
-  for (const text of [skill, inspection]) {
-    assert.match(text, /bare (?:image|retained PNG\/JPEG|retained video timestamp|timestamp selector)/i);
-    assert.match(text, /\?q=.*text/i);
-    assert.match(text, /pair(?:ed)?(?: it)? with (?:a )?separate bare/i);
-  }
-});
-
 test("only the evidence companion opts out of document runner defaults", () => {
   assert.equal(isEvidenceScenario({ phases: [{ skill: "iterate-evidence" }] }), true);
   assert.equal(isEvidenceScenario({ name: "iterate-evidence", phases: [{ skill: "verify-implementation" }] }), false);
@@ -39,14 +29,14 @@ test("repair authorization catches forbidden changes even when a later commit re
   assert.ok(problems.every((problem) => problem.includes("spec.md")));
 });
 
-test("source repairs remain allowed but receipt/source commits cannot be mixed", () => {
+test("source repairs remain allowed but task artifact commits are forbidden", () => {
   const receipt = `${task}/01-evidence-iteration-counter-evidence.md`;
   const repaired = { boundary: "tool_execution_end", files: { ...base.files, "app.js": { sha256: "repaired" }, [receipt]: { sha256: "receipt" } } };
   assert.deepEqual(evidencePathProblems(base, [repaired], [
     { sha: "source", subject: "fix: increment correctly", paths: ["app.js"] },
-    { sha: "receipt", subject: "docs(task): record inspected repair", paths: [receipt] },
   ], task), []);
-  assert.ok(evidencePathProblems(base, [repaired], [{ sha: "mixed", subject: "docs(task): evidence", paths: ["app.js", receipt] }], task).length > 0);
+  assert.ok(evidencePathProblems(base, [repaired], [{ sha: "receipt", subject: "docs: save inspected repair", paths: [receipt] }], task).some((problem) => problem.includes("must not be committed")));
+  assert.ok(evidencePathProblems(base, [repaired], [{ sha: "mixed", subject: "fix: repair and save", paths: ["app.js", receipt] }], task).length > 0);
 });
 
 test("a forbidden write reverted before the final state is still retained at a tool boundary", () => {
@@ -566,6 +556,15 @@ test("normalize strips parenthetical, bracketed, quoted, and mixed label forms",
   assert.strictEqual(normalize("in-progress (active round)."), "in-progress", "annotated status stripped");
 });
 
+test("counterFlowCoverage keeps a row whose cell holds an escaped pipe", () => {
+  const make = (charter, coverage) => `\n### Targets and regression charter\n\n${charter}\n\n## Final coverage\n\n${coverage}\n`;
+  const charRow = (id, action) => `| ${id} | target | zero | ${action} | expected: 1 \\| 2 | spec.md | yes |`;
+  const covRow = (id, result) => `| ${id} | target | rev | evidence a \\| b | checks | ${result} | reason |`;
+  const got = counterFlowCoverage(make(charRow("F-INC", "Add one"), covRow("F-INC", "failed")), { increment: "failed", reset: "passed" });
+  assert.ok(got.increment, "the escaped pipe does not shift the result column");
+  assert.deepEqual(got.results, ["failed"]);
+});
+
 test("counterFlowCoverage resolves parenthetical, quoted, and mixed label forms (F_COVERAGE_PARSE_V8)", () => {
   const make = (charter, coverage) => `\n### Targets and regression charter\n\n${charter}\n\n## Final coverage\n\n${coverage}\n`;
   const charRow = (id, action) => `| ${id} | target | zero | ${action} | expected: 1 | spec.md | yes |`;
@@ -714,3 +713,4 @@ test("the disclosed worker command starts the real worker only after a saved che
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+

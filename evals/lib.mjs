@@ -4,6 +4,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { indexFileExists, readArtifactIndex } from "../shared/task-artifacts.mjs";
+import { execFileSync, spawn } from "node:child_process";
 
 export function frontmatter(text) {
   const match = /^---\n([\s\S]*?)\n---\n/.exec(text);
@@ -20,9 +22,19 @@ export function frontmatter(text) {
   return out;
 }
 
-// Every `NN-*.md` in the task directory with its parsed frontmatter, newest number first.
+// Indexed artifacts are digest-validated and selected by their semantic current pointers.
+// Numbered directory scanning is reserved for genuinely legacy tasks without an index.
 export function artifacts(taskDir) {
   if (!fs.existsSync(taskDir)) return [];
+  if (indexFileExists(path.join(taskDir, "index.json"))) {
+    const index = readArtifactIndex(taskDir);
+    return Object.values(index.artifactSeries).flatMap((series) =>
+      [...series.iterations].reverse().map((record) => {
+        const file = record.path;
+        const text = fs.readFileSync(path.join(taskDir, file), "utf8");
+        return { file, path: path.join(taskDir, file), text, fm: frontmatter(text) ?? {}, record, current: record.id === series.current };
+      }));
+  }
   return fs
     .readdirSync(taskDir)
     .filter((f) => /^\d{2}-.+\.md$/.test(f))
@@ -35,7 +47,7 @@ export function artifacts(taskDir) {
 }
 
 export function newest(taskDir, type) {
-  return artifacts(taskDir).find((a) => a.fm.type === type) ?? null;
+  return artifacts(taskDir).find((a) => a.fm.type === type && a.current !== false) ?? null;
 }
 
 // The one `/<skill>[ @<file>]` command in the reply's final text fence, or null.
@@ -160,3 +172,49 @@ export const expect = {
 };
 
 export const failures = (...checks) => checks.flat().filter(Boolean);
+
+// The environment a live session runs in: the operator's Slack services stay out of reach. No `SLACK_*` variables, a direct-thread
+// env file that does not exist, and a failing `slack-coordinator` stub ahead of the real one on PATH. This hides the usual routes;
+// it is not a sandbox (an absolute path to the daemon or its socket under HOME still works).
+export function isolatedEnv(env = process.env) {
+  const out = Object.fromEntries(Object.entries(env).filter(([k]) => !/^SLACK_/i.test(k)));
+  const stubs = fs.mkdtempSync(path.join(env.TMPDIR ?? "/tmp", "no-slack-"));
+  fs.writeFileSync(path.join(stubs, "slack-coordinator"), "#!/bin/sh\necho 'slack-coordinator is unavailable in evals' >&2\nexit 1\n", { mode: 0o755 });
+  out.PATH = [stubs, env.PATH].filter(Boolean).join(path.delimiter);
+  out.SLACK_AGENT_ENV_FILE = path.join(stubs, "no-such-slack-env");
+  return out;
+}
+
+// `spawn` for a session that runs in an `isolatedEnv`: the stub directory goes when the process ends or fails to start.
+export function spawnIsolated(command, args, { isolated, ...options }) {
+  const child = spawn(command, args, options);
+  const done = () => disposeIsolatedEnv(isolated);
+  child.once("close", done);
+  child.once("error", done);
+  return child;
+}
+
+// Removes the stub directory `isolatedEnv` made, once the session that used it has closed.
+export function disposeIsolatedEnv(env) {
+  const dir = env.SLACK_AGENT_ENV_FILE ? path.dirname(env.SLACK_AGENT_ENV_FILE) : "";
+  if (path.basename(dir).startsWith("no-slack-")) fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// A directory to put first on PATH so every `omp` the orchestrator starts itself records its session under `nestedDir`: a call that
+// already names `--session-dir` (the runner's own) passes through. A session started by absolute path, or from a script that resets
+// PATH, leaves `nestedDir` empty and the grader fails the run rather than guess who built.
+export function ompShim(nestedDir, env = process.env) {
+  const real = execFileSync("sh", ["-c", "command -v omp"], { env, encoding: "utf8" }).trim();
+  const dir = fs.mkdtempSync(path.join(env.TMPDIR ?? "/tmp", "omp-shim-"));
+  fs.mkdirSync(nestedDir, { recursive: true });
+  const q = (x) => `'${x.replace(/'/g, "'\\''")}'`;
+  fs.writeFileSync(path.join(dir, "omp"), `#!/bin/sh\nfor a in "$@"; do case "$a" in --session-dir|--session-dir=*) exec ${q(real)} "$@";; esac; done\nexec ${q(real)} --session-dir ${q(nestedDir)} "$@"\n`, { mode: 0o755 });
+  return dir;
+}
+
+// The arguments of every live phase session. `--no-skills` keeps the operator's global skills out of the run; the prompt names each
+// SKILL.md by path.
+export function ompArgs({ prompt, sessionDir = null, maxMinutes, model = null }) {
+  return ["-p", "--auto-approve", "--no-skills", "--mode", "json", ...(sessionDir ? ["--session-dir", sessionDir] : ["--no-session"]), `--max-time=${maxMinutes}m`, ...(model !== null ? ["--model", model] : []), prompt];
+}
+

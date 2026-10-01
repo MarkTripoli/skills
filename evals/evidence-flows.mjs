@@ -1,4 +1,5 @@
 import { section } from "./lib.mjs";
+import { tableRows } from "../skills/delivery/deliver/contract.mjs";
 
 // Strip parenthetical/bracketed annotations, surrounding quotes/backticks, trailing
 // punctuation, and collapse whitespace; lowercases for uniform comparison.
@@ -17,9 +18,8 @@ export function normalize(label) {
 }
 
 function rows(text) {
-  return text.split("\n")
-    .filter((line) => /^\s*\|/.test(line))
-    .map((line) => line.trim().slice(1, -1).split("|").map((cell) => cell.replace(/[`*_]/g, "").trim()))
+  return tableRows(text)
+    .map((cells) => cells.map((cell) => cell.replace(/[`*_]/g, "").trim()))
     .filter((cells) => cells.length === 7);
 }
 
