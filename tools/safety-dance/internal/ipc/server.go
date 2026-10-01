@@ -33,8 +33,12 @@ type Server struct {
 	streamHandlers map[string]StreamHandlerFunc
 	listener       net.Listener
 	wg             sync.WaitGroup
-	done           chan struct{}
-	closeOnce      sync.Once
+	// replies counts dispatched requests until their reply has been written.
+	// mu guards draining and prevents new requests from joining during Drain.
+	replies   sync.WaitGroup
+	draining  bool
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 // NewServer creates a new IPC server.
@@ -137,6 +141,27 @@ func (s *Server) Close() {
 	})
 }
 
+// Drain stops accepting requests and waits for dispatched replies before exit.
+// Streams are cancelled by Close but are not waited for.
+func (s *Server) Drain(ctx context.Context) error {
+	s.mu.Lock()
+	s.draining = true
+	s.mu.Unlock()
+	s.Close()
+	s.CloseListener()
+	written := make(chan struct{})
+	go func() {
+		s.replies.Wait()
+		close(written)
+	}()
+	select {
+	case <-written:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // CloseListener closes the underlying listener without signaling server
 // shutdown. This causes Accept to return net.ErrClosed, which the server
 // detects and exits cleanly.
@@ -223,8 +248,19 @@ func (s *Server) handleConn(conn net.Conn) {
 			return // connection done after streaming
 		}
 
+		s.mu.RLock()
+		draining := s.draining
+		if !draining {
+			s.replies.Add(1)
+		}
+		s.mu.RUnlock()
+		if draining {
+			return
+		}
 		resp := s.dispatch(ctx, req)
-		if err := encoder.Encode(resp); err != nil {
+		err := encoder.Encode(resp)
+		s.replies.Done()
+		if err != nil {
 			slog.Error("write response", "error", err)
 			return
 		}

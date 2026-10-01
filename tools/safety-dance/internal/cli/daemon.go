@@ -559,8 +559,12 @@ func serveDaemon(cmd *cobra.Command, args []string) error {
 	case <-shutdown:
 	}
 	manager.Shutdown()
-	server.Close()
-	server.CloseListener()
+	// The shutdown handler signals exit before its reply has been written.
+	drainCtx, cancelDrain := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelDrain()
+	if err := server.Drain(drainCtx); err != nil {
+		_, _ = fmt.Fprintf(logFile, "drain IPC replies: %v\n", err)
+	}
 	return nil
 }
 

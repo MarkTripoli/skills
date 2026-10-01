@@ -338,6 +338,89 @@ func TestAuthorizeMutationPeerRejectsMarkerOnDetachedAncestor(t *testing.T) {
 	}
 }
 
+func TestAuthorizeMutationPeerUnreadableAncestorSessionBoundary(t *testing.T) {
+	oldInfo, oldEnv, oldSession := processInfoFunc, processEnvironmentFunc, processSessionIDFunc
+	t.Cleanup(func() {
+		processInfoFunc, processEnvironmentFunc, processSessionIDFunc = oldInfo, oldEnv, oldSession
+		SetTrustedOperatorSession(0)
+	})
+	SetTrustedOperatorSession(102)
+	processInfoFunc = func(pid int) (int, string, error) {
+		switch pid {
+		case 101:
+			return 102, "/tmp/safety-dance daemon restart", nil
+		case 102:
+			return 103, "/usr/bin/zsh", nil
+		default:
+			return 1, "/usr/sbin/tailscaled be-child ssh", nil
+		}
+	}
+	processEnvironmentFunc = func(pid int) ([]byte, error) {
+		if pid == 103 {
+			return nil, fmt.Errorf("read process environment: %w", os.ErrPermission)
+		}
+		return nil, nil
+	}
+	for _, tc := range []struct {
+		name    string
+		session int64
+		known   bool
+		allowed bool
+	}{
+		{"outside", 50, true, true},
+		{"inside", 102, true, false},
+		{"unknown", 0, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			processSessionIDFunc = func(pid int) (int64, bool) {
+				if pid == 103 {
+					return tc.session, tc.known
+				}
+				return 102, true
+			}
+			err := AuthorizeMutationPeer(101)
+			if tc.allowed && err != nil {
+				t.Fatalf("out-of-session login ancestor rejected: %v", err)
+			}
+			if !tc.allowed && (err == nil || !strings.Contains(err.Error(), "cannot verify IPC peer environment")) {
+				t.Fatalf("unreadable untrusted ancestor accepted: %v", err)
+			}
+		})
+	}
+}
+
+func TestManagedHookPeerPreservesQuotedReceivePackExecutable(t *testing.T) {
+	gate := filepath.Join(t.TempDir(), "A User", "gate.git")
+	hook := filepath.Join(gate, "hooks", "pre-receive")
+	oldInfo, oldEnv := processInfoFunc, processEnvironmentFunc
+	t.Cleanup(func() { processInfoFunc, processEnvironmentFunc = oldInfo, oldEnv })
+	processEnvironmentFunc = func(int) ([]byte, error) { return nil, nil }
+	for _, tc := range []struct {
+		name    string
+		command string
+		allowed bool
+	}{
+		{"quoted", `"/opt/Git Tools/git-receive-pack" "` + gate + `"`, true},
+		{"argument only", `/bin/echo git-receive-pack "` + gate + `"`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			processInfoFunc = func(pid int) (int, string, error) {
+				switch pid {
+				case 101:
+					return 102, "/tmp/safety-dance", nil
+				case 102:
+					return 103, `/bin/sh "` + hook + `"`, nil
+				default:
+					return 1, tc.command, nil
+				}
+			}
+			if got := managedHookPeer(101, gate); got != tc.allowed {
+				t.Fatalf("managed hook admission = %v, want %v", got, tc.allowed)
+			}
+		})
+	}
+}
+
 func TestAdmissionReceiptLoadFailureIsVisible(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "receipts.json")

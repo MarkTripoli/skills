@@ -785,7 +785,9 @@ func ResolveRef(ctx context.Context, dir, ref string) (string, error) {
 }
 
 func DirectRefTarget(ctx context.Context, dir, ref string) (string, bool, error) {
-	target, err := Run(ctx, dir, "symbolic-ref", "--quiet", "--no-recurse", ref)
+	// Only the exit status matters; --no-recurse needs Git 2.35, while
+	// Ubuntu 22.04 ships Git 2.34.
+	target, err := Run(ctx, dir, "symbolic-ref", "--quiet", ref)
 	if err == nil {
 		return "", false, fmt.Errorf("ref %s is symbolic (target %s)", ref, target)
 	}

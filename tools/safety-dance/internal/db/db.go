@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"fmt"
@@ -18,27 +19,26 @@ var (
 	entropy   = ulid.Monotonic(rand.Reader, 0)
 )
 
+// busyWait matches the busy_timeout pragma in the DSN.
+const busyWait = 5 * time.Second
+
 // DB wraps a SQLite database connection.
 type DB struct {
 	sql *sql.DB
 }
 
 // Open opens (or creates) the SQLite database at path and runs migrations.
+// Immediate transactions take the write lock before reading, so competing
+// writers wait on busy_timeout instead of failing during a read-to-write upgrade.
 func Open(path string) (*DB, error) {
-	sqlDB, err := sql.Open("sqlite", path+"?_pragma=journal_mode(wal)&_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)")
+	sqlDB, err := sql.Open("sqlite", path+"?_pragma=journal_mode(wal)&_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)&_txlock=immediate")
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
 	sqlDB.SetMaxOpenConns(1)
-	if _, err := sqlDB.Exec(schemaSQL); err != nil {
+	if err := migrate(sqlDB); err != nil {
 		sqlDB.Close()
-		return nil, fmt.Errorf("migrate db: %w", err)
-	}
-	for _, stmt := range migrationStatements {
-		if _, err := sqlDB.Exec(stmt); err != nil && !isDuplicateColumnErr(err) {
-			sqlDB.Close()
-			return nil, fmt.Errorf("migrate db: %w", err)
-		}
+		return nil, err
 	}
 	// SQLite creates state files lazily; tighten every state file after
 	// migration so an existing world-readable database is repaired too.
@@ -49,6 +49,50 @@ func Open(path string) (*DB, error) {
 		}
 	}
 	return &DB{sql: sqlDB}, nil
+}
+
+// Switching a fresh database to WAL can report SQLITE_BUSY without consulting
+// busy_timeout. Retry connection initialization within the same wait allowance.
+func connect(ctx context.Context, database *sql.DB) (*sql.Conn, error) {
+	deadline := time.Now().Add(busyWait)
+	for {
+		conn, err := database.Conn(ctx)
+		if err == nil || !strings.Contains(err.Error(), "database is locked") || time.Now().After(deadline) {
+			return conn, err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Migrations share one write transaction so concurrent CLI and daemon openers
+// cannot interleave schema changes or observe a partially migrated database.
+func migrate(database *sql.DB) (err error) {
+	ctx := context.Background()
+	conn, err := connect(ctx, database)
+	if err != nil {
+		return fmt.Errorf("migrate db: %w", err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return fmt.Errorf("migrate db: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_, _ = conn.ExecContext(ctx, "ROLLBACK")
+		}
+	}()
+	if _, err := conn.ExecContext(ctx, schemaSQL); err != nil {
+		return fmt.Errorf("migrate db: %w", err)
+	}
+	for _, stmt := range migrationStatements {
+		if _, err := conn.ExecContext(ctx, stmt); err != nil && !isDuplicateColumnErr(err) {
+			return fmt.Errorf("migrate db: %w", err)
+		}
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return fmt.Errorf("migrate db: %w", err)
+	}
+	return nil
 }
 
 // OpenReadOnly opens an existing database without creating or migrating it.
