@@ -11,9 +11,16 @@ type blockKitText struct {
 	Text string `json:"text"`
 }
 
+type blockKitElement struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
 type blockKitBlock struct {
-	Type string       `json:"type"`
-	Text blockKitText `json:"text"`
+	Type     string            `json:"type"`
+	Text     blockKitText      `json:"text"`
+	Fields   []blockKitText    `json:"fields"`
+	Elements []blockKitElement `json:"elements"`
 }
 
 func assertBlockKitMessage(t *testing.T, got SlackMessage, title string, fields []string, fallback string) {
@@ -29,47 +36,34 @@ func assertBlockKitMessage(t *testing.T, got SlackMessage, title string, fields 
 	if err := json.Unmarshal(data, &blocks); err != nil {
 		t.Fatal(err)
 	}
-	if len(blocks) != len(fields)+1 {
-		t.Fatalf("got %d blocks, want header plus %d sections: %s", len(blocks), len(fields), data)
+	wantBlocks := 1
+	if len(fields) > 0 {
+		wantBlocks++
+	}
+	if len(blocks) != wantBlocks {
+		t.Fatalf("got %d blocks, want header plus optional fields: %s", len(blocks), data)
 	}
 	if blocks[0].Type != "header" || blocks[0].Text != (blockKitText{Type: "plain_text", Text: title}) {
 		t.Fatalf("header = %+v", blocks[0])
 	}
+	if len(fields) == 0 {
+		return
+	}
+	if blocks[1].Type != "section" || blocks[1].Text.Text != "" || len(blocks[1].Fields) != len(fields) {
+		t.Fatalf("section = %+v, want %d fields", blocks[1], len(fields))
+	}
 	for i, field := range fields {
-		if blocks[i+1].Type != "section" || blocks[i+1].Text != (blockKitText{Type: "mrkdwn", Text: field}) {
-			t.Fatalf("block %d = %+v, want section %q", i+1, blocks[i+1], field)
+		if blocks[1].Fields[i] != (blockKitText{Type: "mrkdwn", Text: field}) {
+			t.Errorf("field %d = %+v, want %q", i, blocks[1].Fields[i], field)
 		}
 	}
 }
 
-func TestBuildLifecycleMessagesUsesOrderedBlockKitSchemas(t *testing.T) {
-	root := RootMessage{Work: "Ship release", Goal: "Deliver", Scope: "CLI", OwnerUserID: "U1", Links: []string{"https://example.test"}, StartedAt: "2026-09-25T12:00:00Z"}
-	rootFields := []string{"*Work:* Ship release", "*Goal:* Deliver", "*Scope:* CLI", "*Owner:* <@U1>", "*Links:*\n• https://example.test", "*Started at:* 2026-09-25T12:00:00Z"}
-	assertBlockKitMessage(t, BuildRootMessage(root), "Ship release", rootFields, strings.Join(rootFields, "\n"))
-
-	status := WorkEvent{Current: "Implementing", Completed: []string{"Schema"}, Decisions: []string{"Keep API"}, Blockers: []string{"Review"}, Next: []string{"Merge"}}
-	statusFields := []string{"*Current work:* Implementing", "*Completed since last update:*\n• Schema", "*Decisions:*\n• Keep API", "*Blockers:*\n• Review", "*Up next:*\n• Merge"}
-	assertBlockKitMessage(t, BuildStatusMessage(status), "Run update", statusFields, strings.Join(statusFields, "\n"))
-
-	finish := FinishRunInput{Outcome: "Success", Completed: []string{"Feature"}, Decisions: []string{"Ship"}, Unresolved: []string{"None"}, Evidence: []string{"Smoke run"}, Links: []string{"https://example.test"}}
-	finishFields := []string{"*Outcome:* Success", "*Completed work:*\n• Feature", "*Decisions:*\n• Ship", "*Unresolved items:*\n• None", "*Evidence:*\n• Smoke run", "*Links:*\n• https://example.test", "*Finished at:* 2026-09-25T12:10:00Z"}
-	assertBlockKitMessage(t, BuildCompletionMessage(finish, "2026-09-25T12:10:00Z"), "Run finished", finishFields, strings.Join(finishFields, "\n"))
-}
-
-func TestBuildLifecycleMessageUsesTextFallbackForOversizedSection(t *testing.T) {
-	long := strings.Repeat("x", maxSectionText)
-	got := BuildStatusMessage(WorkEvent{Current: long})
-	want := "*Current work:* " + long + "\n*Completed since last update:* None\n*Decisions:* None\n*Blockers:* None\n*Up next:* None"
-	if got.Text != want {
-		t.Fatalf("fallback lost oversized content: got %d chars, want %d", len(got.Text), len(want))
+func assertLegacyBlockKitMessage(t *testing.T, got SlackMessage, title string, fields []string, fallback string) {
+	t.Helper()
+	if got.Text != fallback {
+		t.Fatalf("legacy fallback = %q, want %q", got.Text, fallback)
 	}
-	if len(got.Blocks) != 0 {
-		t.Fatalf("oversized message should use fallback only, got %d blocks", len(got.Blocks))
-	}
-}
-
-func TestBuildStatusOmitsEmptySections(t *testing.T) {
-	got := BuildStatusMessage(WorkEvent{Current: "Working", Blockers: []string{"blocked"}})
 	data, err := json.Marshal(got.Blocks)
 	if err != nil {
 		t.Fatal(err)
@@ -78,15 +72,118 @@ func TestBuildStatusOmitsEmptySections(t *testing.T) {
 	if err := json.Unmarshal(data, &blocks); err != nil {
 		t.Fatal(err)
 	}
-	if len(blocks) != 3 || blocks[1].Text.Text != "*Current work:* Working" || blocks[2].Text.Text != "*Blockers:*\n• blocked" {
-		t.Fatalf("empty sections not omitted or order changed: %s", data)
+	if len(blocks) != len(fields)+1 || blocks[0].Type != "header" || blocks[0].Text.Text != title {
+		t.Fatalf("legacy blocks = %s", data)
 	}
-	if strings.Count(got.Text, "None") != 3 {
-		t.Fatalf("fallback should retain all empty fields: %q", got.Text)
+	for i, field := range fields {
+		if blocks[i+1].Type != "section" || blocks[i+1].Text != (blockKitText{Type: "mrkdwn", Text: field}) {
+			t.Errorf("legacy section %d = %+v, want %q", i, blocks[i+1], field)
+		}
 	}
 }
 
-func TestBuildNoteIsOneSentence(t *testing.T) {
-	got := BuildStatusMessage(WorkEvent{Note: "A concise update."})
-	assertBlockKitMessage(t, got, "Update", []string{"A concise update."}, "A concise update.")
+func assertRichBlockKitMessage(t *testing.T, got SlackMessage, title string, primary, secondary []string, context, fallback string) {
+	t.Helper()
+	if got.Text != fallback {
+		t.Fatalf("fallback text = %q, want %q", got.Text, fallback)
+	}
+	data, err := json.Marshal(got.Blocks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var blocks []blockKitBlock
+	if err := json.Unmarshal(data, &blocks); err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) == 0 || blocks[0].Type != "header" || blocks[0].Text.Text != title {
+		t.Fatalf("header = %+v", blocks)
+	}
+	index := 1
+	assertFields := func(want []string) {
+		t.Helper()
+		if len(want) == 0 {
+			return
+		}
+		if index >= len(blocks) || blocks[index].Type != "section" || len(blocks[index].Fields) != len(want) {
+			t.Fatalf("block %d = %+v, want section with %d fields", index, blocks, len(want))
+		}
+		for i, field := range want {
+			if blocks[index].Fields[i] != (blockKitText{Type: "mrkdwn", Text: field}) {
+				t.Errorf("field %d = %+v, want %q", i, blocks[index].Fields[i], field)
+			}
+		}
+		index++
+	}
+	assertFields(primary)
+	if len(secondary) > 0 || context != "" {
+		if len(primary) > 0 {
+			if index >= len(blocks) || blocks[index].Type != "divider" {
+				t.Fatalf("block %d = %+v, want divider", index, blocks)
+			}
+			index++
+		}
+		assertFields(secondary)
+		if context != "" {
+			if index >= len(blocks) || blocks[index].Type != "context" || len(blocks[index].Elements) != 1 || blocks[index].Elements[0] != (blockKitElement{Type: "mrkdwn", Text: context}) {
+				t.Fatalf("context block = %+v, want %q", blocks, context)
+			}
+			index++
+		}
+	}
+	if index != len(blocks) {
+		t.Fatalf("unexpected blocks: %+v", blocks[index:])
+	}
+}
+
+func TestBuildLifecycleMessagesUsesCompactBlockKitSchemas(t *testing.T) {
+	root := RootMessage{
+		Work: "Profile enhancements", Goal: "Improve profile editing", Scope: "Profile screen",
+		Links: []string{"https://gitlab.com/group/project/-/merge_requests/1", "https://jira.example/browse/PROJ-2"},
+	}
+	assertBlockKitMessage(t, BuildRootMessage(root), "Profile enhancements", []string{
+		"*Goal:*\nImprove profile editing",
+		"*Scope:*\nProfile screen",
+	}, RenderRoot(root))
+
+	status := WorkEvent{Current: "Reviewing", Completed: []string{"Built"}, Decisions: []string{"Use Go"}, Blockers: []string{"Need approval"}, Next: []string{"Test"}}
+	assertRichBlockKitMessage(t, BuildProgressMessage(root, status), "Progress", []string{
+		"*Now:*\nReviewing",
+		"*Next:*\nTest",
+	}, nil, "*Links:* <https://gitlab.com/group/project/-/merge_requests/1|MR !1> · <https://jira.example/browse/PROJ-2|PROJ-2>", "*Now:* Reviewing\n*Next:* Test\n*Links:* <https://gitlab.com/group/project/-/merge_requests/1|MR !1> · <https://jira.example/browse/PROJ-2|PROJ-2>")
+
+	completion := FinishRunInput{Outcome: "completed", Completed: []string{"Shipped"}, Decisions: []string{"Keep fallback"}, Unresolved: []string{"Flaky UI test"}, Evidence: []string{"go test passes"}, Links: []string{"https://gitlab.com/group/project/-/merge_requests/1"}}
+	assertRichBlockKitMessage(t, BuildCompletionMessage(root, completion), "Run summary", []string{
+		"*Outcome:*\ncompleted",
+		"*Summary:*\nShipped",
+	}, []string{
+		"*Unresolved:*\nFlaky UI test",
+		"*Evidence:*\ngo test passes",
+	}, "*Links:* <https://gitlab.com/group/project/-/merge_requests/1|MR !1> · <https://jira.example/browse/PROJ-2|PROJ-2>", "*Outcome:* completed\n*Summary:* Shipped\n*Unresolved:* Flaky UI test\n*Evidence:* go test passes\n*Links:* <https://gitlab.com/group/project/-/merge_requests/1|MR !1> · <https://jira.example/browse/PROJ-2|PROJ-2>")
+
+	assertBlockKitMessage(t, BuildStatusMessage(WorkEvent{Note: "Review passed."}), "Progress", []string{"*Update:*\nReview passed."}, "*Update:* Review passed.")
+	assertBlockKitMessage(t, BuildBlockerMessage("Need review", ""), "⚠️ Blocked", []string{"*Blocker:*\nNeed review"}, "*Blocker:* Need review")
+	assertBlockKitMessage(t, BuildBlockerMessage("Need review", "U0123ABC"), "⚠️ Blocked", []string{"*Blocker:*\nNeed review", "*Owner:*\n<@U0123ABC>"}, "*Blocker:* Need review\n*Owner:* <@U0123ABC>")
+}
+
+func TestBuildLifecycleMessageUsesTextFallbackForOversizedField(t *testing.T) {
+	value := strings.Repeat("🪨", maxBlockText)
+	message := BuildStatusMessage(WorkEvent{Current: value})
+	if len(message.Blocks) != 0 {
+		t.Fatalf("oversized field emitted %d blocks", len(message.Blocks))
+	}
+	if !strings.Contains(message.Text, value) {
+		t.Fatal("oversized fallback lost field content")
+	}
+	if message.Blocks != nil {
+		t.Fatalf("fallback blocks = %#v, want nil", message.Blocks)
+	}
+}
+
+func TestBuildStatusOmitsEmptyFields(t *testing.T) {
+	event := WorkEvent{Current: "Reviewing"}
+	message := BuildStatusMessage(event)
+	assertBlockKitMessage(t, message, "Progress", []string{"*Now:*\nReviewing"}, RenderStatus(event))
+	if strings.Contains(message.Text, "Decisions") || strings.Contains(message.Text, "None") {
+		t.Fatalf("fallback contains omitted fields: %q", message.Text)
+	}
 }

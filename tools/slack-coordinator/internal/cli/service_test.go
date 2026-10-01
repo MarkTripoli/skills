@@ -32,7 +32,9 @@ func injectService(t *testing.T, goos string) *recordingExecutor {
 	serviceFor = func(p *paths.Paths) (daemon.Service, error) {
 		return daemon.Service{Home: p, Binary: "/opt/slack-coordinator", Executor: executor, GOOS: goos}, nil
 	}
-	t.Cleanup(func() { serviceFor = previous })
+	previousWait := waitForDaemonReady
+	waitForDaemonReady = func() error { return nil }
+	t.Cleanup(func() { serviceFor = previous; waitForDaemonReady = previousWait })
 	return executor
 }
 
@@ -45,7 +47,7 @@ func TestServiceInstallStatusUninstall(t *testing.T) {
 	if out, code := runCLI(t, "service", "status"); code != ExitOK || out != "service not installed\n" {
 		t.Fatalf("status before install: exit %d, output %q", code, out)
 	}
-	if out, code := runCLI(t, "service", "install"); code != ExitOK || out != "service installed at "+plist+"\n" {
+	if out, code := runCLI(t, "service", "install"); code != ExitOK || !strings.Contains(out, "service installed at "+plist) {
 		t.Fatalf("install: exit %d, output %q", code, out)
 	}
 	if got := strings.Join(executor.commands, ";"); got != "launchctl load -w "+plist {
@@ -101,6 +103,7 @@ func TestDaemonStopUnderSupervisionStillShutsDown(t *testing.T) {
 
 func TestRestartDaemonReinstallsAnInstalledLinuxService(t *testing.T) {
 	t.Setenv(paths.EnvHome, t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	executor := injectService(t, "linux")
 	p, err := home()
 	if err != nil {

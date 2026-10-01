@@ -223,6 +223,9 @@ func TestConsumeInboundPersistsDMAndMentionBeforeAck(t *testing.T) {
 			if len(acker.acked) != 0 {
 				t.Fatalf("failed persistence acked %v", acker.acked)
 			}
+			if len(slack.reactions) != 0 {
+				t.Fatalf("failed persistence marked receipt: %+v", slack.reactions)
+			}
 		})
 
 		t.Run(tc.name+" persistence success", func(t *testing.T) {
@@ -250,6 +253,9 @@ func TestConsumeInboundPersistsDMAndMentionBeforeAck(t *testing.T) {
 			input, ok, err := s.DB.OldestUnhandledInput(context.Background(), "RUN1")
 			if err != nil || !ok || input.Text != tc.text {
 				t.Fatalf("pending input = %+v, %t, %v; want one normalized input", input, ok, err)
+			}
+			if len(slack.reactions) != 1 || slack.reactions[0] != (slackReaction{tc.channel, messageTS, "eyes"}) {
+				t.Fatalf("durable owner receipt = %+v", slack.reactions)
 			}
 		})
 

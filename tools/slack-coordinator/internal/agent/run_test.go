@@ -140,7 +140,7 @@ func TestContextEndKillsProcessGroup(t *testing.T) {
 }
 
 func TestEnvironmentDropsSecretsAndHome(t *testing.T) {
-	names := []string{"SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_COORDINATOR_HOME"}
+	names := []string{"SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "JIRA_API_TOKEN", "SLACK_COORDINATOR_HOME"}
 	for _, name := range names {
 		t.Setenv(name, "secret-"+name)
 	}

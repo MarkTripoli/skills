@@ -35,9 +35,38 @@ type Service struct {
 	Home     *paths.Paths
 	Binary   string
 	Executor ServiceExecutor
+	// Path is the PATH exported to the daemon. Launchd and systemd do not
+	// use a login shell's PATH, so an empty value leaves pi, claude, and
+	// codex invisible. Install snapshots the installing shell.
+	Path string
 	// GOOS selects the definition format; empty means runtime.GOOS. Tests set
 	// it so both platforms are covered on one host.
 	GOOS string
+}
+
+// AgentPath merges path with the bin directories a login shell usually has
+// and a per-user supervisor does not. Later duplicates are dropped.
+func AgentPath(path string) string {
+	extras := []string{"/opt/homebrew/bin", "/usr/local/bin"}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		extras = append(extras, filepath.Join(home, ".local", "bin"))
+	}
+	seen := map[string]bool{}
+	var parts []string
+	add := func(dir string) {
+		if dir == "" || seen[dir] {
+			return
+		}
+		seen[dir] = true
+		parts = append(parts, dir)
+	}
+	for _, dir := range strings.Split(path, string(os.PathListSeparator)) {
+		add(dir)
+	}
+	for _, dir := range extras {
+		add(dir)
+	}
+	return strings.Join(parts, string(os.PathListSeparator))
 }
 
 func (s Service) goos() string {
@@ -63,6 +92,10 @@ func (s Service) Definition() (string, error) {
 	switch s.goos() {
 	case "darwin":
 		esc := html.EscapeString
+		env := fmt.Sprintf("\t\t<key>%s</key>\n\t\t<string>%s</string>\n", paths.EnvHome, esc(s.Home.Root()))
+		if s.Path != "" {
+			env += fmt.Sprintf("\t\t<key>PATH</key>\n\t\t<string>%s</string>\n", esc(s.Path))
+		}
 		return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- %s -->
@@ -78,9 +111,7 @@ func (s Service) Definition() (string, error) {
 	</array>
 	<key>EnvironmentVariables</key>
 	<dict>
-		<key>%s</key>
-		<string>%s</string>
-	</dict>
+%s	</dict>
 	<key>StandardOutPath</key>
 	<string>%s</string>
 	<key>StandardErrorPath</key>
@@ -91,22 +122,26 @@ func (s Service) Definition() (string, error) {
 	<true/>
 </dict>
 </plist>
-`, serviceMarker, esc(s.Label()), esc(s.Binary), paths.EnvHome, esc(s.Home.Root()), esc(s.Home.DaemonLog()), esc(s.Home.DaemonLog())), nil
+`, serviceMarker, esc(s.Label()), esc(s.Binary), env, esc(s.Home.DaemonLog()), esc(s.Home.DaemonLog())), nil
 	case "linux":
+		env := "Environment=" + strconv.Quote(paths.EnvHome+"="+s.Home.Root())
+		if s.Path != "" {
+			env += "\nEnvironment=" + strconv.Quote("PATH="+s.Path)
+		}
 		return fmt.Sprintf(`# %s
 [Unit]
 Description=slack-coordinator daemon
 
 [Service]
 ExecStart=%s daemon serve
-Environment=%s
+%s
 StandardOutput=append:%s
 StandardError=append:%s
 Restart=on-failure
 
 [Install]
 WantedBy=default.target
-`, serviceMarker, strconv.Quote(s.Binary), strconv.Quote(paths.EnvHome+"="+s.Home.Root()), s.Home.DaemonLog(), s.Home.DaemonLog()), nil
+`, serviceMarker, strconv.Quote(s.Binary), env, s.Home.DaemonLog(), s.Home.DaemonLog()), nil
 	default:
 		return "", ErrUnsupportedPlatform
 	}
@@ -145,19 +180,23 @@ func (s Service) ownedDefinition(path string) (exists, owned bool, err error) {
 	return true, strings.Contains(string(raw), serviceMarker), nil
 }
 
-// Installed reports whether an owned definition exists at DefinitionPath.
-func (s Service) Installed() bool {
+// InstalledPath returns this installation's owned service definition.
+func (s Service) InstalledPath() string {
 	path, err := s.DefinitionPath()
 	if err != nil {
-		return false
+		return ""
 	}
 	_, owned, err := s.ownedDefinition(path)
-	return err == nil && owned
+	if err != nil || !owned {
+		return ""
+	}
+	return path
 }
 
-// Install writes the definition with mode 0600 and activates it. A foreign
-// file at the definition path fails the install before anything is written;
-// a failed activation removes a definition this call created.
+func (s Service) Installed() bool { return s.InstalledPath() != "" }
+
+// Install writes and activates the owned service. A failed update restores
+// its previous definition and restarts it; runtime configuration and data stay put.
 func (s Service) Install() error {
 	if s.Executor == nil {
 		return errors.New("service executor is required")
@@ -177,33 +216,67 @@ func (s Service) Install() error {
 	if existed && !owned {
 		return fmt.Errorf("refusing to replace foreign service definition at %s (missing %s marker)", path, serviceMarker)
 	}
+	var previous []byte
+	if existed {
+		previous, err = os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, []byte(definition), 0o600); err != nil {
-		return fmt.Errorf("write service definition: %w", err)
+	// A loaded agent rejects a second load. Unload first when this definition
+	// is already ours. Unload of a definition that is not currently loaded
+	// fails, and the load below still applies the new file.
+	if existed && owned {
+		_ = s.deactivate(path, serviceLabel)
 	}
-	var activate error
-	switch s.goos() {
-	case "darwin":
-		activate = s.Executor.Run("launchctl", "load", "-w", path)
-	case "linux":
-		activate = s.Executor.Run("systemctl", "--user", "daemon-reload")
-		if activate == nil {
-			activate = s.Executor.Run("systemctl", "--user", "enable", "--now", s.unitName())
+	rollback := func(cause error, attemptedActivation bool) error {
+		var restore error
+		if attemptedActivation {
+			restore = s.deactivate(path, serviceLabel)
 		}
+		if existed {
+			restore = errors.Join(restore, os.WriteFile(path, previous, 0o600))
+		} else {
+			err := os.Remove(path)
+			if !os.IsNotExist(err) {
+				restore = errors.Join(restore, err)
+			}
+		}
+		if existed {
+			restore = errors.Join(restore, s.activate(path, serviceLabel))
+		}
+		return errors.Join(cause, restore)
 	}
-	if activate == nil {
-		return nil
+	if err := os.WriteFile(path, []byte(definition), 0o600); err != nil {
+		return rollback(fmt.Errorf("write service definition: %w", err), false)
 	}
-	if !existed {
-		_ = os.Remove(path)
+	if err := s.activate(path, serviceLabel); err != nil {
+		return rollback(fmt.Errorf("activate service: %w", err), true)
 	}
-	return fmt.Errorf("activate service: %w", activate)
+	return nil
 }
 
-// Uninstall deactivates the service and removes the owned definition. A
-// missing definition is not an error; a foreign file is refused.
+func (s Service) deactivate(path, label string) error {
+	if s.goos() == "darwin" {
+		return s.Executor.Run("launchctl", "unload", path)
+	}
+	return s.Executor.Run("systemctl", "--user", "disable", "--now", label+".service")
+}
+
+func (s Service) activate(path, label string) error {
+	if s.goos() == "darwin" {
+		return s.Executor.Run("launchctl", "load", "-w", path)
+	}
+	if err := s.Executor.Run("systemctl", "--user", "daemon-reload"); err != nil {
+		return err
+	}
+	return s.Executor.Run("systemctl", "--user", "enable", "--now", label+".service")
+}
+
+// Uninstall deactivates and removes only this installation's owned definition.
 func (s Service) Uninstall() error {
 	if s.Executor == nil {
 		return errors.New("service executor is required")
@@ -212,25 +285,15 @@ func (s Service) Uninstall() error {
 	if err != nil {
 		return err
 	}
-	existed, owned, err := s.ownedDefinition(path)
-	if err != nil {
+	exists, owned, err := s.ownedDefinition(path)
+	if err != nil || !exists {
 		return err
-	}
-	if !existed {
-		return nil
 	}
 	if !owned {
 		return fmt.Errorf("refusing to remove foreign service definition at %s (missing %s marker)", path, serviceMarker)
 	}
-	var deactivate error
-	switch s.goos() {
-	case "darwin":
-		deactivate = s.Executor.Run("launchctl", "unload", path)
-	case "linux":
-		deactivate = s.Executor.Run("systemctl", "--user", "disable", "--now", s.unitName())
-	}
-	if deactivate != nil {
-		return fmt.Errorf("deactivate service: %w", deactivate)
+	if err := s.deactivate(path, serviceLabel); err != nil {
+		return fmt.Errorf("deactivate service: %w", err)
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err

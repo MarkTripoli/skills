@@ -26,7 +26,7 @@ func newDaemon() *cobra.Command {
 	start := &cobra.Command{Use: "start", Short: "Start the daemon in the background", Args: cobra.NoArgs, RunE: startDaemon}
 	serve := &cobra.Command{Use: "serve", Hidden: true, Args: cobra.NoArgs, RunE: serveDaemon}
 	for _, c := range []*cobra.Command{start, serve} {
-		c.Flags().Duration(statusIntervalFlag, daemon.DefaultStatusInterval, "deprecated: status now edits the root without periodic reposts")
+		c.Flags().Duration(statusIntervalFlag, daemon.DefaultStatusInterval, "deprecated: routine status cadence is configured per run")
 	}
 	d.AddCommand(
 		start,
@@ -176,9 +176,6 @@ func restartDaemon(out io.Writer) error {
 		_ = os.Remove(p.PIDFile())
 	}
 	if s, serviceErr := serviceFor(p); serviceErr == nil && s.Installed() {
-		if err := s.Uninstall(); err != nil {
-			return fmt.Errorf("stop the installed service: %w", err)
-		}
 		if err := s.Install(); err != nil {
 			return fmt.Errorf("start the installed service: %w", err)
 		}

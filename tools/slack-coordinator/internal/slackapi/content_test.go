@@ -16,6 +16,9 @@ func TestContentReadAndUpload(t *testing.T) {
 	var server *httptest.Server
 	var uploaded, completed bool
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" { // host port-scanner probe, not a Slack API call
+			return
+		}
 		switch r.URL.Path {
 		case "/files.list":
 			if r.FormValue("channel") != "C1" || r.FormValue("page") != "2" {

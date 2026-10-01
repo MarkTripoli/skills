@@ -16,6 +16,9 @@ import (
 func newSocketMode(t *testing.T, slackError string) *SocketMode {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" { // stray host port-scanner probe, not a client call
+			return
+		}
 		if r.URL.Path != "/apps.connections.open" {
 			t.Errorf("unexpected call %s", r.URL.Path)
 		}

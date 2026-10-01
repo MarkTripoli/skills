@@ -20,6 +20,7 @@ import (
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/coordinator"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/ipc"
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/jira"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/paths"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/slackapi"
 )
@@ -86,9 +87,9 @@ type Runtime struct {
 // Options tunes a daemon.
 type Options struct {
 	// StatusInterval is retained for older CLI invocations but does not
-	// schedule status posts. Root edits replace periodic thread replies.
+	// schedule status posts. Each run stores its status-card cadence.
 	StatusInterval time.Duration
-	// SchedulerPeriod is how often the daemon retries failed root edits.
+	// SchedulerPeriod is how often the daemon retries cards and Jira backlinks.
 	// Zero means DefaultSchedulerPeriod.
 	SchedulerPeriod time.Duration
 	// DispatcherPeriod is how often the daemon looks for queued assistant runs
@@ -165,6 +166,11 @@ func Serve(ctx context.Context, p *paths.Paths, cfg *config.Config, opts Options
 		inbound, acker = socket.Inbound(), socket
 	}
 	coord := &coordinator.Coordinator{DB: rt.DB, Slack: rt.Slack, Content: rt.Slack, Now: time.Now, OwnerUserID: cfg.Slack.OwnerUserID, Health: socketHealth}
+	if cfg.JiraEnabled() {
+		if coord.Jira, err = jira.New(*cfg.Jira); err != nil {
+			return err
+		}
+	}
 	svc := assistant.New(rt.DB, rt.Slack, coord, p, cfg.Slack.OwnerUserID, cfg.Agent, time.Now)
 	svc.Retention = cfg.Retention
 	if cfg.AgentEnabled() {

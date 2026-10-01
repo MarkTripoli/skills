@@ -295,6 +295,7 @@ func (s *Service) startDM(ctx context.Context, run db.AssistantRun) (startedRun,
 		Approval:  s.Agent.Approval,
 		ExtraDirs: s.Agent.ExtraDirs,
 		Timeout:   s.Agent.Timeout,
+		Bin:       s.Agent.Bin,
 		Model:     agent.SelectModel(s.Agent.Command, request),
 	})
 	if err != nil {
@@ -333,6 +334,7 @@ func (s *Service) startTask(ctx context.Context, run db.AssistantRun) (startedRu
 		Approval:  s.Agent.Approval,
 		ExtraDirs: s.Agent.ExtraDirs,
 		Timeout:   s.Agent.Timeout,
+		Bin:       s.Agent.Bin,
 		Model:     agent.SelectModel(s.Agent.Command, task.Instruction),
 	})
 	if err != nil {

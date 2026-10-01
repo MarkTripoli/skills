@@ -11,10 +11,10 @@ func newRunNote() *cobra.Command {
 	var e coordinator.WorkEvent
 	c := &cobra.Command{
 		Use:   "note --run-id <id> --text <s>",
-		Short: "Save one sentence for the run's root message",
-		Long: `Save one sentence as the run's latest status. The root is edited when
-the run's routine cadence is due; an identical note is ignored. A finished
-run is refused.`,
+		Short: "Save one sentence for the run's status card",
+		Long: `Save one sentence as the run's latest Update. The status card is edited
+when the run's routine cadence is due; an identical note is ignored. Older
+active runs keep root-edit behavior. A finished run is refused.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return callRunMethod(ipc.MethodRunEvent, e)

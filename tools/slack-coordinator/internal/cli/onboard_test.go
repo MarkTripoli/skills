@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -18,6 +19,7 @@ import (
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/daemon"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/manifest"
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/onboard"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/paths"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/slackapi"
 )
@@ -58,6 +60,37 @@ type onboardSlack struct {
 	posts []url.Values
 }
 
+// replyToSetupDM plays the owner: once the setup DM is posted it sends an
+// owner reply, and keeps sending fresh ones until finished closes. The daemon
+// ignores a DM that arrives before chat.postMessage has returned to it, so a
+// single reply sent the instant the fake records the post can be lost under
+// load; any reply after that point resolves the verification. Stray replies
+// left over reach the no-agent path and only post a notice. It closes
+// replied when done.
+func replyToSetupDM(t *testing.T, fake *onboardSlack, inbound chan<- socketmode.Event, finished <-chan struct{}, wantText, text string) <-chan struct{} {
+	replied := make(chan struct{})
+	go func() {
+		defer close(replied)
+		post := fake.waitPost(t, "D0CLI")
+		if post.Get("text") != wantText || post.Get("thread_ts") != "" {
+			t.Errorf("setup DM = %v; want the fixed text at the top level", post)
+		}
+		for i := 0; ; i++ {
+			select {
+			case inbound <- ownerDM("U0CLI", "D0CLI", fmt.Sprintf("1700000000.%06d", 200+i), text):
+			case <-finished:
+				return
+			}
+			select {
+			case <-time.After(100 * time.Millisecond):
+			case <-finished:
+				return
+			}
+		}
+	}()
+	return replied
+}
+
 // waitPost returns the first chat.postMessage to channel, or fails after five
 // seconds.
 func (f *onboardSlack) waitPost(t *testing.T, channel string) url.Values {
@@ -74,8 +107,8 @@ func (f *onboardSlack) waitPost(t *testing.T, channel string) url.Values {
 		f.mu.Unlock()
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("no chat.postMessage to %s", channel)
-	return nil
+	t.Errorf("no chat.postMessage to %s", channel)
+	return url.Values{}
 }
 
 func newOnboardSlack(t *testing.T) *onboardSlack {
@@ -93,6 +126,9 @@ func newOnboardSlack(t *testing.T) *onboardSlack {
 		f.manifestUpdateAppID = r.PostForm.Get("app_id")
 		f.manifestUpdateBody = r.PostForm.Get("manifest")
 		_, _ = w.Write([]byte(`{"ok":true,"app_id":"` + r.PostForm.Get("app_id") + `"}`))
+	})
+	mux.HandleFunc("/apps.manifest.export", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true,"manifest":{"settings":{"org_deploy_enabled":false}}}`))
 	})
 	mux.HandleFunc("/auth.test", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
@@ -172,23 +208,17 @@ func TestOnboardWritesTheConfigInstallsTheServiceAndVerifiesTheOwner(t *testing.
 		SocketModeHealth: func() string { return slackapi.SocketConnected },
 		Inbound:          inbound,
 	})
-	replied := make(chan struct{})
-	go func() {
-		defer close(replied)
-		post := fake.waitPost(t, "D0CLI")
-		if post.Get("text") != "Reply to this message to finish setup" || post.Get("thread_ts") != "" {
-			t.Errorf("setup DM = %v; want the fixed text at the top level", post)
-		}
-		inbound <- ownerDM("U0CLI", "D0CLI", "1700000000.000200", "here I am")
-	}()
+	finished := make(chan struct{})
+	replied := replyToSetupDM(t, fake, inbound, finished, "Reply to this message to finish setup", "here I am")
 
 	out, urls, err := runOnboard(t, "xoxe.xoxp-1-cfg\n\nxoxb-cli\nxapp-cli\nU0CLI\n\n")
+	close(finished)
 	<-replied
 	if code := exitCode(err); code != ExitOK {
 		t.Fatalf("exit %d (err %v), output %q", code, err, out)
 	}
-	if fake.manifestAuth != "Bearer xoxe.xoxp-1-cfg" || fake.manifestBody != manifest.YAML() {
-		t.Fatalf("apps.manifest.create authorized %q with manifest matching embedded=%t", fake.manifestAuth, fake.manifestBody == manifest.YAML())
+	if fake.manifestAuth != "Bearer xoxe.xoxp-1-cfg" || fake.manifestBody != manifest.JSONNamed(onboard.DefaultAppName) {
+		t.Fatalf("apps.manifest.create authorized %q with manifest matching embedded=%t", fake.manifestAuth, fake.manifestBody == manifest.JSONNamed(onboard.DefaultAppName))
 	}
 	if len(urls) != 2 || urls[0] != "https://slack.com/oauth/v2/authorize?client_id=cli" || urls[1] != "https://api.slack.com/apps/A0CLI/general" {
 		t.Fatalf("opened %v", urls)
@@ -196,8 +226,8 @@ func TestOnboardWritesTheConfigInstallsTheServiceAndVerifiesTheOwner(t *testing.
 	fake.mu.Lock()
 	infoTokens, infoUsers := strings.Join(fake.infoTokens, ","), strings.Join(fake.infoUsers, ",")
 	fake.mu.Unlock()
-	if infoTokens != "xoxb-cli,xoxb-cli" || infoUsers != "U0CLI,U0CLI" {
-		t.Fatalf("users.info tokens %q users %q; want onboard's owner lookup and the daemon's display-name lookup", infoTokens, infoUsers)
+	if infoTokens != "xoxb-cli,xoxb-cli,xoxb-cli" || infoUsers != "U0CLI,U0CLI,U0CLI" {
+		t.Fatalf("users.info tokens %q users %q; want setup, onboard's owner lookup, and the daemon's display-name lookup", infoTokens, infoUsers)
 	}
 	if got := strings.Join(fake.authTokens, ","); got != "xoxb-cli,xoxb-cli" {
 		t.Fatalf("auth.test tokens %v; want the bot token from setup and from onboard", fake.authTokens)
@@ -288,25 +318,19 @@ func TestOnboardExistingUpdatesManifestAndVerifies(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	replied := make(chan struct{})
-	go func() {
-		defer close(replied)
-		post := fake.waitPost(t, "D0CLI")
-		if post.Get("text") != "Reply to this message to finish setup" {
-			t.Errorf("setup DM = %v; want the fixed text", post)
-		}
-		inbound <- ownerDM("U0CLI", "D0CLI", "1700000000.000300", "done")
-	}()
+	finished := make(chan struct{})
+	replied := replyToSetupDM(t, fake, inbound, finished, "Reply to this message to finish setup", "done")
 
 	// stdin: config token, then Enter (keep bot token)
-	out, _, err := runOnboard(t, "xoxe.xoxp-1-cfg\n\n", "--existing", "--no-service")
+	out, _, err := runOnboard(t, "xoxe.xoxp-1-cfg\nyes\n\n", "--existing", "--no-service")
+	close(finished)
 	<-replied
 	if code := exitCode(err); code != ExitOK {
 		t.Fatalf("exit %d (err %v), output %q", code, err, out)
 	}
-	if fake.manifestUpdateAuth != "Bearer xoxe.xoxp-1-cfg" || fake.manifestUpdateAppID != "A0CLI" || fake.manifestUpdateBody != manifest.YAML() {
+	if fake.manifestUpdateAuth != "Bearer xoxe.xoxp-1-cfg" || fake.manifestUpdateAppID != "A0CLI" || fake.manifestUpdateBody != manifest.JSON() {
 		t.Fatalf("apps.manifest.update auth=%q appID=%q bodyMatch=%v",
-			fake.manifestUpdateAuth, fake.manifestUpdateAppID, fake.manifestUpdateBody == manifest.YAML())
+			fake.manifestUpdateAuth, fake.manifestUpdateAppID, fake.manifestUpdateBody == manifest.JSON())
 	}
 	if !strings.Contains(out, "Manifest updated.") || !strings.Contains(out, "Verified: ada replied.") {
 		t.Fatalf("output %q lacks manifest updated or verified line", out)

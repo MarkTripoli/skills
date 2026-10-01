@@ -1,7 +1,7 @@
 package db
 
 // schemaSQL creates every table the daemon owns. Timestamps are RFC 3339 UTC
-// text. Beyond the three coordinator tables, the assistant tables use:
+// text. Beyond the coordinator tables, the assistant tables use:
 //
 //   - tasks.schedule: JSON {"daily":"09:00","tz":"Europe/Berlin"} |
 //     {"every_hours":6} | {"at":"<RFC3339>"}.
@@ -37,6 +37,15 @@ CREATE TABLE IF NOT EXISTS owner_inputs (
   claimed_at  TEXT,
   outcome     TEXT CHECK (outcome IN ('applied','rejected','answered')),
   PRIMARY KEY (run_id, message_ts)
+);
+CREATE TABLE IF NOT EXISTS jira_backlinks (
+  run_id     TEXT PRIMARY KEY REFERENCES runs(run_id),
+  issue_key  TEXT NOT NULL,
+  thread_url TEXT NOT NULL,
+  state      TEXT NOT NULL CHECK (state IN ('pending','delivered')) DEFAULT 'pending',
+  attempts   INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  next_attempt_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS tasks (
   task_id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,7 +107,9 @@ var migrationStatements = []string{
 	`ALTER TABLE runs ADD COLUMN last_status TEXT`,  // JSON of coordinator.WorkEvent
 	`ALTER TABLE runs ADD COLUMN root_message TEXT`, // JSON of coordinator.RootMessage; NULL for pre-upgrade runs
 	`ALTER TABLE runs ADD COLUMN status_interval_seconds INTEGER NOT NULL DEFAULT 10800`,
-	`ALTER TABLE runs ADD COLUMN last_root_update TEXT`,    // UTC time of most recent root post or status edit
-	`ALTER TABLE runs ADD COLUMN last_delivery_error TEXT`, // last failed Slack post; NULL once a post succeeds
+	`ALTER TABLE runs ADD COLUMN last_root_update TEXT`,    // UTC time of most recent root post or status-card edit
+	`ALTER TABLE runs ADD COLUMN last_delivery_error TEXT`, // failed Slack delivery; uncertain uploads remain gated until explicit disable
+	`ALTER TABLE runs ADD COLUMN status_message_ts TEXT`,   // Slack timestamp of the editable thread status card
 	`ALTER TABLE owner_inputs ADD COLUMN claimed_at TEXT`,
+	`ALTER TABLE owner_inputs ADD COLUMN stale_notice_at TEXT`, // UTC time the unread-reply notice was posted
 }

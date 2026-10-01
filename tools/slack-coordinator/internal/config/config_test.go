@@ -75,6 +75,35 @@ func TestValidateRejectsMissingAppToken(t *testing.T) {
 	}
 }
 
+func TestJiraBlockRoundTripsAndIsValidated(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	want := &Config{
+		Slack: Slack{BotToken: "xoxb-1", AppToken: "xapp-1", OwnerUserID: "U123"},
+		Jira:  &Jira{BaseURL: "https://acme.atlassian.net", Email: "me@example.com", APIToken: "tok", FieldID: "customfield_10042"},
+	}
+	if !want.JiraEnabled() {
+		t.Fatal("JiraEnabled() = false with a jira block")
+	}
+	if err := Save(path, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Slack != want.Slack || got.Jira == nil || *got.Jira != *want.Jira {
+		t.Fatalf("round trip changed config: %+v jira %+v", got, got.Jira)
+	}
+
+	if (&Config{Slack: want.Slack}).JiraEnabled() {
+		t.Fatal("JiraEnabled() = true without a jira block")
+	}
+	partial := &Config{Slack: want.Slack, Jira: &Jira{BaseURL: "https://acme.atlassian.net", Email: "me@example.com", APIToken: "tok", FieldID: "summary"}}
+	if err := partial.Validate(); err == nil || !strings.Contains(err.Error(), "field_id") {
+		t.Fatalf("Validate() = %v, want field_id error", err)
+	}
+}
+
 const slackOnlyYAML = "slack:\n  bot_token: xoxb-1\n  app_token: xapp-1\n  owner_user_id: U123\n"
 
 func TestLoadFillsAgentAndRetentionDefaults(t *testing.T) {
@@ -146,6 +175,7 @@ func TestValidateRejectsAgentAndRetentionValues(t *testing.T) {
 		want   []string // every substring the error must carry: the key and the allowed values
 	}{
 		{"unknown command", func(c *Config) { c.Agent.Command = "cursor" }, []string{"agent.command", "cursor", "pi", "claude", "codex"}},
+		{"omp command", func(c *Config) { c.Agent.Command = "omp" }, []string{"agent.command", "omp", "pi", "claude", "codex"}},
 		{"empty command", func(c *Config) { c.Agent.Command = "" }, []string{"agent.command", "pi", "claude", "codex"}},
 		{"unknown approval", func(c *Config) { c.Agent.Approval = "none" }, []string{"agent.approval", "none", "edits", "full"}},
 		{"zero timeout", func(c *Config) { c.Agent.Timeout = 0 }, []string{"agent.timeout", "greater than 0"}},
@@ -153,6 +183,7 @@ func TestValidateRejectsAgentAndRetentionValues(t *testing.T) {
 		{"zero max runs", func(c *Config) { c.Agent.MaxRunsPerHour = 0 }, []string{"agent.max_runs_per_hour", "greater than 0"}},
 		{"negative max runs", func(c *Config) { c.Agent.MaxRunsPerHour = -1 }, []string{"agent.max_runs_per_hour", "greater than 0"}},
 		{"relative extra dir", func(c *Config) { c.Agent.ExtraDirs = []string{"/srv/ok", "relative/dir"} }, []string{"agent.extra_dirs[1]", "relative/dir", "absolute"}},
+		{"relative agent bin", func(c *Config) { c.Agent.Bin = "pi" }, []string{"agent.bin", "absolute"}},
 		{"zero retention days", func(c *Config) { c.Retention.Days = 0 }, []string{"retention.days", "greater than 0"}},
 		{"negative retention days", func(c *Config) { c.Retention.Days = -3 }, []string{"retention.days", "greater than 0"}},
 		{"zero consumed days", func(c *Config) { c.Retention.ConsumedDays = 0 }, []string{"retention.consumed_days", "greater than 0"}},
@@ -174,6 +205,15 @@ func TestValidateRejectsAgentAndRetentionValues(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestValidateRejectsPlaceholderOwner(t *testing.T) {
+	cfg := &Config{Slack: validSlack}
+	cfg.Slack.OwnerUserID = "U…"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "member ID") {
+		t.Fatalf("Validate() = %v, want the placeholder rejected", err)
 	}
 }
 

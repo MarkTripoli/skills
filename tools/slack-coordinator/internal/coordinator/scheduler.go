@@ -12,14 +12,14 @@ import (
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
 )
 
-// StatusScheduler applies due root edits and retries failed deliveries. It
-// never posts routine thread replies.
+// StatusScheduler applies due status-card edits (or legacy root edits), retries
+// failed deliveries and Jira backlinks, and flags unread owner replies.
 type StatusScheduler struct {
 	C *Coordinator
 }
 
-// Tick retries failed root edits. Every run is attempted; the returned error
-// joins the failures.
+// Tick retries failed status-card edits and due Jira backlinks and posts
+// unread-reply notices. Every run is attempted; errors are joined.
 func (s *StatusScheduler) Tick(ctx context.Context, now time.Time) error {
 	s.C.statusMu.Lock()
 	defer s.C.statusMu.Unlock()
@@ -35,7 +35,6 @@ func (s *StatusScheduler) Tick(ctx context.Context, now time.Time) error {
 	seen := make(map[string]bool, len(due))
 	for _, run := range due {
 		seen[run.RunID] = true
-		// An upload error is ambiguous: retrying could create a duplicate file.
 		if run.LastDeliveryError.Valid && strings.HasPrefix(run.LastDeliveryError.String, db.UploadOutcomeUncertainPrefix) {
 			continue
 		}
@@ -56,8 +55,7 @@ func (s *StatusScheduler) Tick(ctx context.Context, now time.Time) error {
 		if seen[run.RunID] || !run.LastStatus.Valid {
 			continue
 		}
-		// Root edits cannot determine whether the failed upload already landed.
-		if run.LastDeliveryError.Valid && strings.HasPrefix(run.LastDeliveryError.String, db.UploadOutcomeUncertainPrefix) {
+		if strings.HasPrefix(run.LastDeliveryError.String, db.UploadOutcomeUncertainPrefix) {
 			continue
 		}
 		// A failed blocker reply needs the originating event retried; editing
@@ -69,10 +67,43 @@ func (s *StatusScheduler) Tick(ctx context.Context, now time.Time) error {
 			errs = append(errs, fmt.Errorf("run %s: %w", run.RunID, err))
 		}
 	}
+	if err := s.C.retryBacklinks(ctx, now); err != nil {
+		errs = append(errs, err)
+	}
+	if err := s.noticeUnreadInputs(ctx, now); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
 }
 
-// retryStatus edits the root with the last saved status.
+// unreadInputAfter is how long an owner reply may sit unread before the
+// thread is told no agent has read it.
+const unreadInputAfter = 5 * time.Minute
+
+const unreadInputNotice = "No agent has read this reply yet; the agent may have stopped. `!runs` lists active runs."
+
+// noticeUnreadInputs posts one notice per owner input left unread past
+// unreadInputAfter. It bypasses c.post so a failure never becomes the run's
+// last_delivery_error; the unmarked input is retried on a later tick.
+func (s *StatusScheduler) noticeUnreadInputs(ctx context.Context, now time.Time) error {
+	stale, err := s.C.DB.StaleOwnerInputs(ctx, stamp(now.Add(-unreadInputAfter)))
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, in := range stale {
+		if _, err := s.C.Slack.PostBlocksMessage(ctx, in.ChannelID, in.ThreadTS, unreadInputNotice, nil); err != nil {
+			errs = append(errs, fmt.Errorf("run %s: unread input notice %s: %w", in.RunID, in.MessageTS, err))
+			continue
+		}
+		if err := s.C.DB.MarkStaleNotice(ctx, in.RunID, in.MessageTS, stamp(now)); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// retryStatus edits the status card with the last saved event.
 func (s *StatusScheduler) retryStatus(ctx context.Context, run db.Run) error {
 	e := WorkEvent{RunID: run.RunID}
 	if run.LastStatus.Valid {

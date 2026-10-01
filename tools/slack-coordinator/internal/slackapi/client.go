@@ -14,6 +14,7 @@ import (
 	"github.com/slack-go/slack"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/manifest"
 )
 
 // Client is one authenticated Slack Web API client.
@@ -85,7 +86,7 @@ func (c *Client) PostBlocksMessage(ctx context.Context, channelID, threadTS, fal
 	return ts, err
 }
 
-// UpdateBlocksMessage edits the root with the same accessible fallback and
+// UpdateBlocksMessage edits a message with the same accessible fallback and
 // structured blocks as a posted message. An empty block list replaces older
 // blocks as well, so oversized updates never leave stale content visible.
 func (c *Client) UpdateBlocksMessage(ctx context.Context, channelID, ts, fallback string, blocks []slack.Block) error {
@@ -110,7 +111,7 @@ func (c *Client) AddReaction(ctx context.Context, channelID, ts, name string) er
 	return c.api.AddReactionContext(ctx, name, slack.NewRefToMessage(channelID, ts))
 }
 
-// OpenConversation opens or resumes the DM with userID and returns its channel ID.
+// OpenConversation opens or resumes the DM with userID and returns its D… channel ID.
 func (c *Client) OpenConversation(ctx context.Context, userID string) (string, error) {
 	channel, _, _, err := c.api.OpenConversationContext(ctx, &slack.OpenConversationParameters{Users: []string{userID}})
 	if err != nil {
@@ -161,7 +162,7 @@ type ManifestResult struct {
 	InstallURL string
 }
 
-// ManifestCreate is apps.manifest.create with the YAML manifest, authorized
+// ManifestCreate is apps.manifest.create with the JSON manifest, authorized
 // by an app configuration token.
 func (c *Client) ManifestCreate(ctx context.Context, configToken, manifest string) (ManifestResult, error) {
 	return c.postManifest(ctx, "apps.manifest.create", configToken, url.Values{"manifest": {manifest}})
@@ -172,9 +173,67 @@ func (c *Client) ManifestUpdate(ctx context.Context, configToken, appID, manifes
 	return c.postManifest(ctx, "apps.manifest.update", configToken, url.Values{"app_id": {appID}, "manifest": {manifest}})
 }
 
+// ManifestExport is apps.manifest.export for appID. It returns the live
+// manifest's settings that an update keeps.
+func (c *Client) ManifestExport(ctx context.Context, configToken, appID string) (manifest.Live, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiURL+"apps.manifest.export", strings.NewReader(url.Values{"app_id": {appID}}.Encode()))
+	if err != nil {
+		return manifest.Live{}, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Bearer "+configToken)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return manifest.Live{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return manifest.Live{}, fmt.Errorf("apps.manifest.export: HTTP %d", resp.StatusCode)
+	}
+	var body struct {
+		OK       bool   `json:"ok"`
+		Error    string `json:"error"`
+		Manifest struct {
+			Display struct {
+				Name            string `json:"name"`
+				Description     string `json:"description"`
+				LongDescription string `json:"long_description"`
+				BackgroundColor string `json:"background_color"`
+			} `json:"display_information"`
+			Features struct {
+				BotUser struct {
+					DisplayName string `json:"display_name"`
+				} `json:"bot_user"`
+			} `json:"features"`
+			Settings struct {
+				OrgDeployEnabled bool `json:"org_deploy_enabled"`
+			} `json:"settings"`
+		} `json:"manifest"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); err != nil {
+		return manifest.Live{}, fmt.Errorf("apps.manifest.export: decode response: %w", err)
+	}
+	if !body.OK {
+		if body.Error == "" {
+			body.Error = "unknown_error"
+		}
+		return manifest.Live{}, fmt.Errorf("apps.manifest.export: %s", body.Error)
+	}
+	m := body.Manifest
+	return manifest.Live{
+		Name:             m.Display.Name,
+		Description:      m.Display.Description,
+		LongDescription:  m.Display.LongDescription,
+		BackgroundColor:  m.Display.BackgroundColor,
+		BotDisplayName:   m.Features.BotUser.DisplayName,
+		OrgDeployEnabled: m.Settings.OrgDeployEnabled,
+	}, nil
+}
+
 // postManifest form-posts to <apiURL><method> with a bearer configToken and
 // decodes the app_id and oauth_authorize_url fields. A Slack ok:false
-// response becomes an error carrying Slack's error string verbatim.
+// response becomes an error carrying Slack's error string verbatim, followed
+// by each entry of Slack's errors array as "pointer: message".
 func (c *Client) postManifest(ctx context.Context, method, configToken string, form url.Values) (ManifestResult, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiURL+method, strings.NewReader(form.Encode()))
 	if err != nil {
@@ -195,6 +254,10 @@ func (c *Client) postManifest(ctx context.Context, method, configToken string, f
 		Error      string `json:"error"`
 		AppID      string `json:"app_id"`
 		InstallURL string `json:"oauth_authorize_url"`
+		Errors     []struct {
+			Message string `json:"message"`
+			Pointer string `json:"pointer"`
+		} `json:"errors"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); err != nil {
 		return ManifestResult{}, fmt.Errorf("%s: decode response: %w", method, err)
@@ -203,6 +266,13 @@ func (c *Client) postManifest(ctx context.Context, method, configToken string, f
 		if body.Error == "" {
 			body.Error = "unknown_error"
 		}
+	}
+	details := make([]string, 0, len(body.Errors))
+	for _, e := range body.Errors {
+		details = append(details, e.Pointer+": "+e.Message)
+	}
+	if len(details) > 0 {
+		return ManifestResult{}, fmt.Errorf("%s: %s (%s)", method, body.Error, strings.Join(details, "; "))
 		return ManifestResult{}, fmt.Errorf("%s: %s", method, body.Error)
 	}
 	return ManifestResult{AppID: body.AppID, InstallURL: body.InstallURL}, nil

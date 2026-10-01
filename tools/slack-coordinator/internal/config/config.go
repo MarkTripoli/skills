@@ -3,8 +3,10 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -20,10 +22,20 @@ type Slack struct {
 	APIURL string `yaml:"api_url,omitempty"`
 }
 
+// Jira holds the Jira Cloud site and the custom field a run's thread
+// permalink is written to. Absent when Jira backlinks are not configured.
+type Jira struct {
+	BaseURL  string `yaml:"base_url"`
+	Email    string `yaml:"email"`
+	APIToken string `yaml:"api_token"`
+	FieldID  string `yaml:"field_id"`
+}
+
 // Agent selects the coding agent the daemon runs for a thread and bounds how
 // it runs. Absent when the daemon only coordinates and never spawns an agent.
 type Agent struct {
 	Command        string        `yaml:"command"`           // pi | claude | codex
+	Bin            string        `yaml:"bin,omitempty"`     // absolute executable; overrides PATH lookup
 	Approval       string        `yaml:"approval"`          // edits | full; default edits
 	Timeout        time.Duration `yaml:"timeout"`           // default 10m
 	MaxRunsPerHour int           `yaml:"max_runs_per_hour"` // default 30
@@ -48,6 +60,7 @@ const (
 // Config is the whole of config.yaml.
 type Config struct {
 	Slack     Slack     `yaml:"slack"`
+	Jira      *Jira     `yaml:"jira,omitempty"`
 	Agent     *Agent    `yaml:"agent,omitempty"`
 	Retention Retention `yaml:"retention"`
 }
@@ -125,8 +138,12 @@ func (c *Config) ApplyDefaults() {
 	}
 }
 
-// Validate checks the token shapes Slack issues, the owner user ID prefix,
-// the retention bounds, and the agent block when present.
+// ownerIDPattern is a Slack member ID: U or W, then letters and digits.
+// It rejects the help-text placeholder U…, which used to pass a prefix check.
+var ownerIDPattern = regexp.MustCompile(`^[UW][A-Z0-9]+$`)
+
+// Validate checks the token shapes Slack issues, the owner user ID shape,
+// the retention bounds, and the Jira and agent blocks when present.
 func (c *Config) Validate() error {
 	s := c.Slack
 	switch {
@@ -134,8 +151,13 @@ func (c *Config) Validate() error {
 		return errors.New("slack.bot_token must start with xoxb-")
 	case !strings.HasPrefix(s.AppToken, "xapp-"):
 		return errors.New("slack.app_token must start with xapp-")
-	case !strings.HasPrefix(s.OwnerUserID, "U") && !strings.HasPrefix(s.OwnerUserID, "W"):
-		return errors.New("slack.owner_user_id must start with U or W")
+	case !ownerIDPattern.MatchString(s.OwnerUserID):
+		return fmt.Errorf("slack.owner_user_id %q must be your Slack member ID (U or W followed by letters and digits). Copy it from your profile menu; the help-text example is not an ID", s.OwnerUserID)
+	}
+	if c.Jira != nil {
+		if err := c.Jira.Validate(); err != nil {
+			return err
+		}
 	}
 	if c.Agent != nil {
 		if err := c.Agent.Validate(); err != nil {
@@ -155,6 +177,9 @@ func (a *Agent) Validate() error {
 	case "pi", "claude", "codex":
 	default:
 		return fmt.Errorf("agent.command %q must be one of pi, claude, codex", a.Command)
+	}
+	if a.Bin != "" && !filepath.IsAbs(a.Bin) {
+		return fmt.Errorf("agent.bin %q must be an absolute path", a.Bin)
 	}
 	switch a.Approval {
 	case "edits", "full":
@@ -182,6 +207,30 @@ func (r Retention) Validate() error {
 	}
 	if r.ConsumedDays <= 0 {
 		return fmt.Errorf("retention.consumed_days %d must be greater than 0", r.ConsumedDays)
+	}
+	return nil
+}
+
+// JiraEnabled reports whether runs may carry a --jira-issue backlink.
+func (c *Config) JiraEnabled() bool { return c.Jira != nil }
+
+var fieldIDPattern = regexp.MustCompile(`^customfield_\d+$`)
+
+// Validate requires every Jira key: an absolute http(s) base_url, email,
+// api_token, and a field_id of the form customfield_<digits>.
+func (j *Jira) Validate() error {
+	u, err := url.Parse(j.BaseURL)
+	switch {
+	case j.BaseURL == "":
+		return errors.New("jira.base_url is required")
+	case err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "":
+		return fmt.Errorf("jira.base_url %q must be an absolute http(s) URL", j.BaseURL)
+	case j.Email == "":
+		return errors.New("jira.email is required")
+	case j.APIToken == "":
+		return errors.New("jira.api_token is required")
+	case !fieldIDPattern.MatchString(j.FieldID):
+		return fmt.Errorf("jira.field_id %q must match customfield_<digits>", j.FieldID)
 	}
 	return nil
 }

@@ -12,14 +12,19 @@ import (
 )
 
 type recordingExecutor struct {
-	names []string
-	args  [][]string
-	err   error
+	names  []string
+	args   [][]string
+	err    error
+	failOn string
 }
 
 func (e *recordingExecutor) Run(name string, args ...string) error {
 	e.names = append(e.names, name)
 	e.args = append(e.args, append([]string(nil), args...))
+	if e.failOn != "" && strings.Contains(name+" "+strings.Join(args, " "), e.failOn) {
+		e.failOn = ""
+		return errors.New("injected activation failure")
+	}
 	return e.err
 }
 
@@ -50,6 +55,32 @@ func TestServiceDefinitionBindsHomeBinaryAndServeVerb(t *testing.T) {
 				t.Errorf("%s definition lacks %q:\n%s", goos, fragment, definition)
 			}
 		}
+	}
+}
+
+func TestServiceDefinitionRecordsPath(t *testing.T) {
+	home := paths.WithRoot(t.TempDir())
+	const path = "/opt/homebrew/bin:/usr/bin"
+	for goos, fragment := range map[string]string{
+		"darwin": "<key>PATH</key>\n\t\t<string>" + path + "</string>",
+		"linux":  `Environment="PATH=` + path + `"`,
+	} {
+		definition, err := (Service{Home: home, Binary: "/opt/slack-coordinator", Path: path, GOOS: goos}).Definition()
+		if err != nil {
+			t.Fatalf("%s: %v", goos, err)
+		}
+		if !strings.Contains(definition, fragment) {
+			t.Errorf("%s definition lacks %q:\n%s", goos, fragment, definition)
+		}
+	}
+}
+
+func TestAgentPathKeepsTheShellPathAndAddsUserBins(t *testing.T) {
+	t.Setenv("HOME", "/Users/ada")
+	got := strings.Split(AgentPath("/usr/bin:/opt/homebrew/bin"), string(os.PathListSeparator))
+	want := []string{"/usr/bin", "/opt/homebrew/bin", "/usr/local/bin", "/Users/ada/.local/bin"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("AgentPath = %q, want %q", got, want)
 	}
 }
 
@@ -189,5 +220,55 @@ func TestServiceInstallRemovesItsFileWhenActivationFails(t *testing.T) {
 	}
 	if service.Installed() {
 		t.Fatal("definition left behind after failed activation")
+	}
+}
+
+func TestServiceUpdateActivationFailureRestoresOwnedDefinition(t *testing.T) {
+	for _, goos := range []string{"darwin", "linux"} {
+		t.Run(goos, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			home := paths.WithRoot(t.TempDir())
+			executor := &recordingExecutor{}
+			service := Service{Home: home, Binary: "/opt/old-coordinator", Executor: executor, GOOS: goos}
+			if err := service.Install(); err != nil {
+				t.Fatal(err)
+			}
+			path, _ := service.DefinitionPath()
+			previous, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data := filepath.Join(home.Root(), "state.sqlite")
+			if err := os.MkdirAll(home.Root(), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(data, []byte("keep runtime state"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			service.Binary = "/opt/new-coordinator"
+			if goos == "darwin" {
+				executor.failOn = "launchctl load -w"
+			} else {
+				executor.failOn = "enable --now " + serviceLabel + ".service"
+			}
+			if err := service.Install(); err == nil || !strings.Contains(err.Error(), "injected activation failure") {
+				t.Fatalf("update failure = %v", err)
+			}
+			if raw, err := os.ReadFile(path); err != nil || string(raw) != string(previous) {
+				t.Fatalf("owned service not restored: %s, %v", raw, err)
+			}
+			if raw, err := os.ReadFile(data); err != nil || string(raw) != "keep runtime state" {
+				t.Fatalf("runtime state changed: %s, %v", raw, err)
+			}
+			if !service.Installed() {
+				t.Fatal("rollback left service uninstalled")
+			}
+			if err := service.Install(); err != nil {
+				t.Fatalf("retry after rollback: %v", err)
+			}
+			if raw, err := os.ReadFile(path); err != nil || !strings.Contains(string(raw), service.Binary) {
+				t.Fatalf("retry did not apply new binary: %s, %v", raw, err)
+			}
+		})
 	}
 }
