@@ -1,4 +1,4 @@
-Artifact saved: {artifact_link}
+Artifact saved locally: {artifact_link}
 
 Summary:
 {summary}

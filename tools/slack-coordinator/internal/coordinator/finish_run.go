@@ -8,8 +8,8 @@ import (
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/db"
 )
 
-// FinishRun updates the root with the completion details and closes the run.
-// A failed edit leaves the run active for a retry; disabled runs close locally.
+// FinishRun replaces the status card with a concise completion card and closes
+// the run. Legacy runs keep their root-edit behavior.
 func (c *Coordinator) FinishRun(ctx context.Context, in FinishRunInput) error {
 	c.statusMu.Lock()
 	defer c.statusMu.Unlock()
@@ -39,7 +39,7 @@ func (c *Coordinator) FinishRun(ctx context.Context, in FinishRunInput) error {
 	}
 	finishedAt := stamp(c.Now())
 	if run.SlackMode != db.SlackDisabled {
-		if err := c.updateRoot(ctx, run, nil, &in, finishedAt); err != nil {
+		if err := c.updateCompletionCard(ctx, run, in, finishedAt); err != nil {
 			return fmt.Errorf("update completion message: %w", err)
 		}
 		if name != "none" {

@@ -24,6 +24,7 @@ Revise an existing implementation plan. Check feedback before applying it, prese
 4. **Process feedback**:
    - If a ticket or feedback file is provided, treat it as instruction to evaluate, not as automatically correct.
    - Map each item to the affected plan phase or success criterion.
+   - Do not convert a proposed Jira addition into a required implementation criterion. Record it as an open question or explicit assumption until confirmed; update QA checks only for source-backed expected behavior.
    - Do not accept corrections blindly. Read mentioned files or directories.
    - Verify code examples, file paths, and command names.
    - If the plan depends on uncertain behavior, inspect the source directly or start a child worker for role `agent-codebase-analyzer` (see the conventions' Child workers section) to verify the narrow fact; wait for it and read its final message.
@@ -38,8 +39,9 @@ Revise an existing implementation plan. Check feedback before applying it, prese
    - Ensure automated checks are commands the implementer can run.
     - Keep deferred human evidence as plain bullets with pointers, never checkboxes; remove filler.
    - Maintain phase sections with success criteria.
+   - After applying the confirmed Jira refinement deltas, update that artifact's `Plan reconciliation` line to `applied in <plan path>` and save the revised refinement alongside the plan artifact as local task state. When a confirmed required change stays unresolved, write `Plan reconciliation: needs-human: <question>` and ask the owner; do not begin implementation in that state.
 
-6. Record the next iteration through the conventions' Recording an artifact flow and respond following `references/plan_final_answer.md` exactly; fill `{artifact_link}` and `{artifact_file}` with the saved canonical task-root-relative path (the template carries the `@`), and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. Add no prose before or after the template. Commit the canonical path and `index.json` explicitly as `docs(task): plan artifact`.
+6. Record the next iteration through the conventions' Recording an artifact flow and respond following `references/plan_final_answer.md` exactly; fill `{artifact_link}` and `{artifact_file}` with the saved canonical task-root-relative path (the template carries the `@`), and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. Add no prose before or after the template.
 
 ## Plan Guidelines
 

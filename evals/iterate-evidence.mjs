@@ -7,8 +7,9 @@ import { createHash } from "node:crypto";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { finished } from "node:stream/promises";
 import { pathToFileURL } from "node:url";
-import { artifacts, newest, placeholders, frontmatter, section } from "./lib.mjs";
+import { artifacts, disposeIsolatedEnv, isolatedEnv, newest, placeholders, frontmatter, section, spawnIsolated } from "./lib.mjs";
 import { normalize } from "./evidence-flows.mjs";
+import { tableRows } from "../skills/delivery/deliver/contract.mjs";
 import { boundedWorkerLauncher, reservationCheckpoint } from "./worker-gate.mjs";
 
 const repairable = new Set(["app.js", "check.mjs"]);
@@ -185,13 +186,34 @@ export async function inspectEvidenceTrace(file, imageDir = null) {
 // Providers whose OAuth token OMP accepts from the environment; the isolated viewer case exports exactly one.
 const isolatedCredentialEnv = { "openai-codex": "OPENAI_CODEX_OAUTH_TOKEN", anthropic: "ANTHROPIC_OAUTH_TOKEN" };
 
+// The environment of the live subject. Slack stays out of reach in both shapes: no SLACK_* variables, a failing slack-coordinator
+// stub first on PATH. The isolated viewer case keeps nothing else of the operator's, only its one provider credential.
+export function subjectEnvironment({ isolated, observer, pauseFile = null, blocked = false, home = null, credential = null, playwright = null }) {
+  if (!blocked) return { ...isolated, ITERATE_EVIDENCE_OBSERVER: observer, ...(pauseFile ? { ITERATE_EVIDENCE_CAPTURE_PAUSE: pauseFile } : {}) };
+  return {
+    PATH: isolated.PATH, SLACK_AGENT_ENV_FILE: isolated.SLACK_AGENT_ENV_FILE, TMPDIR: process.env.TMPDIR, HOME: home,
+    PI_CONFIG_DIR: path.join(home, ".omp"), PI_CODING_AGENT_DIR: path.join(home, ".omp", "agent"),
+    [credential.name]: credential.token,
+    PLAYWRIGHT_BROWSERS_PATH: playwright,
+    ITERATE_EVIDENCE_OBSERVER: observer,
+  };
+}
+
 async function runSubject(prompt, config, pinned, options) {
+  const isolated = isolatedEnv(process.env);
+  try {
+    await runSubjectIn(prompt, config, pinned, options, isolated);
+  } finally {
+    disposeIsolatedEnv(isolated);
+  }
+}
+
+async function runSubjectIn(prompt, config, pinned, options, isolated) {
   const { out, repo } = config;
   const args = ["-p", "--auto-approve", "--mode", "json", "--session-dir", path.join(out, "sessions"), "--no-extensions", "--no-skills", "--no-rules", "--no-lsp", "--no-title", "--extension", path.join(pinned, "evals", "iterate-evidence-hooks.mjs"), `--max-time=${options.maxMinutes}m`];
   const model = options.model || null;
   if (model) args.push("--model", model);
-  let subjectEnv = { ...process.env, ITERATE_EVIDENCE_OBSERVER: path.join(out, "observer-config.json") };
-  if (config.pauseFile) subjectEnv.ITERATE_EVIDENCE_CAPTURE_PAUSE = config.pauseFile;
+  let subjectEnv = subjectEnvironment({ isolated, observer: path.join(out, "observer-config.json"), pauseFile: config.pauseFile });
   if (config.blocked) {
     const overlay = path.join(out, "viewer-blocked.yml");
     fs.writeFileSync(overlay, blockedOverlay);
@@ -203,13 +225,11 @@ async function runSubject(prompt, config, pinned, options) {
     if (!envName) throw new Error(`Isolated viewer case has no environment credential arrangement for provider ${provider}; supported: ${Object.keys(isolatedCredentialEnv).join(", ")}`);
     const token = command("omp", ["token", provider], repo);
     if (token.code !== 0 || !token.stdout.trim()) throw new Error("Isolated provider authentication unavailable");
-    subjectEnv = {
-      PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, HOME: config.home,
-      PI_CONFIG_DIR: path.join(config.home, ".omp"), PI_CODING_AGENT_DIR: path.join(config.home, ".omp", "agent"),
-      [envName]: token.stdout.trim(),
-      PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || path.join(os.homedir(), "Library", "Caches", "ms-playwright"),
-      ITERATE_EVIDENCE_OBSERVER: path.join(out, "observer-config.json"),
-    };
+    subjectEnv = subjectEnvironment({
+      isolated, observer: path.join(out, "observer-config.json"), blocked: true, home: config.home,
+      credential: { name: envName, token: token.stdout.trim() },
+      playwright: process.env.PLAYWRIGHT_BROWSERS_PATH || path.join(os.homedir(), "Library", "Caches", "ms-playwright"),
+    });
   }
   args.push(prompt);
   const configPath = path.join(out, "observer-config.json");
@@ -217,7 +237,7 @@ async function runSubject(prompt, config, pinned, options) {
   save(path.join(out, "runtime.json"), { node: process.version, platform: process.platform, arch: process.arch, omp: command("omp", ["--version"], repo), model, args, authentication: config.blocked ? `Fresh isolated HOME/config; omp token ${model.split("/")[0]} supplied only as ${isolatedCredentialEnv[model.split("/")[0]]}; no credentials retained` : "Caller environment/profile; no credentials copied into evidence" });
   const stdout = fs.createWriteStream(path.join(out, "trace.jsonl"));
   const stderr = fs.createWriteStream(path.join(out, "stderr.log"));
-  const child = spawn("omp", args, { cwd: repo, env: subjectEnv, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawnIsolated("omp", args, { cwd: repo, env: subjectEnv, detached: true, stdio: ["ignore", "pipe", "pipe"], isolated });
   child.stdout.pipe(stdout);
   child.stderr.pipe(stderr);
   let spawnError = null;
@@ -282,10 +302,10 @@ export function evidencePathProblems(base, snapshots, commits, taskRel, viewerFi
     }
   }
   for (const commit of commits) {
-    for (const name of commit.paths) if (!allowedPath(name, taskRel)) problems.add(`authorization: forbidden committed change ${name} in ${commit.sha}`);
-    const receipts = commit.paths.filter((name) => name.startsWith(`${taskRel}/`));
-    if (receipts.length && (commit.paths.length !== 1 || !commit.subject.startsWith("docs(task): "))) problems.add(`authorization: receipt commit ${commit.sha} is not a focused docs(task) commit`);
-    if (receipts.length && commit.paths.some((name) => repairable.has(name))) problems.add(`authorization: mixed source/receipt commit ${commit.sha}`);
+    for (const name of commit.paths) {
+      if (name.startsWith(`${taskRel}/`)) problems.add(`authorization: task artifact must not be committed: ${name} in ${commit.sha}`);
+      else if (!allowedPath(name, taskRel)) problems.add(`authorization: forbidden committed change ${name} in ${commit.sha}`);
+    }
   }
   return [...problems];
 }
@@ -451,7 +471,7 @@ function retainedFile(out, relative) {
 // Receipt frontmatter owns the current allowance/status; a numbered round owns
 // its step state. Identify the active round by its heading number, not global position;
 // historical completed-round headings in other sections must not shadow it.
-function activeReservation(text, round, limit, findingId, pendingRepair = false) {
+export function activeReservation(text, round, limit, findingId, pendingRepair = false) {
   // The saved checkpoint is the same structure the delegated-worker gate admits: active frontmatter,
   // an unencumbered round record, and no terminal-marker heading for that round.
   if (reservationCheckpoint(text, round, limit, findingId).length) return false;
@@ -521,8 +541,8 @@ function activeReservation(text, round, limit, findingId, pendingRepair = false)
         declarations.push((value.match(/\bIE-\d+\b/g) ?? []).includes(findingId));
       }
     }
-    for (const line of content.split("\n").filter((line) => line.trim().startsWith("|"))) {
-      const cells = line.trim().split("|").slice(1, -1).map(clean);
+    for (const row of tableRows(content)) {
+      const cells = row.map(clean);
       if (/\brepair\b/.test(strip(cells[0] ?? ""))) {
         stepDeclared = true;
         declarations.push(!terminalRepair(`repair ${cells[1] ?? ""}`));
@@ -953,6 +973,11 @@ export async function gradeEvidenceScenario(scenario, runDir) {
   const resultDir = path.join(runDir, scenario.name);
   const out = path.join(resultDir, "1-iterate-evidence");
   const result = { name: scenario.name, repo: null, phases: [], ok: false, graded: true };
+  // A scenario the run never recorded is skipped, as `gradeScenario` does, so a regrade of a whole run does not fail on the others.
+  if (!fs.existsSync(resultDir)) {
+    console.log(`[${scenario.name}] no recording under ${path.basename(runDir)}; skipped`);
+    return { ...result, ok: true, skipped: true };
+  }
   const problems = [];
   try {
     if (fs.existsSync(path.join(out, "setup-error.json"))) problems.push(`execution/setup: ${json(path.join(out, "setup-error.json")).error}`);
@@ -999,12 +1024,11 @@ export async function gradeEvidenceScenario(scenario, runDir) {
       if (placeholders(receipt.text, template).length) problems.push("receipt: unfilled template placeholders");
       if (!new RegExp(`\\[[^\\]]+\\]\\([^\\n)]*${receipt.file.replace(/\./g, "\\.")}\\)`).test(trace.answer) || /```|~~~/.test(trace.answer)) problems.push("reply: must link the receipt without a handoff fence");
       const receiptRel = `${setup.taskRel}/${receipt.file}`;
-      if (!commits.some((commit) => commit.paths.length === 1 && commit.paths[0] === receiptRel && commit.subject.startsWith("docs(task): "))) problems.push("receipt: missing focused artifact commit");
       if (finalState.files[receiptRel]?.sha256 !== sha256(Buffer.from(receipt.text))) problems.push("receipt: final snapshot does not match retained receipt");
     }
     if (json(retainedFile(out, "git-final.json")).dirty) problems.push("git: repository left dirty outside ignored evidence");
     const install = json(retainedFile(out, "installation.json"));
-    if (install.names.join(",") !== "iterate-evidence,record-evidence" || !install.sentinelPreserved || !install.noAtomic || install.command.code !== 0) problems.push("installation: selected resources, sentinel, or no-Atomic contract failed");
+    if (install.names.join(",") !== "iterate-evidence,record-evidence" || !install.sentinelPreserved || !install.noAtomic || install.command.code !== 0) problems.push("installation: selected resources, or sentinel contract failed");
     if (boundedScenario(scenario.name)) {
       problems.push(...await boundedEvidenceProblems(out, setup, trace, snapshots, base, finalState, commits, receipt));
     } else if (inspectionOnly(scenario.name)) {
@@ -1076,7 +1100,7 @@ async function externalBaseline({ repo, out, taskDir, browserDir, evidence, url,
   });
   const receipt = path.join(taskDir, "00-evidence-external-counter.md");
   const manifest = json(path.join(session, "manifest.json"));
-  fs.writeFileSync(receipt, `---\ntype: evidence\nstatus: untested\nsummary: "External Chromium recording covers Add one from zero and Reset from nonzero. Recorder labels and finalization are retained; application acceptance requires independent pixel inspection."\n---\n\n# Evidence Receipt\n\n## Revision\n\n- commit: ${baseSha}\n- branch: main\n- environment: Chromium ${captured.browserVersion}, 1280x720, ${url}\n- app.js SHA-256: ${captured.servedSha256}; served bytes: evidence/external-baseline/served-app.js\n- specification SHA-256: ${sha256(fs.readFileSync(path.join(repo, "spec.md")))}\n\n## Sessions\n\n- Chromium: evidence/external-baseline/report.md, evidence/external-baseline/evidence.mp4\n- Raw video: evidence/external-baseline/${captured.video}; SHA-256 ${captured.videoSha256}\n- Capture identity, actions and timing: evidence/external-baseline/capture.json\n- Standalone recorder schema/output: evidence/external-baseline/manifest.json\n\n## Results\n\n| Test | Result | Video time |\n|---|---|---|\n${manifest.tests.map((item) => `| ${item.name} | ${item.result} | ${item.video_t.toFixed(3)} s |`).join("\n")}\n\n## Caveats\n\n- Recorded labels are observations, not pixel inspection. Raw and rendered video remain available. Timing uses ${manifest.timing.card_seconds} s title cards and ${manifest.timing.offset_applied} s alignment offset. Static state coverage only.\n- This receipt-only commit does not alter application or served-source identity.\n\n## Posted to\n\n- requester only\n`);
+  fs.writeFileSync(receipt, `---\ntype: evidence\nstatus: untested\nsummary: "External Chromium recording covers Add one from zero and Reset from nonzero. Recorder labels and finalization are retained; application acceptance requires independent pixel inspection."\n---\n\n# Evidence Receipt\n\n## Revision\n\n- commit: ${baseSha}\n- branch: main\n- environment: Chromium ${captured.browserVersion}, 1280x720, ${url}\n- app.js SHA-256: ${captured.servedSha256}; served bytes: evidence/external-baseline/served-app.js\n- specification SHA-256: ${sha256(fs.readFileSync(path.join(repo, "spec.md")))}\n\n## Sessions\n\n- Chromium: evidence/external-baseline/report.md, evidence/external-baseline/evidence.mp4\n- Raw video: evidence/external-baseline/${captured.video}; SHA-256 ${captured.videoSha256}\n- Capture identity, actions and timing: evidence/external-baseline/capture.json\n- Standalone recorder schema/output: evidence/external-baseline/manifest.json\n\n## Results\n\n| Test | Result | Video time |\n|---|---|---|\n${manifest.tests.map((item) => `| ${item.name} | ${item.result} | ${item.video_t.toFixed(3)} s |`).join("\n")}\n\n## Caveats\n\n- Recorded labels are observations, not pixel inspection. Raw and rendered video remain available. Timing uses ${manifest.timing.card_seconds} s title cards and ${manifest.timing.offset_applied} s alignment offset. Static state coverage only.\n- This local receipt does not alter application or served-source identity.\n\n## Posted to\n\n- requester only\n`);
   return receipt;
 }
 
@@ -1128,6 +1152,7 @@ export async function runEvidenceScenario(scenario, runDir, pinned, options) {
     git(repo, "init", "-q", "-b", "main");
     git(repo, "config", "user.email", "evals@example.com");
     git(repo, "config", "user.name", "Skills Evals");
+    fs.appendFileSync(path.join(repo, ".git", "info", "exclude"), "\n/.agents/tasks/\n");
     git(repo, "add", ".");
     git(repo, "commit", "-q", "-m", "chore: pin counter fixture and selected skills");
     let baseSha = git(repo, "rev-parse", "HEAD");
@@ -1141,20 +1166,17 @@ export async function runEvidenceScenario(scenario, runDir, pinned, options) {
     let baselineInput = "";
     if (labelDisagreement(scenario.name)) {
       baselineInput = await externalBaseline({ repo, out, taskDir, browserDir, evidence, url: server.url, baseSha });
-      git(repo, "add", path.relative(repo, baselineInput));
-      git(repo, "commit", "-q", "-m", "docs(task): record external evidence baseline");
-      baseSha = git(repo, "rev-parse", "HEAD");
-      config.baseSha = baseSha;
+      // External baselines are local task state; they are never staged or committed.
       config.protectedEvidence = files(path.join(taskDir, "evidence", "external-baseline")).map((name) => `${taskRel}/evidence/external-baseline/${name}`);
     }
     save(path.join(out, "setup.json"), { ...config, pinned, scenario: scenario.name, sourceAllowlist: inspectionOnly(scenario.name) ? [] : [...repairable], specificationSha256: sha256(fs.readFileSync(path.join(repo, "spec.md"))) });
     const baseRecord = evidenceSnapshot(config, { sequence: 0, boundary: "base" });
     fs.copyFileSync(path.join(out, baseRecord.path), path.join(out, "base-state.json"));
     let prompt = [
-      `Read and follow .omp/skills/iterate-evidence/SKILL.md for ${taskRel}. Read the pinned shared/WRITING.md and shared/CONVENTIONS.md instead of fetching remote guides.`,
+      `Read and follow .omp/skills/iterate-evidence/SKILL.md for ${taskRel}. Read the pinned shared/WRITING.md, shared/CONVENTIONS.md and shared/placeholders.md instead of fetching remote guides.`,
       "This task repository is already open on its task branch. Do not open another worktree or consult the evaluator's checkout. The selected recorder is .omp/skills/record-evidence/scripts/evidence.py. Use its media operations, not its terminal handoff.",
       scenario.request,
-      `Specification: spec.md. The owned fixture server is already running at ${server.url}; node server.mjs independently allocates a loopback port if needed. Check command: node check.mjs ${server.url}. Only app.js and check.mjs are repairable. Preserve task.md, spec.md, server.mjs, index.html, capture.mjs, shared guides, installed resources, configuration, and the sentinel. Receipt files belong in ${taskRel}; media and temporary scripts only in its ignored evidence/ directory. Commit source and receipts separately.`,
+      `Specification: spec.md. The owned fixture server is already running at ${server.url}; node server.mjs independently allocates a loopback port if needed. Check command: node check.mjs ${server.url}. Only app.js and check.mjs are repairable. Preserve task.md, spec.md, server.mjs, index.html, capture.mjs, shared guides, installed resources, configuration, and the sentinel. Save receipt files in ${taskRel}; media and temporary scripts only in its ignored evidence/ directory. Never stage or commit task files.`,
       `Browser setup is ready in ${path.relative(repo, browserDir)}. To record, start a fresh external session with python3 ${evidence} start --source external --output SESSION --title 'Counter flows' --label Chromium. Then execute EVIDENCE=${evidence} node ${path.join(browserDir, "capture.mjs")} ${server.url} SESSION. This fixed entry performs the specified real clicks, records raw video, and writes SESSION/capture.json with paths and timing, without judging results. Do not change this entry.`,
       `Finalize with python3 ${evidence} stop SESSION --video RAW_VIDEO_PATH --caveats 'Your observed timing and coverage limits'. Extract with python3 ${evidence} frames SESSION. Recorder annotate SESSION --type assertion --result passed|failed|untested --message TEXT is available; labels do not inspect pixels. Open the recorded frames yourself. The capture entry writes video-started-at for alignment and closes its recording context. Use distinct baseline and post-repair session paths.`,
       `Playwright is installed beside capture.mjs, not in application dependencies. To execute your check beside that dependency, copy check.mjs byte-for-byte to ${path.join(browserDir, "check.mjs")} and run node ${path.join(browserDir, "check.mjs")} URL. The evaluator retains and executes your identical strengthened check against preserved and final sources after you finish; you still own your checks and conclusions.`,
@@ -1193,7 +1215,7 @@ export async function runEvidenceScenario(scenario, runDir, pinned, options) {
       config.receipt = `${taskRel}/01-evidence-iteration-${scenario.slug}.md`;
       const session = `${taskRel}/evidence/baseline`;
       const recorder = `python3 ${quote(evidence)}`;
-      const textPaths = [...files(installed).filter((name) => name.endsWith(".md")).map((name) => `.omp/skills/${name}`), "shared/WRITING.md", "shared/CONVENTIONS.md", "spec.md", "app.js", "check.mjs", `${taskRel}/task.md`, config.receipt,
+      const textPaths = [...files(installed).filter((name) => name.endsWith(".md")).map((name) => `.omp/skills/${name}`), "shared/WRITING.md", "shared/CONVENTIONS.md", "shared/placeholders.md", "spec.md", "app.js", "check.mjs", `${taskRel}/task.md`, config.receipt,
         `${session}/capture.json`, `${session}/manifest.json`, `${session}/report.md`, `${session}/events.jsonl`];
       config.shellCommands = [
         ...textPaths.map((name) => `cat ${quote(name)}`),
@@ -1203,8 +1225,7 @@ export async function runEvidenceScenario(scenario, runDir, pinned, options) {
         `EVIDENCE=${quote(evidence)} node ${quote(path.join(browserDir, "capture.mjs"))} ${server.url} ${quote(session)}`,
         `${recorder} stop ${quote(session)} --video ${quote(session)}/video/*.webm --caveats 'Pixel inspection unavailable in this session; static flow capture only'`,
         `${recorder} frames ${quote(session)}`,
-        `git add ${quote(config.receipt)}`,
-        "git commit -m 'docs(task): evidence-iteration artifact'",
+        "git status --short",
       ];
       prompt = [
         `Follow .omp/skills/iterate-evidence/SKILL.md for ${taskRel}, the pinned shared guides and installed recorder media instructions. This repository is already open; do not create a worktree.`,
@@ -1213,7 +1234,7 @@ export async function runEvidenceScenario(scenario, runDir, pinned, options) {
         "This isolated session permits text reads via the exact cat commands below. Read tool approval is denied; all alternate viewers/execution routes are unavailable. Capture is still usable. Execute the fixed start, capture, stop, frames commands in order, then attempt read on a recorded frame/video. Do not substitute text, labels, source inspection or capture success for viewed pixels. Record tool denial as a viewing gap without inferring defects.",
         "The following finite shell commands are allowed exactly as written, one per bash call, no env/cwd override, composition, scripts, or substitutions. Use write for the named receipt and todo if useful. No other shell/tool routes are available:",
         ...config.shellCommands,
-        "Capture JSON, manifest, report and events provide source hashes, timing and frame context as text; read must be attempted on the recorded media itself. Persist the companion receipt and terminal decision, then use the exact receipt-only Git commands.",
+        "Capture JSON, manifest, report and events provide source hashes, timing and frame context as text; read must be attempted on the recorded media itself. Save the companion receipt locally and report the terminal decision; never stage or commit task files.",
       ].join("\n\n");
     }
     fs.writeFileSync(path.join(out, "prompt.md"), prompt);

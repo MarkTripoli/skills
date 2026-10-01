@@ -42,6 +42,8 @@ type script struct {
 	createTokens []string
 	createBodies []string
 
+	live manifest.Live
+
 	updateErr    error
 	updateCalls  int
 	updateTokens []string
@@ -103,6 +105,10 @@ func (s *script) ManifestUpdate(_ context.Context, token, appID, body string) (s
 		return slackapi.ManifestResult{}, s.updateErr
 	}
 	return slackapi.ManifestResult{AppID: appID}, nil
+}
+
+func (s *script) ManifestExport(_ context.Context, _, _ string) (manifest.Live, error) {
+	return s.live, nil
 }
 
 func (s *script) deps() Deps {
@@ -284,7 +290,7 @@ func TestFreshRunCompletesSevenStepsAndInstallsTheService(t *testing.T) {
 			t.Errorf("%s = %v, want %v", k, got[k], v)
 		}
 	}
-	if s.createCalls != 1 || s.createTokens[0] != configToken || s.createBodies[0] != manifest.YAML() {
+	if s.createCalls != 1 || s.createTokens[0] != configToken {
 		t.Fatalf("ManifestCreate calls %d tokens %v; want one call with the configuration token and the embedded manifest", s.createCalls, s.createTokens)
 	}
 	if len(s.urls) != 2 || s.urls[0] != "https://slack.com/oauth/v2/authorize?client_id=1" || s.urls[1] != "https://api.slack.com/apps/A0EXAMPLE/general" {
@@ -436,7 +442,7 @@ func TestNoServiceStartsTheDaemonInstead(t *testing.T) {
 	}
 }
 
-func TestVerifyTimeoutPrintsHintsInOrderAndKeepsEverything(t *testing.T) {
+func TestVerifyTimeoutKeepsCheckpointConfigAndService(t *testing.T) {
 	s := newScript(t, ada.ID, "")
 	s.verifyResult = ipc.VerifyOwnerResult{Timeout: true}
 	_, raw, err := run(t, s, tokensStep4())
@@ -444,19 +450,6 @@ func TestVerifyTimeoutPrintsHintsInOrderAndKeepsEverything(t *testing.T) {
 		t.Fatalf("error %v, want ErrVerifyTimeout", err)
 	}
 	out := s.out.String()
-	hints := []string{
-		"1. The app was not reinstalled after the scope change; reinstall it at https://api.slack.com/apps/A0STORED/install-on-team.",
-		"2. The message.im event subscription is missing",
-		"3. The owner id is wrong; config.yaml names " + ada.ID + ".",
-	}
-	last := -1
-	for _, h := range hints {
-		i := strings.Index(out, h)
-		if i < 0 || i < last {
-			t.Fatalf("output %q lacks %q in order", out, h)
-		}
-		last = i
-	}
 	if strings.Contains(out, "Invite the bot") {
 		t.Fatalf("output %q prints next steps after a failed verification", out)
 	}
@@ -605,15 +598,6 @@ func TestCreateAppFailureLeavesStepOneWithoutTokens(t *testing.T) {
 	}
 }
 
-func TestInvalidAuthNamesTheExpiredConfigurationToken(t *testing.T) {
-	s := newScript(t, configToken, "")
-	s.createErr = errors.New("apps.manifest.create: invalid_auth")
-	_, _, err := run(t, s, &Checkpoint{})
-	if err == nil || err.Error() != "configuration token rejected; create a new one at api.slack.com/apps" {
-		t.Fatalf("error %v, want the fixed rejected-token line", err)
-	}
-}
-
 func TestResumeFromStepTwoSkipsCreateAndUsesStoredAppID(t *testing.T) {
 	s := newScript(t, "xoxb-bot", "xapp-app", ada.ID, "")
 	_, raw, err := run(t, s, &Checkpoint{Step: 2, AppID: "A0STORED", AppName: "Stored"})
@@ -692,9 +676,10 @@ func runExistingScript(t *testing.T, s *script, cp *Checkpoint) (string, []byte,
 	return run(t, s, cp)
 }
 
-func TestExistingUpdatesManifestWithAppIDFromCheckpointAndEmbeddedYAML(t *testing.T) {
+func TestExistingUpdatesManifestWithAppIDFromCheckpoint(t *testing.T) {
 	s := newScript(t,
 		configToken, // config token prompt
+		"yes",       // confirm manifest replacement
 		"xoxb-new",  // reinstall: new bot token
 	)
 	existingSetup(t, s)
@@ -704,9 +689,9 @@ func TestExistingUpdatesManifestWithAppIDFromCheckpointAndEmbeddedYAML(t *testin
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if s.updateCalls != 1 || s.updateTokens[0] != configToken || s.updateAppIDs[0] != "A0STORED" || s.updateBodies[0] != manifest.YAML() {
-		t.Fatalf("ManifestUpdate: calls=%d token=%v appID=%v bodyMatch=%v",
-			s.updateCalls, s.updateTokens, s.updateAppIDs, s.updateBodies[0] == manifest.YAML())
+	if s.updateCalls != 1 || s.updateTokens[0] != configToken || s.updateAppIDs[0] != "A0STORED" {
+		t.Fatalf("ManifestUpdate: calls=%d token=%v appID=%v",
+			s.updateCalls, s.updateTokens, s.updateAppIDs)
 	}
 	wantVerified(t, s, raw, "Verified: ada replied.")
 }
@@ -714,6 +699,7 @@ func TestExistingUpdatesManifestWithAppIDFromCheckpointAndEmbeddedYAML(t *testin
 func TestExistingBotTokenReplacesOnlyBotTokenAndKeepsOtherKeys(t *testing.T) {
 	s := newScript(t,
 		configToken, // config token
+		"yes",       // confirm manifest replacement
 		"xoxb-new",  // new bot token at reinstall prompt
 	)
 	existingSetup(t, s)
@@ -741,6 +727,7 @@ func TestExistingBotTokenReplacesOnlyBotTokenAndKeepsOtherKeys(t *testing.T) {
 func TestExistingEnterKeepsCurrentBotToken(t *testing.T) {
 	s := newScript(t,
 		configToken, // config token
+		"yes",       // confirm manifest replacement
 		"",          // Enter at reinstall prompt → keep current
 	)
 	existingSetup(t, s)
@@ -756,7 +743,7 @@ func TestExistingEnterKeepsCurrentBotToken(t *testing.T) {
 }
 
 func TestExistingInvalidAuthReturnsErrConfigTokenRejected(t *testing.T) {
-	s := newScript(t, configToken)
+	s := newScript(t, configToken, "yes")
 	existingSetup(t, s)
 	s.updateErr = fmt.Errorf("apps.manifest.update: invalid_auth")
 	cp := &Checkpoint{AppID: "A0STORED"}
@@ -770,6 +757,7 @@ func TestExistingInvalidAuthReturnsErrConfigTokenRejected(t *testing.T) {
 func TestExistingRunsVerifyStepAfterUpdate(t *testing.T) {
 	s := newScript(t,
 		configToken, // config token
+		"yes",       // confirm manifest replacement
 		"",          // Enter → keep token
 	)
 	existingSetup(t, s)
@@ -797,6 +785,7 @@ func TestExistingPromptsForAppIDWhenNotInCheckpoint(t *testing.T) {
 	s := newScript(t,
 		"A0PROMPTED", // app ID prompt
 		configToken,  // config token
+		"yes",        // confirm manifest replacement
 		"",           // Enter → keep token
 	)
 	existingSetup(t, s)
@@ -808,5 +797,52 @@ func TestExistingPromptsForAppIDWhenNotInCheckpoint(t *testing.T) {
 	}
 	if s.updateCalls != 1 || s.updateAppIDs[0] != "A0PROMPTED" {
 		t.Fatalf("ManifestUpdate appID = %v; want A0PROMPTED", s.updateAppIDs)
+	}
+}
+
+func TestExistingKeepsLiveIdentityAndDeployment(t *testing.T) {
+	s := newScript(t, configToken, "yes", "")
+	existingSetup(t, s)
+	s.live = manifest.Live{Name: "Ada's bot", BotDisplayName: "adabot", OrgDeployEnabled: true}
+	if _, _, err := runExistingScript(t, s, &Checkpoint{AppID: "A0STORED"}); err != nil {
+		t.Fatal(err)
+	}
+	if s.updateCalls != 1 {
+		t.Fatalf("updates = %d", s.updateCalls)
+	}
+	var doc struct {
+		Display struct {
+			Name string `json:"name"`
+		} `json:"display_information"`
+		Features struct {
+			Bot struct {
+				Name string `json:"display_name"`
+			} `json:"bot_user"`
+		} `json:"features"`
+		Settings struct {
+			OrgDeploy bool `json:"org_deploy_enabled"`
+		} `json:"settings"`
+	}
+	if err := json.Unmarshal([]byte(s.updateBodies[0]), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Display.Name != "Ada's bot" || doc.Features.Bot.Name != "adabot" || !doc.Settings.OrgDeploy {
+		t.Fatalf("live manifest settings overwritten: %+v", doc)
+	}
+}
+func TestValidConfigBeatsAStaleCheckpoint(t *testing.T) {
+	s := newScript(t, "1")
+	if err := config.Save(s.configPath, &config.Config{Slack: config.Slack{BotToken: "xoxb-bot", AppToken: "xapp-app", OwnerUserID: ada.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := run(t, s, &Checkpoint{Step: 1})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if s.createCalls != 0 {
+		t.Fatal("created an app even though config.yaml already has a bot token")
+	}
+	if n := s.count("Existing setup found"); n != 1 {
+		t.Fatalf("repair prompt count %d, prompts %q", n, s.prompts)
 	}
 }

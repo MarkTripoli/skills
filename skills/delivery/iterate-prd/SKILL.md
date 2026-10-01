@@ -47,4 +47,4 @@ If user wants to keep resolving choices: read PRD fully, identify sparse or unre
 
 7. **Stop and ask next**: After incorporating feedback, stop. State change briefly, ask what to work on next, offer next decision if unresolved parts remain. Never continue to another change without user direction.
 
-8. **Finish when user is done**: Record the new iteration through the conventions' Recording an artifact flow, then follow `references/prd_final_answer.md` exactly. Fill `{artifact_link}` and `{artifact_file}` with the canonical task-root-relative path. Commit that path and `index.json` explicitly as `docs(task): prd artifact`.
+8. **Finish when user is done**: Record the new iteration through the conventions' Recording an artifact flow, then follow `references/prd_final_answer.md` exactly. Fill `{artifact_link}` and `{artifact_file}` with the canonical task-root-relative path.

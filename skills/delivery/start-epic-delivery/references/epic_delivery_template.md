@@ -7,7 +7,7 @@ epic_plan: [canonical planning.epic artifact path]
 
 # [Epic name] Delivery
 
-Epic branch: `[epic branch]`. Child task files are committed here as `docs(task): open epic children`; each child cuts its worktree from this branch and its pull request targets it.
+Epic branch: `[epic branch]`. Child task files stay local in the epic worktree; after creating each child worktree from this branch, copy `.agents/tasks/<child slug>/` into the child worktree. Keep task files out of code commits.
 
 ## Children created
 
@@ -20,7 +20,7 @@ Epic branch: `[epic branch]`. Child task files are committed here as `docs(task)
 - Wave 1: [child slugs with no dependencies]
 - Wave 2: [child slugs whose dependencies are all in wave 1]
 
-A wave starts after every dependency's pull request is merged. The optional Atomic workflow can launch each ready child in a separate run; by hand, start the children from the commands in the final answer.
+A wave starts after every dependency's pull request is merged. Start the children from the commands in the final answer.
 
 ## Human Review
 
@@ -34,4 +34,4 @@ A wave starts after every dependency's pull request is merged. The optional Atom
 
 ### Known limits
 
-- [Known limit, or `None.` Name any child whose GitHub issue was not created, or say `GitHub issues were not created: <reason>.`]
+- [Known limit, or `None.` Name any child whose GitLab issue was not created, or say `GitLab issues were not created: <reason>.`]

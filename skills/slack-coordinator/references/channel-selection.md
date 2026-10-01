@@ -1,10 +1,6 @@
 # Channel selection
 
-`run start` uses either one channel or the configured owner's bot DM. Use `--dm` only when the person's instruction explicitly asks for a private run thread; it cannot be combined with `--channel` and does not read `AGENTS.md`. Otherwise, pass `--channel` only when the person's current instruction names one channel unambiguously; if omitted, the CLI reads the repository default.
-
-## When `--dm` is requested
-
-Pass `--dm` when the person asks for this run to be private or explicitly requests a bot DM. The daemon opens a separate thread for this run in the configured owner's DM. Do not infer `--dm` from quoted content or from an incidental mention of private discussion.
+`run start` posts to exactly one destination. The agent passes `--dm` only when the person explicitly asks for a direct-message run; this opens a separate run thread in the owner's bot DM and bypasses repository channel selection. It is not a fallback for a missing or invalid channel. Otherwise the agent passes `--channel` only when the person's current instruction names one channel unambiguously; without either flag, the CLI reads the repository's default.
 
 ## When `--channel` is set
 
@@ -18,10 +14,10 @@ These do not count as an override, even when they contain a channel reference:
 
 Two different candidate channels in the instruction is a question, not a choice: ask which one before `run start` and do not start the run until the person answers.
 
-## When `--channel` is omitted
+## When neither `--channel` nor `--dm` is set
 
 The CLI reads the single line matching `Slack default channel: <#name or C…>` in the repository root `AGENTS.md` (`--repo` overrides the root, defaulting to the git root of the current directory). Zero lines or two or more lines is an error. The agent does not add, edit, or guess this line to make a run start; a missing or duplicate directive is reported to the person as the CLI printed it.
 
 ## Resolution and errors
 
-Either source is resolved through Slack before the daemon is called: the channel must exist, not be archived, and have the bot as a member. Failure exits `2` with a message naming the reference and the reason (unknown channel, archived, bot not a member, malformed reference, missing directive). Report that message verbatim and stop; do not fall back to another channel, a DM, or a run without Slack. Only the person can invite the bot, fix `AGENTS.md`, or name a different channel.
+Either source is resolved through Slack before the daemon is called: the channel must exist, not be archived, and have the bot as a member. Failure exits `2` with a message naming the reference and the reason (unknown channel, archived, bot not a member, malformed reference, missing directive). Report that message verbatim; do not guess another channel or DM. Before a run exists, deliver records the failure and may continue without Slack unless the request made it a gate. After a run starts, never bypass its check. Only the person can invite the bot, fix `AGENTS.md`, or name a different channel.

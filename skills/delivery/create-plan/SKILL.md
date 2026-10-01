@@ -31,6 +31,7 @@ Expand the structure outline into a detailed implementation plan with concrete e
    - Convert each structure-outline phase into implementation steps.
    - Include concrete code examples where they clarify the change.
    - Include automated verification commands and real manual checks when needed.
+   - Reconcile every confirmed `jira-refinement` Planning impact item with an explicit phase or check before saving. Put unresolved proposals in Open Questions or Known limits, not in required implementation checkboxes. After saving the plan, update the refinement artifact's `Plan reconciliation` line to `applied in <plan path>` (or `not needed` with reason when no confirmed delta applies). If a confirmed required change stays unresolved, write `Plan reconciliation: needs-human: <question>` instead. Save both artifacts locally; never stage or commit task files.
 
 ## Plan Guidelines
 
@@ -45,4 +46,4 @@ Expand the structure outline into a detailed implementation plan with concrete e
 
 ## Output
 
-1. Save the plan and follow `references/plan_final_answer.md` exactly; fill `{artifact_link}` and `{artifact_file}` with the saved canonical task-root-relative path (the template carries the `@`), and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. Add no prose before or after the template. Commit the canonical path and `index.json` explicitly as `docs(task): plan artifact`. A legacy task without `index.json` follows the conventions' legacy rules.
+1. Save the plan and follow `references/plan_final_answer.md` exactly; fill `{artifact_link}` and `{artifact_file}` with the saved canonical task-root-relative path (the template carries the `@`), and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. Add no prose before or after the template. A legacy task without `index.json` follows the conventions' legacy rules.

@@ -34,7 +34,7 @@ A `<feedback>` block or feedback file holds the artifact name and one entry per 
    - Edit: copy current artifact to the next iteration in its canonical series, preserve frontmatter/structure, and record it through the conventions. Never overwrite indexed history.
    - Not applied: say why, in the reply.
 
-5. **Note when useful.** Most need no artifact. If user asks or the review is complex, record the next immutable `review.comments` iteration through the conventions' Recording an artifact flow using `references/comments_template.md`. Commit its canonical path and `index.json` explicitly as `docs(task): comment-review artifact`.
+5. **Note when useful.** Most need no artifact. If user asks or the review is complex, record the next immutable `review.comments` iteration through the conventions' Recording an artifact flow using `references/comments_template.md`.
 
 6. **Final.** Read `references/comments_final_answer.md`. Fill `{artifact_link}` with the saved canonical task-root-relative path; when no receipt was saved, link the edited artifact. End with one fenced `text` block: `/iterate-implementation`. A legacy task without `index.json` follows the conventions' legacy rules.
 

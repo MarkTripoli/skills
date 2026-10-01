@@ -21,6 +21,7 @@ type fakeContent struct {
 	uploads         int
 	uploadErr       error
 	onUpload        func()
+	listFile        *slack.File
 }
 
 func (f *fakeContent) Files(_ context.Context, channel string, _ int) ([]slack.File, *slack.Paging, error) {
@@ -32,6 +33,9 @@ func (f *fakeContent) Bookmarks(_ context.Context, channel string) ([]slack.Book
 	return []slack.Bookmark{{ID: "B1"}}, nil
 }
 func (f *fakeContent) FileInfo(_ context.Context, id string) (*slack.File, error) {
+	if f.listFile != nil && f.listFile.ID == id {
+		return f.listFile, nil
+	}
 	if id == "FTab" {
 		return &slack.File{ID: id, Filetype: "list"}, nil
 	}
@@ -134,6 +138,7 @@ func TestUploadFailureStaysUnavailableAcrossStatusRecovery(t *testing.T) {
 	}
 
 	poster.fail = errors.New("channel_not_found")
+	*now = now.Add(3 * time.Hour)
 	if err := c.RecordWorkEvent(ctx, WorkEvent{RunID: "RUN1", Current: "Still working"}); err == nil {
 		t.Fatal("later status delivery failure was hidden")
 	}
@@ -216,5 +221,65 @@ func TestUploadSerializesWithDisableSlack(t *testing.T) {
 	}
 	if _, err := c.UploadContent(ctx, UploadParams{RunID: "RUN1", Path: path}); err == nil || content.uploads != 1 {
 		t.Fatalf("upload after disable was not refused: err=%v uploads=%d", err, content.uploads)
+	}
+}
+
+func TestListsRequireListTypeAndRunChannelAccess(t *testing.T) {
+	cases := []struct {
+		name    string
+		file    slack.File
+		allowed bool
+	}{
+		{"public share", slack.File{Filetype: "list", Channels: []string{"C1"}}, true},
+		{"private share", slack.File{Mode: "list", Groups: []string{"C1"}}, true},
+		{"DM share", slack.File{Mode: "list", IMs: []string{"C1"}}, true},
+		{"different private channel", slack.File{Mode: "list", Groups: []string{"GOTHER"}}, false},
+		{"ordinary file shared in run channel", slack.File{Filetype: "text", Channels: []string{"C1"}}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _, _ := newTestCoordinator(t)
+			startTestRun(t, c, "RUN1")
+			tc.file.ID = "FChecked"
+			c.Content = &fakeContent{listFile: &tc.file}
+			items, err := c.ListItems(context.Background(), ListItemsParams{RunID: "RUN1", ListID: tc.file.ID})
+			if tc.allowed {
+				if err != nil || !strings.Contains(string(items), "Rec1") {
+					t.Fatalf("shared list unavailable: %s, %v", items, err)
+				}
+			} else if err == nil {
+				t.Fatalf("unshared or non-list file exposed: %s", items)
+			}
+		})
+	}
+}
+
+func TestUploadRejectsEmptyAndOversizedFilesBeforeSlack(t *testing.T) {
+	c, _, _ := newTestCoordinator(t)
+	startTestRun(t, c, "RUN1")
+	c.Health = func() string { return slackapi.SocketConnected }
+	content := &fakeContent{}
+	c.Content = content
+	file, err := os.Create(filepath.Join(t.TempDir(), "bounded.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	for _, size := range []int64{0, (20 << 20) + 1} {
+		if err := file.Truncate(size); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.UploadContent(context.Background(), UploadParams{RunID: "RUN1", Path: file.Name()}); err == nil {
+			t.Fatalf("upload accepted %d-byte file", size)
+		}
+	}
+	if content.uploads != 0 {
+		t.Fatalf("refused files reached Slack %d times", content.uploads)
+	}
+	if err := file.Truncate(20 << 20); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.UploadContent(context.Background(), UploadParams{RunID: "RUN1", Path: file.Name()}); err != nil || content.uploads != 1 {
+		t.Fatalf("20 MiB upload boundary: %v, uploads %d", err, content.uploads)
 	}
 }

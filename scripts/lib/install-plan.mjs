@@ -2,12 +2,22 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import * as prompts from '@clack/prompts';
-import { RUNTIMES, repoRoot } from './build.mjs';
+import { RUNTIMES, repoRoot, WORKER_MODEL_RUNTIMES, PINNED_WORKERS, runtimeModel } from './build.mjs';
 import { scanSkills } from './layout.mjs';
+import { loadCandidateProfile, normalizeCandidates } from '../../skills/delivery/route-model/route-model.mjs';
+import { retiredSweep } from './install-retirement.mjs';
 
 const TARGETS = [...RUNTIMES, 'portable'];
 const TARGET_LABEL = { 'claude-code': 'Claude Code', codex: 'Codex', 'oh-my-pi': 'Oh My Pi', pi: 'Pi', portable: 'Portable' };
-const SKILL_DEPENDENCIES = { deliver: ['agent-first-sergent'], 'agent-first-sergent': ['route-model', 'typed-judgment'], 'jev-ui': ['typed-judgment', 'record-evidence'], 'iterate-evidence': ['record-evidence'] };
+const SKILL_DEPENDENCIES = {
+  deliver: ['route-model', 'record-evidence', 'iterate-evidence', 'jira-issue-refinement'],
+  'jev-ui': ['typed-judgment', 'record-evidence'],
+  'record-evidence': ['deliver'],
+  'iterate-evidence': ['record-evidence', 'deliver'],
+  'video-iterative-orchestration': ['agent-implementation-reviewer', 'extract-figma-visuals', 'feature-conformance', 'jira-issue-hierarchy', 'slack-coordinator', 'video-iterative-development'],
+  ...Object.fromEntries(['implement-plan', 'implement-outline', 'iterate-implementation', 'fix-bug', 'reproduce-bug', 'fix-code-review', 'describe-pr'].map(name => [name, ['deliver']])),
+  ...Object.fromEntries(['verify-implementation', 'review-code', 'test-app', 'resolve-pr-reviews'].map(name => [name, ['deliver', 'typed-judgment']])),
+};
 const BINARY = { 'claude-code': 'claude', codex: 'codex', 'oh-my-pi': 'omp', pi: 'pi' };
 
 function dependencyClosure(names) {
@@ -18,14 +28,13 @@ function dependencyClosure(names) {
 }
 
 export function parseArgs(argv) {
-  const out = { targets: [], skillNames: [], project: false, dryRun: false, yes: false, atomic: false, ompPublicationHook: false, uninstall: false, list: false, help: false, errors: [] };
+  const out = { targets: [], skillNames: [], project: false, dryRun: false, yes: false, ompPublicationHook: false, uninstall: false, list: false, help: false, errors: [] };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--project') out.project = true;
     else if (arg === '--global') out.project = false;
     else if (arg === '--dry-run') out.dryRun = true;
     else if (arg === '--yes' || arg === '-y') out.yes = true;
-    else if (arg === '--atomic') out.atomic = true;
     else if (arg === '--omp-publication-hook') out.ompPublicationHook = true;
     else if (arg === '--uninstall') out.uninstall = true;
     else if (arg === '--list') out.list = true;
@@ -97,32 +106,50 @@ export function destinations(target, { project, cwd = process.cwd(), home = os.h
     default: throw new Error(`unknown target ${target}`);
   }
 }
-export function atomicDestination({ project, cwd = process.cwd(), home = os.homedir(), env = process.env }) {
-  const agentDir = env.ATOMIC_CODING_AGENT_DIR || path.join(home, '.atomic', 'agent');
-  return project ? path.join(cwd, '.atomic', 'workflows', 'skills-delivery') : path.resolve(agentDir, 'workflows', 'skills-delivery');
-}
 export function plan(options) {
-  const { targets, project = false, atomic = false, cwd = process.cwd(), home = os.homedir(), env = process.env } = options;
+  const { targets, project = false, cwd = process.cwd(), home = os.homedir(), env = process.env } = options;
   const { skills } = scanSkills(path.join(repoRoot, 'skills'));
   const allNames = skills.map(skill => skill.name);
   const requestedNames = resolveSkillNames(options.skillNames ?? [], skills);
   const names = dependencyClosure(requestedNames);
-  if (atomic && names.length !== allNames.length) throw new Error("--atomic requires all skills; remove --skill selections or pass --skill '*' (omit --atomic for independent skills)");
   if (options.ompPublicationHook && !targets.includes('oh-my-pi')) throw new Error('--omp-publication-hook requires the oh-my-pi target');
   const allWorkerNames = allNames.filter(name => name.startsWith('agent-'));
   const workerNames = names.filter(name => name.startsWith('agent-'));
+  const requestedWorkers = requestedNames.filter(name => name.startsWith('agent-'));
   const steps = []; const notes = []; const skillDirsClaimed = new Map();
+  let workerModel = null;
+  const pinned = targets.filter(target => WORKER_MODEL_RUNTIMES.includes(target) && destinations(target, { project, cwd, home, env }).agents);
+  if (!options.uninstall && pinned.length && workerNames.some(name => PINNED_WORKERS.includes(name))) {
+    if (project || env.SKILLS_MODEL_CANDIDATES_FILE) {
+      try {
+        const profile = loadCandidateProfile({ projectDir: cwd, env });
+        if (profile.source !== 'none') {
+          const economy = profile.economy.trim();
+          normalizeCandidates(profile.candidates, economy);
+          if (profile.routing !== undefined && !['auto', 'fixed'].includes(profile.routing)) throw new Error(`unknown routing ${JSON.stringify(profile.routing)}`);
+          const ids = pinned.map(target => [target, runtimeModel(target, economy)]);
+          for (const [target, id] of ids) if (!id) notes.push(`model profile ${short(profile.file, home)}: economy model ${economy} is not a ${target} model id, so ${target} builder workers are left unpinned`);
+          const used = ids.filter(([, id]) => id);
+          if (used.length) {
+            workerModel = economy;
+            notes.push(`model profile ${short(profile.file, home)}: builder workers (${PINNED_WORKERS.join(', ')}) pinned for ${used.map(([target, id]) => `${target} (${id})`).join(', ')}; rerun install after changing the profile`);
+          }
+        }
+      } catch (error) { notes.push(`model profile ignored, builder workers left unpinned: ${error.message}`); }
+    } else if (fs.existsSync(path.join(cwd, '.agents', 'model-candidates.json'))) {
+      notes.push('project model profile ignored for a user-scope install, so builder workers are left unpinned; set SKILLS_MODEL_CANDIDATES_FILE to pin them');
+    }
+  }
   const skillStep = target => {
     const dest = destinations(target, { project, cwd, home, env }); const claimant = skillDirsClaimed.get(dest.skills);
     if (claimant) { notes.push(`${target}: skills directory ${short(dest.skills, home)} is already written by ${claimant}; skipping the ${target} copy of the skills`); return dest; }
     skillDirsClaimed.set(dest.skills, target); steps.push({ target, kind: 'skills', from: target === 'portable' ? 'canonical' : `built for ${target}`, to: dest.skills, names, removeNames: requestedNames }); return dest;
   };
-  if (atomic) skillStep('portable');
   for (const target of targets) {
     const dest = skillStep(target);
-    if (dest.agents && workerNames.length) steps.push({ target, kind: 'agents', to: dest.agents, names: workerNames, format: target === 'codex' ? 'toml' : 'md' });
+    if (dest.agents && workerNames.length) steps.push({ target, kind: 'agents', to: dest.agents, names: workerNames, removeNames: requestedWorkers, format: target === 'codex' ? 'toml' : 'md' });
     else if (target === 'codex' && project && workerNames.length) notes.push('codex: worker definitions and their config.toml block are user-level; run without --project to install them');
-    if (dest.config && workerNames.length) steps.push({ target, kind: 'config', to: dest.config, names: workerNames, complete: workerNames.length === allWorkerNames.length });
+    if (dest.config && workerNames.length) steps.push({ target, kind: 'config', to: dest.config, names: workerNames, removeNames: requestedWorkers });
   }
   if (options.ompPublicationHook) {
     const base = project ? path.join(cwd, '.omp', 'hooks') : path.join(home, '.omp', 'agent', 'hooks');
@@ -130,9 +157,11 @@ export function plan(options) {
   } else if (targets.includes('oh-my-pi')) {
     notes.push('Oh My Pi publication guard is optional: pass --omp-publication-hook, then launch with --hook=<installed-path> and SKILLS_PUBLICATION_TASK_DIR=<absolute-task-dir>');
   }
-  if (atomic) steps.push({ target: 'atomic', kind: 'workflow', to: atomicDestination({ project, cwd, home, env }) });
-  if (!atomic && targets.includes('codex') && !project && (targets.includes('pi') || targets.includes('oh-my-pi'))) notes.push('Pi and Oh My Pi also read ~/.agents/skills, where the Codex copy lives; their own skill directories are installed too, so a skill may appear twice by name in those runtimes');
-  return { steps, notes, names, requestedNames };
+  if (targets.includes('codex') && !project && (targets.includes('pi') || targets.includes('oh-my-pi'))) notes.push('Pi and Oh My Pi also read ~/.agents/skills, where the Codex copy lives; their own skill directories are installed too, so a skill may appear twice by name in those runtimes');
+  const retired = retiredSweep({ project, cwd, home, env });
+  if (retired.remove.length) steps.unshift({ target: 'retired', kind: 'retire', items: retired.remove, scope: { project, cwd, home, env } });
+  notes.push(...retired.keep);
+  return { steps, notes, names, requestedNames, workerModel };
 }
 
 export function short(file, home) { return file.startsWith(home) ? `~${file.slice(home.length)}` : file; }
@@ -142,7 +171,7 @@ export function describe(step, home) {
     case 'agents': return `${step.target}: ${step.names.length} worker definitions -> ${short(step.to, home)}/agent-*.${step.format}`;
     case 'config': return `${step.target}: [agents.*] block -> ${short(step.to, home)}`;
     case 'publication-hook': return `oh-my-pi: optional Bash publication guard -> ${short(path.join(step.to, 'hooks', 'omp-publication.mjs'), home)} (register with omp --hook=<installed-path>; set SKILLS_PUBLICATION_TASK_DIR per task; direct shell and Codex are not guarded)`;
-    case 'workflow': return `atomic: delivery workflow -> ${short(step.to, home)}/ and ${short(path.join(path.dirname(step.to), 'skills-delivery.mjs'), home)}`;
+    case 'retire': return step.items.map(item => `would remove ${item.label} ${short(item.path, home)}`).join('\n  ');
     default: return JSON.stringify(step);
   }
 }

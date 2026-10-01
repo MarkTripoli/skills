@@ -61,7 +61,7 @@ func TestCheckBeforeWriteOrdersHealthBeforeDelivery(t *testing.T) {
 	if err := (&StatusScheduler{C: c}).Tick(ctx, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if len(poster.posts) != 1 || len(poster.updates) != 1 || poster.updates[0].ThreadTS != "1700000000.000100" {
+	if len(poster.posts) != 1 || len(poster.updates) != 1 || poster.updates[0].ThreadTS != "1700000000.000101" {
 		t.Fatalf("retry did not edit the root: posts=%+v updates=%+v", poster.posts, poster.updates)
 	}
 	if gate, err := c.CheckBeforeWrite(ctx, "RUN1"); err != nil || !gateIs(gate, GateReady, "") {

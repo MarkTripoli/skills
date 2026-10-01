@@ -7,10 +7,11 @@ import path from 'node:path';
 import {
   allocateArtifactIteration,
   observeArtifacts,
+  parseArtifactText,
   serializeArtifactIndex,
   validateArtifactIndex,
   writeArtifactIndex,
-} from '../atomic/lib/artifacts.mjs';
+} from '../shared/task-artifacts.mjs';
 import { initTaskArtifacts, readArtifactIndex } from '../shared/task-artifacts.mjs';
 
 const taskDirs = [];
@@ -248,7 +249,7 @@ test('invalid JSON, dangling files, hash mismatches, and metadata mismatches fai
   }
 });
 
-test('dangling index symlinks fail closed in init, read, and Atomic observation', () => {
+test('dangling index symlinks fail closed in init, read, and artifact observation', () => {
   const taskDir = taskFixture('dangling-index-symlink');
   fs.symlinkSync(path.join(taskDir, 'missing-index.json'), path.join(taskDir, 'index.json'));
 
@@ -273,4 +274,62 @@ test('legacy scan remains unchanged, including pr-description, and deleting inde
   fs.rmSync(path.join(taskDir, 'index.json'));
 
   assert.deepEqual(observeArtifacts(taskDir), before);
+});
+
+test('passed verification permits only explicitly optional untested rows with item-specific reasons', () => {
+  const receipt = (verdict, required = 'no', limits = '- A2: optional device inspection needs a physical device.') =>
+    `---\ntype: verification\nsummary: Required CLI passed; optional device unavailable.\nstatus: passed\n---\n## Items\n\n| Id | Observed | Verdict | Required |\n|---|---|---|---|\n| C1 | expected output | pass | yes |\n| A2 | device unavailable | ${verdict} | ${required} |\n\n## Human Review\n\n### Known limits\n\n${limits}\n`;
+  assert.equal(parseArtifactText(receipt('untested'), 'verification').status, 'passed');
+  for (const [verdict, required, limits] of [
+    ['fail', 'no', '- A2: failure is optional.'],
+    ['untested', 'yes', '- A2: device unavailable.'],
+    ['untested', '', '- A2: device unavailable.'],
+    ['untested', 'no', 'None.'],
+    ['untested', 'no', '- A3: unrelated device unavailable.'],
+    ['untested', 'no', '- A2:'],
+    ['unreachable', 'no', '- A2: device unavailable.'],
+  ]) assert.throws(() => parseArtifactText(receipt(verdict, required, limits), 'verification'), /contradicts evidence/);
+  const noRequiredColumn = receipt('untested').replace(' | Required', '').replace(' | yes', '').replace(' | no', '');
+  assert.throws(() => parseArtifactText(noRequiredColumn, 'verification'), /contradicts evidence/);
+  const app = '---\ntype: app-test\nsummary: Browser not inspected.\nstatus: passed\n---\n## Steps\n\n| Step | Verdict | Required |\n|---|---|---|\n| browser | unreachable | no |\n';
+  assert.throws(() => parseArtifactText(app, 'app-test'), /contradicts evidence/);
+});
+
+test('clean review semantic recording rejects contrary decisions and current failed checks', () => {
+  const receipt = (story, decision = 'approve') => `---\ntype: code-review\nsummary: Inspected output.\nstatus: clean\n---\n## Verification Story\n\n${story}\n\n## Critical and Required Findings\n\nNone.\n\n## Verdict\n\n- decision: ${decision}\n`;
+  for (const decision of ['blocked', 'request_changes']) assert.throws(() => parseArtifactText(receipt('- result: passed', decision), 'code-review'), /contradicts.*decision/);
+  assert.throws(() => parseArtifactText(receipt('| Command | Exit |\n|---|---|\n| current check | 1 |'), 'code-review'), /failed check/);
+  assert.equal(parseArtifactText(receipt('- result: passed; expected-negative probe returned exit 1'), 'code-review').status, 'clean');
+});
+
+test('superseded semantic-invalid native reviews retain strict historical identity enforcement', () => {
+  const invalid = '---\ntype: code-review\nsummary: Historical invalid approval\nstatus: clean\n---\n## Critical and Required Findings\n\nNone.\n\n## Verdict\n\n- decision: blocked\n';
+  const valid = invalid.replace('Historical invalid approval', 'Corrected approval').replace('decision: blocked', 'decision: approve');
+  const cases = [
+    ['digest', text => `${text}tampered\n`, /SHA-256/, false],
+    ['summary', text => text.replace('summary: Historical invalid approval', 'summary: Different summary'), /metadata/, true],
+    ['status', text => text.replace('status: clean', 'status: findings'), /metadata/, true],
+    ['type', text => text.replace('type: code-review', 'type: verification'), /artifact type/, true],
+    ['empty-body', text => text.split('## Critical')[0].trim(), /artifact body/, true],
+  ];
+  for (const [name, mutate, error, rehash] of cases) {
+    const taskDir = taskFixture(`historical-${name}`);
+    const first = iteration('review', 'code', 1, invalid, { type: 'code-review', status: 'clean', summary: 'Historical invalid approval' });
+    const second = iteration('review', 'code', 2, valid, { type: 'code-review', status: 'clean', summary: 'Corrected approval', supersedes: first.id });
+    writeIndexedArtifact(taskDir, first, invalid); writeIndexedArtifact(taskDir, second, valid);
+    const index = indexFixture(`historical-${name}`, { 'review.code': { current: second.id, iterations: [first, second] } });
+    writeArtifactIndex(taskDir, index);
+    assert.equal(observeArtifacts(taskDir).latest['code-review'].summary, 'Corrected approval');
+    const tampered = mutate(invalid); writeIndexedArtifact(taskDir, first, tampered);
+    if (rehash) { first.sha256 = sha256(tampered); writeArtifactIndex(taskDir, index); }
+    assert.throws(() => observeArtifacts(taskDir), error);
+  }
+  const taskDir = taskFixture('historical-symlink');
+  const first = iteration('review', 'code', 1, invalid, { type: 'code-review', status: 'clean', summary: 'Historical invalid approval' });
+  const second = iteration('review', 'code', 2, valid, { type: 'code-review', status: 'clean', summary: 'Corrected approval', supersedes: first.id });
+  writeIndexedArtifact(taskDir, first, invalid); writeIndexedArtifact(taskDir, second, valid);
+  writeArtifactIndex(taskDir, indexFixture('historical-symlink', { 'review.code': { current: second.id, iterations: [first, second] } }));
+  const file = path.join(taskDir, first.path);
+  fs.renameSync(file, `${file}.original`); fs.symlinkSync(`${file}.original`, file);
+  assert.throws(() => observeArtifacts(taskDir), /symlink/);
 });

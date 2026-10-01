@@ -1,6 +1,6 @@
 The PRD is ready for review.
 
-Review artifact: {artifact_link}
+Saved for review: {artifact_link}
 
 Check:
 - {review_check}

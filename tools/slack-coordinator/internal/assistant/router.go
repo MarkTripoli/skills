@@ -32,18 +32,21 @@ func (s *Service) ConsumeInbound(ctx context.Context, events <-chan socketmode.E
 			if !ok {
 				return
 			}
-			msg, matched, err := s.activeRunInput(ctx, evt)
+			msg, run, err := s.activeRunInput(ctx, evt)
 			if err != nil {
 				slog.Error("run thread lookup failed", "error", err)
 				continue
 			}
-			if matched {
+			if run != nil {
 				if err := s.Coord.RecordOwnerInput(ctx, msg); err != nil {
 					slog.Error("owner input not recorded", "error", err)
 					continue
 				}
 				if evt.Request != nil && ack != nil {
 					ack.Ack(*evt.Request)
+				}
+				if run.SlackMode == db.SlackEnabled {
+					s.markReceived(ctx, msg)
 				}
 				if appMention(evt) == nil && (msg.Channel[0] == 'C' || msg.Channel[0] == 'G') {
 					if err := s.collect(ctx, msg); err != nil {
@@ -308,14 +311,14 @@ func (s *Service) terminalNotice(ctx context.Context, msg *slackevents.MessageEv
 
 // activeRunInput routes an owner message or app_mention in an active coding run's
 // thread to the run owner. Other events are left for normal routing.
-func (s *Service) activeRunInput(ctx context.Context, evt socketmode.Event) (*slackevents.MessageEvent, bool, error) {
+func (s *Service) activeRunInput(ctx context.Context, evt socketmode.Event) (*slackevents.MessageEvent, *db.Run, error) {
 	msg := userMessage(evt)
 	if mention := appMention(evt); mention != nil {
 		// routeMention stores the text after removing the bot mention; use the
 		// same normalization on the pre-ack path.
 		text := stripBotMention(mention.Text)
 		if text == "" || mention.ThreadTimeStamp == "" || (mention.Channel == "" || mention.Channel[0] != 'C' && mention.Channel[0] != 'G') {
-			return nil, false, nil
+			return nil, nil, nil
 		}
 		msg = &slackevents.MessageEvent{
 			Type:            "message",
@@ -326,13 +329,13 @@ func (s *Service) activeRunInput(ctx context.Context, evt socketmode.Event) (*sl
 			Channel:         mention.Channel,
 		}
 	} else if msg == nil || msg.ThreadTimeStamp == "" || (msg.Channel == "" || msg.Channel[0] != 'C' && msg.Channel[0] != 'G' && msg.Channel[0] != 'D') {
-		return nil, false, nil
+		return nil, nil, nil
 	}
 	run, found, err := s.DB.ActiveRunByThread(ctx, msg.Channel, msg.ThreadTimeStamp)
 	if err != nil || !found || msg.User != run.OwnerUserID {
-		return msg, false, err
+		return msg, nil, err
 	}
-	return msg, true, nil
+	return msg, &run, nil
 }
 
 // isToRun recognizes a !to command while ignoring case in its command token.
@@ -359,7 +362,7 @@ func (s *Service) toRun(ctx context.Context, msg *slackevents.MessageEvent) erro
 	if err != nil {
 		return err
 	}
-	if run.Lifecycle != "active" || run.OwnerUserID != msg.User {
+	if run.Lifecycle != "active" || run.SlackMode != db.SlackEnabled || run.OwnerUserID != msg.User {
 		_, err := s.Slack.PostMessage(ctx, msg.Channel, "", "That run is not active or is not yours.")
 		return err
 	}
@@ -378,8 +381,17 @@ func (s *Service) toRun(ctx context.Context, msg *slackevents.MessageEvent) erro
 	if err := s.Coord.RecordOwnerInput(ctx, input); err != nil {
 		return err
 	}
+	s.markReceived(ctx, msg)
 	_, err = s.Slack.PostMessage(ctx, msg.Channel, "", "Sent input to run "+runID+".")
 	return err
+}
+
+// markReceived acknowledges durable owner input with an eyes reaction. A
+// receipt failure never discards stored input or changes the run's write gate.
+func (s *Service) markReceived(ctx context.Context, msg *slackevents.MessageEvent) {
+	if err := s.Slack.AddReaction(ctx, msg.Channel, msg.TimeStamp, "eyes"); err != nil && err.Error() != "already_reacted" {
+		slog.Error("owner input receipt not marked", "channel", msg.Channel, "ts", msg.TimeStamp, "error", err)
+	}
 }
 
 // refuse answers a DM from anyone but the owner only once. A failed post

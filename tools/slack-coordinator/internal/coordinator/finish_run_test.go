@@ -19,10 +19,10 @@ func TestFinishRunClosesTheRunOnce(t *testing.T) {
 	if err := c.FinishRun(ctx, in); err != nil {
 		t.Fatal(err)
 	}
-	if len(poster.posts) != 1 || len(poster.updates) != 1 || poster.updates[0].ThreadTS != "1700000000.000100" {
+	if len(poster.posts) != 1 || len(poster.updates) != 1 || poster.updates[0].ThreadTS != "1700000000.000101" {
 		t.Fatalf("completion did not edit root: posts=%+v updates=%+v", poster.posts, poster.updates)
 	}
-	for _, part := range []string{"*Work:* w", "*Outcome:* failed", "*Unresolved items:*\n• flaky test"} {
+	for _, part := range []string{"failed", "flaky test"} {
 		if !strings.Contains(poster.updates[0].Text, part) {
 			t.Fatalf("completion missing %q: %s", part, poster.updates[0].Text)
 		}
@@ -66,7 +66,7 @@ func TestSuccessfulMessagesDoNotClearUploadUncertainty(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := c.updateRoot(ctx, run, &WorkEvent{RunID: run.RunID, Current: "updated"}, nil, ""); err != nil {
+	if err := c.updateStatusCard(ctx, run, WorkEvent{RunID: run.RunID, Current: "updated"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.post(ctx, run, BuildStatusMessage(WorkEvent{Current: "posted"})); err != nil {

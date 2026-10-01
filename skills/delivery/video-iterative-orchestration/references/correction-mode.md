@@ -1,30 +1,30 @@
 # Findings-driven correction mode
 
-Use when a run starts from a read-only findings document and identified GitHub Issues or existing pull requests, not the original delivery conversation. Keep findings, architecture documents, and design files read-only; store run state under an ignored orchestration evidence directory.
+Use when new session gets selected queue + read-only findings Markdown doc, not original delivery conversation. Findings doc, architecture doc, Figma file stay read-only; all run state go in ignored orchestration evidence dir.
 
-The selected requirement's acceptance criteria define correction scope. An implementation child issue records ownership only; it is not a separate acceptance target. Parent issue or roadmap description provides queue context only. Do not create duplicate corrections, broaden scope, or treat a parent-versus-requirement mismatch as a blocker.
+Selected Jira Story requirements + acceptance criteria = correction scope. Agent-owned Subtask = implementation ownership only, not separate QA target. Epic description = queue context only; no create correction, no broaden one, no turn epic-vs-ticket mismatch into blocker.
 
 ## Intake and classification
 
-1. Read the selected issue/requirements, linked implementation items, and all findings. Resolve each cited repository, pull request, source and target branch, architecture section or design file/page/node, and supporting evidence. Check current remote pull-request state and source/target commit SHAs; do not trust stale local checkouts or prior-agent summaries.
-2. Record one ledger row per finding: issue or requirement ID, finding ID, source-document location, affected pull request, source/target SHAs, expected state, observed drift, cited architecture/design evidence, candidate repositories, downstream requirements, state, owner, and replacement evidence.
-3. Confirm the finding, selected requirement, repository reality, and supplied architecture/design agree. For a material conflict, set `needs-design-decision`, record it in architecture feedback, and ask for the smallest necessary decision. Do not guess a visual or cross-repository contract outcome.
-4. Group findings only when they share a root cause and the same pull-request branch owner. Otherwise make ordered correction tasks; the orchestrator sets scope and dependencies.
+1. Read the selected queue, affected requirements and implementation children first, then every finding. Resolve each cited repo, PR, source branch, target branch, architecture section or Figma file/page/node, supporting evidence. Check current remote PR state + source/target commit SHAs; no trust stale local checkout or prior-agent summary.
+2. One ledger row per finding: Jira ticket, finding ID, source-doc location, affected PR, source/target SHAs, expected state, observed drift, cited architecture/Figma evidence if supplied, candidate repos, downstream requirements, state, owner, replacement evidence.
+3. Compare only source nodes and sections mapped to the selected Story. Mapped Figma resolves ambiguous or conflicting ticket details and overrides a conflicting architecture document; record the automatic resolution in `decision-log.md`. Only a remaining choice that materially changes scope or user behavior becomes `needs_product_decision`; keep unrelated work moving.
+4. Group findings only if shared root cause AND same PR branch ownership. Else make ordered correction tasks; orchestrator, not prompter, sets scope + dependency.
 
-## Mutable unmerged-pull-request boundary
+## Mutable unmerged-PR boundary
 
-Before dispatch, compare each affected pull-request source branch with its target. Artifacts introduced only by that unmerged change are mutable: edit, rename, or remove the original migration, API/client artifact, component, test, or configuration so the final pull-request diff is correct. Do not add compensating artifacts to preserve an intermediate implementation.
+Before dispatch, diff each affected PR source branch vs target. Artifacts introduced only by that unmerged PR = mutable: edit, rename, delete original migration, API/client artifact, component, test, config so final PR diff correct. No compensating migration or compat layer to keep intermediate PR state.
 
-Artifacts already on the target branch, merged, deployed, or externally consumed follow the repository's normal compatibility and forward-migration policy. If origin is unclear, inspect merge base and source/target diff. Prefer a correction commit on the existing source branch; do not force-push or rewrite remote history without explicit authorization.
+Artifacts on target branch, merged, deployed, or externally consumed = not covered; follow repo normal compat + forward-migration policy. Origin unclear → check merge base + source/target diff first. Prefer new correction commit on PR source branch; no force-push or remote history rewrite unless explicitly authorized.
 
 ## Dispatch and branch ownership
 
-Update the existing pull-request source branch and existing pull request by default. Reuse the original worktree and make the correction agent its exclusive writer. Do not create a correction branch, stacked pull request, parallel review path, or replacement worktree unless repository circumstances require it. Never modify the target branch. If the original worktree is genuinely unavailable or unusable, recreate a local checkout of the exact existing source branch and record why.
+Update existing PR source branch + existing PR; default no correction branch, stacked PR, parallel review path, replacement worktree. Find and reuse original PR worktree, give correction agent as exclusive write surface. Correction agent never touch target branch. Only if original worktree truly unavailable/unusable, orchestrator may recreate local checkout of exact existing source branch; log reason in ledger.
 
-Give the agent the finding, expected-versus-observed behavior, cited source locations, existing pull-request URL and source/target SHAs, relevant architecture feedback, and explicit acceptance criteria. Require `video-iterative-development`, including fresh scope selection, repository-convention inspection, and real-user-path evidence rules. Replace invalid or superseded final evidence with proof of corrected behavior.
+Give the agent the finding, orchestrator-selected scope, expected-versus-observed statement, cited source locations, existing PR URL and source/target SHAs, relevant decision-log entries, and explicit acceptance criteria. Require `video-iterative-development`, including assigned-scope validation, repository-convention inspection, and the real-user-path evidence rules. It must replace invalid or superseded final evidence with proof of the corrected behavior and return any consequential choice as a `decision_request`.
 
 ## Closure and downstream effects
 
-For each correction, verify that the final pull-request diff matches the cited requirement/design, the correction commit is pushed to the existing source branch, and the pull-request description links replacement final proof. UI drift requires fresh reviewer-ready Chrome and Android evidence; backend drift requires renewed applicable contract proof. Re-check the specific finding and affected original acceptance criteria before marking it `resolved`.
+For every correction, verify the final PR diff now matches the cited design source, the correction commit is pushed to the existing PR source branch, and the PR description links the replacement final proof. UI drift needs fresh reviewer-ready Android evidence; backend drift needs renewed applicable contract proof. Re-check the specific finding and its affected original acceptance criteria before marking it `resolved`.
 
-Assess downstream worktrees created from a faulty source head explicitly: recreate from the corrected remote head, queue dependent corrections, or document why they are unaffected. Do not resolve a finding while known downstream impact remains open. Apply the orchestration pipeline policy before `merge-ready`; deployments and approvals remain non-blocking unless explicitly required.
+If downstream worktrees were created from a faulty source head, assess them explicitly: recreate them from the corrected remote head, queue dependent corrections, or document why they are unaffected. Do not mark a finding resolved while its known downstream impact is unaddressed. A pending, missing, or failed PR pipeline does not delay `submitted_verified`; record its status if already available. Deployments and approvals remain non-blocking.

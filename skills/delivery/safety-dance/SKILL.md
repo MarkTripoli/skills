@@ -7,7 +7,7 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 # Safety Dance
 
-Use this skill to operate a local Safety Dance Git gate without weakening its review boundary. The skill works independently from Atomic and other delivery skills.
+Use this skill to operate a local Safety Dance Git gate without weakening its review boundary. The skill works independently from other delivery skills.
 
 Before any mutating command, apply the nested-run fence: when `SD_PARENT_RUN_ID` is set, do not initialize a repository, start a run, respond to a prompt, abort a run, or bypass the parent run. Inspect status or logs only, then report the parent run.
 

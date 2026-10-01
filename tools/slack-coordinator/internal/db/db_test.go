@@ -23,7 +23,7 @@ func TestRunsRoundTrip(t *testing.T) {
 		t.Fatalf("GetRun(missing) = %v, want ErrRunNotFound", err)
 	}
 
-	want := Run{RunID: "r1", OwnerUserID: "U1", ChannelID: "C1", ThreadTS: "1.0", Permalink: "https://x/p", Lifecycle: "active", SlackMode: "enabled", StartedAt: "2026-09-21T00:00:00Z"}
+	want := Run{RunID: "r1", OwnerUserID: "U1", ChannelID: "C1", ThreadTS: "1.0", Permalink: "https://x/p", Lifecycle: "active", SlackMode: "enabled", StartedAt: "2026-09-21T00:00:00Z", StatusMessageTS: sql.NullString{String: "1.1", Valid: true}}
 	if err := d.InsertRun(ctx, want); err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestRunsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.RunID != want.RunID || got.OwnerUserID != want.OwnerUserID || got.ChannelID != want.ChannelID || got.ThreadTS != want.ThreadTS || got.Permalink != want.Permalink || got.Lifecycle != want.Lifecycle || got.SlackMode != want.SlackMode || got.StartedAt != want.StartedAt {
+	if got.RunID != want.RunID || got.OwnerUserID != want.OwnerUserID || got.ChannelID != want.ChannelID || got.ThreadTS != want.ThreadTS || got.Permalink != want.Permalink || got.Lifecycle != want.Lifecycle || got.SlackMode != want.SlackMode || got.StartedAt != want.StartedAt || got.StatusMessageTS != want.StatusMessageTS {
 		t.Fatalf("GetRun = %+v; run identity or lifecycle fields did not round-trip", got)
 	}
 	if got.StatusIntervalSeconds != DefaultStatusIntervalSeconds {
@@ -373,7 +373,7 @@ func TestOpenAddsAssistantTablesToExistingDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"runs", "owner_inputs", "terminal_notices",
+		"runs", "owner_inputs", "terminal_notices", "jira_backlinks",
 		"tasks", "task_channels", "collected_messages", "task_messages",
 		"dm_requests", "dm_messages", "assistant_runs", "refused_users",
 	}
@@ -385,8 +385,12 @@ func TestOpenAddsAssistantTablesToExistingDatabase(t *testing.T) {
 	if len(got) != len(want) {
 		t.Errorf("sqlite_master lists %d tables %v, want %d", len(got), got, len(want))
 	}
-	if _, err := d.GetRun(context.Background(), "r1"); err != nil {
+	legacyRun, err := d.GetRun(context.Background(), "r1")
+	if err != nil {
 		t.Fatalf("row written before the upgrade is unreadable: %v", err)
+	}
+	if legacyRun.StatusMessageTS.Valid {
+		t.Fatalf("legacy run unexpectedly has a status-card timestamp: %+v", legacyRun.StatusMessageTS)
 	}
 }
 

@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 )
@@ -9,9 +10,9 @@ import (
 // ErrRunNotActive reports a write that only an active run accepts.
 var ErrRunNotActive = errors.New("run is not active")
 
-// SetStatus records the most recent agent event and when its root edit is due.
+// SetStatus records the most recent agent event and its optional render deadline.
 func (d *DB) SetStatus(ctx context.Context, runID, lastStatusJSON, nextDue string) error {
-	res, err := d.sql.ExecContext(ctx, `UPDATE runs SET last_status = ?, next_status_due = ? WHERE run_id = ?`, lastStatusJSON, nextDue, runID)
+	res, err := d.sql.ExecContext(ctx, `UPDATE runs SET last_status = ?, next_status_due = ? WHERE run_id = ?`, lastStatusJSON, sql.NullString{String: nextDue, Valid: nextDue != ""}, runID)
 	if err != nil {
 		return fmt.Errorf("set status %s: %w", runID, err)
 	}
@@ -35,7 +36,7 @@ func (d *DB) MarkStatusRendered(ctx context.Context, runID, renderedJSON, at str
 }
 
 // SetStatusInterval changes one active run's cadence. A pending edit keeps its
-// deadline, recalculated by the caller from the last successful root edit.
+// deadline, recalculated by the caller from the last successful card edit.
 func (d *DB) SetStatusInterval(ctx context.Context, runID string, seconds int64, nextDue string) error {
 	res, err := d.sql.ExecContext(ctx, `UPDATE runs SET status_interval_seconds = ?, next_status_due = CASE WHEN next_status_due IS NOT NULL THEN ? ELSE NULL END WHERE run_id = ? AND lifecycle = 'active'`, seconds, nextDue, runID)
 	if err != nil {

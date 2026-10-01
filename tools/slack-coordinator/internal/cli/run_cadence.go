@@ -15,7 +15,7 @@ func newRunCadence() *cobra.Command {
 	var every time.Duration
 	c := &cobra.Command{
 		Use:   "cadence --run-id <id> --every <duration>",
-		Short: "Change the run's routine root-update cadence (default 3h)",
+		Short: "Change the run's routine status-card cadence (default 3h)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if every < time.Second || every%time.Second != 0 {
@@ -31,7 +31,7 @@ func newRunCadence() *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&runID, "run-id", "", "active run identifier")
-	c.Flags().DurationVar(&every, "every", 0, "routine root-update interval, e.g. 30m or 3h")
+	c.Flags().DurationVar(&every, "every", 0, "routine status-card interval, e.g. 30m or 3h")
 	_ = c.MarkFlagRequired("run-id")
 	_ = c.MarkFlagRequired("every")
 	return c

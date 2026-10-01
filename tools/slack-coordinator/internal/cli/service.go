@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/daemon"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/paths"
 )
@@ -39,7 +40,7 @@ var serviceFor = func(p *paths.Paths) (daemon.Service, error) {
 	if err != nil {
 		return daemon.Service{}, err
 	}
-	return daemon.Service{Home: p, Binary: exe, Executor: commandExecutor{}}, nil
+	return daemon.Service{Home: p, Binary: exe, Executor: commandExecutor{}, Path: daemon.AgentPath(os.Getenv("PATH"))}, nil
 }
 
 // service resolves the home and supervisor entry; an unsupported platform is
@@ -66,8 +67,11 @@ func newService() *cobra.Command {
 		Short: "Supervise the daemon with launchd (macOS) or systemd (Linux)",
 		Long: `Installs a per-user launchd agent or systemd user unit that runs
 "slack-coordinator daemon serve" at login and restarts it after exit. The
-definition binds this binary and $SLACK_COORDINATOR_HOME; run install again
-after moving either.`,
+definition binds this binary, $SLACK_COORDINATOR_HOME, and the PATH of the
+shell that runs install (plus Homebrew, /usr/local/bin, and ~/.local/bin).
+Launchd and systemd do not use a login shell's PATH. Run install again from
+a shell where "command -v pi" (or claude, or codex) succeeds after the
+agent moves or the binary is not found.`,
 	}
 	c.AddCommand(
 		&cobra.Command{Use: "install", Short: "Write the service definition and start supervision", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
@@ -78,34 +82,58 @@ after moving either.`,
 			if err := s.Home.EnsureDirs(); err != nil {
 				return err
 			}
+			cfg, err := config.Read(s.Home.ConfigFile())
+			if err != nil {
+				return err
+			}
+			changed, err := resolveAgentBin(cfg)
+			if err != nil {
+				return err
+			}
+			if changed {
+				if err := config.Save(s.Home.ConfigFile(), cfg); err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "recorded agent.bin %s\n", cfg.Agent.Bin)
+			}
+			if cfg != nil && cfg.Agent != nil && cfg.Agent.Bin != "" {
+				if err := verifyAgent(cfg.Agent.Bin, s.Home.Workspace()); err != nil {
+					return err
+				}
+			}
 			if err := s.Install(); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "service installed at %s\n", path)
+			if err := waitForDaemonReady(); err != nil {
+				return fmt.Errorf("service installed but the daemon socket did not answer (see %s): %w", s.Home.DaemonLog(), err)
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "daemon is ready")
 			return nil
 		}},
 		&cobra.Command{Use: "uninstall", Short: "Stop supervision and remove the service definition", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-			s, path, err := service()
+			s, _, err := service()
 			if err != nil {
 				return err
 			}
-			if !s.Installed() {
+			installed := s.InstalledPath()
+			if installed == "" {
 				fmt.Fprintln(cmd.OutOrStdout(), "service not installed")
 				return nil
 			}
 			if err := s.Uninstall(); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "service removed from %s\n", path)
+			fmt.Fprintf(cmd.OutOrStdout(), "service removed from %s\n", installed)
 			return nil
 		}},
 		&cobra.Command{Use: "status", Short: "Report whether the service definition is installed", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-			s, path, err := service()
+			s, _, err := service()
 			if err != nil {
 				return err
 			}
-			if s.Installed() {
-				fmt.Fprintf(cmd.OutOrStdout(), "service installed at %s\n", path)
+			if installed := s.InstalledPath(); installed != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "service installed at %s\n", installed)
 			} else {
 				fmt.Fprintln(cmd.OutOrStdout(), "service not installed")
 			}

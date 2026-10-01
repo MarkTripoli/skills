@@ -53,6 +53,8 @@ Validate the temporary profile through the existing `route-model` helper with ex
 
 After temporary validation succeeds, atomically rename the temporary file over the target. Before replacing an existing target, make a same-directory backup while the target remains in place. Then verify the final target through normal lookup: use project `cwd` lookup for `.agents/model-candidates.json`, or `SKILLS_MODEL_CANDIDATES_FILE` for a user-level file. Require the JSON result to report the configured economy model, every candidate in saved order, and the expected `profileSource` (`project` or `env`).
 
+Rerun the installer after changing the profile. It pins only `agent-implementer` and `agent-outline-implementer` where native worker definitions honor `model`. Project installs may use the project profile; user-scope installs read only `SKILLS_MODEL_CANDIDATES_FILE`, never a project profile shared accidentally across projects. Incompatible IDs produce a note and no pin.
+
 Temporary-validation shape (use explicit candidate-file input):
 
 ```sh

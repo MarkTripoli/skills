@@ -13,8 +13,8 @@ func newRunFinish() *cobra.Command {
 	var in coordinator.FinishRunInput
 	c := &cobra.Command{
 		Use:   "finish --run-id <id> --outcome completed|failed|cancelled [--emoji <name|none>] [--completed <s>]... [--decision <s>]... [--unresolved <s>]... [--evidence <s>]... [--link <url>]...",
-		Short: "Post the completion message and close the run",
-		Long: `Post the completion message and close the run.
+		Short: "Replace the status card with completion and close the run",
+		Long: `Replace the status card with a concise completion summary and close the run.
 
 The outcome becomes the run's terminal lifecycle; later run event or run finish
 calls for the same run are refused.`,
@@ -35,8 +35,8 @@ calls for the same run are refused.`,
 	f.StringVar(&in.RunID, "run-id", "", "run identifier printed by run start")
 	f.StringVar(&in.Outcome, "outcome", "", "completed, failed, or cancelled")
 	f.StringVar(&in.Emoji, "emoji", "", "reaction on the main message (none disables it; default depends on outcome)")
-	f.StringArrayVar(&in.Completed, "completed", nil, "work completed (repeatable)")
-	f.StringArrayVar(&in.Decisions, "decision", nil, "decision made (repeatable)")
+	f.StringArrayVar(&in.Completed, "completed", nil, "summary item (repeatable)")
+	f.StringArrayVar(&in.Decisions, "decision", nil, "legacy field (repeatable; omitted from the compact card)")
 	f.StringArrayVar(&in.Unresolved, "unresolved", nil, "item left unresolved (repeatable)")
 	f.StringArrayVar(&in.Evidence, "evidence", nil, "evidence of the outcome (repeatable)")
 	f.StringArrayVar(&in.Links, "link", nil, "related URL (repeatable)")

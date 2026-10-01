@@ -384,7 +384,12 @@ func AuthorizeMutationPeer(pid int) error {
 		}
 		env, envErr := processEnvironmentFunc(current)
 		if envErr != nil {
-			return fmt.Errorf("cannot verify IPC peer environment: %w", envErr)
+			// Daemon validation children start in the operator session. An
+			// unreadable ancestor outside it cannot hide a marked child that
+			// returns to this session, but unreadable peers inside fail closed.
+			if session, ok := processSessionIDFunc(current); !ok || session == trusted {
+				return fmt.Errorf("cannot verify IPC peer environment: %w", envErr)
+			}
 		}
 		if environmentHas(env, "SD_PARENT_RUN_ID=") || strings.Contains(command, "SD_PARENT_RUN_ID=") {
 			return errors.New("nested validation process cannot mutate daemon state")

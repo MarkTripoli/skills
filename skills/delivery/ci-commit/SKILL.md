@@ -24,7 +24,7 @@ git diff
 
 Inspect staged. Read changed files. Decide one or multiple commits.
 
-Do not stage scratch files, dummy scripts, one-off tests, or unrelated output. Keep the configured task root out of code commits; commit task changes separately per the conventions.
+Do not stage scratch files, dummy scripts, one-off tests, or unrelated output. Keep the configured task root out of code commits; task artifacts remain local and are never staged or committed.
 
 ### 3. Plan commits
 
@@ -48,7 +48,7 @@ Before every commit, check the subject line against the conventions' pattern:
 printf '%s' "<subject>" | grep -Eq '^(feat|fix|refactor|perf|test|docs|build|ci|chore|style|revert)(\([a-z0-9][a-z0-9-]*\))?!?: [a-z0-9].*[^.]$' && test "$(printf '%s' "<subject>" | wc -c)" -le 72
 ```
 
-A failing subject is rewritten and re-checked; it is never committed. When the repository has its own commit lint (`commitlint` config, a `commit-msg` hook, `.gitmessage`, or a `CONTRIBUTING.md` rule), read it and satisfy its stricter rule too.
+A failing subject is rewritten and re-checked; it is never committed. When the repository has its own commit lint (`commitlint` config, a `commit-msg` hook, `.gitmessage`, or a `CONTRIBUTING.md` rule), read it and satisfy its stricter rule too. Repository rules cover the whole message, body and trailers included: read the root `AGENTS.md` and `CLAUDE.md` and any commit validator script, and run that validator on the full message before committing. A repository rule against attribution trailers, such as `Co-Authored-By:`, overrides the runtime's default attribution. Leave such a trailer out rather than rewording later: a reword rewrites history, which permission modes often refuse.
 
 ### 5. Execute
 
@@ -61,7 +61,7 @@ Never `git add -A`, `git add .`, broad staging. Verify with `git log -1 --format
 
 ### 6. Save receipt
 
-Useful: record the next immutable `delivery.commit` iteration through the conventions' Recording an artifact flow using `references/commit_template.md`. Commit its canonical path and `index.json` explicitly as `docs(task): commit artifact`.
+Useful: record the next immutable `delivery.commit` iteration through the conventions' Recording an artifact flow using `references/commit_template.md`.
 
 Read and use `references/commit_final_answer.md` exactly. Fill `{artifact_link}` with the saved canonical task-root-relative path; when no receipt was saved, write `none`. End with a single fenced `text` command. A legacy task without `index.json` follows the conventions' legacy rules.
 
@@ -69,5 +69,5 @@ Read and use `references/commit_final_answer.md` exactly. Fill `{artifact_link}`
 
 - Use current session context; do not ask the user to restate it.
 - Focused commits, one type each, Conventional Commits subjects.
-- Artifact files never share a commit with code.
+- Task artifacts stay local and are never staged or committed.
 - Failed tests, unsafe git: blockers.

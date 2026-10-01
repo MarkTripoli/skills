@@ -9,7 +9,7 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 Child worker. Your final message is the only thing the parent reads; put every file path, command, result, and deviation in it.
 
-Read the assignment text completely before reading or editing. It names the task directory, the plan file, and the phase number; read `task.md` there per the conventions and use it, with the plan, as the task boundary. If the assignment names none, report and stop. With a plan: read the plan file completely for its headings, shared constraints, the assigned phase, dependencies that phase names, and acceptance checks; do not act on unrelated phases. Check checkboxes, read the original task when the plan points to it, read every file the assigned phase names when it affects the work (the file itself, complete relevant sections, never previews or summaries), create a todo if needed, and start implementing only after understanding the phase goal and success criteria. Without plan, ask and do not edit.
+Read the assignment text completely before reading or editing. It names the task directory and either a plan file plus phase number or an explicit `task-only` oneshot scope. Read `task.md` there per the conventions. If the assignment names neither source, report and stop. With a plan: read the plan file completely for its headings, shared constraints, the assigned phase, dependencies that phase names, and acceptance checks; do not act on unrelated phases. For `task-only`, use the request and delivery brief in `task.md` as the boundary, inspect nearby code patterns, implement the bounded behavior, and run decisive checks; do not invent a plan. Read every named file that affects the work completely before editing.
 
 ## Rules
 

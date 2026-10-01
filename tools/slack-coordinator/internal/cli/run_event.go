@@ -11,10 +11,10 @@ func newRunEvent() *cobra.Command {
 	var e coordinator.WorkEvent
 	c := &cobra.Command{
 		Use:   "event --run-id <id> --current <s> [--completed <s>]... [--decision <s>]... [--blocker <s>]... [--next <s>]...",
-		Short: "Save a status update for the run's root message",
-		Long: `Save the latest status for the run's root message. Routine changes are
-coalesced to the run's cadence (3h by default); new blockers and cleared
-blockers update immediately. A run that has finished is refused.`,
+		Short: "Save a status update for the run's thread card",
+		Long: `Save the latest status for the run's thread card. Routine changes are
+coalesced to the run's cadence (3h by default); new blockers post separate
+immediate replies. Older active runs keep root-edit behavior. A finished run is refused.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return callRunMethod(ipc.MethodRunEvent, e)
@@ -23,8 +23,8 @@ blockers update immediately. A run that has finished is refused.`,
 	f := c.Flags()
 	f.StringVar(&e.RunID, "run-id", "", "run identifier printed by run start")
 	f.StringVar(&e.Current, "current", "", "what the run is doing now")
-	f.StringArrayVar(&e.Completed, "completed", nil, "work completed since the last update (repeatable)")
-	f.StringArrayVar(&e.Decisions, "decision", nil, "decision made (repeatable)")
+	f.StringArrayVar(&e.Completed, "completed", nil, "legacy status field (repeatable; omitted from the compact card)")
+	f.StringArrayVar(&e.Decisions, "decision", nil, "legacy status field (repeatable; omitted from the compact card)")
 	f.StringArrayVar(&e.Blockers, "blocker", nil, "current blocker (repeatable)")
 	f.StringArrayVar(&e.Next, "next", nil, "work up next (repeatable)")
 	_ = c.MarkFlagRequired("run-id")

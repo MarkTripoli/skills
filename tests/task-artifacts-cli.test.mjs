@@ -164,3 +164,115 @@ test('record handles PR descriptions without frontmatter', t => {
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.json.summary, 'Ship portable indexing.');
 });
+
+test('CLIs dispatch through executable symlinks and reject nonempty invalid arguments', t => {
+  const { root, taskDir } = fixture(t, 'aliased-entrypoint');
+  const entrypoint = path.join(root, 'helper-alias.mjs');
+  fs.symlinkSync(helper, entrypoint);
+  const result = spawnSync(process.execPath, [entrypoint, 'init', taskDir], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).task, 'aliased-entrypoint');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(taskDir, 'index.json'), 'utf8')).generation, 0);
+
+  const publicationAlias = path.join(root, 'publication-alias.mjs');
+  fs.symlinkSync(fileURLToPath(new URL('../shared/publication-proof.mjs', import.meta.url)), publicationAlias);
+  const invalidPublication = spawnSync(process.execPath, [publicationAlias, 'invalid'], { encoding: 'utf8' });
+  assert.equal(invalidPublication.status, 1);
+  assert.match(invalidPublication.stderr, /Usage:/);
+
+  const contractAlias = path.join(root, 'contract-alias.mjs');
+  fs.symlinkSync(fileURLToPath(new URL('../skills/delivery/deliver/contract.mjs', import.meta.url)), contractAlias);
+  const nextReview = spawnSync(process.execPath, [contractAlias, 'review-next', taskDir, 'slice-review', 'phase-1'], { encoding: 'utf8' });
+  assert.equal(nextReview.status, 0, nextReview.stderr);
+  assert.deepEqual(JSON.parse(nextReview.stdout), {
+    type: 'slice-review', checkpoint: 'phase-1', next_round: 1, repair_round: 0,
+    previous_record: null, previous_blocking: [], invalid_records: [], limit_reached: false,
+  });
+
+  for (const entry of [entrypoint, contractAlias]) {
+    const invalid = spawnSync(process.execPath, [entry, 'invalid'], { encoding: 'utf8' });
+    assert.equal(invalid.status, 1);
+    assert.match(invalid.stderr, /Usage:|Unknown delivery contract command/);
+  }
+});
+
+test('library APIs persist indexed artifacts with absent, directory and virtual-overlay argv', t => {
+  const { root } = fixture(t, 'embedded-import');
+  const modules = ['../shared/task-artifacts.mjs', '../shared/publication-proof.mjs', '../skills/delivery/deliver/contract.mjs']
+    .map(relative => new URL(relative, import.meta.url).href);
+  for (const [name, argv, overlay] of [
+    ['absent', null, false],
+    ['directory', root, false],
+    ['virtual-missing', path.join(root, 'virtual-executable'), true],
+    ['virtual-not-directory', path.join(helper, 'virtual-executable'), true],
+  ]) {
+    const taskDir = path.join(root, name);
+    fs.mkdirSync(taskDir);
+    const text = artifact('research', `Research from ${name}`);
+    const revision = 'a'.repeat(40);
+    const capture = `source sha: ${revision}\ncommand: node probe.mjs\nstdout: persisted research.primary.0001\nexit status: 0\n`;
+    const script = `
+      import assert from 'node:assert/strict';
+      import fs from 'node:fs';
+      import path from 'node:path';
+      const argv = ${JSON.stringify(argv)};
+      if (argv === null) process.argv.length = 1;
+      else process.argv[1] = argv;
+      const exists = fs.existsSync;
+      if (${overlay}) {
+        fs.existsSync = value => value === argv || exists(value);
+        assert.equal(fs.existsSync(argv), true);
+      }
+      const [artifacts, publication, delivery] = await Promise.all(${JSON.stringify(modules)}.map(url => import(url)));
+      fs.existsSync = exists;
+      const taskDir = ${JSON.stringify(taskDir)};
+      assert.equal(artifacts.initTaskArtifacts(taskDir).generation, 0);
+      const allocation = artifacts.reserveArtifactIteration(taskDir, 'research', 'primary');
+      fs.writeFileSync(path.join(taskDir, allocation.writePath), ${JSON.stringify(text)});
+      const record = artifacts.recordArtifact(taskDir, 'research', 'primary', 'research', allocation.writePath);
+      assert.deepEqual(artifacts.currentArtifact(taskDir, 'research'), record);
+      const observed = delivery.readDeliveryArtifacts(taskDir);
+      assert.equal(observed.latest.research.hash, record.sha256);
+      assert.equal(observed.latest.research.text, ${JSON.stringify(text)});
+      assert.equal(publication.captureDestination('https://github.com/user-attachments/assets/abcd').hostname, 'github.com');
+      assert.equal(publication.captureDestination('https://untrusted.example/capture'), null);
+      const revision = ${JSON.stringify(revision)};
+      const capture = ${JSON.stringify(capture)};
+      assert.equal(publication.validateRecordedText(capture, revision, 'cli-terminal'), true);
+      assert.equal(publication.validateRecordedText(${JSON.stringify(`${capture}exit status: 1\n`)}, revision, 'cli-terminal'), false);
+      console.log(JSON.stringify({ id: record.id, sha256: record.sha256 }));
+    `;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' });
+    assert.equal(result.status, 0, `${name}: ${result.stderr}`);
+    const record = JSON.parse(result.stdout);
+    const index = JSON.parse(fs.readFileSync(path.join(taskDir, 'index.json'), 'utf8'));
+    assert.equal(index.generation, 1);
+    assert.equal(index.artifactSeries['research.primary'].current, record.id);
+    assert.equal(index.artifactSeries['research.primary'].iterations[0].sha256, record.sha256);
+    assert.equal(fs.readFileSync(path.join(taskDir, 'artifacts/research/primary/0001.md'), 'utf8'), text);
+  }
+});
+
+test('library entrypoint resolution does not hide permission or symlink-loop errors', t => {
+  const { root } = fixture(t, 'entrypoint-errors');
+  const modules = ['../shared/task-artifacts.mjs', '../shared/publication-proof.mjs', '../skills/delivery/deliver/contract.mjs']
+    .map(relative => new URL(relative, import.meta.url).href);
+  for (const module of modules) for (const code of ['EACCES', 'ELOOP']) {
+    const script = `
+      import assert from 'node:assert/strict';
+      import fs from 'node:fs';
+      process.argv.length = 1;
+      await Promise.all(${JSON.stringify(modules)}.map(url => import(url)));
+      const argv = ${JSON.stringify(path.join(root, 'inaccessible-executable'))};
+      process.argv[1] = argv;
+      const realpath = fs.realpathSync;
+      fs.realpathSync = value => {
+        if (value === argv) throw Object.assign(new Error('entrypoint resolution ${code}'), { code: '${code}' });
+        return realpath(value);
+      };
+      await assert.rejects(import(${JSON.stringify(`${module}?guard-error=${code}`)}), { code: '${code}' });
+    `;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' });
+    assert.equal(result.status, 0, `${module} ${code}: ${result.stderr}`);
+  }
+});

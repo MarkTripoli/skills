@@ -38,6 +38,7 @@ type ContentResult struct {
 	CanvasURL string           `json:"canvas_url,omitempty"`
 	Page      int              `json:"page"`
 	Pages     int              `json:"pages"`
+	Tabs      []slack.Tab      `json:"tabs,omitempty"`
 }
 
 // ListItemsParams reads one page from a Slack List accessible in the run channel.
@@ -66,7 +67,10 @@ func (c *Coordinator) ListItems(ctx context.Context, in ListItemsParams) (json.R
 	if err != nil {
 		return nil, fmt.Errorf("get list %s: %w", in.ListID, err)
 	}
-	accessible := file != nil && file.Filetype == "list" && containsChannel(file, run.ChannelID)
+	if file == nil || (file.Filetype != "list" && file.Mode != "list") {
+		return nil, errors.New("file is not a Slack List")
+	}
+	accessible := containsChannel(file, run.ChannelID)
 	if !accessible {
 		conversation, infoErr := c.Content.ConversationInfo(ctx, run.ChannelID)
 		if infoErr != nil {
@@ -98,9 +102,11 @@ func containsChannel(file *slack.File, channel string) bool {
 	if file == nil || channel == "" {
 		return false
 	}
-	for _, id := range file.Channels {
-		if id == channel {
-			return true
+	for _, channels := range [][]string{file.Channels, file.Groups, file.IMs} {
+		for _, id := range channels {
+			if id == channel {
+				return true
+			}
 		}
 	}
 	return false
@@ -132,7 +138,11 @@ func (c *Coordinator) ListContent(ctx context.Context, in ContentParams) (Conten
 	if c.Content == nil {
 		return ContentResult{}, errors.New("Slack content operations unavailable")
 	}
-	files, paging, err := c.Content.Files(ctx, run.ChannelID, in.Page)
+	page := in.Page
+	if page == 0 {
+		page = 1
+	}
+	files, paging, err := c.Content.Files(ctx, run.ChannelID, page)
 	if err != nil {
 		return ContentResult{}, fmt.Errorf("list channel files: %w", err)
 	}
@@ -144,11 +154,12 @@ func (c *Coordinator) ListContent(ctx context.Context, in ContentParams) (Conten
 	if err != nil {
 		return ContentResult{}, fmt.Errorf("get run channel info: %w", err)
 	}
-	result := ContentResult{Files: files, Bookmarks: bookmarks, Page: in.Page}
+	result := ContentResult{Files: files, Bookmarks: bookmarks, Page: page}
 	if paging != nil {
 		result.Pages = paging.Pages
 	}
 	if conversation != nil && conversation.Properties != nil {
+		result.Tabs = conversation.Properties.Tabs
 		result.CanvasID = conversation.Properties.Canvas.FileId
 		if result.CanvasID != "" {
 			canvas, err := c.Content.FileInfo(ctx, result.CanvasID)
@@ -199,8 +210,8 @@ func (c *Coordinator) UploadContent(ctx context.Context, in UploadParams) (Uploa
 	if err != nil {
 		return UploadResult{}, fmt.Errorf("stat upload file: %w", err)
 	}
-	if !info.Mode().IsRegular() {
-		return UploadResult{}, errors.New("upload path must be a regular file")
+	if !info.Mode().IsRegular() || info.Size() == 0 || info.Size() > 20<<20 {
+		return UploadResult{}, errors.New("file must be regular, nonempty, and at most 20 MiB")
 	}
 	name := filepath.Base(in.Path)
 	title := strings.TrimSpace(in.Title)

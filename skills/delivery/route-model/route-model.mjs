@@ -2,7 +2,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { filterCandidatesByQuota, readOmpUsage } from './quota.mjs';
 
 export const DEFAULT_ECONOMY = 'openai-codex/gpt-5.6-luna-fast';
 export const MUTATION_PHASES = new Set(['implement-task', 'implement-plan', 'implement-outline', 'agent-implementer', 'iterate-implementation', 'fix-bug', 'fix-code-review', 'resolve-pr-reviews', 'reproduce-bug', 'test-app', 'record-evidence']);
@@ -19,7 +18,7 @@ const number = (value, label) => {
 
 export function loadCandidateProfile(options = {}) {
   if (options.candidates !== undefined) return { candidates: options.candidates, economy: options.economy, routing: options.routing ?? options.modelRouting, source: 'explicit' };
-  const configuredFile = options.projectOnly ? undefined : process.env.SKILLS_MODEL_CANDIDATES_FILE;
+  const configuredFile = options.projectOnly ? undefined : (options.env ?? process.env).SKILLS_MODEL_CANDIDATES_FILE;
   const projectFile = path.resolve(options.projectDir ?? options.cwd ?? process.cwd(), '.agents', 'model-candidates.json');
   const file = configuredFile || (fs.existsSync(projectFile) ? projectFile : null);
   if (!file) return { candidates: undefined, economy: options.economy, routing: options.routing ?? options.modelRouting, source: 'none' };
@@ -29,6 +28,9 @@ export function loadCandidateProfile(options = {}) {
   if (!Array.isArray(profile.candidates) || typeof profile.economy !== 'string' || !profile.economy.trim()) throw new Error(`Invalid model candidate profile ${file}: expected economy and candidates`);
   return { candidates: profile.candidates, economy: options.economy ?? profile.economy, routing: options.routing ?? options.modelRouting ?? profile.routing, source: configuredFile ? 'env' : 'project', file };
 }
+
+// Capability order, not cost, determines the strongest candidate.
+export const strongestCandidate = candidates => candidates.at(-1);
 
 export function normalizeCandidates(value, economy) {
   if (value === undefined) value = [{ model: economy, cost: 0, description: 'configured economical model' }];
@@ -75,35 +77,11 @@ export async function routeModel(skillsDir, options = {}) {
   const routing = profile.routing ?? 'auto';
   if (routing !== 'auto' && routing !== 'fixed') throw new Error(`Unknown routing ${JSON.stringify(routing)}; expected auto or fixed`);
   const candidates = normalizeCandidates(profile.candidates, economy);
-  const originalModels = candidates.map(candidate => candidate.model);
-  let availableCandidates = candidates;
-  let quotaRecord = null;
-  if (options.quotaMode && options.quotaMode !== 'off') {
-    if (options.quotaMode !== 'omp') throw new Error('agent-router quota requires the explicit Herdr transport; route-model does not provide a generic reservation API');
-    const snapshot = options.quotaSnapshot ?? await readOmpUsage({ command: options.quotaCommand, cwd: options.cwd, env: options.env });
-    const filtered = filterCandidatesByQuota(candidates, snapshot, options.quota || {});
-    availableCandidates = filtered.candidates;
-    quotaRecord = { ...filtered.summary, exclusions: filtered.exclusions };
-    if (availableCandidates.length === 0) {
-      const reasons = filtered.exclusions.map(item => `${item.model}:${item.reason}`).join(', ');
-      throw new Error(`No eligible model candidates after OMP quota filtering (${reasons})`);
-    }
-  }
-  const models = availableCandidates.map(candidate => candidate.model);
-  const record = { candidates: originalModels, availableCandidates: models, confidence: null, probabilities: null, profileSource: profile.source, ...(quotaRecord ? { quota: quotaRecord } : {}) };
-  const fallback = (reason) => ({ ...record, model: availableCandidates[0].model, source: 'fallback', reason });
-  const mutationOrUnknown = MUTATION_PHASES.has(phase) || !ELIGIBLE_PHASES.has(phase);
-  if (mutationOrUnknown && !models.includes(economy)) {
-    throw new Error(`Configured economy model ${JSON.stringify(economy)} is unavailable under the active quota policy`);
-  }
-  if (routing === 'fixed' && !models.includes(economy)) {
-    throw new Error(`Configured economy model ${JSON.stringify(economy)} is unavailable under the active quota policy`);
-  }
-  if (mutationOrUnknown) {
+  const models = candidates.map(candidate => candidate.model);
+  const record = { candidates: models, availableCandidates: models, confidence: null, probabilities: null, profileSource: profile.source };
+  const fallback = reason => ({ ...record, model: economy, source: 'fallback', reason });
+  if (routing === 'fixed' || !ELIGIBLE_PHASES.has(phase) || MUTATION_PHASES.has(phase) || candidates.length === 1) {
     return { ...record, model: economy, source: routing === 'fixed' ? 'fixed' : 'policy' };
-  }
-  if (routing === 'fixed' || availableCandidates.length === 1) {
-    return { ...record, model: routing === 'fixed' ? economy : availableCandidates[0].model, source: routing === 'fixed' ? 'fixed' : 'policy' };
   }
   const helperPath = path.resolve(skillsDir, 'typed-judgment', 'judge.mjs');
   let helper;
@@ -115,10 +93,10 @@ export async function routeModel(skillsDir, options = {}) {
     if (!options.requireJev) return fallback('typed-judgment helper has no systemOne export');
     throw new Error(`JEV is unavailable: ${helperPath} has no systemOne export`);
   }
-  const criteria = Object.fromEntries(availableCandidates.map((candidate, index) => [candidate.model, `Candidate ${index + 1}, ordered weakest to strongest, can complete the request with this capability: ${candidate.description}. Choose the cheapest adequate candidate.`]));
+  const criteria = Object.fromEntries(candidates.map((candidate, index) => [candidate.model, `Candidate ${index + 1}, ordered weakest to strongest, can complete the request with this capability: ${candidate.description}. Choose the cheapest adequate candidate.`]));
   let answers;
   try {
-    answers = await helper.systemOne({ phase, request: options.request ?? '', artifacts: options.artifacts ?? [], candidates: availableCandidates }, { model: { type: 'choice', instructions: 'Choose the cheapest supplied model that can fully complete this phase in one pass. Never choose a model not listed as a criterion.', criteria } });
+    answers = await helper.systemOne({ phase, request: options.request ?? '', artifacts: options.artifacts ?? [], candidates }, { model: { type: 'choice', instructions: 'Choose the cheapest supplied model that can fully complete this phase in one pass. Never choose a model not listed as a criterion.', criteria } });
   } catch (error) {
     if (!options.requireJev) return fallback(`JEV unavailable: ${error.message}`);
     throw new Error(`JEV is unavailable: ${error.message}`);
@@ -133,9 +111,9 @@ export async function routeModel(skillsDir, options = {}) {
   }
   validateProbabilities(probabilities, models);
   if (!Number.isFinite(answer.confidence) || answer.confidence < 0 || answer.confidence > 1) throw new Error('Invalid JEV model-routing response: confidence must be finite in [0,1]');
-  const losses = expectedLosses(availableCandidates, probabilities);
+  const losses = expectedLosses(candidates, probabilities);
   const selectedIndex = losses.indexOf(Math.min(...losses));
-  return { ...record, model: availableCandidates[selectedIndex].model, source: 'jev', confidence: answer.confidence, probabilities, requestedModel: choice, expectedLosses: Object.fromEntries(models.map((model, index) => [model, losses[index]])), ...(helper.lastCall?.usage ? { usage: helper.lastCall.usage } : {}) };
+  return { ...record, model: candidates[selectedIndex].model, source: 'jev', confidence: answer.confidence, probabilities, requestedModel: choice, expectedLosses: Object.fromEntries(models.map((model, index) => [model, losses[index]])), ...(helper.lastCall?.usage ? { usage: helper.lastCall.usage } : {}) };
 }
 
 async function main() {
@@ -157,4 +135,4 @@ async function main() {
   const result = await routeModel(skillsDir, input);
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
-if (import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(error => { process.stderr.write(`${error.message}\n`); process.exitCode = 1; });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(error => { process.stderr.write(`${error.message}\n`); process.exitCode = 1; });

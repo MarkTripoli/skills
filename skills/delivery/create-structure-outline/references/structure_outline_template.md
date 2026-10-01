@@ -87,3 +87,11 @@ Omit this section when the phase has none.
 ### Known limits
 
 - [Known limit, or `None.`]
+
+## Progress
+
+- [YYYY-MM-DD: phase, commit, reviewer verdict; or `None.`]
+
+## Decisions
+
+- [Decision, owner, reason; or `None.`]

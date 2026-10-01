@@ -6,9 +6,9 @@ import (
 	"time"
 )
 
-// SetStatusCadence adjusts one active run's routine root-edit cadence without
+// SetStatusCadence adjusts one active run's routine status-card cadence without
 // affecting blocker notifications or completion. A pending event is rescheduled
-// relative to the last root edit; overdue work is picked up on the next tick.
+// relative to the last successful card edit.
 func (c *Coordinator) SetStatusCadence(ctx context.Context, in StatusCadenceInput) error {
 	c.statusMu.Lock()
 	defer c.statusMu.Unlock()

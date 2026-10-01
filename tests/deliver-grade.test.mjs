@@ -1,0 +1,90 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { execFileSync } from "node:child_process";
+import { deliverCheck } from "../evals/deliver-grade.mjs";
+import { sourceRevision } from "../skills/delivery/deliver/contract.mjs";
+import { initTaskArtifacts, reserveArtifactIteration, recordArtifact } from "../shared/task-artifacts.mjs";
+
+const economy = "anthropic/claude-sonnet-5-5";
+const strongest = "anthropic/claude-opus-5-5";
+
+test("deliver grading binds indexed records to independently attributed work and rejects a moved head", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "deliver-grade-index-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, "repo");
+  fs.cpSync(new URL("../evals/fixtures/deliver-small-bug/", import.meta.url), repo, { recursive: true });
+  const git = (...args) => execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  git("init", "-q", "-b", "main");
+  git("config", "user.email", "evals@example.com");
+  git("config", "user.name", "Skills Evals");
+  fs.appendFileSync(path.join(repo, ".git", "info", "exclude"), "\n/.agents/tasks/\n");
+  fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({ type: "module", scripts: { test: "node --test tests/*.test.mjs" } }));
+  git("add", ".agents/model-candidates.json", "README.md", "src/retry.mjs", "tests/retry.test.mjs", "package.json");
+  git("commit", "-q", "-m", "chore: seed retry fixture");
+  const fixtureSha = git("rev-parse", "HEAD");
+  const taskDir = path.join(repo, ".agents", "tasks", "deliver-small-bug");
+  fs.mkdirSync(taskDir, { recursive: true });
+  fs.writeFileSync(path.join(taskDir, "task.md"), "---\nslug: deliver-small-bug\n---\nFix the retry cap.\n\n## Delivery brief\nOnly the retry helper changes.\n\n## Status\nblocked: no GitHub PR remote; unblock check: git remote get-url origin\n");
+  initTaskArtifacts(taskDir);
+  const save = (kind, variant, type, status, body, extra = "") => {
+    const allocation = reserveArtifactIteration(taskDir, kind, variant);
+    fs.writeFileSync(path.join(taskDir, allocation.writePath), `---\ntype: ${type}\nsummary: Source-bound evaluation fixture\n${status ? `status: ${status}\n` : ""}${extra}---\n\n${body}\n`);
+    return recordArtifact(taskDir, kind, variant, type, allocation.writePath);
+  };
+  const plan = save("planning", "plan", "plan", null, "# Retry plan\n\n## Phase 1: cap the delay");
+  const source = path.join(repo, "src", "retry.mjs");
+  fs.writeFileSync(source, fs.readFileSync(source, "utf8").replace("Math.max", "Math.min"));
+  git("add", "src/retry.mjs");
+  git("commit", "-q", "-m", "fix(retry): cap the delay");
+  const head = git("rev-parse", "HEAD");
+  const revision = sourceRevision(taskDir);
+  const meta = (checkpoint) => `checkpoint: ${checkpoint}\nreviewed_commit: ${head}\nreviewer_model: ${strongest}\nround: 1\nrevision: ${revision}\n${checkpoint === "plan" ? `reviewed_artifact: ${plan.path}\nreviewed_artifact_sha256: ${plan.sha256}\n` : ""}`;
+  const planReview = save("review", "plan", "plan-review", "approve", "## Findings\n\nNone.", meta("plan"));
+  const slice = save("review", "slice", "slice-review", "approve", "## Checks\n\n| Command | Exit | Result |\n|---|---|---|\n| npm test | 0 | pass |\n\n## Findings\n\nNone.", meta("phase-1"));
+  const code = save("review", "code", "code-review", "clean", "## Critical and Required Findings\n\nNone.", meta("final"));
+  const verification = save("review", "verification", "verification", "passed", "## Items\n\n| ID | Criterion | Verdict | Observed |\n|---|---|---|---|\n| A1 | Delay cap | pass | 10000 ms at attempt 10 |", meta("final"));
+  const sessionDir = path.join(root, "sessions");
+  fs.mkdirSync(sessionDir);
+  let callId = 0;
+  const call = (name, args) => ({ type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: `call-${++callId}`, name, arguments: args }] } });
+  const session = (id, agent, model, calls) => {
+    const at = new Date(Date.now() + 60000).toISOString();
+    const results = calls.flatMap((row) => row.message.content.filter((part) => ["write", "read"].includes(part.name)).map((part) => {
+      let text = "Written.";
+      let details;
+      if (part.name === "read") {
+        const skill = path.basename(path.dirname(part.arguments.path));
+        const lines = fs.readFileSync(new URL(`../skills/delivery/${skill}/SKILL.md`, import.meta.url), "utf8").split("\n");
+        text = `[${part.arguments.path}#1829]\n${lines.map((line, i) => `${i + 1}:${line}`).join("\n")}`;
+        details = { totalLines: lines.length };
+      }
+      return { type: "message", message: { role: "toolResult", toolCallId: part.id, isError: false, content: [{ type: "text", text }], ...(details ? { details } : {}) } };
+    }));
+    const rows = [{ type: "session", id, ...(agent ? { parentSession: "orchestrator" } : {}) }, { type: "session_init", agent, resolvedModel: model, task: "Read the repository and assigned artifact." }, ...calls, ...results];
+    fs.writeFileSync(path.join(sessionDir, `${id}.jsonl`), rows.map((row) => JSON.stringify({ ...row, timestamp: at })).join("\n"));
+  };
+  const writeRecord = (record) => call("write", { path: `${taskDir}/${record.path}`, content: fs.readFileSync(path.join(taskDir, record.path), "utf8") });
+  session("orchestrator", null, strongest, []);
+  session("builder", "agent-implementer", economy, [call("edit", { input: "[src/retry.mjs#ABCD]\nPUT 3.=3:\n+  return Math.min(baseMs * 2 ** attempt, maxMs);" }), call("bash", { command: 'git commit -m "fix(retry): cap the delay"' })]);
+  session("plan", "agent-implementation-reviewer", strongest, [writeRecord(planReview)]);
+  session("slice", "agent-implementation-reviewer", strongest, [writeRecord(slice)]);
+  session("code", "agent-implementation-reviewer", strongest, [call("read", { path: "/fixture/.dist/skills/review-code/SKILL.md" }), writeRecord(code)]);
+  session("verification", "agent-implementation-reviewer", strongest, [call("read", { path: "/fixture/.dist/skills/verify-implementation/SKILL.md" }), writeRecord(verification)]);
+  const grade = (options = {}) => deliverCheck(options)({ live: true, timesPreserved: true, repo, codeRoot: repo, taskDir, fixtureSha, sessionDir, answer: "Stopped: `blocked: no GitHub PR remote; unblock check: git remote get-url origin`." });
+  assert.deepEqual(grade(), []);
+  assert.ok(grade({ minPhases: 2 }).some((p) => p.includes("expected at least 2")));
+  assert.ok(grade({ minPhases: 2 }).some((p) => p.includes("distinct reviewed commits")));
+  save("planning", "plan", "plan", null, "# Revised retry plan\n\n## Phase 1: cap the delay");
+  assert.ok(grade().some((p) => p.includes("current plan")));
+  session("code", "agent-implementation-reviewer", economy, [call("read", { path: "/fixture/.dist/skills/review-code/SKILL.md" }), writeRecord(code)]);
+  assert.ok(grade().some((p) => p.includes("expected the strongest candidate")));
+  fs.appendFileSync(source, "\n// Another source revision.\n");
+  git("add", "src/retry.mjs");
+  git("commit", "-q", "-m", "fix(retry): explain the cap");
+  const moved = grade();
+  assert.ok(moved.some((p) => p.includes("no record reviews HEAD")));
+  assert.ok(moved.some((p) => p.includes("without an approved slice review")));
+});

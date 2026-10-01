@@ -2,6 +2,7 @@
 type: implementation
 completed_phase: [positive integer]
 summary: "[Two to four sentences stating what the completed phase proves and what the next phase must consume.]"
+revision: "[exact contract source fingerprint]"
 ---
 
 # Outline Implementation Receipt
@@ -11,6 +12,9 @@ summary: "[Two to four sentences stating what the completed phase proves and wha
 - structure outline:
 - companion artifacts:
 - phase range:
+- policy/baseline checkpoint:
+- current phase / remaining verification, review, evidence:
+- last completed action / next incomplete action:
 
 ## Child Workers
 - outline implementer:

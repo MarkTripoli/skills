@@ -34,16 +34,17 @@ type Run struct {
 	StartedAt             string
 	FinishedAt            sql.NullString
 	NextStatusDue         sql.NullString
-	LastStatus            sql.NullString // JSON of the last status message posted
-	RootMessage           sql.NullString // JSON of the original root fields, for editing the root
+	LastStatus            sql.NullString // JSON of the latest status payload
+	RootMessage           sql.NullString // JSON of the original root fields
+	StatusMessageTS       sql.NullString // timestamp of the editable thread status card
 	StatusIntervalSeconds int64          // per-run cadence, 10800 by default
-	LastRootUpdate        sql.NullString // last root post or status edit (UTC)
+	LastRootUpdate        sql.NullString // last status-card edit or root post (UTC)
 	// LastDeliveryError holds the latest failed Slack delivery, including a
 	// finish reaction failure. When present, run check reports unavailable.
 	LastDeliveryError sql.NullString
 }
 
-const runColumns = `run_id, owner_user_id, channel_id, thread_ts, permalink, lifecycle, slack_mode, started_at, finished_at, next_status_due, last_status, last_delivery_error, root_message, status_interval_seconds, last_root_update`
+const runColumns = `run_id, owner_user_id, channel_id, thread_ts, permalink, lifecycle, slack_mode, started_at, finished_at, next_status_due, last_status, last_delivery_error, root_message, status_interval_seconds, last_root_update, status_message_ts`
 
 type scanner interface {
 	Scan(dest ...any) error
@@ -51,7 +52,7 @@ type scanner interface {
 
 func scanRun(s scanner) (Run, error) {
 	var r Run
-	err := s.Scan(&r.RunID, &r.OwnerUserID, &r.ChannelID, &r.ThreadTS, &r.Permalink, &r.Lifecycle, &r.SlackMode, &r.StartedAt, &r.FinishedAt, &r.NextStatusDue, &r.LastStatus, &r.LastDeliveryError, &r.RootMessage, &r.StatusIntervalSeconds, &r.LastRootUpdate)
+	err := s.Scan(&r.RunID, &r.OwnerUserID, &r.ChannelID, &r.ThreadTS, &r.Permalink, &r.Lifecycle, &r.SlackMode, &r.StartedAt, &r.FinishedAt, &r.NextStatusDue, &r.LastStatus, &r.LastDeliveryError, &r.RootMessage, &r.StatusIntervalSeconds, &r.LastRootUpdate, &r.StatusMessageTS)
 	return r, err
 }
 
@@ -62,8 +63,8 @@ func (d *DB) InsertRun(ctx context.Context, r Run) error {
 	}
 	_, err := d.sql.ExecContext(ctx, `
 INSERT INTO runs (`+runColumns+`)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.RunID, r.OwnerUserID, r.ChannelID, r.ThreadTS, r.Permalink, r.Lifecycle, r.SlackMode, r.StartedAt, r.FinishedAt, r.NextStatusDue, r.LastStatus, r.LastDeliveryError, r.RootMessage, r.StatusIntervalSeconds, r.LastRootUpdate)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.RunID, r.OwnerUserID, r.ChannelID, r.ThreadTS, r.Permalink, r.Lifecycle, r.SlackMode, r.StartedAt, r.FinishedAt, r.NextStatusDue, r.LastStatus, r.LastDeliveryError, r.RootMessage, r.StatusIntervalSeconds, r.LastRootUpdate, r.StatusMessageTS)
 	if err != nil {
 		return fmt.Errorf("insert run %s: %w", r.RunID, err)
 	}

@@ -2,10 +2,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { subjectProblems } from "../scripts/check-commits.mjs";
-import { artifacts, failures, handoff, newest, placeholders } from "./lib.mjs";
+import { artifacts, failures, handoff, isolatedEnv, newest, ompArgs, ompShim, placeholders, spawnIsolated } from "./lib.mjs";
 import { recordSecurityAssessment } from "./security-assessment.mjs";
 import { gradeEvidenceScenario, isEvidenceScenario, snapshotEvidenceSources } from "./iterate-evidence.mjs";
 import { metricsForOutput } from "./metrics.mjs";
@@ -16,7 +15,7 @@ const repoRoot = path.resolve(here, "..");
 const resultsRoot = path.join(here, "results");
 const scenariosDir = path.join(here, "scenarios");
 const fixturesDir = path.join(here, "fixtures");
-const guidanceFiles = ["WRITING.md", "CONVENTIONS.md"];
+const guidanceFiles = ["WRITING.md", "CONVENTIONS.md", "placeholders.md"];
 
 const args = process.argv.slice(2);
 if (args[0] === "--compare") {
@@ -136,26 +135,52 @@ function snapshotSources(dist) {
   fs.cpSync(fixturesDir, path.join(dist, "fixtures"), { recursive: true });
   fs.cpSync(shared, path.join(dist, "fixtures", "shared"), { recursive: true });
 }
-// A throwaway git repository holding the fixture codebase, the worker definitions, and the task directory.
-function prepareRepo(scenario, dist) {
+// A throwaway fixture repository with ignored indexed task state and installed workers.
+async function prepareRepo(scenario, dist) {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), `skills-eval-${scenario.name}-`));
   git(repo, "init", "-q", "-b", "main");
   git(repo, "config", "user.email", "evals@example.com");
   git(repo, "config", "user.name", "Skills Evals");
   copyFixtures(scenario, repo, path.join(dist, "fixtures"));
-  fs.cpSync(path.join(dist, "agents"), path.join(repo, ".omp", "agents"), { recursive: true });
+  // Task files are local, ignored state, including any a fixture seeds: ignore them before the first commit so none is tracked.
+  fs.appendFileSync(path.join(repo, ".git", "info", "exclude"), "\n/.agents/tasks/\n");
+  const { apply, buildTrees, plan } = await import(pathToFileURL(path.join(dist, "evidence-source", "scripts", "install.mjs")));
+  const { PINNED_WORKERS } = await import(pathToFileURL(path.join(dist, "evidence-source", "scripts", "lib", "build.mjs")));
+  const { initTaskArtifacts } = await import(pathToFileURL(path.join(dist, "evidence-source", "shared", "task-artifacts.mjs")));
+  // Workers come from the real installer, project scope, so the fixture's model profile pins the builder exactly as a user's install would.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "skills-eval-home-"));
+  const workers = fs.readdirSync(path.join(dist, "agents")).map((f) => f.replace(/\.md$/, ""));
+  const planned = plan({ targets: ["oh-my-pi"], skillNames: workers, project: true, cwd: repo, home, env: { PATH: "" } });
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), "skills-eval-build-"));
+  try {
+    apply(planned, { built: buildTrees(planned, work), uninstall: false, home });
+  } finally {
+    fs.rmSync(work, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+  // A scenario for the separate-session fallback has no pinned builder definition: drop the `model:` the installer wrote.
+  if (scenario.pinBuilders === false) {
+    for (const name of PINNED_WORKERS) {
+      const file = path.join(repo, ".omp", "agents", `${name}.md`);
+      if (!fs.existsSync(file)) continue;
+      const text = fs.readFileSync(file, "utf8");
+      if (!/^model: /m.test(text)) throw new Error(`${name} was not pinned, so there is no pin to drop`);
+      fs.writeFileSync(file, text.replace(/^model: .*\n/m, ""));
+    }
+  }
   git(repo, "add", "-A");
   git(repo, "commit", "-q", "-m", "chore: fixture codebase and worker definitions");
 
   const taskDir = path.join(repo, ".agents", "tasks", scenario.slug);
+  const legacyTask = fs.existsSync(taskDir) && !fs.existsSync(path.join(taskDir, "index.json"));
   fs.mkdirSync(taskDir, { recursive: true });
   const created = new Date().toISOString().slice(0, 10);
   fs.writeFileSync(
     path.join(taskDir, "task.md"),
     `---\nslug: ${scenario.slug}\ntitle: ${scenario.title}\nworkflow: ${scenario.workflow}\ncreated: ${created}\n---\n${scenario.request}\n`,
   );
-  git(repo, "add", path.relative(repo, path.join(taskDir, "task.md")));
-  git(repo, "commit", "-q", "-m", `docs(task): open ${scenario.slug}`);
+  // Seeded historical tasks retain legacy discovery; never hide their inputs behind an empty index.
+  if (!legacyTask) initTaskArtifacts(taskDir);
   return { repo, taskDir };
 }
 
@@ -168,7 +193,7 @@ function phasePrompt(skillsDir, phase, taskRel) {
   return [
     `Read and follow ${path.join(skillsDir, phase.skill, "SKILL.md")}, the installed \`${phase.skill}\` skill, for task directory ${taskRel}.`,
     "",
-    "Before drafting or replying, read the pinned current guidance in this task repository: `shared/WRITING.md` and `shared/CONVENTIONS.md`. Do not fetch published copies or read the harness checkout.",
+    "Before drafting or replying, read the pinned current guidance in this task repository: `shared/WRITING.md`, `shared/CONVENTIONS.md` and `shared/placeholders.md`. Do not fetch published copies or read the harness checkout.",
     "Use only facts from this task repository (its task, artifacts, fixture source, and local source documents) in artifacts and citations; never cite host-repository code.",
     "",
     phase.request ?? "",
@@ -177,23 +202,34 @@ function phasePrompt(skillsDir, phase, taskRel) {
   ].join("\n").replace(/\n{3,}/g, "\n\n");
 }
 
-function runOmp(prompt, cwd) {
+function runOmp(prompt, cwd, { sessionDir = null, phaseModel = null, nestedDir = null } = {}) {
   return new Promise((resolve) => {
-    const ompArgs = ["-p", "--auto-approve", "--no-session", "--mode", "json", `--max-time=${maxMinutes}m`];
-    if (model !== null) ompArgs.push("--model", model);
-    ompArgs.push(prompt);
-    const child = spawn("omp", ompArgs, {
-      cwd, stdio: ["ignore", "pipe", "pipe"], env: process.env, detached: true,
+    // Its own process group, so a kill on timeout reaches the child workers omp spawned.
+    const callArgs = ompArgs({ prompt, sessionDir, maxMinutes, model: model ?? phaseModel });
+    const env = isolatedEnv(process.env);
+    const shim = nestedDir ? ompShim(nestedDir, env) : null;
+    if (shim) env.PATH = [shim, env.PATH].join(path.delimiter);
+    const child = spawnIsolated("omp", callArgs, {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      env,
+      detached: true,
+      isolated: env,
     });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d) => (stdout += d));
     child.stderr.on("data", (d) => (stderr += d));
     const timer = setTimeout(() => {
-      try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        child.kill("SIGKILL");
+      }
     }, (maxMinutes + 1) * 60 * 1000);
     child.on("close", (code) => {
       clearTimeout(timer);
+      if (shim) fs.rmSync(shim, { recursive: true, force: true });
       resolve({ code, stdout, stderr });
     });
   });
@@ -209,23 +245,29 @@ function snapshot(taskDir) {
 
 // Checks every phase must pass before its own: one handoff fence naming the next skill directly after
 // the handoff sentences, the artifact with its type and summary, no template placeholder left anywhere
-// in it (frontmatter included), its commit carrying that file, a repository that is otherwise untouched
+// in it (frontmatter included), task files ignored and untracked, a repository that is otherwise untouched
 // (no code, config, or stray file written or committed by a phase that only writes an artifact), and
 // earlier artifacts and `task.md` unchanged. Git-state checks need the live repository and are skipped
 // when re-grading a recording.
-function headArtifactCommitProblems(ctx) {
-  const relative = path.relative(ctx.repo, ctx.artifact.path);
-  const subject = git(ctx.repo, "log", "-1", "--format=%s");
-  const problems = subjectProblems(subject).map((problem) => `git: HEAD subject ${JSON.stringify(subject)}: ${problem}`);
-  if (!subject.startsWith("docs(task): ")) problems.push(`git: HEAD subject ${JSON.stringify(subject)} is not a focused docs(task) commit`);
-  const changed = git(ctx.repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").split("\n").filter(Boolean);
-  if (!changed.includes(relative)) problems.push(`git: HEAD does not commit produced artifact ${relative} (changed: ${changed.join(", ") || "none"})`);
-  else if (changed.length !== 1) problems.push(`git: HEAD commit is not focused on ${relative} (changed: ${changed.join(", ")})`);
-  return problems;
+function taskArtifactProblems(ctx) {
+  const taskRel = path.relative(ctx.repo, ctx.taskDir);
+  const tracked = git(ctx.repo, "ls-files", "--", taskRel).split("\n").filter(Boolean);
+  const committed = git(ctx.repo, "log", "--all", "--format=", "--name-only", "--", taskRel).split("\n").filter(Boolean);
+  let ignored = true;
+  try {
+    execFileSync("git", ["check-ignore", "-q", path.join(taskRel, "task.md")], { cwd: ctx.repo, stdio: "ignore" });
+  } catch {
+    ignored = false;
+  }
+  return [
+    ...(!ignored ? [`git: ${taskRel}/task.md is not ignored`] : []),
+    ...(tracked.length ? [`git: task files are tracked: ${tracked.join(", ")}`] : []),
+    ...(committed.length ? [`git: task files appear in commit history: ${committed.join(", ")}`] : []),
+  ];
 }
 
 // Checks every phase must pass before its own: one text handoff fence naming the next skill,
-// included), its commit carrying that file, a repository that is otherwise untouched (no code,
+// included), task files ignored and untracked, a repository that is otherwise untouched (no code,
 // config, or stray file written or committed by a phase that only writes an artifact), and earlier
 // artifacts and `task.md` unchanged. Git-state checks need the live repository and are skipped when
 // re-grading a recording.
@@ -248,7 +290,7 @@ function commonChecks(phase, ctx) {
     if (!ctx.artifact.fm.summary) out.push(`${ctx.artifact.file}: frontmatter summary missing`);
     const left = placeholders(ctx.artifact.text, ctx.template);
     if (left.length) out.push(`${ctx.artifact.file}: template placeholder left: ${left.slice(0, 3).join(" | ")}`);
-    if (phase.handoffNamesArtifact && h && h.file !== ctx.artifact.file) out.push(`reply: fence names ${h.file ?? "no file"}, expected @${ctx.artifact.file}`);
+    if (phase.handoffNamesArtifact && h && ![ctx.artifact.file, `${ctx.taskRel}/${ctx.artifact.file}`].includes(h.file)) out.push(`reply: fence names ${h.file ?? "no file"}, expected @${ctx.taskRel}/${ctx.artifact.file}`);
     if (ctx.artifact.text.includes(`${repoRoot}${path.sep}`)) out.push(`${ctx.artifact.file}: cites the harness checkout instead of the fixture repository`);
     if (ctx.before.some((a) => a.file === ctx.artifact.file)) out.push(`${ctx.artifact.file}: the phase reused an existing artifact instead of taking the next number`);
   }
@@ -258,7 +300,7 @@ function commonChecks(phase, ctx) {
     else if (now !== a.text) out.push(`${a.file}: an earlier file was modified by this phase`);
   }
   if (!ctx.live) return out;
-  if (ctx.artifact) out.push(...headArtifactCommitProblems(ctx));
+  out.push(...taskArtifactProblems(ctx));
   const dirty = git(ctx.repo, "status", "--porcelain");
   if (dirty) out.push(`git: repository left dirty:\n${dirty}`);
   const touched = git(ctx.repo, "diff", "--name-only", ctx.fixtureSha, "HEAD", "--", ".", ":!.agents").split("\n").filter(Boolean);
@@ -267,6 +309,7 @@ function commonChecks(phase, ctx) {
 }
 
 function grade(phase, ctx, exitCode) {
+  if (phase.terminal) return failures(exitCode === 0 ? null : `omp exited ${exitCode}`, ctx.live ? taskArtifactProblems(ctx) : [], phase.check(ctx));
   return failures(exitCode === 0 ? null : `omp exited ${exitCode}`, commonChecks(phase, ctx), phase.check ? phase.check(ctx) : []);
 }
 
@@ -290,13 +333,14 @@ async function runScenario(scenario, runDir, dist) {
     return runEvidenceScenario(scenario, runDir, pinned, { model, maxMinutes: effectiveMinutes });
   }
   const skillsDir = path.join(dist, "skills");
-  const { repo, taskDir } = prepareRepo(scenario, dist);
+  const { repo, taskDir } = await prepareRepo(scenario, dist);
   const taskRel = path.relative(repo, taskDir);
   // The commit before any phase ran: everything a phase changes outside `.agents/` is measured from here.
   const fixtureSha = git(repo, "rev-parse", "HEAD");
   const resultDir = path.join(runDir, scenario.name);
   const result = { name: scenario.name, repo, phases: [], ok: true, model: model ?? "omp-default", fixtureRevision: fixtureSha, wallTimeSeconds: 0, metrics: { wall_ms: 0, tokens: {}, cost: null, cost_basis: null, cost_source: null, coverage: { complete: true, usage_events: 0, cost_events: 0, models: [] } } };
 
+  const scratch = [];
   for (const [index, phase] of scenario.phases.entries()) {
     const label = `${index + 1}-${phase.skill}`;
     const out = path.join(resultDir, label);
@@ -307,14 +351,21 @@ async function runScenario(scenario, runDir, dist) {
     const template = templateFor(skillsDir, phase);
     const started = Date.now();
     console.log(`[${scenario.name}] ${label}: started`);
-    const { code, stdout, stderr } = await runOmp(prompt, repo);
+    const sessionDir = phase.terminal ? path.join(out, "session") : null;
+    const nestedDir = phase.nested ? path.join(out, "nested") : null;
+    const setup = await phase.setup?.({ repo, taskDir });
+    if (setup?.bare) scratch.push(setup.bare);
+    if (setup) fs.writeFileSync(path.join(out, "setup.json"), JSON.stringify(setup));
+    const { code, stdout, stderr } = await runOmp(prompt, repo, { sessionDir, phaseModel: phase.model ?? null, nestedDir });
     const wallMs = Date.now() - started;
     const metrics = metricsForOutput(stdout, wallMs);
     const answer = metrics.answer ?? "";
     fs.writeFileSync(path.join(out, "answer.md"), answer);
+    fs.writeFileSync(path.join(out, "trace.jsonl"), stdout);
     fs.writeFileSync(path.join(out, "stderr.log"), stderr);
-    if (fs.existsSync(taskDir)) fs.cpSync(taskDir, path.join(out, "task"), { recursive: true });
-    const ctx = { live: true, repo, codeRoot: repo, taskDir, fixtureSha, before, template, answer, artifact: newest(taskDir, phase.artifactType), artifacts: artifacts(taskDir) };
+    if (fs.existsSync(taskDir)) fs.cpSync(taskDir, path.join(out, "task"), { recursive: true, preserveTimestamps: true });
+    fs.writeFileSync(path.join(out, "timestamps-preserved"), "");
+    const ctx = { live: true, timesPreserved: true, sessionDir, nestedDir, setup, repo, codeRoot: repo, taskDir, taskRel, fixtureSha, before, template, answer, artifact: newest(taskDir, phase.artifactType), artifacts: artifacts(taskDir) };
     const problems = grade(phase, ctx, code);
     result.wallTimeSeconds += Math.round(wallMs / 1000);
     const aggregate = result.metrics;
@@ -332,6 +383,7 @@ async function runScenario(scenario, runDir, dist) {
     if (problems.length) { result.ok = false; break; }
   }
   if (result.ok && !keep) {
+    for (const dir of scratch) fs.rmSync(dir, { recursive: true, force: true });
     fs.rmSync(repo, { recursive: true, force: true });
     result.repo = null;
   } else console.log(`[${scenario.name}] repository kept at ${repo}`);
@@ -372,9 +424,13 @@ async function gradeScenario(scenario, runDir) {
       const previous = index === 0 ? null : path.join(resultDir, `${index}-${scenario.phases[index - 1].skill}`, "task");
       const ctx = {
         live: false,
+        timesPreserved: fs.existsSync(path.join(out, "timestamps-preserved")),
+        sessionDir: phase.terminal ? path.join(out, "session") : null,
+        nestedDir: phase.nested ? path.join(out, "nested") : null,
         repo: null,
         codeRoot,
         taskDir,
+        taskRel: `.agents/tasks/${scenario.slug}`,
         fixtureSha: null,
         before: previous && fs.existsSync(previous) ? snapshot(previous) : fs.existsSync(taskDir) ? [{ file: "task.md", text: fs.readFileSync(path.join(taskDir, "task.md"), "utf8") }] : [],
         template: fs.existsSync(pinnedDist) ? templateFor(path.join(pinnedDist, "skills"), phase) : "",
@@ -418,7 +474,7 @@ if (gradeDir !== null) {
     const { buildRuntime } = await import("../scripts/lib/build.mjs");
     buildRuntime("oh-my-pi", dist);
   }
-  if (scenarios.some(isEvidenceScenario)) snapshotEvidenceSources(repoRoot, dist);
+  snapshotEvidenceSources(repoRoot, dist);
   snapshotSources(dist);
   const latest = path.join(resultsRoot, "latest");
   fs.rmSync(latest, { force: true });

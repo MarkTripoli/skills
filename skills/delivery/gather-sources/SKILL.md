@@ -27,7 +27,7 @@ Report each source in its own terms. Do not evaluate, rank, propose, or reconcil
 
 ## Output
 
-Follow references/sources_template.md. Frontmatter `summary` names the sources gathered and what a later phase gets from them. Record the next immutable `research.sources` iteration through the conventions' Recording an artifact flow. Commit its canonical path and `index.json` explicitly as `docs(task): sources artifact`. Respond using references/sources_final_answer.md only: fill `{artifact_link}` with the canonical task-root-relative path returned by recording, fill the `Known limits:` lines from the artifact's `### Known limits` list, and add no prose before or after it. For a legacy task without `index.json`, use the conventions' legacy filename and revision rules.
+Follow references/sources_template.md. Frontmatter `summary` names the sources gathered and what a later phase gets from them. Record the next immutable `research.sources` iteration through the conventions' Recording an artifact flow. Respond using references/sources_final_answer.md only: fill `{artifact_link}` with the canonical task-root-relative path returned by recording, fill the `Known limits:` lines from the artifact's `### Known limits` list, and add no prose before or after it. For a legacy task without `index.json`, use the conventions' legacy filename and revision rules.
 
 `{next_command}` names the skill that owns the next artifact:
 

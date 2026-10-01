@@ -25,6 +25,16 @@ const POINTER = /\b(line|item|requirement)s?\s*\d+|(?<=\W):\d+\b|billing-alerts-
 // A made-up target for "fast": a number with a duration unit, in digits or words.
 const DURATION = /\b\d+(\.\d+)?\s?(ms|milliseconds?|s|secs?|seconds?|mins?|minutes?|hours?)\b|\b(one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|sixty)\s+(second|minute|hour)s?\b/i;
 
+// EARS requirements name an actor and response, with a condition when behavior is conditional.
+export function earsProblems(details) {
+  return sentences(details, /\bshall\b/i).flatMap((sentence) => {
+    const text = sentence.replace(/[`*_]/g, "").replace(/^\s*(?:-\s*|\d+[.)]\s*)?(?:[A-Z]+-\d+:\s*)?/, "").trim();
+    const ubiquitous = /^(?:the\s+[^,]+|notifyctl|system)\s+shall\s+\S/i.test(text);
+    const conditional = /^(?:WHEN|WHILE|WHERE|IF)\s+.+,\s+(?:THEN\s+)?(?:the\s+)?[^,]+\s+shall\s+\S/i.test(text);
+    return ubiquitous || conditional ? [] : [`prd: requirement is not an actor/response EARS sentence: "${sentence.slice(0, 120)}"`];
+  });
+}
+
 export default {
   slug: "billing-alerts-digest",
   title: "Convert the Billing Alerts Digest PRD",
@@ -77,14 +87,12 @@ export default {
         // The open question may be named in a product section only as open.
         const sevenDayDecided = sentences(productSections, SEVEN_DAY).filter((s) => !HEDGE.test(s));
         return failures(
-          // One pass: the reply is the final answer, not an interview turn.
-          expect.includes("reply: ended at the final answer", answer, "The PRD is ready for review."),
-          expect.excludes("reply: no interview options offered", answer, /Option [ABC]\b/),
           // Every requirement mapped to an obligation, each cited to the export.
           expect.filled("prd: Problem to Solve", section(text, "### Problem to Solve")),
           expect.matches("prd: open-rate metric carried over", section(text, "### Success Measures") ?? "", /40%/),
           expect.matches("prd: ticket-reduction metric carried over", section(text, "### Success Measures") ?? "", /half|50%|214/),
           expect.atLeast("prd: obligations stated with shall", obligations.length, 6),
+          earsProblems(details),
           uncited.length ? `prd: ${uncited.length} obligation block(s) without a pointer into the export, e.g. "${uncited[0].trim().slice(0, 100)}"` : null,
           expect.matches("prd: daily digest obligation names the actor and the time", digest, /notifyctl|system|digest|owner/i),
           expect.matches("prd: daily digest obligation carries the time zone", digest, /time zone/),

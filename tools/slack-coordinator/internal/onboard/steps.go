@@ -20,6 +20,7 @@ import (
 type ManifestAPI interface {
 	ManifestCreate(ctx context.Context, configToken, manifest string) (slackapi.ManifestResult, error)
 	ManifestUpdate(ctx context.Context, configToken, appID, manifest string) (slackapi.ManifestResult, error)
+	ManifestExport(ctx context.Context, configToken, appID string) (manifest.Live, error)
 }
 
 // Deps are the terminal, browser, Slack, config file, and daemon the steps
@@ -186,9 +187,8 @@ func Run(ctx context.Context, deps Deps, cp *Checkpoint, cpPath string, flags Fl
 
 // runExisting implements --existing: updates the installed app's manifest,
 // prompts for a reinstall, optionally replaces the bot token, and runs the
-// verify step. --existing authorizes the manifest replacement; config.yaml
-// must already exist. onboard.json may supply the app id, or the user is
-// prompted for it.
+// verify step. config.yaml must already exist; onboard.json may supply the
+// app id, or the user is prompted for it.
 func runExisting(ctx context.Context, deps Deps, cp *Checkpoint, cpPath string, flags Flags) error {
 	cfg, err := deps.LoadConfig()
 	if err != nil {
@@ -217,14 +217,42 @@ func runExisting(ctx context.Context, deps Deps, cp *Checkpoint, cpPath string, 
 	}
 
 	// config token
+	fmt.Fprintln(deps.Out, "Generate an app configuration token at https://api.slack.com/apps (Your App Configuration Tokens > Generate).")
 	configToken, err := promptToken(st, "App configuration token (xoxe.xoxp-…)", "xoxe.xoxp-", "xoxe-")
 	if err != nil {
 		return err
 	}
 	st.configToken = configToken
 
+	fmt.Fprintf(deps.Out, "App ID: %s\n", appID)
+	fmt.Fprintf(deps.Out, "Bot token already in config.yaml belongs to owner %s.\n", cfg.Slack.OwnerUserID)
+	live, err := deps.Slack.ManifestExport(ctx, configToken, appID)
+	if err != nil {
+		if strings.HasSuffix(err.Error(), "invalid_auth") {
+			return ErrConfigTokenRejected
+		}
+		return err
+	}
+	fmt.Fprintf(deps.Out, "Keeps the live app name %q, bot display name %q, descriptions, and background color.\n", live.Name, live.BotDisplayName)
+	fmt.Fprintln(deps.Out, "apps.manifest.update replaces the rest of the app manifest with the embedded one. Bot scopes it sets:")
+	for _, scope := range manifest.BotScopes() {
+		fmt.Fprintf(deps.Out, "  • %s\n", scope)
+	}
+	fmt.Fprintln(deps.Out, "Events it sets: app_mention, message.channels, message.groups, message.im. Socket Mode and the App Home Messages tab are turned on.")
+	if live.OrgDeployEnabled {
+		fmt.Fprintln(deps.Out, "Org-wide deployment is enabled on this app and stays enabled; Slack does not allow turning it off.")
+	}
+	fmt.Fprintln(deps.Out, "Settings that are not in the embedded manifest are removed. Unrelated existing scopes are not kept.")
+	confirm, err := deps.Prompt("Type yes to replace the manifest")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(confirm) != "yes" {
+		return errors.New("manifest update cancelled")
+	}
+
 	// update manifest
-	if _, err = deps.Slack.ManifestUpdate(ctx, configToken, appID, manifest.YAML()); err != nil {
+	if _, err = deps.Slack.ManifestUpdate(ctx, configToken, appID, manifest.JSONForUpdate(live)); err != nil {
 		if strings.HasSuffix(err.Error(), "invalid_auth") {
 			return ErrConfigTokenRejected
 		}
@@ -304,10 +332,8 @@ func promptConfigToken(_ context.Context, st *state) error {
 	return nil
 }
 
-// createApp records the name the user chose and creates the app from the
-// embedded manifest, sent verbatim. Slack names the app from the manifest's
-// display_information.name, so the output line does not attribute the
-// prompted name to Slack.
+// createApp creates the app from the embedded manifest with the app name and
+// bot display name set to the name the user chose, and records that name.
 func createApp(ctx context.Context, st *state) error {
 	name, err := st.deps.Prompt(fmt.Sprintf("App name [%s]", DefaultAppName))
 	if err != nil {
@@ -316,7 +342,7 @@ func createApp(ctx context.Context, st *state) error {
 	if name = strings.TrimSpace(name); name == "" {
 		name = DefaultAppName
 	}
-	res, err := st.deps.Slack.ManifestCreate(ctx, st.configToken, manifest.YAML())
+	res, err := st.deps.Slack.ManifestCreate(ctx, st.configToken, manifest.JSONNamed(name))
 	if err != nil {
 		if strings.HasSuffix(err.Error(), "invalid_auth") {
 			return ErrConfigTokenRejected
@@ -324,7 +350,7 @@ func createApp(ctx context.Context, st *state) error {
 		return err
 	}
 	st.cp.AppID, st.cp.AppName, st.installURL = res.AppID, name, res.InstallURL
-	fmt.Fprintf(st.deps.Out, "Created app %s from the embedded manifest; recorded as %q.\n", res.AppID, name)
+	fmt.Fprintf(st.deps.Out, "Created app %s named %q from the embedded manifest.\n", res.AppID, name)
 	return nil
 }
 
@@ -336,7 +362,7 @@ func installApp(_ context.Context, st *state) error {
 		url = installURL(st.cp.AppID)
 	}
 	open(st, url)
-	fmt.Fprintln(st.deps.Out, "Allow the install. The Bot User OAuth Token then appears under OAuth & Permissions.")
+	fmt.Fprintf(st.deps.Out, "Allow the install, then copy the Bot User OAuth Token from OAuth & Permissions: %s\n", oauthURL(st.cp.AppID))
 	token, err := promptToken(st, "Bot token (xoxb-…)", "xoxb-")
 	if err != nil {
 		return err
@@ -348,7 +374,7 @@ func installApp(_ context.Context, st *state) error {
 // appLevelToken opens Basic Information and collects the Socket Mode token.
 func appLevelToken(_ context.Context, st *state) error {
 	open(st, generalURL(st.cp.AppID))
-	fmt.Fprintln(st.deps.Out, "Under App-Level Tokens, generate a token with the connections:write scope.")
+	fmt.Fprintf(st.deps.Out, "On Basic Information (%s), under App-Level Tokens, generate a token with the connections:write scope.\n", generalURL(st.cp.AppID))
 	token, err := promptToken(st, "App-level token (xapp-…)", "xapp-")
 	if err != nil {
 		return err
@@ -413,7 +439,8 @@ func lookupUser(ctx context.Context, st *state, answer string) (slackapi.User, e
 }
 
 // writeConfigAndStart checks both tokens against Slack, writes config.yaml
-// with the collected slack keys over any existing file (its agent and retention blocks survive), then installs the user service or, with
+// with the collected slack keys over any existing file (its agent, retention,
+// and jira blocks survive), then installs the user service or, with
 // --no-service, starts the daemon detached.
 func writeConfigAndStart(ctx context.Context, st *state) error {
 	d := st.deps
@@ -464,14 +491,15 @@ func verifyOwner(ctx context.Context, st *state) error {
 		return err
 	}
 	if !res.OK {
-		install := "https://api.slack.com/apps"
+		install, appHome := "https://api.slack.com/apps", "https://api.slack.com/apps"
 		if st.cp.AppID != "" {
-			install = installURL(st.cp.AppID)
+			install, appHome = installURL(st.cp.AppID), appHomeURL(st.cp.AppID)
 		}
 		fmt.Fprintln(d.Out, "No reply within 2 minutes. Likely causes, most common first:")
 		fmt.Fprintf(d.Out, "  1. The app was not reinstalled after the scope change; reinstall it at %s.\n", install)
-		fmt.Fprintln(d.Out, "  2. The message.im event subscription is missing; add it under Event Subscriptions on the app's page.")
-		fmt.Fprintf(d.Out, "  3. The owner id is wrong; config.yaml names %s.\n", st.cp.OwnerUserID)
+		fmt.Fprintf(d.Out, "  2. DMs to the bot are turned off (Slack shows \"Sending messages to this app has been turned off\"); under App Home at %s, turn on the Messages Tab and allow users to send messages from it, then reload Slack.\n", appHome)
+		fmt.Fprintln(d.Out, "  3. The message.im event subscription is missing; add it under Event Subscriptions on the app's page.")
+		fmt.Fprintf(d.Out, "  4. The owner id is wrong; config.yaml names %s.\n", st.cp.OwnerUserID)
 		fmt.Fprintln(d.Out, "config.yaml, the service, and onboard.json are kept; fix the cause, then run slack-coordinator onboard again and choose re-verify.")
 		return ErrVerifyTimeout
 	}
@@ -534,6 +562,11 @@ func replaceToken(ctx context.Context, st *state, cfg *config.Config) error {
 	}
 	switch choice {
 	case 1:
+		if st.cp.AppID != "" {
+			fmt.Fprintf(d.Out, "Reinstall the app if needed, then copy the Bot User OAuth Token from OAuth & Permissions: %s\n", oauthURL(st.cp.AppID))
+		} else {
+			fmt.Fprintln(d.Out, "Select your app at https://api.slack.com/apps, then copy the Bot User OAuth Token from OAuth & Permissions (reinstall the app if needed).")
+		}
 		token, err := promptToken(st, "Bot token (xoxb-…)", "xoxb-")
 		if err != nil {
 			return err
@@ -543,6 +576,11 @@ func replaceToken(ctx context.Context, st *state, cfg *config.Config) error {
 		}
 		cfg.Slack.BotToken, st.cp.BotToken = token, token
 	case 2:
+		if st.cp.AppID != "" {
+			fmt.Fprintf(d.Out, "On Basic Information (%s), generate an App-Level Token with connections:write.\n", generalURL(st.cp.AppID))
+		} else {
+			fmt.Fprintln(d.Out, "Select your app at https://api.slack.com/apps, then under Basic Information > App-Level Tokens generate a token with connections:write.")
+		}
 		token, err := promptToken(st, "App-level token (xapp-…)", "xapp-")
 		if err != nil {
 			return err
@@ -582,6 +620,10 @@ func installURL(appID string) string {
 }
 
 func generalURL(appID string) string { return "https://api.slack.com/apps/" + appID + "/general" }
+
+func oauthURL(appID string) string { return "https://api.slack.com/apps/" + appID + "/oauth" }
+
+func appHomeURL(appID string) string { return "https://api.slack.com/apps/" + appID + "/app-home" }
 
 // open prints url, so a headless terminal still has it, then opens it. An
 // opener failure is a warning, not a stop: the URL is already on screen and

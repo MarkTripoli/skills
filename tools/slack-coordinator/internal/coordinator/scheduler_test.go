@@ -2,6 +2,8 @@ package coordinator
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -27,8 +29,10 @@ type reaction struct {
 
 type fakePoster struct {
 	posts         []post
+	statusCards   []post
 	updates       []post
 	reactions     []reaction
+	messageCount  int
 	fail          error
 	failReactions error
 	onReaction    func()
@@ -38,8 +42,15 @@ func (f *fakePoster) PostBlocksMessage(_ context.Context, channelID, threadTS, f
 	if f.fail != nil {
 		return "", f.fail
 	}
-	f.posts = append(f.posts, post{ChannelID: channelID, ThreadTS: threadTS, Text: fallback, Blocks: blocks})
-	return "1700000000.000100", nil
+	message := post{ChannelID: channelID, ThreadTS: threadTS, Text: fallback, Blocks: blocks}
+	if threadTS != "" && strings.HasPrefix(fallback, "*Now:* Starting") {
+		f.statusCards = append(f.statusCards, message)
+	} else {
+		f.posts = append(f.posts, message)
+	}
+	ts := fmt.Sprintf("1700000000.%06d", 100+f.messageCount)
+	f.messageCount++
+	return ts, nil
 }
 
 func (f *fakePoster) UpdateBlocksMessage(_ context.Context, channelID, ts, fallback string, blocks []slack.Block) error {
@@ -86,7 +97,76 @@ func startTestRun(t *testing.T, c *Coordinator, runID string) {
 	}
 }
 
-func TestStatusEditsRootWithoutQuietIntervalPosts(t *testing.T) {
+func TestStartRunPersistsOneCompactThreadStatusCard(t *testing.T) {
+	c, poster, _ := newTestCoordinator(t)
+	ref, err := c.StartRun(context.Background(), StartRunInput{
+		RunID: "RUN1", ChannelID: "C1", Work: "Profile enhancements",
+		Goal: "Improve profile editing", Scope: "Profile screen",
+		Links: []string{"https://example.test/mr/1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref.ThreadTS != "1700000000.000100" || len(poster.posts) != 1 || len(poster.statusCards) != 1 {
+		t.Fatalf("start messages: ref=%+v posts=%+v statusCards=%+v", ref, poster.posts, poster.statusCards)
+	}
+	if poster.posts[0].Text != "*Issue:* Profile enhancements\n*Goal:* Improve profile editing\n*Scope:* Profile screen" {
+		t.Fatalf("root is not compact: %q", poster.posts[0].Text)
+	}
+	if poster.statusCards[0].ThreadTS != ref.ThreadTS || poster.statusCards[0].Text != "*Now:* Starting\n*Links:* <https://example.test/mr/1|example.test>" {
+		t.Fatalf("initial card = %+v", poster.statusCards[0])
+	}
+	run, err := c.DB.GetRun(context.Background(), "RUN1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !run.StatusMessageTS.Valid || run.StatusMessageTS.String != "1700000000.000101" {
+		t.Fatalf("saved status-card timestamp = %+v", run.StatusMessageTS)
+	}
+}
+
+func TestLegacyRunKeepsRootEditBehavior(t *testing.T) {
+	c, poster, now := newTestCoordinator(t)
+	legacy := db.Run{
+		RunID: "LEGACY", OwnerUserID: "U1", ChannelID: "C1", ThreadTS: "1700000000.000100",
+		Permalink: "https://example.test/thread", Lifecycle: "active", SlackMode: db.SlackEnabled,
+		StartedAt: stamp(*now), StatusIntervalSeconds: db.DefaultStatusIntervalSeconds,
+		RootMessage:    sql.NullString{String: `{"Work":"Legacy issue","Goal":"Keep old behavior"}`, Valid: true},
+		LastRootUpdate: sql.NullString{String: stamp(*now), Valid: true},
+	}
+	if err := c.DB.InsertRun(context.Background(), legacy); err != nil {
+		t.Fatal(err)
+	}
+	*now = now.Add(3 * time.Hour)
+	if err := c.RecordWorkEvent(context.Background(), WorkEvent{RunID: "LEGACY", Current: "Still working"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(poster.updates) != 1 || poster.updates[0].ThreadTS != legacy.ThreadTS || !strings.Contains(poster.updates[0].Text, "*Current work:* Still working") {
+		t.Fatalf("legacy run did not edit root: %+v", poster.updates)
+	}
+}
+
+func TestLegacyBlockerStillGetsImmediateRootEdit(t *testing.T) {
+	c, poster, now := newTestCoordinator(t)
+	legacy := db.Run{
+		RunID: "LEGACY", OwnerUserID: "U1", ChannelID: "C1", ThreadTS: "1700000000.000050",
+		Permalink: "https://example.test/thread", Lifecycle: "active", SlackMode: db.SlackEnabled,
+		StartedAt: stamp(*now), StatusIntervalSeconds: db.DefaultStatusIntervalSeconds,
+		RootMessage:    sql.NullString{String: `{"Work":"Legacy issue","Goal":"Keep old behavior"}`, Valid: true},
+		LastRootUpdate: sql.NullString{String: stamp(*now), Valid: true},
+	}
+	if err := c.DB.InsertRun(context.Background(), legacy); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RecordWorkEvent(context.Background(), WorkEvent{RunID: legacy.RunID, Current: "Waiting", Blockers: []string{"Need approval"}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(poster.posts) != 1 || poster.posts[0].ThreadTS != legacy.ThreadTS || len(poster.updates) != 1 || poster.updates[0].ThreadTS != legacy.ThreadTS || !strings.Contains(poster.updates[0].Text, "*Blockers:*\n• Need approval") {
+		t.Fatalf("legacy blocker behavior changed: posts=%+v updates=%+v", poster.posts, poster.updates)
+	}
+}
+
+func TestStatusEditsThreadCardAfterQuietInterval(t *testing.T) {
 	c, poster, now := newTestCoordinator(t)
 	ctx := context.Background()
 	startTestRun(t, c, "RUN1")
@@ -111,8 +191,8 @@ func TestStatusEditsRootWithoutQuietIntervalPosts(t *testing.T) {
 	if err := s.Tick(ctx, *now); err != nil {
 		t.Fatal(err)
 	}
-	if len(poster.posts) != 1 || len(poster.updates) != 1 || !strings.Contains(poster.updates[0].Text, "*Work:* w") || !strings.Contains(poster.updates[0].Text, "*Current work:* Wiring flags") {
-		t.Fatalf("status did not edit the root preserving original details: posts=%+v updates=%+v", poster.posts, poster.updates)
+	if len(poster.posts) != 1 || len(poster.updates) != 1 || poster.updates[0].ThreadTS != "1700000000.000101" || !strings.Contains(poster.updates[0].Text, "*Now:* Wiring flags") {
+		t.Fatalf("status did not edit the thread card: posts=%+v updates=%+v", poster.posts, poster.updates)
 	}
 	if err := c.RecordWorkEvent(ctx, e); err != nil {
 		t.Fatal(err)
@@ -138,7 +218,7 @@ func TestNewBlockerGetsOneThreadReply(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if len(poster.posts) != 2 || poster.posts[1].Text != "Blocked: Need approval" || poster.posts[1].ThreadTS != "1700000000.000100" || len(poster.updates) != 2 {
+	if len(poster.posts) != 2 || poster.posts[1].Text != "*Blocker:* Need approval\n*Owner:* <@U1>" || len(poster.posts[1].Blocks) == 0 || poster.posts[1].ThreadTS != "1700000000.000100" || len(poster.updates) != 0 {
 		t.Fatalf("blocker notifications: posts=%+v updates=%+v", poster.posts, poster.updates)
 	}
 }
@@ -163,7 +243,7 @@ func TestBlockerFailureKeepsGateUnavailableUntilEventRetried(t *testing.T) {
 	if err := c.RecordWorkEvent(ctx, e); err != nil {
 		t.Fatal(err)
 	}
-	if len(poster.posts) != 2 || len(poster.updates) != 1 {
+	if len(poster.posts) != 2 || len(poster.updates) != 1 || poster.updates[0].ThreadTS != "1700000000.000101" {
 		t.Fatalf("event retry: posts=%+v edits=%+v", poster.posts, poster.updates)
 	}
 }
@@ -190,7 +270,7 @@ func TestSchedulerRetriesFailedRootEdit(t *testing.T) {
 	*now = now.Add(3 * time.Hour)
 	poster.fail = context.DeadlineExceeded
 	if err := c.RecordWorkEvent(ctx, WorkEvent{RunID: "RUN1", Current: "Wiring flags"}); err == nil {
-		t.Fatal("failed root edit succeeded")
+		t.Fatal("failed status-card edit succeeded")
 	}
 	s := &StatusScheduler{C: c}
 	if err := s.Tick(ctx, now.Add(time.Minute)); err == nil || !strings.Contains(err.Error(), "RUN1") {

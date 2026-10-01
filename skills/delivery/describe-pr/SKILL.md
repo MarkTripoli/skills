@@ -13,7 +13,7 @@ Create or update the PR description only after current, recorded behavior eviden
 
 ### 0. Load context
 
-Locate the task directory and read `task.md` per the conventions before reading other files; select current artifacts from `index.json` (scan numbered files only for a legacy task without an index). When no task directory matches the request, open one under the resolved task root as in step 5.
+Locate the task directory and read `task.md` per the conventions before reading other files; select current artifacts from `index.json` (scan numbered files only for a legacy task without an index). For an existing delivery whose local task is absent, locate its original worktree; never invent a retrospective baseline. A standalone request may open metadata under the resolved root, but final delivery publication still requires authentic current evidence.
 
 Read from this skill directory:
 
@@ -49,7 +49,9 @@ The title is a Conventional Commits subject under the conventions' rule: `<type>
 
 Read `task.md` or `ticket.md`, explanatory metadata selected through current index records, and `@file` inputs. Require current hosted proof and read current `review.verification` when present. Enumerate required UI, CLI, API, and agent surfaces from the task and change, not file extensions. Inspect every capture at its direct supported host: a GitHub user-attachment or raw gist, with actual video bytes and playback for UI, or original invocation, tested SHA, successful exit/status/outcome, and observed output for text. A PNG, HTML page, self-reported prose, or URL/MIME alone does not prove a recording. Require a substantive passing Recorded tests row with timestamp/output-line cue for each surface and passing rows for every required behavior. A failed or required-untested target blocks `result: passed`. Confirm tested code SHA and current PR head; behavior-changing differences require recapture.
 
-Read full diff plus surrounding code.
+For a delivery task, run `node <skills-dir>/deliver/contract.mjs status <task-dir>` before final publication. Require authentic baseline/policy, current verification and clean review when required, current sealed recording and inspection; only Hosted PR description may remain missing. Source changes invalidate those prerequisites. Report verification items and review findings inline, never as task-file links. Failed or required-untested surfaces and unverified hosted captures block ready publication rather than becoming a caveat.
+
+Read full diff plus surrounding code. For `/deliver`, inspect the diff stat and the approved slicing decision against shared/SLICING.md; generated files and lockfiles count separately. Recut an oversized hand-written change into independently reviewable children before publication.
 
 If the task has a plan, start a child worker for role `agent-implementation-reviewer` with the assignment "Compare <plan path or task dir> with the current implementation against <base>. Return only reviewer-relevant deviations." (see the conventions' Child workers section); wait for it; read its final message. Use only findings you have read from the worker's final message.
 
@@ -67,7 +69,7 @@ Template exactly:
 - `Human Review`: keep `### Review targets`, `### Verify`, and `### Known limits` with concrete review and approval checks; human approval remains separate from recording proof.
 - `Closes #{ISSUE_NUMBER}`, the template's last line: keep it only when `task.md` has `issue: <number>` (an epic child whose issue `start-epic-delivery` opened), filled with that number, so the merge closes the issue; otherwise delete the line and the blank line before it, so the body ends with the Known limits bullet.
 
-Task metadata and review/verification artifacts may remain local, but the PR body must not link their repository-relative paths as proof. Recording, report, receipt, and PR-description files never belong under `.agent/tasks/` or `.agents/tasks/`. Put reviewable observations and limits in the body itself.
+Task metadata and review/verification artifacts may remain local, but the PR body must not link their repository-relative paths as proof. Raw recording, report and PR-description files belong outside the resolved task root. Immutable evidence/review metadata and seals remain local there; never upload or commit them. Put reviewable observations and limits in the body itself.
 
 Do not include walkthrough artifacts in the PR body unless asked. When requested, create a separate HTML walkthrough from `references/pr_walkthrough_example.html` with real diff nodes outside the task root, and publish only its approved hosted link.
 
@@ -77,7 +79,7 @@ Prepare a provisional body in a temporary file outside the task directory. A pen
 
 For every required surface, host the actual recording at a supported direct destination and inspect its content as in step 3. Post a **separate** PR comment repeating `- result: passed`, full tested and current-head SHAs and every recording/capture pair exactly. Use `gh pr comment <number> --body-file <temporary-path>` for already-hosted captures, or the authenticated PR comment box to upload and verify a user attachment first. Editing the PR body does not count as a comment. On updates, edit the previous evidence comment or post a replacement explicitly superseding it; obtain the exact permalink on this PR and read back that comment by ID.
 
-Insert the verified comment permalink in the final body, publish the complete template with every capture and Recorded tests row, then re-fetch the whole body and separate comment. Compare revisions, types, URLs, per-test results/cues and required sections; verify every capture is still the original recording. Remove temporary descriptions and scratch after successful hosting/readback. Never upload or commit task-root data. If publication fails, leave the PR draft and report incomplete.
+Insert the verified comment permalink in the final body, publish the complete template with every capture and Recorded tests row, then re-fetch the whole body and separate comment. Compare revisions, types, URLs, per-test results/cues and required sections; verify every capture is still the original recording. Remove transient description drafts after successful readback. Retain sealed captures, samples and provenance attachments at their recorded external paths for resumable delivery; removing them invalidates local seals. Never upload or commit task-root data. If publication fails, leave the PR draft and report incomplete.
 
 
 Before changing a draft to ready, run the collection's proof command from the repository root:
@@ -99,15 +101,17 @@ node shared/publication-proof.mjs <task-dir> <repo-root> <pr-number> --draft-hos
 This may return `allowed: true` with `ready: false` and `status: "incomplete"` only for an existing draft PR. It does not authorize final body publication or ready status. After uploading and verifying the capture, complete the ordinary comment/body ordering above and run the final decision again.
 Re-fetch the PR and confirm URL, title, number, base, head, complete hosted template, every recording/capture pair, Recorded tests rows, and same-PR comment. Retitle an existing PR that fails the title rule with `gh pr edit <number> --title "<title>"`. Mark a draft PR ready only after the proof command passes. If upload, comment, link verification, capture inspection, or final-body readback fails, publication is incomplete.
 
+When task.md carries slack_run_id and you own the run, send `run event` with the observed PR URL and next current-head checks; do not finish a run whose requested follow-up remains. Direct feature-thread visibility updates only its existing root per agent-slack-control-plane. Slack failures are reported without changing publication outcome unless Slack was requested as a gate.
+
 ### 6. Report
 
 Read and use `references/pr_description_final_answer.md`, linking to the hosted PR instead of a task-local artifact. Include PR URL, file-change summary, deviation summary or `No plan file found`.
 
-The final answer must end with exactly one fenced `text` block. This is a human gate; running the next command records approval.
+The final answer must end with exactly one fenced `text` block. Under `/deliver`, the orchestrator continues the authorized chain; in standalone use, running the next command records human approval.
 
 ## Feedback
 
-When feedback arrives, read the live PR body, confirm every hosted recording still covers its required surface at the current head, and publish a complete revised body directly. Behavior-changing feedback requires recapture and updating every affected recording/capture pair and the distinct PR comment first. Never save an evidence or description iteration under the task root.
+When feedback arrives, read the live PR body, confirm every hosted recording still covers its required surface at the current head, and publish a complete revised body directly. Behavior-changing feedback requires recapture and updating every affected recording/capture pair and the distinct PR comment first. Never save raw evidence or a description under the task root; current sealed evidence metadata is selected from its immutable series.
 
 ## Style
 

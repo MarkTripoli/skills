@@ -1,6 +1,6 @@
 # App testing
 
-`test-app` uses the real app and records what happened at each step. Atomic runs it before the pull request description when `app_test` is enabled. By hand, run `/test-app` in a new session.
+`test-app` uses the real app and records what happened at each step. Run `/test-app` in a new session before the pull request description.
 
 ## What the phase does
 
@@ -9,7 +9,7 @@
 3. Write a test plan with six to twelve steps. Link each expected result to a line in the task documents.
 4. Perform every step and record the screen as text: an accessibility snapshot or view hierarchy, not a screenshot path.
 5. Grade each step `pass`, `fail`, or `unclear`, with severity 0 (none) through 3 (blocking).
-6. Save `NN-app-test-<slug>.md` with `status: passed`, `failed`, or `blocked`.
+6. Save `<task-root>/<slug>/artifacts/review/browser/<NNNN>.md` with `status: passed`, `failed`, or `blocked`.
 
 ## Prerequisites per kind
 
@@ -21,43 +21,31 @@
 
 Missing prerequisites produce `status: blocked` and a complete `## Missing` list. They do not fail silently.
 
-## Optional workflow inputs
+## Launch target
 
-Atomic `delivery` accepts:
+Pass the launch target in the request, for example `/test-app http://localhost:3000` or an iOS bundle ID. Omit it to let the skill inspect repository dev-server or build instructions.
 
-- `app_test`: `none` (default), `web`, `ios`, or `android`. Any non-`none` value requests UI testing.
-- `app_target`: the launch target. Omit it to let the skill inspect repository dev-server or build instructions.
-
-```text
-/workflow delivery request="Add a settings toggle" workflow=lean branch=settings-toggle app_test=web app_target="http://localhost:3000"
-/workflow delivery request="Redesign onboarding" workflow=full branch=onboarding app_test=ios app_target=com.example.app
-```
-
-The running machine needs the simulator, emulator, or browser; this skill does not set them up. Running it by hand needs the same tools but no Atomic installation.
+The running machine needs the simulator, emulator, or browser; this skill does not set them up.
 
 ## What the artifact records
 
-`NN-app-test-<slug>.md` stores:
+`<task-root>/<slug>/artifacts/review/browser/<NNNN>.md` stores:
 
 - Header fields: `task`, `type: app-test`, `summary`, `status`, `kind`, and `target`.
 - Launch command, revision, and a step table: id, action, expected, observed, verdict, and severity.
 - `## Findings`: each failed step's expected result, observed result, severity, and source line.
 - `## Missing` when blocked, and `## Human Review` with checks to rerun.
 
-Screenshots go under `<task dir>/app-test/` and are committed with `docs(task): app-test artifacts`.
+Screenshots go under `<task dir>/app-test/` and remain in the local task directory.
 
 ## How failures loop back
 
-Atomic reads the artifact:
+Read the artifact status:
 
-- `failed` routes to `iterate-implementation`, then a fresh app-test stage exercises the repair;
-- `passed` allows review and pull-request work to continue;
-- `blocked` reports the missing prerequisite instead of passing.
-
-`max_steps` bounds repeated repair sessions. Inspect native run status and the artifact before resuming or starting a new run with the existing `task_dir`.
-
-By hand, use `/describe-pr` after a pass, `/iterate-implementation @<plan file>` after a failure, and `/show-me` when blocked.
+- `failed`: run `/iterate-implementation @<plan file>`, then `/test-app` again in a fresh session;
+- `passed`: continue with review and `/describe-pr`;
+- `blocked`: the missing prerequisite is reported instead of passing. Use `/show-me` if it helps.
 
 ## Grading
 
-`judge.mjs grade-steps` sends each step's `expected` and `observed` text to the grading service. It returns a verdict and severity. The key can come from the environment or a key file; see [key lookup rules](model-routing.md#phase-selection-with-jev). If the helper is unavailable or returns `unclear`, the agent decides and says so under `### Known limits`. Only `steps.json` leaves the machine, not screenshots, page source, or repository code. See [typed-judgment](../skills/delivery/typed-judgment/SKILL.md).
+`judge.mjs grade-steps` sends each step's `expected` and `observed` text to the grading service. It returns a verdict and severity. The key can come from the environment or a key file; see [typed-judgment](../skills/delivery/typed-judgment/SKILL.md). If the helper is unavailable or returns `unclear`, the agent decides and says so under `### Known limits`. Only `steps.json` leaves the machine, not screenshots, page source, or repository code.

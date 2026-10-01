@@ -11,7 +11,7 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 ## When it runs
 
-Only when a skill step or the optional Atomic controller names it. Skills such as `create-epic-plan`, `resolve-pr-reviews`, `review-code`, `test-app`, and `verify-implementation` name the command to run in their steps. Never add a call the step does not ask for.
+Only when a skill step names it. Skills such as `create-epic-plan`, `resolve-pr-reviews`, `review-code`, `test-app`, and `verify-implementation` name the command to run in their steps. Never add a call the step does not ask for.
 
 ## Availability and fallback
 
@@ -31,13 +31,12 @@ Run from the skill's directory under the installed skills (`<skills dir>/typed-j
 | `verification-status <artifact.md> <claimed>` | effective `passed`, `failed`, `blocked` | verify-implementation step |
 | `axis-coverage <artifact.md>` | `covered`, `asserted`, `skipped`, or `unclear` per review axis, with a level 0 to 3 | `review-code` |
 | `extract-json --required a,b --enum status=x,y [--dir d] [file]` | the JSON object an answer contains or implies, else the answer as is | skills that parse structured answers |
-| `route-workflow [--children file.json] [text]` | the workflow that fits a request, or one per epic child | `deliver`, `create-epic-plan`, and Atomic routing |
+| `route-workflow [--children file.json] [text]` | the workflow that fits a request, or one per epic child | `create-epic-plan` |
 | `size-children --children file.json` | `ok`, `split`, or `unclear` per epic child, with its weakest sizing test and the split to apply | `create-epic-plan` |
 | `triage-threads <threads.json>` | `fix`, `discuss`, `decline`, `clarify`, or `undecided` per thread | `resolve-pr-reviews` |
 | `feedback-intent [text]` | `revise`, `proceed`, `stop` | human-review steps |
 | `slug [request]` | the directory slug picked from code-proposed candidates | `deliver` and task setup |
 | `tier [text]` | `small`, `medium`, `large` | delivery routing |
-| `autonomy [text]` | `none`, `pr`, `plan`, `all`: how much the request wants a person involved | `delivery` and `deliver` |
 | `grade-steps [--kind screen\|command\|diff] <steps.json>` | `pass`, `fail`, `unclear` and a severity level per step; `screen` (default) grades what a screen showed, `command` what a command, request, or file read returned, `diff` whether a test file's diff against the merge target keeps its strength | `test-app`, `verify-implementation` |
 | `rerank --query <text> <candidates.json>` | candidates ordered by how well they answer the question, with a level 0 to 3 | `create-research`, `iterate-research` |
 | `coverage <questions.json> <artifact.md>` | `answered`, `partial`, `missing` per research question | `create-research`, `iterate-research` |

@@ -6,7 +6,7 @@ review_artifact:
 reviewed_head_sha:
 fixed_head_sha:
 status: complete
-summary: "State which findings were fixed, declined, or remain blocked and which gates ran."
+summary: "State which findings were fixed, disputed, or remain blocked and which gates ran."
 ---
 
 # Code Review Fixes
@@ -22,7 +22,7 @@ CR entries are the review's critical/major-severity findings; ADV entries are th
 
 ### CR-001
 
-- disposition: fixed | declined | blocked
+- disposition: fixed | disputed: <evidence> | blocked
 - evidence:
 - files changed:
 - regression check:

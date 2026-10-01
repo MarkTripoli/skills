@@ -1,0 +1,7 @@
+{
+  "economy": "anthropic/claude-sonnet-5-5",
+  "candidates": [
+    { "model": "anthropic/claude-sonnet-5-5", "cost": 1, "description": "Economy model for building and routine edits." },
+    { "model": "anthropic/claude-opus-5-5", "cost": 4, "description": "Strongest model for orchestration and independent review." }
+  ]
+}

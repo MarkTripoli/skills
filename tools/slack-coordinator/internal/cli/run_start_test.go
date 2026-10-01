@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -48,10 +49,14 @@ type fakeSlack struct {
 	posts         []url.Values
 	updates       []url.Values
 	reactions     []url.Values
-	failPosts     atomic.Bool
+	reactionError string
 	failUpdates   atomic.Bool
+	// failPosts makes chat.postMessage answer 500 until cleared.
+	failPosts atomic.Bool
+	// failReactions makes reactions.add answer 500 until cleared.
 	failReactions atomic.Bool
-	requests      atomic.Int64
+	// requests counts every Web API call, whatever the method.
+	requests atomic.Int64
 }
 
 func (f *fakeSlack) count() int {
@@ -93,33 +98,47 @@ func newFakeSlack(t *testing.T) (*fakeSlack, string) {
 		f.posts = append(f.posts, r.PostForm)
 		ts := fmt.Sprintf("1700000000.%06d", len(f.posts)*100)
 		f.mu.Unlock()
-		_, _ = w.Write([]byte(`{"ok":true,"channel":"` + r.PostForm.Get("channel") + `","ts":"` + ts + `"}`))
+		_, _ = fmt.Fprintf(w, `{"ok":true,"channel":%q,"ts":%q}`, r.PostForm.Get("channel"), ts)
 	})
 	mux.HandleFunc("/chat.update", func(w http.ResponseWriter, r *http.Request) {
+		if f.failPosts.Load() || f.failUpdates.Load() {
+			http.Error(w, "slack is down", http.StatusInternalServerError)
+			return
+		}
 		_ = r.ParseForm()
 		f.mu.Lock()
 		f.updates = append(f.updates, r.PostForm)
 		f.mu.Unlock()
-		if f.failUpdates.Load() {
-			http.Error(w, "slack is down", http.StatusInternalServerError)
-			return
-		}
 		_, _ = w.Write([]byte(`{"ok":true,"channel":"` + r.PostForm.Get("channel") + `","ts":"` + r.PostForm.Get("ts") + `","text":"edited"}`))
 	})
 	mux.HandleFunc("/reactions.add", func(w http.ResponseWriter, r *http.Request) {
-		if f.failReactions.Load() {
-			_, _ = w.Write([]byte(`{"ok":false,"error":"ratelimited"}`))
-			return
-		}
 		_ = r.ParseForm()
 		f.mu.Lock()
 		f.reactions = append(f.reactions, r.PostForm)
+		reactionError := f.reactionError
 		f.mu.Unlock()
+		if f.failReactions.Load() {
+			http.Error(w, "slack is down", http.StatusInternalServerError)
+			return
+		}
+		if reactionError != "" {
+			_, _ = fmt.Fprintf(w, `{"ok":false,"error":%q}`, reactionError)
+			return
+		}
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
 	mux.HandleFunc("/chat.getPermalink", func(w http.ResponseWriter, r *http.Request) {
 		ch := r.URL.Query().Get("channel")
-		_, _ = w.Write([]byte(`{"ok":true,"channel":"` + ch + `","permalink":"https://t.slack.com/archives/` + ch + `/p1700000000000100"}`))
+		ts := strings.ReplaceAll(r.URL.Query().Get("message_ts"), ".", "")
+		_, _ = fmt.Fprintf(w, `{"ok":true,"channel":%q,"permalink":%q}`, ch, "https://t.slack.com/archives/"+ch+"/p"+ts)
+	})
+	mux.HandleFunc("/conversations.open", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		if r.PostForm.Get("users") != "U1" {
+			_, _ = w.Write([]byte(`{"ok":false,"error":"user_not_found"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"channel":{"id":"D0000000001"}}`))
 	})
 	mux.HandleFunc("/conversations.info", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
@@ -130,14 +149,6 @@ func newFakeSlack(t *testing.T) (*fakeSlack, string) {
 			}
 		}
 		_, _ = w.Write([]byte(`{"ok":false,"error":"channel_not_found"}`))
-	})
-	mux.HandleFunc("/conversations.open", func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseForm()
-		if r.PostForm.Get("users") == "" {
-			_, _ = w.Write([]byte(`{"ok":false,"error":"invalid_users"}`))
-			return
-		}
-		_, _ = w.Write([]byte(`{"ok":true,"channel":{"id":"D0000000001","is_im":true,"is_open":true,"is_member":true}}`))
 	})
 	mux.HandleFunc("/conversations.list", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
@@ -153,7 +164,12 @@ func newFakeSlack(t *testing.T) (*fakeSlack, string) {
 		_, _ = w.Write([]byte(`{"ok":true,"channels":[` + testChannels[i].json() + `],"response_metadata":{"next_cursor":"` + next + `"}}`))
 	})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		f.requests.Add(1)
+		// A host port scanner can send a stray GET / to any listening port.
+		// Every other request counts, including Slack methods the fake does
+		// not route, so a call the test forbids cannot go unseen.
+		if r.URL.Path != "/" {
+			f.requests.Add(1)
+		}
 		mux.ServeHTTP(w, r)
 	}))
 	t.Cleanup(srv.Close)
@@ -223,7 +239,7 @@ func runCLI(t *testing.T, args ...string) (string, int) {
 	return buf.String(), exitCode(err)
 }
 
-func TestRunStartPostsOneRootMessage(t *testing.T) {
+func TestRunStartPostsCompactRootAndThreadCard(t *testing.T) {
 	fake, apiURL := newFakeSlack(t)
 	cfg := &config.Config{Slack: config.Slack{BotToken: "xoxb-1", AppToken: "xapp-1", OwnerUserID: "U1", APIURL: apiURL}}
 	stop := startTestDaemon(t, cfg)
@@ -241,11 +257,15 @@ func TestRunStartPostsOneRootMessage(t *testing.T) {
 	if ref != want {
 		t.Fatalf("stdout = %+v, want %+v", ref, want)
 	}
-	if fake.count() != 1 {
-		t.Fatalf("chat.postMessage called %d times, want 1", fake.count())
+	if fake.count() != 2 {
+		t.Fatalf("chat.postMessage called %d times, want root and status card", fake.count())
 	}
 	text := fake.posts[0].Get("text")
-	for _, part := range []string{"*Work:* Add flag", "*Owner:* <@U1>", "• https://example.com/pr/1"} {
+	blocks := fake.posts[0].Get("blocks")
+	if !strings.Contains(blocks, `"type":"header"`) || strings.Contains(text, "*Work:*") || strings.Contains(text, "*Owner:*") || strings.Contains(text, "*Started at:*") {
+		t.Fatalf("root payload missing header blocks or retained removed fields: text=%q blocks=%s", text, blocks)
+	}
+	for _, part := range []string{"*Issue:* Add flag", "*Goal:* Print commands", "*Scope:* cli"} {
 		if !strings.Contains(text, part) {
 			t.Errorf("root text missing %q:\n%s", part, text)
 		}
@@ -253,11 +273,14 @@ func TestRunStartPostsOneRootMessage(t *testing.T) {
 	if fake.posts[0].Get("channel") != "C0000000001" {
 		t.Errorf("posted to channel %q", fake.posts[0].Get("channel"))
 	}
+	if fake.posts[1].Get("thread_ts") != ref.ThreadTS || !strings.Contains(fake.posts[1].Get("text"), "<https://example.com/pr/1|example.com>") {
+		t.Errorf("status card missing thread or start link: %v", fake.posts[1])
+	}
 
 	if _, code := runCLI(t, args...); code != ExitUsage {
 		t.Fatalf("duplicate run-id exit %d, want %d", code, ExitUsage)
 	}
-	if fake.count() != 1 {
+	if fake.count() != 2 {
 		t.Fatalf("duplicate run-id posted; %d posts", fake.count())
 	}
 
@@ -293,7 +316,7 @@ func TestRunStartResolvesAgentsMDDirectiveByName(t *testing.T) {
 	if ref.ChannelID != "C0000000004" {
 		t.Fatalf("resolved channel %q, want C0000000004 (#deep-runs on the last list page)", ref.ChannelID)
 	}
-	if fake.count() != 1 || fake.posts[0].Get("channel") != "C0000000004" {
+	if fake.count() != 2 || fake.posts[0].Get("channel") != "C0000000004" {
 		t.Fatalf("posts = %d to %q", fake.count(), fake.posts[0].Get("channel"))
 	}
 }
@@ -337,6 +360,91 @@ func TestRunStartRefusesUnusableChannelsBeforePosting(t *testing.T) {
 	}
 	if fake.count() != 0 {
 		t.Fatalf("refused channels still posted %d messages", fake.count())
+	}
+}
+
+// fakeJira records "<method> <path> <body>" for every request and answers 204.
+type fakeJira struct {
+	mu       sync.Mutex
+	requests []string
+}
+
+func (f *fakeJira) all() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.requests...)
+}
+
+func newFakeJira(t *testing.T) (*fakeJira, string) {
+	t.Helper()
+	f := &fakeJira{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" { // stray host port-scanner probe, not a Jira call
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		f.mu.Lock()
+		f.requests = append(f.requests, r.Method+" "+r.URL.Path+" "+string(body))
+		f.mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+	return f, srv.URL
+}
+
+func TestRunStartWritesTheJiraBacklinkThroughTheDaemon(t *testing.T) {
+	fake, apiURL := newFakeSlack(t)
+	jira, jiraURL := newFakeJira(t)
+	cfg := &config.Config{
+		Slack: config.Slack{BotToken: "xoxb-1", AppToken: "xapp-1", OwnerUserID: "U1", APIURL: apiURL},
+		Jira:  &config.Jira{BaseURL: jiraURL, Email: "me@example.com", APIToken: "tok", FieldID: "customfield_10042"},
+	}
+	startTestDaemon(t, cfg)
+
+	out, code := runCLI(t, "run", "start", "--channel", "C0000000001", "--work", "x", "--run-id", "RUN1", "--jira-issue", "PROJ-7")
+	if code != ExitOK {
+		t.Fatalf("run start exit %d, output %q", code, out)
+	}
+	var ref coordinator.SlackRunRef
+	if err := json.Unmarshal([]byte(out), &ref); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{`PUT /rest/api/3/issue/PROJ-7 {"fields":{"customfield_10042":"` + ref.Permalink + `"}}`}
+	if got := jira.all(); len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("jira requests = %q, want %q", got, want)
+	}
+	if fake.count() != 2 {
+		t.Fatalf("chat.postMessage called %d times, want root and status card", fake.count())
+	}
+}
+
+func TestRunStartRefusesJiraIssueBeforeAnySlackCall(t *testing.T) {
+	fake, apiURL := newFakeSlack(t)
+	cfg := &config.Config{Slack: config.Slack{BotToken: "xoxb-1", AppToken: "xapp-1", OwnerUserID: "U1", APIURL: apiURL}}
+	startTestDaemon(t, cfg)
+
+	cases := []struct{ name, key, want string }{
+		{name: "jira not configured", key: "PROJ-7", want: "jira is not configured"},
+		{name: "lower-case key", key: "proj-7", want: "must look like PROJ-123"},
+		{name: "no number", key: "PROJ-", want: "must look like PROJ-123"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			SetOutput(&bytes.Buffer{})
+			t.Cleanup(func() { output = os.Stdout })
+			root := NewRoot()
+			root.SetArgs([]string{"run", "start", "--channel", "C0000000001", "--work", "x", "--jira-issue", tc.key})
+			err := root.Execute()
+			if code := exitCode(err); code != ExitUsage {
+				t.Fatalf("exit %d, want %d (err %v)", code, ExitUsage, err)
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %q does not name the cause %q", err, tc.want)
+			}
+		})
+	}
+	if n := fake.requests.Load(); n != 0 {
+		t.Fatalf("refused --jira-issue still made %d Slack calls", n)
 	}
 }
 

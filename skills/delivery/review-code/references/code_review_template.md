@@ -5,7 +5,12 @@ branch:
 base_branch:
 base_sha:
 head_sha:
+revision: "[exact contract source fingerprint reviewed]"
 status: findings
+checkpoint: final
+reviewed_commit: "[HEAD sha reviewed]"
+reviewer_model: "[observed model id, or unobserved: <requested>]"
+round: 1
 summary: "State the reviewed scope, the highest-risk result, and what the next phase must do."
 ---
 
@@ -19,11 +24,12 @@ summary: "State the reviewed scope, the highest-risk result, and what the next p
 - staged and unstaged changes:
 - task-owned untracked files:
 - excluded changes:
+- delivery checkpoint: [policy/baseline paths, remaining evidence]
 
 ## Previous Round
 
 - previous artifact:
-- CR-001 Short title: fixed | still open | declined
+- CR-001 Short title: fixed | still open | disputed
 
 `None.` in the first round. Identifiers and titles only, from the previous artifact's `## Critical and Required Findings`; a finding still open is raised again below under a new identifier.
 

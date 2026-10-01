@@ -13,6 +13,7 @@ import (
 	"github.com/slack-go/slack"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
+	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/manifest"
 )
 
 type fakeSlack struct {
@@ -153,6 +154,10 @@ func (f *fakeSlack) handler(t *testing.T) http.Handler {
 	}
 	mux.HandleFunc("/apps.manifest.create", manifest)
 	mux.HandleFunc("/apps.manifest.update", manifest)
+	mux.HandleFunc("/apps.manifest.export", func(w http.ResponseWriter, r *http.Request) {
+		f.record(r)
+		_, _ = w.Write([]byte(`{"ok":true,"manifest":{"display_information":{"name":"Ada's bot","description":"d","long_description":"l","background_color":"#000000"},"features":{"bot_user":{"display_name":"adabot"}},"settings":{"org_deploy_enabled":true}}}`))
+	})
 	return mux
 }
 
@@ -314,6 +319,24 @@ func wantBotForm(t *testing.T, call fakeCall, fields map[string]string) {
 	wantForm(t, call, "", fields)
 }
 
+func TestFallbackUpdateClearsStaleBlocks(t *testing.T) {
+	f := &fakeSlack{}
+	c := newClient(t, f)
+	blocks := []slack.Block{slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, "*Work:* current", false, false), nil, nil)}
+	if err := c.UpdateBlocksMessage(context.Background(), "C1", "1700000000.000100", "*Work:* current", blocks); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.UpdateBlocksMessage(context.Background(), "C1", "1700000000.000100", "oversized fallback", nil); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	call := f.calls[len(f.calls)-1]
+	f.mu.Unlock()
+	if call.form.Get("text") != "oversized fallback" || call.form.Get("blocks") != "[]" {
+		t.Fatalf("oversized fallback did not clear stale blocks: %v", call.form)
+	}
+}
+
 func TestUpdateMessage(t *testing.T) {
 	f := &fakeSlack{}
 	c := newClient(t, f)
@@ -428,4 +451,25 @@ func TestManifestCreateSurfacesSlackError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "invalid_auth") {
 		t.Fatalf("ManifestCreate error = %v, want invalid_auth", err)
 	}
+}
+
+func TestManifestUpdateSurfacesSlackErrorDetails(t *testing.T) {
+	f := &fakeSlack{manifestReply: `{"ok":false,"error":"invalid_manifest","errors":[{"message":"Invalid scope","pointer":"/oauth_config/scopes/bot/3"}]}`}
+	c := newClient(t, f)
+	_, err := c.ManifestUpdate(context.Background(), "xoxe.xoxp-config", "A0000000042", "{}")
+	want := "apps.manifest.update: invalid_manifest (/oauth_config/scopes/bot/3: Invalid scope)"
+	if err == nil || err.Error() != want {
+		t.Fatalf("ManifestUpdate error = %v, want %q", err, want)
+	}
+}
+
+func TestManifestExportReadsTheKeptSettings(t *testing.T) {
+	f := &fakeSlack{}
+	c := newClient(t, f)
+	live, err := c.ManifestExport(context.Background(), "xoxe.xoxp-config", "A0000000042")
+	want := manifest.Live{Name: "Ada's bot", Description: "d", LongDescription: "l", BackgroundColor: "#000000", BotDisplayName: "adabot", OrgDeployEnabled: true}
+	if err != nil || live != want {
+		t.Fatalf("ManifestExport = %+v, %v; want %+v, nil", live, err, want)
+	}
+	wantForm(t, f.call(t, "apps.manifest.export"), "xoxe.xoxp-config", map[string]string{"app_id": "A0000000042"})
 }

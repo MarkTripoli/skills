@@ -3,7 +3,11 @@ task: [task slug]
 type: verification
 summary: "[Two to four sentences: what was re-run, the status, the failing or missing items, and what the next phase needs from this file.]"
 status: passed | failed | blocked
-revision: [short SHA verified]
+revision: "[exact contract source fingerprint verified]"
+checkpoint: final
+reviewed_commit: "[HEAD sha verified]"
+reviewer_model: "[observed model id, or unobserved: <requested>]"
+round: 1
 target: [merge target branch]
 ---
 
@@ -12,6 +16,7 @@ target: [merge target branch]
 ## Run
 
 - Revision: [`<short SHA>` on `<branch>`; clean tree, or the uncommitted paths]
+- Delivery checkpoint: [policy/baseline paths, remaining evidence]
 - Target: [`<merge target>`; `<n>` files changed, `<m>` of them tests]
 - Checks from: [`package.json` scripts, `Makefile`, CI file, or none defined]
 - Coverage: [`<n>` acceptance items; `<k>` claimed by a receipt, `<n - k>` claimed by none]
@@ -19,13 +24,13 @@ target: [merge target branch]
 
 ## Items
 
-| Id | Item | Decided by | Expected | Observed | Verdict | Confidence | Severity |
-|---|---|---|---|---|---|---|---|
-| C1 | [Repository check name.] | [`<exact command>`] | [Exits 0 with no failing test.] | [One-line digest: exit code and the decisive output.] | pass \| fail | 1.00 \| hand | 0 \| 1 \| 2 \| 3 |
-| T1 | [Test file changed by the diff.] | [`git diff <target>...HEAD -- <path>`, read in this session] | [The change keeps this check's strength.] | [Digest: tests added, removed, skipped, or rewritten; assertions, fixtures, or inputs changed.] | pass \| fail | 0.00 \| hand | 0 \| 1 \| 2 \| 3 |
-| A1 | [Acceptance item, with its source `<artifact>:<line>` and `claimed: yes \| no`.] | [`<command>`, `<request>`, or `<observation>`; or "not in this environment: <reason>".] | [Outcome the artifact promises, quoted.] | [One-line digest of what was recorded.] | pass \| fail \| untested | 0.00 \| hand | 0 \| 1 \| 2 \| 3 |
+| Id | Item | Decided by | Expected | Observed | Verdict | Required | Confidence | Severity |
+|---|---|---|---|---|---|---|---|---|
+| C1 | [Repository check name.] | [`<exact command>`] | [Exits 0 with no failing test.] | [One-line digest: exit code and the decisive output.] | pass \| fail | yes | 1.00 \| hand | 0 \| 1 \| 2 \| 3 |
+| T1 | [Test file changed by the diff.] | [`git diff <target>...HEAD -- <path>`, read in this session] | [The change keeps this check's strength.] | [Digest: tests added, removed, skipped, or rewritten; assertions, fixtures, or inputs changed.] | pass \| fail | yes | 0.00 \| hand | 0 \| 1 \| 2 \| 3 |
+| A1 | [Acceptance item, with its source `<artifact>:<line>` and `claimed: yes \| no`.] | [`<command>`, `<request>`, or `<observation>`; or "not in this environment: <reason>".] | [Outcome the artifact promises, quoted.] | [One-line digest of what was recorded.] | pass \| fail \| untested | yes | 0.00 \| hand | 0 \| 1 \| 2 \| 3 |
 
-Verdicts: `pass`, `fail`, or `untested` (nothing in this environment could decide it). Confidence is the helper's probability for the verdict, or `hand` when decided without it; deterministic verdicts (an exit code, an exact string) record `1.00`. Severity: 0 none, 1 cosmetic, 2 functional, 3 blocking.
+Verdicts: `pass`, `fail`, or `untested` (nothing in this environment could decide it). `Required` is `yes` by default; `no` marks an optional item, whose untested reason goes under `### Known limits`. `contract.mjs status` flags a `passed` verification that has an untested item not marked `no`. Confidence is the helper's probability for the verdict, or `hand` when decided without it; deterministic verdicts (an exit code, an exact string) record `1.00`. Severity: 0 none, 1 cosmetic, 2 functional, 3 blocking.
 
 ## Findings
 

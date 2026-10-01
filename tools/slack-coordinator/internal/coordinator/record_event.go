@@ -26,9 +26,8 @@ func (c *Coordinator) activeRun(ctx context.Context, runID string) (db.Run, erro
 	return run, nil
 }
 
-// RecordWorkEvent edits the root with the latest status. New blockers get one
-// thread reply so they can notify the owner; routine updates stay on the root.
-// A failed edit is retried by the scheduler using the saved status.
+// RecordWorkEvent updates the thread's one status card on cadence. New blockers
+// get their own immediate reply; a failed card edit is retried by the scheduler.
 func (c *Coordinator) RecordWorkEvent(ctx context.Context, e WorkEvent) error {
 	c.statusMu.Lock()
 	defer c.statusMu.Unlock()
@@ -36,20 +35,25 @@ func (c *Coordinator) RecordWorkEvent(ctx context.Context, e WorkEvent) error {
 	if err != nil {
 		return err
 	}
+	legacyRoot := !run.StatusMessageTS.Valid || run.StatusMessageTS.String == ""
 	var prev WorkEvent
 	if run.LastStatus.Valid {
 		if err := json.Unmarshal([]byte(run.LastStatus.String), &prev); err != nil {
 			return fmt.Errorf("decode last status: %w", err)
 		}
-		if sameStatus(prev, e) && !run.LastDeliveryError.Valid {
+		unchanged := sameStatus(prev, e)
+		if legacyRoot {
+			unchanged = RenderLegacyStatus(prev) == RenderLegacyStatus(e) && slices.Equal(prev.Blockers, e.Blockers)
+		}
+		if unchanged && !run.LastDeliveryError.Valid {
 			return nil
 		}
 	}
 	if run.SlackMode != db.SlackDisabled {
 		for _, blocker := range e.Blockers {
 			if !contains(prev.Blockers, blocker) {
-				if err := c.post(ctx, run, SlackMessage{Text: "Blocked: " + blocker}); err != nil {
-					// A root edit cannot recover a missed action-required reply.
+				if err := c.post(ctx, run, BuildBlockerMessage(blocker, run.OwnerUserID)); err != nil {
+					// A status-card edit cannot recover a missed blocker reply.
 					if dbErr := c.DB.SetDeliveryError(ctx, run.RunID, "blocker notification: "+err.Error()); dbErr != nil {
 						return errors.Join(err, dbErr)
 					}
@@ -58,26 +62,43 @@ func (c *Coordinator) RecordWorkEvent(ctx context.Context, e WorkEvent) error {
 			}
 		}
 	}
-	// Save before editing so a failed edit can be retried without another
-	// owner notification. Disabled runs still record their latest status.
-	if err := c.storeStatus(ctx, e); err != nil {
+	progressChanged := RenderStatus(prev) != RenderStatus(e)
+	blockersChanged := !slices.Equal(prev.Blockers, e.Blockers)
+	if legacyRoot {
+		progressChanged = RenderLegacyStatus(prev) != RenderLegacyStatus(e)
+	}
+	nextDue := ""
+	if run.NextStatusDue.Valid {
+		nextDue = run.NextStatusDue.String
+	}
+	if progressChanged {
+		nextDue = stamp(statusDue(run))
+	}
+	// Save before editing so a failed edit can be retried against the same card.
+	// For new runs, blocker-only changes keep any pending progress deadline
+	// without editing the card. Legacy runs retain their immediate root edit.
+	// Disabled runs still record their latest event.
+	if err := c.storeStatus(ctx, e, nextDue); err != nil {
 		return err
 	}
 	if run.SlackMode == db.SlackDisabled {
 		return nil
 	}
-	if slices.Equal(prev.Blockers, e.Blockers) && c.Now().Before(statusDue(run)) && !run.LastDeliveryError.Valid {
-		return nil
+	if !run.LastDeliveryError.Valid {
+		if !progressChanged && nextDue == "" {
+			return nil
+		}
+		if !(legacyRoot && blockersChanged) && nextDue != "" && isBeforeDue(c.Now(), nextDue) {
+			return nil
+		}
 	}
 	return c.renderStatus(ctx, run, e)
 }
 
-// sameStatus reports that two events would show the reader the same update.
+// sameStatus reports whether two events produce the same visible card and
+// blocker notifications.
 func sameStatus(a, b WorkEvent) bool {
-	if a.Note != "" || b.Note != "" {
-		return a.Note == b.Note
-	}
-	return RenderStatus(a) == RenderStatus(b)
+	return RenderStatus(a) == RenderStatus(b) && slices.Equal(a.Blockers, b.Blockers)
 }
 
 func contains(items []string, item string) bool {
@@ -89,7 +110,7 @@ func contains(items []string, item string) bool {
 	return false
 }
 
-// statusDue measures the run's cadence from the most recent root edit.
+// statusDue measures the cadence from the most recent root post or card edit.
 func statusDue(run db.Run) time.Time {
 	last := run.StartedAt
 	if run.LastRootUpdate.Valid {
@@ -99,8 +120,13 @@ func statusDue(run db.Run) time.Time {
 	return at.Add(time.Duration(run.StatusIntervalSeconds) * time.Second)
 }
 
+func isBeforeDue(now time.Time, due string) bool {
+	at, err := time.Parse(time.RFC3339, due)
+	return err == nil && now.Before(at)
+}
+
 func (c *Coordinator) renderStatus(ctx context.Context, run db.Run, e WorkEvent) error {
-	if err := c.updateRoot(ctx, run, &e, nil, ""); err != nil {
+	if err := c.updateStatusCard(ctx, run, e); err != nil {
 		return err
 	}
 	raw, err := json.Marshal(e)
@@ -110,15 +136,11 @@ func (c *Coordinator) renderStatus(ctx context.Context, run db.Run, e WorkEvent)
 	return c.DB.MarkStatusRendered(ctx, run.RunID, string(raw), stamp(c.Now()))
 }
 
-// storeStatus records e as the run's latest status and schedules its root edit.
-func (c *Coordinator) storeStatus(ctx context.Context, e WorkEvent) error {
+// storeStatus records e and an optional deadline for its next card edit.
+func (c *Coordinator) storeStatus(ctx context.Context, e WorkEvent, nextDue string) error {
 	raw, err := json.Marshal(e)
 	if err != nil {
 		return fmt.Errorf("encode status: %w", err)
 	}
-	run, err := c.DB.GetRun(ctx, e.RunID)
-	if err != nil {
-		return err
-	}
-	return c.DB.SetStatus(ctx, e.RunID, string(raw), stamp(statusDue(run)))
+	return c.DB.SetStatus(ctx, e.RunID, string(raw), nextDue)
 }

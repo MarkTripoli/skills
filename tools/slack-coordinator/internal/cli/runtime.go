@@ -76,6 +76,9 @@ func daemonErr(err error) error {
 	if rpcErr.Code == ipc.ErrUnavailable {
 		return &ExitCodeError{Code: ExitUnavailable, Err: rpcErr}
 	}
+	if rpcErr.Code == ipc.ErrSlackDisabled {
+		return &ExitCodeError{Code: ExitSlackDisabled, Err: rpcErr}
+	}
 	return usageErr("%s", rpcErr.Message)
 }
 

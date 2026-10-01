@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { currentArtifact, indexFileExists, parseArtifactText, readArtifactIndex, readArtifactScalars } from './task-artifacts.mjs';
+import { currentArtifact, indexFileExists, parseArtifactText, readArtifactIndex, readArtifactScalars, sourceRevision } from './task-artifacts.mjs';
 import { decidePublicationProof } from './publication-proof-policy.mjs';
 
 function command(bin, args, cwd, { trim = true } = {}) {
@@ -94,7 +94,7 @@ function currentRecord(taskDir, type, index) {
   }
   return latest;
 }
-function captureDestination(value) {
+export function captureDestination(value) {
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:' || url.port || url.username || url.password || url.hash) return null;
@@ -121,7 +121,7 @@ function firstOutputLine(text, start, echoed = '') {
   }
   return '';
 }
-function recordedText(text, sha, recording) {
+export function validateRecordedText(text, sha, recording) {
   if (!text || /^\s*<(?:!doctype html|html)/i.test(text)) return false;
   const revision = /(?:^|\n)\s*(?:source sha|tested sha|tested revision|commit sha|revision)\s*:\s*([a-f0-9]{40})\b/im.exec(text)?.[1];
   const invocationPattern = recording === 'api-probe'
@@ -271,7 +271,7 @@ async function readable(value, recording, sha, taskRoot) {
       if (video) return decodableVideo(response, taskRoot);
       const bytes = await captureBytes(response, TEXT_LIMIT);
       if (!bytes) return false;
-      return recordedText(new TextDecoder('utf-8', { fatal: true }).decode(bytes), sha, recording);
+      return validateRecordedText(new TextDecoder('utf-8', { fatal: true }).decode(bytes), sha, recording);
     }
   } catch { return false; }
   return false;
@@ -342,17 +342,19 @@ export async function inspect({ taskDir, repo, prNumber, draftHostCapture = fals
       commentFields.recordings.get(label) === type && commentFields.captures.get(label) === bodyFields.captures.get(label)) &&
     bodyFields.recordings.size === commentFields.recordings.size &&
     recordedTests(evidence, bodyFields.captures));
-  const reviewSha = review ? commitExists(repo, field(review.text, 'head_sha')) : '';
+  const reviewSha = review ? commitExists(repo, field(review.text, 'reviewed_commit') || field(review.text, 'head_sha')) : '';
   const hostedBase = commitExists(repo, pr.baseRefOid);
   const mergeBase = hostedBase && pr.headRefOid === headSha ? command('git', ['merge-base', hostedBase, headSha], repo) : '';
   const artifactOnly = Boolean(testedSha) && pr.headRefOid === headSha &&
     (testedSha === headSha || Boolean(index && onlyIndexedArtifacts(repo, task, root, testedSha, headSha, index)));
-  const reviewCurrent = Boolean(review?.status === 'clean' &&
+  const sourceCurrent = artifact => !field(artifact?.text || '', 'reviewed_commit') || field(artifact.text, 'revision') === sourceRevision(task);
+  const reviewCurrent = Boolean(review?.status === 'clean' && sourceCurrent(review) &&
     pr.baseRefName && mergeBase && field(review.text, 'base_branch') === pr.baseRefName &&
     commitExists(repo, field(review.text, 'base_sha')) === mergeBase &&
     sameCodeRevision(repo, task, root, index, reviewSha, testedSha));
-  const verificationCurrent = Boolean(verification?.status === 'passed' &&
-    sameCodeRevision(repo, task, root, index, commitExists(repo, field(verification.text, 'revision')), testedSha));
+  const verificationSha = verification ? commitExists(repo, field(verification.text, 'reviewed_commit') || field(verification.text, 'revision')) : '';
+  const verificationCurrent = Boolean(verification?.status === 'passed' && sourceCurrent(verification) &&
+    sameCodeRevision(repo, task, root, index, verificationSha, testedSha));
   const captureCurrent = Boolean(testedSha && artifactOnly && hostedResult);
   const captureHosted = Boolean(hostedResult && (await Promise.all([...bodyFields.recordings].map(([label, recording]) =>
     readable(bodyFields.captures.get(label), recording, testedSha, root)))).every(Boolean));
@@ -397,6 +399,16 @@ async function main(argv) {
     process.exitCode = 1;
   }
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  let entrypoint;
+  try { entrypoint = fs.realpathSync(process.argv[1]); }
+  catch (error) {
+    if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') return false;
+    throw error;
+  }
+  return entrypoint === fs.realpathSync(fileURLToPath(import.meta.url));
+})();
+if (isMain) {
   main(process.argv.slice(2)).catch(error => { process.stderr.write(`${String(error?.message ?? error).slice(0, 800)}\n`); process.exitCode = 1; });
 }

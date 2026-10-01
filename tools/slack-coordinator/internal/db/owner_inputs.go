@@ -135,6 +135,54 @@ WHERE run_id = ? AND message_ts = ? AND claimed_at = ? AND handled_at IS NULL`,
 	return nil
 }
 
+// StaleOwnerInput is an unread input and the thread of the run it belongs to.
+type StaleOwnerInput struct {
+	RunID     string
+	MessageTS string
+	ChannelID string
+	ThreadTS  string
+}
+
+// StaleOwnerInputs lists inputs on Slack-enabled active runs that are still
+// unhandled and unclaimed, were received at or before receivedBefore, and
+// have no unread-reply notice yet.
+func (d *DB) StaleOwnerInputs(ctx context.Context, receivedBefore string) ([]StaleOwnerInput, error) {
+	rows, err := d.sql.QueryContext(ctx, `
+SELECT o.run_id, o.message_ts, r.channel_id, r.thread_ts
+FROM owner_inputs o JOIN runs r ON r.run_id = o.run_id
+WHERE r.lifecycle = 'active' AND r.slack_mode = 'enabled'
+  AND o.handled_at IS NULL AND o.claimed_at IS NULL AND o.stale_notice_at IS NULL
+  AND o.received_at <= ?
+ORDER BY o.run_id, o.message_ts`, receivedBefore)
+	if err != nil {
+		return nil, fmt.Errorf("stale owner inputs: %w", err)
+	}
+	defer rows.Close()
+	var stale []StaleOwnerInput
+	for rows.Next() {
+		var in StaleOwnerInput
+		if err := rows.Scan(&in.RunID, &in.MessageTS, &in.ChannelID, &in.ThreadTS); err != nil {
+			return nil, fmt.Errorf("stale owner inputs: %w", err)
+		}
+		stale = append(stale, in)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("stale owner inputs: %w", err)
+	}
+	return stale, nil
+}
+
+// MarkStaleNotice records that the unread-reply notice for (runID, messageTS)
+// was posted, so it is never posted again.
+func (d *DB) MarkStaleNotice(ctx context.Context, runID, messageTS, noticedAt string) error {
+	if _, err := d.sql.ExecContext(ctx, `
+UPDATE owner_inputs SET stale_notice_at = ? WHERE run_id = ? AND message_ts = ?`,
+		noticedAt, runID, messageTS); err != nil {
+		return fmt.Errorf("mark stale notice %s/%s: %w", runID, messageTS, err)
+	}
+	return nil
+}
+
 // ActiveRunByThread finds the active run whose thread is (channelID, threadTS).
 func (d *DB) ActiveRunByThread(ctx context.Context, channelID, threadTS string) (Run, bool, error) {
 	r, err := scanRun(d.sql.QueryRowContext(ctx, `

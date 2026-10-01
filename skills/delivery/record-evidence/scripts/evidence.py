@@ -15,6 +15,7 @@ import argparse
 import datetime as _dt
 import hashlib
 import json
+import math
 import os
 import math
 import re
@@ -1762,7 +1763,8 @@ def render_opts_from_args(args):
         "cards": not getattr(args, "no_cards", False),
         "card_seconds": getattr(args, "card_seconds", DEFAULT_CARD_SECONDS),
         "toast_seconds": getattr(args, "toast_seconds", DEFAULT_TOAST_SECONDS),
-        "max_height": getattr(args, "max_height", 0) or 0,
+        "max_height": getattr(args, "max_height", 720),
+        "max_width": getattr(args, "max_width", 0),
         "font": getattr(args, "font", None),
         "preset": getattr(args, "preset", "veryfast"),
         "crf": getattr(args, "crf", 20),
@@ -1828,7 +1830,15 @@ def render_video(tc, raster, inputs, out_path, cfg, filter_prefix, overlay_dir, 
     else:
         warnings.append("no text overlay backend (Pillow or ImageMagick); the video carries no burned-in annotations")
         graph = filter_prefix + ";[base]format=yuv420p[v]"
-    cmd += ["-filter_complex", graph, "-map", "[v]", "-an", *tc.encode_args(preset=opts["preset"], crf=opts["crf"]),
+    max_height = opts.get("max_height") or 0
+    max_width = opts.get("max_width") or 0
+    if max_height or max_width:
+        graph += ";[v]scale='trunc(iw*min(1\\,min(%d/iw\\,%d/ih))/2)*2':'trunc(ih*min(1\\,min(%d/iw\\,%d/ih))/2)*2'[bounded]" % (
+            max_width or 2 ** 31, max_height or 2 ** 31, max_width or 2 ** 31, max_height or 2 ** 31)
+        output = "[bounded]"
+    else:
+        output = "[v]"
+    cmd += ["-filter_complex", graph, "-map", output, "-an", *tc.encode_args(preset=opts["preset"], crf=opts["crf"]),
             "-movflags", "+faststart", str(out_path)]
     res = run(cmd, timeout=7200)
     if res.returncode != 0:
@@ -2161,7 +2171,9 @@ def cmd_frames(args):
                                     ("-" + ev["result"]) if ev.get("result") else "")
         path = out_dir / name
         res = run([tc.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-ss", "%.3f" % t, "-i", str(video),
-                   "-frames:v", "1", str(path)], timeout=300)
+                   "-frames:v", "1", "-vf", "scale='trunc(iw*min(1\\,min(%d/iw\\,%d/ih))/2)*2':'trunc(ih*min(1\\,min(%d/iw\\,%d/ih))/2)*2'" %
+                   (args.max_width or 2 ** 31, args.max_height or 2 ** 31, args.max_width or 2 ** 31, args.max_height or 2 ** 31),
+                   str(path)], timeout=300)
         if res.returncode == 0 and path.exists():
             written.append({"file": str(path), "video_t": round(t, 3), "type": ev["type"], "message": ev["message"],
                             "result": ev.get("result"), "pane": label or None})
@@ -2262,9 +2274,9 @@ def cmd_pair(args):
     cmd = [tc.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(sides[0][0]), "-i", str(sides[1][0])]
     if overlay_png:
         cmd += ["-i", str(overlay_png)]
-        graph += ";[base][2:v]overlay=0:0:format=rgb[v]"
+        graph += ";[base][2:v]overlay=0:0:format=rgb,scale='trunc(iw*min(1\\,min(1920/iw\\,%d/ih))/2)*2':'trunc(ih*min(1\\,min(1920/iw\\,%d/ih))/2)*2'[v]" % (args.height or 2 ** 31, args.height or 2 ** 31)
     else:
-        graph += ";[base]copy[v]"
+        graph += ";[base]scale='trunc(iw*min(1\\,min(1920/iw\\,%d/ih))/2)*2':'trunc(ih*min(1\\,min(1920/iw\\,%d/ih))/2)*2'[v]" % (args.height or 2 ** 31, args.height or 2 ** 31)
     cmd += ["-filter_complex", graph, "-map", "[v]", "-frames:v", "1", str(out)]
     res = run(cmd, timeout=300)
     if res.returncode != 0:
@@ -2319,6 +2331,9 @@ def cmd_compose(args):
     out_dir = Path(args.output).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     opts = render_opts_from_args(args)
+    if opts["max_height"] is None:
+        opts["max_height"] = 0 if args.size is not None else 720
+    opts["max_width"] = args.max_width if args.max_width is not None else (0 if not opts["max_height"] else 1920)
     raster, overlay_info = overlay_backend(opts.get("font"))
     manifests = []
     for session in args.session:
@@ -2342,10 +2357,10 @@ def cmd_compose(args):
     content = max(d + dur for d, dur in zip(deltas, durations))
     # Pane geometry.
     if args.direction == "h":
-        PH = even(args.size)
+        PH = even(args.size if args.size is not None else (opts["max_height"] or max(m["raw"]["height"] for m in manifests)))
         sizes = [(even(m["raw"]["width"] * PH / m["raw"]["height"]), PH) for m in manifests]
     else:
-        PW = even(args.size)
+        PW = even(args.size if args.size is not None else 720)
         sizes = [(PW, even(m["raw"]["height"] * PW / m["raw"]["width"])) for m in manifests]
     # Pane events (video_t includes the alignment delta and the title card).
     pane_events = []
@@ -2501,7 +2516,7 @@ def add_render_options(parser):
     parser.add_argument("--no-cards", action="store_true", help="skip the title and summary cards")
     parser.add_argument("--card-seconds", type=float, default=DEFAULT_CARD_SECONDS)
     parser.add_argument("--toast-seconds", type=float, default=DEFAULT_TOAST_SECONDS, help="how long each assertion stays on screen")
-    parser.add_argument("--max-height", type=int, default=0, help="downscale taller video to this height (0 keeps the size)")
+    parser.add_argument("--max-height", type=int, default=720, help="maximum final video height (0 keeps native height)")
     parser.add_argument("--font", default=None, help="TTF/TTC font file for overlays (or EVIDENCE_FONT)")
     parser.add_argument("--preset", default="veryfast")
     parser.add_argument("--crf", type=int, default=20)
@@ -2591,6 +2606,8 @@ def build_parser():
     f.add_argument("session", help="session or composite directory")
     f.add_argument("--types", default="assertion,test_start", help="comma list of event types")
     f.add_argument("--delay", type=float, default=0.6, help="seconds after the annotation to grab (lets the overlay appear)")
+    f.add_argument("--max-width", type=int, default=1920, help="maximum frame width (0 keeps native width)")
+    f.add_argument("--max-height", type=int, default=720, help="maximum frame height (0 keeps native height)")
     f.add_argument("--out", default=None)
     f.set_defaults(func=cmd_frames)
 
@@ -2603,7 +2620,7 @@ def build_parser():
     pr.add_argument("--out", required=True, help="output PNG")
     pr.add_argument("--labels", default=None, help="two comma-separated labels (default BEFORE,AFTER)")
     pr.add_argument("--caption", default=None, help="one line under the pair saying what changed")
-    pr.add_argument("--height", type=int, default=720)
+    pr.add_argument("--height", type=int, default=720, help="maximum pair image height")
     pr.add_argument("--font", default=None)
     pr.set_defaults(func=cmd_pair)
 
@@ -2612,11 +2629,13 @@ def build_parser():
     c.add_argument("session", nargs="+", help="finalized session directories, in pane order")
     c.add_argument("--label", action="append", help="pane label, one per session")
     c.add_argument("--direction", default="h", choices=["h", "v"])
-    c.add_argument("--size", type=int, default=1080, help="pane height (h) or width (v) in pixels")
+    c.add_argument("--size", type=int, default=None, help="explicit pane height (h) or width (v); overrides default bounds")
+    c.add_argument("--max-width", type=int, default=None, help="maximum composite width (default 1920, 0 keeps native width)")
     c.add_argument("--title", default=None)
     c.add_argument("--no-align", action="store_true", help="start every pane at 0 instead of aligning by wall clock")
     c.add_argument("--caveats", default=None)
     add_render_options(c)
+    c.set_defaults(max_height=None)
     c.set_defaults(func=cmd_compose)
 
     sv = sub.add_parser("_supervise")

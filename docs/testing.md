@@ -1,6 +1,6 @@
 # Testing
 
-Keep evidence kinds apart: offline repo check, live skill eval, maybe-run Atomic runtime. One kind pass no mean other kind pass.
+Keep evidence kinds apart: offline repo check, live skill eval. One kind pass no mean other kind pass.
 
 ## Repository checks
 
@@ -8,16 +8,14 @@ Keep evidence kinds apart: offline repo check, live skill eval, maybe-run Atomic
 
 | Surface | Entry point | Contract |
 |---|---|---|
-| Skill validation | `node scripts/validate.mjs` | Layout, frontmatter, shared links, templates, handoff fences, phase-table coverage, and source conventions |
+| Skill validation | `node scripts/validate.mjs` | Layout, frontmatter, shared links, templates, handoff fences, phase-table coverage, source conventions, and instruction word caps (`WORD_CAPS`; raising one is a visible diff) |
 | Plugin sync | `node scripts/sync-plugin.mjs --check` | Published plugin resources match canonical skills |
 | Unit tests | `node --test tests/` | Installer ownership, runtime adaptation, commit rules, typed helper behavior, task-index and task-root contracts, artifact helper distribution, and workflow helpers |
 
-Offline check no need Atomic install, no need live provider key. Installer test use temp home and temp project, cover:
+Offline check no need live provider key. Installer test use temp home and temp project, cover:
 
-- no-workflow default;
 - project-local portable skill;
-- independent partial pick;
-- workflow discovery door; and
+- independent partial pick; and
 - scoped uninstall no touch real user install.
 
 Offline contract also cover indexed task-artifact model:
@@ -25,10 +23,54 @@ Offline contract also cover indexed task-artifact model:
 - `index.json` schema and fail-closed read: invalid JSON/schema, dangling path, symlink component, SHA-256 mismatch, metadata mismatch be errors, never scan fallback;
 - semantic series `(kind, variant)`, immutable contiguous iteration, `current`, `generation`, `supersedes`;
 - task-root directive in root `AGENTS.md`/`CLAUDE.md`, matching declarations, conflict, invalid path, symlink rejection, default `.agents/tasks`;
-- helper distribution for canonical, plugin, runtime, portable, Atomic install shape; and
+- helper distribution for canonical, plugin, runtime, portable install shape; and
 - legacy task with no `index.json` keep numbered-file scan, never silently migrate.
 
-Passing offline contract no claim runtime ready. Old engine fixture no be Atomic run proof. Maybe-run TypeScript workflow plus helper be current controller source.
+Passing offline contracts does not prove live delivery or hosted publication. Run the contract CLI and actual scratch installation before claiming readiness.
+
+Run the focused contract and installation checks with:
+
+```sh
+node --test tests/delivery-contract.test.mjs tests/install.test.mjs
+python3 skills/delivery/record-evidence/scripts/test_evidence.py EvidencePipeline.test_before_after_comparison_ignores_development_gap
+```
+
+The contract cases exercise indexed/legacy selection, exact plan/current-source approval, prior review rounds, base-commit baselines, complete hosted byte comparison, trailing failures, tampered captures, inspection binding and durable repair stops. The media regression uses synthetic fixtures only to prove that `--no-align` preserves both panes and their results without inserting the development gap; it is not product-behavior evidence.
+
+### Live delivery evals
+
+Run live delivery scenarios only with authenticated runtime access:
+
+```sh
+node evals/run.mjs deliver-small-bug --keep --max-time 40
+node evals/run.mjs deliver-separate-builder deliver-resume --keep --max-time 40
+```
+
+The small-bug fixture exercises a bounded retry fix, economy builders, strongest reviewers, fresh child sessions, commit attribution and blocked publication without a remote. The separate-builder and resume cases cover worker separation and durable continuation. Read each scenario for its exact requirements; a fixture profile is test input, not a required user profile.
+
+Grading validates indexed current artifacts through the delivery contract, binds plan approval to its exact canonical path and digest, checks final reviewed commits/source fingerprints and reviewer attribution, and rejects task data in commits. Legacy discovery applies only when the index is absent. The runner keeps source/guide snapshots, session traces and results for independent inspection; fixture output and upstream recordings are not proof of this checkout. Isolated Slack configuration prevents the normal notification routes but is not an OS sandbox. Do not claim a model or session was observed without its retained trace.
+
+Review attribution hashes the exact bytes in a successful native full-content `write`, whether its path is reserved staging or external scratch, and matches the validated published digest. The parser also recognizes a literal `cat > <path> <<'DELIMITER'` with an optional `mkdir -p <parent> &&` prefix; it never executes captured code. Unquoted heredocs, substitutions, appended commands, opaque scripts/eval, metadata and path-only calls cannot prove authorship. A parent may publish unchanged bytes without becoming their author; changed bytes fail attribution. Legacy records also require byte proof and retain direct-file timestamp guards.
+
+Contract-invalid superseded indexed reviews do not consume rounds. Legacy review history uses the newest numbered record per type and checkpoint as its current boundary. Invalid current reviews, ledger tampering and duplicate valid rounds still fail. Valid round history stays bound to the exact review type and checkpoint even when the plan gains a successor.
+
+Receipt round numbers remain contiguous across successor approvals. Approvals do not consume the repair allowance: the grader uses the delivery contract's counter for the current unresolved blocking episode. Only a valid approval closes that episode; invalid attempts and new plan bytes do not reset it.
+
+`node --test tests/deliver-sessions.test.mjs tests/deliver-native-transport.test.mjs` exercises retained authentic native event schemas and adversarial changes without modifying or regrading the archived run. These regressions prove the parser boundary, not a fresh live delivery.
+
+The safe projected native fixture `tests/fixtures/deliver-small-bug-native-scratch.json` retains relevant actual event fields from `evals/results/20261001-041919`, omitting every runtime `systemPrompt`. Scratch writes and the quoted shell heredoc prove authorship, but neither final child loaded its assigned full skill. The regression preserves those missing-skill failures; it does not turn the retained failed live run into a pass. A fresh source-current model run must prove the corrected native writer and explicit installed full-skill loading instructions.
+
+## Slack coordinator proof boundaries
+
+`npm run test:slack-coordinator` is the offline Slack coordinator gate. It runs the Go race tests, `go vet`, and a temporary binary build in `tools/slack-coordinator/` without Slack credentials; inbound Socket Mode events and connection health are exercised through injected events and a fake Slack HTTP server.
+
+Live Slack/Jira field delivery, Socket Mode inbound replies, and launchd or systemd restart after `kill -9` are deferred evidence; they require a Slack workspace or a supervising host.
+
+## Single-orchestrator runtime proof
+
+Offline checks do not prove live worker/session isolation. Run the live scenarios `deliver-small-bug`, `deliver-separate-builder` and `deliver-resume` with `node evals/run.mjs <scenario> --keep --max-time 40` when authenticated runtime access is configured. These exercise head/model-bound independent review, fresh sessions, resume state and blocked publication. Retain only observed scenario output as evidence; upstream recordings are not proof of this checkout.
+
+Jira hierarchy/refinement scenarios are draft-only. Immutable indexed tasks select validated current semantic records; legacy tasks use numbered discovery only when the index is absent. The retained security and solo-comparison scenarios remain separate. Scoped offline coverage: `node --test tests/evals.test.mjs tests/deliver-evals.test.mjs tests/deliver-grade.test.mjs tests/deliver-sessions.test.mjs tests/deliver-native-transport.test.mjs tests/evidence-flows.test.mjs tests/delivery-comparison.test.mjs`.
 
 ## Safety Dance proof boundaries
 
@@ -36,51 +78,11 @@ Passing offline contract no claim runtime ready. Old engine fixture no be Atomic
 
 `cd tools/safety-dance && make e2e` exercises temporary local repositories and remotes. It does not prove live pull-request or CI provider behavior or a hosted `safety-dance-v*` release; those remain deferred evidence requiring credentials or GitHub Actions. Windows is not a supported release target until its native gate and service path have CI coverage.
 
-## Slack coordinator proof boundaries
-
-`npm run test:slack-coordinator` is the offline Slack coordinator gate. It runs the Go race tests, `go vet`, and a temporary binary build in `tools/slack-coordinator/` without Slack credentials; inbound Socket Mode events and connection health are exercised through injected events and a fake Slack HTTP server.
-
-Live Slack delivery, Socket Mode inbound replies, and launchd or systemd restart after `kill -9` are deferred evidence; they require a Slack workspace or a supervising host.
-
-## Atomic runtime proof
-
-Use scratch repo and scratch Atomic agent dir. Keep task stuff and other user state out of cleanup reach. Follow native [authoring](https://docs.bastani.ai/workflows/authoring) and [operations](https://docs.bastani.ai/workflows/operations) contract.
-
-1. Install whole portable collection with `--atomic` into scratch spot.
-2. Start Atomic, run `/workflow reload`, `/workflow list`, `/workflow inputs delivery`. Confirm registered name and input schema. Discovery no go deep, so check both installed top-level `skills-delivery.mjs` door and its nested source tree.
-3. Run small real task with explicit workflow. Look at saved artifact and native run status. Fake context prove only helper/control flow, no stage run.
-4. For gate change, use `gates=all` or `plan`: look at artifact, ask change, approve revision, look at pause/quit/resume with saved run id.
-5. For headless change, use `gates=none`; no path may touch `ctx.ui`. Exercise blocked and failed result, no take them as done.
-6. For auto routing, test JEV with key present and its visible unavailable-service fail path. Deterministic explicit chain no prove auto routing.
-
-Write down exact command, version, seen status, blocker. Registration, module import, stub stage, or one deterministic helper result no be end-to-end workflow proof. Runtime integration be optional for skill-only change, but any claim about it need live proof.
-
-### Retained Atomic 0.9.19 evidence
-
-Current proven runtime edge be Atomic 0.9.19 native two-model-session artifact handoff. Table below keep seen result and limit apart:
-
-| Run or evidence | Observed result | Limit or required handling |
-|---|---|---|
-| `0a18d915-142a-4f1a-a8d6-c453f86d4032` | Failed native run resumed from another process through the native workflow CONTROL TOOL. DBOS metadata showed `completed`, `count-effects=1`, and no replay of the `completed-once` callback. Raw proof: `/tmp/atomic-migration.JBu9Sk/recovery-proof.json`. | Direct headless `/workflow resume <run-id>` first error, DBOS durability no ready; native tool recovery start it. Narrow recovery result, no proof of every CLI path. |
-| `6ba6144a-9806-4c7b-9ba0-ba1535b9df9f` | With a persistent interactive host, recovery advanced stage 016 to 017. | `-p` control-tool call can say `running` then pause when print mode kill its host; superseded paused host can push another pause while shutting down. Stop superseded host, keep one interactive `atomic` host open, run `/workflow status <run-id>` to start durability, then `/workflow resume <run-id>`. Chat back to idle keep run alive; exit no keep. Admission alone no be progress, no be done proof. |
-| `b5e7dca8-8820-4d41-a8a5-e342ba386c03` | After host and device-service restoration, the run resumed from `crashed` with its first four stages cached. | Keep supervising host and owned device service alive across harness teardown. Open terminal screen no prove alive. Restore service, check authorized target, look at status and cached stage, then resume; stop persistent service after accept. Cached checkpoint no prove rest of delivery, no prove UI assertion. |
-| `600e37e0-14f2-4b18-8348-0d00c8c8dcc7` | Successor run reused the task with `max_steps=80` and `verify=true`. | Old `6ba6144a-9806-4c7b-9ba0-ba1535b9df9f` run later come back `blocked` at its 40-stage wall; native resume refuse it as non-resumable. Go on with same `task_dir` and branch, bigger explicit `max_steps`, and needed verify setting. Keep blocked run and artifact; no reset checkpoint, no call it done. |
-| Existing `task_dir` behavior | The runtime reads the canonical request from `task.md`. | New `request` no replace it, no carry repair feedback. Keep original request, add accepted feedback pointer to task, send them explicit to live stage that already took input. |
-| `73ac4665-6b6e-430a-b11b-e8972a38037a` | Recovery after successor local PR description lack needed Purpose and Change outline fail with replay/topology mismatch. | No be good full-controller recovery proof. |
-| `9b65b796-f8b0-419a-bc19-2640e5ad92fc` | Independent-verification revision guard fail after fixture build write untracked output in source tree; tracked implementation file stay same. | Exact pre-stage fingerprint no restore from kept generated output. Keep fixture build output outside source tree and keep each run outcome. |
-| `853af082-da2e-4c89-8afd-94500a5a20e0` | Guard fail at `009-verify-implementation-observe` because relative evidence path write recording under `skills/delivery/jev-ui/.agents/`; recording kept before move. | Clean tree no prove exact fingerprint. No bypass guard, no throw away regression source to fake match. |
-| `e4f70765-bd1a-48c4-acae-78d8c7fbc5f1` and `f54ac46d-1d0c-45c6-9357-c7022a496059` | Moving two runtime metadata file byte-same into task evidence bring back fingerprint, but continuation still fail topology admission. Atomic 0.9.19 give failed-run continuation fresh `ctx.runId`; putting that attempt ID in completed-workspace argument change checkpoint identity. | Fix take attempt ID out of those argument but keep original ownership ID in cached workspace output. Old checkpoint identity no migrate, no rewrite. |
-| `d862dec2-ce66-4aab-91de-3bad68c8a649` → `41b053b4-e678-4afa-8621-cfb899abd7e7` | Real Luna-fast implementation session fail `001-implement-plan-observe` on purpose; fresh-ID continuation finish with cached `open-task-workspace`, zero-duration model reuse, same session ID, and observer admission. See-through context wrapper pass native task and argument along unchanged. | Prove internal replay after observer admission, no prove cached-child replay, no prove full delivery done. Evidence: `evidence/supervisor-independent-EE5OZZ/native-internal-replay/`. |
-| Live intercom | In same 0.9.19 run, `workflow:<run-id>/**` message pile up under empty-root `[future]` while stage run. Blocking ask can outlive its target. | Queue admission no be delivery. Pick current roster receiver, demand ack, refresh receiver as stage move, put accepted finding in task artifact so fresh session no lean on undelivered queue. |
-| Repair handoff | Fresh native `openai-codex/gpt-5.6-luna-fast` worker eat final `iterate-implementation` prompt in isolated `notifyctl`. Padded channel selector fail with exit 1 before repair, work after; whitespace, case, canonical logged channel identity, and input artifact all kept. | Stale uppercase-message finding no applied. Evidence and archive hash: `evidence/supervisor-independent-EE5OZZ/controller-repair-handoff/`. Prove repair input contract, no prove whole route, no prove recovery path. |
-
-Full controller end-to-end delivery, every route and durable control, still unproven.
-
 ## Evals
 
 `npm run evals` run skill scenario against live model, no part of offline suite. `evals/run.mjs` build OMP skill tree and run each phase in own `omp -p` session against throwaway repo from `evals/results/<stamp>/.dist/`. Snapshot hold current `shared/WRITING.md`, `shared/CONVENTIONS.md`, and fixture. Each phase told to read those pinned local guide, no published copy, no host-checkout copy. Prompt, answer, stderr, artifact, grading result stay under `evals/results/`. Pick model with `--model <selector>`, like `npm run evals -- lean-with-sources --model openai-codex/gpt-5.6-luna --keep`; else OMP default used.
 
-Scenario in `evals/scenarios/` check what consumer see: source-backed claim, unresolved requirement, repo citation, artifact shape, one-command operational handoff, unchanged old artifact, and no implementation change by document phase. Artifact must be only path at `HEAD`, and commit must use valid Conventional Commit subject with `docs(task):`. Subject no compared with side wording. Read each scenario source for exact contract; no pin wording alone, no pin formatting alone.
+Scenario in `evals/scenarios/` checks what consumers see: source-backed claim, unresolved requirement, repo citation, artifact shape, one-command operational handoff, unchanged old artifact, and no implementation change by document phase. The artifact must be saved under `.agents/tasks/` and ignored, untracked, and absent from every commit. Regraded recordings check the saved artifact and Git state; no artifact-commit subject is expected. Read each scenario source for the exact contract; do not pin wording or formatting alone.
 
 Fixture repo be only codebase artifact may describe. Saved source snapshot and local guide stop read from changeable host file. Regrade use saved `.dist` template and fixture snapshot; old recording with no snapshot get skipped.
 
@@ -90,7 +92,11 @@ Fixture repo be only codebase artifact may describe. Saved source snapshot and l
 npm run evals -- verify-required-arguments --model openai-codex/gpt-5.6-luna --keep --max-time 15
 ```
 
-This test command discovery and keeping of documented build output, no test moving of surprise runtime evidence. Live skill eval prove only exercised phase in that harness. No prove Atomic discovery, no prove its human UI, no prove durable resume, no prove epic child scheduling, no prove other harness tool. Provider key and OMP needed.
+This test command discovery and keeping of documented build output, no test moving of surprise runtime evidence. Live skill eval prove only exercised phase in that harness. No prove epic child scheduling, no prove other harness tool. Provider key and OMP needed.
+
+Native delivery checks bind complete model-visible installed SKILL contents and exact child-authored review bytes. Compound reader output needs every byte of its preserved pinned installed source; a path, hidden full-content metadata or partial output is insufficient. Preserve the run's `.dist` and session JSONL alongside its results.
+
+Successful same-child native edits extend authorship only through full `oldText`/`newText` snapshots chained to the child's own successful full-content write. Parent edits, mismatched paths or old bytes, failed receipts and diff-only claims do not qualify. Never execute captured commands or patches to reconstruct evidence. A grader repair does not change an original failed report; record a fresh current-source run.
 
 ### Recorded repair evidence
 
@@ -111,7 +117,7 @@ Required bare image-path read and bare video timestamp read be sequential eviden
 
 OMP 18.1.22 video reader make relative temp frame and contact-sheet dir. Observer write down its real ffmpeg invocation, runtime call stack, active read, exit, and output hash. Attribution need exact video read, process input/output, returned image bytes, temp lifetime, and no overlapping writer. Bare-video preview also bind every thumbnail to sheet process that eat it and to that sheet good read result. Unknown file, broken thumbnail chain, unmatched bytes, persistent file, committed viewer output — all forbidden. This no be filename-prefix exception, no be OS sandbox; unsupported viewer shape fail closed.
 
-Before commit any terminal receipt, follow companion finalization checklist: keep all seven coverage column, use seen timestamp or say time unavailable, and match current pending state with real result. Earlier reservation stay clearly historical. Failed/no-progress result no let you shorten coverage table, no let you invent chronology. Keep rejected receipt unchanged; prove instruction repair with fresh subject, no edit old outcome.
+Before recording any terminal receipt, follow companion finalization checklist: keep all seven coverage column, use seen timestamp or say time unavailable, and match current pending state with real result. Earlier reservation stay clearly historical. Failed/no-progress result no let you shorten coverage table, no let you invent chronology. Keep rejected receipt unchanged; prove instruction repair with fresh subject, no edit old outcome.
 
 Phase 2 use same helper for real viewing denial and lying recorder label:
 
@@ -152,13 +158,13 @@ npm run evals -- iterate-evidence-three-rounds iterate-evidence-continuation --g
 
 First run three-rounds recording miss its initial state, and its continuation leave orphan capture alive. Neither one be acceptance. Fresh second run follow capture paint flush plus initial dwell, and kill paused owned capture before fresh-session launch. `phase-3-grade-controls.json` in each dir keep evidence-removal failure and restored passing grade.
 
-Saved regrade read kept repair evidence, no rebuilt original fixture, no changeable host source. It no run agent, no supply missing inspection. Complete plan hold exactly seven live case: primary repair, viewer blocked, label disagreement, no progress, zero limit, three rounds, and continuation. Grade each phase explicit dir separately: runner skip absent name, and skipped name never count toward acceptance. These case no establish other harness, no establish broader fault coverage, no establish Atomic run.
+Saved regrade read kept repair evidence, no rebuilt original fixture, no changeable host source. It no run agent, no supply missing inspection. Complete plan hold exactly seven live case: primary repair, viewer blocked, label disagreement, no progress, zero limit, three rounds, and continuation. Grade each phase explicit dir separately: runner skip absent name, and skipped name never count toward acceptance. These case no establish other harness, no establish broader fault coverage.
 
 ## Adding a skill to the workflow
 
 1. Add `skills/delivery/<name>/SKILL.md` and `references/` template, keep frontmatter and shared link on line 6.
 2. Add its row under exact `| Skill | Artifact type | Human gate | Runs in |` header in [workflows/delivery.md](../workflows/delivery.md#phase-table).
 3. Keep independent invocation and artifact-first reply. Human handoff use one text command fence naming next skill and needed artifact; terminal reply have no fence.
-4. Add controller integration only when workflow should call skill. Keep graph and decision in `atomic/workflows/delivery.ts` and tight helper in `atomic/lib/`. Every skill stage use `context: "fresh"`; each bounded-loop turn make new stage identity, no graph cycle.
+4. Integrate an invoked phase through deliver and its executable contract; independent reviewers start fresh and only current digest-validated artifacts count.
 5. Add test only for believable seen regression. Live artifact change may need eval; workflow API change need runtime proof.
 6. Run `npm test` after related edit land. During shared work, one integration owner run big check after tree be coherent.

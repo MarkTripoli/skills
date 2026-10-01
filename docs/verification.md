@@ -1,6 +1,6 @@
 # Verification
 
-`verify-implementation` checks the work in a separate session. It runs the project's checks, checks each promised outcome, and saves a report. Atomic runs it after implementation and before review unless disabled. By hand, run `/verify-implementation` in a new session.
+`verify-implementation` checks the work in a separate session. It runs the project's checks, checks each promised outcome, and saves a report. Run `/verify-implementation` in a new session after implementation and before review.
 
 An implementation report is a list of claims, not proof. Agents can report checks they did not run or weaken tests. See the [supporting research](research/llm-output-verification.md).
 
@@ -12,22 +12,11 @@ An implementation report is a list of claims, not proof. Agents can report check
 4. List promised outcomes with source lines, whether the implementation report claimed them, and how to check them: command, request, or observation (`A` items). Mark outcomes that cannot be checked here as `untested`.
 5. Run every command and record exit codes and decisive output lines. A receipt, summary, or CI badge is not a result.
 6. Grade with exact exit codes and strings first. Other rows go to `judge.mjs grade-steps --kind command`, which returns `pass`, `fail`, or `unclear` with probability and severity. Decide `unclear` rows by hand and list them for a person.
-7. Save `NN-verification-<slug>.md` with `status: passed`, `failed`, or `blocked`.
-
-## Optional workflow input
-
-The Atomic `delivery` workflow verifies by default:
-
-```text
-/workflow delivery request="Add a --verbose flag" workflow=lean branch=verbose-flag
-/workflow delivery request="Add a --verbose flag" workflow=lean branch=verbose-flag verify=false
-```
-
-`verify=false` deliberately skips independent verification. It does not turn an unverified result into a pass. Standalone use needs no Atomic installation.
+7. Save `<task-root>/<slug>/artifacts/review/verification/<NNNN>.md` with `status: passed`, `failed`, or `blocked`.
 
 ## What the artifact records
 
-`NN-verification-<slug>.md` has frontmatter `task`, `type: verification`, `summary`, `status`, `revision`, and `target`, followed by:
+`<task-root>/<slug>/artifacts/review/verification/<NNNN>.md` has frontmatter `task`, `type: verification`, `summary`, `status`, `revision`, and `target`, followed by:
 
 - `## Run`: revision, target, check sources, receipt coverage counts, and grading method;
 - an items table: id, item, deciding method, expected, observed, verdict, confidence, and severity;
@@ -39,15 +28,19 @@ Verdicts are `pass`, `fail`, and `untested`. Confidence is the helper's probabil
 
 ## How failures loop back
 
-Atomic reads the saved artifact before choosing the next step:
+Read the saved artifact status:
 
-- `failed` routes to `iterate-implementation`, then a fresh verification stage checks the repair;
-- `passed` continues toward optional app testing and review;
-- `blocked` names the external prerequisite and does not continue silently.
+- `failed`: run `/iterate-implementation @<plan file>`, then `/verify-implementation` again in a fresh session;
+- `passed`: continue with optional app testing and `/review-code`;
+- `blocked`: the artifact names the external prerequisite; restore it before rerunning. Use `/show-me` if it helps.
 
-`max_steps` bounds repair sessions. Supply missing prerequisites before native resume or a new run with the existing `task_dir`.
+The shared delivery contract preserves a bounded evidence-repair allowance across session replacement and continuation. A no-progress repair stops rather than renewing its allowance. Source changes invalidate the previous verification, review and recorded proof.
 
-By hand, use `/review-code` after a pass, `/iterate-implementation @<plan file>` after a failure, and `/show-me` when blocked.
+## Recorded evidence is a separate completion requirement
+
+Passing repository checks does not satisfy the recorded-behavior gate. Prepare the evidence policy early and capture existing UI behavior, from a temporary worktree at the base commit if implementation has begun. After verification and review, record the current result, inspect the capture against every required target, and compose the authentic `BEFORE`/`AFTER` sessions where required. Net-new behavior uses current-state proof; non-UI work uses captured commands, probes or agent transcripts.
+
+`deliver/contract.mjs` seals and reads evidence. A passed Markdown receipt alone is not sealed evidence: its binding must match the current revision and actual nonempty captures, include the required comparison and inspected targets, and bind the hosted bytes to the local capture (or record `unverified` with a reason). `status` lists what publication still lacks; the final reviewer judges it. The workflow reference documents [status](../workflows/delivery.md#executable-delivery-status).
 
 ## Blocked versus failed
 
@@ -55,7 +48,7 @@ A build or test failure caused by the change is `fail` and returns to the fix lo
 
 ## Rules the phase keeps
 
-- It never edits product code, configuration, or tests and never commits code. Only its artifact is committed: `docs(task): verification artifacts`.
+- It never edits product code, configuration, or tests and never commits code. Its artifact stays in the local task directory.
 - It runs each repository-defined check, never a narrowed variant that omits the failing part.
 - It sends the typed-judgment helper only `expected` and trimmed `observed` text. Repository code, diffs, and secrets stay on the machine.
 - It quotes output. `observed` never paraphrases an error or printed value.

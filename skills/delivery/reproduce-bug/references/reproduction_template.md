@@ -3,6 +3,7 @@ task: [task slug]
 type: reproduction
 summary: "[Two to four sentences: whether the bug reproduced, the cause or the missing input, and what the fix session needs from this file.]"
 status: reproduced | not-reproduced
+revision: "[exact contract source fingerprint]"
 ---
 
 # [Bug] Reproduction
@@ -18,6 +19,8 @@ status: reproduced | not-reproduced
 - Test or command: [`path/to/test_file` with the test name, left uncommitted; or the exact command.]
 - Run: [`<command that runs the test or reproduction>`]
 - Result today: [Fails; the decisive output lines, quoted.]
+- Pre-mutation policy/baseline: [sealed original capture, inspected output/sample references]
+- Delivery checkpoint: [actual phase, remaining fix/verification/review/evidence]
 
 ## Cause
 

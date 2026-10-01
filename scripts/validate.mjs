@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Validates the skill collection: layout, frontmatter, shared links, reference files,
-// answer-template handoffs, human-review templates, banned host tokens, and the optional Atomic workflow.
+// answer-template handoffs, human-review templates, and banned host tokens.
 // Usage: node scripts/validate.mjs [--root <dir>]
 // Exit 1 with one `file:line: message` per failure.
 
@@ -8,7 +8,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { scanSkills } from "./lib/layout.mjs";
+import { ADJACENT_HELPERS } from "./lib/build.mjs";
 import { validateTaskArtifacts } from "./lib/validate-task-artifacts.mjs";
+import { validateInstructionSize } from "./lib/validate-instruction-size.mjs";
 import { SUBJECT_PATTERN, MAX_SUBJECT_LENGTH } from "./check-commits.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -17,7 +19,7 @@ const rootIndex = args.indexOf("--root");
 const root = rootIndex === -1 ? repoRoot : path.resolve(args[rootIndex + 1] ?? "");
 const generated = root !== repoRoot;
 
-const EXPECTED_SKILL_COUNT = 53;
+const EXPECTED_SKILL_COUNT = 57;
 const SHARED_LINKS = {
   "shared/WRITING.md": "https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md",
   "shared/CONVENTIONS.md": "https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md",
@@ -27,10 +29,13 @@ const LINE6 =
 
 const RESEARCH_VARIANTS = { full: "create-design-discussion", lean: "create-structure-outline", prd: "create-prd" };
 // The deliver skill's by-hand reply names the first skill of the routed chain.
-const DELIVER_VARIANTS = { bugfix: "reproduce-bug", oneshot: "review-code", lean: "create-research-questions", full: "create-research-questions", prd: "create-research", epic: "create-research-questions", program: "create-research" };
+const DELIVER_VARIANTS = { bugfix: "record-evidence --baseline", oneshot: "record-evidence --baseline", lean: "create-research-questions", full: "create-research-questions", prd: "create-research", epic: "create-research-questions", program: "create-research" };
 // A sources reply hands off to the chain's first skill, or to the skill that owns a document being converted;
 // a oneshot with sources to gather starts with research.
 const SOURCES_VARIANTS = { ...DELIVER_VARIANTS, oneshot: "create-research", "product-document": "create-prd", "technical-document": "create-tdd" };
+const POST_MUTATION_VARIANTS = { verify: "verify-implementation", app: "test-app", review: "review-code" };
+const BASELINE_VARIANTS = { oneshot: "iterate-implementation", bugfix: "reproduce-bug", plan: "implement-plan", outline: "implement-outline", reviews: "resolve-pr-reviews" };
+const INSPECTION_VARIANTS = { passed: "describe-pr", repair: "iterate-implementation", verify: "verify-implementation", app: "test-app", review: "review-code", capture: "record-evidence" };
 const TERMINAL_ANSWER = "<terminal>";
 
 // answer file -> skill named in the final fence, or TERMINAL_ANSWER when no skill follows.
@@ -48,13 +53,13 @@ const ANSWER_INVENTORY = {
   "create-tdd/references/tdd_final_answer.md": "create-plan",
   "create-tdd/references/tdd_program_review_answer.md": "iterate-tdd",
   "create-tdd/references/tdd_system_review_answer.md": "iterate-tdd",
-  "deliver/references/deliver_atomic_answer.md": TERMINAL_ANSWER,
-  "deliver/references/deliver_ended_answer.md": TERMINAL_ANSWER,
-  "deliver/references/deliver_hand_answer.md": DELIVER_VARIANTS,
+  "deliver/references/deliver_answer.md": TERMINAL_ANSWER,
   "describe-pr/references/pr_description_final_answer.md": "resolve-pr-reviews",
-  "fix-code-review/references/code_review_fixes_answer.md": "review-code",
-  "fix-bug/references/fix_answer.md": "review-code",
+  "fix-code-review/references/code_review_fixes_answer.md": POST_MUTATION_VARIANTS,
+  "fix-bug/references/fix_answer.md": POST_MUTATION_VARIANTS,
   "gather-sources/references/sources_final_answer.md": SOURCES_VARIANTS,
+  "group-review/references/group_review_decisions_answer.md": TERMINAL_ANSWER,
+  "group-review/references/group_review_posted_answer.md": TERMINAL_ANSWER,
   "herd-next/references/herd_next_answer.md": TERMINAL_ANSWER,
   "herd-next/references/herd_next_skipped_answer.md": TERMINAL_ANSWER,
   "implement-outline/references/implementation_final_answer.md": "verify-implementation",
@@ -65,6 +70,7 @@ const ANSWER_INVENTORY = {
   "iterate-design-discussion/references/design_discussion_review_answer.md": "iterate-design-discussion",
   "iterate-evidence/references/evidence_iteration_passed_answer.md": TERMINAL_ANSWER,
   "iterate-evidence/references/evidence_iteration_stopped_answer.md": TERMINAL_ANSWER,
+  "iterate-evidence/references/evidence_delivery_answer.md": INSPECTION_VARIANTS,
   "iterate-implementation/references/implementation_final_answer.md": "verify-implementation",
   "iterate-implementation/references/implementation_phase_final_answer.md": "implement-plan",
   "iterate-plan/references/plan_final_answer.md": "implement-plan",
@@ -75,12 +81,15 @@ const ANSWER_INVENTORY = {
   "iterate-structure-outline/references/structure_outline_final_answer.md": "implement-outline",
   "iterate-tdd/references/tdd_final_answer.md": "create-plan",
   "iterate-tdd/references/tdd_review_answer.md": "iterate-tdd",
-  "record-evidence/references/evidence_failed_answer.md": "iterate-implementation",
-  "record-evidence/references/evidence_final_answer.md": "describe-pr",
+  "jira-issue-refinement/references/refinement_applied_answer.md": TERMINAL_ANSWER,
+  "jira-issue-refinement/references/refinement_draft_answer.md": TERMINAL_ANSWER,
+  "record-evidence/references/evidence_baseline_answer.md": BASELINE_VARIANTS,
+  "record-evidence/references/evidence_final_answer.md": "iterate-evidence",
   "record-evidence/references/evidence_standalone_answer.md": TERMINAL_ANSWER,
   "reproduce-bug/references/reproduction_not_reproduced_answer.md": TERMINAL_ANSWER,
   "reproduce-bug/references/reproduction_reproduced_answer.md": "fix-bug",
   "resolve-pr-reviews/references/pr_review_approved_answer.md": TERMINAL_ANSWER,
+  "resolve-pr-reviews/references/pr_review_monitored_answer.md": TERMINAL_ANSWER,
   "resolve-pr-reviews/references/pr_review_pending_answer.md": "resolve-pr-reviews",
   "review-artifact-comments/references/comments_final_answer.md": "iterate-implementation",
   "review-code/references/code_review_blocked_answer.md": TERMINAL_ANSWER,
@@ -91,7 +100,7 @@ const ANSWER_INVENTORY = {
   "test-app/references/app_test_passed_answer.md": "review-code",
   "test-app/references/app_test_failed_answer.md": "iterate-implementation",
   "test-app/references/app_test_blocked_answer.md": TERMINAL_ANSWER,
-  "verify-implementation/references/verification_passed_answer.md": "review-code",
+  "verify-implementation/references/verification_passed_answer.md": { app: "test-app", review: "review-code" },
   "verify-implementation/references/verification_failed_answer.md": "iterate-implementation",
   "verify-implementation/references/verification_blocked_answer.md": TERMINAL_ANSWER,
 };
@@ -128,14 +137,12 @@ const FENCE_ARTIFACT = {
   "implement-outline/references/implementation_phase_final_answer.md": true, // resumes on @{plan_file}
   "implement-plan/references/implementation_phase_final_answer.md": true,
   "iterate-implementation/references/implementation_phase_final_answer.md": true,
-  "record-evidence/references/evidence_failed_answer.md": true, // iterate-implementation on @{plan_file}
   "test-app/references/app_test_failed_answer.md": true,
   "verify-implementation/references/verification_failed_answer.md": true,
   // Next skill reviews the whole diff or pull request, or resolves the newest artifact itself; bare command.
   "ci-commit/references/commit_final_answer.md": false, // describe-pr acts on the PR
   "create-research/references/research_final_answer.md": false, // design/outline/prd read newest research, exclude questions
   "iterate-research/references/research_final_answer.md": false,
-  "deliver/references/deliver_hand_answer.md": false, // chain's first skill reads task.md
   "gather-sources/references/sources_final_answer.md": false,
   "describe-pr/references/pr_description_final_answer.md": false, // resolve-pr-reviews acts on the PR
   "fix-code-review/references/code_review_fixes_answer.md": false, // review-code reviews the whole diff
@@ -145,7 +152,9 @@ const FENCE_ARTIFACT = {
   "implement-outline/references/implementation_final_answer.md": false,
   "implement-plan/references/implementation_final_answer.md": false,
   "iterate-implementation/references/implementation_final_answer.md": false,
-  "record-evidence/references/evidence_final_answer.md": false,
+  "record-evidence/references/evidence_final_answer.md": true,
+  "record-evidence/references/evidence_baseline_answer.md": false,
+  "iterate-evidence/references/evidence_delivery_answer.md": false,
   "test-app/references/app_test_passed_answer.md": false,
   "reproduce-bug/references/reproduction_reproduced_answer.md": false, // fix-bug reads newest reproduction
   "resolve-pr-reviews/references/pr_review_pending_answer.md": false, // acts on the PR
@@ -215,8 +224,8 @@ const BANNED_TOKENS = [
   /artifact_directive/i,
 ];
 
-const STANDALONE_SKILLS = new Set(["jev-ui"]);
-const SKIP_DIRS = new Set([".git", ".backups", "node_modules", "dist", "results", ".cache"]);
+const STANDALONE_SKILLS = new Set(["extract-figma-visuals", "feature-conformance", "jev-ui"]);
+const SKIP_DIRS = new Set([".git", ".backups", ".omo", ".ci-go", "node_modules", "dist", "results", ".cache"]);
 const SKIP_FILES = new Set(["scripts/validate.mjs", ".skill-lock.json"]);
 const SKIP_BINARY_MEDIA = /\.(mp4|m4v|mov|webm|avi|mkv|wav|mp3)$/i;
 
@@ -323,13 +332,16 @@ for (const name of skillNames) {
     if (!fs.existsSync(path.join(repoRoot, target))) fail(target, 0, "shared document missing from the repository");
   }
 
-  for (const match of content.matchAll(/references\/([A-Za-z0-9_.-]+)/g)) {
-    const fileName = match[1].replace(/\.+$/, "");
+  for (const match of content.matchAll(/(?:(\.\.\/)?([a-z0-9-]+)\/)?references\/([A-Za-z0-9_.-]+)/g)) {
+    const fileName = match[3].replace(/\.+$/, "");
+    const owner = match[2] || name;
     const linkStart = content.lastIndexOf("](", match.index);
     const linkEnd = linkStart === -1 ? -1 : content.indexOf(")", linkStart);
     if (linkEnd >= match.index && /^https?:\/\//i.test(content.slice(linkStart + 2, linkEnd))) continue;
-    const referenced = path.join(skillDirs.get(name), "references", fileName);
-    if (!fs.existsSync(referenced)) {
+    const referenced = path.join(skillDirs.get(owner) || path.resolve(skillDirs.get(name), "..", owner), "references", fileName);
+    // Canonical skills use the manual contract; installers supply these registered optional adjacent helpers.
+    const optionalHelper = !generated && skillDirs.has(owner) && ADJACENT_HELPERS.includes(fileName) && fs.existsSync(path.join(repoRoot, "shared", fileName));
+    if (!fs.existsSync(referenced) && !optionalHelper) {
       const line = content.slice(0, match.index).split("\n").length;
       fail(rel(file), line, `references/${fileName} does not exist`);
     }
@@ -369,14 +381,15 @@ function checkHandoff(content, expectedSkill, label, { terminal = false, wantsAr
   const [block] = blocks;
   if (block.lang.toLowerCase() !== "text") fail(label, 0, `final fence must be a text fence, found "${block.lang}"`);
   const body = block.body.trim();
-  const match = /^\/([a-z0-9]+(?:-[a-z0-9]+)*)( @\S+)?$/.exec(body);
-  if (!match) fail(label, 0, `fence must hold one /<skill>[ @<file>] line, found "${body}"`);
+  const match = /^\/([a-z0-9]+(?:-[a-z0-9]+)*)( --baseline)?( @\S+)?$/.exec(body);
+  if (!match) fail(label, 0, `fence must hold one /<skill>[ --baseline][ @<file>] line, found "${body}"`);
   if (match && !skillSet.has(match[1])) fail(label, 0, `fence names unknown skill "${match[1]}"`);
-  if (match && match[1] !== expectedSkill) fail(label, 0, `fence names "${match[1]}", expected "${expectedSkill}"`);
-  if (match && wantsArtifact === true && !match[2]) {
+  if (match && `${match[1]}${match[2] || ""}` !== expectedSkill) fail(label, 0, `fence names "${match[1]}${match[2] || ""}", expected "${expectedSkill}"`);
+  if (match?.[2] && match[1] !== "record-evidence") fail(label, 0, "--baseline is supported only by record-evidence");
+  if (match && wantsArtifact === true && !match[3]) {
     fail(label, 0, `fence must name the artifact this phase wrote, "/${expectedSkill} @<file>", because ${expectedSkill} acts on that specific file`);
   }
-  if (match && wantsArtifact === false && match[2]) {
+  if (match && wantsArtifact === false && match[3]) {
     fail(label, 0, `fence must be the bare command "/${expectedSkill}"; ${expectedSkill} resolves its own input, and a named file would mislead it`);
   }
   if (content.slice(block.end).trim() !== "") fail(label, 0, "nothing may follow the command fence");
@@ -536,19 +549,6 @@ if (!fs.existsSync(workflowFile)) {
   }
 }
 
-// 11. Atomic is an optional installation, not a prerequisite for reading or building skills.
-// Check the repository entry statically; never import the runtime or start a workflow here.
-if (!generated) {
-  const entry = path.join(repoRoot, "atomic", "workflows", "delivery.ts");
-  if (!fs.existsSync(entry)) {
-    fail("atomic/workflows/delivery.ts", 0, "missing the optional delivery workflow source");
-  } else {
-    const content = read(entry);
-    if (!/\bexport\s+default\b/.test(content)) fail(rel(entry), 0, "the Atomic workflow must have a default export");
-    if (!/\bname\s*:\s*["']delivery["']/.test(content)) fail(rel(entry), 0, "the Atomic workflow must register as delivery");
-  }
-}
-
 // 12. Generated runtimes carry exactly the canonical portable skill inventory.
 if (generated) {
   const canonicalNames = new Set(scanSkills(path.join(repoRoot, "skills")).skills.map((skill) => skill.name));
@@ -570,6 +570,8 @@ if (!rule) {
   if (Number(rule[2]) !== MAX_SUBJECT_LENGTH) fail("shared/CONVENTIONS.md", ruleIndex + 1, `documented subject limit ${rule[2]} differs from scripts/check-commits.mjs: ${MAX_SUBJECT_LENGTH}`);
 }
 
+validateInstructionSize({ root, generated, fail });
+
 report();
 
 function report() {
@@ -579,6 +581,6 @@ function report() {
     process.exit(1);
   }
   console.log(
-    `ok: ${skillNames.length} skills, ${answerFiles.length} answer templates, ${HUMAN_REVIEW_TEMPLATES.length} human-review templates, ${EXECUTION_DAG_TEMPLATES.length} execution-DAG templates, ${WORK_BREAKDOWN_TEMPLATES.length} work-breakdown templates, ${bannedHits} banned tokens${generated ? ` (generated tree ${root})` : ", Atomic entry checked"}`,
+    `ok: ${skillNames.length} skills, ${answerFiles.length} answer templates, ${HUMAN_REVIEW_TEMPLATES.length} human-review templates, ${EXECUTION_DAG_TEMPLATES.length} execution-DAG templates, ${WORK_BREAKDOWN_TEMPLATES.length} work-breakdown templates, ${bannedHits} banned tokens${generated ? ` (generated tree ${root})` : ""}`,
   );
 }

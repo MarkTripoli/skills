@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { normalizeTaskRoot, parseTaskRootDirectives, resolveTaskRoot } from '../atomic/lib/task-storage.mjs';
+import { normalizeTaskRoot, parseTaskRootDirectives, resolveTaskRoot } from '../shared/task-root.mjs';
 
 function repository(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'atomic-task-storage-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'task-storage-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return root;
 }
@@ -141,7 +141,7 @@ test('resolveTaskRoot rejects dangling repository instruction symlinks', t => {
 
 test('resolveTaskRoot rejects symlinked existing task-root components', t => {
   const root = repository(t);
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'atomic-task-storage-outside-'));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'task-storage-outside-'));
   t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
   fs.symlinkSync(outside, path.join(root, 'delivery'));
   fs.writeFileSync(path.join(root, 'AGENTS.md'), directive('delivery/tasks'));

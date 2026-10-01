@@ -196,7 +196,7 @@ func scrubEnv(env []string) []string {
 	for _, kv := range env {
 		name, _, _ := strings.Cut(kv, "=")
 		switch name {
-		case "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_COORDINATOR_HOME":
+		case "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "JIRA_API_TOKEN", "SLACK_COORDINATOR_HOME":
 			continue
 		}
 		out = append(out, kv)

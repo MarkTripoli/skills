@@ -8,6 +8,8 @@ without re-sizing them.
 
 A child task produces one pull request a reviewer reads in one sitting and merges the day it starts. Work that cannot merge that day is not one unit; it is a wave of units that has not been split yet.
 
+For `/deliver`, treat a proposed PR approaching 10,000 hand-written changed lines as an automatic split signal, even when its summary sounds like one feature. Estimate before implementation and inspect `git diff --stat` as work grows. Count generated code and lockfiles separately, but review their impact; a smaller hand-written diff can still fail the four tests below. Prefer a small number of coherent child PRs, normally two to four, each independently reviewable and mergeable. Do not split solely by layer or by an arbitrary equal line count.
+
 ## Size signal (advisory)
 
 Before running the four tests, estimate the unit's likely changed lines (generated code and

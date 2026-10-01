@@ -49,18 +49,13 @@ func TestRunCheckFailsClosedUntilDeliveryRecovers(t *testing.T) {
 		t.Fatalf("set short test cadence: exit %d", code)
 	}
 	time.Sleep(time.Second)
-	updatesBeforeFailure := fake.updateCount()
-	fake.failUpdates.Store(true)
 	fake.failPosts.Store(true)
 	if _, code := runCLI(t, "run", "event", "--run-id", "RUN1", "--current", "x"); code != ExitUnavailable {
-		t.Fatalf("run event with root edit failing exit %d, want %d", code, ExitUnavailable)
+		t.Fatalf("run event with Slack failing exit %d, want %d", code, ExitUnavailable)
 	}
 	gate, code = checkGate(t, "RUN1")
 	if code != ExitUnavailable || gate.Kind != "unavailable" || !strings.Contains(gate.Reason, "500") {
-		t.Fatalf("after a failed root edit: exit %d, gate %+v; want 11, unavailable, and the Slack error", code, gate)
-	}
-	if fake.updateCount() <= updatesBeforeFailure || fake.update(fake.updateCount()-1).Get("ts") != "1700000000.000100" {
-		t.Fatalf("failing Slack did not receive a failed root edit: %d edits before, %d after", updatesBeforeFailure, fake.updateCount())
+		t.Fatalf("after a failed post: exit %d, gate %+v; want 11, unavailable, and the Slack error", code, gate)
 	}
 	if _, code := runCLI(t, "run", "finish", "--run-id", "RUN1", "--outcome", "completed"); code != ExitUnavailable {
 		t.Fatalf("run finish with Slack failing exit %d, want %d", code, ExitUnavailable)
@@ -68,11 +63,10 @@ func TestRunCheckFailsClosedUntilDeliveryRecovers(t *testing.T) {
 	if _, code := runCLI(t, "run", "start", "--channel", "C0000000001", "--work", "x", "--run-id", "RUN2"); code != ExitUnavailable {
 		t.Fatalf("run start with Slack failing exit %d, want %d", code, ExitUnavailable)
 	}
-	if fake.count() != 1 {
-		t.Fatalf("failing Slack recorded %d posts, want only the root", fake.count())
+	if fake.count() != 2 {
+		t.Fatalf("failing Slack recorded %d posts, want root and status card", fake.count())
 	}
 
-	fake.failUpdates.Store(false)
 	fake.failPosts.Store(false)
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -85,8 +79,8 @@ func TestRunCheckFailsClosedUntilDeliveryRecovers(t *testing.T) {
 	if code != ExitOK || gate.Kind != "ready" {
 		t.Fatalf("after Slack recovered: exit %d, gate %+v; want the scheduler retry to clear the error", code, gate)
 	}
-	if fake.count() != 1 || fake.updateCount() < 2 || fake.update(0).Get("ts") != "1700000000.000100" {
-		t.Fatalf("retry did not edit root: %d posts, %d edits", fake.count(), fake.updateCount())
+	if fake.count() != 2 || fake.updateCount() < 1 || fake.update(0).Get("ts") != "1700000000.000200" {
+		t.Fatalf("retry did not edit the saved status card: %d posts, %d edits", fake.count(), fake.updateCount())
 	}
 	if _, code := runCLI(t, "run", "finish", "--run-id", "RUN1", "--outcome", "completed"); code != ExitOK {
 		t.Fatalf("run finish after recovery exit %d, want 0", code)

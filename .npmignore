@@ -5,5 +5,6 @@ node_modules/
 .atomic/
 .atomic-delivery/
 .claude/
+.omo/
 .codegraph
 evals/results/

@@ -1,6 +1,6 @@
 ---
 name: reproduce-bug
-description: Run for /reproduce-bug requests. Reproduce a reported bug before anything is edited. Record the observed and expected behavior, a reproduction that fails today, the cause, and a short fix plan; or record exactly what is missing when it cannot be reproduced.
+description: "Run for /reproduce-bug requests. Reproduce a reported bug before anything is edited. Record the observed and expected behavior, a reproduction that fails today, the cause, and a short fix plan; or record exactly what is missing when it cannot be reproduced."
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
@@ -19,6 +19,8 @@ Turn a bug report into a reproduction that fails today, then record the cause an
 
 4. **Find the code path**: locate the entry point the report exercises and follow it to the point where behavior diverges from expected. Read the existing tests for that path before writing one. Use child workers per the conventions (agent-codebase-locator for files and tests, agent-codebase-analyzer for current behavior) when the area is unfamiliar; verify their claims against the repository.
 
+   Before adding or editing a reproduction test/check, reuse an existing sealed original baseline when one exists; otherwise run `/record-evidence --baseline`. For that first baseline, freeze policy and capture the real existing failure with the exact probe or live UI recorder while source/checks are unchanged, then inspect and seal it. Reuse matching observed failure output in step 5; do not rerun merely to confirm a reported observation. A baseline can also be captured later from a temporary worktree at the base commit, so a missing baseline never blocks the reproduction edit; a missing recording/viewing capability is recorded `untested` with its reason. `node <skills-dir>/deliver/contract.mjs status <task-dir>` reports artifact currency and what publication lacks; optional for manual work.
+
 5. **Write a reproduction that fails today**:
    - Prefer a test in the project's test suite: a new test file or a new case in the file that covers the path, following that suite's patterns. Leave it uncommitted and record its path.
    - Fall back to an exact command with its observed output when no test harness can reach the behavior (a CLI invocation, an HTTP request, a script). Record the command byte-exact and the decisive output lines.
@@ -30,13 +32,13 @@ Turn a bug report into a reproduction that fails today, then record the cause an
 
 7. **Not reproduced**: set `status: not-reproduced`. Under `## Attempted`, record every attempt from step 5: command, environment (versions, OS, data, configuration), result. Under `## Missing`, list exactly what would let it reproduce: steps, data, version, environment, logs, one item per line. Remove the `## Cause` and `## Fix` sections. Do not guess a cause.
 
-8. **Save the artifact**: record the next immutable `debugging.reproduction` iteration through the conventions' Recording an artifact flow. Frontmatter: `task`, `type: reproduction`, `summary` (two to four sentences: what reproduced or did not, the cause or missing input, what the fix session needs), `status`. Fill `## Human Review`: `### Review targets` names the reproduction and cause/fix; `### Verify` begins with the reproduction command and failure; `### Known limits` records environments not tried, expected-behavior reading, or `None.` Commit the canonical path and `index.json` explicitly as `docs(task): reproduction artifact`. A legacy task without `index.json` follows the conventions' legacy rules.
+8. **Save the artifact**: record the next immutable `debugging.reproduction` iteration through the conventions' Recording an artifact flow. Frontmatter: `task`, `type: reproduction`, `summary` (two to four sentences: what reproduced or did not, the cause or missing input, what the fix session needs), `status`. Fill `## Human Review`: `### Review targets` names the reproduction and cause/fix; `### Verify` begins with the reproduction command and failure; `### Known limits` records environments not tried, expected-behavior reading, or `None.` A legacy task without `index.json` follows the conventions' legacy rules.
 
-9. **Final answer**: `status: reproduced` uses `references/reproduction_reproduced_answer.md`; `status: not-reproduced` uses `references/reproduction_not_reproduced_answer.md`. Fill the selected template exactly, using the conventions' placeholders, plus `{needed}`: one line per item of the artifact's `## Missing` list. End with one fenced `text` command; nothing follows the fence.
+9. **Final answer**: `status: reproduced` uses `references/reproduction_reproduced_answer.md`; `status: not-reproduced` uses `references/reproduction_not_reproduced_answer.md`. Fill the selected template exactly, using the conventions' placeholders, plus `{needed}`: one line per item of the artifact's `## Missing` list. End with one fenced `text` command; nothing follows the fence. When `status: not-reproduced` and an item under `## Missing` needs a human answer, post one blocker to the task's Slack thread per `agent-slack-control-plane` [feature-thread mode](https://github.com/MarkTripoli/skills/blob/main/skills/delivery/agent-slack-control-plane/SKILL.md#post-a-blocker).
 
 ## Rules
 
-- Never edit product code and never commit code. The reproduction test stays uncommitted; the fix session decides whether it becomes a regression test. Only the reproduction artifact is committed, as a `docs(task)` commit.
+- Never edit product code and never commit code. The reproduction test stays uncommitted; the fix session decides whether it becomes a regression test. Keep the reproduction artifact in the local task directory; it is not part of branch history.
 - A reproduction that passes today is not a reproduction. Record it under `## Attempted` and try a different input, environment, or entry point.
 - Do not guess a cause without a failing reproduction. `## Cause` and `## Fix` exist only when `status: reproduced`.
 - Keep the fix plan short enough to execute in one session: two to six steps, each with a file, a function, the change, and its proving check. A bug whose fix needs a design decision is not a `bugfix` task; say so under `### Known limits` and keep the fix steps to what is settled.
