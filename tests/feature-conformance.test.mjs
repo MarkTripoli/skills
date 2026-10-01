@@ -69,6 +69,92 @@ test("delivery accepts a requirement with evidence and an owning PR", () => {
   assert.equal(result.report.state, "delivery_ready");
 });
 
+for (const scenario of [
+  {
+    field: "source_resolution",
+    authority: ["ticket_scope", "figma", "design_document", "ticket_detail", "repository"],
+    design_document_manifest: documentManifest,
+    figma_bundles: [figmaBundle],
+    design_basis: {
+      sources: ["ticket", "figma", "design_document"],
+      design_document: { status: "referenced", sections: [documentMapping] },
+      figma: { status: "mapped", bundle_id: "report-draft", node_ids: ["10047:10900"] },
+    },
+    source_resolution: { status: "decision_needed", summary: "Choose the authoritative draft lifecycle." },
+    resolved: { source_resolution: { status: "figma_overrides_design_document", summary: "The mapped Figma reopen state supersedes the document." } },
+    diagnostic: "source decision",
+  },
+  {
+    field: "design_basis.design_document",
+    authority: ["ticket_scope", "design_document", "ticket_detail", "repository"],
+    design_document_manifest: documentManifest,
+    design_basis: {
+      sources: ["ticket", "design_document"],
+      design_document: { status: "decision_needed" },
+      figma: { status: "not_supplied" },
+    },
+    resolved: { design_basis: {
+      sources: ["ticket", "design_document"],
+      design_document: { status: "referenced", sections: [documentMapping] },
+      figma: { status: "not_supplied" },
+    } },
+    diagnostic: "design-document decision",
+  },
+  {
+    field: "design_basis.figma",
+    authority: ["ticket_scope", "figma", "ticket_detail", "repository"],
+    figma_bundles: [figmaBundle],
+    design_basis: {
+      sources: ["ticket", "figma"],
+      design_document: { status: "not_supplied" },
+      figma: { status: "decision_needed" },
+    },
+    resolved: { design_basis: {
+      sources: ["ticket", "figma"],
+      design_document: { status: "not_supplied" },
+      figma: { status: "mapped", bundle_id: "report-draft", node_ids: ["10047:10900"] },
+    } },
+    diagnostic: "Figma decision",
+  },
+]) {
+  test(`${scenario.field} must be resolved for delivery but only warns at preflight`, () => {
+    const requirement = {
+      ...baseRequirement,
+      owner: { ticket: "APP-103", pr: "https://github.com/example/app/pull/103" },
+      status: "delivered",
+      decision: { status: "none" },
+      evidence: [{ kind: "journey", location: "https://github.com/user-attachments/assets/103" }],
+      design_basis: scenario.design_basis,
+      ...(scenario.source_resolution ? { source_resolution: scenario.source_resolution } : {}),
+    };
+    const contract = {
+      ...baseContract,
+      release_status: "release_complete",
+      authority: scenario.authority,
+      ...(scenario.design_document_manifest ? { design_document_manifest: scenario.design_document_manifest } : {}),
+      ...(scenario.figma_bundles ? { figma_bundles: scenario.figma_bundles } : {}),
+      requirements: [requirement],
+    };
+
+    const preflight = validateContract(contract, "preflight");
+    assert.equal(preflight.valid, true);
+    assert.equal(preflight.report.state, "execution_ready_with_decisions");
+    assert.deepEqual(preflight.report.issues, []);
+    assert.deepEqual(preflight.report.warnings, [`R3: ${scenario.diagnostic} needed`]);
+
+    const delivery = validateContract(contract, "delivery");
+    assert.equal(delivery.valid, false);
+    assert.equal(delivery.report.state, "release_held");
+    assert.deepEqual(delivery.report.issues, [`R3: unresolved ${scenario.diagnostic} cannot pass delivery`]);
+
+    const resolved = validateContract({ ...contract, requirements: [{ ...requirement, ...scenario.resolved }] }, "delivery");
+    assert.equal(resolved.valid, true);
+    assert.equal(resolved.report.state, "delivery_ready");
+    assert.deepEqual(resolved.report.issues, []);
+    assert.deepEqual(resolved.report.warnings, []);
+  });
+}
+
 test("delivery holds an unproven requirement", () => {
   const result = validateContract({
     ...baseContract,

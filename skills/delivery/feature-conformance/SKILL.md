@@ -58,7 +58,7 @@ The orchestrator records one adapted reviewer outcome per row:
 - `deferred` or `not in release`
 - `not implemented`
 
-Update the contract from the reviewer result and run delivery validation. `delivery_ready` supports the orchestrator's submission lifecycle. `release_held` withholds only the affected delivery claim and returns repairable gaps to recovery.
+Update the contract from the reviewer result and run delivery validation. A delivered row with `decision_needed` in `source_resolution`, `design_basis.design_document`, or `design_basis.figma` holds delivery even when its ordinary `decision.status` is `none` and its PR and evidence are present. Resolve the authoritative source choice before claiming delivery. `delivery_ready` supports the orchestrator's submission lifecycle. `release_held` withholds only the affected delivery claim and returns repairable gaps to recovery.
 
 ## Guardrails
 

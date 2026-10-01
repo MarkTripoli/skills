@@ -99,4 +99,6 @@ node <skill-dir>/scripts/validate-feature-contract.mjs <contract> --mode deliver
 
 Preflight returns `execution_ready`, `execution_ready_with_decisions`, or `contract_invalid`. Delivery returns `delivery_ready` or `release_held`.
 
+`decision_needed` in `source_resolution`, `design_basis.design_document`, or `design_basis.figma` produces a preflight warning and still permits dispatch. In delivery mode, any of those unresolved authoritative source choices on a `delivered` row produces an issue and `release_held`, even with `decision.status: "none"`, an owning PR, and evidence. Resolving the source choice restores eligibility for `delivery_ready`; optional sources remain optional.
+
 Contract JSON snapshots and referenced manifests are immutable. Their task-index receipts carry exact SHA-256 values; a receipt revision never changes an earlier snapshot or index record. Validate the selected receipt and referenced bytes before running the JSON validator. The JSON validator checks the supplied snapshot, not live Jira, Figma, Git, or hosted evidence.

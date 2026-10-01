@@ -250,6 +250,11 @@ export function validateContract(contract, mode) {
   if (mode === "delivery") {
     for (const requirement of contract?.requirements ?? []) {
       if (requirement?.status === "in_progress") issue(`${requirement.id}: in_progress work cannot pass delivery`);
+      if (requirement?.status === "delivered") {
+        if (requirement?.source_resolution?.status === "decision_needed") issue(`${requirement.id}: unresolved source decision cannot pass delivery`);
+        if (requirement?.design_basis?.design_document?.status === "decision_needed") issue(`${requirement.id}: unresolved design-document decision cannot pass delivery`);
+        if (requirement?.design_basis?.figma?.status === "decision_needed") issue(`${requirement.id}: unresolved Figma decision cannot pass delivery`);
+      }
       if (["update_detected", "reconciliation_active", "source_unavailable"].includes(requirement?.source_change?.status)) {
         issue(`${requirement.id}: unresolved mapped source change cannot pass delivery`);
       }
