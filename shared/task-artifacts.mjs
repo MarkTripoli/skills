@@ -155,11 +155,57 @@ function section(body, title) {
   if (start < 0) return '';
   const end = lines.findIndex((line, index) => index > start && /^## /.test(line)); return lines.slice(start + 1, end < 0 ? undefined : end).join('\n').trim();
 }
+// Only current check tables and result fields decide an approval, not setup or negative-probe prose.
+export function validateReviewOutcome(type, status, body, file = 'artifact') {
+  if (type === 'code-review') {
+    const verdict = section(body, 'Verdict');
+    const decision = /^[-*\s]*decision:[ \t]*`?([a-z_]+)`?/im.exec(verdict)?.[1]?.toLowerCase();
+    const expected = { clean: 'approve', findings: 'request_changes', blocked: 'blocked' }[status];
+    if (verdict && decision !== expected) throw new Error(`${file}: status ${status} contradicts Verdict decision ${decision ?? '(missing)'}`);
+  }
+  if (!(type === 'code-review' ? status === 'clean' : status === 'approve')) return;
+  const failedResult = value => {
+    const result = value.trim().replace(/^`|`$/g, '');
+    if (/^(?:fail(?:ed|ure)?|blocked)\b/i.test(result)) return true;
+    const exit = /^exit(?:\s+(?:code|status))?\s*[:=]?\s*(-?\d+)\b/i.exec(result);
+    return exit !== null && Number(exit[1]) !== 0;
+  };
+  for (const title of type === 'code-review' ? ['Checks', 'Verification Story'] : ['Checks']) {
+    let excludedDepth = null, fence = null, header = null;
+    for (const line of section(body, title).split('\n')) {
+      const marker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
+      if (marker) { if (!fence) fence = marker[0]; else if (fence === marker[0]) fence = null; continue; }
+      if (fence) continue;
+      const heading = /^(#{3,6})\s+(.+)$/.exec(line);
+      if (heading) {
+        if (excludedDepth !== null && heading[1].length <= excludedDepth) excludedDepth = null;
+        if (/\b(?:setup|expected[- ]negative(?: probes?)?)\b/i.test(heading[2])) excludedDepth = heading[1].length;
+      }
+      if (excludedDepth !== null) continue;
+      if (line.trim().startsWith('|')) {
+        const cells = line.trim().split(/(?<!\\)\|/).slice(1, -1).map(cell => cell.trim());
+        if (cells.every(cell => /^:?-+:?$/.test(cell))) continue;
+        const columns = cells.map(cell => cell.toLowerCase());
+        if (columns.includes('exit') || columns.includes('result')) { header = columns; continue; }
+        if (!header) continue;
+        const exit = cells[header.indexOf('exit')] || '';
+        const result = cells[header.indexOf('result')] || '';
+        if (/^-?\d+$/.test(exit) && Number(exit) !== 0) throw new Error(`${file}: approval contradicts a failed check exit`);
+        if (failedResult(result)) throw new Error(`${file}: approval contradicts a failed check result`);
+      } else {
+        header = null;
+        const result = /^[-*\s]*result:[ \t]*(.+)$/i.exec(line)?.[1];
+        if (result && failedResult(result)) throw new Error(`${file}: approval contradicts a failed check result`);
+      }
+    }
+  }
+}
 export function validateArtifactSemantics(type, status, body, file = 'artifact') {
   validateArtifactStatus(type, status, file);
   if (type === 'reproduction' && status === 'reproduced' && (!section(body, 'Reproduction') || !section(body, 'Cause') || !section(body, 'Fix'))) throw new Error(`${file}: reproduced requires reproduction evidence, cause and fix`);
   if (type === 'code-review' && status === 'clean') {
     const findings = section(body, 'Critical and Required Findings'); if (!findings || /^###\s+CR-/m.test(findings)) throw new Error(`${file}: clean review still contains required findings or lacks their section`);
+    validateReviewOutcome(type, status, body, file);
   }
   if (!['verification', 'app-test'].includes(type) || status !== 'passed') return;
   const heading = type === 'verification' ? 'Items' : 'Steps';
@@ -168,9 +214,18 @@ export function validateArtifactSemantics(type, status, body, file = 'artifact')
   const header = rows.shift();
   if (!header || !header.includes('verdict')) throw new Error(`${file}: passed evidence requires a ${heading} verdict table`);
   const verdict = header.indexOf('verdict'); const actual = rows.filter(row => row.length && !row.every(cell => /^:?-+:?$/.test(cell)));
-  if (!actual.length || actual.some(row => !row[verdict] || !allowed.has(row[verdict])) || actual.some(row => row[verdict] !== 'pass')) throw new Error(`${file}: passed status contradicts evidence verdicts`);
+  const required = header.indexOf('required'); const id = header.indexOf('id') >= 0 ? header.indexOf('id') : header.indexOf('item');
+  const limits = /(?:^|\n)### Known limits\s*\n([\s\S]*?)(?=\n#{1,3} |$)/i.exec(body)?.[1]?.toLowerCase() || '';
+  const documentedOptional = row => {
+    if (type !== 'verification' || row[verdict] !== 'untested' || row[required] !== 'no' || !row[id]) return false;
+    return limits.split('\n').some(line => {
+      const entry = /^[-*]\s+`?([^`:]+)`?:\s*(\S.*)$/.exec(line.trim());
+      return entry && entry[1].trim() === row[id];
+    });
+  };
+  if (!actual.length || actual.some(row => !allowed.has(row[verdict]) || (row[verdict] !== 'pass' && !documentedOptional(row)))) throw new Error(`${file}: passed status contradicts evidence verdicts`);
 }
-export function parseArtifactText(text, expectedType, file = 'artifact') {
+function parseArtifactIdentity(text, expectedType, file) {
   const body = text.replace(/\r\n/g, '\n');
   if (expectedType === 'pr-description') {
     const summary = section(body, 'Purpose'); if (!summary || !section(body, 'Change outline')) throw new Error(`${file}: incomplete PR description`);
@@ -188,8 +243,17 @@ export function parseArtifactText(text, expectedType, file = 'artifact') {
   const statusValue = values.status === undefined ? null : scalar(values.status, `${file}: status`); const status = statusValue === 'null' || statusValue === '~' ? null : statusValue;
   if (type !== expectedType) throw new Error(`${file}: artifact type ${type} does not match ${expectedType}`);
   const artifactBody = lines.slice(end + 1).join('\n').trim(); if (!artifactBody) throw new Error(`${file}: artifact body is required`);
-  validateArtifactSemantics(type, status, artifactBody, file);
+  validateArtifactStatus(type, status, file);
   return { type, summary, status, text };
+}
+export function parseArtifactText(text, expectedType, file = 'artifact') {
+  const parsed = parseArtifactIdentity(text, expectedType, file);
+  validateArtifactSemantics(parsed.type, parsed.status, parsed.text, file);
+  return parsed;
+}
+function readArtifactIdentity(file, expectedType) {
+  if (fs.lstatSync(file).isSymbolicLink()) throw new Error(`${file}: artifact symlinks are not accepted`);
+  return parseArtifactIdentity(fs.readFileSync(file, 'utf8'), expectedType, file);
 }
 export function readArtifactScalars(file, expectedType) {
   if (fs.lstatSync(file).isSymbolicLink()) throw new Error(`${file}: artifact symlinks are not accepted`); return parseArtifactText(fs.readFileSync(file, 'utf8'), expectedType, file);
@@ -206,7 +270,7 @@ function safeArtifactFile(taskDir, artifactPath) {
 }
 function validateArtifactLedger(taskDir, index) {
   for (const series of Object.values(index.artifactSeries)) for (const record of series.iterations) {
-    const file = safeArtifactFile(taskDir, record.path); const metadata = readArtifactScalars(file, record.type); const hash = crypto.createHash('sha256').update(metadata.text).digest('hex');
+    const file = safeArtifactFile(taskDir, record.path); const metadata = readArtifactIdentity(file, record.type); const hash = crypto.createHash('sha256').update(metadata.text).digest('hex');
     if (hash !== record.sha256) throw new Error(`${record.id}: SHA-256 hash does not match indexed artifact`); if (metadata.type !== record.type || metadata.status !== record.status || metadata.summary !== record.summary) throw new Error(`${record.id}: indexed type, status, or summary metadata does not match artifact`);
   }
 }
@@ -262,17 +326,24 @@ export function currentArtifact(taskDir, type) {
 export function observeArtifacts(taskDir, problems, unproven = {}) {
   const latest = {}, hashes = {};
   const parse = (file, type, record) => {
-    const parsed = readArtifactScalars(file, type);
+    const parsed = record ? readArtifactIdentity(file, type) : readArtifactScalars(file, type);
     return { ...record, file: path.resolve(file), text: parsed.text, type: parsed.type, status: parsed.status, summary: parsed.summary, hash: record?.sha256 ?? crypto.createHash('sha256').update(parsed.text).digest('hex') };
   };
   if (indexFileExists(path.join(taskDir, 'index.json'))) {
     try {
-      const index = readArtifactIndex(taskDir), artifactSeries = {};
+      const index = readArtifactIndex(taskDir), artifactSeries = {}, types = new Set();
       for (const [identity, series] of Object.entries(index.artifactSeries)) {
         const iterations = series.iterations.map(record => parse(path.join(taskDir, record.path), record.type, record));
         const current = iterations.find(record => record.id === series.current);
-        if (latest[current.type]) throw new Error(`Duplicate current artifact type ${current.type}`);
-        latest[current.type] = current;
+        if (types.has(current.type)) throw new Error(`Duplicate current artifact type ${current.type}`);
+        types.add(current.type);
+        try {
+          validateArtifactSemantics(current.type, current.status, current.text, current.file);
+          latest[current.type] = current;
+        } catch (error) {
+          if (!problems) throw error;
+          problems.push(`${current.path}: ${error.message}`); unproven[current.type] = current.path;
+        }
         for (const artifact of iterations) hashes[artifact.file] = artifact.hash;
         artifactSeries[identity] = { iterations, current };
       }
@@ -307,7 +378,17 @@ function runCli(argv) {
   if (command === 'root' && args.length === 1) return resolveTaskRoot(args[0]);
   throw new Error('Usage: task-artifacts.mjs init <task-dir> | allocate <task-dir> <kind> <variant> | record <task-dir> <kind> <variant> <type> <artifact-path> | current <task-dir> <type> | root <repo-root>');
 }
-if (process.argv[1] && fs.existsSync(process.argv[1]) && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) {
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  let entrypoint;
+  try { entrypoint = fs.realpathSync(process.argv[1]); }
+  catch (error) {
+    if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') return false;
+    throw error;
+  }
+  return entrypoint === fs.realpathSync(fileURLToPath(import.meta.url));
+})();
+if (isMain) {
   try { process.stdout.write(`${JSON.stringify(runCli(process.argv.slice(2)))}\n`); }
   catch (error) { process.stderr.write(`${String(error?.message ?? error).slice(0, 800)}\n`); process.exitCode = 1; }
 }

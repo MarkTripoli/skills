@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const shared = async name => import(fs.existsSync(path.join(here, 'references', name)) ? path.join(here, 'references', name) : path.join(here, '../../../shared', name));
-const { readArtifactIndex, indexFileExists, observeArtifacts, validateArtifactSemantics, sourceRevision, semanticSeries, reserveArtifactIteration, recordArtifact } = await shared('task-artifacts.mjs');
+const { readArtifactIndex, indexFileExists, observeArtifacts, validateArtifactSemantics, validateReviewOutcome, sourceRevision, semanticSeries, reserveArtifactIteration, recordArtifact } = await shared('task-artifacts.mjs');
 const { captureDestination, validateRecordedText } = await shared('publication-proof.mjs');
 
 export const REPAIR_LIMIT = 3;
@@ -460,6 +460,7 @@ export function parseRecord(taskDir, name) {
   if (info.status === 'blocked' && native) fail(`${name}: a blocked ${info.type} has no verdict; clear the prerequisite it names and rerun the reviewer`);
   const status = native ? (info.status === nativeApprove[info.type] ? 'approve' : info.status === nativeChanges[info.type] ? 'changes' : null) : info.status;
   if (!['approve', 'changes'].includes(status)) fail(`${name}: status is ${info.status}; use ${native ? `${nativeApprove[info.type]} or ${nativeChanges[info.type]}` : 'approve or changes'}`);
+  validateReviewOutcome(info.type, native ? info.status : status, text, name);
   const round = Number(info.round);
   if (!Number.isInteger(round) || round < 1) fail(`${name}: round must be a positive integer`);
   let findings;
@@ -477,7 +478,6 @@ export function parseRecord(taskDir, name) {
     const checks = tableRows(section(text, 'Checks'));
     const header = checks.shift();
     const exit = header?.findIndex(cell => /^exit$/i.test(cell));
-    if (status === 'approve' && exit >= 0 && checks.some(row => /^\d+$/.test(row[exit] || '') && Number(row[exit]) !== 0)) fail(`${name}: approve contradicts a failed check exit`);
     if (info.checkpoint !== 'plan' && (!header || exit < 0 || !checks.some(row => /^\d+$/.test(row[exit] || '')))) fail(`${name}: ## Checks needs a table with an Exit column and one row per command run, each with its exit code (the plan checkpoint may omit it)`);
   }
   const blocking = findings.filter(finding => finding.severity === 'blocking');
@@ -679,6 +679,16 @@ async function main(args) {
   if (command === 'repair-begin') return beginRepair({ taskDir, attemptId: value });
   return completeRepair({ taskDir, attemptId: value });
 }
-if (process.argv[1] && fs.existsSync(process.argv[1]) && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) {
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  let entrypoint;
+  try { entrypoint = fs.realpathSync(process.argv[1]); }
+  catch (error) {
+    if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') return false;
+    throw error;
+  }
+  return entrypoint === fs.realpathSync(fileURLToPath(import.meta.url));
+})();
+if (isMain) {
   main(process.argv.slice(2)).then(value => console.log(JSON.stringify(value, null, 2))).catch(error => { console.error(error.message); process.exitCode = 1; });
 }

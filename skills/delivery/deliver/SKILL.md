@@ -31,7 +31,7 @@ For each plan phase:
 
 1. A builder (`agent-implementer`, or `implement-plan` standalone) implements it, runs targeted checks and commits with explicit paths.
 2. A fresh read-only slice reviewer gets `task.md`, current plan phase/digest, acceptance criteria and `<phase-base>..HEAD`, never the builder's transcript or your summary.
-3. Before every review run `node <skills-dir>/deliver/contract.mjs review-next <task-dir> <review-type> <checkpoint>`; assign its next round, previous record and blockers. Use the review template, then run `node <skills-dir>/deliver/contract.mjs review <task-dir> <record>`. Rejection: preserve the receipt, recompute `review-next`, and give a fresh reviewer the exact error, next round and normal inputs. Never rewrite history.
+3. Before each review run `node <skills-dir>/deliver/contract.mjs review-next <task-dir> <review-type> <checkpoint>`; assign next round, previous record and blockers. Assign full template content to staging via native `write` path/content when available; otherwise use the portable writer. Publish unchanged; run `node <skills-dir>/deliver/contract.mjs review <task-dir> <record>`. Rejection: preserve the receipt; give a fresh reviewer recomputed `review-next`, exact error and normal inputs. Never rewrite history.
 4. `approve`: run `node <skills-dir>/deliver/contract.mjs phase-complete <task-dir> <phase-N> <record>` for indexed plans. It publishes a phase/Progress successor from the bound approval, not new test execution; reapprove that exact successor using `review-next`. Legacy tasks retain manual checkboxes/Progress. `changes`: a builder answers findings `fixed` or `disputed: <evidence>` in a new commit; review earlier valid blockers, dispositions and `git diff <previous reviewed_commit>..HEAD`.
 
 Blocking means unmet acceptance, wrong behavior, security, data loss or broken checks; otherwise `follow-up`. Stop on `progress: false` or `limit_reached`: three valid `changes` per blocking episode. Only valid approval closes an episode; successful progress reapprovals consume no repairs. Disputes go to the owner only if the next reviewer retains them; the owner may record `accepted-limit` in Decisions.
@@ -42,7 +42,7 @@ After a failed evidence inspection, reserve one attempt with `contract.mjs repai
 
 ## Final
 
-On HEAD, run repository checks; prove acceptance with fresh strongest-model `verify-implementation` and `review-code` reviewers in parallel (checkpoint `final`). Their records pass `review`; builders repair findings through `fix-code-review`. Follow [evidence commands](../record-evidence/references/delivery_contract.md): policy, existing-behavior baseline from a base-commit worktree, `record-evidence`, then `iterate-evidence`. Record only requested policy-scoped UI devices; unavailable surfaces are `untested` with reasons.
+On HEAD, run repository checks; prove acceptance with separate fresh strongest-model final reviewers in parallel. Each first reads and follows the complete installed `verify-implementation/SKILL.md` or `review-code/SKILL.md`, not merely its template. Their records pass `review`; builders repair findings through `fix-code-review`. Follow [evidence commands](../record-evidence/references/delivery_contract.md): policy, existing-behavior baseline from a base-commit worktree, `record-evidence`, then `iterate-evidence`. Record only requested policy-scoped UI devices; unavailable surfaces are `untested` with reasons.
 
 ## Publish
 

@@ -1,6 +1,6 @@
 // Reads the omp session JSONL a terminal phase leaves (`--session-dir`): the orchestrator's session and one
 // child session per spawned subagent, each with its agent, resolved model, first prompt and tool calls.
-// A reviewer is credited only for a separate session's direct write or successful staged write of the indexed bytes.
+// Review authorship requires successful full-content writes whose exact bytes match the published digest.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -11,9 +11,29 @@ function jsonlFiles(dir) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? jsonlFiles(path.join(dir, e.name)) : e.name.endsWith(".jsonl") ? [path.join(dir, e.name)] : []));
 }
 
+// Parse only the observed literal cat transport, never run captured commands or expand shell syntax.
+// A quoted delimiter makes the body data. Extra commands, substitutions, append and unquoted
+// heredocs remain opaque; a success receipt or a destination alone cannot prove their output bytes.
+function literalShellWrite(command) {
+  const word = `(?:[\\w./-]+|'[\\w./-]+'|"[\\w./-]+")`;
+  const match = new RegExp(`^(?:mkdir -p (${word}) && )?cat > (${word}) <<'([A-Za-z_]\\w*)'\\n([\\s\\S]*)\\n\\3\\n?$`).exec(command);
+  if (!match) return null;
+  const unquotePath = (value) => value.replace(/^['"]|['"]$/g, "");
+  const target = unquotePath(match[2]);
+  if (match[1] && path.posix.normalize(unquotePath(match[1])) !== path.posix.dirname(target)) return null;
+  if (match[4].split("\n").includes(match[3])) return null;
+  return { path: target, content: `${match[4]}\n` };
+}
+
+function authoredWrite(call) {
+  if (call?.name === "write" && typeof call.args.path === "string" && typeof call.args.content === "string") return call.args;
+  if (call?.name === "bash" && typeof call.args.command === "string") return literalShellWrite(call.args.command);
+  return null;
+}
+
 export function readSessions(dir) {
   return jsonlFiles(dir).map((file) => {
-    const s = { file, id: null, child: false, agent: null, model: null, task: "", calls: [], stagedWrites: [], texts: [], lastTime: 0 };
+    const s = { file, id: null, child: false, agent: null, model: null, task: "", calls: [], authoredWrites: [], texts: [], lastTime: 0 };
     for (const line of fs.readFileSync(file, "utf8").split("\n")) {
       let d;
       try {
@@ -41,13 +61,12 @@ export function readSessions(dir) {
           else if (part.type === "text") s.texts.push(part.text);
         }
       } else if (d.type === "message" && d.message?.role === "toolResult" && !d.message.isError) {
+        if (d.message.details?.exitCode !== undefined && d.message.details.exitCode !== 0) continue;
         const call = s.calls.find((c) => c.id === d.message.toolCallId);
-        // Native task children author a staging file; the parent publishes it, possibly through a wrapper
-        // with no JSON receipt and a different staging UUID. Bind the successful child's actual bytes,
-        // not the publisher's command spelling, returned metadata or a claimed reviewer identity.
-        if (call?.name !== "write" || typeof call.args.content !== "string" ||
-          !/(?:^|\/)\.artifact-staging\/[a-f0-9-]+\.md$/.test(String(call.args.path ?? ""))) continue;
-        s.stagedWrites.push({ path: call.args.path, sha256: createHash("sha256").update(call.args.content).digest("hex") });
+        const written = authoredWrite(call);
+        // Native children may write a reserved staging file or external scratch. Publication can
+        // copy either unchanged; bind authored bytes, not a staging UUID or publisher's wrapper.
+        if (written) s.authoredWrites.push({ path: written.path, sha256: createHash("sha256").update(written.content).digest("hex") });
       }
     }
     return s;
@@ -129,8 +148,8 @@ export function sessionProblems({ sessions, records, subjects, economy, stronges
   const transcript = builders.flatMap((b) => b.texts.flatMap((t) => t.split("\n")).map((l) => l.trim()).filter((l) => l.length >= 80));
   const writers = new Map();
   for (const r of records) {
-    const who = [...sessions, ...(separate ?? [])].filter((s) => wrote(s, r.file) ||
-      (r.sha256 && s.stagedWrites?.some((p) => p.sha256 === r.sha256)));
+    const who = [...sessions, ...(separate ?? [])].filter((s) =>
+      r.sha256 && s.authoredWrites?.some((p) => p.sha256 === r.sha256));
     if (!who.length) {
       out.push(`sessions: no session wrote ${r.file}`);
       continue;

@@ -48,13 +48,15 @@ test("deliver grading binds indexed records to independently attributed work and
   const verification = save("review", "verification", "verification", "passed", "## Items\n\n| ID | Criterion | Verdict | Observed |\n|---|---|---|---|\n| A1 | Delay cap | pass | 10000 ms at attempt 10 |", meta("final"));
   const sessionDir = path.join(root, "sessions");
   fs.mkdirSync(sessionDir);
-  const call = (name, args) => ({ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name, arguments: args }] } });
+  let callId = 0;
+  const call = (name, args) => ({ type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: `call-${++callId}`, name, arguments: args }] } });
   const session = (id, agent, model, calls) => {
     const at = new Date(Date.now() + 60000).toISOString();
-    const rows = [{ type: "session", id, ...(agent ? { parentSession: "orchestrator" } : {}) }, { type: "session_init", agent, resolvedModel: model, task: "Read the repository and assigned artifact." }, ...calls];
+    const results = calls.flatMap((row) => row.message.content.filter((part) => part.name === "write").map((part) => ({ type: "message", message: { role: "toolResult", toolCallId: part.id, isError: false, content: [{ type: "text", text: "Written." }] } })));
+    const rows = [{ type: "session", id, ...(agent ? { parentSession: "orchestrator" } : {}) }, { type: "session_init", agent, resolvedModel: model, task: "Read the repository and assigned artifact." }, ...calls, ...results];
     fs.writeFileSync(path.join(sessionDir, `${id}.jsonl`), rows.map((row) => JSON.stringify({ ...row, timestamp: at })).join("\n"));
   };
-  const writeRecord = (record) => call("write", { path: `${taskDir}/${record.path}` });
+  const writeRecord = (record) => call("write", { path: `${taskDir}/${record.path}`, content: fs.readFileSync(path.join(taskDir, record.path), "utf8") });
   session("orchestrator", null, strongest, []);
   session("builder", "agent-implementer", economy, [call("edit", { input: "[src/retry.mjs#ABCD]\nPUT 3.=3:\n+  return Math.min(baseMs * 2 ** attempt, maxMs);" }), call("bash", { command: 'git commit -m "fix(retry): cap the delay"' })]);
   session("plan", "agent-implementation-reviewer", strongest, [writeRecord(planReview)]);

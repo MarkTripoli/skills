@@ -13,6 +13,8 @@ Read the complete assignment before files, then `task.md`. It names a task direc
 
 ## Process
 
+At `final`, first read complete installed `review-code/SKILL.md` or `verify-implementation/SKILL.md`; follow its process/template.
+
 1. **Scope.** Base: assignment, PR `baseRefName` (`gh pr view --json baseRefName`), `git symbolic-ref refs/remotes/origin/HEAD`, then `main`. Before checks record `reviewed_commit` (`git rev-parse HEAD`) and `revision` (`node <skills-dir>/deliver/contract.mjs revision <task-dir>`). Verify round/previous valid blockers with `contract.mjs review-next <task-dir> <review-type> <checkpoint>`. Read the assigned phase, otherwise current indexed `plan`, `structure-outline`, `epic-plan`, `design-tdd`, then `design-prd`; none means no comparison. Plan/phase reviews bind current `reviewed_artifact` and `reviewed_artifact_sha256`.
 2. **Compare.** Run `git status --short --branch`, `git diff --name-status <range>` and `git diff <range>`. Read behavior-relevant changes; classify planned work, deviations, additions and gaps.
 3. **Run checks yourself.** Run Automated Verification and the narrowest regression check; record every command's actual exit, never builder claims. At `plan`, inspect read-only (`git diff --stat`); cite retained baseline failures without rerunning the known failing pre-build suite. Every failed current command blocks approval, even expected failures; retain it in Checks with an evidenced blocker. Run source-mutating formatters/generators in scratch worktrees or restore tracked files before recording.
@@ -26,7 +28,7 @@ Round two and later judge only three things: the earlier blocking findings, the 
 
 ## Rules
 
-Stay factual. Never mutate, stage or commit source. When the assignment names a checkpoint, write exactly one file: the next immutable review iteration in `review.slice`, `review.plan` or `review.final`, recorded through the conventions' artifact contract, from [the record template](../skills/delivery/agent-implementation-reviewer/references/review_record_template.md). The parent runs `contract.mjs review` on it, and a record whose tracked files changed during your review does not count.
+Never mutate, stage or commit source. At a checkpoint, write exactly one immutable record using the applicable template and artifact contract. For plan/slice use [the record template](../skills/delivery/agent-implementation-reviewer/references/review_record_template.md). Use native `write` with full path/content when available; otherwise the portable writer. Return staging for unchanged publication. The parent checks `contract.mjs review`; changed source invalidates the record.
 
 Contract retry: use the parent's exact failure and helper's next valid round, not a builder transcript. Preserve immutable attempts and earlier valid blockers. Plan successors never reset receipt rounds. Only valid approval closes a three-changes repair episode; successful progress approvals consume no repairs. Never falsify or omit an actual check.
 

@@ -34,7 +34,7 @@ const problems = (sessions, records = reviewRecords) => sessionProblems({ sessio
 test("native task children, not the publishing parent, authored all six indexed reviews", (t) => {
   const sessions = recordedSessions(t);
   assert.deepEqual(problems(sessions), []);
-  const childWriters = reviewRecords.map((r) => sessions.filter((s) => s.stagedWrites.some((w) => w.sha256 === r.sha256)));
+  const childWriters = reviewRecords.map((r) => sessions.filter((s) => s.authoredWrites.some((w) => w.sha256 === r.sha256)));
   assert.ok(childWriters.every((who) => who.length === 1 && who[0].child && who[0].agent === "agent-implementation-reviewer" && who[0].model === strongest));
   assert.equal(new Set(childWriters.map(([s]) => s.id)).size, 6);
   // Publication may happen after authoring, but matching immutable bytes are still the child's review.

@@ -10,4 +10,6 @@ Exclude local `.omo` run-continuation caches from package archives alongside tas
 
 Resume from immutable phase-completion proofs. Recover rejected review attempts without erasing history, and keep bounded blocking repairs separate from successful approvals.
 
+Preserve indexed outline successors and canonical handoffs, reject contradictory native review outcomes, and support documented optional verification limits. Restore GitHub Actions discovery, hold delivery for unresolved source choices, and bind renamed GitLab comments to pinned old/new paths. Verify independent review authors from successful full-content writes without publishing runtime system prompts.
+
 Existing Atomic runs are historical state, not resumable through the retired controller. Resume delivery through `/deliver <task-dir>` using the task's current artifacts and recorded decisions.

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { artifacts, expect, failures, newest } from "./lib.mjs";
 import { readSessions, sessionProblems, skillLoadProblems } from "./sessions.mjs";
 import { blockingRounds, checkReview, parseRecord, REVIEW_ROUND_LIMIT } from "../skills/delivery/deliver/contract.mjs";
@@ -30,7 +31,8 @@ export function readRecords(taskDir) {
     seen.add(key);
     try {
       const parsed = parseRecord(taskDir, a.file);
-      records.push({ mtime: fs.statSync(path.join(taskDir, a.file)).mtimeMs, file: a.file, sha256: a.record?.sha256, type: a.fm.type, group: parsed.info.checkpoint === "final" ? "final" : parsed.info.checkpoint, checkpoint: parsed.info.checkpoint, round: parsed.round, status: parsed.status, reviewed_commit: parsed.info.reviewed_commit, reviewer_model: parsed.info.reviewer_model, reviewed_artifact: parsed.info.reviewed_artifact, reviewed_artifact_sha256: parsed.info.reviewed_artifact_sha256 });
+      const sha256 = a.record?.sha256 ?? createHash("sha256").update(a.text).digest("hex");
+      records.push({ mtime: fs.statSync(path.join(taskDir, a.file)).mtimeMs, file: a.file, sha256, type: a.fm.type, group: parsed.info.checkpoint === "final" ? "final" : parsed.info.checkpoint, checkpoint: parsed.info.checkpoint, round: parsed.round, status: parsed.status, reviewed_commit: parsed.info.reviewed_commit, reviewer_model: parsed.info.reviewer_model, reviewed_artifact: parsed.info.reviewed_artifact, reviewed_artifact_sha256: parsed.info.reviewed_artifact_sha256 });
     } catch (error) {
       if (current) problems.push(`record ${a.file}: ${error.message}`);
     }

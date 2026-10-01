@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { initTaskArtifacts, reserveArtifactIteration, recordArtifact, readArtifactIndex, semanticSeries } from '../shared/task-artifacts.mjs';
-import { sourceRevision, readDeliveryArtifacts, parseRecord, checkReview, deliveryStatus, saveEvidencePolicy, sealEvidence, sealInspection, beginRepair, completeRepair } from '../skills/delivery/deliver/contract.mjs';
+import { initTaskArtifacts, reserveArtifactIteration, recordArtifact, readArtifactIndex, semanticSeries, writeArtifactIndex } from '../shared/task-artifacts.mjs';
+import { sourceRevision, readDeliveryArtifacts, parseRecord, checkReview, nextReview, deliveryStatus, saveEvidencePolicy, sealEvidence, sealInspection, beginRepair, completeRepair } from '../skills/delivery/deliver/contract.mjs';
 
 function fixture(t, indexed = true) {
   const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'delivery-contract-')));
@@ -250,6 +251,73 @@ test('four committed CLI phases resume beyond three approvals while later blocki
     assert.equal(verdict.limit_reached, repair === 3);
   }
   assert.equal(command('review-next', f.taskDir, 'plan-review', 'plan').limit_reached, true);
+});
+
+test('native clean reviews reject blocked decisions and failed current results without rejecting probe history', t => {
+  const f = fixture(t, false);
+  const native = (story, decision = 'approve') => f.artifact('code-review', 'clean',
+    `## Verification Story\n\n${story}\n\n## Critical and Required Findings\n\nNone.\n\n## Verdict\n\n- decision: ${decision}`,
+    `checkpoint: final\nreviewed_commit: ${f.git('rev-parse', 'HEAD')}\nreviewer_model: unobserved: requested-strong\nround: 1\n`);
+  for (const decision of ['blocked', 'request_changes']) assert.throws(() => reviewCheck(f, native('- result: passed', decision)), /contradicts.*decision/);
+  for (const story of [
+    '| Command | Exit | Result |\n|---|---|---|\n| node cli.mjs | 1 | failed |',
+    '| Command | Result |\n|---|---|\n| node cli.mjs | failed |',
+    '- command or inspection: node cli.mjs\n- result: exit 1; incorrect output',
+    '- result: failed; incorrect output',
+    '| Command | Exit |\n|---|---|\n| first | 0 |\n\n| Command | Exit |\n|---|---|\n| current | 2 |',
+  ]) assert.throws(() => reviewCheck(f, native(story)), /failed check/);
+  const file = native('Setup returned exit 1 without arguments; the supported invocation follows.\nExpected-negative probe returned exit 1 as expected.\n\n### Expected-negative probes\n\n| Command | Exit |\n|---|---|\n| reject malformed input | 1 |\n\n### Current checks\n\n| Command | Exit | Result |\n|---|---|---|\n| node cli.mjs | 0 | passed |\n\n- result: passed; expected-negative probe rejected with exit 1');
+  assert.equal(reviewCheck(f, file).status, 'approve');
+  assert.deepEqual(parseRecord(f.taskDir, file).ids, []);
+});
+
+test('historical invalid native approvals remain immutable while corrected current reviews recover', t => {
+  for (const [decision, exit, error] of [['blocked', 0, /contradicts.*decision/], ['approve', 1, /failed check/]]) {
+    const f = fixture(t);
+    const file = 'artifacts/review/code/0001.md';
+    const body = `## Verification Story\n\n| Command | Exit |\n|---|---|\n| node cli.mjs | ${exit} |\n\n## Critical and Required Findings\n\nNone.\n\n## Verdict\n\n- decision: ${decision}`;
+    const bytes = `---\ntype: code-review\nsummary: Observed code-review\nstatus: clean\nrevision: ${sourceRevision(f.taskDir)}\ncheckpoint: final\nreviewed_commit: ${f.git('rev-parse', 'HEAD')}\nreviewer_model: unobserved: requested-strong\nround: 1\n---\n${body}\n`;
+    const record = { id: 'review.code.0001', iteration: 1, path: file, sha256: crypto.createHash('sha256').update(bytes).digest('hex'), type: 'code-review', status: 'clean', summary: 'Observed code-review' };
+    fs.mkdirSync(path.dirname(path.join(f.taskDir, file)), { recursive: true });
+    fs.writeFileSync(path.join(f.taskDir, file), bytes);
+    const index = readArtifactIndex(f.taskDir);
+    index.generation = 1; index.artifactSeries['review.code'] = { current: record.id, iterations: [record] };
+    writeArtifactIndex(f.taskDir, index); // Receipt recorded by the earlier native parser.
+    assert.throws(() => reviewCheck(f, file), error);
+    const unproven = deliveryStatus({ taskDir: f.taskDir });
+    assert.equal(unproven.artifacts['code-review'], undefined);
+    assert.equal(unproven.unproven['code-review'], file);
+    assert.equal(unproven.unproven.index, undefined);
+    const history = nextReview({ taskDir: f.taskDir, type: 'code-review', checkpoint: 'final' });
+    assert.equal(history.next_round, 1); assert.match(history.invalid_records[0].error, error);
+    const corrected = f.artifact('code-review', 'clean', body.replace(`| ${exit} |`, '| 0 |').replace(`decision: ${decision}`, 'decision: approve'),
+      `checkpoint: final\nreviewed_commit: ${f.git('rev-parse', 'HEAD')}\nreviewer_model: unobserved: requested-strong\nround: 1\n`);
+    assert.equal(reviewCheck(f, corrected).status, 'approve');
+    assert.equal(deliveryStatus({ taskDir: f.taskDir }).missing.includes('Current clean code review'), false);
+    assert.equal(fs.readFileSync(path.join(f.taskDir, file), 'utf8'), bytes);
+    assert.deepEqual(readArtifactIndex(f.taskDir).artifactSeries['review.code'].iterations[0], record);
+    fs.appendFileSync(path.join(f.taskDir, file), 'tampered history\n');
+    assert.throws(() => reserveArtifactIteration(f.taskDir, 'review', 'code'), /SHA-256/);
+    assert.throws(() => reviewCheck(f, corrected), /SHA-256/);
+  }
+});
+
+test('generic approvals reject failed result fields as well as failed exits', t => {
+  const f = fixture(t, false);
+  const file = f.artifact('final-review', 'approve', '## Checks\n\n| Command | Exit | Result |\n|---|---|---|\n| node cli.mjs | 0 | failed: wrong output |\n\n## Findings\n\nNone.',
+    `checkpoint: final\nreviewed_commit: ${f.git('rev-parse', 'HEAD')}\nreviewer_model: unobserved: requested-strong\nround: 1\n`);
+  assert.throws(() => reviewCheck(f, file), /failed check/);
+});
+
+test('passed verification with reasoned optional untested scope remains current and approving', t => {
+  const f = fixture(t);
+  const file = f.artifact('verification', 'passed', '## Items\n\n| Id | Observed | Verdict | Required |\n|---|---|---|---|\n| C1 | old value | pass | yes |\n| A2 | device unavailable | untested | no |\n\n## Human Review\n\n### Known limits\n\n- A2: physical device unavailable; optional display inspection was not run.',
+    `checkpoint: final\nreviewed_commit: ${f.git('rev-parse', 'HEAD')}\nreviewer_model: unobserved: requested-strong\nround: 1\n`);
+  assert.equal(reviewCheck(f, file).status, 'approve');
+  const status = deliveryStatus({ taskDir: f.taskDir });
+  assert.equal(status.artifacts.verification.current, true);
+  assert.equal(status.missing.includes('Current passed verification'), false);
+  assert.deepEqual(status.problems, []);
 });
 
 test('verification cannot advertise passing while a required verdict failed or went untested', t => {

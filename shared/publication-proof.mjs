@@ -399,6 +399,16 @@ async function main(argv) {
     process.exitCode = 1;
   }
 }
-if (process.argv[1] && fs.existsSync(process.argv[1]) && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) {
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  let entrypoint;
+  try { entrypoint = fs.realpathSync(process.argv[1]); }
+  catch (error) {
+    if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') return false;
+    throw error;
+  }
+  return entrypoint === fs.realpathSync(fileURLToPath(import.meta.url));
+})();
+if (isMain) {
   main(process.argv.slice(2)).catch(error => { process.stderr.write(`${String(error?.message ?? error).slice(0, 800)}\n`); process.exitCode = 1; });
 }

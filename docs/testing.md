@@ -50,13 +50,15 @@ The small-bug fixture exercises a bounded retry fix, economy builders, strongest
 
 Grading validates indexed current artifacts through the delivery contract, binds plan approval to its exact canonical path and digest, checks final reviewed commits/source fingerprints and reviewer attribution, and rejects task data in commits. Legacy discovery applies only when the index is absent. The runner keeps source/guide snapshots, session traces and results for independent inspection; fixture output and upstream recordings are not proof of this checkout. Isolated Slack configuration prevents the normal notification routes but is not an OS sandbox. Do not claim a model or session was observed without its retained trace.
 
-Indexed staging attribution hashes the bytes in a child's successful native `write` call and matches the validated ledger digest. A parent can publish those unchanged bytes through a helper wrapper or a replacement staging reservation without becoming the author. Claimed reviewer metadata and publication receipts alone are not authorship proof; direct legacy writes still enforce file timestamps.
+Review attribution hashes the exact bytes in a successful native full-content `write`, whether its path is reserved staging or external scratch, and matches the validated published digest. The parser also recognizes a literal `cat > <path> <<'DELIMITER'` with an optional `mkdir -p <parent> &&` prefix; it never executes captured code. Unquoted heredocs, substitutions, appended commands, opaque scripts/eval, metadata and path-only calls cannot prove authorship. A parent may publish unchanged bytes without becoming their author; changed bytes fail attribution. Legacy records also require byte proof and retain direct-file timestamp guards.
 
 Contract-invalid superseded indexed reviews do not consume rounds. Legacy review history uses the newest numbered record per type and checkpoint as its current boundary. Invalid current reviews, ledger tampering and duplicate valid rounds still fail. Valid round history stays bound to the exact review type and checkpoint even when the plan gains a successor.
 
 Receipt round numbers remain contiguous across successor approvals. Approvals do not consume the repair allowance: the grader uses the delivery contract's counter for the current unresolved blocking episode. Only a valid approval closes that episode; invalid attempts and new plan bytes do not reset it.
 
-`node --test tests/deliver-sessions.test.mjs` exercises retained authentic native event schemas and adversarial changes without modifying or regrading the archived run. These regressions prove the parser boundary, not a fresh live delivery.
+`node --test tests/deliver-sessions.test.mjs tests/deliver-native-transport.test.mjs` exercises retained authentic native event schemas and adversarial changes without modifying or regrading the archived run. These regressions prove the parser boundary, not a fresh live delivery.
+
+The safe projected native fixture `tests/fixtures/deliver-small-bug-native-scratch.json` retains relevant actual event fields from `evals/results/20261001-041919`, omitting every runtime `systemPrompt`. Scratch writes and the quoted shell heredoc prove authorship, but neither final child loaded its assigned full skill. The regression preserves those missing-skill failures; it does not turn the retained failed live run into a pass. A fresh source-current model run must prove the corrected native writer and explicit installed full-skill loading instructions.
 
 ## Slack coordinator proof boundaries
 
@@ -68,7 +70,7 @@ Live Slack/Jira field delivery, Socket Mode inbound replies, and launchd or syst
 
 Offline checks do not prove live worker/session isolation. Run the live scenarios `deliver-small-bug`, `deliver-separate-builder` and `deliver-resume` with `node evals/run.mjs <scenario> --keep --max-time 40` when authenticated runtime access is configured. These exercise head/model-bound independent review, fresh sessions, resume state and blocked publication. Retain only observed scenario output as evidence; upstream recordings are not proof of this checkout.
 
-Jira hierarchy/refinement scenarios are draft-only. Immutable indexed tasks select validated current semantic records; legacy tasks use numbered discovery only when the index is absent. The retained security and solo-comparison scenarios remain separate. Scoped offline coverage: `node --test tests/evals.test.mjs tests/deliver-evals.test.mjs tests/deliver-grade.test.mjs tests/deliver-sessions.test.mjs tests/evidence-flows.test.mjs tests/delivery-comparison.test.mjs`.
+Jira hierarchy/refinement scenarios are draft-only. Immutable indexed tasks select validated current semantic records; legacy tasks use numbered discovery only when the index is absent. The retained security and solo-comparison scenarios remain separate. Scoped offline coverage: `node --test tests/evals.test.mjs tests/deliver-evals.test.mjs tests/deliver-grade.test.mjs tests/deliver-sessions.test.mjs tests/deliver-native-transport.test.mjs tests/evidence-flows.test.mjs tests/delivery-comparison.test.mjs`.
 
 ## Safety Dance proof boundaries
 
