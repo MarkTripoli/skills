@@ -109,11 +109,6 @@ func BuildCompletionMessage(root RootMessage, m FinishRunInput) SlackMessage {
 	return buildRichFieldsMessage("Run summary", primary, secondary, contexts, renderFields(fallbackFields))
 }
 
-// RenderCompletion renders the concise terminal fallback.
-func RenderCompletion(root RootMessage, m FinishRunInput) string {
-	return renderFields(completionFields(root, m))
-}
-
 // BuildBlockerMessage returns the structured notification for one new blocker.
 // A non-empty ownerID adds a direct mention so Slack notifies the run owner.
 func BuildBlockerMessage(blocker, ownerID string) SlackMessage {
@@ -131,14 +126,6 @@ func rootFields(m RootMessage) []messageField {
 	}
 	if m.Scope != "" {
 		fields = append(fields, messageField{label: "Scope", value: m.Scope})
-	}
-	return fields
-}
-
-func completionFields(root RootMessage, m FinishRunInput) []messageField {
-	fields := append(completionPrimaryFields(m), completionDetailFields(m)...)
-	if links := compactValues(formatLinks(appendUnique(root.Links, m.Links))); links != "" {
-		fields = append(fields, messageField{label: "Links", value: links})
 	}
 	return fields
 }
