@@ -94,6 +94,10 @@ npm run evals -- verify-required-arguments --model openai-codex/gpt-5.6-luna --k
 
 This test command discovery and keeping of documented build output, no test moving of surprise runtime evidence. Live skill eval prove only exercised phase in that harness. No prove epic child scheduling, no prove other harness tool. Provider key and OMP needed.
 
+Native delivery checks bind complete model-visible installed SKILL contents and exact child-authored review bytes. Compound reader output needs every byte of its preserved pinned installed source; a path, hidden full-content metadata or partial output is insufficient. Preserve the run's `.dist` and session JSONL alongside its results.
+
+Successful same-child native edits extend authorship only through full `oldText`/`newText` snapshots chained to the child's own successful full-content write. Parent edits, mismatched paths or old bytes, failed receipts and diff-only claims do not qualify. Never execute captured commands or patches to reconstruct evidence. A grader repair does not change an original failed report; record a fresh current-source run.
+
 ### Recorded repair evidence
 
 `iterate-evidence` family use picked installed companion and recorder, no full document-skill tree. Its pinned installer input, JSON tool trace, source and receipt snapshot, check, raw video, pulled frame, and install inventory stay under result dir. Only fixable fixture path be `app.js` and `check.mjs`; spec and capture support stay fixed.

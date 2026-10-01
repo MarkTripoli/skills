@@ -244,3 +244,123 @@ test("legacy review discovery also binds actual scratch-authored bytes and rejec
   assert.deepEqual(changed.problems, []);
   assert.ok(problems(sessions, changed.records).includes("sessions: no session wrote 01-code-review.md"));
 });
+
+const nativeEdit = (target, oldText, newText, id) => [
+  { type: "message", message: { role: "assistant", content: [{ type: "toolCall", id, name: "edit", arguments: { input: `[${target}#DF11]\nPUT 1.=1:\n+replacement\n` } }] } },
+  { type: "message", message: { role: "toolResult", toolCallId: id, toolName: "edit", isError: false, content: [{ type: "text", text: "Updated file" }], details: { op: "update", path: target, oldText, newText, diff: "-placeholder\n+replacement", firstChangedLine: 1 } } },
+];
+
+const editedCapture = (t, mutate = () => {}) => capture(t, (source) => {
+  const owner = source.find((s) => s.file === "FinalVerifier.jsonl");
+  const write = calls(owner).find((call) => call.name === "write");
+  const final = review("verification").text;
+  const first = `${final}\nDraft finding.\n`;
+  const second = `${final}\nRevised finding.\n`;
+  write.arguments.content = first;
+  const edits = [...nativeEdit(write.arguments.path, first, second, "edit-first"), ...nativeEdit(write.arguments.path, second, final, "edit-final")];
+  mutate({ source, owner, write, edits, final, first, second });
+  owner.events.push(...edits);
+});
+
+test("same-child successful native edit snapshots carry exact authorship through multiple revisions", (t) => {
+  const sessions = editedCapture(t);
+  assert.deepEqual(problems(sessions), []);
+  const verification = review("verification");
+  const authors = sessions.filter((s) => s.authoredWrites.some((w) => w.sha256 === verification.sha256));
+  assert.equal(authors.length, 1);
+  assert.equal(authors[0].agent, sessions.find((s) => s.authoredWrites.some((w) => w.sha256 === digest(`${verification.text}\nDraft finding.\n`))).agent);
+  assert.equal(authors[0].child, true);
+  assert.ok(problems(sessions, [{ ...verification, sha256: digest(`${verification.text}\nPublisher correction.\n`) }]).includes(`sessions: no session wrote ${verification.file}`));
+});
+
+test("relative native writes and absolute edit snapshots bind only through the session cwd", (t) => {
+  const setup = ({ owner, write, edits }, cwd) => {
+    owner.events.find((event) => event.type === "session").cwd = cwd;
+    write.arguments.path = ".artifact-staging/verification.md";
+    for (const index of [0, 2]) edits[index].message.content[0].arguments.input = "[.artifact-staging/verification.md#DF11]\nPUT 1.=1:\n+replacement\n";
+    for (const index of [1, 3]) edits[index].message.details.path = "/tmp/owned-native-run/.artifact-staging/verification.md";
+  };
+  assert.deepEqual(problems(editedCapture(t, (state) => setup(state, "/tmp/owned-native-run"))), []);
+  const verification = review("verification");
+  for (const cwd of ["/tmp/other-native-run", undefined]) {
+    const sessions = editedCapture(t, (state) => setup(state, cwd));
+    assert.ok(problems(sessions, [verification]).includes(`sessions: no session wrote ${verification.file}`));
+  }
+});
+
+test("native edit attribution requires successful matched full snapshots of the owner's current target", (t) => {
+  const cases = [
+    ({ edits }) => { edits[1].message.details.oldText = "Wrong predecessor"; },
+    ({ edits }) => { delete edits[1].message.details.oldText; },
+    ({ edits }) => { delete edits[1].message.details.newText; },
+    ({ edits }) => { edits[3].message.details.oldText = "Broken second link"; },
+    ({ edits }) => { edits[1].message.details.path = "/tmp/unowned/artifact.md"; },
+    ({ edits }) => { edits[1].message.isError = true; },
+    ({ edits }) => { edits[1].message.details.exitCode = 1; },
+    ({ edits }) => { edits[1].message.toolCallId = "unmatched-edit"; },
+    ({ edits }) => { edits[1].message.toolName = "read"; },
+    ({ edits }) => { edits[0].message.content[0].name = "eval"; },
+    ({ edits }) => { delete edits[1].message.details.oldText; delete edits[1].message.details.newText; },
+    ({ edits }) => { edits[1].message.details.path = "artifact.md"; edits[0].message.content[0].arguments.cwd = "/tmp/other-child"; },
+    ({ source, owner, edits }) => {
+      source.find((s) => s !== owner && s.file === "FinalCodeReviewer.jsonl").events.push(...edits);
+      edits.length = 0;
+    },
+    ({ source, edits }) => {
+      source.find((s) => s.events.some((event) => event.type === "session" && !event.parentSession)).events.push(...edits);
+      edits.length = 0;
+    },
+  ];
+  for (const mutate of cases) {
+    const sessions = editedCapture(t, mutate);
+    const verification = review("verification");
+    assert.ok(problems(sessions, [verification]).includes(`sessions: no session wrote ${verification.file}`));
+  }
+});
+
+test("compound literal reads prove full installed bytes rather than a shell command shape", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "compound-native-skills-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const expectedText = (name) => `${skillText(name)}Physical line: ${"évidence ".repeat(120)}TAIL-MUST-BE-VISIBLE\n`;
+  for (const skill of finalSkills) {
+    const target = path.join(root, ".dist", "skills", skill.name, "SKILL.md");
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, expectedText(skill.name));
+  }
+  const check = (mutate = () => {}) => capture(t, (source) => {
+    for (const skill of finalSkills) {
+      const owner = source.find((s) => s.file === skill.file);
+      owner.events.find((event) => event.type === "session").cwd = root;
+      const target = `.dist/skills/${skill.name}/SKILL.md`;
+      const events = [
+        { type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: `compound-${skill.name}`, name: "bash", arguments: { command: `printf 'context\\n'; cat '${target}'; printf 'done\\n'`, cwd: root } }] } },
+        { type: "message", message: { role: "toolResult", toolCallId: `compound-${skill.name}`, toolName: "bash", isError: false, details: { exitCode: 0 }, content: [{ type: "text", text: `context\n${expectedText(skill.name)}done\n` }] } },
+      ];
+      mutate(events, skill, owner);
+      owner.events.push(...events);
+    }
+  });
+  const sessions = check();
+  assert.deepEqual(skillProblems(sessions), []);
+  assert.deepEqual(problems(sessions), []);
+  const cases = [
+    (events) => { events[1].message.content[0].text = "context\ndone\n"; },
+    (events, skill) => { events[1].message.content[0].text = expectedText(skill.name).slice(0, -20); },
+    (events, skill) => { events[1].message.content[0].text = expectedText(skill.name).replace("évidence ".repeat(120), "évidence ".repeat(80)); },
+    (events) => { events[1].message.isError = true; },
+    (events) => { events[1].message.details.exitCode = 1; },
+    (events) => { events[1].message.toolCallId = "unmatched"; },
+    (events) => { events[1].message.details.fullOutput = events[1].message.content[0].text; events[1].message.content[0].text = "partial"; },
+    (events) => { events[1].message.details.truncated = true; },
+    (events, skill) => { events[1].message.content[0].text = skillText(`${skill.name}-wrong`); },
+    (events) => { events[0].message.content[0].arguments.cwd = "/nonexistent/other-run"; },
+    (events, skill) => { events[0].message.content[0].arguments.command = `cat '$ROOT/.dist/skills/${skill.name}/SKILL.md'; printf done`; },
+    (events, skill) => { events[0].message.content[0].arguments.command = `cat '/home/u/.omp/agent/skills/${skill.name}/SKILL.md'; printf done`; },
+  ];
+  for (const mutate of cases) {
+    const found = skillProblems(check(mutate));
+    assert.ok(found.length > 0);
+  }
+  for (const skill of finalSkills) fs.rmSync(path.join(root, ".dist", "skills", skill.name, "SKILL.md"));
+  incompleteFinals(check());
+});
