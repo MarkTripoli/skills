@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const shared = async name => import(fs.existsSync(path.join(here, 'references', name)) ? path.join(here, 'references', name) : path.join(here, '../../../shared', name));
-const { readArtifactIndex, indexFileExists, observeArtifacts, validateArtifactSemantics, sourceRevision } = await shared('task-artifacts.mjs');
+const { readArtifactIndex, indexFileExists, observeArtifacts, validateArtifactSemantics, sourceRevision, semanticSeries, reserveArtifactIteration, recordArtifact } = await shared('task-artifacts.mjs');
 const { captureDestination, validateRecordedText } = await shared('publication-proof.mjs');
 
 export const REPAIR_LIMIT = 3;
@@ -411,7 +411,13 @@ export function deliveryStatus({ taskDir }) {
 
     }
   } catch (error) { problems.push(error.message); }
-  return { revision, artifacts, unproven, problems, missing, stop, evidence, untested, unverified, repairs };
+  let resume = null;
+  try {
+    resume = phaseStatus({ taskDir });
+    if (resume && !resume.plan.approved) missing.push('Current approved plan review');
+    for (const phase of resume?.phases || []) if (!phase.completed) missing.push(`Incomplete plan phase ${phase.checkpoint}`);
+  } catch (error) { problems.push(error.message); }
+  return { revision, artifacts, unproven, problems, missing, stop, evidence, untested, unverified, repairs, resume };
 }
 
 // Independent review record. Slice and plan reviews use type slice-review|plan-review|final-review with status approve|changes,
@@ -440,8 +446,8 @@ export function parseRecord(taskDir, name) {
   const checkpoints = { 'plan-review': ['plan'], 'final-review': ['final'], 'code-review': ['final'], verification: ['final'] }[info.type];
   // Slice checkpoints name the assigned phase; retaining that exact label isolates its review-round history.
   if (checkpoints && !checkpoints.includes(info.checkpoint)) fail(`${name}: ${info.type} requires checkpoint ${checkpoints.join(' or ')}`);
-  if (info.checkpoint === 'plan') {
-    if (!nonempty(info.reviewed_artifact) || !/^[a-f0-9]{64}$/.test(info.reviewed_artifact_sha256 || '')) fail(`${name}: plan review needs reviewed_artifact and reviewed_artifact_sha256`);
+  if (info.checkpoint === 'plan' || (info.type === 'slice-review' && (info.reviewed_artifact || info.reviewed_artifact_sha256))) {
+    if (!nonempty(info.reviewed_artifact) || !/^[a-f0-9]{64}$/.test(info.reviewed_artifact_sha256 || '')) fail(`${name}: plan-bound review needs reviewed_artifact and reviewed_artifact_sha256`);
     const reviewed = path.resolve(taskDir, info.reviewed_artifact);
     const relativeArtifact = path.relative(path.resolve(taskDir), reviewed);
     if (!relativeArtifact || relativeArtifact.startsWith('..') || path.isAbsolute(relativeArtifact)) fail(`${name}: reviewed artifact escapes the task`);
@@ -488,7 +494,7 @@ export function checkReview({ taskDir, file }) {
     if (!Object.values(index.artifactSeries).some(series => series.iterations.some(record => record.id === series.current && rootFile(taskDir, record.path) === path.resolve(taskDir, file)))) fail(`${name}: review must select the current indexed iteration`);
   }
   const { info, status, round, ids } = parseRecord(taskDir, name);
-  if (info.checkpoint === 'plan' && indexFileExists(rootFile(taskDir, 'index.json'))) {
+  if ((info.checkpoint === 'plan' || info.type === 'slice-review') && info.reviewed_artifact && indexFileExists(rootFile(taskDir, 'index.json'))) {
     const index = readArtifactIndex(taskDir);
     if (!Object.values(index.artifactSeries).some(series => series.iterations.some(record => record.id === series.current && rootFile(taskDir, record.path) === path.resolve(taskDir, info.reviewed_artifact) && record.sha256 === info.reviewed_artifact_sha256))) fail(`${name}: reviewed plan is not the current indexed artifact`);
   }
@@ -497,30 +503,175 @@ export function checkReview({ taskDir, file }) {
   const head = gitHead(taskDir);
   if (reviewed !== head) fail(`${name}: reviewed_commit ${info.reviewed_commit} is not HEAD (${head?.slice(0, 12)}); review the current commit`);
   if (info.revision !== sourceRevision(taskDir)) fail(`${name}: tracked files changed since the review began (revision differs); a reviewer never edits source, so restore generated files or review in a scratch worktree, then review again`);
-  // The previous round is the newest valid record of the same type and checkpoint at the highest earlier round; a record that fails its own checks is skipped.
-  let previous = null;
-  const history = indexFileExists(rootFile(taskDir, 'index.json'))
-    ? Object.values(readArtifactIndex(taskDir).artifactSeries).flatMap(series => series.iterations.map(record => record.path))
-    : fs.readdirSync(taskDir).filter(entry => /^\d{2,}-[a-z0-9-]+\.md$/.test(entry));
-  for (const other of history.filter(entry => entry !== name)) {
+  const history = reviewHistory({ taskDir, type: info.type, checkpoint: info.checkpoint, before: name });
+  const previous = history.valid.at(-1);
+  const expected = (previous?.round || 0) + 1;
+  if (round !== expected) fail(`${name}: round ${round} is invalid; expected ${expected}${previous ? ` after ${previous.file}` : ` (no earlier valid ${info.type} round for checkpoint ${info.checkpoint})`}; run review-next and give its result to a fresh reviewer`);
+  const progress = status === 'approve' || !previous || previous.status === 'approve' || ids.length < previous.ids.length;
+  const repairRound = status === 'changes' ? blockingRounds(history.valid) + 1 : 0;
+  return { checkpoint: info.checkpoint, round, repair_round: repairRound, status, reviewer_model: info.reviewer_model, blocking: ids, previous_record: previous?.file || null, previous_blocking: previous?.ids || [], progress, limit_reached: repairRound >= REVIEW_ROUND_LIMIT };
+}
+
+function reviewHistory({ taskDir, type, checkpoint, before = null }) {
+  const names = indexFileExists(rootFile(taskDir, 'index.json'))
+    ? Object.values(readArtifactIndex(taskDir).artifactSeries).flatMap(series => series.iterations.filter(record => record.type === type).map(record => record.path))
+    : fs.readdirSync(taskDir).filter(entry => /^\d{2,}-[a-z0-9-]+\.md$/.test(entry)).sort((a, b) => Number.parseInt(a) - Number.parseInt(b));
+  const valid = [], invalid = [];
+  for (const file of names) {
+    if (file === before) break;
     let record;
-    try { record = parseRecord(taskDir, other); } catch { continue; }
-    if (record.info.checkpoint === info.checkpoint && record.info.type === info.type && record.round < round && (!previous || record.round > previous.round)) previous = record;
+    try { record = parseRecord(taskDir, file); }
+    catch (error) {
+      let info;
+      try { info = metadata(fs.readFileSync(rootFile(taskDir, file), 'utf8')); } catch { continue; }
+      if (info.type === type && info.checkpoint === checkpoint) invalid.push({ file, error: error.message });
+      continue;
+    }
+    if (record.info.type !== type || record.info.checkpoint !== checkpoint) continue;
+    const expected = (valid.at(-1)?.round || 0) + 1;
+    if (record.round !== expected) {
+      invalid.push({ file, error: `${file}: round ${record.round} is invalid; expected ${expected}` });
+      continue;
+    }
+    valid.push({ ...record, file });
   }
-  if (round > 1 && !previous) fail(`${name}: round ${round} has no earlier valid ${info.type} round for checkpoint ${info.checkpoint}`);
-  const progress = status === 'approve' || !previous || ids.length < previous.ids.length;
-  return { checkpoint: info.checkpoint, round, status, reviewer_model: info.reviewer_model, blocking: ids, previous_blocking: previous?.ids || [], progress, limit_reached: round >= REVIEW_ROUND_LIMIT && status !== 'approve' };
+  return { valid, invalid };
+}
+
+// Receipt rounds never reset. Only a valid approval closes a blocking episode; new plan bytes and invalid attempts do not.
+export const blockingRounds = records => records.reduce((count, record) => record.status === 'approve' ? 0 : count + 1, 0);
+
+export function nextReview({ taskDir, type, checkpoint }) {
+  if (!['plan-review', 'slice-review', 'final-review', 'code-review', 'verification'].includes(type) || !nonempty(checkpoint)) fail('review-next requires a review type and exact checkpoint');
+  const checkpoints = { 'plan-review': ['plan'], 'final-review': ['final'], 'code-review': ['final'], verification: ['final'] }[type];
+  if (checkpoints && !checkpoints.includes(checkpoint)) fail(`${type} requires checkpoint ${checkpoints.join(' or ')}`);
+  const history = reviewHistory({ taskDir, type, checkpoint });
+  const previous = history.valid.at(-1);
+  const repairRound = blockingRounds(history.valid);
+  return { type, checkpoint, next_round: (previous?.round || 0) + 1, repair_round: repairRound, previous_record: previous?.file || null, previous_blocking: previous?.ids || [], invalid_records: history.invalid, limit_reached: repairRound >= REVIEW_ROUND_LIMIT };
+}
+
+function phaseSections(text) {
+  const lines = text.split('\n'), phases = [];
+  let fence = null;
+  for (let i = 0; i < lines.length; i++) {
+    const marker = /^\s*(`{3,}|~{3,})/.exec(lines[i])?.[1];
+    if (marker) { if (!fence) fence = marker[0]; else if (marker[0] === fence) fence = null; continue; }
+    if (fence || !/^## /.test(lines[i])) continue;
+    if (phases.length && phases.at(-1).end === undefined) phases.at(-1).end = i;
+    const match = /^## Phase (\d+):\s*(.+)$/i.exec(lines[i]);
+    if (match) phases.push({ checkpoint: `phase-${Number(match[1])}`, title: match[2], start: i, end: undefined });
+  }
+  if (phases.at(-1)?.end === undefined && phases.length) phases.at(-1).end = lines.length;
+  if (new Set(phases.map(phase => phase.checkpoint)).size !== phases.length) fail('Plan contains duplicate phase headings');
+  return { lines, phases };
+}
+function selectedPlan(taskDir) {
+  const latest = readDeliveryArtifacts(taskDir).latest;
+  return latest.plan || latest['structure-outline'] || null;
+}
+function phaseDefinition(text, checkpoint) {
+  const { lines, phases } = phaseSections(text);
+  const phase = phases.find(item => item.checkpoint === checkpoint);
+  if (!phase) fail(`Plan has no phase ${checkpoint}`);
+  return lines.slice(phase.start, phase.end).join('\n').replace(/^([-*] )\[[ xX]\]/gm, '$1[ ]').trim();
+}
+function phaseProgress(taskDir, plan) {
+  const records = [];
+  for (const match of section(plan.text, 'Progress').matchAll(/^- \d{4}-\d{2}-\d{2}: (phase-\d+), commit ([a-f0-9]{40}), review `([^`]+)` approve; plan `([^`]+)` sha256 ([a-f0-9]{64})\.$/gm)) {
+    const [, checkpoint, commit, file, reviewedPlan, digest] = match;
+    const record = parseRecord(taskDir, file);
+    const history = reviewHistory({ taskDir, type: 'slice-review', checkpoint });
+    const reviewedCommit = git(taskDir, ['rev-parse', '--verify', `${record.info.reviewed_commit}^{commit}`]);
+    if (record.info.type !== 'slice-review' || record.info.checkpoint !== checkpoint || record.status !== 'approve' || reviewedCommit !== commit || record.info.reviewed_artifact !== reviewedPlan || record.info.reviewed_artifact_sha256 !== digest || !history.valid.some(item => item.file === file)) fail(`Invalid phase progress proof for ${checkpoint}`);
+    const index = readArtifactIndex(taskDir);
+    if (!Object.values(index.artifactSeries).some(series => series.iterations.some(item => item.path === reviewedPlan && item.sha256 === digest))) fail(`Phase ${checkpoint} progress references an unregistered plan`);
+    if (phaseDefinition(fs.readFileSync(rootFile(taskDir, reviewedPlan), 'utf8'), checkpoint) !== phaseDefinition(plan.text, checkpoint)) fail(`Phase ${checkpoint} changed since its approval; review the revised phase before recording completion`);
+    try { git(taskDir, ['merge-base', '--is-ancestor', commit, 'HEAD']); } catch { fail(`Phase ${checkpoint} approved commit is not in current HEAD history`); }
+    if (records.some(item => item.checkpoint === checkpoint)) fail(`Duplicate phase progress for ${checkpoint}`);
+    records.push({ checkpoint, commit, review: file });
+  }
+  return records;
+}
+export function phaseStatus({ taskDir }) {
+  if (!indexFileExists(rootFile(taskDir, 'index.json'))) return null;
+  const plan = selectedPlan(taskDir);
+  if (!plan) return null;
+  const { phases } = phaseSections(plan.text);
+  if (!phases.length) return null;
+  const progress = phaseProgress(taskDir, plan);
+  const completed = phases.map(({ checkpoint, title }) => ({ checkpoint, title, completed: progress.some(item => item.checkpoint === checkpoint), ...progress.find(item => item.checkpoint === checkpoint) }));
+  const planReview = readDeliveryArtifacts(taskDir).latest['plan-review'];
+  let approved = false, reviewError = null;
+  if (planReview) {
+    try {
+      if (planReview.metadata.reviewed_artifact !== path.relative(path.resolve(taskDir), plan.file).split(path.sep).join('/') || planReview.metadata.reviewed_artifact_sha256 !== plan.hash) fail('Current plan review does not bind the selected plan');
+      approved = checkReview({ taskDir, file: planReview.file }).status === 'approve';
+    } catch (error) { reviewError = error.message; }
+  }
+  const next = completed.find(phase => !phase.completed);
+  return { plan: { file: path.relative(path.resolve(taskDir), plan.file), sha256: plan.hash, approved, review_error: reviewError }, phases: completed, next_phase: next?.checkpoint || null, next_action: !approved ? 'review-plan' : next ? 'build' : 'final' };
+}
+export function completePhase({ taskDir, checkpoint, file }) {
+  if (!indexFileExists(rootFile(taskDir, 'index.json'))) fail('phase-complete requires an indexed task; legacy tasks retain manual Progress');
+  const plan = selectedPlan(taskDir);
+  if (!plan) fail('phase-complete requires a current plan or structure-outline');
+  const { lines, phases } = phaseSections(plan.text);
+  const phase = phases.find(item => item.checkpoint === checkpoint);
+  if (!phase) fail(`Plan has no phase ${checkpoint}`);
+  const progress = phaseProgress(taskDir, plan);
+  const existing = progress.find(item => item.checkpoint === checkpoint);
+  const name = path.relative(path.resolve(taskDir), path.resolve(taskDir, file)).split(path.sep).join('/');
+  if (existing) {
+    if (existing.review !== name) fail(`Phase ${checkpoint} already has a different approval`);
+    return { path: path.relative(path.resolve(taskDir), plan.file), checkpoint, review: name, already_complete: true };
+  }
+  const verdict = checkReview({ taskDir, file });
+  const { info } = parseRecord(taskDir, name);
+  if (info.type !== 'slice-review' || info.checkpoint !== checkpoint || verdict.status !== 'approve') fail('phase-complete requires an approving slice review for the exact phase');
+  if (info.reviewed_artifact !== path.relative(path.resolve(taskDir), plan.file).split(path.sep).join('/') || info.reviewed_artifact_sha256 !== plan.hash) fail('Slice approval must bind the current plan path and SHA-256');
+  if (git(taskDir, ['status', '--porcelain', '--untracked-files=no', '--', ...sourcePaths(taskDir)])) fail('Phase completion requires committed source');
+  if (phases.slice(0, phases.indexOf(phase)).some(item => !progress.some(record => record.checkpoint === item.checkpoint))) fail('Complete earlier plan phases first');
+  let verificationDepth = null, checks = 0;
+  for (let i = phase.start + 1; i < phase.end; i++) {
+    const heading = /^(#{3,6})\s+(.+?)\s*$/.exec(lines[i]);
+    if (heading) {
+      if (verificationDepth !== null && heading[1].length <= verificationDepth) verificationDepth = null;
+      if (/^(?:Automated Verification|Verify):?$/i.test(heading[2])) verificationDepth = heading[1].length;
+    }
+    if (verificationDepth !== null && /^[-*] \[[ xX]\] /.test(lines[i])) { lines[i] = lines[i].replace(/\[[ xX]\]/, '[x]'); checks++; }
+  }
+  if (!checks) fail(`Phase ${checkpoint} has no Automated Verification or Verify checkboxes`);
+  const commit = git(taskDir, ['rev-parse', '--verify', `${info.reviewed_commit}^{commit}`]);
+  const entry = `- ${new Date().toISOString().slice(0, 10)}: ${checkpoint}, commit ${commit}, review \`${name}\` approve; plan \`${info.reviewed_artifact}\` sha256 ${plan.hash}.`;
+  const start = lines.findIndex(line => line.trim() === '## Progress');
+  if (start < 0) lines.push('', '## Progress', '', entry, '');
+  else {
+    const next = lines.findIndex((line, i) => i > start && /^## /.test(line));
+    const end = next < 0 ? lines.length : next;
+    const prior = lines.slice(start + 1, end).filter(line => line.trim() && line.trim() !== 'None.');
+    lines.splice(start + 1, end - start - 1, '', ...prior, entry, '');
+  }
+  const { kind, variant } = semanticSeries(plan.type);
+  const reservation = reserveArtifactIteration(taskDir, kind, variant);
+  const current = readArtifactIndex(taskDir).artifactSeries[`${kind}.${variant}`].iterations.at(-1);
+  if (current.path !== path.relative(path.resolve(taskDir), plan.file).split(path.sep).join('/') || current.sha256 !== plan.hash) fail('Current plan changed before phase completion; retry from status');
+  fs.writeFileSync(rootFile(taskDir, reservation.writePath), lines.join('\n'), { flag: 'wx' });
+  const result = recordArtifact(taskDir, kind, variant, plan.type, reservation.writePath);
+  return { ...result, checkpoint, review: name, already_complete: false };
 }
 
 async function main(args) {
   const command = args[0];
-  const arity = { revision: [2, 2], status: [2, 2], policy: [3, 3], seal: [4, 4], inspect: [4, 4], 'repair-begin': [3, 3], 'repair-complete': [3, 3], review: [3, 3] };
+  const arity = { revision: [2, 2], status: [2, 2], policy: [3, 3], seal: [4, 4], inspect: [4, 4], 'repair-begin': [3, 3], 'repair-complete': [3, 3], review: [3, 3], 'review-next': [4, 4], 'phase-complete': [4, 4] };
   if (!Object.hasOwn(arity, command)) fail(`Unknown delivery contract command ${command}`);
   const [min, max] = arity[command];
   if (args.length < min || args.length > max || args.some(value => !nonempty(value) || value.startsWith('-'))) fail(`Invalid arguments for ${command}`);
   const [, taskDir, value, extra] = args;
   if (command === 'revision') return sourceRevision(taskDir);
   if (command === 'review') return checkReview({ taskDir, file: value });
+  if (command === 'review-next') return nextReview({ taskDir, type: value, checkpoint: extra });
+  if (command === 'phase-complete') return completePhase({ taskDir, checkpoint: value, file: extra });
   if (command === 'status') return deliveryStatus({ taskDir });
   if (command === 'policy') return saveEvidencePolicy({ taskDir, policy: JSON.parse(fs.readFileSync(value, 'utf8')) });
   if (command === 'seal') return sealEvidence({ taskDir, artifactFile: value, record: JSON.parse(fs.readFileSync(extra, 'utf8')) });

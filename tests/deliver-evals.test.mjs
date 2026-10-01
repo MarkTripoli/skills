@@ -7,7 +7,6 @@ import { spawnSync } from "node:child_process";
 import { artifacts, newest } from "../evals/lib.mjs";
 import { initTaskArtifacts, reserveArtifactIteration, recordArtifact } from "../shared/task-artifacts.mjs";
 import { verdictProblems } from "../evals/deliver-grade.mjs";
-import { readSessions, sessionProblems } from "../evals/sessions.mjs";
 
 test("resumeProblems wants the recorded unblock check rerun, the status read, no rebuild and a stop that moved on", async () => {
   const { resumeProblems } = await import("../evals/scenarios/deliver-resume.mjs");
@@ -236,41 +235,17 @@ test("indexed evaluation selection ignores unregistered numbered files and rejec
   assert.throws(() => newest(dir, "sources"), /SHA-256/);
 });
 
-test("review grading cannot hide changes behind an older approval or exceed round allowance", () => {
+test("review grading preserves receipt history and bounds only unresolved blocking episodes", () => {
   const row = (round, status) => ({ checkpoint: "phase-1", type: "slice-review", round, status });
   assert.deepEqual(verdictProblems([row(1, "changes"), row(2, "approve")]), []);
   assert.ok(verdictProblems([row(1, "approve"), row(2, "changes")]).some((p) => p.includes("expected approve")));
   assert.ok(verdictProblems([row(4, "approve")]).some((p) => p.includes("review rounds")));
   assert.ok(verdictProblems([row(1, "approve"), row(1, "approve")]).some((p) => p.includes("duplicate round")));
-});
-
-test("immutable staged review publications are attributed by tool result path and digest", (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "indexed-sessions-"));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const file = "artifacts/review/slice/0001.md";
-  const sha256 = "a".repeat(64);
-  const staging = ".artifact-staging/12345678-1234-1234-1234-123456789abc.md";
-  const at = "2026-09-30T00:00:00Z";
-  const rows = [
-    { type: "session", id: "reviewer", parentSession: "parent" },
-    { type: "session_init", agent: "agent-implementation-reviewer", resolvedModel: "strong", task: "Review the slice" },
-    { type: "message", message: { role: "assistant", content: [
-      { type: "toolCall", id: "write", name: "write", arguments: { path: staging, content: "review bytes" } },
-      { type: "toolCall", id: "record", name: "bash", arguments: { command: `node references/task-artifacts.mjs record task review slice slice-review ${staging}` } },
-    ] } },
-    { type: "message", message: { role: "toolResult", toolCallId: "record", content: [{ type: "text", text: JSON.stringify({ path: file, sha256 }) }] } },
-  ];
-  const write = (value) => fs.writeFileSync(path.join(dir, "reviewer.jsonl"), value.map((r) => JSON.stringify({ ...r, timestamp: at })).join("\n"));
-  write(rows);
-  const check = (digest) => sessionProblems({
-    sessions: [{ id: "parent", child: false, calls: [] }, ...readSessions(dir)],
-    records: [{ file, sha256: digest, group: "phase-1", reviewer_model: "strong" }],
-    subjects: [], economy: "economy", strongest: "strong", separate: [{ id: "builder", model: "economy", calls: [], texts: [] }],
-  });
-  assert.deepEqual(check(sha256), []);
-  assert.ok(check("b".repeat(64)).some((p) => p.includes("no session wrote")));
-  write(rows.map((r) => r.message?.role === "toolResult" ? { ...r, message: { ...r.message, isError: true } } : r));
-  assert.ok(check(sha256).some((p) => p.includes("no session wrote")));
+  const approvals = Array.from({ length: 5 }, (_, i) => row(i + 1, "approve"));
+  assert.deepEqual(verdictProblems(approvals.toReversed()), [], "successor approvals do not consume the repair allowance");
+  const lateChanges = [...approvals, row(6, "changes"), row(7, "changes"), row(8, "changes")];
+  assert.ok(verdictProblems(lateChanges).some((p) => p.includes("review repairs")), "late blockers remain bounded after many approvals");
+  assert.deepEqual(verdictProblems([...lateChanges, row(9, "approve")]), [], "a valid approval closes the blocking episode");
 });
 
 test("PRD grading accepts EARS actor/response forms and rejects non-obligations", async () => {

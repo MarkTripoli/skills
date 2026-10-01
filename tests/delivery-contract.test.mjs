@@ -128,6 +128,130 @@ test('plan reviews bind current immutable plan bytes, not only an unchanged Git 
   assert.throws(() => reviewCheck(f, file), /not the current indexed artifact/);
 });
 
+test('invalid immutable reviews do not consume rounds or erase valid blocking history', t => {
+  const f = fixture(t);
+  const invalidFirst = f.review({ status: 'approve', findings: '', exit: 1 });
+  assert.throws(() => reviewCheck(f, invalidFirst), /failed check exit/);
+  const first = f.review({ findings: '### F1 blocking One\n\n- Evidence: cli.mjs:1\n\n### F2 blocking Two\n\n- Evidence: cli.mjs:1' });
+  assert.equal(reviewCheck(f, first).round, 1);
+  const invalidSecond = f.review({ round: 2, status: 'approve', findings: '', exit: 1 });
+  assert.throws(() => reviewCheck(f, invalidSecond), /failed check exit/);
+  const corrected = reviewCheck(f, f.review({ round: 2 }));
+  assert.deepEqual(corrected.previous_blocking, ['F1', 'F2']);
+  assert.equal(corrected.progress, true);
+  assert.throws(() => parseRecord(f.taskDir, invalidFirst), /failed check exit/);
+});
+
+test('a valid duplicate round cannot replace a blocking verdict or reset the review limit', t => {
+  const f = fixture(t); f.review();
+  assert.throws(() => reviewCheck(f, f.review({ status: 'approve', findings: '' })), /round 1.*expected 2/);
+  const recovered = reviewCheck(f, f.review({ round: 2, status: 'approve', findings: '' }));
+  assert.deepEqual(recovered.previous_blocking, ['F1']);
+  assert.equal(recovered.status, 'approve');
+});
+
+test('plan successors preserve prior valid blockers and cannot restart checkpoint rounds', t => {
+  const f = fixture(t);
+  const planReview = ({ round = 1, status = 'changes', exit = 0 } = {}) => {
+    const plan = f.artifact('plan', null, `# Plan\n\nRevision for round ${round}.`);
+    const record = readArtifactIndex(f.taskDir).artifactSeries['planning.plan'].iterations.at(-1);
+    return f.review({ type: 'plan-review', checkpoint: 'plan', round, status, exit, findings: status === 'approve' ? '' : '### F1 blocking Missing cap\n\n- Evidence: cli.mjs:1', extra: `reviewed_artifact: ${plan}\nreviewed_artifact_sha256: ${record.sha256}\n` });
+  };
+  assert.equal(reviewCheck(f, planReview()).status, 'changes');
+  assert.throws(() => reviewCheck(f, planReview({ round: 2, status: 'approve', exit: 1 })), /failed check exit/);
+  assert.throws(() => reviewCheck(f, planReview({ status: 'approve' })), /round 1.*expected 2/);
+  const corrected = reviewCheck(f, planReview({ round: 2, status: 'approve' }));
+  assert.deepEqual(corrected.previous_blocking, ['F1']);
+  assert.equal(corrected.status, 'approve');
+});
+
+test('phase CLI records only the approved phase and resumes through successor plan review', t => {
+  const f = fixture(t);
+  const cli = path.resolve('skills/delivery/deliver/contract.mjs');
+  const command = (...args) => JSON.parse(execFileSync(process.execPath, [cli, ...args], { cwd: f.repo, encoding: 'utf8' }));
+  const plan = f.artifact('plan', null, '# Plan\n\n## Phase 1: First output\n\n### Verify\n\n- [ ] `node cli.mjs` reports new value.\n\n## Phase 2: Next output\n\n#### Automated Verification:\n\n- [ ] Check the next output.\n\n## Progress\n\nNone.');
+  const record = readArtifactIndex(f.taskDir).artifactSeries['planning.plan'].iterations[0];
+  const binding = `reviewed_artifact: ${plan}\nreviewed_artifact_sha256: ${record.sha256}\n`;
+  const rejected = f.review({ status: 'approve', findings: '', exit: 1, extra: binding });
+  assert.throws(() => command('phase-complete', f.taskDir, 'phase-1', rejected), /failed check exit/);
+  assert.equal(readArtifactIndex(f.taskDir).artifactSeries['planning.plan'].iterations.length, 1);
+  const wrongPlan = f.review({ status: 'approve', findings: '', extra: `reviewed_artifact: ${plan}\nreviewed_artifact_sha256: ${'0'.repeat(64)}\n` });
+  assert.throws(() => command('phase-complete', f.taskDir, 'phase-1', wrongPlan), /digest-valid indexed artifact/);
+  assert.equal(readArtifactIndex(f.taskDir).artifactSeries['planning.plan'].iterations.length, 1);
+  const approved = f.review({ status: 'approve', findings: '', commit: f.git('rev-parse', '--short', 'HEAD'), extra: binding });
+  const before = fs.readFileSync(path.join(f.taskDir, plan), 'utf8');
+  const completed = command('phase-complete', f.taskDir, 'phase-1', approved);
+  const successor = fs.readFileSync(path.join(f.taskDir, completed.path), 'utf8');
+  assert.match(successor, /- \[x\] `node cli\.mjs` reports new value/);
+  assert.match(successor, /- \[ \] Check the next output/);
+  assert.equal(fs.readFileSync(path.join(f.taskDir, plan), 'utf8'), before);
+  assert.equal(command('phase-complete', f.taskDir, 'phase-1', approved).path, completed.path);
+  const resume = command('status', f.taskDir).resume;
+  assert.equal(resume.next_phase, 'phase-2');
+  assert.equal(resume.next_action, 'review-plan');
+  assert.deepEqual(resume.phases.map(phase => phase.completed), [true, false]);
+  const next = command('review-next', f.taskDir, 'slice-review', 'phase-1');
+  assert.equal(next.next_round, 2);
+  assert.equal(next.previous_record, approved);
+  assert.equal(next.invalid_records[0].file, rejected);
+  assert.match(next.invalid_records[0].error, /failed check exit/);
+  const successorRecord = readArtifactIndex(f.taskDir).artifactSeries['planning.plan'].iterations.at(-1);
+  const successorBinding = `reviewed_artifact: ${completed.path}\nreviewed_artifact_sha256: ${successorRecord.sha256}\n`;
+  const planApproval = f.review({ type: 'plan-review', checkpoint: 'plan', status: 'approve', findings: '', extra: successorBinding });
+  assert.equal(reviewCheck(f, planApproval).status, 'approve');
+  assert.equal(command('status', f.taskDir).resume.next_action, 'build');
+});
+
+test('four committed CLI phases resume beyond three approvals while later blocking repairs stay bounded', t => {
+  const f = fixture(t);
+  const cli = path.resolve('skills/delivery/deliver/contract.mjs');
+  const command = (...args) => JSON.parse(execFileSync(process.execPath, [cli, ...args], { cwd: f.repo, encoding: 'utf8' }));
+  let plan = f.artifact('plan', null, '# Plan\n\n' + [1, 2, 3, 4].map(n => `## Phase ${n}: Output ${n}\n\n### Verify\n\n- [ ] \`node cli.mjs\` reports phase ${n}.\n`).join('\n') + '\n## Progress\n\nNone.');
+  const binding = () => {
+    const record = readArtifactIndex(f.taskDir).artifactSeries['planning.plan'].iterations.at(-1);
+    return `reviewed_artifact: ${record.path}\nreviewed_artifact_sha256: ${record.sha256}\n`;
+  };
+  const approvePlan = () => {
+    const next = command('review-next', f.taskDir, 'plan-review', 'plan');
+    assert.equal(next.limit_reached, false);
+    const file = f.review({ type: 'plan-review', checkpoint: 'plan', round: next.next_round, status: 'approve', findings: '', extra: binding() });
+    const result = command('review', f.taskDir, file);
+    assert.equal(result.limit_reached, false);
+    assert.equal(result.repair_round, 0);
+    return result.round;
+  };
+  assert.equal(approvePlan(), 1);
+  for (let n = 1; n <= 4; n++) {
+    assert.equal(command('status', f.taskDir).resume.next_phase, `phase-${n}`);
+    fs.writeFileSync(path.join(f.repo, 'cli.mjs'), `console.log(\"phase ${n}\");\n`);
+    f.git('commit', '-am', `phase ${n}`);
+    assert.equal(execFileSync(process.execPath, ['cli.mjs'], { cwd: f.repo, encoding: 'utf8' }), `phase ${n}\n`);
+    const file = f.review({ checkpoint: `phase-${n}`, status: 'approve', findings: '', extra: binding() });
+    command('review', f.taskDir, file);
+    plan = command('phase-complete', f.taskDir, `phase-${n}`, file).path;
+    assert.equal(command('status', f.taskDir).resume.next_action, 'review-plan');
+    assert.equal(approvePlan(), n + 1);
+  }
+  const resume = command('status', f.taskDir).resume;
+  assert.equal(resume.next_action, 'final');
+  assert.equal(resume.next_phase, null);
+  assert.equal(resume.phases.every(phase => phase.completed), true);
+  for (let repair = 1; repair <= 3; repair++) {
+    const findings = Array.from({ length: 4 - repair }, (_, n) => `### F${n + 1} blocking Wrong output\n\n- Evidence: cli.mjs:1`).join('\n\n');
+    if (repair === 2) {
+      const invalid = f.review({ type: 'plan-review', checkpoint: 'plan', round: 7, status: 'approve', findings: '', exit: 1, extra: binding() });
+      assert.throws(() => command('review', f.taskDir, invalid), /failed check exit/);
+      assert.equal(command('review-next', f.taskDir, 'plan-review', 'plan').repair_round, 1);
+    }
+    const file = f.review({ type: 'plan-review', checkpoint: 'plan', round: 5 + repair, findings, extra: binding() });
+    const verdict = command('review', f.taskDir, file);
+    assert.equal(verdict.repair_round, repair);
+    assert.equal(verdict.progress, true);
+    assert.equal(verdict.limit_reached, repair === 3);
+  }
+  assert.equal(command('review-next', f.taskDir, 'plan-review', 'plan').limit_reached, true);
+});
+
 test('verification cannot advertise passing while a required verdict failed or went untested', t => {
   const f = fixture(t);
   for (const verdict of ['fail', 'untested', 'unreachable']) assert.throws(() => f.artifact('verification', 'passed', `## Items\n\n| Item | Verdict |\n|---|---|\n| output | ${verdict} |`), /contradicts evidence/);

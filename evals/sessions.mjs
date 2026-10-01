@@ -1,9 +1,10 @@
 // Reads the omp session JSONL a terminal phase leaves (`--session-dir`): the orchestrator's session and one
 // child session per spawned subagent, each with its agent, resolved model, first prompt and tool calls.
-// A reviewer record is only credited to a separate agent when a child session wrote the file.
+// A reviewer is credited only for a separate session's direct write or successful staged write of the indexed bytes.
 
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 function jsonlFiles(dir) {
   if (!fs.existsSync(dir)) return [];
@@ -12,7 +13,7 @@ function jsonlFiles(dir) {
 
 export function readSessions(dir) {
   return jsonlFiles(dir).map((file) => {
-    const s = { file, id: null, child: false, agent: null, model: null, task: "", calls: [], publications: [], texts: [], lastTime: 0 };
+    const s = { file, id: null, child: false, agent: null, model: null, task: "", calls: [], stagedWrites: [], texts: [], lastTime: 0 };
     for (const line of fs.readFileSync(file, "utf8").split("\n")) {
       let d;
       try {
@@ -41,17 +42,12 @@ export function readSessions(dir) {
         }
       } else if (d.type === "message" && d.message?.role === "toolResult" && !d.message.isError) {
         const call = s.calls.find((c) => c.id === d.message.toolCallId);
-        const command = String(call?.args.command ?? "");
-        if (call?.name !== "bash" || !/task-artifacts\.mjs\s+record\b/.test(command)) continue;
-        const staging = /\.artifact-staging\/[a-f0-9-]+\.md/.exec(command)?.[0];
-        if (!staging || !wrote(s, staging)) continue;
-        const text = (d.message.content ?? []).filter((p) => p.type === "text").map((p) => p.text).join("\n");
-        for (const match of text.matchAll(/\{[^{}]*"sha256"[^{}]*\}/g)) {
-          try {
-            const record = JSON.parse(match[0]);
-            if (typeof record.path === "string" && typeof record.sha256 === "string") s.publications.push(record);
-          } catch { /* Non-JSON tool prose is not publication proof. */ }
-        }
+        // Native task children author a staging file; the parent publishes it, possibly through a wrapper
+        // with no JSON receipt and a different staging UUID. Bind the successful child's actual bytes,
+        // not the publisher's command spelling, returned metadata or a claimed reviewer identity.
+        if (call?.name !== "write" || typeof call.args.content !== "string" ||
+          !/(?:^|\/)\.artifact-staging\/[a-f0-9-]+\.md$/.test(String(call.args.path ?? ""))) continue;
+        s.stagedWrites.push({ path: call.args.path, sha256: createHash("sha256").update(call.args.content).digest("hex") });
       }
     }
     return s;
@@ -134,7 +130,7 @@ export function sessionProblems({ sessions, records, subjects, economy, stronges
   const writers = new Map();
   for (const r of records) {
     const who = [...sessions, ...(separate ?? [])].filter((s) => wrote(s, r.file) ||
-      (r.sha256 && s.publications?.some((p) => p.path === r.file && p.sha256 === r.sha256)));
+      (r.sha256 && s.stagedWrites?.some((p) => p.sha256 === r.sha256)));
     if (!who.length) {
       out.push(`sessions: no session wrote ${r.file}`);
       continue;
@@ -142,7 +138,9 @@ export function sessionProblems({ sessions, records, subjects, economy, stronges
     for (const s of who) {
       const label = `${r.file} written by ${s.agent ?? "orchestrator"} ${s.id}`;
       if (!s.child) out.push(`sessions: ${label}: the orchestrator wrote a review record`);
-      if (timesPreserved && s.child && r.mtime > s.lastTime) out.push(`sessions: ${label}: the file changed after its session ended (${new Date(r.mtime).toISOString()} > ${new Date(s.lastTime).toISOString()}); something else edited the record`);
+      // Immutable publication can follow the child's exit. Its digest already binds those bytes;
+      // only direct legacy writes need the original file's mtime to detect a later parent edit.
+      if (timesPreserved && s.child && wrote(s, r.file) && r.mtime > s.lastTime) out.push(`sessions: ${label}: the file changed after its session ended (${new Date(r.mtime).toISOString()} > ${new Date(s.lastTime).toISOString()}); something else edited the record`);
       if (builders.includes(s)) out.push(`sessions: ${label}: the builder wrote a review record`);
       if (s.model !== strongest) out.push(`sessions: ${label}: ran ${s.model}, expected the strongest candidate ${strongest}`);
       // The skill has a reviewer write `unobserved: <requested>` when it cannot see its own model; the session is the observation.

@@ -8,4 +8,6 @@ Import recent portable upstream delivery, installation, review, visual-conforman
 
 Exclude local `.omo` run-continuation caches from package archives alongside task and evaluation history.
 
+Resume from immutable phase-completion proofs. Recover rejected review attempts without erasing history, and keep bounded blocking repairs separate from successful approvals.
+
 Existing Atomic runs are historical state, not resumable through the retired controller. Resume delivery through `/deliver <task-dir>` using the task's current artifacts and recorded decisions.

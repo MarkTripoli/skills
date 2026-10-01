@@ -3,17 +3,16 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { artifacts, expect, failures, newest } from "./lib.mjs";
 import { readSessions, sessionProblems, skillLoadProblems } from "./sessions.mjs";
-import { checkReview, parseRecord } from "../skills/delivery/deliver/contract.mjs";
+import { blockingRounds, checkReview, parseRecord, REVIEW_ROUND_LIMIT } from "../skills/delivery/deliver/contract.mjs";
 import { strongestCandidate } from "../skills/delivery/route-model/route-model.mjs";
 
 export const git = (repo, ...argv) => execFileSync("git", argv, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 const REVIEW_TYPES = new Set(["plan-review", "slice-review", "code-review", "verification"]);
 const FINAL_TYPES = ["verification", "code-review"];
-const ROUND_LIMIT = 4;
 const REMOTE_MISSING = /(?:\bno|\bmissing|\bwithout)\s+(?:git\s+)?remote\b|remote\s+(?:is\s+)?(?:missing|not\s+configured)|add\s+a\s+remote|git remote add/i;
 
-// The review records of a task directory, each through the contract's own parser. A record the parser
-// rejects is a failure here, so a hollow or self-contradicting file cannot stand in for a review.
+// Every indexed artifact is digest-validated before review parsing. Invalid historical reviews do not
+// consume rounds; an invalid current record still fails, so an older approval cannot hide it.
 export function readRecords(taskDir) {
   const problems = [];
   const records = [];
@@ -23,27 +22,36 @@ export function readRecords(taskDir) {
   } catch (error) {
     return { records, problems: [`index: ${error.message}`] };
   }
+  const seen = new Set();
   for (const a of all.filter((x) => REVIEW_TYPES.has(x.fm.type))) {
+    // Legacy discovery is newest-first; its latest type/checkpoint stands in for an indexed current pointer.
+    const key = `${a.fm.type}/${a.fm.checkpoint ?? ""}`;
+    const current = a.current ?? !seen.has(key);
+    seen.add(key);
     try {
       const parsed = parseRecord(taskDir, a.file);
       records.push({ mtime: fs.statSync(path.join(taskDir, a.file)).mtimeMs, file: a.file, sha256: a.record?.sha256, type: a.fm.type, group: parsed.info.checkpoint === "final" ? "final" : parsed.info.checkpoint, checkpoint: parsed.info.checkpoint, round: parsed.round, status: parsed.status, reviewed_commit: parsed.info.reviewed_commit, reviewer_model: parsed.info.reviewer_model, reviewed_artifact: parsed.info.reviewed_artifact, reviewed_artifact_sha256: parsed.info.reviewed_artifact_sha256 });
     } catch (error) {
-      problems.push(`record ${a.file}: ${error.message}`);
+      if (current) problems.push(`record ${a.file}: ${error.message}`);
     }
   }
   return { records, problems };
 }
 
-// Highest round per checkpoint and type must approve; rounds and record counts stay below the limit.
+// Receipt rounds remain contiguous; approvals close blocking episodes rather than consuming repair allowance.
 export function verdictProblems(records) {
   const groups = new Map();
   for (const r of records) groups.set(`${r.checkpoint}/${r.type}`, [...(groups.get(`${r.checkpoint}/${r.type}`) ?? []), r]);
   return [...groups.entries()].flatMap(([key, list]) => {
-    const top = list.reduce((a, b) => (b.round > a.round ? b : a));
+    list.sort((a, b) => a.round - b.round);
+    const top = list.at(-1);
+    const contiguous = list.every((r, i) => r.round === i + 1);
+    const repairs = contiguous ? blockingRounds(list) : null;
     return [
       top.status === "approve" ? null : `review: ${key} round ${top.round} is ${top.status}, expected approve`,
       new Set(list.map((r) => r.round)).size === list.length ? null : `review: ${key} has duplicate round records`,
-      top.round < ROUND_LIMIT && list.length < ROUND_LIMIT ? null : `review rounds: ${key} has ${list.length} records up to round ${top.round}, expected fewer than ${ROUND_LIMIT}`,
+      contiguous ? null : `review rounds: ${key} must be contiguous from round 1`,
+      repairs === null || repairs < REVIEW_ROUND_LIMIT ? null : `review repairs: ${key} has ${repairs} unresolved changes rounds, expected fewer than ${REVIEW_ROUND_LIMIT}`,
     ];
   }).filter(Boolean);
 }

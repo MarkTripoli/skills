@@ -11,7 +11,7 @@ Orchestrate decisions, delegation, verification and records; builders and review
 
 ## Inputs
 
-Take the request verbatim without the leading `/deliver`; empty means ask for it. An existing task directory resumes: read `task.md` (`## Status`, `## Decisions`), the plan's `## Progress`, and `node <skills-dir>/deliver/contract.mjs status <task-dir>`, rerun the `## Status` unblock check, and continue at the first incomplete step. A path missing from this checkout resolves through `git worktree list`; never open a duplicate task.
+Take the request verbatim without `/deliver`; empty means ask. Resume an existing task from `task.md` Status/Decisions, plan Progress and `node <skills-dir>/deliver/contract.mjs status <task-dir>`. Indexed `resume` gives completed proofs, `next_phase` and `next_action`: `review-plan` requires current approval, `build` selects the first incomplete phase, `final` starts final checks. Rerun the Status unblock check. Resolve missing paths through `git worktree list`; never duplicate tasks.
 
 `gates` is `plan` (default: the human approves the plan, and any design discussion, PRD or TDD the workflow produces) or `none` (unattended). Old `all` and `mr` read as `plan`. `none` needs an explicit request that says not to ask; it covers implementation choices, commits, pushes, PR creation, pipeline repairs and review replies inside the task, never merging, deployment or Jira changes. An explicit workflow or gate in the request wins.
 
@@ -23,28 +23,30 @@ Decide from repository evidence; ask only for unreachable information or access.
 
 ## Plan
 
-Delegate read-only research to child workers (`agent-codebase-locator`, `-analyzer`, `-pattern-finder`, `-web-search-researcher`), then plan at the workflow's depth (task setup table; phases sized by `shared/SLICING.md`). Every plan artifact, including a oneshot plan written on request, gets a fresh read-only plan reviewer who checks it against the request; run the review check on its record. Under `gates=plan`, stop `needs-human` with the plan for approval; on resume, continue only when `## Decisions` holds the owner's dated approval line. Size again after research; an oversized PR becomes an epic.
+Delegate read-only research to `agent-codebase-locator`, `agent-codebase-analyzer`, `agent-codebase-pattern-finder` and `agent-web-search-researcher`, then plan at the workflow's depth (task setup table; `shared/SLICING.md`). Every plan, including a requested oneshot, needs a fresh read-only reviewer against the request and a passing contract review. Under `gates=plan`, stop `needs-human`; resume only with dated owner approval in Decisions. Resize after research; oversized PRs become epics.
 
 ## Build
 
 For each plan phase:
 
 1. A builder (`agent-implementer`, or `implement-plan` standalone) implements it, runs targeted checks and commits with explicit paths.
-2. A slice reviewer (`agent-implementation-reviewer`) starts fresh and read-only. Its assignment is `task.md`, the plan phase, the acceptance criteria and `<phase-base>..HEAD`. Never give it the builder's transcript or your summary of it.
-3. The reviewer writes a review record from `agent-implementation-reviewer/references/review_record_template.md`. Run `node <skills-dir>/deliver/contract.mjs review <task-dir> <record>`. A failing check means the review does not count: rerun the reviewer, never edit its record.
-4. `approve`: record a new immutable plan iteration with the phase checked and append a dated `## Progress` line (phase, commit, verdict). Reapprove the exact successor at plan checkpoint, read-only. `changes`: return the findings to the builder, who answers each `fixed` or `disputed: <evidence>` in a new commit; the next round judges only earlier findings, those answers and `git diff <previous reviewed_commit>..HEAD`.
+2. A fresh read-only slice reviewer gets `task.md`, current plan phase/digest, acceptance criteria and `<phase-base>..HEAD`, never the builder's transcript or your summary.
+3. Before every review run `node <skills-dir>/deliver/contract.mjs review-next <task-dir> <review-type> <checkpoint>`; assign its next round, previous record and blockers. Use the review template, then run `node <skills-dir>/deliver/contract.mjs review <task-dir> <record>`. Rejection: preserve the receipt, recompute `review-next`, and give a fresh reviewer the exact error, next round and normal inputs. Never rewrite history.
+4. `approve`: run `node <skills-dir>/deliver/contract.mjs phase-complete <task-dir> <phase-N> <record>` for indexed plans. It publishes a phase/Progress successor from the bound approval, not new test execution; reapprove that exact successor using `review-next`. Legacy tasks retain manual checkboxes/Progress. `changes`: a builder answers findings `fixed` or `disputed: <evidence>` in a new commit; review earlier valid blockers, dispositions and `git diff <previous reviewed_commit>..HEAD`.
 
-Blocking means an unmet acceptance criterion, wrong behavior, security, data loss or a broken check. Everything else is `follow-up`. Stop `no-progress` when the check reports `progress: false`, and `needs-human` when it reports `limit_reached` (3 rounds). The next reviewer judges a `disputed` answer first; only a dispute it keeps blocking stops `needs-human`, where the owner may record `accepted-limit` in `## Decisions`.
+Blocking means unmet acceptance, wrong behavior, security, data loss or broken checks; otherwise `follow-up`. Stop on `progress: false` or `limit_reached`: three valid `changes` per blocking episode. Only valid approval closes an episode; successful progress reapprovals consume no repairs. Disputes go to the owner only if the next reviewer retains them; the owner may record `accepted-limit` in Decisions.
+
+Invalid attempts do not consume rounds or erase blockers; new plan digests never reset history. Retain every command's actual exit; failed current checks prohibit approval. At plan checkpoint inspect read-only, citing retained baseline failures as unproven context without rerunning the known failing suite.
 
 After a failed evidence inspection, reserve one attempt with `contract.mjs repair-begin <task-dir> <attempt-id>`, pass that id to the builder (which must not reserve again), and call `repair-complete` after.
 
 ## Final
 
-On HEAD, run the repository checks and prove the acceptance criteria with `verify-implementation` and `review-code` as two fresh reviewers in parallel, on the strongest model (checkpoint `final`; their `code-review` and `verification` records pass the same `review` check, and findings go to a builder through `fix-code-review`). Record evidence per [the evidence commands](../record-evidence/references/delivery_contract.md): the policy and, for existing behavior, a baseline from a temporary worktree at the base commit, then `record-evidence` and inspection with `iterate-evidence`. UI work records only requested policy-scoped devices; a surface that cannot run is `untested` with a reason.
+On HEAD, run repository checks; prove acceptance with fresh strongest-model `verify-implementation` and `review-code` reviewers in parallel (checkpoint `final`). Their records pass `review`; builders repair findings through `fix-code-review`. Follow [evidence commands](../record-evidence/references/delivery_contract.md): policy, existing-behavior baseline from a base-commit worktree, `record-evidence`, then `iterate-evidence`. Record only requested policy-scoped UI devices; unavailable surfaces are `untested` with reasons.
 
 ## Publish
 
-Publication needs `contract.mjs status` to list nothing missing except `Hosted PR description`, report no problems and no `stop`. Run `describe-pr`; it creates or updates the GitHub PR. Preserve strict current-head hosted capture bytes, recorded passing tests/cues, same-PR evidence comment and full-body readback, plus configured publication hooks. Contract status never bypasses that gate. Never merge.
+Publication needs status missing only `Hosted PR description`, with no problems or stop. Run `describe-pr` to create/update GitHub. Preserve current-head hosted capture bytes, recorded passing tests/cues, same-PR evidence comment, full-body readback and configured hooks. Status never bypasses that gate. Never merge.
 
 ## Follow-up
 
