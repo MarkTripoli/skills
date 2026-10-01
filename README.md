@@ -1,4 +1,4 @@
-# Adyton Skills
+# skills
 
 Instructions help code agent research, plan, build, check, review change. Use one skill or mash many together.
 
