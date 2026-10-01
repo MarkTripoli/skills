@@ -63,6 +63,7 @@ export function readSessions(dir) {
       } else if (d.type === "message" && d.message?.role === "toolResult" && !d.message.isError) {
         if (d.message.details?.exitCode !== undefined && d.message.details.exitCode !== 0) continue;
         const call = s.calls.find((c) => c.id === d.message.toolCallId);
+        if (call && ["read", "bash"].includes(call.name)) call.result = { content: d.message.content, details: d.message.details };
         const written = authoredWrite(call);
         // Native children may write a reserved staging file or external scratch. Publication can
         // copy either unchanged; bind authored bytes, not a staging UUID or publisher's wrapper.
@@ -174,25 +175,70 @@ export function sessionProblems({ sessions, records, subjects, economy, stronges
   return out;
 }
 
-// Every SKILL.md a session opened through a `read` or a shell command: a `skill://` URL (omp's own discovery, which finds the operator's
-// global copy) or a path. A command may name the directory through a shell variable it assigns first (`S=/x/.dist/skills; cat $S/a/SKILL.md`),
-// so assignments in the same command are substituted; a variable left unresolved stays in the path and fails the check.
-const skillRefs = (s) => s.calls.filter((c) => c.name === "read" || c.name === "bash").flatMap((c) => {
-  let text = String(c.name === "read" ? c.args.path ?? "" : c.args.command ?? "");
+// Keep attempted paths for provenance even when the call failed or its output was incomplete.
+// Resolve only assignments recorded in the same command; never evaluate captured shell/source.
+const skillRefs = (s) => s.calls.filter((c) => c.name === "read" || c.name === "bash").flatMap((call) => {
+  let text = String(call.name === "read" ? call.args.path ?? "" : call.args.command ?? "");
   const vars = Object.fromEntries([...text.matchAll(/(?:^|[;&\n]\s*|\bexport\s+)([A-Za-z_]\w*)=("[^"]*"|'[^']*'|[^\s;&|]+)/g)].map((m) => [m[1], m[2].replace(/^["']|["']$/g, "")]));
   for (let i = 0; i < 3; i++) text = text.replace(/\$(?:\{(\w+)\}|(\w+))/g, (whole, a, b) => vars[a ?? b] ?? whole);
-  return [...text.matchAll(/skill:\/\/([\w-]+)|([^\s"'`;&|]*?)\/([\w-]+)\/SKILL\.md/g)].map((m) => ({ name: m[1] ?? m[3], where: m[1] ? "skill://" : m[2] }));
+  return [...text.matchAll(/skill:\/\/([\w-]+)|([^\s"'`;&|]*?)\/([\w-]+)\/SKILL\.md/g)].map((m) => ({ name: m[1] ?? m[3], where: m[1] ? "skill://" : m[2], path: m[0], call, resolved: text }));
 });
 
-// The copies of `names` a run loaded must be the ones under test: the run's `.dist/skills`, or the project's `.omp/skills` the installer wrote.
-// omp runs with `--no-skills`, so a `skill://` URL or another path (the operator's `~/.omp/agent/skills`) means the session reached for a copy
-// the run did not build. Some child session must have read each name.
+// A whole native read or a literal cat with assignment-only setup can prove loading. Ranges,
+// pipelines, scripts, command substitutions and executable tails are opaque, even with exit 0.
+function wholeSkillReader(ref) {
+  if (ref.call.name === "read") return ref.resolved === ref.path || ref.resolved === `${ref.path}:raw`;
+  // Single quotes suppress shell expansion; the provenance resolver alone cannot prove it.
+  if (/'[^']*\$[^']*'/.test(String(ref.call.args.command ?? ""))) return false;
+  const word = `(?:[\\w./-]+|'[\\w./-]+'|"[\\w./-]+")`;
+  const setup = `(?:\\s*(?:export\\s+)?[A-Za-z_]\\w*=${word}\\s*(?:;|&&)\\s*)*`;
+  const match = new RegExp(`^${setup}cat\\s+(${word}(?:\\s+${word})*)\\s*$`).exec(ref.resolved);
+  if (!match) return false;
+  const files = match[1].match(new RegExp(word, "g")).map((f) => f.replace(/^["']|["']$/g, ""));
+  // Concatenated SKILL documents cannot be attributed independently from one combined output.
+  return files[0] === ref.path && files.filter((f) => f.endsWith("/SKILL.md")).length === 1;
+}
+
+function limitedRead(details) {
+  if (!details || typeof details !== "object") return false;
+  return Object.entries(details).some(([key, value]) =>
+    ((/truncat|omitt|partial/i.test(key) || key === "limits") && Boolean(value) && (typeof value !== "object" || Object.keys(value).length > 0)) ||
+    (value && typeof value === "object" && limitedRead(value)));
+}
+
+function completeSkillRead(ref) {
+  const result = ref.call.result;
+  if (!result || !wholeSkillReader(ref) || limitedRead(result.details)) return false;
+  const parts = result.content;
+  let text = typeof parts === "string" ? parts : Array.isArray(parts) && parts.every((p) => p.type === "text" && typeof p.text === "string") ? parts.map((p) => p.text).join("\n") : "";
+  // Inspect the model-visible text, not details.displayContent (which can itself be truncated).
+  if (!text || /^\[(?:[^\]\n]*(?:truncated|omitted)|Showing lines\b)[^\n]*\]/im.test(text) || /^(?:…|\.\.\.)\s*$/m.test(text)) return false;
+  if (ref.call.name === "read" && text.startsWith("[")) {
+    const header = /^\[[^\n]+#[A-Fa-f0-9]{4}\]\n/.exec(text);
+    if (!header) return false;
+    const lines = text.slice(header[0].length).replace(/\n+$/, "").split("\n").map((line) => /^(\d+):(.*)$/.exec(line));
+    if (!lines.every((line, i) => line && Number(line[1]) === i + 1)) return false;
+    if (!Number.isInteger(result.details?.totalLines) || lines.length !== result.details.totalLines) return false;
+    text = lines.map((line) => line[2]).join("\n");
+  } else if (ref.call.name === "read") {
+    // A raw range is not whole-file evidence. A raw whole read still needs actual SKILL bytes.
+    if (ref.resolved !== `${ref.path}:raw`) return false;
+    if (Number.isInteger(result.details?.totalLines) && text.replace(/\n$/, "").split("\n").length !== result.details.totalLines) return false;
+  } else text = text.replace(/\n{2,}Wall time: [\d.]+ seconds\s*$/, "");
+  const document = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(text);
+  return Boolean(document && new RegExp(`^name:\\s*${escape(ref.name)}\\s*$`, "m").test(document[1]) && document[2].trim());
+}
+
+// Bind completeness to observed successful tool output, without requiring old capture paths
+// to remain on disk. This proves transport, not byte equality with a relocated source tree.
+// Under-test provenance still rejects global and unresolved paths, including after recovery.
 export function skillLoadProblems({ sessions, names }) {
   const out = [];
-  const underTest = (r) => r.where !== "skill://" && /(^|\/)(\.dist\/skills|\.omp\/skills)$/.test(r.where);
+  const underTest = (r) => r.where !== "skill://" && !/[$`]/.test(r.where) && /(^|\/)(\.dist\/skills|\.omp\/skills)$/.test(r.where);
+  const refs = new Map(sessions.map((s) => [s, skillRefs(s)]));
   for (const s of sessions) {
-    for (const r of skillRefs(s).filter((x) => !underTest(x))) out.push(`skills: ${s.agent ?? "orchestrator"} ${s.id} loaded ${r.name} from ${r.where === "skill://" ? "skill://" : `${r.where}/${r.name}/SKILL.md`}, not from the run's .dist/skills or the project's .omp/skills`);
+    for (const r of refs.get(s).filter((x) => !underTest(x))) out.push(`skills: ${s.agent ?? "orchestrator"} ${s.id} loaded ${r.name} from ${r.where === "skill://" ? "skill://" : `${r.where}/${r.name}/SKILL.md`}, not from the run's .dist/skills or the project's .omp/skills`);
   }
-  for (const name of names) if (!sessions.some((s) => s.child && skillRefs(s).some((r) => r.name === name && underTest(r)))) out.push(`skills: no child session read ${name}/SKILL.md from the run's .dist/skills or the project's .omp/skills`);
+  for (const name of names) if (!sessions.some((s) => s.child && refs.get(s).some((r) => r.name === name && underTest(r) && completeSkillRead(r)))) out.push(`skills: no child session completely read ${name}/SKILL.md from the run's .dist/skills or the project's .omp/skills with successful untruncated output`);
   return [...new Set(out)];
 }

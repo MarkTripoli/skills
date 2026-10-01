@@ -17,15 +17,19 @@ For delivery, require current verification when configured. Save the source fing
 
 ## Pin scope
 
-Determine merge target: existing pull request base, else `base:` from `task.md`, else repository default branch. Record base branch, merge-base SHA, HEAD SHA, working changes, and commits after merge base. Review committed/working-tree changes against merge base. Files under the configured task root and unrelated changes are not review subjects. Stop if base unresolved. Empty or incomplete scope is not clean.
+Determine merge target: existing pull request base, else `base:` from `task.md`, else repository default branch. Record base branch, merge-base SHA, HEAD SHA, working changes, and commits after merge base. Review committed/working-tree changes against merge base. Files under the configured task root and unrelated
+changes are not review subjects. Stop if base unresolved. Empty or incomplete scope is not clean.
 
 ## Requirements and tests
 
 Read `task.md`/`ticket.md` and current indexed implementation source (prefer `planning.plan`, `planning.structure`, `design.tdd`, `design.prd`). Use current artifact summaries to avoid unrelated documents. Read repo instructions, changed tests, commits, and PR description before judging.
 
-When `task.md` lists acceptance criteria, decide each one against the diff and tests. A criterion the change does not prove is a major-severity finding; a criterion the change contradicts is critical. When `review.verification` has a current iteration, read its items table first: a criterion recorded as `pass` with a command and quoted output is proven; `fail` and `untested` items are findings to confirm.
+When `task.md` lists acceptance criteria, decide each one against the diff and tests. A criterion the change does not prove is a major-severity finding; a criterion the change contradicts is critical. When `review.verification` has a current iteration, read its items table first: a criterion recorded as `pass` with a
+command and quoted output is proven; `fail` and `untested` items are findings to confirm.
 
-When the validated index holds the prior review.code iteration, read only the `### CR-...` heading lines under its `## Critical and Required Findings`, and no finding body. Record each one in `## Previous Round` as `fixed`, `still open`, or `disputed`, decided from the current diff and the fix round's recorded reason, never from the previous reviewer's reasoning. A `still open` entry is raised again under `## Critical and Required Findings` with a new identifier so the gate counts it. Round two and later judge only earlier findings, the builder's dispositions (`fixed` or `disputed: <evidence>`), and regressions in `git diff <previous reviewed_commit>..HEAD`; a new issue outside that diff is an advisory (`follow-up`).
+When the validated index holds the prior review.code iteration, read only the `### CR-...` heading lines under its `## Critical and Required Findings`, and no finding body. Record each one in `## Previous Round` as `fixed`, `still open`, or `disputed`, decided from the current diff and the fix round's recorded reason,
+never from the previous reviewer's reasoning. A `still open` entry is raised again under `## Critical and Required Findings` with a new identifier so the gate counts it. Round two and later judge only earlier findings, the builder's dispositions (`fixed` or `disputed: <evidence>`), and regressions in
+`git diff <previous reviewed_commit>..HEAD`; a new issue outside that diff is an advisory (`follow-up`).
 
 ## Review
 
@@ -48,7 +52,8 @@ Classify each finding on three axes (CodeRabbit vocabulary; no live integration)
 - Severity: critical | major | minor | trivial | info (guidance, not a problem).
 - Category: Functional correctness | Security and privacy | Data integrity and integration | Performance and scalability | Stability and availability | Maintainability and code quality.
 
-Gate on Severity: critical or major set `findings`. minor, trivial, and info are Advisories and do not prevent `clean`. CR- findings are `blocking`; ADV- findings are `follow-up`. Only an unmet acceptance criterion, wrong behavior, security, data loss, or a broken check may be critical or major; readability and architecture concerns are advisories unless they cause one of those.
+Gate on Severity: critical or major set `findings`. minor, trivial, and info are Advisories and do not prevent `clean`. CR- findings are `blocking`; ADV- findings are `follow-up`. Only an unmet acceptance criterion, wrong behavior, security, data loss, or a broken check may be critical or major; readability and
+architecture concerns are advisories unless they cause one of those.
 
 Lead with highest-leverage. Prefer proven to weak. Structural: name smallest fix (collapse branches, separate orchestration/policy, move to owner, reuse helper, explicit boundary, delete pass-through, extract module).
 
@@ -66,9 +71,12 @@ Verify tests/build/manual/screenshots. Green checks alone are not sufficient.
 
 ## Save
 
-Allocate the next immutable iteration through the conventions. Write `<task-root>/<slug>/artifacts/review/code/<NNNN>.md` using the template. Record `checkpoint: final`, `reviewed_commit` = HEAD, `reviewer_model` as the observed model (or `unobserved: <requested>`) and `round`; `contract.mjs review <task-dir> <file>` checks the record (clean is approve, findings is changes). Set `findings` when actionable remain, `clean` when none, `blocked` when a gate failed; blocked is not clean. Save the review locally in the task directory without staging, committing, or pushing it.
+Allocate the next immutable iteration through the conventions. Write `<task-root>/<slug>/artifacts/review/code/<NNNN>.md` using the template. Record `checkpoint: final`, `reviewed_commit` = HEAD, `reviewer_model` as the observed model (or `unobserved: <requested>`) and `round`; `contract.mjs review <task-dir> <file>`
+checks the record (clean is approve, findings is changes). Set `findings` when actionable remain, `clean` when none, `blocked` when a gate failed; blocked is not clean. Save the review locally in the task directory without staging, committing, or pushing it.
 
-Then run `node <skills dir>/typed-judgment/judge.mjs axis-coverage <the staged file> --json`, where `<skills dir>` is the directory that holds this skill (in a checkout, `skills/delivery`). Record each row's verdict, level, and confidence on that axis's `helper coverage` line, and the stderr provenance line under the heading. An axis that comes back `skipped` or `asserted` was not examined against the pinned scope: examine it, rewrite that section with evidence from the changed code or the reason the axis does not apply, save again, and run the command once more. Run it at most twice and record what the second run says. A finding the second pass turns up is a finding like any other and can change the status. Exit 3, no `node`, no `TYPESAFE_API_KEY`, or an `unclear` row: write `unavailable` on the lines it would have filled, decide those axes yourself, and say under `## Review Limits` that judgments were skipped.
+Then run `node <skills dir>/typed-judgment/judge.mjs axis-coverage <the staged file> --json`, where `<skills dir>` is the directory that holds this skill (in a checkout, `skills/delivery`). Record each row's verdict, level, and confidence on that axis's `helper coverage` line, and the stderr provenance line under the
+heading. An axis that comes back `skipped` or `asserted` was not examined against the pinned scope: examine it, rewrite that section with evidence from the changed code or the reason the axis does not apply, save again, and run the command once more. Run it at most twice and record what the second run says. A finding
+the second pass turns up is a finding like any other and can change the status. Exit 3, no `node`, no `TYPESAFE_API_KEY`, or an `unclear` row: write `unavailable` on the lines it would have filled, decide those axes yourself, and say under `## Review Limits` that judgments were skipped.
 
 Record the staged document once as the next immutable `review.code` iteration.
 

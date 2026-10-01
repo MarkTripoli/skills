@@ -25,6 +25,34 @@ const capture = (t, change = () => {}) => {
 };
 const problems = (sessions, reviews = records) => sessionProblems({ sessions, records: reviews, subjects: ["fix(retry): cap backoff delay at maxMs"], economy, strongest, timesPreserved: true, changed: ["src/retry.mjs"] });
 const review = (type) => records.find((r) => r.type === type);
+// Consumer boundaries use the actual native call/result shape from the retained 053312
+// read receipts. Only disposable copies receive these synthetic complete/limited outputs.
+const finalSkills = [
+  { file: "FinalCodeReviewer.jsonl", name: "review-code", path: "/relocated/run/.dist/skills/review-code/SKILL.md" },
+  { file: "FinalVerifier.jsonl", name: "verify-implementation", path: ".omp/skills/verify-implementation/SKILL.md" },
+];
+const skillText = (name) => `---\nname: ${name}\ndescription: Inspect the change.\n---\n\n# Review\nRun the required checks and record findings.\n`;
+const nativeRead = (skill, { raw = false, id = `load-${skill.name}` } = {}) => {
+  const text = skillText(skill.name);
+  const lines = text.trimEnd().split("\n");
+  return [
+    { type: "message", message: { role: "assistant", content: [{ type: "toolCall", id, name: "read", arguments: { path: `${skill.path}${raw ? ":raw" : ""}` } }] } },
+    { type: "message", message: { role: "toolResult", toolCallId: id, toolName: "read", isError: false, content: [{ type: "text", text: raw ? text : `[${skill.path}#1829]\n${lines.map((line, i) => `${i + 1}:${line}`).join("\n")}` }], details: { totalLines: lines.length, meta: { source: { type: "path", value: skill.path } } } } },
+  ];
+};
+const withSkillReads = (t, mutate = () => {}) => capture(t, (source) => {
+  for (const skill of finalSkills) {
+    const session = source.find((s) => s.file === skill.file);
+    const events = nativeRead(skill);
+    mutate(events, session, skill);
+    session.events.push(...events);
+  }
+});
+const skillProblems = (sessions) => skillLoadProblems({ sessions, names: finalSkills.map((skill) => skill.name) });
+const incompleteFinals = (sessions) => {
+  const found = skillProblems(sessions);
+  for (const skill of finalSkills) assert.ok(found.some((p) => p.includes(`completely read ${skill.name}/SKILL.md`)), skill.name);
+};
 
 test("actual scratch writes and literal shell heredoc bind six independent authors, but missing final skills still fail", (t) => {
   const sessions = capture(t);
@@ -38,10 +66,86 @@ test("actual scratch writes and literal shell heredoc bind six independent autho
     assert.ok(authors[0].authoredWrites.some((w) => w.path.startsWith("/tmp/dsb/") && w.sha256 === record.sha256));
   }
   assert.equal(new Set(records.map((r) => sessions.find((s) => s.authoredWrites.some((w) => w.sha256 === r.sha256)).id)).size, 6);
-  assert.deepEqual(skillLoadProblems({ sessions, names: ["review-code", "verify-implementation"] }), [
-    "skills: no child session read review-code/SKILL.md from the run's .dist/skills or the project's .omp/skills",
-    "skills: no child session read verify-implementation/SKILL.md from the run's .dist/skills or the project's .omp/skills",
-  ]);
+  incompleteFinals(sessions);
+});
+
+test("successful whole native reads prove both final skills without requiring capture paths on disk", (t) => {
+  const sessions = withSkillReads(t);
+  assert.deepEqual(skillProblems(sessions), []);
+  assert.deepEqual(problems(sessions), [], "complete skill loads do not weaken native scratch authorship");
+});
+
+test("truncated or omitted native results cannot prove complete final instructions", (t) => {
+  const cases = [
+    // Actual retained marker and metadata, not an unsuccessful call.
+    (result) => {
+      result.content[0].text += "\n\n[Some lines truncated to 768 chars]";
+      result.details.meta.limits = { columnTruncated: { maxColumn: 768, unit: "chars" } };
+    },
+    (result) => { result.details.meta.limits = { columnTruncated: { maxColumn: 768, unit: "chars" } }; },
+    (result) => { result.content[0].text += "\n\n[Showing lines 1-7 of 20. Use :8 to continue]"; },
+    (result) => { result.content[0].text = result.content[0].text.replace("\n5:", "\n…\n5:"); },
+    (result) => { result.content[0].text = result.content[0].text.replace("\n5:\n", "\n"); },
+    (result) => { result.details.totalLines += 1; },
+  ];
+  for (const mutate of cases) {
+    const sessions = withSkillReads(t, (events) => mutate(events[1].message));
+    incompleteFinals(sessions);
+    assert.deepEqual(problems(sessions), []);
+  }
+});
+
+test("an actual complete raw followup recovers from a truncated native read", (t) => {
+  const sessions = withSkillReads(t, (events, _session, skill) => {
+    events[1].message.content[0].text += "\n\n[Some lines truncated to 768 chars]";
+    events[1].message.details.meta.limits = { columnTruncated: { maxColumn: 768, unit: "chars" } };
+    events.push(...nativeRead(skill, { raw: true, id: `raw-${skill.name}` }));
+  });
+  assert.deepEqual(skillProblems(sessions), []);
+  assert.deepEqual(problems(sessions), []);
+});
+
+test("raw selectors, prompt claims, missing or failed receipts and path-only results are not complete reads", (t) => {
+  const cases = [
+    (events) => { events.pop(); },
+    (events) => { events[1].message.isError = true; },
+    (events) => { events[1].message.details.exitCode = 1; },
+    (events) => { events[1].message.toolCallId = "unrelated-call"; },
+    (events) => { events[1].message.content[0].text = events[0].message.content[0].arguments.path; },
+    (events, session, skill) => {
+      session.events.push({ type: "message", message: { role: "user", content: [{ type: "text", text: `Read ${skill.path}:raw completely.\n${skillText(skill.name)}` }] } });
+      events.length = 0;
+    },
+    (events, _session, skill) => {
+      events.splice(0, events.length, ...nativeRead(skill, { raw: true }));
+      events.pop();
+    },
+    (events, _session, skill) => {
+      events.splice(0, events.length, ...nativeRead(skill, { raw: true }));
+      events[1].message.content[0].text += "\n[Output truncated]";
+    },
+    (events, _session, skill) => {
+      events.splice(0, events.length, ...nativeRead(skill, { raw: true }));
+      events[0].message.content[0].arguments.path += ":1-7";
+    },
+  ];
+  for (const mutate of cases) incompleteFinals(withSkillReads(t, mutate));
+});
+
+test("complete observed bytes do not excuse global, unresolved or non-child skill provenance", (t) => {
+  for (const location of ["/home/u/.omp/agent/skills", "$ROOT/.dist/skills", "skill://"]) {
+    const sessions = withSkillReads(t, (events, _session, skill) => {
+      events[0].message.content[0].arguments.path = location === "skill://" ? `skill://${skill.name}` : `${location}/${skill.name}/SKILL.md`;
+      // A good followup proves completeness but must not erase the foreign attempt.
+      events.push(...nativeRead(skill, { raw: true, id: `recovery-${skill.name}` }));
+    });
+    assert.ok(skillProblems(sessions).some((p) => p.includes("not from the run's .dist/skills")), location);
+  }
+  const sessions = capture(t, (source) => {
+    const parent = source.find((s) => s.events.some((event) => event.type === "session" && !event.parentSession));
+    for (const skill of finalSkills) parent.events.push(...nativeRead(skill));
+  });
+  incompleteFinals(sessions);
 });
 
 test("scratch authorship rejects unsuccessful native writes and path-only or metadata claims", (t) => {

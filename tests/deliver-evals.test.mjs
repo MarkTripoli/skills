@@ -103,18 +103,41 @@ test("a redirect heuristic does not mistake an arrow function or a require for a
   assert.equal(wrote(bash("cat a >> 'src/timeout.mjs'; ls"), "src/timeout.mjs"), true);
 });
 
-test("skillLoadProblems resolves a shell variable holding the skills directory and fails closed on an unresolved one", async () => {
-  const { skillLoadProblems } = await import("../evals/sessions.mjs");
-  const bash = (command) => ({ name: "bash", args: { command } });
-  const reviewer = (command) => ({ child: true, id: "r", agent: "agent-implementation-reviewer", calls: [bash(command)] });
-  const ok = skillLoadProblems({ sessions: [reviewer("S=/x/results/1/.dist/skills; cat $S/review-code/SKILL.md $S/review-code/references/t.md")], names: ["review-code"] });
-  assert.deepEqual(ok, []);
-  const projectCopy = skillLoadProblems({ sessions: [reviewer("cat .omp/skills/review-code/SKILL.md")], names: ["review-code"] });
-  assert.deepEqual(projectCopy, []);
-  const unresolved = skillLoadProblems({ sessions: [reviewer("cat $SKILLS/review-code/SKILL.md")], names: ["review-code"] });
-  assert.ok(unresolved.some((p) => p.includes("$SKILLS/review-code/SKILL.md")));
-  const global = skillLoadProblems({ sessions: [reviewer("S=/home/u/.omp/agent/skills && cat ${S}/review-code/SKILL.md")], names: ["review-code"] });
-  assert.ok(global.some((p) => p.includes("/home/u/.omp/agent/skills/review-code/SKILL.md")));
+test("skillLoadProblems binds safe shell readers to successful complete output and rejects unresolved or foreign provenance", async (t) => {
+  const { readSessions, skillLoadProblems } = await import("../evals/sessions.mjs");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "skill-reader-sessions-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const skill = "---\nname: review-code\ndescription: Review the change.\n---\n\n# Review Code\nInspect the diff and record findings.\n";
+  const check = (command, { text = skill, isError = false, exitCode = 0, receipt = true } = {}) => {
+    const events = [
+      { type: "session", id: "r", parentSession: "parent.jsonl" },
+      { type: "session_init", agent: "agent-implementation-reviewer" },
+      { type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "read-skill", name: "bash", arguments: { command } }] } },
+      ...(receipt ? [{ type: "message", message: { role: "toolResult", toolCallId: "read-skill", isError, details: { exitCode }, content: [{ type: "text", text }] } }] : []),
+    ];
+    fs.writeFileSync(path.join(dir, "r.jsonl"), events.map((event) => JSON.stringify(event)).join("\n"));
+    return skillLoadProblems({ sessions: readSessions(dir), names: ["review-code"] });
+  };
+  const command = "S=/x/results/1/.dist/skills; cat $S/review-code/SKILL.md $S/review-code/references/t.md";
+  assert.deepEqual(check(command, { text: `${skill}\n# Template\nRecord findings.\n\n\nWall time: 0.00 seconds` }), []);
+  assert.deepEqual(check("cat .omp/skills/review-code/SKILL.md"), []);
+  assert.deepEqual(check('S="/x/results/1/.dist/skills" && cat "${S}/review-code/SKILL.md"'), []);
+  for (const result of [{ receipt: false }, { isError: true }, { exitCode: 1 }, { text: ".omp/skills/review-code/SKILL.md" }, { text: `${skill}\n[Output truncated]` }]) {
+    assert.ok(check("cat .omp/skills/review-code/SKILL.md", result).some((p) => p.includes("no child session completely read")), JSON.stringify(result));
+  }
+  for (const opaque of [
+    "cat .omp/skills/review-code/SKILL.md | head -c 100",
+    "cat .omp/skills/review-code/SKILL.md; printf done",
+    "echo .omp/skills/review-code/SKILL.md",
+    "node -e 'require(\"fs\").readFileSync(\".omp/skills/review-code/SKILL.md\")'",
+    "S=/x/.dist/skills; cat '$S/review-code/SKILL.md'",
+    "cat .omp/skills/review-code/references/t.md .omp/skills/review-code/SKILL.md",
+    "cat .omp/skills/review-code/SKILL.md .omp/skills/verify-implementation/SKILL.md",
+    "cat $(echo .omp/skills/review-code/SKILL.md)",
+  ]) assert.ok(check(opaque).some((p) => p.includes("no child session completely read")), opaque);
+  assert.ok(check("cat $SKILLS/review-code/SKILL.md").some((p) => p.includes("$SKILLS/review-code/SKILL.md")));
+  assert.ok(check("cat $ROOT/.dist/skills/review-code/SKILL.md").some((p) => p.includes("$ROOT/.dist/skills/review-code/SKILL.md")));
+  assert.ok(check("S=/home/u/.omp/agent/skills && cat ${S}/review-code/SKILL.md").some((p) => p.includes("/home/u/.omp/agent/skills/review-code/SKILL.md")));
 });
 
 test("the evidence subject's environment keeps Slack out of reach in both shapes, and the stub directory is removed after", async () => {

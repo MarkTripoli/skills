@@ -42,7 +42,7 @@ After a failed evidence inspection, reserve one attempt with `contract.mjs repai
 
 ## Final
 
-On HEAD, run repository checks; prove acceptance with separate fresh strongest-model final reviewers in parallel. Each first reads and follows the complete installed `verify-implementation/SKILL.md` or `review-code/SKILL.md`, not merely its template. Their records pass `review`; builders repair findings through `fix-code-review`. Follow [evidence commands](../record-evidence/references/delivery_contract.md): policy, existing-behavior baseline from a base-commit worktree, `record-evidence`, then `iterate-evidence`. Record only requested policy-scoped UI devices; unavailable surfaces are `untested` with reasons.
+On HEAD, run repository checks; prove acceptance with separate fresh strongest-model final reviewers in parallel. Before reviewing, each reads and follows all installed native `verify-implementation/SKILL.md` or `review-code/SKILL.md` contents, using raw/full-content reads or continuations for omitted or truncated text; templates or path references are insufficient. Their records pass `review`; builders repair findings through `fix-code-review`. Follow [evidence commands](../record-evidence/references/delivery_contract.md): policy, existing-behavior baseline from a base-commit worktree, `record-evidence`, then `iterate-evidence`. Record only requested policy-scoped UI devices; unavailable surfaces are `untested` with reasons.
 
 ## Publish
 
