@@ -8,8 +8,9 @@ import { frontmatter } from "../evals/lib.mjs";
 import { readRecords, verdictProblems } from "../evals/deliver-grade.mjs";
 import { readSessions, sessionProblems } from "../evals/sessions.mjs";
 import { initTaskArtifacts, reserveArtifactIteration, recordArtifact } from "../shared/task-artifacts.mjs";
+import { parseRecord } from "../skills/delivery/deliver/contract.mjs";
 
-// Selected, unmodified native events from the failed live run named in the fixture's source field.
+// Authentic selected native event fields; runtime systemPrompt fields are omitted.
 // The retained archive is not loaded, mutated or regraded by these regressions.
 const fixture = JSON.parse(fs.readFileSync(new URL("./fixtures/deliver-small-bug-native.json", import.meta.url), "utf8"));
 const economy = "anthropic/claude-sonnet-5-5";
@@ -114,15 +115,17 @@ test("authentic invalid historical reviews do not count, invalid current reviews
   for (const plan of fixture.planArtifacts) save("planning", "plan", "plan", plan.text);
   const planRecords = fixture.records.filter((r) => r.type === "plan-review");
   const original = save("review", "plan", "plan-review", authored(planRecords[0]).arguments.content);
-  assert.ok(readRecords(taskDir).problems.some((p) => p.includes("approve contradicts a failed check exit")), "the failed first record is current, so it must fail");
+  assert.throws(() => parseRecord(taskDir, original.path));
+  assert.deepEqual(readRecords(taskDir).records, []);
   save("review", "plan", "plan-review", authored(planRecords[1]).arguments.content);
   let graded = readRecords(taskDir);
   assert.deepEqual(graded.problems, []);
   assert.equal(graded.records.length, 1);
   assert.deepEqual(verdictProblems(graded.records), []);
-  save("review", "plan", "plan-review", authored(planRecords[0]).arguments.content);
+  const failedCurrent = save("review", "plan", "plan-review", authored(planRecords[0]).arguments.content);
   graded = readRecords(taskDir);
-  assert.ok(graded.problems.some((p) => p.includes("approve contradicts a failed check exit")), "a later failed current record cannot hide behind the prior approval");
+  assert.throws(() => parseRecord(taskDir, failedCurrent.path));
+  assert.deepEqual(graded.records.map(({ status, round }) => ({ status, round })), [{ status: "approve", round: 1 }]);
   save("review", "plan", "plan-review", authored(planRecords[2]).arguments.content);
   graded = readRecords(taskDir);
   assert.deepEqual(graded.problems, []);
@@ -143,7 +146,8 @@ test("legacy corrected review history skips invalid earlier attempts but keeps a
   const planRecords = fixture.records.filter((r) => r.type === "plan-review");
   const save = (name, record) => fs.writeFileSync(path.join(taskDir, name), authored(record).arguments.content);
   save("01-plan-review.md", planRecords[0]);
-  assert.ok(readRecords(taskDir).problems.some((p) => p.includes("approve contradicts a failed check exit")));
+  assert.throws(() => parseRecord(taskDir, "01-plan-review.md"));
+  assert.deepEqual(readRecords(taskDir).records, []);
   save("02-plan-review.md", planRecords[1]);
   let graded = readRecords(taskDir);
   assert.deepEqual(graded.problems, []);
