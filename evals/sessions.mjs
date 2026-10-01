@@ -303,7 +303,7 @@ function completeSkillRead(ref) {
   } else if (ref.call.name === "read") {
     // A raw range is not whole-file evidence. A raw whole read still needs actual SKILL bytes.
     if (ref.resolved !== `${ref.path}:raw`) return false;
-    if (Object.hasOwn(result.details ?? {}, "totalLines") && (!Number.isInteger(result.details.totalLines) || text.replace(/\n$/, "").split("\n").length !== result.details.totalLines)) return false;
+    if (Object.hasOwn(result.details ?? {}, "totalLines") && (!Number.isInteger(result.details.totalLines) || text.split("\n").length !== result.details.totalLines)) return false;
   } else text = text.replace(/\n{2,}Wall time: [\d.]+ seconds\s*$/, "");
   return skillDocument(text, ref.name);
 }

@@ -34,7 +34,7 @@ const finalSkills = [
 const skillText = (name) => `---\nname: ${name}\ndescription: Inspect the change.\n---\n\n# Review\nRun the required checks and record findings.\n`;
 const nativeRead = (skill, { raw = false, id = `load-${skill.name}` } = {}) => {
   const text = skillText(skill.name);
-  const lines = text.trimEnd().split("\n");
+  const lines = text.split("\n");
   return [
     { type: "message", message: { role: "assistant", content: [{ type: "toolCall", id, name: "read", arguments: { path: `${skill.path}${raw ? ":raw" : ""}` } }] } },
     { type: "message", message: { role: "toolResult", toolCallId: id, toolName: "read", isError: false, content: [{ type: "text", text: raw ? text : `[${skill.path}#1829]\n${lines.map((line, i) => `${i + 1}:${line}`).join("\n")}` }], details: { totalLines: lines.length, meta: { source: { type: "path", value: skill.path } } } } },
@@ -117,6 +117,22 @@ test("raw native completeness rejects malformed declared line counts but support
     delete events[1].message.details.totalLines;
   });
   assert.deepEqual(skillProblems(sessions), []);
+});
+
+test("whole raw native reads count terminal empty lines exactly as recorded", (t) => {
+  for (const ending of ["", "\n", "\n\n"]) {
+    const sessions = withSkillReads(t, (events, _session, skill) => {
+      events.splice(0, events.length, ...nativeRead(skill, { raw: true }));
+      const text = skillText(skill.name).trimEnd() + ending;
+      events[1].message.content[0].text = text;
+      events[1].message.details.totalLines = text.split("\n").length;
+    });
+    assert.deepEqual(skillProblems(sessions), []);
+  }
+  incompleteFinals(withSkillReads(t, (events, _session, skill) => {
+    events.splice(0, events.length, ...nativeRead(skill, { raw: true }));
+    events[1].message.details.totalLines -= 1;
+  }));
 });
 
 test("raw selectors, prompt claims, missing or failed receipts and path-only results are not complete reads", (t) => {
