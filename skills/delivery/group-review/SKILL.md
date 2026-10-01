@@ -98,13 +98,15 @@ Reply with [group_review_decisions_answer.md](references/group_review_decisions_
 
 Write one entry per approved comment to `<workspace>/comments.json`: `{id, mr, path, pattern, occurrence, body}`, or an explicit `line` in place of `pattern`. Follow [comment_style.md](references/comment_style.md). Then run `node <installed-skills-dir>/group-review/scripts/anchors.mjs --stack <workspace>/stack.json --in <workspace>/comments.json --out <workspace>/anchors.json`. It finds each pattern's line at the pinned head and checks that the line is inside the request's diff; hosts reject or detach an inline comment on a line outside it. For an anchor outside the diff, move it to the nearest added line that shows the problem (the field declaration, the test class) and name the real location in the body. Run it again until every anchor reports `in_diff`.
 
+The resolver derives `old_path` and `new_path` from rename-aware Git diffs at the pinned base/head, ignoring caller-supplied path pairs. Posting revalidates that pair before writing: GitLab discussions use the pre-change and post-change filenames with only `new_line` for an added line, as required by the [Discussions API](https://docs.gitlab.com/api/discussions/#create-a-new-thread-in-the-merge-request-diff). GitHub comments keep the head-side `path` and `RIGHT` line semantics.
+
 ## 9. Test post
 
 Show the user the full text and location of one comment, normally the highest-ranked. Only after explicit approval, run `node <installed-skills-dir>/group-review/scripts/post.mjs --stack <workspace>/stack.json --comments <workspace>/anchors.json --posted <workspace>/posted.json --only <id> --approved`, give the user the link, and wait for format feedback. `--approved` asserts that approval happened; never infer it from discovery or review approval. Apply the feedback to every remaining draft before step 10.
 
 ## 10. Batch post
 
-After the user approves the rest, run `post.mjs --approved` with the same files, without `--only`. It revalidates the pinned base/head, actual new-side diff line and cited text, then checks the live head before each post. It stops on moved heads, rejected positions, or non-inline results, skips ids already in `posted.json`, and records every success. A moved head requires rediscovery, a renewed review of changed code, re-anchoring and fresh posting approval. `--dry-run` checks without posting. These scripts handle inline comments only: summary comments require separately shown content and explicit approval, then the selected host's summary-comment command. Tracker writes remain outside this skill.
+After the user approves the rest, run `post.mjs --approved` with the same files, without `--only`. It revalidates the pinned base/head, old/new path pair, actual new-side diff line and cited text, then checks the live head before each post. It stops on moved heads, rejected positions, or non-inline results, skips ids already in `posted.json`, and records every success. A moved head requires rediscovery, a renewed review of changed code, re-anchoring and fresh posting approval. `--dry-run` checks without posting. These scripts handle inline comments only: summary comments require separately shown content and explicit approval, then the selected host's summary-comment command. Tracker writes remain outside this skill.
 
 ## 11. Clean up
 

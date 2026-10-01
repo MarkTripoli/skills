@@ -27,8 +27,22 @@ export function findLine(text, pattern, occurrence = 1) {
   return null;
 }
 
-export function resolveAnchors(stack, comments, {show, diff}) {
+// NUL-delimited paths retain spaces, tabs and Git-quoted filenames without trusting caller metadata.
+export function diffPaths(base, head) {
+  const fields = git(['diff', '--name-status', '-z', '--find-renames', base, head], undefined, true).split('\0');
+  const paths = new Map();
+  for (let index = 0; index < fields.length - 1;) {
+    const status = fields[index++];
+    const oldPath = fields[index++];
+    const newPath = /^[RC]/.test(status) ? fields[index++] : oldPath;
+    if (status !== 'D') paths.set(newPath, {old_path: oldPath, new_path: newPath});
+  }
+  return paths;
+}
+
+export function resolveAnchors(stack, comments, {show, diff, paths}) {
   const byNumber = new Map(stack.requests.map(request => [request.number, request]));
+  const pathsByRequest = new Map();
   return comments.map(comment => {
     const request = byNumber.get(Number(String(comment.mr).replace(/^[!#]/, '')));
     if (!request) return {...comment, line: null, in_diff: false, problem: `request ${comment.mr} is not in the stack`};
@@ -38,8 +52,10 @@ export function resolveAnchors(stack, comments, {show, diff}) {
     const text = show(request.head_sha, comment.path);
     const line = comment.line ?? findLine(text, comment.pattern, comment.occurrence ?? 1);
     if (!Number.isInteger(line) || line < 1 || line > text.split('\n').length) return {...comment, line: null, in_diff: false, problem: `anchor not found at ${request.head_sha.slice(0, 9)}`};
-    const inDiff = addedLines(diff(request.base_sha, request.head_sha, comment.path)).has(line);
-    return {...comment, mr: request.number, line, head_sha: request.head_sha, base_sha: request.base_sha, text: text.split('\n')[line - 1], in_diff: inDiff, problem: inDiff ? null : 'line is outside the request diff'};
+    if (!pathsByRequest.has(request.number)) pathsByRequest.set(request.number, paths(request.base_sha, request.head_sha));
+    const pair = pathsByRequest.get(request.number).get(comment.path);
+    const inDiff = Boolean(pair && addedLines(diff(request.base_sha, request.head_sha, pair.old_path, pair.new_path)).has(line));
+    return {...comment, old_path: pair?.old_path ?? null, new_path: pair?.new_path ?? null, mr: request.number, line, head_sha: request.head_sha, base_sha: request.base_sha, text: text.split('\n')[line - 1], in_diff: inDiff, problem: inDiff ? null : 'line is outside the request diff'};
   });
 }
 
@@ -55,7 +71,8 @@ export function main(argv = process.argv.slice(2)) {
   const comments = JSON.parse(fs.readFileSync(input, 'utf8'));
   const anchors = resolveAnchors(stack, comments, {
     show: (sha, file) => git(['show', `${sha}:${file}`], undefined, true),
-    diff: (base, head, file) => git(['diff', '-U0', base, head, '--', file]),
+    paths: diffPaths,
+    diff: (base, head, oldPath, newPath) => git(['diff', '-U0', '--find-renames', base, head, '--', `:(literal)${oldPath}`, `:(literal)${newPath}`]),
   });
   fs.writeFileSync(out, `${JSON.stringify(anchors, null, 2)}\n`);
   for (const anchor of anchors) {

@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {git, hostAdapter} from './host.mjs';
-import {resolveAnchors} from './anchors.mjs';
+import {diffPaths, resolveAnchors} from './anchors.mjs';
 
 export function pending(comments, posted, only) {
   const done = new Set(posted.map(entry => entry.id));
@@ -69,9 +69,10 @@ export function main(argv = process.argv.slice(2)) {
     checkAnchor: (request, comment) => {
       const [fresh] = resolveAnchors({requests: [request]}, [comment], {
         show: (sha, file) => git(['show', `${sha}:${file}`], undefined, true),
-        diff: (base, head, file) => git(['diff', '-U0', base, head, '--', file]),
+        paths: diffPaths,
+        diff: (base, head, oldPath, newPath) => git(['diff', '-U0', '--find-renames', base, head, '--', `:(literal)${oldPath}`, `:(literal)${newPath}`]),
       });
-      return fresh.in_diff && fresh.line === comment.line && fresh.text === comment.text;
+      return fresh.in_diff && fresh.line === comment.line && fresh.text === comment.text && fresh.old_path === comment.old_path && fresh.new_path === comment.new_path;
     },
     save: entries => fs.writeFileSync(postedFile, `${JSON.stringify(entries, null, 2)}\n`),
     log: line => console.log(line),

@@ -73,10 +73,10 @@ export function hostAdapter(name, context = remoteContext(configuredRemoteUrl(),
       const created = api(`${prefix}/${request.number}/${github ? 'comments' : 'discussions'}`, ['-X', 'POST', '--input', '-'], JSON.stringify(payload));
       if (github) return {note_id: created.id, discussion_id: null, inline: created.path === comment.path && created.line === comment.line && created.commit_id === request.head_sha, url: created.html_url};
       const note = created.notes?.[0];
-      return {note_id: note?.id ?? null, discussion_id: created.id, inline: note?.type === 'DiffNote' && note?.position?.head_sha === request.head_sha && note?.position?.new_path === comment.path && note?.position?.new_line === comment.line, url: note ? `${request.url}#note_${note.id}` : request.url};
+      return {note_id: note?.id ?? null, discussion_id: created.id, inline: note?.type === 'DiffNote' && note?.position?.head_sha === request.head_sha && note?.position?.old_path === comment.old_path && note?.position?.new_path === comment.new_path && note?.position?.new_line === comment.line, url: note ? `${request.url}#note_${note.id}` : request.url};
     },
   };
 }
 export function gitlabPosition(request, comment) {
-  return {position_type: 'text', base_sha: request.base_sha, start_sha: request.start_sha, head_sha: request.head_sha, old_path: comment.path, new_path: comment.path, new_line: comment.line};
+  return {position_type: 'text', base_sha: request.base_sha, start_sha: request.start_sha, head_sha: request.head_sha, old_path: comment.old_path, new_path: comment.new_path, new_line: comment.line};
 }

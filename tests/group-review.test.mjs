@@ -31,7 +31,7 @@ test('anchor ranges exclude deletion-only hunks and preserve occurrence', () => 
   assert.equal(findLine('nothing', 'absent'), null);
 });
 
-function fixture(t, hostname = 'github.com') {
+function fixture(t, hostname = 'github.com', {host = 'github', rename = false} = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'group-review-'));
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
   const repo = path.join(root, 'repo');
@@ -40,21 +40,34 @@ function fixture(t, hostname = 'github.com') {
   const env = {...process.env, GIT_CONFIG_GLOBAL: path.join(root, 'global'), GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 'Fixture', GIT_AUTHOR_EMAIL: 'fixture@example.test', GIT_COMMITTER_NAME: 'Fixture', GIT_COMMITTER_EMAIL: 'fixture@example.test', PATH: `${bin}${path.delimiter}${process.env.PATH}`};
   const git = (...args) => execFileSync('git', args, {cwd: repo, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']}).trim();
   git('init', '-b', 'main');
-  fs.writeFileSync(path.join(repo, 'app.js'), '\nconst stable = 1;\n');
-  git('add', 'app.js'); git('commit', '-m', 'base'); const base = git('rev-parse', 'HEAD');
+  const oldPath = rename ? 'old\tapp.js' : 'app.js';
+  const currentPath = rename ? 'renamed app.js' : oldPath;
+  const initial = '\nconst stable = 1;\n' + (rename ? 'const retained = true;\n'.repeat(8) : '');
+  fs.writeFileSync(path.join(repo, oldPath), initial);
+  git('add', oldPath); git('commit', '-m', 'base'); const base = git('rev-parse', 'HEAD');
   git('checkout', '-b', 'feature-a');
-  fs.writeFileSync(path.join(repo, 'app.js'), '\nconst stable = 1;\nconst changed = true;\n');
-  git('add', 'app.js'); git('commit', '-m', 'first'); const first = git('rev-parse', 'HEAD');
+  if (rename) git('mv', oldPath, currentPath);
+  fs.writeFileSync(path.join(repo, currentPath), `${initial}const changed = true;\n`);
+  git('add', currentPath); git('commit', '-m', 'first'); const first = git('rev-parse', 'HEAD');
   git('checkout', '-b', 'feature-b');
-  fs.appendFileSync(path.join(repo, 'app.js'), 'const second = true;\n');
-  git('add', 'app.js'); git('commit', '-m', 'second'); const second = git('rev-parse', 'HEAD');
-  git('update-ref', 'refs/pull/10/head', first); git('update-ref', 'refs/pull/11/head', second);
+  fs.appendFileSync(path.join(repo, currentPath), 'const second = true;\n');
+  git('add', currentPath); git('commit', '-m', 'second'); const second = git('rev-parse', 'HEAD');
+  const requestRefs = host === 'github' ? 'pull' : 'merge-requests';
+  git('update-ref', `refs/${requestRefs}/10/head`, first); git('update-ref', `refs/${requestRefs}/11/head`, second);
   git('checkout', 'main');
   git('branch', '-D', 'feature-b'); // Simulate a fork head absent from origin's source branches.
   const remote = `https://${hostname}/owner/repo.git`;
   git('remote', 'add', 'origin', remote);
   git('config', `url.${repo}/.insteadOf`, remote);
   const requests = Object.fromEntries([[10, 'feature-a', 'main', first, base], [11, 'feature-b', 'feature-a', second, first], [12, 'closed', 'main', first, base]].map(([number, source, target, head, start]) => [number, {number, title: `Request ${number}`, state: number === 12 ? 'closed' : 'open', head: {ref: source, sha: head}, base: {ref: target, sha: start}, html_url: `https://${hostname}/owner/repo/pull/${number}`, body: 'Scoped requirement'}]));
+  if (host === 'gitlab') {
+    for (const [number, request] of Object.entries(requests)) requests[number] = {
+      iid: request.number, title: request.title, state: request.state === 'open' ? 'opened' : request.state,
+      source_branch: request.head.ref, target_branch: request.base.ref,
+      diff_refs: {base_sha: request.base.sha, start_sha: request.base.sha, head_sha: request.head.sha},
+      web_url: `https://${hostname}/owner/repo/-/merge_requests/${number}`, description: request.body,
+    };
+  }
   const fixtureFile = path.join(root, 'requests.json'); fs.writeFileSync(fixtureFile, JSON.stringify(requests));
   env.REQUESTS = fixtureFile; env.POST_LOG = path.join(root, 'posts.jsonl');
   fs.writeFileSync(path.join(bin, 'gh'), `#!/usr/bin/env node
@@ -72,12 +85,31 @@ if (args.includes('POST')) {
 } else { const request = requests[number]; if (process.env.MOVED) request.head.sha='f'.repeat(40); console.log(JSON.stringify(request)); }
 `);
   fs.chmodSync(path.join(bin, 'gh'), 0o755);
+  if (host === 'gitlab') {
+    fs.writeFileSync(path.join(bin, 'glab'), `#!/usr/bin/env node
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+const requests = JSON.parse(fs.readFileSync(process.env.REQUESTS, 'utf8'));
+const endpoint = args.find(a => /^projects\\//.test(a));
+if (!endpoint?.startsWith('projects/owner%2Frepo/merge_requests') || args[args.indexOf('--hostname')+1] !== '${hostname}') process.exit(7);
+const number = endpoint.match(/merge_requests\\/(\\d+)/)?.[1];
+if (args.includes('POST')) {
+ const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
+ fs.appendFileSync(process.env.POST_LOG, JSON.stringify(payload)+'\\n');
+ const position = {...payload.position, ...(process.env.WRONG_OLD ? {old_path:'wrong.js'} : {})};
+ console.log(JSON.stringify({id:'thread100', notes:[{id:100, type:'DiffNote', position}]}));
+} else if (number) {
+ const request = requests[number]; if (process.env.MOVED) request.diff_refs.head_sha='f'.repeat(40); console.log(JSON.stringify(request));
+} else console.log(JSON.stringify(Object.values(requests)));
+`);
+    fs.chmodSync(path.join(bin, 'glab'), 0o755);
+  }
   const cli = (name, args, overrides = {}) => spawnSync(process.execPath, [path.join(scripts, name), ...args], {cwd: repo, env: {...env, ...overrides}, encoding: 'utf8'});
   const stackFile = path.join(root, 'stack.json');
-  const discovery = cli('stack.mjs', ['--out', stackFile, ...(hostname === 'github.com' ? [] : ['--host', 'github']), 'related']);
+  const discovery = cli('stack.mjs', ['--out', stackFile, ...(host === 'github' && hostname !== 'github.com' ? ['--host', 'github'] : []), 'related']);
   assert.equal(discovery.status, 0, discovery.stderr);
   const stack = JSON.parse(fs.readFileSync(stackFile));
-  return {root, env, git, cli, stack, stackFile, first, second, base};
+  return {root, env, git, cli, stack, stackFile, first, second, base, oldPath, currentPath, addedLine: initial.split('\n').length};
 }
 
 test('actual discovery CLI pins fork request refs, orders a stack and preserves checkout', t => {
@@ -132,6 +164,67 @@ test('posting stops without success receipt when host returns a non-inline resul
   assert.equal(f.cli('anchors.mjs', ['--stack', f.stackFile, '--in', commentsFile, '--out', anchorsFile]).status, 0);
   const result = f.cli('post.mjs', ['--stack', f.stackFile, '--comments', anchorsFile, '--posted', postedFile, '--approved'], {NON_INLINE: '1'});
   assert.equal(result.status, 4, result.stderr); assert.equal(fs.existsSync(postedFile), false);
+});
+
+for (const rename of [false, true]) {
+  test(`GitLab posting CLI uses the pinned ${rename ? 'renamed' : 'normal'} path pair and denies forged positions`, t => {
+    const f = fixture(t, 'gitlab.example.test', {host: 'gitlab', rename});
+    const commentsFile = path.join(f.root, 'comments.json');
+    const anchorsFile = path.join(f.root, 'anchors.json');
+    const postedFile = path.join(f.root, 'posted.json');
+    fs.writeFileSync(commentsFile, JSON.stringify([{id: 'R1', mr: '!10', path: f.currentPath, old_path: 'claimed.js', new_path: 'claimed.js', pattern: 'const changed', body: 'The added line violates the contract.'}]));
+    const anchorArgs = ['--stack', f.stackFile, '--in', commentsFile, '--out', anchorsFile];
+    let result = f.cli('anchors.mjs', anchorArgs);
+    assert.equal(result.status, 0, result.stderr);
+    const anchors = JSON.parse(fs.readFileSync(anchorsFile));
+    const postArgs = ['--stack', f.stackFile, '--comments', anchorsFile, '--posted', postedFile];
+    assert.deepEqual([anchors[0].old_path, anchors[0].new_path, anchors[0].line], [f.oldPath, f.currentPath, f.addedLine]);
+    result = f.cli('post.mjs', postArgs);
+    assert.equal(result.status, 2, result.stderr);
+    result = f.cli('post.mjs', [...postArgs, '--approved'], {MOVED: '1'});
+    assert.equal(result.status, 3, result.stderr);
+    for (const forged of [{old_path: 'forged.js'}, {new_path: 'forged.js'}, {old_path: f.currentPath, new_path: f.oldPath}, {line: 2}, {head_sha: f.base}, {base_sha: f.first}]) {
+      if (!rename && forged.old_path === f.currentPath) continue;
+      fs.writeFileSync(anchorsFile, JSON.stringify([{...anchors[0], ...forged}]));
+      result = f.cli('post.mjs', [...postArgs, '--approved']);
+      assert.equal(result.status, 1, `${JSON.stringify(forged)}: ${result.stderr}\n${result.stdout}`);
+    }
+    assert.equal(fs.existsSync(f.env.POST_LOG), false);
+    assert.equal(fs.existsSync(postedFile), false);
+    fs.writeFileSync(anchorsFile, JSON.stringify(anchors));
+    result = f.cli('post.mjs', [...postArgs, '--approved']);
+    assert.equal(result.status, 0, result.stderr);
+    const [payload] = fs.readFileSync(f.env.POST_LOG, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    assert.deepEqual(payload, {body: anchors[0].body, position: {
+      position_type: 'text', base_sha: f.base, start_sha: f.base, head_sha: f.first,
+      old_path: f.oldPath, new_path: f.currentPath, new_line: f.addedLine,
+    }});
+    const [receipt] = JSON.parse(fs.readFileSync(postedFile));
+    assert.deepEqual([receipt.note_id, receipt.discussion_id, receipt.path, receipt.line, receipt.head_sha], [100, 'thread100', f.currentPath, f.addedLine, f.first]);
+    assert.equal(f.git('branch', '--show-current'), 'main');
+    assert.equal(f.git('rev-parse', 'HEAD'), f.base);
+    assert.equal(f.git('status', '--porcelain'), '');
+  });
+}
+
+test('GitLab posting rejects a returned discussion on a different old path', t => {
+  const f = fixture(t, 'gitlab.example.test', {host: 'gitlab', rename: true});
+  const commentsFile = path.join(f.root, 'comments.json'); const anchorsFile = path.join(f.root, 'anchors.json'); const postedFile = path.join(f.root, 'posted.json');
+  fs.writeFileSync(commentsFile, JSON.stringify([{id: 'R1', mr: 10, path: f.currentPath, pattern: 'const changed', body: 'Missing permission boundary.'}]));
+  assert.equal(f.cli('anchors.mjs', ['--stack', f.stackFile, '--in', commentsFile, '--out', anchorsFile]).status, 0);
+  const result = f.cli('post.mjs', ['--stack', f.stackFile, '--comments', anchorsFile, '--posted', postedFile, '--approved'], {WRONG_OLD: '1'});
+  assert.equal(result.status, 4, result.stderr);
+  assert.equal(fs.existsSync(postedFile), false);
+});
+
+test('GitHub renamed-file posting keeps the head-side path and RIGHT line semantics', t => {
+  const f = fixture(t, 'github.com', {rename: true});
+  const commentsFile = path.join(f.root, 'comments.json'); const anchorsFile = path.join(f.root, 'anchors.json'); const postedFile = path.join(f.root, 'posted.json');
+  fs.writeFileSync(commentsFile, JSON.stringify([{id: 'R1', mr: 10, path: f.currentPath, pattern: 'const changed', body: 'Missing permission boundary.'}]));
+  assert.equal(f.cli('anchors.mjs', ['--stack', f.stackFile, '--in', commentsFile, '--out', anchorsFile]).status, 0);
+  const result = f.cli('post.mjs', ['--stack', f.stackFile, '--comments', anchorsFile, '--posted', postedFile, '--approved']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(fs.readFileSync(f.env.POST_LOG, 'utf8')), {body: 'Missing permission boundary.', commit_id: f.first, path: f.currentPath, line: f.addedLine, side: 'RIGHT'});
 });
 
 test('indexed group records keep parallel request scopes distinct and reject tampered current artifacts', async t => {
