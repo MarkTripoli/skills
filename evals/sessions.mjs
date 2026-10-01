@@ -223,7 +223,7 @@ function completeSkillRead(ref) {
   } else if (ref.call.name === "read") {
     // A raw range is not whole-file evidence. A raw whole read still needs actual SKILL bytes.
     if (ref.resolved !== `${ref.path}:raw`) return false;
-    if (Number.isInteger(result.details?.totalLines) && text.replace(/\n$/, "").split("\n").length !== result.details.totalLines) return false;
+    if (Object.hasOwn(result.details ?? {}, "totalLines") && (!Number.isInteger(result.details.totalLines) || text.replace(/\n$/, "").split("\n").length !== result.details.totalLines)) return false;
   } else text = text.replace(/\n{2,}Wall time: [\d.]+ seconds\s*$/, "");
   const document = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(text);
   return Boolean(document && new RegExp(`^name:\\s*${escape(ref.name)}\\s*$`, "m").test(document[1]) && document[2].trim());

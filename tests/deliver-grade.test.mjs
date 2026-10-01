@@ -52,7 +52,17 @@ test("deliver grading binds indexed records to independently attributed work and
   const call = (name, args) => ({ type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: `call-${++callId}`, name, arguments: args }] } });
   const session = (id, agent, model, calls) => {
     const at = new Date(Date.now() + 60000).toISOString();
-    const results = calls.flatMap((row) => row.message.content.filter((part) => part.name === "write").map((part) => ({ type: "message", message: { role: "toolResult", toolCallId: part.id, isError: false, content: [{ type: "text", text: "Written." }] } })));
+    const results = calls.flatMap((row) => row.message.content.filter((part) => ["write", "read"].includes(part.name)).map((part) => {
+      let text = "Written.";
+      let details;
+      if (part.name === "read") {
+        const skill = path.basename(path.dirname(part.arguments.path));
+        const lines = fs.readFileSync(new URL(`../skills/delivery/${skill}/SKILL.md`, import.meta.url), "utf8").split("\n");
+        text = `[${part.arguments.path}#1829]\n${lines.map((line, i) => `${i + 1}:${line}`).join("\n")}`;
+        details = { totalLines: lines.length };
+      }
+      return { type: "message", message: { role: "toolResult", toolCallId: part.id, isError: false, content: [{ type: "text", text }], ...(details ? { details } : {}) } };
+    }));
     const rows = [{ type: "session", id, ...(agent ? { parentSession: "orchestrator" } : {}) }, { type: "session_init", agent, resolvedModel: model, task: "Read the repository and assigned artifact." }, ...calls, ...results];
     fs.writeFileSync(path.join(sessionDir, `${id}.jsonl`), rows.map((row) => JSON.stringify({ ...row, timestamp: at })).join("\n"));
   };

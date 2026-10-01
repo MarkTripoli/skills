@@ -105,6 +105,20 @@ test("an actual complete raw followup recovers from a truncated native read", (t
   assert.deepEqual(problems(sessions), []);
 });
 
+test("raw native completeness rejects malformed declared line counts but supports count-less whole output", (t) => {
+  for (const totalLines of ["100", null, true, -1, 0.5]) {
+    incompleteFinals(withSkillReads(t, (events, _session, skill) => {
+      events.splice(0, events.length, ...nativeRead(skill, { raw: true }));
+      events[1].message.details.totalLines = totalLines;
+    }));
+  }
+  const sessions = withSkillReads(t, (events, _session, skill) => {
+    events.splice(0, events.length, ...nativeRead(skill, { raw: true }));
+    delete events[1].message.details.totalLines;
+  });
+  assert.deepEqual(skillProblems(sessions), []);
+});
+
 test("raw selectors, prompt claims, missing or failed receipts and path-only results are not complete reads", (t) => {
   const cases = [
     (events) => { events.pop(); },
