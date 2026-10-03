@@ -1,5 +1,41 @@
 # @marktripoli/skills
 
+## 5.0.0
+
+### Major Changes
+
+- [`122075b`](https://github.com/MarkTripoli/skills/commit/122075b5e3125365004aade8e0c727915ddd3ac8) Thanks [@Triippz](https://github.com/Triippz)! - Synchronize the skill-authoring refresh at 9af302dc. Add author-skill's eval-first scaffold and practices checker, explain and land-pr-stack; adopt trigger-specific descriptions, progressive references, deterministic helpers and current-source eval coverage. Atomic remains retired without deleting historical tasks or owner worktrees.
+
+  Retain describe-pr and resolve-pr-reviews naming while preserving GitHub publication, immutable indexed artifacts, configurable task roots, strict hosted proof, optional hooks and opt-in security. Remove implicit three-round review/evidence repair caps; explicit owner caps and no-progress stops remain enforced.
+
+  Include opt-in checkout refresh hooks, head-bound review/epic/Figma helpers, Safety Dance restart ownership fixes, and Slack run replies. Remove the Slack assistant, automatic agent dispatch and standing tasks; ordinary durable run coordination and owner steering remain available.
+
+  Make helper CLI entrypoints work through macOS filesystem aliases without weakening task-root symlink checks. Keep offline Slack gate state logging portable, and validate generated executable companions separately from authored reference reachability.
+
+- [#160](https://github.com/MarkTripoli/skills/pull/160) [`ba87a40`](https://github.com/MarkTripoli/skills/commit/ba87a40678eca2396ad07be824420a8e7756abf7) Thanks [@Triippz](https://github.com/Triippz)! - Replace Atomic and First Sergent with the single `/deliver` orchestrator and independent builder/reviewer records. Remove `--atomic` and retired distribution entrypoints; installation cleans up only recognized collection-owned retired resources and preserves modified resources, unrelated workflows and task history.
+
+  Import recent portable delivery, installation, review, visual-conformance and local-tool improvements while retaining the personal GitHub package/provider identity, immutable indexed artifacts, security checks, hosted publication guards and ordinary Slack run coordination.
+
+  Exclude local `.omo` run-continuation caches from package archives alongside task and evaluation history.
+
+  Resume from immutable phase-completion proofs. Recover rejected review attempts without erasing history, and keep bounded blocking repairs separate from successful approvals.
+
+  Preserve indexed outline successors and canonical handoffs, reject contradictory native review outcomes, and support documented optional verification limits. Restore GitHub Actions discovery, hold delivery for unresolved source choices, and bind renamed GitLab comments to pinned old/new paths. Verify independent review authors from successful full-content writes and same-child full edit snapshots without publishing runtime system prompts; require actual complete native skill reads, including exact pinned bytes in compound output, rather than path-only or truncated-read evidence.
+
+  Count terminal empty lines in raw native reads exactly as the recorder does; complete raw instructions remain valid without accepting malformed or missing-content proof.
+
+  Existing Atomic runs are historical state, not resumable through the retired controller. Resume delivery through `/deliver <task-dir>` using the task's current artifacts and recorded decisions.
+
+### Minor Changes
+
+- [#133](https://github.com/MarkTripoli/skills/pull/133) [`2aaba36`](https://github.com/MarkTripoli/skills/commit/2aaba36cdaced09a90413907af0c5b8eef67d713) Thanks [@Triippz](https://github.com/Triippz)! - Extend opt-in `/security-check` reports with redacted, revision-bound Gitleaks findings and explicit incomplete secret coverage when Gitleaks is unavailable or fails.
+
+- [#129](https://github.com/MarkTripoli/skills/pull/129) [`3ca783a`](https://github.com/MarkTripoli/skills/commit/3ca783a4b9b13ecd7654fb780e8a1542bce89480) Thanks [@Triippz](https://github.com/Triippz)! - Add an opt-in `/security-check` skill with a Semgrep adapter that emits revision-bound normalized findings and marks unavailable or failed scans incomplete.
+
+### Patch Changes
+
+- [#135](https://github.com/MarkTripoli/skills/pull/135) [`2a7aa49`](https://github.com/MarkTripoli/skills/commit/2a7aa493324f3b49330439cf89d3f7d908a5dc8e) Thanks [@Triippz](https://github.com/Triippz)! - Gate ready PR publication on current indexed evidence, review, hosted capture, comment, and body proof.
+
 ## 4.1.1
 
 ### Patch Changes
