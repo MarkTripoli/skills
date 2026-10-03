@@ -30,6 +30,84 @@ const candidates = [
 ];
 
 
+const writeProfile = path.resolve('skills/delivery/configure-model-routing/scripts/write-profile.mjs');
+const skillsDir = path.resolve('skills/delivery');
+const goodProfile = { economy: 'cheap', routing: 'auto', candidates };
+function writer(project, extra) {
+  return runNode(writeProfile, '', ['--skills-dir', skillsDir, '--cwd', project, ...extra]);
+}
+const leftovers = (dir) => fs.readdirSync(dir).filter(name => /\.(tmp|bak)-/.test(name));
+
+test('write-profile saves a project profile and verifies it', async () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'write-profile-'));
+  const target = path.join(project, '.agents', 'model-candidates.json');
+  const { stdout } = await writer(project, ['--target', target, '--scope', 'project', '--profile', JSON.stringify(goodProfile)]);
+  const result = JSON.parse(stdout);
+  assert.equal(result.ok, true);
+  assert.equal(result.profileSource, 'project');
+  assert.deepEqual(result.candidates, ['cheap', 'strong']);
+  assert.deepEqual(JSON.parse(fs.readFileSync(target, 'utf8')), goodProfile);
+  assert.deepEqual(leftovers(path.dirname(target)), []);
+});
+
+test('write-profile saves an environment-scope profile outside the project', async () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'write-profile-'));
+  const target = path.join(project, 'user', 'profile.json');
+  const { stdout } = await writer(project, ['--target', target, '--scope', 'env', '--profile', JSON.stringify(goodProfile)]);
+  assert.equal(JSON.parse(stdout).profileSource, 'env');
+  assert.ok(fs.existsSync(target));
+});
+
+test('write-profile leaves the prior target byte-identical when validation fails', async () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'write-profile-'));
+  const target = path.join(project, '.agents', 'model-candidates.json');
+  fs.mkdirSync(path.dirname(target));
+  fs.writeFileSync(target, '{"prior":true}\n');
+  const bad = [
+    { ...goodProfile, candidates: [{ model: 'cheap', cost: -1, description: 'x' }, candidates[1]] },
+    { ...goodProfile, economy: 'missing' },
+    { ...goodProfile, routing: 'sometimes' },
+  ];
+  for (const profile of bad) {
+    await assert.rejects(writer(project, ['--target', target, '--scope', 'project', '--profile', JSON.stringify(profile)]), /invalid profile/);
+    assert.equal(fs.readFileSync(target, 'utf8'), '{"prior":true}\n');
+    assert.deepEqual(leftovers(path.dirname(target)), []);
+  }
+});
+
+test('write-profile restores the prior target when final verification fails', async () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'write-profile-'));
+  const elsewhere = path.join(project, 'not-the-project-path.json');
+  fs.writeFileSync(elsewhere, '{"prior":true}\n');
+  await assert.rejects(writer(project, ['--target', elsewhere, '--scope', 'project', '--profile', JSON.stringify(goodProfile)]), /final lookup/);
+  assert.equal(fs.readFileSync(elsewhere, 'utf8'), '{"prior":true}\n');
+  const fresh = path.join(project, 'fresh.json');
+  await assert.rejects(writer(project, ['--target', fresh, '--scope', 'project', '--profile', JSON.stringify(goodProfile)]), /final lookup/);
+  assert.equal(fs.existsSync(fresh), false);
+  assert.deepEqual(leftovers(project), []);
+});
+
+test('route-model returns no model when no profile exists', async () => {
+  const dir = fixture('throw new Error("must not call");');
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'route-empty-'));
+  const previous = process.env.SKILLS_MODEL_CANDIDATES_FILE;
+  try {
+    delete process.env.SKILLS_MODEL_CANDIDATES_FILE;
+    const result = await routeModel(dir, { phase: 'create-plan', cwd: project });
+    assert.equal(result.model, null);
+    assert.equal(result.profileSource, 'none');
+    assert.deepEqual(result.candidates, []);
+  } finally {
+    if (previous !== undefined) process.env.SKILLS_MODEL_CANDIDATES_FILE = previous;
+    fs.rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('every eligible phase names an existing skill', async () => {
+  const { ELIGIBLE_PHASES } = await import('../skills/delivery/route-model/route-model.mjs');
+  for (const phase of ELIGIBLE_PHASES) assert.ok(fs.existsSync(path.join('skills/delivery', phase, 'SKILL.md')), phase);
+});
+
 test('candidate profiles use explicit, environment, then project precedence', async () => {
   const dir = fixture('throw new Error("must not call");');
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'route-project-'));
@@ -149,4 +227,12 @@ test('profile lookup honors an injected environment without inheriting process c
   assert.equal(loadCandidateProfile({ projectDir: project, env: {} }).source, 'project');
   assert.equal(loadCandidateProfile({ projectDir: project, env: { SKILLS_MODEL_CANDIDATES_FILE: envFile } }).economy, 'environment');
   assert.equal(loadCandidateProfile({ projectDir: project, projectOnly: true, env: { SKILLS_MODEL_CANDIDATES_FILE: envFile } }).economy, 'project');
+});
+
+test('write-profile rejects a profile without candidates and writes only known keys', async () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'write-profile-'));
+  const target = path.join(project, '.agents', 'model-candidates.json');
+  await assert.rejects(writer(project, ['--target', target, '--scope', 'project', '--profile', JSON.stringify({ economy: 'x' })]), /candidates must be an array/);
+  await writer(project, ['--target', target, '--scope', 'project', '--profile', JSON.stringify({ ...goodProfile, apiKey: 'secret' })]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(target, 'utf8')), goodProfile);
 });

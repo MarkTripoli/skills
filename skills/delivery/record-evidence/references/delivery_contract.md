@@ -16,7 +16,7 @@ node "$CONTRACT" repair-complete "$TASK" <attempt-id>  # after the source work
 
 ## Policy
 
-`policy.json` is `{"surfaces":[{"id","kind","behavior","target","expectation"}]}`. Kinds: `web ios android cli api agent docs`. `behavior` is `existing` or `new`; `new` also needs `exemption`. A later call may append surfaces with `amendment_reason`; existing surfaces and `max_repairs` (default 3; other values need `repair_authorization`) never change. Amending changes the policy hash, so earlier seals must be redone.
+`policy.json` is `{"surfaces":[{"id","kind","behavior","target","expectation"}]}`. Kinds: `web ios android cli api agent docs`. `behavior` is `existing` or `new`; `new` also needs `exemption`. A later call may append surfaces with `amendment_reason`; existing surfaces and `max_repairs` (default none; a cap needs `repair_authorization` naming the owner's decision, set in the first `policy` call) never change. Amending changes the policy hash, so earlier seals must be redone.
 
 ## Seal
 
@@ -49,4 +49,4 @@ The PR description's Evidence section links every verified hosted URL and a sepa
 
 ## Inspect
 
-`inspection.json` is `{"revision","evidence_sha256":"<seal's artifact_sha256>","status":"passed|failed|blocked","findings":[{"id","observed","expected"}]}`. `passed` needs no findings and passing evidence. Keep finding IDs stable across rounds. A repair after a failed inspection runs between `repair-begin` and `repair-complete`, by the orchestrator or the repair skill. No progress on the same findings, or three source-changing rounds (shared across sessions), makes `status` report a `stop`, not a missing item; the owner's `repair-extension +N: <reason>` line in `task.md` `## Decisions` continues it.
+`inspection.json` is `{"revision","evidence_sha256":"<seal's artifact_sha256>","status":"passed|failed|blocked","findings":[{"id","observed","expected"}]}`. `passed` needs no findings and passing evidence. Keep finding IDs stable across rounds. A repair after a failed inspection runs between `repair-begin` and `repair-complete`, by the orchestrator or the repair skill. No progress on the same findings, or exhausting an owner cap on source-changing rounds (shared across sessions), makes `status` report a `stop`, not a missing item; the owner's `repair-extension +N: <reason>` line in `task.md` `## Decisions` continues it.

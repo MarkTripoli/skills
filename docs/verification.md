@@ -34,7 +34,7 @@ Read the saved artifact status:
 - `passed`: continue with optional app testing and `/review-code`;
 - `blocked`: the artifact names the external prerequisite; restore it before rerunning. Use `/show-me` if it helps.
 
-The shared delivery contract preserves a bounded evidence-repair allowance across session replacement and continuation. A no-progress repair stops rather than renewing its allowance. Source changes invalidate the previous verification, review and recorded proof.
+The shared delivery contract preserves any owner-set evidence-repair cap across session replacement and continuation. A no-progress repair stops rather than renewing its allowance. Source changes invalidate the previous verification, review and recorded proof.
 
 ## Recorded evidence is a separate completion requirement
 

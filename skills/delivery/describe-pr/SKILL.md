@@ -1,6 +1,6 @@
 ---
 name: describe-pr
-description: Run for /describe-pr requests. Create or update the pull request description for the current task.
+description: Writes or updates the pull request description from the task's verification, review and hosted evidence, then publishes it and the evidence comment with gh. Use when the user runs /describe-pr, asks for a PR description, or review and recording are done and the PR needs publishing; not for answering review threads (use /resolve-pr-reviews).
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
@@ -73,35 +73,12 @@ Task metadata and review/verification artifacts may remain local, but the PR bod
 
 Do not include walkthrough artifacts in the PR body unless asked. When requested, create a separate HTML walkthrough from `references/pr_walkthrough_example.html` with real diff nodes outside the task root, and publish only its approved hosted link.
 
+On updates, refetch the full host body immediately before drafting and each write. Preserve unrelated human-owned text and any complete `<!-- skills:babysit:begin -->`/`<!-- skills:babysit:end -->` section byte-for-byte. Only babysit updates those markers; partial, duplicate, nested or conflicting markers require reconciliation. Replace only delivery-owned template sections. Serialize local writers, merge refreshed bodies and read back preserved content. Host description writes lack a documented atomic expected-body guard, so concurrent human edits can still race; a mismatch makes publication incomplete, not permission to restore a stale body.
+
+
 ### 5. Save and publish
 
-Prepare a provisional body in a temporary file outside the task directory. A pending comment is allowed only in a draft PR while hosting a missing capture; never call it final. When no task exists, open one under the resolved task root for metadata only. Create the draft PR with `gh pr create --draft --base <base> --body-file <temporary-path> --title "<title>"`, or update an existing draft with `gh pr edit <number> --body-file <temporary-path>`.
-
-For every required surface, host the actual recording at a supported direct destination and inspect its content as in step 3. Post a **separate** PR comment repeating `- result: passed`, full tested and current-head SHAs and every recording/capture pair exactly. Use `gh pr comment <number> --body-file <temporary-path>` for already-hosted captures, or the authenticated PR comment box to upload and verify a user attachment first. Editing the PR body does not count as a comment. On updates, edit the previous evidence comment or post a replacement explicitly superseding it; obtain the exact permalink on this PR and read back that comment by ID.
-
-Insert the verified comment permalink in the final body, publish the complete template with every capture and Recorded tests row, then re-fetch the whole body and separate comment. Compare revisions, types, URLs, per-test results/cues and required sections; verify every capture is still the original recording. Remove transient description drafts after successful readback. Retain sealed captures, samples and provenance attachments at their recorded external paths for resumable delivery; removing them invalidates local seals. Never upload or commit task-root data. If publication fails, leave the PR draft and report incomplete.
-
-
-Before changing a draft to ready, run the collection's proof command from the repository root:
-
-```bash
-node shared/publication-proof.mjs <task-dir> <repo-root> <pr-number>
-```
-
-The command validates local review and optional verification metadata against hosted PR head/base, full body, specific same-PR comment, every declared capture's actual bytes/content and recorded tests. It does not read or require a local evidence or PR-description receipt. `stale` requires new review/capture after behavior changes; `incomplete` requires repairing missing hosted proof.
-
-The Claude plugin offers an optional Bash `PreToolUse` guard when `SKILLS_PUBLICATION_TASK_DIR` names this task directory: direct `gh`/`./gh pr create --draft` can host capture but cannot pass final proof, and `gh pr ready [number]` requires the shared decision above. Direct shell calls outside Claude, unsupported tools/runtimes, and out-of-band GitHub publication are not guarded; perform this skill's proof and read-back steps regardless of hook registration. Unsupported targeted Bash PR syntax is denied in the selected task.
-
-When a draft exists solely to host a capture that has not yet been uploaded, the provisional check is:
-
-```bash
-node shared/publication-proof.mjs <task-dir> <repo-root> <pr-number> --draft-host-capture
-```
-
-This may return `allowed: true` with `ready: false` and `status: "incomplete"` only for an existing draft PR. It does not authorize final body publication or ready status. After uploading and verifying the capture, complete the ordinary comment/body ordering above and run the final decision again.
-Re-fetch the PR and confirm URL, title, number, base, head, complete hosted template, every recording/capture pair, Recorded tests rows, and same-PR comment. Retitle an existing PR that fails the title rule with `gh pr edit <number> --title "<title>"`. Mark a draft PR ready only after the proof command passes. If upload, comment, link verification, capture inspection, or final-body readback fails, publication is incomplete.
-
-When task.md carries slack_run_id and you own the run, send `run event` with the observed PR URL and next current-head checks; do not finish a run whose requested follow-up remains. Direct feature-thread visibility updates only its existing root per agent-slack-control-plane. Slack failures are reported without changing publication outcome unless Slack was requested as a gate.
+Read [the publication protocol](references/publication.md). Follow its complete comment/body ordering, hosted-byte readback, proof command and ready-state gate. Publication needs passing current-head proof; a draft for capture hosting is not final delivery.
 
 ### 6. Report
 

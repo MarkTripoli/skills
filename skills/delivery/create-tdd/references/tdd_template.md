@@ -92,14 +92,12 @@ Critical path: w1 -> w2 -> w4 -> v1 -> g1
 
 ### Execution DAG
 
-[How this work will be executed: the phases ahead, which pause for approval, what runs unattended, and what verification and review follow. Describe the fixed workflow chain from task.md and workflows/delivery.md as a Mermaid flowchart, including human gates, independent review, baseline/current capture, inspection and publication. No routing probabilities.]
+[Draw this task's chain per references/execution_dag.md.]
 
 ```mermaid
 flowchart TD
-  research["research"] --> design["design discussion<br/>gate: plan"]
-  design --> plan["plan<br/>gate: plan"]
-  plan --> implement["implement"]
-  implement --> verify["verify"] --> review["review loop"] --> mr["mr"]
+  done["[phase already done]"] --> gated["[phase]<br/>gate: [gates value]"]
+  gated --> next["[unattended phase]"]
 ```
 
 ## Human Review

@@ -22,4 +22,5 @@ jobs:
         with:
           go-version-file: tools/safety-dance/go.mod
       - run: npm ci
+      - run: npm run check:skills
       - run: npm test

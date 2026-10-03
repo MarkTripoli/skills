@@ -11,7 +11,7 @@ The project owner's Slack member ID is optional. It enables reply steering and m
 
 Accept only the supplied Slack channel ID (for example, `C012ABC34`) and record it in the ledger. Do not accept or resolve a channel name or URL. Never call `conversations.list`, `conversations.info`, or any other conversation-discovery API. If the owner ID is absent, operate status-only: do not create a reply poller or accept instructions from replies.
 
-Load the bot token from the [token file](direct-feature-thread.md#token-file) immediately before each Slack API call.
+Load the bot token from the [token file](../SKILL.md#token-file) immediately before each Slack API call.
 
 ## Start a run
 
@@ -29,7 +29,7 @@ If the first post fails, record the exact failure and mark Slack unavailable for
 
 Record each ticket's routine root-edit cadence in its ledger row, default `3h`, plus the last successful root edit time and latest pending state. The ticket's owning agent may change that cadence in the ledger while the run is active; validate a positive whole-second duration. The next due time is measured from the last successful root edit. A change that shortens the interval below elapsed time becomes due at the next status tick. On a meaningful ticket state change, record its lifecycle state, current work or most recent verified result, and next step as pending. When due, edit the root with only the latest state and clear the pending state; unchanged state never creates a scheduled edit. A new blocker needing an owner answer gets one immediate thread reply and an immediate root edit; clearing it edits the root immediately. Final results edit the root immediately. A short-lived test login code or permission to invoke the standard renewal flow is never an owner action: the implementation agent must renew it from the documented local setup. Omit secrets, credentials, private logs, and unrelated ticket detail.
 
-When native Codex scheduling is available, create one status tick every five minutes to flush due pending ticket updates; if an owner member ID is configured, also create a reply poller every five minutes. Both read the durable ledger, so a fresh orchestration session can resume without blocking implementation. If native scheduling is unavailable, record that capability gap and report it; perform due edits during active orchestration but do not substitute cron, a daemon, or a hidden terminal process without explicit authorization.
+When the runtime has a scheduler, create one status tick every five minutes to flush due pending updates, and a reply poller only when an owner ID is configured. Both read the durable ledger for resumable orchestration. Without a scheduler, report the capability gap and perform due edits during active work; no cron, daemon or hidden process without explicit authorization.
 
 ## Owner-only steering
 
@@ -61,7 +61,7 @@ The orchestration ledger and final report include the configured channel, option
 ## Anti-patterns
 
 - Using the Slack app-development CLI as if it were a general messaging CLI.
-- Assuming `SLACK_AGENT_BOT_TOKEN` is inherited from an unrelated terminal instead of sourcing the [token file](direct-feature-thread.md#token-file) for the API command.
+- Assuming `SLACK_AGENT_BOT_TOKEN` is inherited from an unrelated terminal instead of sourcing the [token file](../SKILL.md#token-file) for the API command.
 - Posting phase progress, gate handoffs, or a second parent message into a feature thread.
 - Storing the feature thread in a local file instead of `task.md`, so a fresh session or a parallel task loses or overwrites it.
 - Posting routine ticket updates as new messages after the parent exists; edit the ticket root instead.

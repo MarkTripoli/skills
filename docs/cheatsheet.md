@@ -41,7 +41,7 @@ Recorded look-and-fix: install companion + recorder dependency:
 npx github:MarkTripoli/skills oh-my-pi --skill iterate-evidence --project --yes
 ```
 
-Run `/iterate-evidence @<task-directory-or-iteration-receipt>` with wanted behavior + fix power. Default three fix round. `0`: look only. Picked uninstall take companion, leave recorder. Repo installer for dependency closure; plain skill copy no guarantee. See [the independent loop](getting-started.md#inspect-and-repair-recorded-behavior).
+Run `/iterate-evidence @<task-directory-or-iteration-receipt>` with wanted behavior + fix power. No default fix-round cap; owner can set one. `0`: look only. Picked uninstall take companion, leave recorder. Repo installer for dependency closure; plain skill copy no guarantee. See [the independent loop](getting-started.md#inspect-and-repair-recorded-behavior).
 ### File locations
 
 | Agent | User skills | User workers |
@@ -61,7 +61,7 @@ Project skill: `.claude/skills/`, `.agents/skills/`, `.omp/skills/`, or `.pi/ski
 - Pinned release: `npx github:MarkTripoli/skills#v<version>`.
 - Checkout: `node scripts/install.mjs`. Build `dist/` with `npm run build -- --runtime <claude-code|codex|oh-my-pi|pi|portable>`.
 
-Updating this checkout does not refresh installed skills. After changing delivery, refresh the complete chain from the checkout rather than copying only `deliver`:
+Updating this checkout does not refresh installed skills unless you opted in with `git config skills.autoInstall auto` ([README](../README.md#working-from-a-clone)). Without it, after changing delivery, refresh the complete chain from the checkout rather than copying only `deliver`:
 
 ```sh
 node scripts/install.mjs oh-my-pi codex --yes
@@ -114,11 +114,18 @@ The first recording invocation prepares the evidence policy and captures the aut
 /deliver Add a diagnostic --verbose flag across the CLI
 ```
 
-`/deliver` is one orchestrator session: it picks the workflow from the request and the [size check](../shared/SLICING.md), plans, delegates each unit of work to a builder, and has a fresh reviewer on the strongest model check it. It stops on `done`, `needs-human`, `blocked` or `no-progress`; `/deliver <task-dir>` resumes. Without subagents it builds inline and prints a fresh-session handoff for each review. Codex: `$deliver`. `gates` is `plan` (default: stop for plan approval) or `none`; older `all` and `mr` read as `plan`. See [workflow choices](../workflows/delivery.md#workflow-choices-and-manual-chains), [model selection](model-routing.md).
+`/deliver` is one orchestrator session: it picks the workflow from the request and the [size check](../shared/SLICING.md), plans, delegates each unit of work to a builder, and has a fresh reviewer on the strongest model check it. It stops on `done`, `needs-human`, `blocked` or `no-progress`; `/deliver <task-dir>` resumes. Without subagents it builds inline and prints a fresh-session handoff for each review. Codex: `$deliver`. `gates` is `plan` (default: stop for plan approval) or `none`; older `all` reads as `plan`. See [workflow choices](../workflows/delivery.md#workflow-choices-and-manual-chains), [model selection](model-routing.md).
 
 ## Existing tasks, PR feedback, and epic waves
 
 Resume with `/deliver <task-dir>` in the task's original worktree, or run a phase by hand on its saved task directory: `/implement-plan @<plan>` for implementation, `/resolve-pr-reviews` for PR feedback, `/start-epic-delivery @<epic-plan>` for ready epic children. Create child worktrees from the epic branch, then copy each child's `<task-root>/<child slug>/` directory from the epic worktree into that child worktree. Child tasks wait for prerequisite branch merges. PR text does not prove merge.
+
+## Authoring a skill
+
+`/author-skill` creates or revises a skill in this collection: it starts from an eval scenario, scaffolds `skills/<name>/`, and loops over `node scripts/validate.mjs` and `node scripts/check-skill-practices.mjs` until both pass. [Skill instructions](../skills/author-skill/SKILL.md), [rules](../skills/author-skill/references/rules.md).
+
+`/explain <topic>` selects an audience, grounds claims in inspected evidence and optionally creates an HTML page outside task roots. `/land-pr-stack <explicit PR scope>` lands a selected stack only with recorded merge authority, using GitHub by default and repository-declared release requirements. See the [workflow table](../workflows/delivery.md#phase-table).
+
 
 ## Where things live
 

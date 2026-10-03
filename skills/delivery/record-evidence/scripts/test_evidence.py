@@ -75,6 +75,11 @@ class EvidencePipeline(unittest.TestCase):
                                manifest["raw"]["effective_duration"] + 2 * manifest["timing"]["card_seconds"], delta=0.6)
         self.assertGreater(duration(session / "evidence.mp4"), 0)
 
+    def test_start_writes_evidence_gitignore(self):
+        session = self.root / "ignored" / "evidence" / "surface"
+        run("start", "--output", session, "--source", "external", "--title", "Ignore")
+        self.assertEqual((session.parent / ".gitignore").read_text(), "*\n")
+
     def test_session_records_annotates_and_reports(self):
         session = self.record_synthetic("alpha")
         stopped = run("stop", session, "--card-seconds", CARD)

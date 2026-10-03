@@ -1,6 +1,6 @@
 ---
 name: resolve-pr-reviews
-description: Run for /resolve-pr-reviews requests. Address pull request review threads, reply with evidence, and repeat until current-head required checks pass and no actionable threads remain.
+description: Triages open pull request review threads, fixes or answers each with evidence, resolves only handled threads, and tracks the current-head pipeline and approval state. Use when the user runs /resolve-pr-reviews, reviewers left comments on the open PR, or /describe-pr finished and review feedback is next; not for reviewing someone else's PRs (use /group-review).
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
@@ -11,25 +11,35 @@ Inspect the current branch's GitHub PR, repair actionable feedback, reply to eve
 
 Run in the existing pull request's worktree, with its branch checked out and its original local task directory when available; task files are not branch history. Reuse that branch and merge target; do not create a new task branch for review resolution.
 
+Copy this checklist and tick each item:
+
+```text
+- [ ] Context and host selected
+- [ ] Current target, head, threads and checks fetched
+- [ ] Triage and replies drafted
+- [ ] Confirmation or recorded authorization checked
+- [ ] Deciding checks passed, fixes pushed, replies read back
+- [ ] Current-head required checks passed, actionable threads settled
+- [ ] Immutable review artifact recorded when task exists
+- [ ] Observed approval and remaining delivery gates reported
+```
+
+
 ## Setup
 
 Locate the original task directory and read task.md when available; do not recreate task files from a hosted PR. Read references/pr_review_template.md, pr_review_pending_answer.md, pr_review_approved_answer.md and pr_review_monitored_answer.md. Select current evidence through index.json; `node <skills-dir>/deliver/contract.mjs status <task-dir>` exposes stale and missing prerequisites. A missing baseline requires authentic capture from a temporary worktree at the base commit, not invented observations.
 
 ## Identify target
 
-Use GitHub for the origin remote. Verify `gh` is installed and authenticated. Find the open PR for the current branch; record its URL, number, base SHA, and head SHA. Stop if there is not exactly one target.
+Use the origin host and complete project namespace. GitHub is the personal default: require authenticated `gh` and read [its protocol](references/github.md). For an explicitly selected GitLab project, require authenticated `glab` and read [its protocol](references/gitlab.md). Never infer a second target or change the branch/merge base. Require exactly one open target.
 
 ## Fetch state
 
-Fetch PR metadata, submitted reviews, comments, and status checks with `gh pr view <number> --json url,number,baseRefOid,headRefOid,reviewDecision,reviews,statusCheckRollup,comments`. For review threads, run GitHub GraphQL against `repository.pullRequest(number: <number>).reviewThreads(first: 100)` and follow every `pageInfo.hasNextPage` cursor. A thread is unresolved when `isResolved` is false; preserve its GraphQL thread ID and each comment ID, author, body, path, line, and diff hunk. Do not treat green checks, no comments, or mergeability as an approval. Keep the head SHA on conclusions and ensure required checks refer to the current head. Even with no open threads and an approved review decision, require current-head required checks to pass and confirm the current head is covered by the current indexed `evidence.recording` receipt and the hosted capture appears in both description and a distinct comment before saving an approved result.
-
-Get `<owner>` and `<repo>` from `gh repo view --json owner,name`. Fetch a thread page with `gh api graphql -f query='query($owner: String!, $repo: String!, $number: Int!, $after: String) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { reviewThreads(first: 100, after: $after) { nodes { id isResolved isOutdated path line startLine comments(first: 100) { nodes { id author { login } body url diffHunk path line } pageInfo { hasNextPage endCursor } } } pageInfo { hasNextPage endCursor } } } } }' -F owner='<owner>' -F repo='<repo>' -F number='<number>' -F after='<cursor-or-null>'`. Omit `after` on the first request; repeat with each returned `endCursor` until `hasNextPage` is false, including comment pages where needed.
-
-For each confirmed reply, use `gh api graphql -f query='mutation($threadId: ID!, $body: String!) { addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $threadId, body: $body}) { comment { id url } } }' -F threadId='<thread-id>' -F body='<reply>'`. Once the reply and requested action are complete, resolve with `gh api graphql -f query='mutation($threadId: ID!) { resolveReviewThread(input: {threadId: $threadId}) { thread { id isResolved } } }' -F threadId='<thread-id>'`. Keep replies concise enough to safely pass as arguments; verify each returned comment or resolved state before continuing.
+For GitHub, follow the paginated metadata/thread reads and confirmed mutations in its protocol. For GitLab, run `node <skills-dir>/resolve-pr-reviews/scripts/pr-state.mjs --branch <branch>` and preserve its IID, source/base SHA, discussion/note IDs, approval rules, head pipeline, status checks and `blocked` reasons. In either host, unavailable required state blocks completion; refetch head last and discard moved-head conclusions. Empty threads, mergeability or green checks alone do not establish approval.
 
 ## Triage
 
-Write the unresolved review threads as `[{id, author, body, hunk}]` to a temporary JSON file outside the repository (`mktemp`); `hunk` is the few lines of current code the thread points at, omitted when the thread has no location. Run `node <skills dir>/typed-judgment/judge.mjs triage-threads <file> --json`, where `<skills dir>` is the directory that contains this skill, then delete the file. Take the helper's `disposition` where it is not `null`; classify the rest yourself as `fix`, `discuss`, `decline`, `clarify`. `addressed` of 0.8 or more signals that the current code may already do what the thread asks: verify against the code before drafting that reply. Each answered run writes one line to stderr, `judge: model <model>, tokens <n> in / <m> out`; do not discard stderr, and copy that line's model and counts into the template's `helper triage` field so a later disagreement can be attributed to a version. Helper unavailable (exit 3, no `node`, no `TYPESAFE_API_KEY`): classify every thread yourself, write `unavailable` in the template's `helper triage` field, and add a `### Known limits` item saying judgments were skipped so the reply carries it in one line.
+Write the unresolved review threads as `[{id, author, body, hunk}]` to a temporary JSON file outside the repository (`mktemp`); `hunk` is the few lines of current code the thread points at, omitted when the thread has no location. Run `node <skills-dir>/typed-judgment/judge.mjs triage-threads <file> --json`, where `<skills-dir>` is the directory that contains this skill, then delete the file. Take the helper's `disposition` where it is not `null`; classify the rest yourself as `fix`, `discuss`, `decline`, `clarify`. `addressed` of 0.8 or more signals that the current code may already do what the thread asks: verify against the code before drafting that reply. Each answered run writes one line to stderr, `judge: model <model>, tokens <n> in / <m> out`; do not discard stderr, and copy that line's model and counts into the template's `helper triage` field so a later disagreement can be attributed to a version. Helper unavailable (exit 3, no `node`, no `TYPESAFE_API_KEY`): classify every thread yourself, write `unavailable` in the template's `helper triage` field, and add a `### Known limits` item saying judgments were skipped so the reply carries it in one line.
 
 Verify `fix` items against code. Research conventions/sources before `decline`/`discuss`. Default `fix` when no evidence declines. Draft a complete reply per review thread: result/evidence, no tooling mentions. Present the numbered triage with each thread's disposition, `confidence`, and `requests_change`, proposed edits, and exact replies. Wait for confirmation only when the task lacks recorded authorization for these in-scope actions.
 
@@ -37,7 +47,7 @@ Verify `fix` items against code. Research conventions/sources before `decline`/`
 
 After required confirmation or under recorded unattended authorization, make the smallest root-cause fixes, add regressions, and run the required checks/gates. Commit and push only when authorized, staging explicit code paths and keeping task artifacts out of code commits.
 
-After checks, reply to each handled thread with the result and verified head SHA using GitHub's `addPullRequestReviewThreadReply` GraphQL mutation; resolve a thread with `resolveReviewThread` only after its reply and action are complete. Use the exact GraphQL thread ID from the fetched thread, and verify each mutation's result before continuing. Never resolve declined, discussed, or clarified feedback without a confirmed disposition. State when fresh evidence and publication remain pending; do not cite a stale capture as proof of the fix.
+After checks and an authorized push, apply only planned replies/resolutions through the selected host protocol. Include the verified head SHA, preserve exact thread/discussion IDs and read back each mutation. A declined, discussed or clarified disposition needs confirmation before resolution. State recapture/publication prerequisites separately; stale captures are not proof of a fix.
 
 ## Checks and follow-up
 

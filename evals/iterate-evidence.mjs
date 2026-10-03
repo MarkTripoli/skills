@@ -19,6 +19,11 @@ const save = (file, value) => fs.writeFileSync(file, `${JSON.stringify(value, nu
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 const split = (text) => text.split("\n").filter(Boolean);
 
+// Installing iterate-evidence also installs its dependency closure (see SKILL_DEPENDENCIES in scripts/install.mjs).
+export const expectedInstalledSkills = "agent-slack-control-plane,deliver,iterate-evidence,jira-issue-refinement,record-evidence,route-model,typed-judgment";
+// An authorized repair may stay uncommitted (the skill records a dirty tree as base SHA plus patch); any other dirt fails.
+export const dirtyProblems = (porcelain) => porcelain.split("\n").map((line) => line.trim()).filter((line) => line && !/^M (app\.js|check\.mjs)$/.test(line));
+
 export const isEvidenceScenario = (scenario) => scenario.phases?.[0]?.skill === "iterate-evidence";
 
 const viewerBlocked = (name) => name === "iterate-evidence-viewer-blocked";
@@ -27,6 +32,12 @@ const zeroLimit = (name) => name === "iterate-evidence-zero-limit";
 const noProgress = (name) => name === "iterate-evidence-no-progress";
 const threeRounds = (name) => name === "iterate-evidence-three-rounds";
 const continuation = (name) => name === "iterate-evidence-continuation";
+// The repair limit each scenario's receipt records: an explicit owner limit where the request states one, else no cap.
+export const expectedLimit = (name) => zeroLimit(name) || labelDisagreement(name) ? "0" : noProgress(name) ? "1" : threeRounds(name) ? "3" : "none";
+// `limit: none` has no number to compare; every numeric comparison goes through here.
+export const overLimit = (fm) => fm.limit !== "none" && Number(fm.consumed_rounds) > Number(fm.limit);
+export const limitMismatch = (name, fm) => fm?.limit !== expectedLimit(name);
+export const scenarioReservation = (name, text, round, findingId, pendingRepair = false) => activeReservation(text, round, expectedLimit(name), findingId, pendingRepair);
 const boundedScenario = (name) => zeroLimit(name) || noProgress(name) || threeRounds(name) || continuation(name);
 const inspectionOnly = (name) => viewerBlocked(name) || labelDisagreement(name) || zeroLimit(name);
 const quote = (value) => `'${value.replace(/'/g, "'\\''")}'`;
@@ -258,7 +269,7 @@ async function runSubjectIn(prompt, config, pinned, options, isolated) {
     const current = json(path.join(out, state.path));
     const pause = json(config.pauseFile);
     const valid = receiptText !== null
-      && activeReservation(receiptText, 1, 3, "IE-001")
+      && scenarioReservation("iterate-evidence-continuation", receiptText, 1, "IE-001")
       && current.files["app.js"]?.sha256 !== pause.appSha256
       && current.files["check.mjs"]?.sha256 !== pause.checkSha256;
     interruption = { valid, waiting: json(`${config.pauseFile}.waiting`), snapshot: state, receipt: receiptFile, receiptSha256: receiptText !== null ? sha256(Buffer.from(receiptText)) : null, reason: "Owned subject terminated at capture-entry pause; no product recovery performed by harness" };
@@ -656,8 +667,8 @@ export function reviewProblems(out, review, trace, snapshots, base, finalState, 
     const receipts = Object.entries(reserved.state.files).filter(([name]) => name.startsWith(`${taskRel}/`) && /\/\d{2}-evidence-iteration-/.test(name));
     require(receipts.some(([, value]) => {
       const text = fs.readFileSync(retainedFile(out, `blobs/${value.sha256}`), "utf8");
-      return activeReservation(text, 1, 3, "IE-001", true);
-    }), "reservation snapshot lacks an in-progress consumed round 1/default 3 receipt with IE-001 and pending repair");
+      return scenarioReservation("iterate-evidence", text, 1, "IE-001", true);
+    }), "reservation snapshot lacks an in-progress consumed round 1/limit none receipt with IE-001 and pending repair");
     for (const sample of [before, selected["baseline-initial"]]) {
       const opening = sample && snapshots.find((item) => item.boundary === "tool_execution_end" && item.toolCallId === sample.image?.toolCallId);
       require(Boolean(opening) && opening.sequence < reserved.sequence, "baseline pixel opening must precede persisted finding/reservation");
@@ -811,7 +822,7 @@ async function boundedEvidenceProblems(out, setup, trace, snapshots, base, final
       require(consumed === undefined || (/^\d+$/.test(consumed) && Number(consumed) <= rounds), "snapshot exceeds authorized reservation boundary");
     }
   }
-  require(Number(receipt?.fm.consumed_rounds) === rounds && Number(receipt?.fm.limit) === (zeroLimit(name) ? 0 : noProgress(name) ? 1 : 3), "exact consumed/default allowance mismatch");
+  require(Number(receipt?.fm.consumed_rounds) === rounds && !limitMismatch(name, receipt?.fm), "exact consumed allowance and limit mismatch");
   const states = [base, ...allSnapshots.map((item) => item.state), finalState];
   const sourceHashes = [...new Set(states.map((state) => state.files["app.js"]?.sha256))];
   require(sourceHashes.length === rounds + 1, "wrong number of distinct source identities; replay or extra mutation");
@@ -955,7 +966,7 @@ async function boundedEvidenceProblems(out, setup, trace, snapshots, base, final
       const entries = Object.entries(reserved.state.files).filter(([file]) => /\/\d{2}-evidence-iteration-/.test(file));
       require(entries.some(([, value]) => {
         const text = fs.readFileSync(retainedFile(root, `blobs/${value.sha256}`), "utf8");
-        return activeReservation(text, round, noProgress(name) ? 1 : 3, expectedId);
+        return scenarioReservation(name, text, round, expectedId);
       }), `round ${round} persisted consumed reservation missing`);
       const priorPixels = review.observations?.filter((item) => item.pass === round - 1 && item.flow.endsWith("increment")) ?? [];
       for (const item of priorPixels) {
@@ -1018,17 +1029,17 @@ export async function gradeEvidenceScenario(scenario, runDir) {
       const status = viewerBlocked(scenario.name) ? "blocked" : only || noProgress(scenario.name) || threeRounds(scenario.name) ? "failed" : "passed";
       const reason = viewerBlocked(scenario.name) ? "blocker" : noProgress(scenario.name) ? "no-progress" : only || threeRounds(scenario.name) ? "exhaustion" : "success";
       if (!receipt.fm.summary || receipt.fm.status !== status || receipt.fm.stop_reason !== reason) problems.push(`receipt: expected ${status}/${reason} with a summary`);
-      if (only ? Number(receipt.fm.consumed_rounds) !== 0 : Number(receipt.fm.consumed_rounds) < 1 || Number(receipt.fm.consumed_rounds) > Number(receipt.fm.limit)) problems.push("receipt: invalid consumed allowance");
-      if (scenario.name === "iterate-evidence" && receipt.fm.limit !== "3") problems.push("receipt: primary default allowance must be exactly 3");
+      if (only ? Number(receipt.fm.consumed_rounds) !== 0 : Number(receipt.fm.consumed_rounds) < 1 || overLimit(receipt.fm)) problems.push("receipt: invalid consumed allowance");
+      if (scenario.name === "iterate-evidence" && limitMismatch(scenario.name, receipt.fm)) problems.push("receipt: primary default allowance must record limit none");
       const template = fs.readFileSync(retainedFile(out, "installed/iterate-evidence/references/evidence_iteration_template.md"), "utf8");
       if (placeholders(receipt.text, template).length) problems.push("receipt: unfilled template placeholders");
       if (!new RegExp(`\\[[^\\]]+\\]\\([^\\n)]*${receipt.file.replace(/\./g, "\\.")}\\)`).test(trace.answer) || /```|~~~/.test(trace.answer)) problems.push("reply: must link the receipt without a handoff fence");
       const receiptRel = `${setup.taskRel}/${receipt.file}`;
       if (finalState.files[receiptRel]?.sha256 !== sha256(Buffer.from(receipt.text))) problems.push("receipt: final snapshot does not match retained receipt");
     }
-    if (json(retainedFile(out, "git-final.json")).dirty) problems.push("git: repository left dirty outside ignored evidence");
+    if (dirtyProblems(json(retainedFile(out, "git-final.json")).dirty).length) problems.push("git: repository left dirty outside ignored evidence");
     const install = json(retainedFile(out, "installation.json"));
-    if (install.names.join(",") !== "iterate-evidence,record-evidence" || !install.sentinelPreserved || !install.noAtomic || install.command.code !== 0) problems.push("installation: selected resources, or sentinel contract failed");
+    if (install.names.join(",") !== expectedInstalledSkills || !install.sentinelPreserved || !install.noAtomic || install.command.code !== 0) problems.push("installation: selected resources, or sentinel contract failed");
     if (boundedScenario(scenario.name)) {
       problems.push(...await boundedEvidenceProblems(out, setup, trace, snapshots, base, finalState, commits, receipt));
     } else if (inspectionOnly(scenario.name)) {
@@ -1183,7 +1194,7 @@ export async function runEvidenceScenario(scenario, runDir, pinned, options) {
       "You own capture, pixel inspection, findings, round reservation before mutation, authorized repairs, regression verification, and the stop decision. Do not read or write evaluator output outside this repository. Return the installed companion's terminal answer.",
     ].join("\n\n");
     if (zeroLimit(scenario.name)) prompt += "\n\nUse the fresh session path evidence/baseline under the task directory. This is ordinary truthful recording, not an external baseline. Limit 0 forbids source/check edits and reservations.";
-    if (threeRounds(scenario.name)) prompt += "\n\nThe four-counter fixed capture covers A-D increments and all Resets each pass. Keep every baseline and round recording and open all relevant recorded pixels. Checks must keep exact expectations for unrepaired counters; a remaining failing check is not an unavailable prerequisite.";
+    if (threeRounds(scenario.name)) prompt += "\n\nThe four-counter fixed capture covers A-D increments and all Resets each pass. Keep every baseline and round recording and open all relevant recorded pixels. Checks must keep exact expectations for unrepaired counters; a remaining failing check is not an unavailable prerequisite. The repair limit is explicitly 3.";
     if (noProgress(scenario.name)) {
       const workerOut = path.join(out, "worker");
       fs.mkdirSync(workerOut, { recursive: true });

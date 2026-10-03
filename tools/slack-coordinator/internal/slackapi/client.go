@@ -60,17 +60,6 @@ func (c *Client) ProbeSocketMode(ctx context.Context) error {
 	return err
 }
 
-// PostMessage posts mrkdwn to channelID, as a thread reply when threadTS is
-// set, and returns the message timestamp.
-func (c *Client) PostMessage(ctx context.Context, channelID, threadTS, mrkdwn string) (string, error) {
-	opts := []slack.MsgOption{slack.MsgOptionText(mrkdwn, false), slack.MsgOptionDisableLinkUnfurl()}
-	if threadTS != "" {
-		opts = append(opts, slack.MsgOptionTS(threadTS))
-	}
-	_, ts, err := c.api.PostMessageContext(ctx, channelID, opts...)
-	return ts, err
-}
-
 // PostBlocksMessage posts Block Kit blocks with a complete accessible text
 // fallback. Empty blocks send only the fallback for messages too large for a
 // Slack section block.
@@ -100,12 +89,6 @@ func (c *Client) Permalink(ctx context.Context, channelID, ts string) (string, e
 	return c.api.GetPermalinkContext(ctx, &slack.PermalinkParameters{Channel: channelID, Ts: ts})
 }
 
-// UpdateMessage replaces the text of one message and returns its timestamp.
-func (c *Client) UpdateMessage(ctx context.Context, channelID, ts, mrkdwn string) (string, error) {
-	_, newTS, _, err := c.api.UpdateMessageContext(ctx, channelID, ts, slack.MsgOptionText(mrkdwn, false), slack.MsgOptionDisableLinkUnfurl())
-	return newTS, err
-}
-
 // AddReaction adds the emoji name (without colons) to one message.
 func (c *Client) AddReaction(ctx context.Context, channelID, ts, name string) error {
 	return c.api.AddReactionContext(ctx, name, slack.NewRefToMessage(channelID, ts))
@@ -120,11 +103,10 @@ func (c *Client) OpenConversation(ctx context.Context, userID string) (string, e
 	return channel.ID, nil
 }
 
-// User is the subset of a Slack user the daemon addresses and schedules by.
+// User is the Slack identity resolved during setup.
 type User struct {
 	ID          string
 	DisplayName string
-	TZ          string
 }
 
 // LookupUserByEmail is users.lookupByEmail.
@@ -152,7 +134,7 @@ func toUser(u *slack.User) User {
 	if name == "" {
 		name = u.RealName
 	}
-	return User{ID: u.ID, DisplayName: name, TZ: u.TZ}
+	return User{ID: u.ID, DisplayName: name}
 }
 
 // ManifestResult identifies the app a manifest call created or updated and

@@ -1,6 +1,6 @@
 ---
 name: herd-next
-description: Run for /herd-next requests at the end of a manual delivery phase inside Herdr. Open the next skill in a fresh pane with its handoff command staged for the user.
+description: Opens the next delivery skill in a fresh Herdr pane with its handoff command staged but not submitted. Use when the user runs /herd-next at the end of a manual delivery phase inside Herdr, or wants a printed handoff command started in a new pane; not for running the next phase in the current session.
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
@@ -13,11 +13,21 @@ Step 1, the guard. Nothing else runs until it passes:
 
 ```bash
 test "${HERDR_ENV:-}" = 1
+command -v herdr >/dev/null && command -v jq >/dev/null
 ```
 
-A failed guard prints `references/herd_next_skipped_answer.md` with the reason `not inside Herdr` and stops. This is not an error: the phase reply that came before already carries the command fence, and pasting it by hand is the documented flow (`workflows/delivery.md`, "Running skills by hand").
+A failed guard prints `references/herd_next_skipped_answer.md` and stops, with the reason `not inside Herdr` when the first test fails and `herdr or jq not installed` when the second does. This is not an error: the phase reply that came before already carries the command fence, and pasting it by hand is the documented flow (the delivery workflow's "Running skills by hand").
 
-Step 2, the command and model. Take the last line matching `^/[a-z0-9-]+( @[^ ]+)?$` from the caller's argument, or, when the skill was given none, from the finishing reply in this session. When no such line exists, print the skipped reply with the reason `no handoff command found` and stop. Never invent the next skill. Route the next phase with the portable helper using this precedence: explicit `--candidates <json-file>` and `--economy <model>`, then `SKILLS_MODEL_CANDIDATES_FILE`, then `$PWD/.agents/model-candidates.json`. The profile JSON is `{economy,candidates,routing?}`, with candidates ordered weakest to strongest. Preserve the returned model recommendation in this phase's reply. A caller may instead pass `--model <model>` as an explicit recommendation. If no profile exists, state that no model was enforced. Never discover candidates by scraping a provider-private catalog.
+Step 2, the command and model. Take the last line matching `^/[a-z0-9-]+( @[^ ]+)?$` from the caller's argument, or, when the skill was given none, from the finishing reply in this session. When no such line exists, print the skipped reply with the reason `no handoff command found` and stop. Never invent the next skill. Route the next phase with the portable helper using this precedence: explicit `--candidates <json-file>` and `--economy <model>`, then `SKILLS_MODEL_CANDIDATES_FILE`, then `$PWD/.agents/model-candidates.json`. The profile JSON is `{economy,candidates,routing?}`, with candidates ordered weakest to strongest. Run the helper:
+
+```bash
+request_json=$(jq -cn --arg skillsDir <skills-dir> --arg phase "$phase" --arg cwd "$root" --arg request "$(cat "$task_md")" \
+  '{skillsDir:$skillsDir,phase:$phase,cwd:$cwd,request:$request}')
+selected_model=$(printf '%s' "$request_json" \
+  | node <skills-dir>/route-model/route-model.mjs --require-jev | jq -r '.model // empty') || selected_model=""
+```
+
+`phase` is the skill name in the parsed command, `root` the repository root, and `task_md` the task's `task.md`, the same inputs `stop_hook.sh` routes on; add the explicit `--candidates` and `--economy` flags to the command when given. An empty `selected_model` (no profile, or a helper failure) means no model was enforced; state that. Preserve a returned model in this phase's reply. A caller may instead pass `--model <model>` as an explicit recommendation. Never discover candidates by scraping a provider-private catalog.
 
 Step 3, the slug and the phase. The slug is the task directory's `slug` from `task.md`; the phase is the skill name in the parsed command with any leading `create-`, `iterate-`, or `implement-` kept as written, so `/create-plan` labels the pane `<slug>/create-plan`.
 
@@ -55,9 +65,16 @@ pane=$(herdr tab create --workspace "$HERDR_WORKSPACE_ID" --cwd "$PWD" --label "
   | jq -r '.result.root_pane.pane_id')
 ```
 
-Step 6, the agent name. Cut the slug to `32 - (length of the phase + 1)` characters first, so the phase always survives, then build `<cut slug>-<phase>`, lower-case, every character outside `a-z0-9-` replaced by `-`, collapsed runs of `-` reduced to one, truncated to 32 characters, any trailing `-` stripped. A phase longer than 31 characters leaves no room for a stem; cut the joined `<slug>-<phase>` to 32 characters in that case. When `herdr agent list` already holds the result, append `-2`, then `-3`, cutting the stem further so the name stays within 32 characters. The built name must start with a lowercase letter, exactly as `stop_hook.sh` checks after building it; when it does not (a slug beginning with a digit, most often), ask the user for a name and stop rather than guessing one.
+Step 6, the agent name. Source the helper and build the name from the slug, the phase, and the names `herdr agent list` already shows:
 
-Step 7, start, label, stage. When a selected model came from configured candidates, pass it to the native agent command after Herdr's option separator, for example `herdr agent start ... -- --model <model>`. This is enforceable for supported Herdr agents; if the installed Herdr command rejects the native `--model`, close the pane and use the manual recommendation path rather than retrying another model. A manual copy-paste handoff can only report `Recommendation only: <model>` and must not claim enforcement.
+```bash
+. <skill-dir>/references/agent_name.sh
+name=$(agent_name "$slug" "$phase" <names from herdr agent list>) || { echo "ask the user for a name"; }
+```
+
+Exit 1 means the name would not start with a lowercase letter, most often a slug beginning with a digit: ask the user for a name and stop rather than guessing one.
+
+Step 7, start, label, stage. When a selected model came from configured candidates, pass it to the native agent command after Herdr's option separator, for example `herdr agent start ... -- --model <model>`. This is enforceable for supported Herdr agents.
 
 ```bash
 model_args=()
@@ -68,7 +85,10 @@ case "$kind" in codex) command="\$${command#/}" ;; esac
 herdr pane send-text "$pane" "$command"
 ```
 
-`agent start` returns `agent_not_ready` when the agent is blocked during startup while keeping the name usable; on that response, wait with `herdr agent wait "$name" --until idle --until done --timeout 30000` before staging. `--until` is repeatable and a bare wait with none settles on `blocked` too, which is the one state this branch exists to sit out. A wait that fails (the 30-second timeout, or the agent settling on `blocked`) means it never became ready: close the pane this step opened, `herdr pane close "$pane"`, then print `references/herd_next_skipped_answer.md` with the reason `the agent in the new pane is still blocked`, and stop. Nothing was staged, so nothing is left half-open with a reply that claims otherwise.
+After `agent start`:
+
+1. `agent_not_ready` (the agent is blocked during startup, the name stays usable): wait with `herdr agent wait "$name" --until idle --until done --timeout 30000` before staging. `--until` is repeatable and a bare wait settles on `blocked` too, the one state this branch exists to sit out. If the wait fails (the timeout, or the agent settling on `blocked`), close the pane this step opened with `herdr pane close "$pane"`, print `references/herd_next_skipped_answer.md` with the reason `the agent in the new pane is still blocked`, and stop. Nothing was staged, so no reply claims otherwise.
+2. Native `--model` rejected: close the pane and use the manual path, reporting `Recommendation only: <model>`, rather than retrying another model.
 
 Step 8, stage or submit. `send-text` stages without Enter. A command that records approval stays staged even when the caller passes `--submit`; the user submits it. For a command that records no approval, submit with `herdr agent prompt "$name" "$command" --wait --timeout 120000` only when the caller passed `--submit`. Step 7 converts `/` to `$` for a Codex pane before either operation; the printed handoff fence keeps `/`.
 
@@ -78,8 +98,4 @@ Never close a pane, tab, or workspace this skill did not create. Never target a 
 
 ## Optional Stop hook
 
-`references/stop_hook.sh` is a Claude Code `Stop` hook that opens the pane without being asked. It parses the task-root-relative artifact path from the handoff fence, resolves its task directory directly, then stages the next command with `send-text` without submitting or writing files.
-
-The hook cannot ask a question, so every branch where the skill would ask - an unreadable agent kind, two task directories holding the same artifact, an agent name already in use - exits 0 and changes nothing. Run `/herd-next` by hand for those. Install the hook by hand in `~/.claude/settings.json`; this collection ships no `hooks` block and the installer never writes that file. Codex takes the same shape in its own `hooks.json`. Oh My Pi and Pi expose in-process extension callbacks rather than shell hooks, so they use the skill invocation only.
-
-Because step 5's busy check never treats a same-slug pane as busy, a full chain of phases splits one new pane per phase into the same tab with no bound and nothing closes the finished ones; close them by hand when the tab gets crowded.
+See [references/stop_hook.md](references/stop_hook.md) to install the hook (`references/stop_hook.sh`) that does this unprompted.

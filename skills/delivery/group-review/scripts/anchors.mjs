@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Resolve each comment's anchor line at the pinned head and check that it sits inside the request diff.
 // Usage: node anchors.mjs --stack <stack.json> --in <comments.json> --out <anchors.json>
-// comments.json: [{id, mr, path, pattern, occurrence?, line?, body}]; an explicit `line` skips the pattern.
+// comments.json: [{id, pr, path, pattern, occurrence?, line?, body}]; an explicit `line` skips the pattern.
 import fs from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {git} from './host.mjs';
@@ -44,8 +44,8 @@ export function resolveAnchors(stack, comments, {show, diff, paths}) {
   const byNumber = new Map(stack.requests.map(request => [request.number, request]));
   const pathsByRequest = new Map();
   return comments.map(comment => {
-    const request = byNumber.get(Number(String(comment.mr).replace(/^[!#]/, '')));
-    if (!request) return {...comment, line: null, in_diff: false, problem: `request ${comment.mr} is not in the stack`};
+    const request = byNumber.get(Number(String(comment.pr).replace(/^[!#]/, '')));
+    if (!request) return {...comment, line: null, in_diff: false, problem: `request ${comment.pr} is not in the stack`};
     if (typeof comment.path !== 'string' || !comment.path || comment.path.startsWith('/') || comment.path.split('/').some(part => !part || part === '.' || part === '..')) {
       return {...comment, in_diff: false, problem: 'invalid repository-relative path'};
     }
@@ -55,7 +55,7 @@ export function resolveAnchors(stack, comments, {show, diff, paths}) {
     if (!pathsByRequest.has(request.number)) pathsByRequest.set(request.number, paths(request.base_sha, request.head_sha));
     const pair = pathsByRequest.get(request.number).get(comment.path);
     const inDiff = Boolean(pair && addedLines(diff(request.base_sha, request.head_sha, pair.old_path, pair.new_path)).has(line));
-    return {...comment, old_path: pair?.old_path ?? null, new_path: pair?.new_path ?? null, mr: request.number, line, head_sha: request.head_sha, base_sha: request.base_sha, text: text.split('\n')[line - 1], in_diff: inDiff, problem: inDiff ? null : 'line is outside the request diff'};
+    return {...comment, old_path: pair?.old_path ?? null, new_path: pair?.new_path ?? null, pr: request.number, line, head_sha: request.head_sha, base_sha: request.base_sha, text: text.split('\n')[line - 1], in_diff: inDiff, problem: inDiff ? null : 'line is outside the request diff'};
   });
 }
 
@@ -76,7 +76,7 @@ export function main(argv = process.argv.slice(2)) {
   });
   fs.writeFileSync(out, `${JSON.stringify(anchors, null, 2)}\n`);
   for (const anchor of anchors) {
-    console.log(`${anchor.id} ${anchor.mr} ${anchor.path}:${anchor.line ?? '?'} ${anchor.in_diff ? 'in_diff' : `FAIL ${anchor.problem}`}`);
+    console.log(`${anchor.id} ${anchor.pr} ${anchor.path}:${anchor.line ?? '?'} ${anchor.in_diff ? 'in_diff' : `FAIL ${anchor.problem}`}`);
   }
   return anchors.every(anchor => anchor.in_diff) ? 0 : 1;
 }

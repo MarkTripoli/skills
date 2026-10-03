@@ -1,13 +1,22 @@
 ---
 name: feature-conformance
-description: Derive and validate a ticket-scoped feature contract that links mapped design sources, decisions, implementation, and evidence.
+description: Derives and validates a ticket-scoped feature contract (feature-contract.json) linking Jira requirements to mapped Figma nodes, design-document sections, decisions, implementation, and evidence. Use when video-iterative-orchestration needs a /feature-conformance preflight or delivery validation; not for exporting Figma (use /extract-figma-visuals).
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
 
 # Feature Conformance
 
-Use this companion from `video-iterative-orchestration` to derive a versioned internal contract from its existing ticket, repository, optional design-document, and optional Figma inputs. It validates delivery claims; it does not own source ingestion, worktrees, implementation, Jira transitions, Figma export, or pipelines.
+Use this skill from `video-iterative-orchestration` to derive a versioned internal feature contract from its existing Jira, repository, optional design-document, and optional Figma inputs. The feature contract validates delivery claims; it does not own source ingestion, worktrees, implementation, Jira transitions, Figma export, or pipelines.
+
+Lifecycle:
+
+- [ ] 1 derive feature ID and contract path
+- [ ] 2 build ticket-scoped rows
+- [ ] 3 reconcile changed sources
+- [ ] 4 preflight validate and repair
+- [ ] 5 adapted reviewer outcome per row
+- [ ] 6 delivery validate
 
 ## Inputs and artifacts
 
@@ -45,11 +54,20 @@ Compare only sources mapped to a selected row. A whole-document hash change alon
 
 An explicitly supplied authority source that remains unreadable is `source_unavailable` and makes preflight invalid for the affected ticket. Do not substitute a stale snapshot or guessed behavior. Unmapped Figma/design content receives no source-change classification.
 
-## Validate without idling agents
+## Validate and review
 
-Run the validator in preflight mode. `execution_ready` and `execution_ready_with_decisions` permit dispatch. Agent-generated contract errors enter an automatic repair-and-rerun loop; they are not ticket blockers. A rare `decision_needed` pauses only the affected behavior while unrelated ticket work continues.
+Run `node <skill-dir>/scripts/validate-feature-contract.mjs <contract> --mode preflight` (or `--mode delivery` after review). It prints one JSON report and exits 1 with issues listed. In preflight, fix each issue and rerun until it exits 0; agent-generated contract errors are not ticket blockers. In delivery, exit 1 is `release_held`: return its gaps to recovery and never edit row status, evidence or source-change state to clear them.
 
-Before `locally_verified`, the orchestrator invokes the unchanged read-only `agent-implementation-reviewer` through the feature-contract review adapter named by `video-iterative-orchestration`. The adapter supplies a row-scoped review plan, final diff, and evidence while preserving the reviewer's standard plan-to-diff contract. This skill does not add feature-contract behavior to the shared reviewer.
+| Mode | State | Action |
+| --- | --- | --- |
+| preflight | `execution_ready` or `execution_ready_with_decisions` | Dispatch |
+| preflight | `contract_invalid` | Repair and rerun |
+| delivery | `delivery_ready` | Submit |
+| delivery | `release_held` | Return the gaps to recovery |
+
+A rare `decision_needed` pauses only the affected behavior while unrelated ticket work continues.
+
+Before `locally_verified`, the orchestrator invokes the unchanged read-only `agent-implementation-reviewer` through the review adapter named by `video-iterative-orchestration`. The adapter supplies a row-scoped review plan, final diff, and evidence while preserving the reviewer's standard plan-to-diff contract. This skill does not add feature-contract behavior to the shared reviewer.
 
 The orchestrator records one adapted reviewer outcome per row:
 

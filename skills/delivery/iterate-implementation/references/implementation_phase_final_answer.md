@@ -15,5 +15,5 @@ Next action:
 Open a new session in {run_location}, then run:
 
 ```text
-{implementation_command} @{plan_file}
+{implementation_command} @{source_file}
 ```

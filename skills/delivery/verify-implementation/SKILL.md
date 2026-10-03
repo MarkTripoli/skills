@@ -1,39 +1,41 @@
 ---
 name: verify-implementation
-description: Run for /verify-implementation requests. In a session that did not write the code, re-run the repository's own checks and every acceptance item the task's artifacts promise, record what each returned against what was expected, grade every item, and report passed, failed, or blocked.
+description: Re-runs the repository's own checks and every acceptance item the task artifacts promise in a session that did not write the code, records observed output against expected, and grades the task passed, failed or blocked. Use when the user runs /verify-implementation, after /implement-plan, /implement-outline, /fix-bug or /iterate-implementation, or before /review-code; not for driving the app through its UI (use /test-app).
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
 
 # Verify Implementation
 
-The implementation receipts say what was checked; this phase checks it. A session that never saw the implementer's context re-runs the repository's checks and every acceptance item the artifacts promise, records what each command or observation returned, grades the record, and saves a `verification` artifact whose
-`status` routes the delivery workflow: `passed` continues to the review, `failed` sends the failed items back to `iterate-implementation`, `blocked` stops the run until a prerequisite outside the change is supplied.
+The implementation artifacts say what was checked; this phase checks it. A session that never saw the implementer's context re-runs the repository's checks and every acceptance item the artifacts promise, records what each command or observation returned, grades the record, and saves a `verification` artifact whose `status` routes the delivery workflow: `passed` continues to the review, `failed` sends the failed items back to `iterate-implementation`, `blocked` stops the run until a prerequisite outside the change is supplied.
 
 One rule shapes every step: a receipt, a summary, a ticked checkbox, or a sentence that says a check passed is a claim. Evidence is a command this session ran with its output recorded, or an observation this session made. Claims are the list of what to re-run; they are never results.
 
-For a delivery task, record the full source fingerprint, not just a short HEAD. Source repair invalidates earlier verification, review, recording, and inspection; do not treat a prior passing receipt as current. `node <skills-dir>/deliver/contract.mjs status <task-dir>` reports artifact currency and what publication
-lacks; optional for manual work.
+For a delivery task, save the output of `node <skills-dir>/deliver/contract.mjs revision <task-dir>` as `revision`, never a git hash, record the policy and baseline paths, and report the evidence still missing. A source change makes earlier verification, review, recording and inspection historical. `node <skills-dir>/deliver/contract.mjs status <task-dir>` reports currency; optional for manual work.
+
+Copy this list and tick it as you go:
+
+- [ ] task and inputs read
+- [ ] commit and diff recorded
+- [ ] C items discovered
+- [ ] A items collected
+- [ ] every item executed with output recorded
+- [ ] graded
+- [ ] status set
+- [ ] artifact saved
 
 ## Steps
 
-1. **Locate the task and read primary inputs.** Read `task.md`, current `planning.plan` or `planning.structure`, every indexed `implementation.receipt` iteration, and for bugfix current `debugging.reproduction` and `implementation.fix`. Use summaries only for other current artifacts. Read the verification templates.
+1. **Read primary inputs**: Read `task.md`, current `planning.plan` or `planning.structure`, all indexed `implementation.receipt` iterations, and for bugfix current `debugging.reproduction` and `implementation.fix`. Use current summaries for other artifacts. Read `references/verification_template.md`.
 
 2. **Check current verification.** Re-run every item in current `review.verification` and record a successor, keeping prior bytes/digests unchanged. A semantic-invalid receipt proves no approval; its correction uses the round from `contract.mjs review-next`. Historical path/hash/metadata corruption still blocks
    recording.
 
-3. **Record the revision and read the diff.** Note `git rev-parse --short HEAD`, the branch, and whether `git status --porcelain` shows uncommitted changes (recorded under `### Known limits`; the checks run against the tree as it is). Resolve the merge target per the conventions' Commits section (the existing pull
-   request base, then `task.md` `base:`, then the repository default branch) and list the change with `git diff --name-status <target>...HEAD`. Read the diff of every test, fixture, or check file it names, and the product diff for a branch that special-cases the exact values a test uses. Every such test file is an item
-   `T1`, `T2`, and so on, with `expected` "the change keeps this check's strength" and `observed` your digest of the diff: which tests were added, removed, skipped (skip, only, xfail, todo), or rewritten, how each assertion, fixture, or input changed, and any special-cased test value found in product code. A deleted,
-   skipped, or loosened check fails the item unless a plan phase asked for that change in so many words.
+3. **Record the commit and read the diff.** Note the full `git rev-parse HEAD`, the branch, and whether `git status --porcelain` shows uncommitted changes (recorded under `### Known limits`; the checks run against the tree as it is). Save that status and `git diff HEAD` in step 6's temporary directory before the first check. Resolve the merge target per the conventions' Commits section and list the change with `git diff --name-status <target>...HEAD`. Read the diff of every test, fixture, or check file it names, and the product diff for special-cased test values. Every such test file is an item `T1`, `T2`, and so on, with `expected` "the change keeps this check's strength" and `observed` your digest of the diff: which tests were added, removed, skipped (skip, only, xfail, todo), or rewritten, how each assertion, fixture, or input changed, and any special-cased value found in product code. A deleted, skipped, or loosened check fails the item unless a plan phase asked for that change in so many words.
 
-4. **Discover repository checks from manifests and CI**, never receipts: `package.json` (`test`, `lint`, `typecheck`, `build`, `check`, using the lockfile's package manager); `Makefile` (`test`, `lint`, `check`); `Cargo.toml` (`cargo test`, CI's `cargo clippy`); `go.mod` (`go test ./...`, `go vet ./...`);
-   `pyproject.toml`, `setup.cfg`, `tox.ini` (`pytest`, configured `ruff`/`mypy`); `Package.swift` (`swift test`); `build.gradle` (`./gradlew test`); `.github/workflows/*.yml` and `*.yaml`, including reusable workflows; and optional `.gitlab-ci.yml` with its includes. Exclude deployments. Preserve workflow arguments,
-   matrices and event context: resolve `BASE..HEAD` from the PR or merge target and `PR_TITLE` from the actual PR for commit/title checks such as `.github/workflows/commits.yml`. Each invocation is `C1`, `C2`, etc., expected to exit 0 without failing tests or meet its stricter contract. Install dependencies with the
-   lockfile command. No checks: no `C` items; Known limits says none defined.
+4. **Discover the repository's checks.** From the manifest and the CI configuration, never from the receipts; the per-ecosystem commands are in [references/check_discovery.md](references/check_discovery.md). Each is a check item `C1`, `C2`, and so on, with `expected` "exits 0 with no failing test" or the stricter outcome the check defines. Install dependencies with the lockfile's command when a check cannot run without them. No check found: no `C` item, and `### Known limits` says the repository defines none.
 
-   Resolve each executable invocation from CI, repository documentation, or command help, including required arguments, build targets, and matrix values. If a bare script prints usage because arguments are missing, run its supported invocation and grade that result; the missing-argument error is not an implementation
-   failure. Preserve the script's interface. An unavailable required input is a missing prerequisite under step 8.
+   Resolve each executable invocation from CI, repository documentation, or command help, including required arguments, build targets, and matrix values. If a bare script prints usage because arguments are missing, run its supported invocation and grade that result; the missing-argument error is not an implementation failure. An unavailable required input is a missing prerequisite under step 8.
 
 5. **Collect the acceptance items.** In this order, dropping later duplicates of the same behavior: `task.md` `## Acceptance criteria`; the `## Desired End State` bullets of the plan or outline; every phase's `### Verify` checkbox of the plan or outline; the `### Verify` lines of every implementation receipt; for a
    `bugfix` task, the reproduction's `Run:` command with `expected` "passes; the reported behavior no longer shows", plus the regression test the fix added with `expected` "fails on the merge target, passes on HEAD" (run it on the target in a temporary `git worktree add <temp dir> <target>`, removed afterwards). A risk
@@ -41,16 +43,9 @@ lacks; optional for manual work.
    `<artifact>:<line>`, `claimed` (`yes` when an implementation receipt says this item was checked, else `no`), and `decided by`: the exact command to run, the request to make, or the observation to take. An item nothing in this environment can decide (a person's judgment, a device, an external account, a production
    system) gets `decided by` "not in this environment" with the reason; its verdict will be `untested`.
 
-6. **Execute.** Run every `C` and `A` command yourself, from the project root, one at a time, with a timeout suited to the check (ten minutes when nothing says otherwise). Record the exit code and the decisive output lines: the failing test names, the error, the printed value the item asked about, trimmed to what
-   decides the item. Make requests and observations the same way (a `curl` with its response body, a CLI invocation with its stdout). Never take a result from a receipt, a summary, a CI badge, or an earlier session. Write every decided `C` and `A` item to `steps.json` in a temporary directory outside the repository
-   (`mktemp -d`) as `[{id, expected, observed}]`, `observed` being the recorded text, and every `T` item to `diffs.json` in the same directory, `observed` being your digest of the diff (which tests were added, removed, skipped, or rewritten, and how each assertion, fixture, or input changed), never the diff itself.
-   Repository code, diffs, and secrets never go in `observed`.
+6. **Execute.** Run every `C` and `A` command yourself, from the project root, one at a time, with a timeout suited to the check (ten minutes when nothing says otherwise). Record the exit code and the decisive output lines: the failing test names, the error, the printed value the item asked about. Make requests and observations the same way (`curl` with its response body, a CLI with its stdout). Never take a result from a receipt, a summary, a CI badge, or an earlier session. Write every decided `C` and `A` item to `steps.json` in a temporary directory outside the repository (`mktemp -d`) as `[{id, expected, observed}]`, `observed` being the recorded text, and every `T` item to `diffs.json` in the same directory, `observed` being the step 3 digest, never the diff itself. Repository code, diffs and secrets stay out of `observed`.
 
-7. **Grade.** Deterministic results first: a `C` item whose command exits nonzero, or an `A` item whose `expected` names an exact string or exit code the record contradicts, is `fail` before anything is asked. Then run `node <skills dir>/typed-judgment/judge.mjs grade-steps --kind command <temp dir>/steps.json --json`
-   for the remaining `C` and `A` rows, and `grade-steps --kind diff <temp dir>/diffs.json --json` for the `T` rows (`<skills dir>` is the directory that holds this skill; in a checkout, `skills/delivery`). Exit 0: take each row's `verdict`, `satisfied` (the probability, recorded in the table's Confidence column), and
-   `severity` (0 none, 1 cosmetic, 2 functional or weakened, 3 blocking or disabled). Each answered run writes one line to stderr, `judge: model <model>, tokens <n> in / <m> out`; do not discard stderr, and copy that line's model and counts into the `Graded by:` line so a later disagreement can be attributed to a
-   version. Write `unavailable` there when no call was answered. Exit 3, no `node`, or a row whose verdict is `unclear`: decide that item yourself by comparing `observed` with `expected`, assign a severity on the same scale, leave Confidence as `hand`, say in `### Known limits` that the helper was unavailable or which
-   rows were `unclear`, and give each such row a `### Verify` checkbox so a person re-decides it. Items decided by nothing in this environment are not sent; their verdict is `untested`, severity 0.
+7. **Grade.** Deterministic results first: a `C` item whose command exits nonzero, or an `A` item whose `expected` names an exact string or exit code the record contradicts, is `fail` before anything is asked. Then run `node <skills-dir>/typed-judgment/judge.mjs grade-steps --kind command <temp dir>/steps.json --json` for the remaining `C` and `A` rows, and `grade-steps --kind diff <temp dir>/diffs.json --json` for the `T` rows (`<skills-dir>` is the directory that holds this skill; in a checkout, `skills/delivery`). Exit 0: take each row's `verdict`, `satisfied` (the probability, recorded in the table's Confidence column), and `severity` (0 none, 1 cosmetic, 2 functional or weakened, 3 blocking or disabled). Each answered run writes one line to stderr, `judge: model <model>, tokens <n> in / <m> out`; do not discard stderr; copy that line's model and counts into the `Graded by:` line. Write `unavailable` there when no call was answered. Exit 3, no `node`, or a row whose verdict is `unclear`: decide that item yourself by comparing `observed` with `expected`, assign a severity on the same scale, leave Confidence as `hand`, say in `### Known limits` that the helper was unavailable or which rows were `unclear`, and give each such row a `### Verify` checkbox so a person re-decides it.
 
 8. **Set the status.**
    - `passed`: every required item passes and no item fails. Optional untested rows explicitly use `Required: no` and an item-specific `- <id>: <reason>` under `### Known limits`. Missing `Required` means yes; required untested blocks.
@@ -62,27 +57,17 @@ lacks; optional for manual work.
    fingerprint), `checkpoint: final`, `reviewed_commit` (HEAD), `reviewer_model` (observed, or `unobserved: <requested>`) and `round` (`contract.mjs review` checks them; passed is approve, failed is changes), and merge `target`. Fill Run with claimed/unclaimed acceptance counts and retain every `C`, `T`, and `A` row
    with observed output, verdict, confidence, and severity. Empty Findings/Missing read `None.`. Human Review names the table and findings; Verify lists every `C` command and every failed, untested, or hand-decided item; Known limits retains actual untested scope, missing helpers, dirty source, and absent checks.
 
-   Save the revision, policy/baseline pointers, retained outputs, and first incomplete action. Expose the actual remaining app-test, review, recording, inspection, and publication prerequisites. For a passed answer, set `{next_command}` to `/test-app` when requested app testing remains, otherwise `/review-code`.
+   Expose the remaining app-test, review, recording, inspection, and publication prerequisites. For a passed answer, set `{next_command}` to `/test-app` when requested app testing remains, otherwise `/review-code`.
 
-10. **Final answer.** `status: passed` uses `references/verification_passed_answer.md`; `status: failed` uses `references/verification_failed_answer.md`, where `{plan_file}` is the name of the plan or structure outline from step 1, or of this verification artifact when the task has neither (its `## Findings` is the
-    feedback); `status: blocked` uses `references/verification_blocked_answer.md`. Fill the selected template exactly, using the conventions' placeholders, plus `{needed}`: one line per item of the artifact's `## Missing` list. End with one fenced `text` command; nothing follows the fence. When `status: blocked` and
-    the missing prerequisite needs a human, post one blocker to the task's Slack thread per `agent-slack-control-plane` [feature-thread mode](https://github.com/MarkTripoli/skills/blob/main/skills/delivery/agent-slack-control-plane/SKILL.md#post-a-blocker).
+10. **Final answer.** Read the answer template selected by status: `passed` uses `references/verification_passed_answer.md`; `failed` uses `references/verification_failed_answer.md`, with `{source_file}` the worktree-relative path of the selected plan or outline, otherwise this verification artifact; `blocked` uses `references/verification_blocked_answer.md`. Fill `{needed}` from `## Missing` and other placeholders per the conventions. End with the template's one command fence. A human prerequisite goes to the orchestrator; by hand, post it per `agent-slack-control-plane`'s feature-thread mode.
 
 ## Rules
 
 - Never edit product code, configuration, or test files, and never commit code. Save the verification artifact locally in the task directory; exclude the resolved task root from any code commit.
 - Run each check as the repository defines it, never a narrowed variant that leaves out the failing part. A single test file or a focused command is an extra `A` item, not a replacement for the `C` item.
-- A failing check is recorded, never fixed; the next phase fixes, this phase records. Say what failed and what was seen, not what should be changed.
-- Deterministic results decide before the typed-judgment helper is asked; the helper reads the prose that exit codes and exact strings cannot settle.
-- Do not send repository code, diffs, or secrets to the helper; `steps.json` carries `expected` and trimmed `observed` text only.
+- A failing check is recorded, never fixed; say what failed and what was seen.
 - Quote what the command printed; never paraphrase an error message, a test name, or a printed value in `observed`.
 - Keep credentials out of the artifact and `steps.json`. An item that would need a secret this environment lacks is `untested` and names the secret's purpose, not its value.
 - Stop the servers, containers, or emulators you started; leave running ones you found as they were.
-- Preserve acceptance and reproduction receipts, screenshots, and recordings under the task directory's `evidence/`, including failed and blocked attempts. Before removing temporary worktrees or scratch directories, copy any durable evidence out and update the verification artifact's links to the retained copies.
-  Remove only disposable working files; do not delete cited evidence.
-- If a check unexpectedly writes new runtime evidence inside product source, preserve byte-identical copies under the task's `evidence/`, record the original paths and failure, then remove only those new source copies before finishing. Leave pre-existing outputs, implementation and test files, staged work, and
-  documented build outputs alone. This relocation is cleanup, not a repair: the failed check remains failed.
-
-## References
-
-Read from this skill directory: `references/verification_template.md`, `references/verification_passed_answer.md`, `references/verification_failed_answer.md`, `references/verification_blocked_answer.md`.
+- Preserve acceptance and reproduction receipts, screenshots, and recordings under the task directory's `evidence/`, including failed and blocked attempts. Before removing temporary worktrees or scratch directories, copy any durable evidence out and update the verification artifact's links to the retained copies. Remove only disposable working files; do not delete cited evidence.
+- If a check unexpectedly writes new runtime evidence inside product source, preserve byte-identical copies under the task's `evidence/`, record the original paths and failure, then remove only those new source copies before finishing. Leave pre-existing outputs, implementation and test files, staged work, and documented build outputs alone. The check remains failed; this is cleanup, not repair.

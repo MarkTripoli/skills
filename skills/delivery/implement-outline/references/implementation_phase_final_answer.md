@@ -15,5 +15,5 @@ Next action:
 Open a new session in {run_location}, then run:
 
 ```text
-/implement-outline @{plan_file}
+/implement-outline @{source_file}
 ```

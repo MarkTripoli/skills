@@ -1,0 +1,72 @@
+{
+  "workflow": "deliver",
+  "gates": "none",
+  "host": "gitlab.babysit.invalid",
+  "frozen": true,
+  "order": [
+    {
+      "project": "group/api",
+      "project_id": 101,
+      "iid": 7,
+      "pr_id": 10107,
+      "depends_on": [],
+      "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "pipeline_id": 101,
+      "pipeline_status": "failed",
+      "job_id": 101,
+      "job_name": "tenant-validation",
+      "host_status": "ci_must_pass",
+      "review_note": {
+        "id": 71,
+        "updated_at": "2026-09-30T10:05:00Z",
+        "body": "Edited finding: reject blank tenant IDs as well as whitespace IDs. This changes public validation behavior; preserve the documented error response. Existing product baseline and worktree are required before a repair."
+      }
+    },
+    {
+      "project": "group/web",
+      "project_id": 102,
+      "iid": 7,
+      "pr_id": 10207,
+      "depends_on": ["gitlab.babysit.invalid/group/api!7"],
+      "dependency_source": "projects/102/merge_requests/7/blocks",
+      "head": "cccccccccccccccccccccccccccccccccccccccc",
+      "pipeline_id": 200,
+      "pipeline_status": "success",
+      "job_id": 200,
+      "host_status": "blocked_status",
+      "discussion": {"id": "web-review", "note_id": 81, "resolved": false}
+    },
+    {
+      "project": "group/ops",
+      "project_id": 103,
+      "iid": 9,
+      "pr_id": 10309,
+      "depends_on": [],
+      "head": "dddddddddddddddddddddddddddddddddddddddd",
+      "pipeline_id": 300,
+      "pipeline_status": "success",
+      "job_id": 300,
+      "host_status": "discussions_not_resolved"
+    }
+  ],
+  "cursor": "gitlab.babysit.invalid/group/api!7",
+  "sweeps_completed": 2,
+  "fixture_ticks": 1,
+  "watcher_active": false,
+  "stop": "blocked",
+  "prerequisites": [
+    "Original API, web and ops worktrees, task directories and authentic existing baselines",
+    "Original API documented error contract and behavior-changing repair/proof at the current original head",
+    "Actual API prerequisite completion before original frontend review",
+    "Ops host discussion readiness reconciliation",
+    "Current-head original verification, clean review, evidence policy, baseline, fresh evidence and sealed inspection for every PR",
+    "Supported authorized plain-deliver host breadcrumb publication operation"
+  ],
+  "host_breadcrumbs_posted": false,
+  "description_puts": 0,
+  "product_repairs": 0,
+  "merges": 0,
+  "merge_policy": "never merge under plain deliver",
+  "routing_artifact": "01-delivery-follow-up-babysit-ordered.md",
+  "failed_log_artifact": "02-ci-trace-babysit-ordered.md"
+}

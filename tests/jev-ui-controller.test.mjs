@@ -1,5 +1,5 @@
 import {act as actIos} from '../skills/delivery/jev-ui/scripts/ios.mjs';
-import {runAcceptance,parseArgs,stopNativeFixture} from '../skills/delivery/jev-ui/scripts/acceptance.mjs';
+import {runAcceptance,parseArgs,stopNativeFixture} from './jev-ui-acceptance/acceptance.mjs';
 import {EventEmitter} from 'node:events';
 const fakeChild = result => { const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); queueMicrotask(() => { if (result.stdout !== undefined) child.stdout.emit('data', result.stdout); if (result.stderr !== undefined) child.stderr.emit('data', result.stderr); child.emit('close', result.code ?? null, result.signal ?? null); }); return child; };
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
@@ -9,7 +9,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {run, consumeDecision, verifyPostconditions, configuredHelper, independentPostconditions, closeOwnedBrowser} from '../skills/delivery/jev-ui/scripts/jev-ui.mjs';
 import {buildRequest, validateAnswers, choose as chooseTypesafeRequest} from '../skills/delivery/jev-ui/scripts/typesafe.mjs';
-import {stableIdentity} from '../skills/delivery/jev-ui/scripts/acceptance.mjs';
+import {stableIdentity} from './jev-ui-acceptance/acceptance.mjs';
 test('CLI cleanup closes only its owned browser and reports cleanup failures',async()=>{let browserClosed=0,nativeClosed=0;assert.equal(await closeOwnedBrowser({close:async()=>{browserClosed++;}},'browser'),null);assert.equal(browserClosed,1);assert.equal(await closeOwnedBrowser({close:async()=>{nativeClosed++;}},'android'),null);assert.equal(nativeClosed,0);const cleanupError=await closeOwnedBrowser({close:async()=>{throw Error('close failed');}},'browser');assert.match(cleanupError.message,/close failed/);});
 test('TypeSafe chooser receives bounded action outcomes without payloads',async()=>{let request;const result=await chooseTypesafeRequest({goal:'set Name',snapshot:{elements:[{id:'name',name:'Name',operations:['TYPE_TEXT']}]},recentActions:[{operation:'TYPE_TEXT',target:'name',changed:false,raw:'helper-private'}],systemOne:async value=>{request=value;return{operation:'DONE',model:'jev-test',usage:{total_tokens:1}}}});assert.equal(result.decision.operation,'DONE');assert.deepEqual(request.state.recentActions,[{operation:'TYPE_TEXT',target:'name',changed:false}]);assert.doesNotMatch(JSON.stringify(request),/helper-private/);});
 test('ambiguous editable equality is visible but not established in the indexed chooser',()=>{
@@ -166,4 +166,12 @@ test('origin guard waits for delayed Fetch readiness on initial and popup target
   await new Promise(resolve=>setTimeout(resolve,35));
   assert.ok(socket.commands.some(command=>command.method==='Runtime.runIfWaitingForDebugger'&&command.sessionId==='popup-session'));
   await guard.close();
+});
+test('a missing browser driver ends blocked with the reason, not failed',async()=>{
+  const {open}=await import('../skills/delivery/jev-ui/scripts/browser.mjs');
+  const err=await open({url:'http://localhost:1/',command:'jev-no-such-driver'}).catch(e=>e);
+  assert.equal(err.code,'driver');
+  const result=await run({goal:'g',session:{id:'s'},adapter:{observe:async()=>{throw err}},helperCommand:undefined,limits:{maxActions:1,maxModels:1}});
+  assert.equal(result.status,'blocked');
+  assert.match(result.reason,/missing driver: jev-no-such-driver/);
 });

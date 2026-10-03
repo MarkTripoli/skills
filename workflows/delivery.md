@@ -8,7 +8,7 @@
   plan      read-only research workers -> plan -> plan reviewer -> human gate when gates=plan
   build     per plan phase: builder implements, checks, commits
             -> slice reviewer (fresh, read-only) -> approve | findings
-            repeat until approve, 3 rounds, or no progress
+            repeat until approve or no progress (or an owner cap)
   final     repo checks + evidence; verify-implementation and review-code reviewers on HEAD
   publish   describe-pr, gh pr create, evidence links
   follow-up CI failures and review threads -> the same builder/reviewer pairs
@@ -59,7 +59,7 @@ For `/deliver` feature requests, the standing brief in `task.md` carries: agent-
 
 ## Gates
 
-`gates` values: `plan` (default) and `none`; older `all` and `mr` read as `plan`.
+`gates` values: `plan` (default) and `none`; older `all` reads as `plan`.
 
 - `plan`: the human approves the plan (or the structure outline or epic plan), recorded as a dated owner line in `task.md` `## Decisions`. Design discussion, PRD and TDD reviews stay human gates when the workflow uses them.
 - `none`: no human review between skills. Only for explicitly authorized unattended work.
@@ -81,9 +81,9 @@ Skills keep a deterministic fallback when their judgment is optional. Research +
 
 Builders implement one plan phase or outline step at a time and read saved artifacts, not prose claims. Plan or outline unreadable: record the error and run `iterate-plan` or `iterate-structure-outline`; never restart planning from an older document.
 
-Code changes need a fresh verification and review. Reviewers are independent: fresh context, strongest model unless one is named, write a record with `reviewed_commit` and `reviewer_model`. Blocking findings are limited to unmet acceptance criteria, wrong behavior, security, data loss or broken checks; everything else is `follow-up`. Round two and later judge only earlier findings, the builder's `fixed` or `disputed` answers and the fix diff, so a review loop ends on approval, three rounds or no progress instead of running on.
+Code changes need a fresh verification and review. Reviewers are independent: fresh context, strongest model unless one is named, write a record with `reviewed_commit` and `reviewer_model`. Blocking findings are limited to unmet acceptance criteria, wrong behavior, security, data loss or broken checks; everything else is `follow-up`. Round two and later judge only earlier findings, the builder's `fixed` or `disputed` answers and the fix diff, so a review loop ends on approval or no progress. No round cap applies unless `task.md` `## Decisions` holds an owner's `review-round-limit: N` (N >= 1); the orchestrator copies a cap stated in the request there. `review-round-limit: none` removes it. At the cap the loop stops `needs-human`.
 
-`verify-implementation` runs repo checks + promised acceptance items itself. `test-app` exercises the real app when the task asks for it. Failures → `iterate-implementation`, then fresh verify or app-test. `review-code` + `fix-code-review` repeat until clean, three rounds, or no progress. Then `record-evidence` captures the current behavior, uploads and verifies the direct hosted capture, and records the next `evidence.recording` metadata iteration; `describe-pr` includes the direct URL in its required Evidence section and posts the same URL in a separate PR comment. A local file path, assertion-only report, failed capture, or stale revision blocks publication. Behavior-changing review feedback requires a fresh capture and updates to both destinations. See [verification](../docs/verification.md), [app testing](../docs/app-testing.md).
+`verify-implementation` runs repo checks and promised acceptance items itself; `test-app` exercises requested real surfaces. Failures go through `iterate-implementation` and fresh verification. `review-code` and `fix-code-review` repeat until clean, no progress, or an explicit owner cap. Then `record-evidence` captures and hosts current behavior, and `iterate-evidence` seals inspection. `describe-pr` publishes the direct capture URL in the complete description and a distinct PR comment. Missing, failed, local-only or stale capture blocks publication. Behavior-changing feedback requires recapture and both destinations updated. See [the evidence flow](../docs/verification.md).
 
 ## Task, artifact, and worktree ownership
 
@@ -99,12 +99,25 @@ User own task branches, artifacts, worktrees. Uninstall never permits deleting t
 
 Ready children run in separate worktrees. Each child PR follows its own review → record-evidence → iterate-evidence → describe-pr chain, with a capture and comment bound to that child's source revision. Prerequisite branches must be merged into the epic branch; PR descriptions do not prove merge. Merge PRs separately, then run `epic-wave` with the same epic task directory.
 
+## Babysit an existing PR set
+
+[`babysit`](../skills/delivery/babysit/SKILL.md) is an active-session supervisor, not a `/deliver` merge stage. It freezes full host/repository/number identities and source-backed dependencies in ignored immutable `supervision.babysit` checkpoints under the configured task root; GitLab selections retain project-scoped IIDs. GitHub is the default host. `/babysit @<checkpoint>` resolves current indexed state and the same selection; only genuine no-index legacy tasks retain numbered files. The template is a starting point, not a mandatory table/JSON schema. External prerequisites, cycles, stale heads and inaccessible requirements block affected paths while independent safe nodes continue.
+
+Record fix and merge authority separately; observe-only grants neither. Explicit “fix and merge these until complete” scopes safe merging to the frozen selection. Prioritize frontier current-head CI, then actionable review; choose debugging, delegation and verification proportionally rather than enforcing a fixed attempt count. Preserve original task/worktree history and serialize writers in isolated selected source-branch worktrees.
+
+Ordinary scoped repairs need actual source access and deciding checks, not original task artifacts, baseline recordings, sealed evidence or proof-helper preflight. Missing optional helpers use the ordinary workflow inline, not observe-only. Full delivery proof remains binding when explicitly required by the owner, repository or original task, including before-edit requirements; routine repairs do not automatically trigger independent review, evidence capture and publication.
+
+Configured native trains are preferred with a source-SHA guard; ordinary merge is allowed only when train/queue requirements are verified disabled. Merge eligibility still requires current required CI/review, host protections and confirmed dependencies. Queued is not merged, and cross-project children wait for host-confirmed prerequisites. Cancel unsafe queued work and read back actual merged state. New review can race a train merge despite cancellation; full-description writes can race human edits. The skill reports those limits rather than claiming atomic safety.
+
+Load one-level references conditionally for the next repair or merge operation. Slack/Jira/breadcrumb details are needed only when requested or configured: one coordinator-owned Slack thread gates mutations once it owns the run; direct MCP mode is explicit and pre-coordinator only. Jira annotations require named-issue authority. Stable `skills:babysit` description markers preserve unrelated body/evidence. Installation still includes existing executable proof companions, not a daemon or mandatory workflow. Monitoring ends with the active session unless an actual runtime scheduler remains active.
+
 ## Phase table
 
 Artifact type = template frontmatter `type`. Human gates count only when enabled. Worker-role skills separate in source tree.
 
 | Skill | Artifact type | Human gate | Runs in |
 |---|---|---|---|
+| babysit | babysit | Scoped fix/merge authority | By hand; ordered existing GitLab PR supervision |
 | jira-issue-refinement | jira-refinement | Jira write only | Read-only `/deliver` preflight or standalone existing-ticket rewrite |
 | gather-sources | sources | no | By hand before chain; outside source digest |
 | create-research-questions | research-questions | no | Research |
@@ -148,6 +161,9 @@ Artifact type = template frontmatter `type`. Human gates count only when enabled
 | ci-commit | commit | no | By hand; explicit-path commit conventions |
 | review-artifact-comments | comment-review | no | By hand; artifact feedback |
 | show-me | show-me | no | By hand; visual explanation |
+| author-skill | none | no | By hand; create or revise a skill in this collection |
+| explain | none | no | By hand; evidence-grounded audience-specific explanation and optional external HTML |
+| land-pr-stack | none | Scoped merge authority | By hand; selected stack landing, GitHub by default |
 | safety-dance | none | no | By hand |
 | security-check | none | no | Explicit opt-in Semgrep scan with accepted-risk handling |
 
@@ -155,7 +171,7 @@ Artifact type = template frontmatter `type`. Human gates count only when enabled
 
 Call `/<skill> @<artifact or task directory>` in Claude Code, OMP, Pi, or compatible host; `$<skill>` in Codex. Unless exception, task conventions open worktree for new task. Later phases use that checkout + branch.
 
-`iterate-evidence` combines the installed recorder with an authorized, capped inspect/repair loop. The shared delivery contract keeps the repair allowance across new sessions and continuation. Independent invocation remains available; a record-only request does not authorize product edits. Install through the [repository installer](../docs/getting-started.md#inspect-and-repair-recorded-behavior) so executable companion dependencies accompany the selected skill.
+`iterate-evidence` combines the installed recorder with an authorized inspect/repair loop, capped only by an owner limit. The shared delivery contract keeps the repair state across new sessions and continuation. Independent invocation remains available; a record-only request does not authorize product edits. Install through the [repository installer](../docs/getting-started.md#inspect-and-repair-recorded-behavior) so executable companion dependencies accompany the selected skill.
 
 Phase table = guide, not must-install-all. Manual PR handoff includes `/record-evidence` after `/review-code` and any fixes, before `/describe-pr`; `oneshot` implementation and bugfix follow the same order. A passed receipt is not a published PR until the strict GitHub publication gate verifies original hosted captures, successful recorded commands, passing per-test cues, tested/current-head SHAs, the full body and a distinct same-PR comment. Optional custom hooks still run. Manual handoff names the saved artifact and ends with:
 

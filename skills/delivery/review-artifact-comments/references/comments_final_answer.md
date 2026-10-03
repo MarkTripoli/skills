@@ -9,5 +9,5 @@ Next action:
 Open a new session in {run_location}, then run:
 
 ```text
-/iterate-implementation
+{next_command}
 ```

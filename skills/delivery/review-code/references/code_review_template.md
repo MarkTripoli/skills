@@ -5,7 +5,7 @@ branch:
 base_branch:
 base_sha:
 head_sha:
-revision: "[exact contract source fingerprint reviewed]"
+revision: [the quoted string that contract.mjs revision <task-dir> prints]
 status: findings
 checkpoint: final
 reviewed_commit: "[HEAD sha reviewed]"
@@ -56,31 +56,32 @@ summary: "State the reviewed scope, the highest-risk result, and what the next p
 ## Five-Axis Assessment
 
 - helper axis-coverage: model `<model>`, tokens `<n>` in / `<m>` out (or `unavailable`)
+- helper verdicts: covered | asserted | skipped | unclear; level 0-3; confidence 0.00
 
 ### Correctness
 
 - assessment and evidence:
-- helper coverage: covered | asserted | skipped | unclear, level 0-3, confidence 0.00 (or `unavailable`)
+- helper coverage: [verdict, level, confidence, or unavailable]
 
 ### Readability and Simplicity
 
 - assessment and evidence:
-- helper coverage: covered | asserted | skipped | unclear, level 0-3, confidence 0.00 (or `unavailable`)
+- helper coverage: [verdict, level, confidence, or unavailable]
 
 ### Architecture
 
 - assessment and evidence:
-- helper coverage: covered | asserted | skipped | unclear, level 0-3, confidence 0.00 (or `unavailable`)
+- helper coverage: [verdict, level, confidence, or unavailable]
 
 ### Security
 
 - assessment and evidence:
-- helper coverage: covered | asserted | skipped | unclear, level 0-3, confidence 0.00 (or `unavailable`)
+- helper coverage: [verdict, level, confidence, or unavailable]
 
 ### Performance
 
 - assessment and evidence:
-- helper coverage: covered | asserted | skipped | unclear, level 0-3, confidence 0.00 (or `unavailable`)
+- helper coverage: [verdict, level, confidence, or unavailable]
 
 ## Verification Story
 

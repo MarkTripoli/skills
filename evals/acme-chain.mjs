@@ -15,11 +15,11 @@ export const request = `Add an \`acme-status\` channel to notifyctl that posts a
 // sources artifact. Paragraphs may wrap across lines and be any length; a pointer in a separate
 // bibliography paragraph does not cite the fact.
 const POINTER = /(?:acme-status-api\.md|\d{2}-sources-[a-z0-9-]+\.md|artifacts\/research\/sources\/\d{4}\.md|research\.sources\.\d{4}|sources artifact)/i;
-const sameParagraph = (fact, pointer = POINTER) => ({
+const sameParagraph = (fact, pointer = POINTER, label = fact) => ({
   test: (text) => paragraphs(text, new RegExp(fact, "i")).some((paragraph) => pointer.test(paragraph)),
-  toString: () => `a paragraph that states ${fact} and points at the saved document or the sources artifact`,
+  toString: () => `a paragraph that states ${label} and points at the saved document or the sources artifact`,
 });
-export const cited = (fact) => sameParagraph(fact);
+export const cited = (fact, label = fact) => sameParagraph(fact, POINTER, label);
 
 export function researchPhases(researchNext) {
   return [
@@ -65,11 +65,18 @@ export function researchPhases(researchNext) {
       artifactType: "research",
       template: "research_template.md",
       next: researchNext,
-      check: ({ artifact }) => {
+      // A `node` stub that logs and then runs the real node: every `node .../judge.mjs <command>` the session runs lands in `ctx.stubCalls`,
+      // since a non-terminal phase leaves no session recording to read.
+      stubs: { node: `exec ${JSON.stringify(process.execPath)} "$@"` },
+      check: ({ artifact, stubCalls = [] }) => {
         const text = artifact?.text ?? "";
+        const ran = (command) => stubCalls.some((call) => new RegExp(String.raw`^node\s.*judge\.mjs\s+${command}\b`).test(call));
+        const skipped = /skipped/i.test(section(text, "### Known limits", { last: true }) ?? "");
         return failures(
+          // The judgment steps are skippable; the session either ran the citation and coverage checks or its Known limits says they were skipped.
+          skipped || (ran("cite(?:-artifact)?") && ran("coverage")) ? null : `research: no \`judge.mjs cite\` and \`judge.mjs coverage\` call recorded, and Known limits does not say judgments were skipped (node calls: ${stubCalls.filter((call) => /^node\s/.test(call)).length})`,
           expect.matches("research: channel registry cited by path", text, /src\/channels\/index\.mjs/),
-          expect.matches("research: vendor rate limit cited to the saved doc or the sources artifact", text, cited("60 requests per minute")),
+          expect.matches("research: vendor rate limit cited to the saved doc or the sources artifact", text, cited(String.raw`\b60 ?(?:requests?|req)?(?: per |/)min`, "the 60 requests per minute rate limit")),
           expect.matches("research: vendor endpoint cited to the saved doc or the sources artifact", text, cited("/incidents")),
           expect.matches("research: vendor error contract present", text, sameParagraph("429", /Retry-After/i)),
         );

@@ -766,7 +766,7 @@ type GitHubProvider struct {
 
 // GitLabProvider holds resolved GitLab provider settings.
 type GitLabProvider struct {
-	// DraftPullRequests opens created GitLab MRs as drafts
+	// DraftPullRequests opens created GitLab PRs as drafts
 	// (glab mr create --draft). Default false.
 	DraftPullRequests bool
 }
@@ -1273,7 +1273,7 @@ eval:
   max_cases: 200
   diversified_size: 32
 
-# Provider-specific settings. Opt in to opening created PRs/MRs as drafts.
+# Provider-specific settings. Opt in to opening created PRs as drafts.
 # providers:
 #   github:
 #     draft_pull_requests: true

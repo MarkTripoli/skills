@@ -190,6 +190,9 @@ func stopDaemon(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("stop installed daemon service: %w", err)
 			}
 			_ = os.Remove(path)
+			if err := daemon.WaitForOwnershipRelease(p, 5*time.Second); err != nil {
+				return err
+			}
 			fmt.Fprintln(cmd.OutOrStdout(), "daemon stopped")
 			return nil
 		}

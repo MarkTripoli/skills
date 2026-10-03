@@ -1,15 +1,28 @@
 ---
 name: implement-plan
-description: Run for /implement-plan requests. Orchestrate phased implementation from a saved plan artifact.
+description: Orchestrates phased implementation of a saved plan; starts one agent-implementer per phase, verifies its checks, ticks the plan, commits, and writes a receipt. Use when the user runs /implement-plan or a /deliver builder assignment names a plan; not for a structure outline (/implement-outline) or follow-up feedback (/iterate-implementation).
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
 
 # Plan Implementation Orchestrator
 
-Coordinate the current approved `planning.plan` artifact in the configured task directory. Start focused child workers, verify them, advance on green automated checks, and hand off after implementation is complete. Do not do bulk implementation inline.
+Coordinate an approved plan artifact in `<task-root>/<slug>/`, as a builder assignment inside `/deliver` or standalone. Start focused implementers, verify them, advance on green automated checks, and hand off after implementation is complete. Do not do bulk implementation inline.
 
 ## Workflow
+
+Copy this checklist for each phase:
+
+```text
+- [ ] locate plan and phase
+- [ ] dispatch agent-implementer
+- [ ] verify its report
+- [ ] tick the plan
+- [ ] run missed checks
+- [ ] commit
+- [ ] write receipt
+- [ ] reply or start next phase
+```
 
 ### 1. Locate the task and the plan
 
@@ -20,82 +33,58 @@ Coordinate the current approved `planning.plan` artifact in the configured task 
 - The current phase is the first phase whose checkboxes are not all checked. The receipt you write at the end of the phase is the review artifact for that phase.
 - If no plan is found, ask for the plan path and stop.
 
-### Baseline evidence
+When the task's evidence policy needs a baseline and none is sealed, run `/record-evidence --baseline`; once implementation has begun it captures from a temporary `git worktree add <tmp> <base-sha>`. It never blocks dispatching an implementer. `node <skills-dir>/deliver/contract.mjs status <task-dir>` is optional and prints artifact currency.
 
-Capture baseline evidence when the task's evidence policy needs it, from a temporary `git worktree add <tmp> <base-sha>` if implementation has begun (pass `baseline_commit`). It never blocks dispatching an implementer. `node <skills-dir>/deliver/contract.mjs status <task-dir>` reports artifact currency; optional.
+When the latest evidence inspection failed, reserve the repair once: use the attempt id your assignment names; with no id, run `node <skills-dir>/deliver/contract.mjs repair-begin "$TASK" <attempt-id>` before editing and `repair-complete` after.
 
-When the latest evidence inspection failed, reserve the repair: use the attempt id your assignment names and do not reserve again; with no id, call `node <skills-dir>/deliver/contract.mjs repair-begin "$TASK" <attempt-id>` before editing and `repair-complete` after.
+### 2. Start the implementer
 
-### 2. Start the implementer child worker
+For each phase that still needs work, start a child worker for role `agent-implementer` with the assignment: the plan path and the phase number (see the conventions' Child workers section); wait for it; read its final message. Do not copy plan content into the assignment. The assignment does not ask the implementer to commit; step 5 commits. Model roles follow `deliver`'s Model roles; record the observed worker model or that selection was unavailable.
 
-For each phase that still needs work, start a child worker for role `agent-implementer` with the assignment: the plan path and the phase number (see the conventions' Child workers section); wait for it; read its final message. Do not copy plan content into the assignment. Model roles follow `deliver`'s Model roles; record the observed worker model or that selection was unavailable.
+### 3. Review the implementer's output
 
-### 3. Review the child output
-
-The child worker's final message is its deliverable. Read it and compare it with the plan. Use only findings you have read from the worker's final message, verified against the repository.
-
-Inspect the implementer report and confirm:
+The implementer's final message is its deliverable. Read it, compare it with the plan, and use only findings verified against the repository. Confirm:
 
 - Which files changed.
 - Which plan items were completed.
 - Which automated checks ran and their results.
 - Which deferred human evidence is pending, with pointers.
-- Whether the child reported mismatches, blockers, or intentionally skipped work.
+- Whether it reported mismatches, blockers, or intentionally skipped work.
 
-If the child says the plan cannot be followed, present that mismatch to the user instead of improvising a new direction.
+If the implementer says the plan cannot be followed, present that mismatch to the user instead of improvising a new direction.
 
-The child never writes task artifacts. Its final message ends with a `## Plan Checkboxes Earned` section listing each checkbox earned by an automated check that ran and passed, with the passing command. For an indexed task, copy the current plan to the next `planning.plan` iteration, tick only checkboxes backed by recorded passing commands, and record that iteration; never edit the current record. A legacy task without `index.json` follows the conventions' in-place rule. Continue phase resolution from the updated current plan.
+The implementer never writes task artifacts. Its final message ends with a `## Progress Markers Earned` section listing each checkbox earned by an automated check that ran and passed, with the passing command. Apply those updates to the plan file yourself: update a staged immutable successor, tick only the checkboxes backed by a recorded passing command.
 
 ### 4. Run missed automated checks
 
-Run checks the child missed and checks the plan makes mandatory: build, test, lint, typecheck, generated-code verification, or focused acceptance scripts. Keep enough output to prove pass or fail.
+Run checks the implementer missed and checks the plan makes mandatory: build, test, lint, typecheck, generated-code verification, or focused acceptance scripts.
 
-### 5. Report the phase to the human
+### 5. Commit
 
-After each verified numeric phase, record the updated plan iteration first, then record the next immutable `implementation.receipt` from `references/implementation_template.md`, even when later phases remain. Set `completed_phase` to the highest proven plan phase. Fill `Human Review` with exact targets, checks, and known limits.
+When every Automated Verification checkbox in the phase is checked with a recorded passing result, create a focused code commit with a Conventional Commits subject (conventions, Commits section). Stage explicit code paths with `git add`; never stage the whole repository, and exclude the configured task root from every code commit. Append a dated line to the plan's `## Progress` (phase, commit, reviewer verdict when a reviewer ran). Save the ticked plan locally; never stage, commit, or push task artifacts. When commits are explicitly forbidden, leave code unstaged and record that actual state. `/ci-commit` stays the manual fallback for work outside this flow.
 
-Persist the baseline/policy paths, actual completed phase, remaining verification/review/evidence, and first incomplete action. Finish all code staging and commits (step 6) before recording the source revision; later source changes invalidate it. Do not report delivery complete from implementation checks alone.
+### 6. Write the receipt, then reply or continue
 
-Use `references/implementation_phase_final_answer.md` between numeric phases and `references/implementation_final_answer.md` only after the terminal phase. Fill `{artifact_link}` with a relative Markdown link to the receipt, `[<task-root>/<slug>/artifacts/implementation/receipt/<NNNN>.md](.agents/tasks/<slug>/<task-root>/<slug>/artifacts/implementation/receipt/<NNNN>.md)`, copy its checks, invoke this skill with the same plan between phases, and keep the command fence last.
+After the commit and recording the plan successor, allocate the next immutable `implementation.receipt` iteration from `references/implementation_template.md`, even when later phases remain. Set `completed_phase` to the highest proven plan phase. Fill `Human Review` with exact targets, checks, and known limits. Record baseline and policy paths, actual completed phase, remaining verification, review and evidence, first incomplete action, and the source revision; later source changes invalidate the revision. Do not report delivery complete from implementation checks alone.
 
-Then summarize:
+Then take the first case that applies:
 
-```markdown
-## Phase [N] Implementation Summary
+0. A required check still fails after step 4: present it as in Handling Issues; commit nothing.
+1. The assignment names one phase, or the phase block has `human-gated: true`: reply and stop. Use `references/implementation_phase_final_answer.md` when another phase remains, and the terminal answer in case 2 when none does.
+2. No phase remains (every phase complete, and any `human-gated: true` phase confirmed): reply with `references/implementation_final_answer.md`, with `{next_command}` set to `/verify-implementation`.
+3. Otherwise: start the next phase at step 2 with a fresh implementer, and send no reply.
 
-**Completed by child worker:**
-- [completed work]
-
-**Automated verification:**
-- [command] -> [result]
-
-**Deferred human evidence (recorded, not executed):**
-- [evidence item and pointer, or None]
-
-Automated checks are green, so implementation continues to the next phase.
-```
-
-### 6. Commit and continue
-
-When every Automated Verification checkbox in the phase is checked with a recorded passing result, create a focused commit with a Conventional Commits subject and start the next phase without waiting. Stage explicit code paths with `git add`; never stage the whole repository or mix task artifacts into the code commit. `/ci-commit` stays the manual fallback outside this flow.
-
-### 7. Repeat for the next phase
-
-When the assignment names one phase, you are done after step 6. Otherwise repeat the same child-worker, review, verification, and commit cycle. A `human-gated: true` line in the executed phase block is the only reason to stop for confirmation; report it with `references/implementation_phase_final_answer.md` and wait.
+Fill `{artifact_link}` with the canonical receipt link and `{source_file}` with the selected plan's worktree-relative path, copy its checks, and keep the command fence last. Add no prose around the template. Deferred human evidence is reported with pointers and never marked executed.
 
 ## Special Instructions
 
 ### Resuming Work
 
-If the plan already has progress markers:
-
-- Treat checked items as complete unless the diff, test result, or user report makes that unsafe.
-- Resume at the first phase whose checkboxes are not all checked.
-- Ask the child to continue from that point, not to restart the whole plan.
+Treat checked items as complete unless the diff, test result, or user report makes that unsafe. Ask the implementer to continue from the first unchecked phase.
 
 ### Handling Issues
 
-When a child worker or local verification finds a mismatch, stop the phase loop and present:
+When an implementer or local verification finds a mismatch, stop the phase loop and present:
 
 ```markdown
 Issue in Phase [N]
@@ -108,22 +97,3 @@ How should I proceed?
 ```
 
 Do not patch around unclear plan drift without user direction.
-
-### Multiple Phases
-
-Every phase advances on green automated checks. Start a fresh implementer worker for each phase and verify between phases. Deferred human evidence is reported with pointers and never marked executed. A `human-gated: true` line in the executed phase block stops the run for confirmation.
-
-### Artifact Notes
-
-Read `references/implementation_template.md`, `references/implementation_phase_final_answer.md`, and `references/implementation_final_answer.md`.
-
-If you update the indexed plan or write a receipt, record the next immutable iteration in `planning.plan` and `implementation.receipt` respectively through the conventions' Recording an artifact flow.
-
-## After Final Phase Completion
-
-When every phase is complete, automated checks pass, and any phase with `human-gated: true` received its recorded confirmation:
-
-1. Save changed task artifacts in the task directory.
-2. Commit remaining code changes before the PR handoff using the `/ci-commit` conventions: inspect the diff and stage explicit code paths, excluding the resolved task root. Keep task artifacts local and uncommitted.
-3. Read `references/implementation_final_answer.md`.
-4. Respond with that template only, including the `/verify-implementation` block; review, recording, and PR publication follow independent verification.

@@ -2,7 +2,7 @@
 # The app-level token (scope connections:write) is not part of a manifest: create it under
 # "Basic Information > App-Level Tokens" after the app exists and export it as SLACK_APP_TOKEN.
 display_information:
-  name: slack-coordinator
+  name: Slack coordinator
   description: Posts one thread per agent run and reads the owner's replies in that thread.
   background_color: "#1f2933"
 features:
@@ -13,7 +13,7 @@ features:
     messages_tab_enabled: true
     messages_tab_read_only_enabled: false
   bot_user:
-    display_name: slack-coordinator
+    display_name: Slack coordinator
     always_online: false
 oauth_config:
   scopes:

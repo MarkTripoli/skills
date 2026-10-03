@@ -23,7 +23,7 @@ export default {
         artifact?.fm?.status === "failed" ? null : "zero-limit: inspected defect must leave the receipt failed",
         artifact?.fm?.stop_reason === "exhaustion" ? null : "zero-limit: zero repair allowance must stop at exhaustion",
         artifact?.fm?.limit === "0" ? null : "zero-limit: receipt must retain the explicit zero limit",
-        artifact?.fm?.consumed_rounds === "0" ? null : "zero-limit: baseline inspection must consume no repair round",
+        artifact?.fm?.consumed_rounds === "0" ? null : "zero-limit: initial inspection must consume no repair round",
         findings.some((cells) => cells[0] === "IE-001" && cells.some((cell) => normalize(cell) === "open"))
           ? null : "zero-limit: inspected defect must retain stable finding IE-001 as open",
         findings.every((cells) => !cells.some((cell) => normalize(cell) === "resolved"))

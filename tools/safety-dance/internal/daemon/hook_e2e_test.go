@@ -34,8 +34,7 @@ func TestExecutableGateAdmission(t *testing.T) {
 		t.Fatalf("build hook helper: %v\n%s", err, out)
 	}
 
-	socket := filepath.Join(os.TempDir(), "sd-"+filepath.Base(base)+".sock")
-	t.Cleanup(func() { _ = os.Remove(socket) })
+	socket := shortSocketPath(t)
 	server := ipc.NewServer()
 	var mu sync.Mutex
 	var notifications []PushNotification

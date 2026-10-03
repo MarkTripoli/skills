@@ -18,12 +18,12 @@ sha: [current commit]
 
 ## Phase Checklist
 
-- [ ] Step 1: [Work area]
-- [ ] Step 2: [Work area]
+- [ ] Phase 1: [Work area]
+- [ ] Phase 2: [Work area]
 
 ---
 
-## Step 1: [Work area]
+## Phase 1: [Work area]
 
 [What this phase accomplishes and why it is independently useful.]
 
@@ -64,7 +64,7 @@ Omit this section when the phase has none.
 
 ---
 
-## Step 2: [Work area]
+## Phase 2: [Work area]
 
 [Repeat the same structure.]
 
@@ -87,3 +87,11 @@ Omit this section when the phase has none.
 ### Known limits
 
 - [Known limit, or `None.`]
+
+## Progress
+
+- [YYYY-MM-DD: phase, commit, reviewer verdict; or `None.`]
+
+## Decisions
+
+- [Decision, owner, reason; or `None.`]

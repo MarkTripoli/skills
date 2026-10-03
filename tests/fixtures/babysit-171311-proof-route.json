@@ -1,0 +1,282 @@
+{
+  "node": {
+    "identity": "gitlab.babysit.invalid/group/api!7",
+    "host": "gitlab.babysit.invalid",
+    "project": "group/api",
+    "project_id": 101,
+    "iid": 7,
+    "url": "https://gitlab.babysit.invalid/group/api/-/merge_requests/7",
+    "selected": true,
+    "source_project": null,
+    "source_project_id": null,
+    "source_project_provenance": "Host PR responses omit source_project_id; original context must authenticate the source project before writer lock or push.",
+    "source_branch": "tenant-validation",
+    "target_branch": "main",
+    "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "worktree": "/unavailable/group/api/worktree",
+    "task_dir": "/unavailable/group/api/.agents/tasks/tenant-validation",
+    "state": "blocked",
+    "last_observed_at": "2026-10-01T17:29:15.060162+00:00",
+    "dependencies": [],
+    "risks": [
+      "Original product context and baseline inaccessible; no substitute source/proof.",
+      "Full-description writes have no atomic human-edit guard.",
+      "Source project/fork identity and effective merge permission are not exposed by observed PR/protection responses; reconfirm before source writes or merge."
+    ],
+    "capabilities": {
+      "host_version": "19.5.0",
+      "trains": false,
+      "merge_pipelines": false,
+      "required_checks": {
+        "only_allow_merge_if_pipeline_succeeds": true,
+        "only_allow_merge_if_all_discussions_are_resolved": true,
+        "only_allow_merge_if_all_status_checks_passed": true,
+        "allow_merge_on_skipped_pipeline": false
+      },
+      "branch_protection": [
+        {
+          "name": "main",
+          "allow_force_push": false,
+          "merge_access_levels": [
+            {
+              "access_level": 40
+            }
+          ]
+        }
+      ],
+      "permissions": null,
+      "merge_method": "merge",
+      "squash_option": "never",
+      "observed_at": "2026-10-01T17:29:15.060162+00:00"
+    },
+    "ci": {
+      "source_head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "pipelines": [
+        {
+          "id": 101,
+          "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "ref": "tenant-validation",
+          "status": "failed",
+          "source": "push",
+          "web_url": "https://gitlab.babysit.invalid/group/api/-/pipelines/101"
+        },
+        {
+          "id": 100,
+          "sha": "0000000000000000000000000000000000000000",
+          "status": "success",
+          "ref": "tenant-validation",
+          "source": "push"
+        }
+      ],
+      "required_status": "failed",
+      "external_status_checks": [],
+      "synthetic_proof": null,
+      "jobs": {
+        "group/api:jobs:101": [
+          {
+            "id": 101,
+            "name": "tenant-validation",
+            "status": "failed",
+            "allow_failure": false,
+            "pipeline": {
+              "id": 101,
+              "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "ref": "tenant-validation",
+              "status": "failed",
+              "source": "push",
+              "web_url": "https://gitlab.babysit.invalid/group/api/-/pipelines/101"
+            },
+            "web_url": "https://gitlab.babysit.invalid/group/api/-/jobs/101"
+          }
+        ],
+        "group/api:jobs:100": [
+          {
+            "id": 100,
+            "name": "tenant-validation",
+            "status": "success",
+            "allow_failure": false,
+            "pipeline": {
+              "id": 100,
+              "sha": "0000000000000000000000000000000000000000",
+              "status": "success",
+              "ref": "tenant-validation"
+            },
+            "web_url": "https://gitlab.babysit.invalid/group/api/-/jobs/100"
+          }
+        ]
+      },
+      "log_receipts": [
+        "group/api:trace:101"
+      ]
+    },
+    "reviews": {
+      "cursors": [],
+      "observed_versions": [
+        {
+          "id": 71,
+          "discussion_id": null,
+          "updated_at": "2026-09-30T10:00:00Z",
+          "body_hash": "2a9dda53df6dfb09d8908cc0e717c5540703484bee009471b74c56fd95fe9fa7",
+          "body": "Reject whitespace tenant IDs. This is a behavior-changing validation defect, not a wording-only comment.",
+          "disposition": "blocked-original-source-behavior-repair",
+          "handled_sha": null,
+          "observed_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "resolvable": false
+        },
+        {
+          "id": 71,
+          "discussion_id": null,
+          "updated_at": "2026-09-30T10:05:00Z",
+          "body_hash": "f66b43a0cc159904c1a822c46f961191fd5d6b7a9dff7cbe15b96b87c5465823",
+          "body": "Edited finding: reject blank tenant IDs as well as whitespace IDs. This changes public validation behavior; preserve the documented error response. Existing product baseline and worktree are required before a repair.",
+          "disposition": "blocked-original-source-behavior-repair",
+          "handled_sha": null,
+          "observed_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "resolvable": false
+        }
+      ],
+      "actionable": [
+        71
+      ],
+      "approval_state": {
+        "approvals_left": 0,
+        "rules": [
+          {
+            "id": 1,
+            "name": "required",
+            "approvals_required": 1,
+            "approved": true,
+            "approved_by": [
+              {
+                "id": 501,
+                "username": "reviewer"
+              }
+            ]
+          }
+        ]
+      },
+      "approvals": {
+        "approvals_required": 1,
+        "approvals_left": 0,
+        "approved_by": [
+          {
+            "user": {
+              "id": 501,
+              "username": "reviewer"
+            }
+          }
+        ]
+      },
+      "discussions": []
+    },
+    "proof": {
+      "source_sha": null,
+      "status": "blocked-original-context-unavailable",
+      "baseline": null,
+      "verification": null,
+      "app_test": null,
+      "review": null,
+      "evidence": null,
+      "inspection": null,
+      "description": null,
+      "evidence_comment": null,
+      "existing_evidence_url": "https://evidence.invalid/group/api/baseline.mp4",
+      "existing_evidence_validated": false,
+      "inspection_helper_preflight": "Executable delivery contract status invoked; original task unavailable, so no inspection receipt validated."
+    },
+    "train": {
+      "entry": null,
+      "pipeline": null,
+      "composition": [],
+      "observed_at": "2026-10-01T17:29:39.636551+00:00",
+      "auto_merge_enabled": false,
+      "merge_when_pipeline_succeeds": false
+    },
+    "blockers": [
+      "Restore original worktree, task context, authentic baseline/policy and current source-bound sealed verification/review/evidence/inspection/publication receipts.",
+      "Current source CI failed.",
+      "Actionable non-resolvable note 71 requires original validation behavior repair; no code or documented response contract available."
+    ],
+    "worker": null,
+    "pending_actions": [],
+    "retries": {
+      "fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:failed:71",
+      "attempts": 0,
+      "no_progress": 0,
+      "last_result": "Blocked before repair: original source/task unavailable.",
+      "next_at": null,
+      "max_attempts": 3,
+      "max_no_progress": 2,
+      "read_retry_seconds": [
+        15,
+        30,
+        60
+      ]
+    },
+    "breadcrumb": {
+      "operation_id": "babysit-ordered-breadcrumb-101-7-1",
+      "status": "confirmed",
+      "url": "https://gitlab.babysit.invalid/group/api/-/merge_requests/7",
+      "source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "second_sweep_preserved": true
+    },
+    "head_transition": {
+      "from": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "to": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "cause": "external fixture schedule; not our repair",
+      "previous_proof_invalidated": true,
+      "observed_at": "2026-10-01T17:29:15.060162+00:00"
+    },
+    "head_readback_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "host_readiness": {
+      "state": "opened",
+      "detailed_merge_status": "ci_must_pass",
+      "draft": false,
+      "has_conflicts": false,
+      "blocking_discussions_resolved": true
+    },
+    "repair_routing": {
+      "identity": "gitlab.babysit.invalid/group/api!7",
+      "expected_head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "original_worktree": "/unavailable/group/api/worktree",
+      "original_task_dir": "/unavailable/group/api/.agents/tasks/tenant-validation",
+      "writer_lock": null,
+      "dispatch_status": "blocked-no-worker-created",
+      "authorized_actions": "Only original in-scope source repair after context restoration; no merge/enrollment/retarget/history rewrite/Slack/Jira by worker.",
+      "behavior_change": true,
+      "proof_route": [
+        "verify-implementation on repaired/current source",
+        "test-app for original requested product surfaces",
+        "fresh independent review-code",
+        "record-evidence against authentic original baseline/policy; direct hosted bytes and sealed source-bound receipt",
+        "iterate-evidence inspecting actual capture, bound to source/capture hashes",
+        "describe-pr preserving human body, existing evidence and owned breadcrumbs; distinct evidence comment; read back direct hosted capture, description and comment; open capture for playback/readability",
+        "delivery contract status on original task and immediate host head/CI/reviews/approval/status/dependency/protection readiness reads before merge"
+      ],
+      "unblock_checks": [
+        "test -d /unavailable/group/api/worktree",
+        "test -f /unavailable/group/api/.agents/tasks/tenant-validation/task.md",
+        "Authenticate original baseline/policy and current source-bound receipt/capture hashes; source project identity and effective permissions; no green defaults for missing proof."
+      ],
+      "affected_source": "src/tenant-validation.mjs",
+      "deciding_command": "npm test -- --run tests/tenant-validation.test.mjs",
+      "failing_pipeline_id": 101,
+      "failing_job_id": 101,
+      "required_job": "tenant-validation",
+      "failure_signature": "blank tenant IDs accepted; expected documented 400 validation response",
+      "log_receipt": "babysit-api-job-101.log",
+      "review_note_id": 71,
+      "review_version": "2026-09-30T10:05:00Z",
+      "review_body_hash": "f66b43a0cc159904c1a822c46f961191fd5d6b7a9dff7cbe15b96b87c5465823",
+      "root_cause_status": "Observed failing validation behavior from simulated log; implementation root cause not verified without original source.",
+      "required_change": "Reject blank and whitespace tenant IDs while preserving the documented 400 validation response; retrieve that contract, do not invent payload/status semantics.",
+      "reproduction": "Not run: original source unavailable.",
+      "first_unblock_check": {
+        "command": "test -f /unavailable/group/api/worktree/src/tenant-validation.mjs",
+        "exit_code": 1
+      },
+      "priority": "Frontier CI repair before frontier review; API behavior repair remains blocked; independent ops host/proof reconciliation is not delayed by this dependency."
+    }
+  },
+  "prose": "### Original API validation repair is blocked, not reproduced\n\n[Second host sweep](babysit-sweep-2.json) authenticates required failed pipeline/job 101 at API head `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`, source branch `tenant-validation`, target `main`. [Actual simulated failed job log](babysit-api-job-101.log) names original `/unavailable/group/api/worktree/src/tenant-validation.mjs` and deciding check `npm test -- --run tests/tenant-validation.test.mjs`: blank tenant IDs were accepted instead of the documented 400 validation response. This proves the simulated check failure, not product reproduction or an implementation-level root cause.\n\nExisting non-resolvable note 71 changed from `2026-09-30T10:00:00Z` to `2026-09-30T10:05:00Z`, with both SHA-256 body hashes and bodies preserved in `reviews.observed_versions`. The edited finding adds blank-ID rejection to whitespace rejection and preserves the documented response. Both observations are blocked/unhandled with `handled_sha: null`; actionable 71 remains and handled cursors stay empty.\n\n`test -f /unavailable/group/api/worktree/src/tenant-validation.mjs` exited 1. Restore the original source, tests, task, authentic baseline/policy and documented error response. Reconfirm original source project/branch and current host head before assigning one writer. The required behavior change routes through current verification, applicable product test, fresh independent code review, original-policy recording with hosted bytes and sealed receipt, source/capture-bound inspection, description recapture and a distinct evidence comment with hosted readbacks. No original proof was fabricated; a reply or note resolution must wait for actual handling and readback. Source repair invalidates verification/review/evidence readiness before editing.\n\n"
+}

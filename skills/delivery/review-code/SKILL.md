@@ -1,19 +1,21 @@
 ---
 name: review-code
-description: Run for /review-code requests. Review the complete task diff and record only concrete findings.
+description: Reviews the complete task diff against its requirements and tests and records only concrete, evidence-backed findings as a code-review artifact. Use when the user runs /review-code, asks for a code review of a branch or pull request, or after /verify-implementation or /fix-code-review passes; not for fixing findings (use /fix-code-review) or reviewing a plan (use agent-implementation-reviewer).
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
 
 # Code Review
 
-Review the complete code change without editing product code. Output is a durable artifact containing concrete findings or recording a clean review. The delivery workflow's review loop (or the user, by hand) alternates `/review-code` and `/fix-code-review` until a review is clean.
+Review the complete code change without editing product code; run read-only checks to confirm or reject suspected issues. Output is a durable artifact containing concrete findings or recording a clean review. The delivery workflow's review loop (or the user, by hand) alternates `/review-code` and `/fix-code-review` until a review is clean.
 
 ## Setup
 
-Locate the task directory and read `task.md` per the conventions (create one from the request when none exists). Read `@file` args fully. Read `references/code_review_template.md`, `code_review_findings_answer.md`, `code_review_clean_answer.md`, `code_review_blocked_answer.md`.
+Locate the task directory and read `task.md` per the conventions. Read `@file` args fully. Read `references/code_review_template.md`.
 
-For delivery, require current verification when configured. Save the source fingerprint as `revision`; a changed source tree makes an older clean review historical. `node <skills-dir>/deliver/contract.mjs status <task-dir>` reports artifact currency and what publication lacks; optional for manual work.
+For delivery, require current verification when configured.
+
+For a delivery task, save the output of `node <skills-dir>/deliver/contract.mjs revision <task-dir>` as `revision`, never a git hash, record the policy and baseline paths, and report the evidence still missing. A source change makes earlier verification, review, recording and inspection historical. `node <skills-dir>/deliver/contract.mjs status <task-dir>` reports currency; optional for manual work.
 
 ## Pin scope
 
@@ -47,34 +49,29 @@ Interfaces: accessibility, keyboard/pointer, responsive, manual/screenshot evide
 
 Clean: improves health, satisfies task, follows conventions, no critical- or major-severity findings. Do not block on preference/perfection/non-blocking.
 
-Classify each finding on three axes (CodeRabbit vocabulary; no live integration):
-- Type: Nitpick (optional polish) | Potential issue (possible defect) | Refactor suggestion (structural improvement).
-- Severity: critical | major | minor | trivial | info (guidance, not a problem).
-- Category: Functional correctness | Security and privacy | Data integrity and integration | Performance and scalability | Stability and availability | Maintainability and code quality.
+Classify each finding by Type, Severity and Category, using the values in the template.
 
 Gate on Severity: critical or major set `findings`. minor, trivial, and info are Advisories and do not prevent `clean`. CR- findings are `blocking`; ADV- findings are `follow-up`. Only an unmet acceptance criterion, wrong behavior, security, data loss, or a broken check may be critical or major; readability and
 architecture concerns are advisories unless they cause one of those.
 
-Lead with highest-leverage. Prefer proven to weak. Structural: name smallest fix (collapse branches, separate orchestration/policy, move to owner, reuse helper, explicit boundary, delete pass-through, extract module).
+Structural: name smallest fix (collapse branches, separate orchestration/policy, move to owner, reuse helper, explicit boundary, delete pass-through, extract module).
 
-Size: ~100 easy, ~300 coherent, ~1000 check split. Signals. Require split when bundled/worsens oversized. Review complete scope.
+Size: about 100 changed lines is easy to review, 300 is coherent, and 1000 or more needs a split check. When the change bundles unrelated concerns, or makes an already oversized file larger, raise one advisory (`ADV-`, severity minor) asking for a split. Size alone is never critical or major.
 
-Dependencies: verify stack insufficient, check lockfile/maintenance/license/security/changelog. One upgrade unless coupled.
+Dependencies: for each added or upgraded dependency, check that the existing stack cannot do the job, then the lockfile diff, maintenance, license, security advisories and changelog. Raise one finding per unrelated upgrade.
 
-Identify newly orphaned code explicitly. Orphaned: task-caused dead = major severity. No deletion of uncertain pre-existing without direction.
+Code the change newly orphans (unused exports, helpers, flags, files) is a major finding when the task caused it. Do not ask to delete uncertain pre-existing code.
 
 Report evidence-backed from change. Critical/major severity: id, file:line, failure, evidence, fix. Advisories: location, evidence, suggestion. No praise, enforced nits, speculation, pre-existing.
 
-Run read-only checks to confirm/reject. No edits.
-
-Verify tests/build/manual/screenshots. Green checks alone are not sufficient.
+Verify tests, build, manual checks and screenshots. Green checks alone are not sufficient.
 
 ## Save
 
 Allocate the next immutable iteration through the conventions. Write `<task-root>/<slug>/artifacts/review/code/<NNNN>.md` using the template. Record `checkpoint: final`, `reviewed_commit` = HEAD, `reviewer_model` as the observed model (or `unobserved: <requested>`) and `round`; `contract.mjs review <task-dir> <file>`
 checks the record (clean is approve, findings is changes). Set `findings` when actionable remain, `clean` when none, `blocked` when a gate failed; blocked is not clean. Save the review locally in the task directory without staging, committing, or pushing it.
 
-Then run `node <skills dir>/typed-judgment/judge.mjs axis-coverage <the staged file> --json`, where `<skills dir>` is the directory that holds this skill (in a checkout, `skills/delivery`). Record each row's verdict, level, and confidence on that axis's `helper coverage` line, and the stderr provenance line under the
+Then run `node <skills-dir>/typed-judgment/judge.mjs axis-coverage <the staged file> --json`, where `<skills-dir>` is the directory that holds this skill (in a checkout, `skills/delivery`). Record each row's verdict, level, and confidence on that axis's `helper coverage` line, and the stderr provenance line under the
 heading. An axis that comes back `skipped` or `asserted` was not examined against the pinned scope: examine it, rewrite that section with evidence from the changed code or the reason the axis does not apply, save again, and run the command once more. Run it at most twice and record what the second run says. A finding
 the second pass turns up is a finding like any other and can change the status. Exit 3, no `node`, no `TYPESAFE_API_KEY`, or an `unclear` row: write `unavailable` on the lines it would have filled, decide those axes yourself, and say under `## Review Limits` that judgments were skipped.
 
@@ -84,8 +81,10 @@ Keep all task records local; never stage or commit them.
 
 ## Next
 
-- Findings: use `references/code_review_findings_answer.md`, next `/fix-code-review @<artifact>`.
-- Clean: use `code_review_clean_answer.md`, next `/record-evidence`.
-- Blocked: use `code_review_blocked_answer.md`, stop until gate runs.
+Read the one answer template the status selects.
+
+- Findings: `references/code_review_findings_answer.md`, next `/fix-code-review @<artifact>`.
+- Clean: `references/code_review_clean_answer.md`, next `/record-evidence`.
+- Blocked: `references/code_review_blocked_answer.md`, stop until the gate runs. A blocker that needs a human goes to the orchestrator; run by hand, post it to the task's Slack thread per [feature-thread mode](https://github.com/MarkTripoli/skills/blob/main/skills/delivery/agent-slack-control-plane/references/feature-thread.md#post-a-blocker).
 
 Use template only. Fill `{artifact_link}` with the saved canonical task-root-relative path. End with one fenced `text` command. A legacy task without `index.json` follows the conventions' legacy rules.

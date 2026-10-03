@@ -7,12 +7,14 @@ const AFFIRMATIVE_CONTINUATION = /^(?:[A-Z][\p{L}\p{N}'’]*(?:\s+|$)|(?:via|wit
  * prefix into a later or negated claim.
  */
 export function normalizedExpected(expected) {
-  return Array.isArray(expected) ? expected.map(item => String(item).trim()).filter(Boolean) : [];
+  return Array.isArray(expected) ? expected.map((item) => String(item).trim()).filter(Boolean) : [];
 }
 
 export function outcomeMatches(value, requirement) {
   const text = String(value ?? '').trim();
-  const wanted = String(requirement ?? '').trim().replace(/\s+/g, ' ');
+  const wanted = String(requirement ?? '')
+    .trim()
+    .replace(/\s+/g, ' ');
   if (!text || !wanted) return false;
   const normalizedText = text.replace(/\s+/g, ' ');
   if (!normalizedText.toLocaleLowerCase().startsWith(wanted.toLocaleLowerCase())) return false;
@@ -23,16 +25,24 @@ export function outcomeMatches(value, requirement) {
 }
 
 export function isIndependentOutcomeElement(element) {
-  return element?.editable !== true && !/(?:input|edittext|textfield|textbox|textarea|combobox)/i.test(String(element?.role || ''));
+  return (
+    element?.editable !== true &&
+    !/(?:input|edittext|textfield|textbox|textarea|combobox)/i.test(String(element?.role || ''))
+  );
 }
 
 export function independentPostconditions(expected, snapshot) {
   const requirements = normalizedExpected(expected);
   const elements = Array.isArray(snapshot?.elements) ? snapshot.elements : [];
-  return requirements.filter(requirement => elements.some(element => {
-    if (!isIndependentOutcomeElement(element)) return false;
-    return [element.value, element.name, element.label].filter(value => value != null).map(String).some(value => outcomeMatches(value, requirement));
-  }));
+  return requirements.filter((requirement) =>
+    elements.some((element) => {
+      if (!isIndependentOutcomeElement(element)) return false;
+      return [element.value, element.name, element.label]
+        .filter((value) => value != null)
+        .map(String)
+        .some((value) => outcomeMatches(value, requirement));
+    })
+  );
 }
 
 export function verifyObservedPostconditions(expected, snapshot) {
@@ -43,5 +53,5 @@ export function verifyObservedPostconditions(expected, snapshot) {
 export function verifyPostconditions(expected, observed) {
   const requirements = normalizedExpected(expected);
   const text = Array.isArray(observed) ? observed.join('\n') : String(observed ?? '');
-  return requirements.length > 0 && requirements.every(item => outcomeMatches(text, item));
+  return requirements.length > 0 && requirements.every((item) => outcomeMatches(text, item));
 }

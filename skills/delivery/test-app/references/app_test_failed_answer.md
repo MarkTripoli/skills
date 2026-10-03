@@ -16,5 +16,5 @@ Next action:
 Open a new session in {run_location}, then run:
 
 ```text
-/iterate-implementation @{plan_file}
+/iterate-implementation @{source_file}
 ```

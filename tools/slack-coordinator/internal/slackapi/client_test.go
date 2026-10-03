@@ -183,12 +183,12 @@ func TestSetupProbesAndPostsThroughFakeServer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ts, err := c.PostMessage(ctx, "C1", "1699999999.000001", "*Work:* x")
+	ts, err := c.PostBlocksMessage(ctx, "C1", "1699999999.000001", "*Work:* x", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ts != "1700000000.000100" {
-		t.Fatalf("PostMessage ts = %q", ts)
+		t.Fatalf("PostBlocksMessage ts = %q", ts)
 	}
 	if len(f.posts) != 1 {
 		t.Fatalf("chat.postMessage called %d times", len(f.posts))
@@ -238,7 +238,7 @@ func TestPostBlocksMessageIncludesFallbackAndBlockKit(t *testing.T) {
 func TestRootPostOmitsThreadTS(t *testing.T) {
 	f := &fakeSlack{}
 	c := newClient(t, f)
-	if _, err := c.PostMessage(context.Background(), "C1", "", "root"); err != nil {
+	if _, err := c.PostBlocksMessage(context.Background(), "C1", "", "root", nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, set := f.posts[0]["thread_ts"]; set {
@@ -249,9 +249,9 @@ func TestRootPostOmitsThreadTS(t *testing.T) {
 func TestSlackErrorSurfaces(t *testing.T) {
 	f := &fakeSlack{postReply: `{"ok":false,"error":"channel_not_found"}`}
 	c := newClient(t, f)
-	_, err := c.PostMessage(context.Background(), "C404", "", "x")
+	_, err := c.PostBlocksMessage(context.Background(), "C404", "", "x", nil)
 	if err == nil || !strings.Contains(err.Error(), "channel_not_found") {
-		t.Fatalf("PostMessage error = %v, want channel_not_found", err)
+		t.Fatalf("PostBlocksMessage error = %v, want channel_not_found", err)
 	}
 }
 
@@ -337,19 +337,6 @@ func TestFallbackUpdateClearsStaleBlocks(t *testing.T) {
 	}
 }
 
-func TestUpdateMessage(t *testing.T) {
-	f := &fakeSlack{}
-	c := newClient(t, f)
-	ts, err := c.UpdateMessage(context.Background(), "D1", "1700000000.000100", "*Done*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ts != "1700000000.000100" {
-		t.Fatalf("UpdateMessage ts = %q", ts)
-	}
-	wantBotForm(t, f.call(t, "chat.update"), map[string]string{"channel": "D1", "ts": "1700000000.000100", "text": "*Done*", "unfurl_links": "false"})
-}
-
 func TestAddReaction(t *testing.T) {
 	f := &fakeSlack{}
 	c := newClient(t, f)
@@ -379,7 +366,7 @@ func TestLookupUserByEmail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u != (User{ID: "U0000000001", DisplayName: "ada", TZ: "Europe/London"}) {
+	if u != (User{ID: "U0000000001", DisplayName: "ada"}) {
 		t.Fatalf("LookupUserByEmail = %+v", u)
 	}
 	wantBotForm(t, f.call(t, "users.lookupByEmail"), map[string]string{"email": "ada@example.com"})
@@ -393,7 +380,7 @@ func TestUserInfoFallsBackToRealName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u != (User{ID: "U0000000001", DisplayName: "ada", TZ: "Europe/London"}) {
+	if u != (User{ID: "U0000000001", DisplayName: "ada"}) {
 		t.Fatalf("UserInfo = %+v", u)
 	}
 	wantBotForm(t, f.call(t, "users.info"), map[string]string{"user": "U0000000001"})
@@ -404,7 +391,7 @@ func TestUserInfoFallsBackToRealName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u != (User{ID: "U0000000002", DisplayName: "No Display", TZ: "UTC"}) {
+	if u != (User{ID: "U0000000002", DisplayName: "No Display"}) {
 		t.Fatalf("UserInfo without display_name = %+v", u)
 	}
 }

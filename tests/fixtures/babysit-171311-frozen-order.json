@@ -1,0 +1,68 @@
+{
+  "workflow": "deliver",
+  "gates": "none",
+  "merge_policy": "never",
+  "frozen_order": ["gitlab.babysit.invalid/group/api!7", "gitlab.babysit.invalid/group/web!7", "gitlab.babysit.invalid/group/ops!9"],
+  "dependency_edges": [{"prerequisite": "gitlab.babysit.invalid/group/api!7", "dependent": "gitlab.babysit.invalid/group/web!7", "source": "projects/group%2Fweb/merge_requests/7/blocks", "relation_id": 1}],
+  "unrelated": ["gitlab.babysit.invalid/group/ops!9"],
+  "completed_sweeps": 2,
+  "tick_count": 1,
+  "watcher_active": false,
+  "next_action": "Restore original worktrees, task directories and authentic baseline/proof; rerun the recorded unblock check. Do not replay the two completed fixture sweeps or tick again. Plain deliver never merges.",
+  "observed_heads": {"api": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "web": "cccccccccccccccccccccccccccccccccccccccc", "ops": "dddddddddddddddddddddddddddddddddddddddd"},
+  "initial_blockers": {
+    "api": ["Pipeline 100 is successful on SHA 0000000000000000000000000000000000000000, not current head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.", "Actionable reviewer note 71 requires rejecting whitespace tenant IDs; original source and proof unavailable."],
+    "web": ["API !7 is an open prerequisite from the host blocks endpoint.", "Discussion web-review note 81 is unresolved.", "Original source/task/baseline and current behavior proof unavailable."],
+    "ops": ["Host detailed_merge_status is discussions_not_resolved despite blocking_discussions_resolved=true and empty discussions.", "Original source/task/baseline and current behavior proof unavailable."]
+  },
+  "original_source_routing": {
+    "api": {"worktree": "/unavailable/group/api/worktree", "task": "/unavailable/group/api/.agents/tasks/tenant-validation", "branch": "tenant-validation"},
+    "web": {"worktree": "/unavailable/group/web/worktree", "task": "/unavailable/group/web/.agents/tasks/tenant-validation", "branch": "tenant-validation"},
+    "ops": {"worktree": "/unavailable/group/ops/worktree", "task": "/unavailable/group/ops/.agents/tasks/tenant-validation", "branch": "tenant-validation"}
+  },
+  "proof_routing": "Restore each original task and product checkout, establish its authentic pre-mutation policy and baseline, repair there, obtain current verification and clean review, capture and inspect original behavior proof, and verify hosted capture plus separate evidence comment. Do not seal isolated notifyctl evidence as product proof.",
+  "snapshot": "sweep-2-host.json",
+  "prior_snapshot": "sweep-1-host.json",
+  "stop": "blocked",
+  "unblock_check": "test -f /unavailable/group/api/worktree/src/tenant-validation.mjs",
+  "unblock_check_observed_exit": 1,
+  "unblock_check_scope": "First original-source availability prerequisite only. Original tasks, baselines, current proof and host gates must still be checked after restoration.",
+  "current_blockers": {
+    "gitlab.babysit.invalid/group/api!7": ["Required tenant-validation job 101 in pipeline 101 failed on current head bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.", "Original src/tenant-validation.mjs, task directory, authentic baseline and documented response contract unavailable.", "Edited actionable reviewer note 71 requires blank and whitespace ID rejection, preserving documented error response.", "No current original verification, clean review or inspected hosted behavior proof."],
+    "gitlab.babysit.invalid/group/web!7": ["API !7 remains open and blocks this PR through host relation 1.", "Discussion web-review note 81 remains unresolved.", "Original source/task/baseline and current behavior proof unavailable, despite successful current-head pipeline 200."],
+    "gitlab.babysit.invalid/group/ops!9": ["Host detailed_merge_status=discussions_not_resolved conflicts with blocking_discussions_resolved=true and empty discussions. Host reconciliation required, not an override.", "Original source/task/baseline and current behavior proof unavailable, despite successful current-head pipeline 300."]
+  },
+  "repair_routes": [{
+    "pr": "gitlab.babysit.invalid/group/api!7",
+    "original_source": "/unavailable/group/api/worktree/src/tenant-validation.mjs",
+    "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "pipeline": 101,
+    "job": 101,
+    "check": "tenant-validation",
+    "allow_failure": false,
+    "command_from_trace": "npm test -- --run tests/tenant-validation.test.mjs",
+    "observed": "Blank tenant IDs accepted; expected documented 400 validation response.",
+    "trace": "api-job-101.log",
+    "status": "blocked before repair; no product reproduction",
+    "proof_scope": "Existing public validation behavior. Preserve the documented error response; body/contract must be recovered from original documents, not inferred from this trace.",
+    "required_route": ["restore original source and task", "recover authentic existing baseline and pre-mutation policy", "repair blank and whitespace validation in original source", "run original targeted check and acceptance verification", "fresh clean code review on repaired head", "capture current original behavior and inspect proof", "verify hosted evidence and separate evidence comment", "recheck current-head CI and host gates"]
+  }],
+  "review_note_state": {
+    "api": {"id": 71, "previous_updated_at": "2026-09-30T10:00:00Z", "updated_at": "2026-09-30T10:05:00Z", "body": "Edited finding: reject blank tenant IDs as well as whitespace IDs. This changes public validation behavior; preserve the documented error response. Existing product baseline and worktree are required before a repair.", "action": "blocked original-source behavior repair", "resolved": false},
+    "web": {"discussion": "web-review", "id": 81, "updated_at": "2026-09-30T10:00:00Z", "body": "Review the frontend tenant validation after the API prerequisite merges.", "resolved": false, "action": "blocked API prerequisite and original frontend source/proof"}
+  },
+  "head_change": {"pr": "gitlab.babysit.invalid/group/api!7", "previous": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "current": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "consequence": "Any prior-head verification, review or evidence cannot establish current-head behavior."},
+  "host_checks": {"approvals_left": {"api": 0, "web": 0, "ops": 0}, "external_status_checks": {"api": [], "web": [], "ops": []}, "pipeline_status": {"api": "failed", "web": "success", "ops": "success"}},
+  "breadcrumbs": {
+    "scope": "local linked deliver supervision notes only; no hosted breadcrumbs published",
+    "api": "api-supervision-note.md",
+    "web": "web-supervision-note.md",
+    "ops": "ops-supervision-note.md",
+    "publication": "All three ordinary note POST operations were rejected by the simulated boundary. Do not retry through another provider or disguise them as babysit-owned mutations.",
+    "response_record": "breadcrumb-publication.json"
+  },
+  "description_publication": "blocked by missing original proof; existing human descriptions and evidence untouched",
+  "description_mutations": 0,
+  "source_mutations": 0,
+  "merge_attempts": 0
+}

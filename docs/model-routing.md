@@ -2,7 +2,7 @@
 
 Run `/configure-model-routing` when a project or user-level candidate profile is missing or needs replacement. Codex users invoke `$configure-model-routing`; other harnesses use `/configure-model-routing`. It asks one setup question at a time, writes the shared profile, and verifies it through the helper.
 
-`skills/delivery/route-model/route-model.mjs` is the shared model-selection owner for Claude Code, Codex, Oh My Pi, Pi, and portable skill installs. It accepts exact caller-supplied candidates and returns one native model identifier; it does not proxy requests, scrape provider-private registries, probe accounts, or fall back after native execution failure.
+`skills/delivery/route-model/route-model.mjs` is the shared model-selection owner for Claude Code, Codex, Oh My Pi, Pi, and portable skill installs. It accepts exact caller-supplied candidates and returns one native model identifier, or `null` without a profile; it does not proxy requests, scrape provider-private registries, probe accounts, or fall back after native execution failure.
 
 ## Machine-readable contract
 
@@ -36,7 +36,7 @@ Candidate configuration precedence is explicit `--candidates <json-file>` and `-
 {"economy":"provider/economy","candidates":[{"model":"provider/economy","cost":1,"description":"ordinary work"}],"routing":"auto"}
 ```
 
-Candidates are ordered weakest to strongest; costs are independent and may vary in either direction. Without a profile, routing preserves the economy behavior and reports that no profile was used, so a manual handoff enforces no model. The Herdr Stop hook uses the same precedence, requires successful routing when a profile exists, and launches no pane on malformed profiles or routing errors.
+Candidates are ordered weakest to strongest; costs are independent and may vary in either direction. Without a profile, the helper returns `model: null`, so a handoff enforces no model. The Herdr Stop hook uses the same precedence, requires successful routing when a profile exists, and launches no pane on malformed profiles or routing errors.
 
 `candidates` must be a non-empty array of unique objects with an exact native `model` string, a finite non-negative caller-supplied `cost`, and a non-empty capability `description`. `economy` must identify one candidate. The response includes `model`, `source`, `candidates`, `availableCandidates`, `confidence`, and `probabilities`; JEV responses also include expected losses and helper usage. Credentials are read only by the typed-judgment helper and are never placed in request or response artifacts.
 
@@ -64,4 +64,4 @@ The installer pins the profile's `economy` model on the generated `agent-impleme
 
 ## Defaults
 
-The economical default is `openai-codex/gpt-5.6-luna-fast`. The reasoning compatibility default is `openai-codex/gpt-5.6-sol`. These are policy defaults, not billing or quality claims. Use `routing: fixed` to select the economy candidate without JEV.
+There is no default model. Without a candidate profile, `route-model` returns `model: null` with `profileSource: "none"`, and callers start sessions without enforcing a model. The profile's `economy` model is the policy default; it is not a billing or quality claim. Use `routing: fixed` to select the economy candidate without JEV.

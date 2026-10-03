@@ -133,7 +133,7 @@ func TestOwnerDMRoutesRepliesAcrossIndependentRuns(t *testing.T) {
 	}
 }
 
-func TestReplyToFinishedDMRunDoesNotBecomeAssistantWork(t *testing.T) {
+func TestFinishedDMRunRepliesReceiveIdempotentGuidance(t *testing.T) {
 	fake, apiURL := newFakeSlack(t)
 	cfg := &config.Config{Slack: config.Slack{BotToken: "xoxb-1", AppToken: "xapp-1", OwnerUserID: "U1", APIURL: apiURL}}
 	inbound := make(chan socketmode.Event, 4)

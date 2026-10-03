@@ -3,7 +3,7 @@ task: [task slug]
 type: verification
 summary: "[Two to four sentences: what was re-run, the status, the failing or missing items, and what the next phase needs from this file.]"
 status: passed | failed | blocked
-revision: "[exact contract source fingerprint verified]"
+revision: [the quoted string that contract.mjs revision <task-dir> prints]
 checkpoint: final
 reviewed_commit: "[HEAD sha verified]"
 reviewer_model: "[observed model id, or unobserved: <requested>]"
@@ -15,7 +15,7 @@ target: [merge target branch]
 
 ## Run
 
-- Revision: [`<short SHA>` on `<branch>`; clean tree, or the uncommitted paths]
+- Commit: [`<full SHA>` on `<branch>`; clean tree, or the uncommitted paths]
 - Delivery checkpoint: [policy/baseline paths, remaining evidence]
 - Target: [`<merge target>`; `<n>` files changed, `<m>` of them tests]
 - Checks from: [`package.json` scripts, `Makefile`, CI file, or none defined]

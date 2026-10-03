@@ -1,69 +1,72 @@
 # Inspection proves only what was viewed
 
-Open recorded media before diagnose visual bug and before fix. Keep viewer/tool result or trace ref with exact file, hash, session, surface, samples in receipt Inspection ledger. Image-open call show access only; review must also say what app pixels really show against cited expectation.
+Contents: Match the observation to the claim; Preserve time and surface identity; Tie proof to the application; Guardrails defend an observed gap; Fail closed; Finalize the receipt.
+
+Open the recorded media before you diagnose a visual bug and before you fix it. Keep the viewer's result or trace reference, with the exact file, hash, session, surface, and samples, in the receipt's Inspection ledger. A call that opened an image shows only that you had access. The review must also say what the app's pixels show against the cited expectation.
 
 ## Match the observation to the claim
 
 | Claim | Required inspection | Boundary |
 | --- | --- | --- |
-| Static state | Readable recorded frame(s) with exact timestamps and visible expected/actual state. | Proves sampled states only, not what happened between them. |
-| Transition, ordering, duration, flicker, or persistence | Relevant whole recorded interval through video playback or sequential frames; record start/end, playback rate or frame cadence, and capture limitations. | Temporal resolution must support the claim; disclose dropped, unreadable, or missing frames. |
-| Absence of a transient defect | Entire claimed interval at adequate temporal resolution. | Sparse event frames cannot rule out flicker or prove persistence; mark the unsupported claim untested. |
-| Business or nonvisual outcome | Recorded pixels plus independently observed application state or an appropriate probe, with command/result and revision. | A success toast alone cannot prove persistence, external side effects, or hidden state. |
-| Non-UI command, API, performance, or agent outcome | Read retained input/output/exit status or transcript, with exact line references and source identity. | A report's result label is not captured output; no video requirement is added to non-UI work. |
+| Static state | Readable recorded frames with exact timestamps and the visible expected and actual state. | Proves the sampled states only, not what happened between them. |
+| Transition, ordering, duration, flicker, or persistence | The whole relevant interval, through video playback or sequential frames. Record start and end, playback rate or frame cadence, and capture limits. | The temporal resolution must support the claim. Disclose dropped, unreadable, or missing frames. |
+| Absence of a transient defect | The entire claimed interval at adequate temporal resolution. | Sparse event frames cannot rule out flicker or prove persistence. Mark the unsupported claim untested. |
+| Business or nonvisual outcome | Recorded pixels plus independently observed application state or a suitable probe, with its command, result, and revision. | A success toast cannot prove persistence, external side effects, or hidden state. |
+| Non-UI command, API, performance, or agent outcome | The retained input, output, exit status, or transcript, with exact line references and source identity. | A report's result label is not captured output. Non-UI work needs no video. |
 
-Recorder `frames` pull event samples, not every frame. Open samples for static claim; use video viewer or sequential pull for time claim. Write exact pull/view commands and cadence when take more samples. Contact sheet too blurry need close frames. Fuzzy pixels need more look in same footage or blocker; no guess fix.
+The recorder's `frames` command pulls event samples, not every frame. Open samples for a static claim. Use a video viewer or a sequential pull for a time claim, and write the exact pull or view commands and the cadence when you take more samples. If a contact sheet is too blurry, look at closer frames. If pixels are still unclear, look again at the same footage or record a blocker; do not guess a fix.
 
-**Per-flow samples:** Open each required UI flow's retained result frame individually and record what its pixels show. Also inspect the initial state of each session. Use a viewer that returns actual image/video content; a text-only description, contact sheet, or URL string cannot establish that inspection. An unavailable required frame is untested with its reason.
+**Per-flow samples.** Open each required UI flow's retained result frame individually, and record what its pixels show. Also open the initial state of each session, a readable frame from strictly before the first interaction. Use a viewer that returns real image or video content. A text-only description, a contact sheet, or a URL string does not establish inspection. A required frame that is unavailable is untested, with its reason.
 
-**Sample identity:** Retain the extracted frame file, its SHA-256, source video hash, exact timestamp coordinate, and viewer/tool trace. If the viewer transforms the image, retain its returned payload when available; otherwise state the transformation limit rather than inventing a payload hash. Inspect each sample before recording its observation.
+**Sample identity.** For each sample, retain these facts in the Inspection ledger or the receipt's ledgers:
 
-**Action timing:** Use the recorder's `manifest.json`, `events.jsonl`, and observed action timing. If an external capture script supplies `capture.json`, use its documented `videoTime` mapping; other recorder sources do not create that file. Result samples follow the action; initial samples precede the first interaction. Missing timing sufficient for the claim is a blocker, not a guessed timestamp.
+- The extracted frame file, its SHA-256, the source video hash, and the exact timestamp coordinate.
+- The viewer or tool trace. If the viewer transforms the image, retain its returned payload when available. Otherwise state the transformation limit instead of inventing a payload hash.
+- The session, the surface or pane, and the revision ID from the Recording ledger.
+- The expected outcome from the frozen charter, and any state probe's command, result, and output path.
 
-DOM/accessibility trees, console output, probes, narration, overlays, assertion tallies, `verified: true`, and file exist are side-support, not recorded-pixel look. Passed label over failing app pixels stay failed; keep both observations, no rewrite labels to hide clash. Good recorder finalize prove media processing, not app correct.
+Inspect each sample before you record its observation.
+
+**Action timing.** Use the recorder's `manifest.json`, `events.jsonl`, and the observed action timing. An external capture script may supply `capture.json`; use its `videoTime` mapping, and its `initial.videoTime` for the initial-state sample. A recorder `test_start` event alone does not prove the pre-action state. If the timing is too thin for the claim, record a blocker instead of a guessed timestamp.
+
+DOM or accessibility trees, console output, probes, narration, overlays, assertion tallies, and `verified: true` support a claim but do not replace looking at recorded pixels. If a passed label sits over failing app pixels, the result stays failed; keep both observations. A good recorder finalization proves media processing, not correct app behavior.
 
 ## Preserve time and surface identity
 
-For every observation, name raw or rendered media, its hash, timestamp coordinate system, and app pane/surface. Read session report and manifest timing before turn event time into video time.
+For every observation, name the raw or rendered media, its hash, the timestamp coordinate system, and the app pane or surface. A timestamp describes only the event its producer saw, so cite the producer's field and event names and sampling point. When a timestamp is unavailable, say so instead of guessing. A clock read before a reservation is saved is not its persistence time, and the initial inspection time cannot date a later reservation; when exact timing is missing, keep the ordered receipt or trace boundary.
 
-Timestamp describe only event its maker saw. Cite maker metadata or source sampling point and keep exact seen field/event names; split reference clock from operation it come before. For browser capture where `startedAt` sample right before `context.newPage`, report that value as pre-page-creation capture reference for `video-started-at`, not navigation time or first encoded frame origin. Mark navigation or encoded-frame time unavailable unless seen own way; served-response identity give neither clock.
+- **Cards and overlays:** Title and summary cards shift rendered time and are not app behavior. If overlays hide state, look at the raw footage or re-render with other `render` options.
+- **External capture:** Keep the supplied `video-started-at` reference and its producer-defined meaning (for example, a clock sampled just before the page was created, not navigation time). Close the recording context before import, and record any hand offset with its observed basis.
+- **Offsets:** Use `video_t` and the manifest timing with `offset_applied`, not the annotation's wall clock. Note whether each sample is raw or rendered time.
+- **Held tails and gaps:** A held last frame repeats the last seen state and cannot prove persistence. A gap cannot prove order, absence, or duration across it. Name segment edges and cadence limits.
+- **Multiple panes:** Name each pane label and source session, and note wall-clock alignment, dark leading holds, and `--no-align`.
 
-Clock read before save reservation is not its persist time, and baseline look time cannot date later reservation. Keep ordered receipt/trace boundary when exact operation timing missing; drop unavailable timestamp out loud, no guess. Use this rule when write observations, not only at final delivery.
-
-- **Cards and overlays:** Count rendered title-card shift and summary card. Neither is app behavior. If overlays hide state, look at raw footage or other render through existing `render` options. Keep original render and label where-from.
-- **External capture:** Keep supplied `video-started-at` reference, its maker-defined meaning, and recorder align; name raw video encoded time coordinate own way. Close recording context before import. Write any hand offset or align fix and its seen basis.
-- **Offsets:** Use `video_t` and manifest timing, with `offset_applied`, not equate annotation wall clock with shown timestamp. Note if each cited sample is raw or rendered time.
-- **Held tails:** Recorder-held last frame only repeat last seen state. It cannot prove persist or app still running through padded gap.
-- **Segments and gaps:** Name segment edges, missing footage, and capture cadence limits. Gap cannot prove order, absence, or duration across it.
-- **Multiple panes:** Write pane labels and their source sessions. Count wall-clock align, dark leading holds, and any `--no-align` composition. Composite timestamp alone no name source moment.
-- **Initial-state frame:** Retain and inspect a readable application frame strictly before the first interaction, citing the observed recorder/script time mapping. With an external `capture.json`, its `initial.videoTime` may supply that point. A recorder `test_start` event alone does not prove pre-action state. Name the sample with its initial-state role and timestamp.
-
-Re-render or pair old footage help look but cannot prove behavior after source change. Keep raw recordings plus rendered media; optional before/after pair link to both originals. Fake sources, playback dressed as live capture, or cut clips cannot stand in for real recorded interaction.
+Re-rendered or paired old footage cannot prove behavior after a source change. Fake sources, playback presented as live capture, and cut clips are not recorded interaction.
 
 ## Tie proof to the application, not receipt state
 
-Each capture point to Revision ledger entry. For clean source, keep app SHA and served build/deploy identity. For dirty source, keep base SHA, patch path/hash, and relevant untracked source hashes. No Git — use source snapshot and hashes. Write the restart/reload or served-byte/build compare that show what running app loaded.
+Each capture points to a Revision ledger entry. For clean source, keep the app SHA and the served build identity. For dirty source, keep the base SHA, the patch path and hash, and hashes of relevant untracked files; without Git, use a source snapshot. Record the restart, reload, or served-byte comparison that shows what the running app loaded.
 
-Saving a task artifact does not create a new app build; changed Git files do not prove the served app changed either. When source or environment identity differs from earlier evidence, keep that evidence as history and demand current proof. Media reuse requires matching source, environment, reachable raw/rendered material, and required coverage. State real file availability and posting location; local-only evidence on one machine is unavailable elsewhere until supplied.
+A saved task artifact or changed Git file does not prove the served app changed. When source or environment identity differs from earlier evidence, keep the earlier evidence as history and require current proof. Reuse media only when source, environment, reachable material, and required coverage match. Local-only evidence on one machine is unavailable elsewhere until supplied.
 
 ## Guardrails defend an observed gap
 
-Before change a check or repo rule, cite the finding and seen gap: what original behavior slip past existing guardrail, with kept run evidence where possible. Name changed assertion/rule, unchanged expected behavior, and why it catch that same failure. Keep failing inputs, thresholds, expected outcomes, and required coverage whole; update baselines or mute failures to get green is not repair.
+Before changing a check or repository rule, cite the finding and the gap: what original behavior slipped past the guardrail. Name the changed assertion, the unchanged expected behavior, and why the change catches that same failure. Keep failing inputs, thresholds, expected outcomes, and required coverage whole; updating baselines or muting failures is not repair.
 
-Run same strong guardrail against kept broken source and fixed source when possible. Keep its input/script hash, both source identities, exact commands, exit codes, stdout/stderr paths, and seen fail/pass. Run kept broken code in isolated spot; no overwrite current work to make the compare. If compare impractical, write reason as clear unverified limit and use direct recorded behavior with no claim guardrail was validated. Missing check required by scope stay blocker.
+When possible, run the same strengthened check against the retained broken source (in an isolated place, never over current work) and the fixed source, and keep both identities, commands, exit codes, and output paths. If that is impractical, record an explicit unverified limit and rely on direct recorded behavior. A required check that is missing stays a blocker.
 
-After any source or check change, look at new recordings of touched flows and whole regression charter. All other required targets must also have latest-revision proof for success. Old passing coverage stay history, not current acceptance. New in-scope defects get new IDs and block success; their repairs stay inside allowance.
+After any source or check change, record new footage of the touched flows and the whole regression charter. Old passing coverage is history, not current acceptance. New in-scope defects get new IDs and block success.
 
 ## Fail closed and retain partial evidence
 
-When capture, readable media, temporal resolution, or able pixel viewer missing, write the real failure or capability limit, keep reachable material, and stop blocked for touched required proof. Keep known failures next to untested coverage. Still-only fallback can write static observations but cannot finish this video contract. Probe-only result cannot turn required visual coverage into passed.
+When capture, readable media, temporal resolution, or a pixel viewer is missing, record the real failure or capability limit, keep the reachable material, and stop blocked for the touched required proof. A still-only fallback or a probe-only result cannot satisfy required visual coverage.
 
-Write a denial or failed open try when it happen, with exact tool/result; no guess viewing from command name, no invent inspection. Use allowed viewers, never dodge a denied capability. Operational failures no grant extra capture pass or endless retry loop. Later authorized continue write restoration and resume at its saved boundary.
+Record a denied or failed open attempt with the exact tool and result. Never guess a view from a command name, and never work around a denied capability. Operational failures grant no extra capture pass or retry loop; a later authorized continuation records the restored prerequisite and resumes at its saved boundary.
 
-Finding reach `resolved` only after current-revision evidence prove its unchanged expected outcome. Evidence-backed `not-a-defect` disposition write source and reason with no delete history and no pretend repair happen; it is not progress. Unbacked suspicions stay observations. Required coverage, not lower finding count or severity, decide acceptance.
+A finding reaches `resolved` only when current-revision evidence proves its unchanged expected outcome. A `not-a-defect` disposition records its source and reason, deletes no history, and is not progress. Required coverage decides acceptance, not a lower finding count or severity.
 
 ## Finalize the receipt against retained evidence
 
-For passed, failed, and blocked outcomes, check each of template seven coverage columns against revision, recording, inspection, check, and finding ledgers. Overall failure or blocker no collapse the table or erase known per-flow outcomes. Missing current proof stay untested with its gap; older evidence stay historical.
+For every outcome, check the template's seven coverage columns against the revision, recording, inspection, check, and finding ledgers. A failure or blocker does not collapse the table or erase known per-flow outcomes. Missing current proof stays untested with its gap, and older evidence stays historical.
 
-Split current state from history: final summaries name real last done step and any truly incomplete blocked work and prerequisite. Superseded pending steps and reservations stay labeled historical at their original boundaries. Failed done round has no unfinished step just because its finding stay open; interrupted round keep first incomplete step for authorized continue.
+Final summaries name the real last completed step and any truly incomplete work with its prerequisite. Superseded pending steps stay labeled historical. A completed failed round has no unfinished step just because its finding stays open; an interrupted round keeps its first incomplete step for authorized continuation.

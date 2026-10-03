@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-// Post only user-approved inline comments bound to a pinned head and revalidated diff.
+// Post approved inline comments. Stops on the first moved head, failed post, or non-inline result.
+// Exit: 0 done, 1 comment not anchored, 2 usage, 3 head moved, 4 non-inline result, 5 batch with no recorded test post.
+// Usage: node post.mjs --stack <stack.json> --comments <anchors.json> --posted <posted.json> [--only <id>] [--dry-run | --approved]
 import fs from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {git, hostAdapter} from './host.mjs';
@@ -20,16 +22,20 @@ export function postAll({stack, comments, posted, only, dryRun, approved, host, 
     log('comment ids must be unique and --only must name an existing comment');
     return 1;
   }
+  if (!only && !dryRun && posted.length === 0 && comments.length > 1) {
+    log('no test post recorded; post one comment with --only first');
+    return 5;
+  }
   const todo = pending(comments, posted, only);
   for (const comment of todo) {
-    const request = byNumber.get(comment.mr);
+    const request = byNumber.get(comment.pr);
     if (!request || !comment.in_diff || comment.head_sha !== request.head_sha || comment.base_sha !== request.base_sha || typeof comment.body !== 'string' || !comment.body.trim() || !checkAnchor || !checkAnchor(request, comment)) {
       log(`${comment.id}: invalid or stale diff anchor; re-run anchors.mjs`);
       return 1;
     }
   }
   for (const comment of todo) {
-    const request = byNumber.get(comment.mr);
+    const request = byNumber.get(comment.pr);
     const current = host.headSha(request.number);
     if (current !== request.head_sha) {
       log(`${comment.id}: ${request.ref} head moved ${request.head_sha.slice(0, 9)} -> ${current.slice(0, 9)}; rediscover, re-anchor and obtain approval before posting`);
@@ -41,7 +47,7 @@ export function postAll({stack, comments, posted, only, dryRun, approved, host, 
       log(`${comment.id}: ${request.ref} did not accept an inline position (${result.url}); stopped`);
       return 4;
     }
-    posted.push({id: comment.id, mr: request.number, path: comment.path, line: comment.line, head_sha: request.head_sha, note_id: result.note_id, discussion_id: result.discussion_id, url: result.url, posted: new Date().toISOString()});
+    posted.push({id: comment.id, pr: request.number, path: comment.path, line: comment.line, head_sha: request.head_sha, note_id: result.note_id, discussion_id: result.discussion_id, url: result.url, posted: new Date().toISOString()});
     save(posted);
     log(`${comment.id}: posted ${result.url}`);
   }

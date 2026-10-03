@@ -347,9 +347,6 @@ func linkLabel(raw string) string {
 	if key := jiraIssueKey(parsed); key != "" {
 		return key
 	}
-	if number := routeNumber(parsed.Path, "merge_requests"); number != "" {
-		return "MR !" + number
-	}
 	if number := routeNumber(parsed.Path, "pull"); number != "" {
 		return "PR #" + number
 	}

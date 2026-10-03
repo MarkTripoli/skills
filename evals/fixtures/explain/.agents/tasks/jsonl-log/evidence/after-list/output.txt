@@ -1,0 +1,16 @@
+$ node src/cli.mjs list    # outbox/log.json written by {{BASE_SHORT}}, three entries
+2026-10-01T17:32:03.470Z console a@example.com delivered
+2026-10-01T17:32:03.501Z console b@example.com delivered
+2026-10-01T17:32:03.540Z console c@example.com delivered
+$ node src/cli.mjs send --channel console --to d@example.com --message "Invoice 42 is overdue"
+[console] to=d@example.com Invoice 42 is overdue
+delivered d9710903-013a-4689-a18b-7772d3f04ccd
+$ node src/cli.mjs list
+2026-10-01T17:32:03.470Z console a@example.com delivered
+2026-10-01T17:32:03.501Z console b@example.com delivered
+2026-10-01T17:32:03.540Z console c@example.com delivered
+2026-10-01T17:32:03.895Z console d@example.com delivered
+$ ls outbox
+log.json
+log.jsonl
+exit 0

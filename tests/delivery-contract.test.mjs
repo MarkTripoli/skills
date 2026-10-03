@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { initTaskArtifacts, reserveArtifactIteration, recordArtifact, readArtifactIndex, semanticSeries, writeArtifactIndex } from '../shared/task-artifacts.mjs';
-import { sourceRevision, readDeliveryArtifacts, parseRecord, checkReview, nextReview, deliveryStatus, saveEvidencePolicy, sealEvidence, sealInspection, beginRepair, completeRepair } from '../skills/delivery/deliver/contract.mjs';
+import { sourceRevision, readDeliveryArtifacts, parseRecord, checkReview, nextReview, reviewRoundLimit, deliveryStatus, saveEvidencePolicy, sealEvidence, sealInspection, beginRepair, completeRepair } from '../skills/delivery/deliver/contract.mjs';
 
 function fixture(t, indexed = true) {
   const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'delivery-contract-')));
@@ -111,12 +111,12 @@ test('history parsing keeps earlier immutable rounds but current review checking
   assert.equal(reviewCheck(f, second).progress, true);
 });
 
-test('review rounds stop on unchanged blockers, respect checkpoint isolation and reach the bounded limit', t => {
+test('review rounds stop on unchanged blockers and have no implicit repair cap', t => {
   const f = fixture(t);
   f.review({ findings: '### F1 blocking One\n\n- Evidence: cli.mjs:1\n\n### F2 blocking Two\n\n- Evidence: cli.mjs:1' });
   assert.equal(reviewCheck(f, f.review({ round: 2 })).progress, true);
   const third = reviewCheck(f, f.review({ round: 3 }));
-  assert.equal(third.progress, false); assert.equal(third.limit_reached, true);
+  assert.equal(third.progress, false); assert.equal(third.limit_reached, false); assert.equal(third.round_limit, null);
   assert.throws(() => reviewCheck(f, f.review({ round: 2, checkpoint: 'phase-2' })), /no earlier valid/);
 });
 
@@ -205,6 +205,7 @@ test('phase CLI records only the approved phase and resumes through successor pl
 
 test('four committed CLI phases resume beyond three approvals while later blocking repairs stay bounded', t => {
   const f = fixture(t);
+  fs.appendFileSync(path.join(f.taskDir, 'task.md'), '\n## Decisions\n\n- Owner: review-round-limit: 3.\n');
   const cli = path.resolve('skills/delivery/deliver/contract.mjs');
   const command = (...args) => JSON.parse(execFileSync(process.execPath, [cli, ...args], { cwd: f.repo, encoding: 'utf8' }));
   let plan = f.artifact('plan', null, '# Plan\n\n' + [1, 2, 3, 4].map(n => `## Phase ${n}: Output ${n}\n\n### Verify\n\n- [ ] \`node cli.mjs\` reports phase ${n}.\n`).join('\n') + '\n## Progress\n\nNone.');
@@ -376,7 +377,9 @@ test('repair reservations persist, are idempotent, and no-op repairs cannot rese
 });
 
 test('an exhausted repair budget is preserved across sessions and policy changes cannot reset it', t => {
-  const f = fixture(t); saveEvidencePolicy({ taskDir: f.taskDir, policy: f.policy });
+  const f = fixture(t);
+  Object.assign(f.policy, { max_repairs: 3, repair_authorization: 'Owner: stop after three repairs.' });
+  saveEvidencePolicy({ taskDir: f.taskDir, policy: f.policy });
   for (let n = 1; n <= 3; n++) {
     beginRepair({ taskDir: f.taskDir, attemptId: `attempt-${n}` });
     fs.writeFileSync(path.join(f.repo, 'cli.mjs'), `console.log(${n});\n`);
@@ -410,4 +413,81 @@ test('repository aliases preserve source identity and committed evidence without
   const linkedTask = path.join(linkedParent, 'change');
   fs.symlinkSync(f.taskDir, linkedTask, 'dir');
   assert.throws(() => readDeliveryArtifacts(linkedTask), /task directory cannot be a symlink/);
+});
+
+test('only owner Decisions set a review cap; positive integers and none change it without resetting receipt history', t => {
+  const f = fixture(t);
+  const task = path.join(f.taskDir, 'task.md');
+  fs.appendFileSync(task, '\nThe request mentions review-round-limit: 1.\n\n## Decisions\n');
+  const decide = line => fs.appendFileSync(task, `\n- Owner: ${line}\n`);
+  assert.equal(reviewRoundLimit(f.taskDir), null);
+  f.review();
+  decide('review-round-limit: 2');
+  const second = reviewCheck(f, f.review({ round: 2 }));
+  assert.equal(second.round_limit, 2);
+  assert.equal(second.limit_reached, true);
+  decide('review-round-limit: 0');
+  assert.equal(reviewRoundLimit(f.taskDir), 2);
+  decide('review-round-limit: 3.5');
+  assert.equal(reviewRoundLimit(f.taskDir), 2);
+  decide('review-round-limit: none.');
+  assert.equal(reviewRoundLimit(f.taskDir), null);
+  const next = nextReview({ taskDir: f.taskDir, type: 'slice-review', checkpoint: 'phase-1' });
+  assert.equal(next.next_round, 3);
+  assert.equal(next.repair_round, 2);
+  assert.equal(next.limit_reached, false);
+  assert.equal(reviewCheck(f, f.review({ round: 3, status: 'approve', findings: '' })).repair_round, 0);
+});
+
+const repairOnce = (f, id) => {
+  beginRepair({ taskDir: f.taskDir, attemptId: id });
+  fs.writeFileSync(path.join(f.repo, 'cli.mjs'), `console.log(${JSON.stringify(id)});\n`);
+  completeRepair({ taskDir: f.taskDir, attemptId: id });
+};
+
+test('five uncapped repairs persist without exhaustion or a serialized Infinity', t => {
+  const f = fixture(t);
+  saveEvidencePolicy({ taskDir: f.taskDir, policy: f.policy });
+  for (let n = 1; n <= 5; n++) repairOnce(f, `repair-${n}`);
+  const state = JSON.parse(fs.readFileSync(path.join(f.taskDir, '.delivery-state.json')));
+  assert.equal(state.repairs.limit, null);
+  assert.equal(state.repairs.used, 5);
+  assert.equal(deliveryStatus({ taskDir: f.taskDir }).repairs.blocked, null);
+});
+
+test('legacy unauthorized default repair cap becomes uncapped without rewriting its policy', t => {
+  const f = fixture(t);
+  const file = path.join(f.taskDir, 'evidence-policy.json');
+  const bytes = JSON.stringify({ schema: 'delivery-evidence-policy/v1', max_repairs: 3, repair_authorization: null, amendments: [], surfaces: f.policy.surfaces });
+  fs.writeFileSync(file, bytes);
+  fs.writeFileSync(path.join(f.taskDir, '.delivery-state.json'), JSON.stringify({ schema: 'delivery-state/v1', repairs: { limit: 3, used: 0, attempts: {}, blocked: null } }));
+  for (let n = 1; n <= 4; n++) repairOnce(f, `repair-${n}`);
+  assert.equal(deliveryStatus({ taskDir: f.taskDir }).repairs.limit, null);
+  assert.equal(fs.readFileSync(file, 'utf8'), bytes);
+});
+
+for (const tamper of ['delete', 'null authorization', 'corrupt']) {
+  test(`an owner repair cap survives policy ${tamper}`, t => {
+    const f = fixture(t);
+    Object.assign(f.policy, { max_repairs: 1, repair_authorization: 'Owner: one repair.' });
+    saveEvidencePolicy({ taskDir: f.taskDir, policy: f.policy });
+    repairOnce(f, 'one');
+    const file = path.join(f.taskDir, 'evidence-policy.json');
+    if (tamper === 'delete') fs.rmSync(file);
+    else if (tamper === 'corrupt') fs.writeFileSync(file, '{ invalid');
+    else fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file)), repair_authorization: null }));
+    assert.throws(() => beginRepair({ taskDir: f.taskDir, attemptId: 'two' }), tamper === 'corrupt' ? /evidence-policy\.json/ : /exhausted/);
+    if (tamper === 'delete') assert.throws(() => saveEvidencePolicy({ taskDir: f.taskDir, policy: { surfaces: f.policy.surfaces } }), /immutable/);
+  });
+}
+
+test('verification needs an Items table and cannot grade a nonzero observed exit as passing', t => {
+  const f = fixture(t);
+  const review = body => f.artifact('verification', 'passed', body,
+    `checkpoint: final\nreviewed_commit: ${f.git('rev-parse', 'HEAD')}\nreviewer_model: unobserved: requested-strong\nround: 1\n`);
+  assert.throws(() => reviewCheck(f, review('## Human Review\n\nAll checks passed.')));
+  for (const observed of ['exit code 1, 2 tests failed', 'exited with 2']) {
+    assert.throws(() => reviewCheck(f, review(`## Items\n\n| ID | Observed | Verdict | Required |\n|---|---|---|---|\n| C1 | ${observed} | pass | yes |`)));
+  }
+  assert.equal(reviewCheck(f, review('## Items\n\n| ID | Observed | Verdict | Required |\n|---|---|---|---|\n| C1 | exit 0 \\| 12 tests passed | pass | yes |')).status, 'approve');
 });

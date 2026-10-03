@@ -5,6 +5,7 @@ import path from 'node:path';
 export const WORD_CAPS = Object.freeze({
   'shared/CONVENTIONS.md': 1998,
   'shared/WRITING.md': 716,
+  'skills/delivery/babysit/SKILL.md': 1000,
   'skills/delivery/deliver/SKILL.md': 1037,
   'skills/delivery/deliver/references/deliver_answer.md': 117,
   'skills/delivery/deliver/references/model_enforcement.md': 199,
@@ -13,6 +14,7 @@ export const WORD_CAPS = Object.freeze({
   'skills/delivery/agent-implementation-reviewer/SKILL.md': 642,
   'skills/delivery/agent-implementer/SKILL.md': 509,
   'skills/delivery/implement-plan/SKILL.md': 1240,
+  'skills/delivery/implement-outline/SKILL.md': 952,
   'skills/delivery/review-code/SKILL.md': 1171,
   'skills/delivery/verify-implementation/SKILL.md': 2133,
   'skills/delivery/record-evidence/SKILL.md': 3571,

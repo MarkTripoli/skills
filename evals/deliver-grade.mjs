@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { artifacts, expect, failures, newest } from "./lib.mjs";
 import { readSessions, sessionProblems, skillLoadProblems } from "./sessions.mjs";
-import { blockingRounds, checkReview, parseRecord, REVIEW_ROUND_LIMIT } from "../skills/delivery/deliver/contract.mjs";
+import { blockingRounds, checkReview, parseRecord, reviewRoundLimit } from "../skills/delivery/deliver/contract.mjs";
 import { strongestCandidate } from "../skills/delivery/route-model/route-model.mjs";
 
 export const git = (repo, ...argv) => execFileSync("git", argv, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -32,7 +32,7 @@ export function readRecords(taskDir) {
     try {
       const parsed = parseRecord(taskDir, a.file);
       const sha256 = a.record?.sha256 ?? createHash("sha256").update(a.text).digest("hex");
-      records.push({ mtime: fs.statSync(path.join(taskDir, a.file)).mtimeMs, file: a.file, sha256, type: a.fm.type, group: parsed.info.checkpoint === "final" ? "final" : parsed.info.checkpoint, checkpoint: parsed.info.checkpoint, round: parsed.round, status: parsed.status, reviewed_commit: parsed.info.reviewed_commit, reviewer_model: parsed.info.reviewer_model, reviewed_artifact: parsed.info.reviewed_artifact, reviewed_artifact_sha256: parsed.info.reviewed_artifact_sha256 });
+      records.push({ mtime: fs.statSync(path.join(taskDir, a.file)).mtimeMs, file: a.file, sha256, type: a.fm.type, group: parsed.info.checkpoint === "final" ? "final" : parsed.info.checkpoint, checkpoint: parsed.info.checkpoint, round: parsed.round, status: parsed.status, blocking: parsed.ids, reviewed_commit: parsed.info.reviewed_commit, reviewer_model: parsed.info.reviewer_model, reviewed_artifact: parsed.info.reviewed_artifact, reviewed_artifact_sha256: parsed.info.reviewed_artifact_sha256 });
     } catch (error) {
       if (current) problems.push(`record ${a.file}: ${error.message}`);
     }
@@ -41,7 +41,7 @@ export function readRecords(taskDir) {
 }
 
 // Receipt rounds remain contiguous; approvals close blocking episodes rather than consuming repair allowance.
-export function verdictProblems(records) {
+export function verdictProblems(records, roundLimit = null) {
   const groups = new Map();
   for (const r of records) groups.set(`${r.checkpoint}/${r.type}`, [...(groups.get(`${r.checkpoint}/${r.type}`) ?? []), r]);
   return [...groups.entries()].flatMap(([key, list]) => {
@@ -49,11 +49,18 @@ export function verdictProblems(records) {
     const top = list.at(-1);
     const contiguous = list.every((r, i) => r.round === i + 1);
     const repairs = contiguous ? blockingRounds(list) : null;
+    const stalled = list.filter((record, index) => {
+      const previous = list[index - 1];
+      return previous && record.round < top.round && record.status !== "approve" &&
+        Array.isArray(record.blocking) && Array.isArray(previous.blocking) &&
+        record.blocking.length >= previous.blocking.length;
+    });
     return [
       top.status === "approve" ? null : `review: ${key} round ${top.round} is ${top.status}, expected approve`,
       new Set(list.map((r) => r.round)).size === list.length ? null : `review: ${key} has duplicate round records`,
       contiguous ? null : `review rounds: ${key} must be contiguous from round 1`,
-      repairs === null || repairs < REVIEW_ROUND_LIMIT ? null : `review repairs: ${key} has ${repairs} unresolved changes rounds, expected fewer than ${REVIEW_ROUND_LIMIT}`,
+      roundLimit === null || repairs === null || repairs < roundLimit ? null : `review repairs: ${key} has ${repairs} unresolved changes rounds, expected fewer than owner limit ${roundLimit}`,
+      ...stalled.map(record => `review rounds: ${key} continued after round ${record.round} made no progress`),
     ];
   }).filter(Boolean);
 }
@@ -99,7 +106,7 @@ export function deliverCheck({ changed = ["src/retry.mjs"], separate = false, mi
       expect.matches("reply: blocked names an unblock check", stop, /unblock check:/i),
       expect.matches("task.md: ## Status records the blocked stop", taskText.split(/^## Status\s*$/m)[1] ?? "", /blocked:/i),
       parseProblems,
-      verdictProblems(records),
+      verdictProblems(records, reviewRoundLimit(taskDir)),
     );
     const profile = (() => {
       try {

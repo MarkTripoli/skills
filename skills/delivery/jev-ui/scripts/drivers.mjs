@@ -8,7 +8,8 @@ export function commandTimeoutMs() {
 }
 export function boundedRunner(runner, timeoutMs = commandTimeoutMs()) {
   const deadline = Number(timeoutMs);
-  if (!Number.isFinite(deadline) || deadline <= 0) throw new TypeError('native command timeout must be finite and positive');
+  if (!Number.isFinite(deadline) || deadline <= 0)
+    throw new TypeError('native command timeout must be finite and positive');
   return (command, args, options = {}) => {
     const controller = new AbortController();
     let timer;
@@ -22,12 +23,14 @@ export function boundedRunner(runner, timeoutMs = commandTimeoutMs()) {
       // A pending deadline must never keep a settled caller alive.
       timer.unref?.();
     });
-    const invocation = Promise.resolve().then(() => runner(command, args, {
-      ...options,
-      timeout: deadline,
-      killSignal: 'SIGKILL',
-      signal: options.signal || controller.signal,
-    }));
+    const invocation = Promise.resolve().then(() =>
+      runner(command, args, {
+        ...options,
+        timeout: deadline,
+        killSignal: 'SIGKILL',
+        signal: options.signal || controller.signal,
+      })
+    );
     return Promise.race([invocation, timeout]).finally(() => {
       settled = true;
       clearTimeout(timer);
@@ -37,7 +40,12 @@ export function boundedRunner(runner, timeoutMs = commandTimeoutMs()) {
 }
 export async function commandAvailable(command, runner = exec) {
   const bounded = boundedRunner(runner);
-  try { await bounded('sh', ['-c', `command -v ${command}`]); return true; } catch { return false; }
+  try {
+    await bounded('sh', ['-c', `command -v ${command}`]);
+    return true;
+  } catch {
+    return false;
+  }
 }
 export async function discoverCapabilities({runner = exec} = {}) {
   const bounded = boundedRunner(runner);
@@ -50,40 +58,108 @@ export async function discoverCapabilities({runner = exec} = {}) {
 async function adbTargets(runner) {
   try {
     const {stdout} = await runner('adb', ['devices', '-l']);
-    return stdout.split(/\r?\n/).slice(1).filter(Boolean).map(line => {
-      const [id, state, ...rest] = line.trim().split(/\s+/);
-      return {id, name: rest.join(' '), state, simulator: id?.startsWith('emulator-')};
-    }).filter(x => x.id);
-  } catch { return []; }
+    const targets = stdout
+      .split(/\r?\n/)
+      .slice(1)
+      .filter(Boolean)
+      .map((line) => {
+        const [id, state, ...rest] = line.trim().split(/\s+/);
+        return {id, name: rest.join(' '), state, simulator: id?.startsWith('emulator-')};
+      })
+      .filter((x) => x.id);
+    return {targets};
+  } catch (error) {
+    return {targets: [], error: error.message};
+  }
 }
 async function idbTargets(runner) {
   try {
-    const {stdout}=await runner('idb',['list-targets','--json']);
-    const lines=String(stdout).split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
-    const data=lines.flatMap(line=>{try{const parsed=JSON.parse(line);return Array.isArray(parsed)?parsed: [parsed]}catch{return []}});
-    return data.map(d=>({id:d.udid||d.id,name:d.name||d.udid,state:d.state||((d.status||'').toLowerCase()==='booted'?'booted':d.status),simulator:true})).filter(t=>t.id);
-  } catch { return []; }
+    const {stdout} = await runner('idb', ['list-targets', '--json']);
+    const lines = String(stdout)
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const data = lines.flatMap((line) => {
+      try {
+        const parsed = JSON.parse(line);
+        return Array.isArray(parsed) ? parsed : [parsed];
+      } catch {
+        return [];
+      }
+    });
+    const targets = data
+      .map((d) => ({
+        id: d.udid || d.id,
+        name: d.name || d.udid,
+        state: d.state || ((d.status || '').toLowerCase() === 'booted' ? 'booted' : d.status),
+        simulator: true,
+      }))
+      .filter((t) => t.id);
+    return {targets};
+  } catch (error) {
+    return {targets: [], error: error.message};
+  }
 }
 async function simTargets(runner) {
-  let result=[];
-  try { const {stdout}=await runner('xcrun', ['simctl', 'list', 'devices', 'available', '-j']); const data=JSON.parse(stdout); for (const [runtime, devices] of Object.entries(data.devices || {})) for (const d of devices || []) result.push({id:d.udid,name:d.name,state:String(d.state||'').toLowerCase(),runtime,simulator:true}); } catch {}
-  const idb=await idbTargets(runner); const byId=new Map(result.map(t=>[t.id,t])); for(const target of idb) byId.set(target.id,{...byId.get(target.id),...target,state:String(target.state||'').toLowerCase()}); return [...byId.values()];
+  let result = [];
+  let error;
+  try {
+    const {stdout} = await runner('xcrun', ['simctl', 'list', 'devices', 'available', '-j']);
+    const data = JSON.parse(stdout);
+    for (const [runtime, devices] of Object.entries(data.devices || {}))
+      for (const d of devices || [])
+        result.push({id: d.udid, name: d.name, state: String(d.state || '').toLowerCase(), runtime, simulator: true});
+  } catch (e) {
+    error = e.message;
+  }
+  const {targets: idb, error: idbError} = await idbTargets(runner);
+  const byId = new Map(result.map((t) => [t.id, t]));
+  for (const target of idb)
+    byId.set(target.id, {...byId.get(target.id), ...target, state: String(target.state || '').toLowerCase()});
+  // A discovery error matters only when it left no target to choose from.
+  const targets = [...byId.values()];
+  return {targets, error: targets.length ? undefined : error || idbError};
 }
-export async function listTargets(platform, {runner = exec} = {}) { return platform === 'android' ? adbTargets(runner) : platform === 'ios' ? simTargets(runner) : []; }
+async function discoverTargets(platform, runner) {
+  return platform === 'android' ? adbTargets(runner) : platform === 'ios' ? simTargets(runner) : {targets: []};
+}
+export async function listTargets(platform, {runner = exec} = {}) {
+  return (await discoverTargets(platform, runner)).targets;
+}
 export async function selectTarget(platform, {id, authorizedId, excludedIds = [], runner = exec} = {}) {
   const bounded = boundedRunner(runner);
-  const capabilities = await discoverCapabilities({runner:bounded});
+  const capabilities = await discoverCapabilities({runner: bounded});
   const required = platform === 'android' ? ['adb'] : platform === 'ios' ? ['xcrun', 'idb'] : [];
-  const missing = required.filter(x => !capabilities[x]);
+  const missing = required.filter((x) => !capabilities[x]);
   if (missing.length) return {blocked: true, reason: `missing driver: ${missing.join(', ')}`, capabilities};
-  const targets = await listTargets(platform, {runner:bounded}); const requested = id || authorizedId;
-  if (!requested && targets.length !== 1) return {blocked:true, reason: targets.length ? 'target selection is ambiguous; explicit identity is required' : 'no target available', capabilities, targets};
-  const selected = targets.find(t => t.id === requested) || (requested ? null : targets[0]);
-  if (!selected) return {blocked:true, reason:`target not found: ${requested}`, capabilities, targets};
-  if (excludedIds.includes(selected.id) && selected.id !== authorizedId) return {blocked:true, reason:`target is excluded: ${selected.id}`, capabilities, target:selected};
-  if (!['device','booted'].includes(selected.state)) return {blocked:true, reason:`target offline: ${selected.id}`, capabilities, target:selected};
-  if (authorizedId && selected.id !== authorizedId) return {blocked:true, reason:`target is not authorized: ${selected.id}`, capabilities, target:selected};
-  return {blocked:false, driver: platform === 'android' ? 'adb' : 'idb', id:selected.id, name:selected.name, state:selected.state, simulator:!!selected.simulator, target:selected, capabilities};
+  const {targets, error} = await discoverTargets(platform, bounded);
+  if (error) return {blocked: true, reason: `target discovery failed: ${error}`, capabilities};
+  const requested = id || authorizedId;
+  if (!requested && targets.length !== 1)
+    return {
+      blocked: true,
+      reason: targets.length ? 'target selection is ambiguous; explicit identity is required' : 'no target available',
+      capabilities,
+      targets,
+    };
+  const selected = targets.find((t) => t.id === requested) || (requested ? null : targets[0]);
+  if (!selected) return {blocked: true, reason: `target not found: ${requested}`, capabilities, targets};
+  if (excludedIds.includes(selected.id) && selected.id !== authorizedId)
+    return {blocked: true, reason: `target is excluded: ${selected.id}`, capabilities, target: selected};
+  if (!['device', 'booted'].includes(selected.state))
+    return {blocked: true, reason: `target offline: ${selected.id}`, capabilities, target: selected};
+  if (authorizedId && selected.id !== authorizedId)
+    return {blocked: true, reason: `target is not authorized: ${selected.id}`, capabilities, target: selected};
+  return {
+    blocked: false,
+    driver: platform === 'android' ? 'adb' : 'idb',
+    id: selected.id,
+    name: selected.name,
+    state: selected.state,
+    simulator: !!selected.simulator,
+    target: selected,
+    capabilities,
+  };
 }
 export const resolveTarget = selectTarget;
 export {exec};

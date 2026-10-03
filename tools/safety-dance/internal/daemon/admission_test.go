@@ -173,10 +173,22 @@ func TestReconcileOnceProcessesAllReceiptsDespiteFailure(t *testing.T) {
 	}
 }
 
+// shortSocketPath returns a socket path in a directory unique to this test.
+// The path stays short because macOS limits it to 104 bytes, and unique
+// because t.TempDir names repeat across test processes, so a fixed /tmp name
+// collides when two runs share a host.
+func shortSocketPath(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "sd-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, "s")
+}
+
 func TestAdmissionAuthenticatedReplayAndMismatch(t *testing.T) {
-	dir := t.TempDir()
-	socket := filepath.Join("/tmp", "sd-"+filepath.Base(dir)+".sock")
-	defer os.Remove(socket)
+	socket := shortSocketPath(t)
 	server := ipc.NewServer()
 	oldProcessInfo := processInfoFunc
 	t.Cleanup(func() { processInfoFunc = oldProcessInfo })
@@ -440,9 +452,7 @@ func TestCommandHasExecutablePreservesQuotedPaths(t *testing.T) {
 	}
 }
 func TestAdmissionNotificationClaimsReceiptBeforeCallback(t *testing.T) {
-	dir := t.TempDir()
-	socket := filepath.Join("/tmp", "sd-claim-"+filepath.Base(dir)+".sock")
-	defer os.Remove(socket)
+	socket := shortSocketPath(t)
 	server := ipc.NewServer()
 	oldProcessInfo := processInfoFunc
 	t.Cleanup(func() { processInfoFunc = oldProcessInfo })

@@ -22,6 +22,7 @@
 //   rerank --query <text|@file|-> <candidates.json>   candidates ordered by how well they answer the query
 //   coverage <questions.json> <artifact.md>      answered | partial | missing per research question
 //   cite <claims.json>                           supported | unsupported | unclear per cited claim
+//   cite-artifact <artifact.md>                  line, pointer, supported | unsupported | unclear per cited pointer; unresolved when the file or lines do not exist or the pointer leaves the working directory
 //   route-question <questions.json>              locate | analyze | pattern | web | none | undecided per question
 //   neutral <questions.json>                     neutral | leading | unclear per question
 //   ask --state <json|@file> --questions <json|@file>             the raw answers object
@@ -45,7 +46,7 @@ const WORKFLOWS = {
   lean: "A feature with a known shape that needs a short structure outline and phased implementation, but no research or design discussion; or the request asks for an outline-first or lean approach.",
   full: "Work that needs research and a design discussion before planning: unclear requirements, several possible approaches, or a cross-cutting or architectural change.",
   prd: "Product work that needs a requirements document and a technical design first, or the request asks for a PRD or TDD.",
-  epic: "A large initiative to split into several independent child tasks, each delivered as its own merge request.",
+  epic: "A large initiative to split into several independent child tasks, each delivered as its own pull request.",
 };
 
 class Unavailable extends Error {}
@@ -343,7 +344,7 @@ const SPLITS = {
   none: "No split applies: the child is already one unit of work.",
 };
 
-// Sizing bars, set from a calibration run over eight children, four of them one merge request each and four
+// Sizing bars, set from a calibration run over eight children, four of them one pull request each and four
 // oversize: the structural tests separated at 0.65 against 0.52, so a pass needs 0.60 and a clear fail sits
 // under 0.40. The effort question answers lower for every child because the model cannot see the codebase
 // (0.54 to 0.67 for the small ones, 0.06 to 0.22 for the oversize ones), so it carries its own two bars.
@@ -358,12 +359,12 @@ async function sizeChildren(file) {
     const it = `the child task \`children[${i}]\` (named \`children[${i}].name\`, described in \`children[${i}].prompt\`)`;
     questions[`obligation_${i}`] = noul(`${it} asks one thing of the system: one actor, one behavior, and one measurable pass criterion, stated in \`children[${i}].acceptance\` when it has them. Naming the files to change, the tests to write, or the documentation to update is part of that one obligation. Two unrelated behaviors, or wording such as "and also", is more than one.`);
     questions[`vertical_${i}`] = noul(`${it} ends at behavior a user or a calling program can exercise once it merges, crossing whatever storage, service, contract, and client layers that behavior needs. A change that stops at one layer boundary and leaves nothing exercisable does not.`);
-    questions[`one_day_${i}`] = noul(`An engineer who knows this codebase implements ${it}, proves it with a test or an observation, and opens the merge request within one working day.`);
+    questions[`one_day_${i}`] = noul(`An engineer who knows this codebase implements ${it}, proves it with a test or an observation, and opens the pull request within one working day.`);
     questions[`merge_safe_${i}`] = noul(`Merging ${it} on its own leaves the product releasable: it finishes the behavior it changes, or its path stays additive, unreachable until later work, or behind a flag whose default keeps today's behavior. A child that half-changes a behavior another child must finish does not.`);
     if (Array.isArray(child.acceptance) && child.acceptance.length) {
       questions[`criteria_${i}`] = noul(`Every sentence in \`children[${i}].acceptance\` names observable state (a status code, stored record, emitted event, exit code, or rendered value) that a command, request, or observation decides, states one behavior, and avoids unmeasurable words such as fast, secure, user-friendly, or works correctly.`);
     }
-    questions[`split_${i}`] = choice(`Assuming ${it} is too large for one merge request and must be split, which split applies`, SPLITS);
+    questions[`split_${i}`] = choice(`Assuming ${it} is too large for one pull request and must be split, which split applies`, SPLITS);
   });
   const answers = await systemOne({ children }, questions);
   const rows = children.map((child, i) => {
@@ -555,10 +556,40 @@ async function coverage(questionsFile, artifactFile) {
   return { text: rows.map((r) => `${r.id}\t${r.verdict}\t${r.answered}`).join("\n"), json: rows };
 }
 
-async function cite(file) {
-  const claims = JSON.parse(fs.readFileSync(file, "utf8"));
+async function cite(file) { return citeClaims(JSON.parse(fs.readFileSync(file, "utf8"))); }
+
+// `cite-artifact` builds the claims itself: every backticked `path:line` or `path:A-B` pointer in the artifact
+// (the research template's citation form) is a claim, its text the sentence (or table cell) holding the
+// pointer, its source the cited lines read from `path` relative to the working directory. Rows carry the
+// artifact line number. A pointer whose file or lines do not resolve, or that points outside the working
+// directory (never read, never sent), is `unresolved` without asking the model.
+async function citeArtifact(file) {
+  const claims = []; const missing = [];
+  fs.readFileSync(file, "utf8").split("\n").forEach((line, n) => {
+    const bounds = [...line.matchAll(/(?<=[.!?])\s+|\|/g)];
+    for (const m of line.matchAll(/`([^`\s]+):(\d+)(?:-(\d+))?`/g)) {
+      const [id, p, a, b] = [`${m[1]}:${m[2]}${m[3] ? `-${m[3]}` : ""}`, m[1], Number(m[2]), Number(m[3] || m[2])];
+      const start = bounds.filter((x) => x.index + x[0].length <= m.index).at(-1);
+      const end = bounds.find((x) => x.index >= m.index + m[0].length);
+      let claim = line.slice(start ? start.index + start[0].length : 0, end ? end.index : line.length).trim();
+      if (!claim.replace(m[0], "").replace(/[^\p{L}\p{N}]/gu, "")) claim = line.trim(); // pointer-only cell: the row is the claim
+      const rel = path.relative(process.cwd(), path.resolve(p));
+      let lines = [];
+      if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
+        try { lines = fs.readFileSync(p, "utf8").split("\n").slice(a - 1, b); } catch { /* unreadable: no source */ }
+      }
+      if (lines.length && lines.some((l) => l.trim())) claims.push({ id, line: n + 1, claim, source: lines.join("\n") });
+      else missing.push({ id, line: n + 1, supported: 0, verdict: "unresolved" });
+    }
+  });
+  const checked = claims.length ? await citeClaims(claims) : { json: [] };
+  const rows = [...checked.json, ...missing].sort((x, y) => x.line - y.line);
+  return { text: rows.map((r) => `L${r.line}\t${r.id}\t${r.verdict}\t${r.supported}`).join("\n"), json: rows };
+}
+
+async function citeClaims(claims) {
   const answers = await systemOne({ claims }, Object.fromEntries(claims.map((_, i) => [`s_${i}`, noul(`The source text \`claims[${i}].source\` supports the statement \`claims[${i}].claim\`; the statement describes what the source shows, not something the source contradicts or does not mention`)])));
-  const rows = claims.map((c, i) => { const p = answers[`s_${i}`].noul; return { id: c.id, supported: p, verdict: p >= T.yes ? "supported" : p <= T.no ? "unsupported" : "unclear" }; });
+  const rows = claims.map((c, i) => { const p = answers[`s_${i}`].noul; return { id: c.id, ...(c.line && { line: c.line }), supported: p, verdict: p >= T.yes ? "supported" : p <= T.no ? "unsupported" : "unclear" }; });
   return { text: rows.map((r) => `${r.id}\t${r.verdict}\t${r.supported}`).join("\n"), json: rows };
 }
 
@@ -566,8 +597,8 @@ const ROLES = {
   locate: "Find where something lives: files, directories, entry points, configuration, tests for a topic",
   analyze: "Explain how a piece of the code works, with file and line evidence",
   pattern: "Find existing examples, conventions, or comparable implementations to follow",
-  web: "Needs current external information: library documentation, a standard, a vendor API, release notes",
-  none: "Answerable from the request and the task files alone; no repository or web reading needed",
+  web: "Needs a live lookup of current external information (a library, a standard, release notes, a vendor API) that no repository or task file holds; a document saved in the repository, named by path, or documented in a sources artifact is never web, including a vendor API reference the task supplies, and a question about what such a document specifies is never web",
+  none: "Answerable from the request and the task files alone, including a saved sources artifact; no repository or web reading needed",
 };
 async function routeQuestion(file) {
   const questions = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -613,6 +644,7 @@ async function main(argv) {
     case "rerank": result = await rerank(rest); break;
     case "coverage": need(2, "<questions.json> <artifact.md>"); result = await coverage(rest[0], rest[1]); break;
     case "cite": need(1, "<claims.json>"); result = await cite(rest[0]); break;
+    case "cite-artifact": need(1, "<artifact.md>"); result = await citeArtifact(rest[0]); break;
     case "route-question": need(1, "<questions.json>"); result = await routeQuestion(rest[0]); break;
     case "neutral": need(1, "<questions.json>"); result = await neutral(rest[0]); break;
     case "ask": result = await ask(rest); break;

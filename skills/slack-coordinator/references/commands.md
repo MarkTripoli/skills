@@ -1,5 +1,7 @@
 # Slack coordinator commands
 
+Contents: [Command flow](#command-flow), [Exit codes](#exit-codes), [Start](#start), [Check](#check), [Resolve](#resolve), [Event and finish](#event-and-finish), [Channel content](#channel-content), [React](#react), [Operator commands](#operator-commands).
+
 The `slack-coordinator` executable reports one run to one Slack thread and reads the owner's replies. Run it from the repository the run works in, keep the `run_id` it prints, and preserve every exit status; the codes carry the decision. The agent never holds a Slack token and never calls the Slack Web API. Each command talks to the per-user daemon over the Unix socket at `$SLACK_COORDINATOR_HOME/socket` (default `~/.slack-coordinator/socket`).
 
 ## Command flow
@@ -12,8 +14,9 @@ The `slack-coordinator` executable reports one run to one Slack thread and reads
      exit 11 → pause; retry 2 after a short wait; never bypass; report the reason
      exit 12 → proceed without further Slack calls
    slack-coordinator run wait --run-id … --for <d>   repeat while idle instead of ending the turn; exits as 2
-3. slack-coordinator run event …            on phase change or blocker start/clear; a blocker starts the seven-day watch in SKILL.md
+3. slack-coordinator run event …            on phase change or blocker start/clear; a blocker starts the seven-day watch in blocked-runs.md
    slack-coordinator run cadence …          optional; change this run's status-card interval
+   slack-coordinator run reply …            optional; one progress reply when the owner wants a running log
 4. slack-coordinator run finish …           once, with --outcome
 ```
 
@@ -28,7 +31,7 @@ The `slack-coordinator` executable reports one run to one Slack thread and reads
 | `11` | `unavailable`: Socket Mode down, a required post failed, or no daemon answered | Pause, retry the check, report the reason; never bypass a started run's check |
 | `12` | `slack_disabled`: an operator broke glass on this run | Proceed without further Slack calls |
 
-`run start`, `run event`, and `run finish` exit `11` for the same delivery failures as `run check`. Before a run exists, an exit from `run start` (`2` or `11`) is the caller's to handle: `/deliver` records it in `## Decisions` and continues without Slack unless the request made Slack a gate. Never bypass applies to a started run. `run wait` uses the same answer shape and exit codes as `run check`; it is for an idle agent, not a substitute for the check immediately before a change. Owner replies reach the agent only through these two commands, so an active run reads its inbox at least once a minute ([SKILL.md](../SKILL.md)).
+`run start`, `run event`, and `run finish` exit `11` for the same delivery failures as `run check`; `run reply` has its own exit codes under [Reply](#reply). Before a run exists, an exit from `run start` (`2` or `11`) is the caller's to handle: `/deliver` records it in `## Decisions` and continues without Slack unless the request made Slack a gate. Never bypass applies to a started run. `run wait` uses the same answer shape and exit codes as `run check`; it is for an idle agent, not a substitute for the check immediately before a change. Owner replies reach the agent only through these two commands, so an active run reads its inbox at least once a minute ([SKILL.md](../SKILL.md)).
 
 ## Start
 
@@ -36,7 +39,7 @@ The `slack-coordinator` executable reports one run to one Slack thread and reads
 slack-coordinator run start --work <s> --goal <s> --scope <s> [--link <url>]... [--dm | --channel <C…|#name>] [--repo <path>] [--run-id <id>] [--jira-issue <KEY>]
 ```
 
-Prints one JSON object: `{"run_id","channel_id","thread_ts","permalink"}`. `--run-id` defaults to a new ULID. `--dm` opens a new run thread in the configured owner's DM with the bot; it cannot be combined with `--channel` or `--jira-issue`. Without `--dm`, the channel comes from `--channel` or the root `AGENTS.md` directive ([channel-selection.md](channel-selection.md)). Every addressable run has its own thread even when many runs share one DM channel. `--jira-issue PROJ-123` asks the daemon to write a channel-thread permalink to the configured Jira field; a private DM link is not published to Jira. If Jira is not configured, the command exits `2` before opening a thread. A Jira write that fails after the thread exists is retried in the background and does not fail the run.
+Prints one JSON object: `{"run_id","channel_id","thread_ts","permalink"}`. `--run-id` defaults to a new ULID. `--dm` opens a new run thread in the configured owner's DM with the bot; it cannot be combined with `--channel` or `--jira-issue`. Without `--dm`, the channel comes from `--channel` or the root `AGENTS.md` directive (see `references/channel-selection.md`). Every addressable run has its own thread even when many runs share one DM channel. `--jira-issue PROJ-123` asks the daemon to write a channel-thread permalink to the configured Jira field; a private DM link is not published to Jira. If Jira is not configured, the command exits `2` before opening a thread. A Jira write that fails after the thread exists is retried in the background and does not fail the run.
 
 ## Check
 
@@ -67,6 +70,25 @@ Posts `--reply` in the thread and marks the input handled. `applied` means the r
 
 Only one agent should consume a given `run_id`. An explicit Slack refusal releases the input for a retry; a timeout or other ambiguous delivery leaves it claimed and makes `run check` unavailable. Do not retry a claimed reply: it might already be visible in Slack. Report the blocked run to the operator, who inspects its thread, cancels the old run when Slack is available, and starts a new one; repeat any unanswered instruction in the new thread. The daemon never guesses whether Slack accepted the original reply.
 
+## Reply
+
+```sh
+slack-coordinator run reply --run-id <id> --text <s>
+```
+
+Posts `--text` verbatim as one reply under the run's root (no Block Kit, no fixed fields) and prints one JSON object: `{"run_id","thread_ts","message_ts"}`. Use it for routine progress when the owner asks for a running log, for example one reply an hour; the root keeps the milestones. It never edits the root or the status card and does not change the cadence or the pending status. Slack renders the text as mrkdwn, so `<@U…>`, `<!here>`, and `<!channel>` in it notify; include one only when that person or channel should be notified.
+
+The daemon applies the same write gate as `run upload` before posting. Exit codes:
+
+| Code | When | Posted |
+|---|---|---|
+| `0` | posted | yes |
+| `2` | missing or empty `--text`, `--text` over 40,000 characters, missing `--run-id`, unknown run, or finished run | no |
+| `11` | owner input pending, Socket Mode down, an unresolved delivery error, the post failed, or no daemon answered | no, unless a timed-out post reached Slack |
+| `12` | an operator disabled Slack for this run | no |
+
+Owner input pending exits `11`, as for `run upload`; `run check` then exits `10` with the input to answer with `run resolve`. A finished run exits `2`: `run finish` is the run's last word in the thread. A failed post is not recorded as the run's delivery error, so it does not hold `run check` at `unavailable`. A timeout can hide a delivered reply, and the daemon keeps no record to detect it, so a retry may post the same reply twice. Retry once, after `run check` is ready, rather than in a loop. A Slack-disabled run posts nothing and stores nothing; keep the progress in the run's own notes.
+
 ## Event and finish
 
 ```sh
@@ -74,7 +96,7 @@ slack-coordinator run event --run-id <id> --current <s> [--completed <s>]... [--
 slack-coordinator run finish --run-id <id> --outcome completed|failed|cancelled [--emoji <name|none>] [--completed <s>]... [--decision <s>]... [--unresolved <s>]... [--evidence <s>]... [--link <url>]...
 ```
 
-`run event` stores the latest status. Routine changes are coalesced into the one thread status card, edited no more often than this run's cadence (default three hours, measured from the root post or latest successful card edit); the scheduler applies the latest pending event when due. Unchanged events do nothing. New blockers receive an immediate separate Block Kit thread reply that mentions the run owner. Blocker-only changes do not force a status-card edit. There are no periodic reposts when nothing changed. `run finish` replaces the status card with completion and makes the run terminal; a later `run event` or `run finish` for the same run exits `2`. Existing active runs keep root-edit behavior. Field rendering is in [messages.md](messages.md).
+`run event` stores the latest status. Routine changes are coalesced into the one thread status card, edited no more often than this run's cadence (default three hours, measured from the root post or latest successful card edit); the scheduler applies the latest pending event when due. Unchanged events do nothing. New blockers receive an immediate separate Block Kit thread reply that mentions the run owner. Blocker-only changes do not force a status-card edit. There are no periodic reposts when nothing changed. `run finish` replaces the status card with completion and makes the run terminal; a later `run event` or `run finish` for the same run exits `2`. Field rendering is in [messages.md](messages.md).
 
 `run finish` reacts to the main message after editing the completion details: `white_check_mark` for completed, `x` for failed, `black_square_for_stop` for cancelled. `--emoji <name>` overrides the default; `--emoji none` skips the reaction. A reaction failure is recorded as a delivery error but does not keep the run open; use `run react` to retry.
 
@@ -116,24 +138,6 @@ slack-coordinator run react --run-id <id> --emoji <name>
 
 Adds one emoji to the run's main message whether the run is active or finished. Repeat with different names to add more reactions. Pass a Slack emoji name such as `rocket`, `:rocket:`, or a workspace custom name; surrounding colons are optional. An empty name, unknown run, or Slack `invalid_name` (emoji absent from the workspace) exits `2`, with the invalid name in the error. `already_reacted` succeeds. Unreachable Slack exits `11`; a Slack-disabled run exits `12` without contacting Slack.
 
-## Break glass
+## Operator commands
 
-```sh
-slack-coordinator run disable-slack --run-id <id>
-```
-
-Prints the run's id, channel, and permalink, then requires an exact `yes` from an interactive terminal. Piped input is refused; anything other than `yes` exits `1` and changes nothing. Afterwards `run check` exits `12`, `run event` and `run finish` record in SQLite without posting, and every other run is untouched. This is a local operator decision typed at a terminal; an agent never pipes `yes` into it.
-
-## Daemon and service
-
-```sh
-slack-coordinator setup --owner <U…> [--install-service] [--jira-base-url <url> --jira-email <email> --jira-field-id <customfield_N>]
-slack-coordinator daemon start  # --status-interval is accepted for compatibility but ignored
-slack-coordinator daemon status
-slack-coordinator daemon stop
-slack-coordinator service install
-slack-coordinator service status
-slack-coordinator service uninstall
-```
-
-`setup` reads `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` from the environment, or from stdin with `--bot-token-stdin` and `--app-token-stdin`. Do not put the tokens on the command line. A successful setup removes `onboard.json`. `--install-service` and `service install` wait until the daemon socket answers. When `agent.command` is set and `agent.bin` is empty, both commands store that command's absolute path in `agent.bin` (so a later service install does not depend on a hand-edited unit PATH) and require `agent.bin --version` to succeed. A non-empty `agent.bin` is left as it is. `agent.command` must be `pi`, `claude`, or `codex` before install; the upgrade steps are in [docs/slack-coordinator.md](../../../docs/slack-coordinator.md). `daemon status` prints the health JSON, including the Socket Mode state. `service install` writes a launchd agent (macOS) or systemd user unit (Linux) that starts the daemon at login and restarts it after exit; because supervision restarts a stopped daemon, `daemon stop` prints a notice when the service is installed and `service uninstall` is how supervision ends. These are operator commands: an agent that finds no daemon reports exit `11` and waits rather than running them itself.
+Operator commands (`setup`, `daemon`, `service`, `run disable-slack`) are in `docs/slack-coordinator.md` of a checkout of the collection; an agent never runs them. An agent that finds no daemon reports exit `11` and waits.

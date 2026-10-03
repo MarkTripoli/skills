@@ -16,7 +16,6 @@ import (
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/daemon"
-	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/ipc"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/onboard"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/paths"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/slackapi"
@@ -60,14 +59,12 @@ func newOnboard() *cobra.Command {
 embedded manifest with an app configuration token, opens the install page for
 the bot token, opens Basic Information for the app-level token, resolves the
 owner by email or user id, checks both tokens against Slack, writes
-$SLACK_COORDINATOR_HOME/config.yaml (mode 0600, keeping any agent, retention,
-and jira settings already there), installs the launchd or systemd user
-service, then has the bot DM the owner and waits up to two minutes for the
-reply. Progress is checkpointed in $SLACK_COORDINATOR_HOME/onboard.json
-(mode 0600) after every step, so an interrupted run resumes where it stopped;
-a verified setup removes the checkpoint. With a config.yaml already in place
-the command offers repair (re-verify, reinstall the service, replace a token)
-instead of creating a second app. The configuration token is never written
+$SLACK_COORDINATOR_HOME/config.yaml (mode 0600, keeping optional Jira settings),
+installs the launchd or systemd user service, and waits for daemon health.
+Progress is checkpointed in $SLACK_COORDINATOR_HOME/onboard.json after each
+step so an interrupted run resumes; successful setup removes the checkpoint.
+An existing configuration offers service repair or token replacement instead
+of creating a second app. The configuration token is never written
 to disk.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -177,16 +174,5 @@ func onboardDeps(cmd *cobra.Command, p *paths.Paths) onboard.Deps {
 		StartDaemon:   func() error { return startDetachedDaemon(out, daemon.DefaultStatusInterval) },
 		RestartDaemon: func() error { return restartDaemon(out) },
 		WaitDaemon:    func(context.Context) error { return waitForDaemon(5 * time.Second) },
-		VerifyOwner: func(ctx context.Context) (ipc.VerifyOwnerResult, error) {
-			var res ipc.VerifyOwnerResult
-			if err := callDaemonWithin(ctx, verifyOwnerDeadline, ipc.MethodAssistantVerifyOwner, ipc.VerifyOwnerParams{}, &res); err != nil {
-				return ipc.VerifyOwnerResult{}, daemonErr(err)
-			}
-			return res, nil
-		},
 	}
 }
-
-// verifyOwnerDeadline is the reply deadline for assistant.verify_owner: the
-// daemon's own 120 s window plus slack for the Slack calls around it.
-const verifyOwnerDeadline = 130 * time.Second

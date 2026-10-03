@@ -64,6 +64,7 @@ function expectedLosses(candidates, probabilities) {
   return candidates.map((candidate, index) => {
     const costLoss = (candidate.cost - minCost) / costRange;
     const underProvision = candidates.slice(index + 1).reduce((sum, required) => sum + probabilities[required.model], 0);
+    // Under-provision costs twice the full cost range, so a likelier shortfall outweighs any saving.
     return costLoss + underProvision * 2;
   });
 }
@@ -73,7 +74,9 @@ export async function routeModel(skillsDir, options = {}) {
   if (typeof skillsDir !== 'string' || !skillsDir.trim()) throw new Error('skillsDir is required for model routing');
   const phase = text(options.phase ?? options.skill ?? 'unknown-phase', 'phase');
   const profile = loadCandidateProfile(options);
-  const economy = text(profile.economy ?? DEFAULT_ECONOMY, 'economy');
+  // No profile: there is no model to recommend, and a vendor default would be one the caller may not be able to run.
+  if (profile.candidates === undefined && profile.economy === undefined) return { model: null, source: 'policy', profileSource: profile.source, candidates: [], availableCandidates: [], confidence: null, probabilities: null };
+  const economy = text(profile.economy, 'economy');
   const routing = profile.routing ?? 'auto';
   if (routing !== 'auto' && routing !== 'fixed') throw new Error(`Unknown routing ${JSON.stringify(routing)}; expected auto or fixed`);
   const candidates = normalizeCandidates(profile.candidates, economy);

@@ -1,0 +1,9 @@
+$ node bench/send-probe.mjs . 50000 15
+notifyctl send, log with 50,000 entries, 15 runs
+median 91.5 ms  min 80.4 ms  max 1089.7 ms
+log file after last run: outbox/log.json 7.7 MB
+$ node bench/send-probe.mjs . 100 15
+notifyctl send, log with 100 entries, 15 runs
+median 40.3 ms  min 26.2 ms  max 53.6 ms
+log file after last run: outbox/log.json 0.0 MB
+exit 0

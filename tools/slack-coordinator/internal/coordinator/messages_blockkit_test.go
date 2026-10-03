@@ -138,7 +138,7 @@ func assertRichBlockKitMessage(t *testing.T, got SlackMessage, title string, pri
 func TestBuildLifecycleMessagesUsesCompactBlockKitSchemas(t *testing.T) {
 	root := RootMessage{
 		Work: "Profile enhancements", Goal: "Improve profile editing", Scope: "Profile screen",
-		Links: []string{"https://gitlab.com/group/project/-/merge_requests/1", "https://jira.example/browse/PROJ-2"},
+		Links: []string{"https://github.com/MarkTripoli/skills/pull/1", "https://jira.example/browse/PROJ-2"},
 	}
 	assertBlockKitMessage(t, BuildRootMessage(root), "Profile enhancements", []string{
 		"*Goal:*\nImprove profile editing",
@@ -149,16 +149,16 @@ func TestBuildLifecycleMessagesUsesCompactBlockKitSchemas(t *testing.T) {
 	assertRichBlockKitMessage(t, BuildProgressMessage(root, status), "Progress", []string{
 		"*Now:*\nReviewing",
 		"*Next:*\nTest",
-	}, nil, "*Links:* <https://gitlab.com/group/project/-/merge_requests/1|MR !1> · <https://jira.example/browse/PROJ-2|PROJ-2>", "*Now:* Reviewing\n*Next:* Test\n*Links:* <https://gitlab.com/group/project/-/merge_requests/1|MR !1> · <https://jira.example/browse/PROJ-2|PROJ-2>")
+	}, nil, "*Links:* <https://github.com/MarkTripoli/skills/pull/1|PR #1> · <https://jira.example/browse/PROJ-2|PROJ-2>", "*Now:* Reviewing\n*Next:* Test\n*Links:* <https://github.com/MarkTripoli/skills/pull/1|PR #1> · <https://jira.example/browse/PROJ-2|PROJ-2>")
 
-	completion := FinishRunInput{Outcome: "completed", Completed: []string{"Shipped"}, Decisions: []string{"Keep fallback"}, Unresolved: []string{"Flaky UI test"}, Evidence: []string{"go test passes"}, Links: []string{"https://gitlab.com/group/project/-/merge_requests/1"}}
+	completion := FinishRunInput{Outcome: "completed", Completed: []string{"Shipped"}, Decisions: []string{"Keep fallback"}, Unresolved: []string{"Flaky UI test"}, Evidence: []string{"go test passes"}, Links: []string{"https://github.com/MarkTripoli/skills/pull/1"}}
 	assertRichBlockKitMessage(t, BuildCompletionMessage(root, completion), "Run summary", []string{
 		"*Outcome:*\ncompleted",
 		"*Summary:*\nShipped",
 	}, []string{
 		"*Unresolved:*\nFlaky UI test",
 		"*Evidence:*\ngo test passes",
-	}, "*Links:* <https://gitlab.com/group/project/-/merge_requests/1|MR !1> · <https://jira.example/browse/PROJ-2|PROJ-2>", "*Outcome:* completed\n*Summary:* Shipped\n*Unresolved:* Flaky UI test\n*Evidence:* go test passes\n*Links:* <https://gitlab.com/group/project/-/merge_requests/1|MR !1> · <https://jira.example/browse/PROJ-2|PROJ-2>")
+	}, "*Links:* <https://github.com/MarkTripoli/skills/pull/1|PR #1> · <https://jira.example/browse/PROJ-2|PROJ-2>", "*Outcome:* completed\n*Summary:* Shipped\n*Unresolved:* Flaky UI test\n*Evidence:* go test passes\n*Links:* <https://github.com/MarkTripoli/skills/pull/1|PR #1> · <https://jira.example/browse/PROJ-2|PROJ-2>")
 
 	assertBlockKitMessage(t, BuildStatusMessage(WorkEvent{Note: "Review passed."}), "Progress", []string{"*Update:*\nReview passed."}, "*Update:* Review passed.")
 	assertBlockKitMessage(t, BuildBlockerMessage("Need review", ""), "⚠️ Blocked", []string{"*Blocker:*\nNeed review"}, "*Blocker:* Need review")

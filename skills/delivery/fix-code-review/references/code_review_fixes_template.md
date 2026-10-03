@@ -25,7 +25,7 @@ CR entries are the review's critical/major-severity findings; ADV entries are th
 - disposition: fixed | disputed: <evidence> | blocked
 - evidence:
 - files changed:
-- regression check:
+- regression check: <test file path under the repository, the test name, and its result before and after the fix | None: <reason>>
 
 ## Advisory Decisions
 

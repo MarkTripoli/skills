@@ -50,6 +50,7 @@ The canonical series for each artifact type, exactly as `ARTIFACT_SERIES` in `sh
 | `jira-breakdown` | `planning.jira` |
 | `jira-story-start` | `implementation.jira` |
 | `qa-readiness` | `review.qa` |
+| `babysit` | `supervision.babysit` |
 
 Distinct series never share iterations. Several general reviews of one type are iterations of one series, while different review kinds (`review.code`, `review.fixes`, `review.verification`, `review.browser`, `review.comments`, `pull-request.review`) remain separate durable series with their own current pointers.
 
@@ -67,7 +68,7 @@ A recorded iteration is immutable. Every durable revision, whether reviewer feed
 
 Delivery review rounds are distinct from immutable iteration numbers. `deliver/contract.mjs review-next <task-dir> <review-type> <checkpoint>` derives the next round, previous valid blockers and exact rejected-receipt errors from digest-valid history. Invalid reviews, including a failed-check approval or duplicate valid round, remain immutable evidence but do not consume a round or erase earlier valid blockers. New plan digests do not reset checkpoint history. Index/path/hash failures still fail the whole ledger closed.
 
-Receipt rounds remain monotonic across approvals; the three-round repair limit counts consecutive valid `changes` since the last valid approval, reported separately as `repair_round`. A first blocker after successful phase reapprovals starts repair round one, not an exhausted limit or no-progress verdict. Only a valid approval closes that blocking episode; changed plan digests, rejected attempts and duplicate rounds never reset it.
+Receipt rounds remain monotonic across approvals; `repair_round` counts consecutive valid `changes` in the current blocking episode. No implicit review cap applies. An explicit owner `review-round-limit: N` in task.md Decisions stops at that boundary; `review-round-limit: none` removes it. Only a valid approval closes an episode; changed plan digests, rejected attempts and duplicate rounds never reset it.
 
 For an indexed plan with `## Phase N:` sections, `deliver/contract.mjs phase-complete <task-dir> <phase-N> <slice-review-path>` validates a current-head/current-revision approval bound to that exact current plan path and SHA-256, requires committed source, and publishes the plan successor through the existing reservation/record protocol. It marks only that phase's Automated Verification or Verify checkboxes and appends dated commit/review/plan proof in Progress; the reviewer, not this helper, runs the checks. The original plan and review bytes never change. Repeating the same completed phase is idempotent. `status` returns proof-bound `resume.phases`, the first incomplete `next_phase` and `next_action` (`review-plan`, `build` or `final`); the successor needs an independent current plan approval before work continues. Legacy tasks retain manual Progress and never silently initialize an index.
 

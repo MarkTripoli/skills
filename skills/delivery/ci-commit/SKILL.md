@@ -1,6 +1,6 @@
 ---
 name: ci-commit
-description: Run for /ci-commit requests. Create focused Conventional Commits for completed work.
+description: Creates focused Conventional Commits for completed work, validating each subject and saving a commit receipt. Use when the user runs /ci-commit, asks to commit finished changes, or an implementation phase hands off to commit; not for opening or describing the pull request (use /describe-pr).
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
@@ -45,10 +45,17 @@ Unrelated edits: leave unstaged, mention. Mixed file: ask how to split unless ob
 Before every commit, check the subject line against the conventions' pattern:
 
 ```bash
-printf '%s' "<subject>" | grep -Eq '^(feat|fix|refactor|perf|test|docs|build|ci|chore|style|revert)(\([a-z0-9][a-z0-9-]*\))?!?: [a-z0-9].*[^.]$' && test "$(printf '%s' "<subject>" | wc -c)" -le 72
+subject='<subject>'
+printf '%s' "$subject" | grep -Eq '^(feat|fix|refactor|perf|test|docs|build|ci|chore|style|revert)(\([a-z0-9][a-z0-9-]*\))?!?: [a-z0-9].*[^.]$' && test "${#subject}" -le 72
 ```
 
-A failing subject is rewritten and re-checked; it is never committed. When the repository has its own commit lint (`commitlint` config, a `commit-msg` hook, `.gitmessage`, or a `CONTRIBUTING.md` rule), read it and satisfy its stricter rule too. Repository rules cover the whole message, body and trailers included: read the root `AGENTS.md` and `CLAUDE.md` and any commit validator script, and run that validator on the full message before committing. A repository rule against attribution trailers, such as `Co-Authored-By:`, overrides the runtime's default attribution. Leave such a trailer out rather than rewording later: a reword rewrites history, which permission modes often refuse.
+When the repository has `scripts/check-commits.mjs`, run `node scripts/check-commits.mjs --title "$subject"` instead.
+
+A failing subject is rewritten and re-checked; it is never committed. Then read the repository's own rules:
+
+- Commit lint: a `commitlint` config, a `commit-msg` hook, `.gitmessage`, or a `CONTRIBUTING.md` rule. Satisfy its stricter rule too.
+- The root `AGENTS.md` and `CLAUDE.md` and any commit validator script. Run the validator on the full message, body and trailers included, before committing.
+- A repository rule against attribution trailers such as `Co-Authored-By:` overrides the runtime's default. Leave the trailer out, because a reword rewrites history, which permission modes often refuse.
 
 ### 5. Execute
 
@@ -68,6 +75,4 @@ Read and use `references/commit_final_answer.md` exactly. Fill `{artifact_link}`
 ## Rules
 
 - Use current session context; do not ask the user to restate it.
-- Focused commits, one type each, Conventional Commits subjects.
-- Task artifacts stay local and are never staged or committed.
 - Failed tests, unsafe git: blockers.

@@ -14,7 +14,7 @@ function charterRow(id, action) {
   return `| ${id} | target | Chromium 1280×720 | ${action} | Specified count | spec.md | yes |`;
 }
 
-function check(scenario, coverage, charter = []) {
+function check(scenario, coverage, charter = [], limit) {
   const bounded = scenario === noProgress;
   const blocked = scenario === viewerBlocked;
   return scenario.phases[0].check({ artifact: {
@@ -22,7 +22,7 @@ function check(scenario, coverage, charter = []) {
       type: "evidence-iteration",
       status: blocked ? "blocked" : "failed",
       stop_reason: blocked ? "blocker" : bounded ? "no-progress" : "exhaustion",
-      limit: blocked ? "3" : bounded ? "1" : "0",
+      limit: limit ?? (blocked ? "none" : bounded ? "1" : "0"),
       consumed_rounds: bounded ? "1" : "0",
     },
     text: [
@@ -216,8 +216,14 @@ test("viewer-blocked: filenames, unmapped IDs and ambiguous labels cannot supply
   ], [charterRow("Increment", "Click Reset once")]).length, 2);
 });
 
+test("viewer-blocked: a receipt that records a repair limit fails", () => {
+  const untested = [coverageRow("Increment", "untested"), coverageRow("Reset", "untested")];
+  assert.deepEqual(check(viewerBlocked, untested), []);
+  assert.ok(check(viewerBlocked, untested, [], "3").some((problem) => problem.includes("limit none")));
+});
+
 test("continuation: IE-001 resolution is read from Findings section only, not Guardrails", () => {
-  const fm = { type: "evidence-iteration", status: "passed", stop_reason: "success", limit: "3", consumed_rounds: "1" };
+  const fm = { type: "evidence-iteration", status: "passed", stop_reason: "success", limit: "none", consumed_rounds: "1" };
   const makeArtifact = (text) => ({ fm, text });
 
   // IE-001 resolved in Findings table: must pass.

@@ -1,17 +1,34 @@
 ---
 name: group-review
-description: Run for /group-review requests. Review a set of related merge requests, often a stack by one author, against their tickets and product docs, verify every finding, and post approved inline comments only after the user decides what goes out.
+description: Reviews a set of related pull requests, often one author's stack, against their tickets and product docs, verifies every finding, and posts approved inline comments only after the user decides. Use when the user runs /group-review, gives PR numbers, Jira keys or a branch prefix to review, or asks for a stack review; not for answering review threads on the current task's PR (use /resolve-pr-reviews).
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
 
 # Group Review
 
-Review several related merge requests (MRs) as one unit: one reviewer per request against its own target branch, one reviewer for the whole stack, and an orchestrator that verifies findings and posts nothing until the user has decided what goes out. The reviewed code belongs to someone else, so this skill edits no product code, commits nothing to the reviewed branches, and never changes the user's checkout.
+Review several related pull requests (PRs) as one unit: one reviewer per request against its own target branch, one reviewer for the whole stack, and an orchestrator that verifies findings and posts nothing until the user has decided what goes out. The reviewed code belongs to someone else, so this skill edits no product code, commits nothing to the reviewed branches, and never changes the user's checkout.
+
+Copy this checklist and tick each item. Steps 1, 3, 7, and 9 end with a stop for the user.
+
+```text
+Progress:
+- [ ] 1 set confirmed by user (stop)
+- [ ] 2 requirements gathered
+- [ ] 3 primer, user says start (stop)
+- [ ] 4 isolated
+- [ ] 5 reviewers done
+- [ ] 6 findings verified
+- [ ] 7 decisions answered by user (stop)
+- [ ] 8 anchors all in_diff
+- [ ] 9 test post approved (stop)
+- [ ] 10 batch approved and posted
+- [ ] 11 cleaned up, checkout compared
+```
 
 ## Input
 
-`/group-review <terms>`: GitHub PR numbers (`#42`), GitLab MR numbers (`!3330`), Jira keys, title fragments, or a branch prefix. The selected remote defaults to `origin`: GitHub through authenticated `gh`, GitLab through authenticated `glab`. Pass `--remote <name>` to discovery for another remote and `--host github` for GitHub Enterprise. The stack records the hostname and repository; every subsequent API read and post uses that same context.
+`/group-review <terms>`: GitHub PR numbers (`#42`), GitLab PR numbers (`!3330`), Jira keys, title fragments, or a branch prefix. The selected remote defaults to `origin`: GitHub through authenticated `gh`, GitLab through authenticated `glab`. Pass `--remote <name>` to discovery for another remote and `--host github` for GitHub Enterprise. The stack records the hostname and repository; every subsequent API read and post uses that same context.
 
 Forge identity comes from the selected remote's configured URL (`remote.<name>.url`). Git `insteadOf` transport rewrites do not change the host/repository used for API calls. A configured local path or `file:` remote cannot identify a forge and fails closed.
 
@@ -46,24 +63,19 @@ Rules:
 
 Run `node <installed-skills-dir>/group-review/scripts/stack.mjs --out <workspace>/stack.json <terms>` from the repository root. It resolves each term to requests, fetches their branches, records title, state, draft, author, source and target branches, pinned base/start/head SHAs, size, and pipeline, orders the stack (a request whose target is another request's source sits above it), and lists commits whose patch-id appears in more than one request.
 
-The workspace is `<task-root>/<slug>/`, resolved per the conventions, with `task.md` holding the request verbatim. New tasks initialize `index.json`; existing indexes are authoritative and validated, never replaced with a directory scan. Working data remains unindexed: `stack.json`, `mr-<number>.md`, `comments.json`, `anchors.json`, `posted.json`, and worker scratch drafts. Durable Markdown records use immutable indexed series: context (`group-review-context`, `review.group-context`), each request (`group-request-<number>-review`, `review.request-<number>`), stack reviewer (`group-stack-review`, `review.stack`), and consolidated report (`group-review`, `review.group`). Per-request types are distinct so artifact observation never sees duplicate current types. Allocate and record through adjacent `references/task-artifacts.mjs` when installed, otherwise follow the conventions' exact manual index contract. Always use returned full record paths, not basenames. Iteration or feedback creates a new iteration; never edit a recorded artifact. For genuinely unindexed legacy tasks only, retain numbered artifact selection. Task records are ignored local state, never staged or committed. This read-only review opens no task worktree or branch.
+The workspace is `<task-root>/<slug>/`, resolved per the conventions, with `task.md` holding the request verbatim. New tasks initialize `index.json`; existing indexes are authoritative and validated, never replaced with a directory scan. Working data remains unindexed: `stack.json`, `pr-<number>.md`, `comments.json`, `anchors.json`, `posted.json`, and worker scratch drafts. Durable Markdown records use immutable indexed series: context (`group-review-context`, `review.group-context`), each request (`group-request-<number>-review`, `review.request-<number>`), stack reviewer (`group-stack-review`, `review.stack`), and consolidated report (`group-review`, `review.group`). Per-request types are distinct so artifact observation never sees duplicate current types. Allocate and record through adjacent `references/task-artifacts.mjs` when installed, otherwise follow the conventions' exact manual index contract. Always use returned full record paths, not basenames. Iteration or feedback creates a new iteration; never edit a recorded artifact. For genuinely unindexed legacy tasks only, retain numbered artifact selection. Task records are ignored local state, never staged or committed. This read-only review opens no task worktree or branch.
 
 Reply with the table of requests found: number, title, source to target, size, pipeline, state. Leave merged and closed requests out of review and say which. Name any duplicated commits. Ask the user to confirm the set, then stop.
 
 ## 2. Gather requirements
 
-1. Save each request description to `<workspace>/mr-<number>.md`.
+1. Save each request description to `<workspace>/pr-<number>.md`.
 2. List the available connectors and resolve reachability as [Context connectors](#context-connectors) describes.
 3. Collect ticket keys from titles, branch names, and descriptions. Read each ticket through the tracker connector: acceptance criteria, checklist, amendments, and comments. A later dated amendment supersedes the criteria it names.
 4. Read the parent epic. Follow its links to the product requirements document (PRD), any technical design, Figma frames, and recordings, and read each through its connector.
-5. Search the repository for related documents, at the target branch and at every request head, since a request may add or change its own design notes. Search `docs/`, `specs/`, `design/`, `adr/`, `rfcs/`, and any `docs` or `documents` folder inside the changed apps or modules:
-   - `git ls-tree -r --name-only <ref> | grep -iE '(^|/)(docs?|documents|specs?|design|adrs?|rfcs?)/|prd|tdd|design|spec'` lists candidates by path.
-   - `git grep -il -E '<ticket keys>|<epic key>|<feature name>' <ref> -- '*.md' '*.mdx' '*.rst' '*.txt'` finds documents that name the work.
-   - Look up every document path that a ticket, epic, or request description cites (for example `feature-docs/02-tdd.md`) by its basename across these refs, because citations often point at another folder or repository.
-   Read the matches that describe the feature or the modules the requests change, and skip unrelated specs and generated files. Record each document read, with the ref it came from, in the context artifact. A cited document that is in no ref goes on the unreachable list.
-6. Collect the repository's review rules from the target branch: `.code-review/` when it exists (start with its `README.md` or index, which says how the rules apply and what is out of scope), plus the convention files those rules point to, such as `.cursor/rules/*.mdc`, `AGENTS.md`, `CLAUDE.md`, or an engineering guidelines document. Read the target branch's copy, because a request cannot relax the rules it is reviewed against; when a request changes a rule file, note that change as a lead. For each request, list the rule files whose topic its diff touches (migrations, queries, concurrency, background tasks, tests), so each worker reads only those.
-7. Record every source read, with its connector, and every unreachable source in the context artifact.
-8. Do a first read of each request diff and note leads: files no ticket covers, permission or transaction changes, duplicated content, fields nothing writes, and code that contradicts a repository document.
+5. Search the repository for related documents and collect its review rules, as [requirements_search.md](references/requirements_search.md) describes. Record each document read, with the ref it came from, in the context artifact.
+6. Record every source read, with its connector, and every unreachable source in the context artifact.
+7. Do a first read of each request diff and note leads: files no ticket covers, permission or transaction changes, duplicated content, fields nothing writes, and code that contradicts a repository document.
 
 Write the context artifact from [context_template.md](references/context_template.md). It is the only requirements input workers receive.
 
@@ -82,7 +94,7 @@ Assign reviewers before dispatch and give each a unique unindexed scratch draft 
 - One reviewer per open request, reviewing `git diff <base_sha> <head_sha>`. Group a request with another when it is under about 50 changed lines outside generated code, or when its diff duplicates another request.
 - One stack reviewer when two or more requests chain or share a target: branch ancestry, merge order (`git merge-tree --write-tree` simulations), migration chains, API contract consistency across requests, and content that belongs in no request. It cross-references the per-request reviews and does not repeat them.
 
-Build each brief from [reviewer_brief.md](references/reviewer_brief.md). Workers write [mr_review_template.md](references/mr_review_template.md) to their assigned file. Start them in parallel when the host supports workers; otherwise run each inline in order and say so. Keep the fan-out to about eight workers.
+Build each brief from [reviewer_brief.md](references/reviewer_brief.md). Workers write [pr_review_template.md](references/pr_review_template.md) to their assigned file. Start them in parallel when the host supports workers; otherwise run each inline in order and say so. Keep the fan-out to about eight workers.
 
 ## 6. Verify
 
@@ -96,7 +108,7 @@ Reply with [group_review_decisions_answer.md](references/group_review_decisions_
 
 ## 8. Draft and anchor
 
-Write one entry per approved comment to `<workspace>/comments.json`: `{id, mr, path, pattern, occurrence, body}`, or an explicit `line` in place of `pattern`. Follow [comment_style.md](references/comment_style.md). Then run `node <installed-skills-dir>/group-review/scripts/anchors.mjs --stack <workspace>/stack.json --in <workspace>/comments.json --out <workspace>/anchors.json`. It finds each pattern's line at the pinned head and checks that the line is inside the request's diff; hosts reject or detach an inline comment on a line outside it. For an anchor outside the diff, move it to the nearest added line that shows the problem (the field declaration, the test class) and name the real location in the body. Run it again until every anchor reports `in_diff`.
+Write one entry per approved comment to `<workspace>/comments.json`: `{id, pr, path, pattern, occurrence, body}`, or an explicit `line` in place of `pattern`. Follow [comment_style.md](references/comment_style.md). Then run `node <installed-skills-dir>/group-review/scripts/anchors.mjs --stack <workspace>/stack.json --in <workspace>/comments.json --out <workspace>/anchors.json`. It finds each pattern's line at the pinned head and checks that the line is inside the request's diff; hosts reject or detach an inline comment on a line outside it. For an anchor outside the diff, move it to the nearest added line that shows the problem (the field declaration, the test class) and name the real location in the body. Run it again until every anchor reports `in_diff`.
 
 The resolver derives `old_path` and `new_path` from rename-aware Git diffs at the pinned base/head, ignoring caller-supplied path pairs. Posting revalidates that pair before writing: GitLab discussions use the pre-change and post-change filenames with only `new_line` for an added line, as required by the [Discussions API](https://docs.gitlab.com/api/discussions/#create-a-new-thread-in-the-merge-request-diff). GitHub comments keep the head-side `path` and `RIGHT` line semantics.
 
@@ -113,8 +125,3 @@ After the user approves the rest, run `post.mjs --approved` with the same files,
 Remove the worktrees (`git worktree remove <path>`, then `git worktree prune`). Compare the user's branch and HEAD with the values recorded in step 4. When they differ, report the reflog line that changed them and the command to return; do not switch back without the user's word.
 
 Reply with [group_review_posted_answer.md](references/group_review_posted_answer.md). Fill `{summary}` with one line per request and its comment count, `{artifact_link}` with a relative link to `posted.json`, and `{checkout_state}` with `unchanged on <branch>` or the reflog line and the return command.
-
-## Shell notes
-
-- In zsh, write `${var}` before a colon: `$B:svc/...` applies a history modifier and corrupts the path.
-- Do not start an `echo` argument with `=`; zsh expands `=word` to a command path.

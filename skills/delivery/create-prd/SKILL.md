@@ -1,6 +1,6 @@
 ---
 name: create-prd
-description: Run for /create-prd requests. Create a guided Product Requirements Document artifact.
+description: Guides a one-question-at-a-time interview and writes a Product Requirements Document artifact with EARS behavior statements, or converts an existing PRD in one pass. Use when the user runs /create-prd, asks for a PRD or product spec, or after research or a design discussion; for revising an existing PRD use /iterate-prd.
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
@@ -9,7 +9,7 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 You create a Product Requirements Document explaining what the product should do and why. Leave implementation architecture, storage, and code for TDD unless a technical constraint changes product behavior.
 
-Run as a guided conversation. Settle foundation (problem, success signal), then walk solution one decision at a time. Document becomes a coherent spec, not a transcript.
+Run as a guided conversation. Settle foundation (problem, Success Measures), then walk solution one decision at a time. Document becomes a coherent spec, not a transcript.
 
 ## Conversation Rules
 
@@ -20,12 +20,19 @@ Run as a guided conversation. Settle foundation (problem, success signal), then 
 - When decision lands, rework section. Replace stale prose, update mockups, move ruled-out choices to alternatives or out of scope.
 - Keep readable as product spec. Headers state takeaway, short paragraphs, visuals near explanatory text.
 - Stay in product space: user flows, behavior, permissions, states, constraints, success criteria. Defer implementation mechanics to TDD.
-- Record each behavior in Solution Details as one EARS sentence that names the actor and uses `shall` with an observable outcome, such as ``WHEN <trigger>, the <system> shall <response>.``; the [slicing guide](https://github.com/MarkTripoli/skills/blob/main/shared/SLICING.md), which a checkout has at `shared/SLICING.md`, covers the other patterns. A behavior carrying "and also" is two behaviors; a vague term ("fast", "secure", "works correctly") is a decision nobody made yet, so ask the question that settles it.
+- Record each behavior in Solution Details as one EARS sentence that names the actor and uses `shall` with an observable outcome, in one of five shapes:
+  - Ubiquitous: `The <system> shall <response>.`
+  - Event-driven: `WHEN <trigger>, the <system> shall <response>.`
+  - State-driven: `WHILE <state>, the <system> shall <response>.`
+  - Optional feature: `WHERE <feature is enabled>, the <system> shall <response>.`
+  - Unwanted behavior: `IF <condition>, THEN the <system> shall <response>.`
+
+  A behavior carrying "and also" is two behaviors; a vague term ("fast", "secure", "works correctly") is a decision nobody made yet, so ask the question that settles it.
 - If codebase reality or product behavior is unclear, verify before presenting options.
 
 ## References
 
-Read from this skill directory: `references/prd_template.md`, `references/prd_final_answer.md`.
+Read from this skill directory: `references/prd_template.md`.
 
 ## Step 1: Understand the context
 
@@ -35,18 +42,13 @@ For a Jira-backed task, read the current indexed `research.jira` artifact fully 
 
 PRD can start from detailed ticket, research, design discussion, gathered sources, or short request. Ground claims in source. Reference upstream artifacts; do not copy. If context is thin, ask questions instead of inventing. Capture product implications of technical constraints; leave implementation for TDD.
 
-## Converting an existing product document
+When the request asks to convert, import, adopt or port an existing PRD, product spec or brief held by current `research.sources` or a user-named file, read [references/convert_existing_prd.md](references/convert_existing_prd.md) instead of Steps 2–5.
 
-When the request asks to convert, import, adopt, or port an existing PRD, product spec, or brief, and the current `research.sources` artifact (or a file the user names) holds it, skip the interview and write the PRD in one pass:
-
-1. Map the source onto the template: its problem statement and user impact become Problem to Solve; its goals, metrics, or success criteria become Success Measures; its chosen approach becomes Proposed Solution; rejected options become Alternative Solutions Considered; each requirement, user story, flow, or acceptance criterion becomes one Solution Details obligation, an EARS `shall` sentence with an observable outcome; its non-goals become Out of Scope. Beside each mapped statement cite the source as the sources artifact records it: location and pointer.
-2. A template section the source does not cover reads `Not stated in <source title>.` followed by the closest fact the source gives, never an invented one. Each such section, and each source statement too vague to be one obligation, becomes one `### Known limits` item and one `### Verify` box naming the decision the reader must make.
-3. Do not ask questions during the conversion. Do not write mockups; link the source's own visuals by location when it has them. Do not reconcile the source with the codebase; that is the TDD's work.
-4. Wrap up per Step 6: save the PRD locally and reply with `references/prd_final_answer.md`, whose `Check:` and `Known limits:` lines carry the blanks the reader fills before the TDD.
-
-Outside this case, a sources artifact that holds a product document is an input to the interview: draft Problem to Solve, the success signal, and each Solution Details behavior from its excerpts, quoting the source and its pointer beside each, and confirm or amend each drafted decision one question at a time instead of rediscovering it.
+Outside this case, a sources artifact that holds a product document is an input to the interview: draft Problem to Solve, the Success Measures, and each Solution Details behavior from its excerpts, quoting the source and its pointer beside each, and confirm or amend each drafted decision one question at a time instead of rediscovering it.
 
 If work touches UI, mockups look like the user's product, not a generic template. Check research for colors, typography, spacing, components, theming. If none documented, start a child worker for role `agent-codebase-analyzer` to identify the design system before creating mockups.
+
+Start a child worker for role `agent-codebase-locator`, `agent-codebase-analyzer`, `agent-codebase-pattern-finder` or `agent-web-search-researcher` only when a missing fact changes the artifact; read its final message before using findings. New or corrected repository facts go into a successor `research.primary` iteration, not an overwrite. Keep gathered source receipts unchanged and put relevant repository facts in the PRD.
 
 ## Step 2: Write the skeleton
 
@@ -54,7 +56,7 @@ Allocate the next immutable `design.prd` iteration through the conventions' Reco
 
 ## Step 3: Settle the foundation
 
-Build foundation one decision at a time, wait after each. Problem to Solve: iterate until user agrees, then rework. Success signal: propose lever showing whether work helped (metric, adoption, benchmark, error rate, latency, qualitative review; for tiny changes, valid to record no metric if user agrees). Do not open solution until both settled.
+Build foundation one decision at a time, wait after each. Problem to Solve: iterate until user agrees, then rework. Success Measures: propose lever showing whether work helped (metric, adoption, benchmark, error rate, latency, qualitative review; for tiny changes, valid to record no metric if user agrees). Do not open solution until both settled.
 
 ## Step 4: Solution interview
 
@@ -64,7 +66,7 @@ Mockups: write `mockup-<description>.html` in the task directory, use real label
 
 ## Step 5: Solution review gate
 
-When solution seems complete, stop. Ask user to read Solution Details top to bottom and confirm spec hangs together. Incorporate fixes.
+When solution seems complete, stop. Ask user to read Solution Details top to bottom and confirm spec hangs together. Incorporate fixes. Then read `references/prd_review_answer.md` and reply with it exactly, filled as Step 6 fills the final answer template.
 
 ## Step 6: Wrap up
 

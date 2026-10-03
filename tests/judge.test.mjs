@@ -12,9 +12,9 @@ const JUDGE = path.join(REPO, "skills", "delivery", "typed-judgment", "judge.mjs
 const PLAN = fs.readFileSync(path.join(REPO, "skills", "delivery", "create-plan", "references", "plan_template.md"), "utf8");
 
 // Async so the in-process stub server can answer while the helper runs.
-function judge(args, env, input) {
+function judge(args, env, input, cwd) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [JUDGE, ...args], { env: { PATH: process.env.PATH, ...env } });
+    const child = spawn(process.execPath, [JUDGE, ...args], { env: { PATH: process.env.PATH, ...env }, cwd });
     let out = ""; let err = "";
     child.stdout.on("data", (chunk) => { out += chunk; });
     child.stderr.on("data", (chunk) => { err += chunk; });
@@ -327,11 +327,53 @@ test("judge research commands: rerank orders by expected level and asks whether 
     const claims = tmp("claims.json", JSON.stringify([{ id: "C1", claim: "exits 1", source: "process.exit(2)" }]));
     p = 0.03;
     assert.equal((await judge(["cite", claims], stub.env)).out, "C1\tunsupported\t0.03");
+    // cite-artifact: one claim per pointer, sources read from the cited lines; a pointer with no source is unsupported without a model call.
+    const src = tmp("app.js", "one\ntwo\nthree\n");
+    const repoDir = path.dirname(src); const app = path.basename(src);
+    p = 0.9;
+    const doc = tmp("02-research-x.md", `Dispatch reads two lines (\`${app}:1-2\`).\nNo pointer here, and https://example.com:8080/x or 127.0.0.1:8080 outside backticks are not one.\nMissing file \`${app}.gone:3\` and past the end \`${app}:40\`.\n`);
+    const cited = JSON.parse((await judge(["cite-artifact", doc, "--json"], stub.env, "", repoDir)).out);
+    assert.deepEqual(cited.map((r) => [r.line, r.id, r.verdict]), [[1, `${app}:1-2`, "supported"], [3, `${app}.gone:3`, "unresolved"], [3, `${app}:40`, "unresolved"]]);
+    assert.equal(stub.requests.at(-1).state.claims[0].source, "one\ntwo", "the source is exactly the cited lines");
+    assert.equal(stub.requests.at(-1).state.claims.length, 1, "unresolvable pointers never reach the model");
+    assert.match((await judge(["cite-artifact", doc], stub.env, "", repoDir)).out, /^L1\t/, "text rows lead with the artifact line");
+    assert.equal((await judge(["cite-artifact"], stub.env)).code, 2);
+    // Each pointer's claim is its own sentence or table cell, not the whole line.
+    const two = tmp("04-research-z.md", `The router reads the config (\`${app}:1-2\`). The store retries three times (\`${app}:3\`). | cell (\`${app}:1\`) | other\n`);
+    await judge(["cite-artifact", two, "--json"], stub.env, "", repoDir);
+    assert.deepEqual(stub.requests.at(-1).state.claims.map((c) => c.claim), [`The router reads the config (\`${app}:1-2\`).`, `The store retries three times (\`${app}:3\`).`, `cell (\`${app}:1\`)`]);
+    // A table row whose pointer sits alone in its cell: the row's text is the claim, not the bare pointer.
+    const cellRow = tmp("06-research-t.md", `| Router reads the config | \`${app}:1-2\` |\n`);
+    await judge(["cite-artifact", cellRow, "--json"], stub.env, "", repoDir);
+    assert.deepEqual(stub.requests.at(-1).state.claims.map((c) => c.claim), [`| Router reads the config | \`${app}:1-2\` |`]);
+    // Pointers outside the working directory are never read or sent.
+    const elsewhere = tmp("secret.txt", "secret\n");
+    fs.mkdirSync(path.join(repoDir, "sub"));
+    const outside = tmp("05-research-o.md", `Absolute (\`${elsewhere}:1\`) and parent (\`../${app}:1\`).\n`);
+    const out = JSON.parse((await judge(["cite-artifact", outside, "--json"], stub.env, "", path.join(repoDir, "sub"))).out);
+    assert.deepEqual(out.map((r) => r.verdict), ["unresolved", "unresolved"]);
+    // Relative pointers resolve against the working directory; brackets and extensionless files are paths; a host:port span does not resolve.
+    fs.mkdirSync(path.join(repoDir, "app", "[id]"), { recursive: true });
+    fs.writeFileSync(path.join(repoDir, "app", "[id]", "page.tsx"), "export default 1\n");
+    fs.writeFileSync(path.join(repoDir, "Makefile"), "all:\n");
+    const rel = tmp("03-research-y.md", "Page `app/[id]/page.tsx:1`, build `Makefile:1`, and `127.0.0.1:8080`.\n");
+    const relRows = JSON.parse((await judge(["cite-artifact", rel, "--json"], stub.env, "", repoDir)).out);
+    assert.deepEqual(relRows.map((r) => [r.id, r.verdict]), [["app/[id]/page.tsx:1", "supported"], ["Makefile:1", "supported"], ["127.0.0.1:8080", "unresolved"]]);
     p = 0.65;
     assert.equal((await judge(["neutral", qs], stub.env)).out, "Q1\tleading\t0.65", "the flag bar for a leading question is 0.6");
     p = 0.35;
     assert.equal((await judge(["neutral", qs], stub.env)).out, "Q1\tneutral\t0.35");
     assert.equal((await judge(["route-question", qs], stub.env)).out, "Q1\tanalyze\t0.9");
+    // The web role keeps saved and sourced documents out, and every skill that routes questions carries the same short clause.
+    const web = stub.requests.at(-1).questions.r_0.criteria.web;
+    assert.match(web, /^Needs a live lookup of current external information .*that no repository or task file holds/);
+    assert.match(web, /a document saved in the repository, named by path, or documented in a sources artifact is never web/);
+    assert.match(stub.requests.at(-1).questions.r_0.criteria.none, /including a saved sources artifact/);
+    const clause = "`web` only for current external facts no repository file, task file, or sources artifact holds; a vendor API reference the task supplies is not web.";
+    for (const skill of ["create-research-questions", "iterate-research-questions", "create-research"]) {
+      const text = fs.readFileSync(new URL(`../skills/delivery/${skill}/SKILL.md`, import.meta.url), "utf8");
+      assert.ok(text.includes(clause), `${skill} carries the web role clause`);
+    }
     confidence = 0.45;
     assert.equal((await judge(["route-question", qs], stub.env)).out, "Q1\tundecided\t0.45", "below a majority reading the skill picks the worker");
   } finally { stub.close(); }

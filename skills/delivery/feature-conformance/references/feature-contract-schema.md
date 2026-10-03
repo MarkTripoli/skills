@@ -1,5 +1,7 @@
 # Feature contract schema
 
+Contents: [Schema](#feature-contract-schema), [Construction and validation](#construction-and-validation).
+
 `feature-contract.json` is a versioned internal artifact. It contains only requirements from selected tickets and references source manifests rather than copying their contents.
 
 ```json
@@ -76,7 +78,9 @@
 }
 ```
 
-`authority` begins with `ticket_scope`. It then lists only applicable behavior sources in this order: `figma`, `design_document`, `ticket_detail`, and `repository`. The ticket is always the work boundary. Mapped Figma is the default visual and interaction authority, including over ambiguous or conflicting ticket details, and overrides a conflicting design document. Without applicable Figma, a design document resolves ambiguous ticket detail; a direct conflict with explicit acceptance criteria may require `decision_needed`.
+## Construction and validation
+
+`authority` lists `ticket_scope` first, then only the applicable sources among `figma`, `design_document`, `ticket_detail`, and `repository`, in that order. The rules for applying them are in SKILL.md.
 
 `design_document_manifest` references the single run-level manifest and fingerprints that file. A `referenced` row maps exact document and section IDs from that manifest, repeats only the mapped section hash needed to freeze the contract version, and states the contributed behavior. The independent reviewer checks the mapping against the referenced manifest.
 
@@ -84,7 +88,7 @@
 
 `source_resolution.status` is one of `aligned`, `figma_resolves_ticket`, `figma_overrides_design_document`, `design_document_resolves_ticket_ambiguity`, or `decision_needed`. Every non-`aligned` resolution includes a summary. Automatic Figma and design-document resolutions do not require approval.
 
-`source_change.status` is `baseline_created`, `unchanged`, `update_detected`, `reconciliation_active`, `reconciled`, or `source_unavailable`. Only confirmed material changes to mapped sources use the update/reconciliation states. A changed whole-document hash or PNG byte hash alone does not. `source_unavailable` uses `impact: "unknown"` and blocks the affected ticket; other changed states use `within_ticket`. Unmapped source content has no row and no source-change state.
+`source_change.status` is `baseline_created`, `unchanged`, `update_detected`, `reconciliation_active`, `reconciled`, or `source_unavailable`. `source_unavailable` uses `impact: "unknown"`; other changed states use `within_ticket`. Unmapped source content has no row and no source-change state.
 
 `decision.status` is `none`, `agent_decided`, `decision_needed`, `proposed_deviation`, `approved_deviation`, or `rejected_deviation`. `agent_decided` records a summary, rationale, authority reference, and reversibility. `approved_deviation` additionally requires `approval.reference`. A delivered row cannot contain an unresolved decision or unapproved deviation.
 

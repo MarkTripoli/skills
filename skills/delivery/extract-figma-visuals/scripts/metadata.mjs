@@ -105,4 +105,4 @@ export function main(argv = process.argv.slice(2)) {
     return 0;
   } catch (error) { console.error(error.message); return 1; }
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exit(main());
+if (process.argv[1] && fs.existsSync(process.argv[1]) && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) process.exit(main());

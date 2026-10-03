@@ -50,7 +50,7 @@ sha: [current commit]
 
 ## Slice Check
 
-| Child | Observable increment | Size evidence | Merge safety |
+| Child | Observable increment | Size evidence | Safe to merge alone |
 |---|---|---|---|
 | [Child outcome] | [what a caller can exercise once this merges, or the sibling that consumes this enabler] | [layers and files touched; the split applied when the first cut was larger] | [flag and its default, additive, or unreachable until the named child merges] |
 

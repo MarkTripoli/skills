@@ -35,38 +35,9 @@ type Service struct {
 	Home     *paths.Paths
 	Binary   string
 	Executor ServiceExecutor
-	// Path is the PATH exported to the daemon. Launchd and systemd do not
-	// use a login shell's PATH, so an empty value leaves pi, claude, and
-	// codex invisible. Install snapshots the installing shell.
-	Path string
 	// GOOS selects the definition format; empty means runtime.GOOS. Tests set
 	// it so both platforms are covered on one host.
 	GOOS string
-}
-
-// AgentPath merges path with the bin directories a login shell usually has
-// and a per-user supervisor does not. Later duplicates are dropped.
-func AgentPath(path string) string {
-	extras := []string{"/opt/homebrew/bin", "/usr/local/bin"}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		extras = append(extras, filepath.Join(home, ".local", "bin"))
-	}
-	seen := map[string]bool{}
-	var parts []string
-	add := func(dir string) {
-		if dir == "" || seen[dir] {
-			return
-		}
-		seen[dir] = true
-		parts = append(parts, dir)
-	}
-	for _, dir := range strings.Split(path, string(os.PathListSeparator)) {
-		add(dir)
-	}
-	for _, dir := range extras {
-		add(dir)
-	}
-	return strings.Join(parts, string(os.PathListSeparator))
 }
 
 func (s Service) goos() string {
@@ -93,9 +64,6 @@ func (s Service) Definition() (string, error) {
 	case "darwin":
 		esc := html.EscapeString
 		env := fmt.Sprintf("\t\t<key>%s</key>\n\t\t<string>%s</string>\n", paths.EnvHome, esc(s.Home.Root()))
-		if s.Path != "" {
-			env += fmt.Sprintf("\t\t<key>PATH</key>\n\t\t<string>%s</string>\n", esc(s.Path))
-		}
 		return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- %s -->
@@ -125,9 +93,6 @@ func (s Service) Definition() (string, error) {
 `, serviceMarker, esc(s.Label()), esc(s.Binary), env, esc(s.Home.DaemonLog()), esc(s.Home.DaemonLog())), nil
 	case "linux":
 		env := "Environment=" + strconv.Quote(paths.EnvHome+"="+s.Home.Root())
-		if s.Path != "" {
-			env += "\nEnvironment=" + strconv.Quote("PATH="+s.Path)
-		}
 		return fmt.Sprintf(`# %s
 [Unit]
 Description=slack-coordinator daemon

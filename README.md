@@ -16,6 +16,10 @@ The standalone `slack-coordinator` skill operates the daemon that reports run st
 
 The standalone [`jira-issue-hierarchy`](skills/jira-issue-hierarchy/SKILL.md) skill drafts KIT Epics and Stories from approved requirements, authors Sub-tasks when Story work starts, and checks Story QA readiness. Its policy and templates ship with the skill; QA reviews the Story, not agent-owned children. Install it alone or select `video-iterative-orchestration` with the repository installer to include it as a dependency. See the [quick start](docs/cheatsheet.md).
 
+## Babysit pull requests
+
+[`babysit`](skills/delivery/babysit/SKILL.md) supervises a frozen PR set and source-backed cross-project dependencies, prioritizes CI/review repairs, and merges only with explicit scoped authority, current required CI and host protections. GitHub is the default; an explicitly selected GitLab scope uses that host's protocol. Ordinary scoped repairs need source access and deciding checks, not old task artifacts, baselines, sealed evidence or helper preflight; full delivery proof remains binding when explicitly required by the owner, repository or original task. The [repository installer quick start](docs/getting-started.md#babysit-selected-gitlab-prs) provides existing companions without requiring their workflow. Queued requests are not merged. Monitoring lasts only while the session or an observed runtime scheduler remains active. `/deliver` stays never-merge.
+
 ## Install
 
 Use Node 22.20 or newer. Run in terminal:
@@ -37,6 +41,17 @@ npx github:MarkTripoli/skills
 See [repository installer reference](docs/cheatsheet.md#install) for its own flag, file place, other install way.
 
 GitHub delivery requires gh authenticated for the repository host. Private installation also requires Git credentials for that host.
+
+### Working from a clone
+
+Installed skills are copies. Opt into normal full-runtime refresh after default-branch merges with `git config skills.autoInstall auto`; use a runtime list such as `codex oh-my-pi` to choose targets. Leave it unset or set `off` for manual updates. The hook runs the regular installer without enabling orchestration. To refresh selected skills explicitly, run `node scripts/install.mjs <runtime> --skill <name> --yes` and start a new session.
+
+### Authoring and explanation
+
+- [`/author-skill`](skills/author-skill/SKILL.md) is the upstream “create skill” workflow: sibling/trigger check, eval-first scaffold, progressive references and executable helpers, both validators, then current-source live eval.
+- [`/explain`](skills/explain/SKILL.md) produces an evidence-grounded explanation for a selected audience; optional HTML and media stay outside task roots.
+- [`/land-pr-stack`](skills/delivery/land-pr-stack/SKILL.md) lands an explicitly authorized PR stack in dependency order, using GitHub by default and existing repository release requirements.
+
 
 ## Use skills independently
 
@@ -70,19 +85,24 @@ Old workflow system and metrics hookup dead; no replace telemetry service. Old c
 
 Keep task doc, published [changelog entries](CHANGELOG.md), existing worktree, include cancelled run. Install change not allow delete them.
 
+The active skills and deterministic helpers incorporate the skill-authoring refresh at revision `9af302dc`. The revamp adopts Claude Code skill-authoring practices: discriminating trigger descriptions, short procedural bodies, branch-loaded references, executable deterministic checks and behavior-first evals. `/author-skill` is canonical, not a new `/create-skill` alias. Atomic remains retired; task history and owner worktrees are preserved.
+
+`/describe-pr` and `/resolve-pr-reviews` retain personal PR naming, GitHub APIs, exact current-head hosted proof and optional hooks. Review and evidence repairs have no implicit three-round cap; explicit owner limits and no-progress stops remain binding. Imported recordings are historical source evidence, not proof of this checkout. The immutable indexed-artifact, configurable-root, opt-in security and run-coordination contracts below remain authoritative.
+
+
 ## Reference
 
 - [Getting started](docs/getting-started.md) and [cheat sheet](docs/cheatsheet.md)
 - [Workflow inputs and steps](workflows/delivery.md), [model selection](docs/model-routing.md), [agent setup](runtimes/)
 - [Session memory](docs/context-management.md), [verification](docs/verification.md), [app testing](docs/app-testing.md)
 
-Skill source: `skills/delivery/<name>/` and standalone directories under `skills/` (including `show-me`, `slack-coordinator`, and `jira-issue-hierarchy`).
+Skill source: `skills/delivery/<name>/` and standalone directories under `skills/` (including `show-me`, `explain`, `slack-coordinator`, and `jira-issue-hierarchy`).
 
 ## License
 
 MIT. See [LICENSE](LICENSE).
 ## Personal contracts
 
-The package remains `@marktripoli/skills`, with GitHub PR publication and releases. [`security-check`](skills/delivery/security-check/SKILL.md) stays opt-in. Slack coordinator retains the personal assistant, DM and standing-task modes alongside durable run status.
+The package remains `@marktripoli/skills`, with GitHub PR publication and releases. [`security-check`](skills/delivery/security-check/SKILL.md) stays opt-in. Slack coordinator provides durable run status and owner steering; it does not launch an assistant or schedule standing tasks.
 
 Tasks use configurable roots and an immutable `skills.task-index/v1` ledger; legacy no-index tasks remain readable. Hosted proof still requires actual tested-command output, passing recorded tests/cues, current-head SHA, direct capture bytes and a distinct same-PR comment. Custom publication hooks remain supported.

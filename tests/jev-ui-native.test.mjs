@@ -24,6 +24,10 @@ test('blocks Android control when adb is unavailable', async () => {
   const runner=async()=>{throw new Error('missing')};
   const result=await selectTarget('android',{runner}); assert.equal(result.blocked,true); assert.match(result.reason,/missing driver/);
 });
+test('reports the adb error when target discovery fails', async () => {
+  const runner=runnerFor({'command -v adb':'/adb','adb devices -l':()=>{throw new Error('adb server is out of date')}});
+  const result=await selectTarget('android',{id:'emulator-5554',runner}); assert.equal(result.blocked,true); assert.equal(result.reason,'target discovery failed: adb server is out of date');
+});
 test('requires explicit identity for ambiguous android targets', async () => {
   const runner=runnerFor({'command -v adb':'/adb','adb devices -l':'List of devices attached\na device\nb device'});
   const result=await selectTarget('android',{runner}); assert.equal(result.blocked,true); assert.match(result.reason,/ambiguous/);

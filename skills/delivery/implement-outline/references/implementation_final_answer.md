@@ -9,7 +9,7 @@ Check:
 - {review_check}
 - Known limits: {known_limits}
 
-Reply with the changes you want, or run `/iterate-implementation @{plan_file}`.
+Reply with the changes you want, or run `/iterate-implementation @{source_file}`.
 Running the next command records approval of implementation.
 
 Next action:

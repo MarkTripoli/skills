@@ -54,7 +54,7 @@ async function main(args) {
   console.log(JSON.stringify(result));
   process.exitCode = scan.coverage === 'complete' && result.accepted_risks.coverage === 'complete' ? 0 : 1;
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && fs.existsSync(process.argv[1]) && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) {
   main(process.argv.slice(2)).catch(() => {
     console.log(JSON.stringify({status: 'incomplete', reason: 'assessment input invalid or stale; no clean report produced'}));
     process.exitCode = 1;

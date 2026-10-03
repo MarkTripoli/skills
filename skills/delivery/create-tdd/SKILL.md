@@ -1,6 +1,6 @@
 ---
 name: create-tdd
-description: Run for /create-tdd requests. Create a guided Technical Design Document artifact.
+description: Guides a System Design then Program Design interview and writes a Technical Design Document artifact with work breakdown and execution DAG, or converts an existing RFC or spec in one pass. Use when the user runs /create-tdd, asks for a technical design, or after the PRD is approved; for revisions use /iterate-tdd.
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
@@ -16,33 +16,28 @@ Run as interview: System Design (behavior across components), then Program Desig
 - Ask exactly one question per message. Two or three options inside that question are allowed; multiple independent questions are not.
 - Present decision, tradeoffs, recommendation, then wait.
 - Treat pushback and clarifying questions as conversation. Patch the TDD only when the decision resolves.
-- Rework affected sections; do not append notes. The TDD reads as a cohesive design, not a running list of answers.
 - Use diagrams, signatures, endpoint shapes, file trees, call trees, or pseudocode when they clarify the decision.
-- Use the smallest useful set of representations.
 - If engineering constraints alter scope or UX, make that explicit and revise the PRD or mockups when they exist.
 
 ## References
 
-Read from this skill directory: `references/tdd_template.md`, `references/artifact_template.html`, `references/tdd_final_answer.md`.
+Read from this skill directory: `references/tdd_template.md`.
 
 ## Step 1: Understand the context
 
 First, resolve the task directory using the repository-configured task root and read `task.md` per the conventions, creating it from the user's message when none exists. For indexed tasks, read and validate `index.json`; select current artifacts through each canonical series' `current` pointer, never by scanning for the newest file. Read primary inputs fully: the current PRD when present; otherwise the task or ticket plus current `design.discussion`, or current `research.primary` when no design discussion exists; current `research.sources` when present; and user-mentioned files. For other artifacts, use their index `summary` fields to choose relevant context, opening only those relevant to design and reading by heading. Exclude research-question artifacts. Only when `index.json` is genuinely absent, follow the conventions' legacy artifact-selection rules. Read `references/tdd_template.md` before creating.
 
-PRD is helpful but not required. Cite inputs; do not duplicate. If requirements are thin, ask questions instead of inventing scope. When technical reality changes product behavior, make that explicit.
+If a PRD exists, cite it; do not duplicate it. If none, take scope from the ticket and design discussion and state product assumptions in the first System Design paragraph. If scope is still unclear after reading them, ask one question before Step 2. When technical reality changes product behavior, make that explicit.
 
-## Converting an existing technical document
+When the request asks to convert, import, adopt or port an existing RFC, technical spec or architecture decision held by current `research.sources` or a user-named file, read [references/convert_existing_tdd.md](references/convert_existing_tdd.md) instead of Steps 2–6.
 
-When the request asks to convert, import, adopt, or port an existing RFC, design document, technical spec, or architecture decision record, and the current `research.sources` artifact (or a file the user names) holds it, skip the interview and both review gates, then write the TDD in one pass:
-
-1. Map the source onto the template: its architecture, components, endpoints, data flow, and external systems become System Design; its module layout, call paths, and internal contracts become Program Design; its interfaces, schemas, and message shapes become Type Definitions; its settings, flags, and migrations become Configuration; its failure modes and recovery become Error Handling; its non-goals become What We're Not Doing. Beside each mapped statement cite the source as the sources artifact records it: location and pointer. Redraw a diagram the source gives as Mermaid only when its content is fully stated; otherwise link the source's visual by location.
-2. Fill the blanks from the repository, not from the source: for each area the source names, start a child worker for role `agent-codebase-locator` or `agent-codebase-pattern-finder` (see the conventions' Child workers section), wait for it, read its final message, and write Local Patterns from what it found, cited with paths. Where the repository contradicts the source (a module, contract, or store the source assumes does not exist or differs), record the difference in the affected section and as a `### Known limits` item; do not resolve it.
-3. A template section the source does not cover, and every item the source marks open (`TBD`, `TODO`, `open question`, `to be decided`), reads `Not stated in <source title>.` followed by the closest fact the source gives, never an invented decision. Each becomes one `### Known limits` item and one `### Verify` box naming the decision the reader must make.
-4. Do not ask questions during the conversion. Wrap up per Step 7: save the TDD locally and reply with `references/tdd_final_answer.md`, whose `Check:` and `Known limits:` lines carry the blanks the reader fills before the plan.
+Start a child worker for role `agent-codebase-locator`, `agent-codebase-analyzer`, `agent-codebase-pattern-finder` or `agent-web-search-researcher` only when a missing fact changes the artifact; read its final message before using findings. New or corrected repository facts go into a successor `research.primary` iteration, not an overwrite. Keep gathered source receipts unchanged and put relevant repository facts in the TDD.
 
 ## Step 2: Write the skeleton
 
 Allocate the next immutable `design.tdd` iteration through the conventions' Recording an artifact flow. Initial skeleton: frontmatter (`type: design-tdd`, task, repo, branch, sha), title, empty System Design and Program Design sections, Patterns to Follow header, What We're Not Doing only if meaningful non-goal exists. Save the staging document, then ask the first system-design question; record it when ready for handoff.
+
+Write `### Execution DAG` from [references/execution_dag.md](references/execution_dag.md) for the task's selected workflow.
 
 First question opens largest unresolved architectural branch: where behavior runs (backend), user action/event (UI+server), state ownership/migration (persistence), control loop/failure mode (reliability), component responsibility/state flow (UI-only). Ask one question with options and recommendation. Do not pre-fill answer.
 
@@ -56,7 +51,7 @@ Use Mermaid for interactions/flow. Use signatures for boundary contracts. Use en
 
 ## Step 4: System Design review gate
 
-When cross-component design is settled, stop and ask user to review System Design top to bottom. Incorporate fixes. Do not begin Program Design until user approves.
+When cross-component design is settled, stop and ask user to review System Design top to bottom. Incorporate fixes. Do not begin Program Design until user approves. Read `references/tdd_system_review_answer.md` and reply with it exactly, filled as Step 7 fills the final answer template.
 
 ## Step 5: Program Design
 
@@ -74,7 +69,7 @@ Program Design is not a task list or implementation plan.
 
 ## Step 6: Program Design review gate
 
-When code shape is settled, stop and ask user to review Program Design. Gate catches module boundaries awkward in full design, dependencies hiding test behavior, migration/rollout problems, stale diagrams, or PRD implications. Incorporate fixes. Do not read final answer template until user approves both System Design and Program Design.
+When code shape is settled, stop and ask user to review Program Design. Gate catches module boundaries awkward in full design, dependencies hiding test behavior, migration/rollout problems, stale diagrams, or PRD implications. Incorporate fixes. Read `references/tdd_program_review_answer.md` and reply with it exactly. Do not read the final answer template until user approves both System Design and Program Design.
 
 ## Step 7: Wrap up
 

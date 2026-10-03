@@ -1,6 +1,6 @@
 ---
 name: iterate-structure-outline
-description: Run for /iterate-structure-outline requests. Revise a phased implementation outline.
+description: Revises a phased implementation outline as an immutable successor from feedback, new evidence, or newer Jira planning impact, keeping each phase a verifiable vertical slice. Use when the user runs /iterate-structure-outline or sends changes to an outline; to start one use /create-structure-outline.
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
@@ -22,7 +22,7 @@ I can revise the structure outline now. Send the phase, scope, validation, or op
 ## Steps
 
 1. **Locate the task directory and read `task.md`** per the conventions, creating it from the user's message when none exists. Note `workflow` from `task.md`.
-2. **Read inputs**: Read the templates, feedback, and user-mentioned files fully. When `index.json` exists, validate the whole index and ledger per the conventions' immutable artifact contract, then read current `planning.structure` (or the explicit indexed `@file`) fully. Invalid indexes fail closed. Only a genuinely absent index uses legacy selection. Read summaries of other current indexed artifacts and open only relevant sections.
+2. **Read inputs**: Read `references/structure_outline_template.md`, `references/structure_outline_final_answer.md`, feedback and user files fully. Validate the indexed ledger and select current `planning.structure`, or the explicit indexed source. Invalid indexes fail closed; only a genuinely absent index uses legacy selection. Use current summaries for other relevant artifacts.
 3. **Verify user input**: Do not accept corrections blindly. Use direct reads or child research to confirm file paths, patterns, validation commands.
 4. **Start child research when a missing fact would change the artifact**: Start a child worker for role `agent-codebase-locator` (files and tests), `agent-codebase-analyzer` (behavior), `agent-codebase-pattern-finder` (local precedents), or `agent-web-search-researcher` (external docs) with the assignment (see the conventions' Child workers section); wait for it; read its final message. Use only findings you have read from the worker's final message. Do not rely on hidden background work. Wait for each child and read its final message before using it.
 5. **Process feedback**: Reorganize phases when requested or when verification shows split is wrong. Update scope and What we're not doing. Remove answered open questions; incorporate answer into relevant phase. Keep frontmatter and major sections. Each phase should remain vertical slice crossing layers. A phase should include the layers and checks needed for a verifiable increment. Avoid batching by layer. Do not make Phase N depend on Phase N+1.

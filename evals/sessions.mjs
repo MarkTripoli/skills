@@ -134,7 +134,27 @@ const segments = (command) => {
 // `eval '…'` and `sh -c '…'` wrap a whole command line in one quoted word, so their argument is read as a command line of its own.
 const WRAPPED = /^\s*(?:eval|(?:ba|z)?sh\s+-c)\s+(["'])([\s\S]*)\1\s*$/;
 const unquote = (quote, text) => (quote === "'" ? text.replace(/'\\''/g, "'") : text.replace(/\\(["\\$`])/g, "$1"));
-const runsCommit = (command) => segments(command).some((seg) => {
+// A heredoc body is text written to a file, not a command: `git commit` inside it is not a commit. Only a real heredoc
+// operator counts (not a `<<<` here-string or `<<` inside `$((…))`), and a body fed to a shell stays, because it runs.
+const HEREDOC = /(?<!<)<<(?!<)-?\s*(?:"([^"\n]+)"|'([^'\n]+)'|\\?([A-Za-z_][\w.-]*))/;
+const SHELL_COMMAND = String.raw`\s*(?:(?:\S*\/)?(?:env|sudo)\s+(?:-\S+\s+|\w+=\S+\s+)*)*(?:\S*\/)?(?:ba|z|da)?sh(?=[\s<]|$)`;
+const SHELL_STDIN = new RegExp(String.raw`(?:^|[;&|(\n])${SHELL_COMMAND}[^<;&|\n]*<<(?!<)|<<[^\n]*(?<!\|)\|(?!\|)${SHELL_COMMAND}`);
+const stripHeredocs = (command) => {
+  const out = [];
+  let end = null;
+  for (const line of command.split("\n")) {
+    if (end !== null) {
+      if (line.trim() === end) end = null;
+      continue;
+    }
+    out.push(line);
+    // ponytail: a regex reading of shell, not a parser; misses two heredocs on one line, nested parens in $((…)), and a shell named in a comment.
+    const m = HEREDOC.exec(line.replace(/\(\([^)]*\)\)/g, ""));
+    if (m && !SHELL_STDIN.test(line)) end = m[1] ?? m[2] ?? m[3];
+  }
+  return out.join("\n");
+};
+const runsCommit = (command) => segments(stripHeredocs(command)).some((seg) => {
   const wrapped = WRAPPED.exec(seg);
   if (wrapped) return runsCommit(unquote(wrapped[1], wrapped[2]));
   return !/^\s*(?:\w+=\S+\s+)*omp\b/.test(seg) && /\bgit\b[^\n]*\bcommit\b/.test(seg);
@@ -142,11 +162,11 @@ const runsCommit = (command) => segments(command).some((seg) => {
 const bashCommits = (s) => s.calls.filter((c) => c.name === "bash" && runsCommit(String(c.args.command ?? "")));
 
 // Did this session write `file` (by basename)? A write call on it, an omp edit whose `input` opens with its
-// `[<path>#` header, an edit with a path, or a shell redirect into it. Writes through `eval` or a script name
+// `[<path>#<hash>]` or (newer omp) `[<path>]` header, an edit with a path, or a shell redirect into it. Writes through `eval` or a script name
 // no parseable target; the mtime rule in `sessionProblems` covers those.
 export function wrote(s, file) {
   return s.calls.some((c) => {
-    if (c.name === "edit" && new RegExp(`^\\[[^\\]\\n]*${escape(file)}#`, "m").test(String(c.args.input ?? ""))) return true;
+    if (c.name === "edit" && new RegExp(`^\\[[^\\]\\n]*${escape(file)}(?:#[^\\]\\n]*)?\\]`, "m").test(String(c.args.input ?? ""))) return true;
     if (c.name === "write" || c.name === "edit") return String(c.args.path ?? "").endsWith(file);
     return c.name === "bash" && new RegExp(`(?:(?<![=\\-])>{1,2}|\\btee\\s+(?:-a\\s+)?)\\s*["']?[^\\s()"']*${escape(file)}["']?(?=$|[\\s;&|])`).test(String(c.args.command ?? ""));
   });
@@ -158,6 +178,7 @@ export function wrote(s, file) {
 // session that wrote it, so a record touched after its reviewer finished (an orchestrator patch) fails.
 // `separate` are top-level sessions the orchestrator itself started for the builder (`omp -p --model`), read from their own
 // directory: they stand in for the agent-implementer subagent, and no subagent builder may exist beside them.
+
 export function sessionProblems({ sessions, records, subjects, economy, strongest, timesPreserved = false, separate = null, changed = [] }) {
   const out = [];
   const orchestrator = sessions.filter((s) => !s.child);
@@ -201,8 +222,9 @@ export function sessionProblems({ sessions, records, subjects, economy, stronges
     writers.set(r.file, who.map((s) => s.id));
   }
   // The two final reviewers are separate sessions.
-  const finals = records.filter((r) => r.group === "final").map((r) => writers.get(r.file)?.[0]);
-  if (new Set(finals.filter(Boolean)).size < finals.filter(Boolean).length) out.push("sessions: one session wrote both final records; they must be separate fresh reviewers");
+  // An extra credited writer (a rename's source name) can only add a failure here, never hide one.
+  const finals = records.filter((r) => r.group === "final").map((r) => new Set(writers.get(r.file) ?? []));
+  if (finals.some((a, i) => finals.slice(i + 1).some((b) => [...a].some((id) => b.has(id))))) out.push("sessions: one session wrote both final records; they must be separate fresh reviewers");
   return out;
 }
 
@@ -212,7 +234,7 @@ const skillRefs = (s) => s.calls.filter((c) => c.name === "read" || c.name === "
   let text = String(call.name === "read" ? call.args.path ?? "" : call.args.command ?? "");
   const vars = Object.fromEntries([...text.matchAll(/(?:^|[;&\n]\s*|\bexport\s+)([A-Za-z_]\w*)=("[^"]*"|'[^']*'|[^\s;&|]+)/g)].map((m) => [m[1], m[2].replace(/^["']|["']$/g, "")]));
   for (let i = 0; i < 3; i++) text = text.replace(/\$(?:\{(\w+)\}|(\w+))/g, (whole, a, b) => vars[a ?? b] ?? whole);
-  return [...text.matchAll(/skill:\/\/([\w-]+)|([^\s"'`;&|]*?)\/([\w-]+)\/SKILL\.md/g)].map((m) => ({ name: m[1] ?? m[3], where: m[1] ? "skill://" : m[2], path: m[0], call, resolved: text, cwd: call.args.cwd ?? s.cwd }));
+  return [...text.matchAll(/skill:\/\/([\w-]+)|([^\s"'`;&|()<>=,]*?)\/([\w-]+)\/SKILL\.md/g)].map((m) => ({ name: m[1] ?? m[3], where: m[1] ? "skill://" : m[2], path: m[0], call, resolved: text, cwd: call.args.cwd ?? s.cwd }));
 });
 
 // Whole native reads and simple literal cats retain transport proof for relocated captures.

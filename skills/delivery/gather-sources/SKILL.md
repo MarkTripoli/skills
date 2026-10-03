@@ -1,6 +1,6 @@
 ---
 name: gather-sources
-description: Run for /gather-sources requests. Fetch the external sources a task names (docs, an existing PRD or spec, tickets, repositories, pages) and save a cited digest artifact that later phases read instead of fetching again.
+description: Fetches the external sources a task names (docs, an existing PRD or spec, tickets, repositories, pages) and saves a cited digest artifact that later phases read instead of fetching again. Use when running /gather-sources, or when a request links vendor docs, a wiki or Notion page, a ticket, or a repo before research or conversion; not for reading this codebase, which /create-research does.
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
@@ -19,9 +19,19 @@ Report each source in its own terms. Do not evaluate, rank, propose, or reconcil
 
 2. **Read inputs fully**. Read `references/sources_template.md` and `references/sources_final_answer.md` from this skill's directory. Collect sources from the request, named files, `task.md`, and `ticket.md` when present: URLs, page links, issue or ticket keys, repository names, local paths, and package names. Preserve every pointer exactly; do not normalize or paraphrase it. When `research.sources` has a current iteration, read it fully and use it as the base for the next immutable iteration; never edit the recorded file. Do not read other artifacts. A legacy task without `index.json` follows the conventions' in-place rule.
 
-3. **Fetch each source**. Use the mechanism the runtime provides, in this order: a read or fetch tool that accepts a URL or path; an MCP resource for the hosting product (Notion, Confluence, Google Docs, GitHub Issues); `curl` with credentials already present in the environment; a browser tool with the user's session. For a documentation site, fetch `llms.txt` and the `.md` or `.txt` form of the page before the HTML. For a repository, clone it into a temporary directory outside the project (`mktemp -d`), read the paths the task names plus its README and top-level docs, and delete the clone before saving. For a PDF, use `pdftotext` when installed, otherwise the read tool. Fetch one source at a time and record how and when it was fetched. When no mechanism reaches a source, ask the user once for an export or a paste, record what they supply as `Fetched: provided by user`, and list anything still missing under `## Unreachable` with the cause and what the user can supply. Never write a token, cookie, or credential into the artifact.
+3. **Fetch each source**. Fetch one source at a time and record how and when it was fetched. Use the first mechanism that reaches the source:
+   - a read or fetch tool that accepts a URL or path;
+   - an MCP resource for the hosting product (Notion, Confluence, Jira, Google Docs, GitLab);
+   - `curl` with credentials already present in the environment;
+   - a browser tool with the user's session.
 
-4. **Digest each source**. Write one `### <source title>` section per source following the template. The digest states what the source says that bears on the task, in the source's own terms, in at most a few short paragraphs. Under `#### Excerpts`, quote verbatim every passage a later phase would cite: requirement statements, acceptance criteria, user flows, decisions and their dates, owners, API signatures, configuration keys, limits, numbers, deadlines. Give each excerpt a pointer inside the source (heading, section number, page, line, or anchor). Quote, never retype; a long list becomes its first lines plus the pointer to the rest. Leave out navigation, marketing, and anything unrelated to the task. Keep the artifact readable in full by a later phase: a source that needs more than about a page of excerpts gets the passages that name obligations, and a pointer to the rest.
+   Per kind of source:
+   - Documentation site: fetch `llms.txt` and the `.md` or `.txt` form of the page before the HTML.
+   - Repository: clone, read and delete in one command block so `$dir` survives, with the URL wrapped in single quotes and each embedded single quote written as `'\''` (never a backslash inside double quotes) so the shell never expands text from a ticket: `dir=$(mktemp -d); git clone --depth 1 -- '<url>' "$dir"`. Read the paths the task names plus its README and top-level docs, then `rm -rf "$dir"` before saving.
+   - PDF: use `pdftotext` when installed, otherwise the read tool.
+   - Unreachable: when no mechanism reaches a source, ask the user once for an export or a paste, record what they supply as `Fetched: provided by user`, and list anything still missing under `## Unreachable` with the cause and what the user can supply. Never write a token, cookie, or credential into the artifact.
+
+4. **Digest each source**. Write one `### <source title>` section, following the template, for each source that was fetched, including one the user supplied; a source still missing after step 3 appears only under `## Unreachable`. The digest states what the source says that bears on the task, in the source's own terms, in at most a few short paragraphs. Under `#### Excerpts`, quote verbatim every passage a later phase would cite: requirement statements, acceptance criteria, user flows, decisions and their dates, owners, API signatures, configuration keys, limits, numbers, deadlines. Give each excerpt a pointer inside the source (heading, section number, page, line, or anchor). Quote, never retype; a long list becomes its first lines plus the pointer to the rest. Leave out navigation, marketing, and anything unrelated to the task. Keep the artifact readable in full by a later phase: a source that needs more than about a page of excerpts gets the passages that name obligations, and a pointer to the rest.
 
 5. **Record conflicts and gaps**. Fill `## Conflicts` with each place two sources disagree, quoting both, or `None.`. Fill `## Unreachable` from step 3, or `None.`. Fill `### Known limits` with sources fetched without a version or date, pages fetched as HTML because no text form existed, exports the user supplied instead of a live fetch, and anything else a later phase must know, or `None.`.
 
@@ -34,6 +44,4 @@ Follow references/sources_template.md. Frontmatter `summary` names the sources g
 - The request asks to convert, import, adopt, or port an existing document that the sources hold, and no research is asked for: `/create-prd` when that document is a product one (a PRD, product spec, feature brief, requirements page); `/create-tdd` when it is a technical one (an RFC, design document, technical spec, architecture decision record). The owning skill writes its artifact from the excerpts in one pass.
 - Otherwise the chain's first skill for the `workflow` in `task.md`: `/create-research-questions` for `full`, `lean`, and `epic`; `/create-research` for `prd`, `program`, and `oneshot`; `/reproduce-bug` for `bugfix`.
 
-Use that mapping literally; source completeness does not advance the chain. A sources artifact is not codebase research. In a `lean`, `full`, or `epic` task, never jump from source gathering to an outline, design, plan, or implementation.
-
-End with exactly one fenced `text` block holding that command.
+Use that mapping literally.

@@ -15,5 +15,5 @@ Next action:
 Open a new session in {run_location}, then run:
 
 ```text
-/implement-plan @{plan_file}
+/implement-plan @{source_file}
 ```

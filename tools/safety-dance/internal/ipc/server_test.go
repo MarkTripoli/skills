@@ -10,11 +10,17 @@ import (
 	"time"
 )
 
-// macOS requires a short socket path rather than the full t.TempDir path.
+// serveForTest starts s on a short socket path in a directory unique to this
+// test. macOS limits the path to 104 bytes, and t.TempDir names repeat across
+// test processes, so a fixed /tmp name collides when two runs share a host.
 func serveForTest(t *testing.T, s *Server) *Client {
 	t.Helper()
-	socket := filepath.Join("/tmp", "sd-drain-"+filepath.Base(t.TempDir())+".sock")
-	t.Cleanup(func() { _ = os.Remove(socket) })
+	dir, err := os.MkdirTemp("/tmp", "sd-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "s")
 	if err := s.Listen(socket); err != nil {
 		t.Fatal(err)
 	}

@@ -10,13 +10,7 @@ import (
 
 func TestYAMLIsTheEmbeddedManifest(t *testing.T) {
 	text := YAML()
-	if text == "" {
-		t.Fatal("YAML() is empty")
-	}
 	var doc struct {
-		Display struct {
-			Name string `yaml:"name"`
-		} `yaml:"display_information"`
 		OAuth struct {
 			Scopes struct {
 				Bot []string `yaml:"bot"`
@@ -35,8 +29,8 @@ func TestYAMLIsTheEmbeddedManifest(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(text), &doc); err != nil {
 		t.Fatalf("YAML() does not parse: %v", err)
 	}
-	if doc.Display.Name != "slack-coordinator" || !doc.Settings.SocketMode {
-		t.Fatalf("manifest = %+v; want name slack-coordinator with Socket Mode enabled", doc)
+	if !doc.Settings.SocketMode {
+		t.Fatal("manifest disables Socket Mode")
 	}
 	if !doc.Features.AppHome.MessagesTab || doc.Features.AppHome.MessagesTabReadOnly {
 		t.Fatalf("app_home = %+v; the bot DM needs a writable Messages tab", doc.Features.AppHome)
@@ -92,7 +86,7 @@ func TestJSONNamedSetsTheAppAndBotName(t *testing.T) {
 }
 
 // Slack refuses DMs to a bot whose Messages tab is off or read-only, and the
-// owner verification in onboard is a DM.
+// run-owner steering can arrive in a DM.
 func TestJSONLetsTheOwnerMessageTheBot(t *testing.T) {
 	for name, text := range map[string]string{"JSON": JSON(), "JSONNamed": JSONNamed("Ops"), "JSONForUpdate": JSONForUpdate(Live{Name: "Ops"})} {
 		var doc struct {

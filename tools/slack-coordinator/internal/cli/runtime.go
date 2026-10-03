@@ -50,8 +50,7 @@ func callDaemon(method string, params, result interface{}) error {
 }
 
 // callDaemonWithin is callDaemon with cancellation and a reply deadline for a
-// method that legitimately blocks longer than the default, such as
-// assistant.verify_owner; zero keeps the default.
+// blocking run operation; zero keeps the default.
 func callDaemonWithin(ctx context.Context, timeout time.Duration, method string, params, result interface{}) error {
 	c, err := dialDaemon()
 	if err != nil {

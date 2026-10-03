@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -307,8 +306,7 @@ func TestOwnerInputsPendingUntilResolved(t *testing.T) {
 	}
 }
 
-// mainSchemaSQL is the three-table schema a state.sqlite created before the
-// assistant tables existed carries; Open must upgrade such a file in place.
+// mainSchemaSQL is an earlier coordinator schema; Open upgrades it in place.
 const mainSchemaSQL = `
 CREATE TABLE runs (
   run_id        TEXT PRIMARY KEY,
@@ -334,7 +332,7 @@ CREATE TABLE owner_inputs (
   PRIMARY KEY (run_id, message_ts)
 );`
 
-func TestOpenAddsAssistantTablesToExistingDatabase(t *testing.T) {
+func TestOpenUpgradesExistingCoordinatorData(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.sqlite")
 	old, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -352,7 +350,7 @@ func TestOpenAddsAssistantTablesToExistingDatabase(t *testing.T) {
 
 	d, err := Open(path)
 	if err != nil {
-		t.Fatalf("Open on a pre-assistant database: %v", err)
+		t.Fatalf("Open on an earlier database: %v", err)
 	}
 	defer d.Close()
 
@@ -374,8 +372,6 @@ func TestOpenAddsAssistantTablesToExistingDatabase(t *testing.T) {
 	}
 	want := []string{
 		"runs", "owner_inputs", "terminal_notices", "jira_backlinks",
-		"tasks", "task_channels", "collected_messages", "task_messages",
-		"dm_requests", "dm_messages", "assistant_runs", "refused_users",
 	}
 	for _, name := range want {
 		if !got[name] {
@@ -394,93 +390,6 @@ func TestOpenAddsAssistantTablesToExistingDatabase(t *testing.T) {
 	}
 }
 
-func TestAssistantCheckConstraintsRejectUnknownValues(t *testing.T) {
-	d, err := Open(filepath.Join(t.TempDir(), "state.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer d.Close()
-	if _, err := d.root.Exec(`INSERT INTO dm_requests (root_ts, channel_id, received_at, last_message_at) VALUES ('1.0','D1','t','t')`); err != nil {
-		t.Fatal(err)
-	}
-
-	// Each insert binds the constrained column to ?1; a second ?1 in a primary
-	// key column keeps the valid and invalid rows from colliding on the key.
-	cases := []struct {
-		column string
-		insert string
-		valid  string
-	}{
-		{"tasks.state", `INSERT INTO tasks (state, instruction, trigger, deliver_to, request_root_ts, created_at) VALUES (?1,'i','schedule','{"dm":true}','1.0','t')`, "paused"},
-		{"tasks.trigger", `INSERT INTO tasks (state, instruction, trigger, deliver_to, request_root_ts, created_at) VALUES ('active','i',?1,'{"dm":true}','1.0','t')`, "window_end"},
-		{"dm_messages.author", `INSERT INTO dm_messages (root_ts, ts, author, text) VALUES ('1.0',?1,?1,'hi')`, "owner"},
-		{"assistant_runs.kind", `INSERT INTO assistant_runs (run_id, kind, state, queued_at) VALUES (?1,?1,'queued','t')`, "dm"},
-		{"assistant_runs.state", `INSERT INTO assistant_runs (run_id, kind, state, queued_at) VALUES (?1,'task',?1,'t')`, "running"},
-	}
-	for _, tc := range cases {
-		for _, value := range []string{tc.valid, "bogus"} {
-			_, err := d.root.Exec(tc.insert, value)
-			switch {
-			case value == tc.valid && err != nil:
-				t.Errorf("%s = %q rejected: %v", tc.column, value, err)
-			case value != tc.valid && err == nil:
-				t.Errorf("%s = %q inserted; want the CHECK constraint to refuse it", tc.column, value)
-			}
-		}
-	}
-}
-
-func TestStatusCountsFilterByStateAndLifecycle(t *testing.T) {
-	d, err := Open(filepath.Join(t.TempDir(), "state.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer d.Close()
-	ctx := context.Background()
-	for _, state := range []string{TaskActive, TaskActive, TaskPaused, TaskCancelled} {
-		if _, err := d.root.Exec(`INSERT INTO tasks (state, instruction, trigger, deliver_to, request_root_ts, created_at) VALUES (?,'i','schedule','{"dm":true}','1.0','t')`, state); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := d.root.Exec(`INSERT INTO collected_messages (channel_id, ts, user_id, text, permalink, received_at) VALUES ('C1','1.0','U2','hi','p','t'), ('C1','2.0','U2','again','p','t')`); err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range []AssistantRun{
-		{RunID: "A1", Kind: RunKindDM, State: RunQueued, QueuedAt: "t"},
-		{RunID: "A2", Kind: RunKindTask, State: RunDone, QueuedAt: "t"},
-		{RunID: "A3", Kind: RunKindDM, State: RunFailed, QueuedAt: "t"},
-	} {
-		if err := d.InsertAssistantRun(ctx, r); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, r := range []Run{
-		{RunID: "R1", OwnerUserID: "U1", ChannelID: "C1", ThreadTS: "1.1", Permalink: "p1", Lifecycle: "active", SlackMode: SlackEnabled, StartedAt: "2026-09-21T10:01:00Z"},
-		{RunID: "R2", OwnerUserID: "U1", ChannelID: "C1", ThreadTS: "1.2", Permalink: "p2", Lifecycle: "completed", SlackMode: SlackEnabled, StartedAt: "2026-09-21T10:00:00Z"},
-		{RunID: "R3", OwnerUserID: "U1", ChannelID: "C2", ThreadTS: "1.3", Permalink: "p3", Lifecycle: "active", SlackMode: SlackDisabled, StartedAt: "2026-09-21T09:00:00Z"},
-	} {
-		if err := d.InsertRun(ctx, r); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	for state, want := range map[string]int{TaskActive: 2, TaskPaused: 1, TaskCompleted: 0, TaskCancelled: 1} {
-		if n, err := d.CountTasksByState(ctx, state); err != nil || n != want {
-			t.Errorf("CountTasksByState(%s) = %d, %v; want %d", state, n, err, want)
-		}
-	}
-	if n, err := d.CountCollectedMessages(ctx); err != nil || n != 2 {
-		t.Errorf("CountCollectedMessages = %d, %v; want 2", n, err)
-	}
-	if n, err := d.CountAssistantRuns(ctx); err != nil || n != 3 {
-		t.Errorf("CountAssistantRuns = %d, %v; want every state counted, 3", n, err)
-	}
-	active, err := d.ActiveRuns(ctx)
-	if err != nil || len(active) != 2 || active[0].RunID != "R3" || active[1].RunID != "R1" {
-		t.Errorf("ActiveRuns = %+v, %v; want R3 then R1 whatever their slack_mode, oldest start first", active, err)
-	}
-}
-
 func TestTransactRollsBackOnErrorAndRefusesNesting(t *testing.T) {
 	d, err := Open(filepath.Join(t.TempDir(), "state.sqlite"))
 	if err != nil {
@@ -488,59 +397,34 @@ func TestTransactRollsBackOnErrorAndRefusesNesting(t *testing.T) {
 	}
 	defer d.Close()
 	ctx := context.Background()
-	req := DMRequest{RootTS: "1.0", ChannelID: "D1", ReceivedAt: "t", LastMessageAt: "t"}
-
-	failed := errors.New("second write failed")
+	run := Run{RunID: "r1", OwnerUserID: "U1", ChannelID: "D1", ThreadTS: "1.0", Permalink: "p", Lifecycle: "active", SlackMode: SlackEnabled, StartedAt: "t"}
+	failure := errors.New("second write failed")
 	err = d.Transact(ctx, func(tx *DB) error {
-		if _, err := tx.InsertDMRequest(ctx, req); err != nil {
+		if err := tx.InsertRun(ctx, run); err != nil {
 			return err
 		}
 		if err := tx.Transact(ctx, func(*DB) error { return nil }); err == nil {
-			t.Error("a nested Transact ran instead of failing")
+			t.Error("nested transaction was accepted")
 		}
-		return failed
+		return failure
 	})
-	if !errors.Is(err, failed) {
-		t.Fatalf("Transact = %v, want the callback's error", err)
+	if !errors.Is(err, failure) {
+		t.Fatalf("Transact = %v, want callback error", err)
 	}
-	if _, ok, _ := d.GetDMRequest(ctx, "1.0"); ok {
-		t.Fatal("the rolled-back insert is visible")
+	if _, err := d.GetRun(ctx, run.RunID); !errors.Is(err, ErrRunNotFound) {
+		t.Fatalf("rolled-back run visible: %v", err)
 	}
-
 	if err := d.Transact(ctx, func(tx *DB) error {
-		inserted, err := tx.InsertDMRequest(ctx, req)
-		if err != nil || !inserted {
-			return fmt.Errorf("insert = %t, %v", inserted, err)
+		if err := tx.InsertRun(ctx, run); err != nil {
+			return err
 		}
-		return tx.InsertDMMessage(ctx, DMMessage{RootTS: "1.0", TS: "1.0", Author: AuthorOwner, Text: "hi"})
+		_, err := tx.InsertOwnerInput(ctx, OwnerInput{RunID: run.RunID, MessageTS: "1.1", Text: "steer", ReceivedAt: "t"})
+		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
-	msgs, err := d.ListDMMessages(ctx, "1.0")
-	if err != nil || len(msgs) != 1 || msgs[0].Text != "hi" {
-		t.Fatalf("committed messages = %+v, %v", msgs, err)
-	}
-}
-
-func TestInsertRefusedUserKeepsTheFirstRow(t *testing.T) {
-	d, err := Open(filepath.Join(t.TempDir(), "state.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer d.Close()
-	ctx := context.Background()
-
-	if inserted, err := d.InsertRefusedUser(ctx, "U2", "2026-09-21T10:00:00Z"); err != nil || !inserted {
-		t.Fatalf("first insert = %t, %v; want a new row", inserted, err)
-	}
-	if inserted, err := d.InsertRefusedUser(ctx, "U2", "2026-09-21T10:01:00Z"); err != nil || inserted {
-		t.Fatalf("second insert = %t, %v; want it ignored", inserted, err)
-	}
-	var at string
-	if err := d.sql.QueryRowContext(ctx, `SELECT refused_at FROM refused_users WHERE user_id = ?`, "U2").Scan(&at); err != nil {
-		t.Fatal(err)
-	}
-	if at != "2026-09-21T10:00:00Z" {
-		t.Fatalf("refused_at = %s, want the first refusal's time kept", at)
+	input, found, err := d.OldestUnhandledInput(ctx, run.RunID)
+	if err != nil || !found || input.Text != "steer" {
+		t.Fatalf("committed input = %+v, %t, %v", input, found, err)
 	}
 }

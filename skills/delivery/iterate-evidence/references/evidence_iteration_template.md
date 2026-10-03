@@ -4,12 +4,12 @@ type: evidence-iteration
 summary: "[Two to four factual sentences: inspected scope and application identity; verified outcomes and unresolved work; stop decision and evidence availability.]"
 status: in-progress
 stop_reason: none
-limit: 3
+limit: none
 consumed_rounds: 0
 branch: "[observed branch, or not applicable outside Git]"
 current_application_revision: "[Revision ledger identity, distinct from the local receipt file]"
 repair_attempt: "[saved repair attempt ID, or none]"
-revision: "[exact contract source fingerprint]"
+revision: [the quoted string that contract.mjs revision <task-dir> prints]
 evidence_sha256: "[current sealed numbered evidence receipt hash]"
 ---
 
@@ -17,9 +17,7 @@ evidence_sha256: "[current sealed numbered evidence receipt hash]"
 
 For an indexed task, record this as the next immutable `evidence.iteration` through the collection's Recording an artifact flow. On continuation, copy the current iteration into the newly allocated staging successor before appending; record every durable boundary as another successor. A legacy task without `index.json` keeps its numbered receipt under the collection's legacy rule. Fill every field from observations, using `None.`, `unknown`, or `not applicable` with a reason instead of invented values. Remove unneeded example rows. Change current frontmatter, finding summaries, and final coverage only in a staged successor; append supporting observations, transitions, round history, authorizations, and stop decisions without deleting earlier results. This series is loop state, not a companion JSON store.
 
-`status`: `in-progress` | `passed` | `blocked` | `failed`. `stop_reason`: `none` | `success` | `blocker` | `no-progress` | `exhaustion`. Mirror saved shared state and preserve the original limit and consumed count. Initial inspection consumes zero; a source-changing repair reserves allowance before edits or delegation. Resume the existing attempt's first incomplete action.
-
-**Initial-zero frame per session.** For every recording session — baseline and each repair pass — open the initial application state before the first action as a separately named frame (the initial-zero count before any interaction) as a distinct viewer call. This is required alongside the per-flow action result frames; do not infer the starting state from a fresh page or a probe.
+`status`: `in-progress` | `passed` | `blocked` | `failed`. `stop_reason`: `none` | `success` | `blocker` | `no-progress` | `exhaustion`. Mirror saved shared state and preserve the original limit and consumed count. `limit: none` means no cap; an explicit owner limit, with its source, replaces it, and `0` is inspect-only. Initial inspection consumes zero; a source-changing repair reserves allowance before edits or delegation. Resume the existing attempt's first incomplete action.
 
 ## Scope
 
@@ -30,9 +28,9 @@ For an indexed task, record this as the next immutable `evidence.iteration` thro
 - Launch/reload commands: [exact commands and owned process/build]
 - Required checks: [commands, scope, required outcomes]
 - Inspection capabilities: [capture source, recorder doctor result, viewer/tool, image/video support, actual failures/denials, limitations]
-- Limit authorization: [initial limit, default or explicit source; zero means inspection-only]
+- Limit authorization: [`none`, or the explicit owner limit and its source]
 - Posting destination: [requester-only, or explicitly requested destination and delivery requirement]
-- Candidate baseline: [receipt/session or None.; comparison of source, environment, accessibility, coverage; reuse or fresh-capture decision and reason]
+- Candidate recording to reuse: [receipt/session or None.; comparison of source, environment, accessibility, coverage; reuse or fresh-capture decision and reason]
 
 ### Targets and regression charter
 
@@ -42,23 +40,7 @@ Freeze expected outcomes and sources before repair. List each required flow/conf
 | --- | --- | --- | --- | --- | --- | --- |
 | [flow] | [role] | [state] | [action] | [outcome] | [path/line or supplied authority] | [yes/no and basis] |
 
-### Visual authority inventory
-
-Record the applicable source/value for every category. Missing categories are `unknown` or `not applicable` with a reason. Conflicts or unknowns needed for an affected repair remain blockers.
-
-| Category | Source and token/value/contract, or unknown/not applicable | Conflict or limit |
-| --- | --- | --- |
-| Colors | [tokens or literal hex values] | [limit or None.] |
-| Typography | [font, weight, scale] | [limit or None.] |
-| Spacing | [scale/constraints] | [limit or None.] |
-| Radius | [tokens/values] | [limit or None.] |
-| Elevation | [shadows/layers] | [limit or None.] |
-| Layout | [component/grid contracts] | [limit or None.] |
-| Breakpoints | [responsive boundaries] | [limit or None.] |
-| Themes/CSS variables | [modes and variables] | [limit or None.] |
-| Framework utilities | [framework and applicable conventions] | [limit or None.] |
-| Accessibility | [requirements and interaction contracts] | [limit or None.] |
-| Visual baselines | [approved references and identity] | [limit or None.] |
+Visual authority: [source and tokens for any category the repair touches, or "not applicable"]
 
 ### Authorization history
 
@@ -76,19 +58,19 @@ Append every application identity used for checks or capture. A dirty tree is ne
 
 ## Recording ledger
 
-One unique session directory per capture/surface. Preserve all baseline/failed material beneath ignored task evidence storage. Hash raw and rendered media; rerenders remain linked to their original capture. Attribute clocks using [time and surface identity](inspection_acceptance.md#preserve-time-and-surface-identity): retain producer field/event names, sampling point, and unavailable operation times.
+One unique session directory per capture/surface. Preserve all initial and failed material beneath ignored task evidence storage. Hash raw and rendered media; rerenders remain linked to their original capture. Attribute clocks as inspection_acceptance.md describes under "Preserve time and surface identity": retain producer field/event names, sampling point, and unavailable operation times.
 
-| Session ID and pass | Surface/pane | Revision ID | Raw/rendered paths and hashes | Report/manifest/events paths | Observed clocks and producer references | Timing and alignment caveats | Availability/posting location |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| [unique session; baseline or reserved round] | [surface/pane/source session] | [identity] | [paths + hash algorithm/values] | [paths] | [field/event, value, source and sampling point; video-started-at reference; unavailable operation times] | [cards, video_t mapping, offsets, held tails, gaps, cadence, alignment] | [local-only reachable paths, verified URL, or unavailable with reason] |
+| Session ID and pass | Surface/pane | Revision ID | Raw/rendered paths and hashes | Observed clocks and caveats | Availability/posting location |
+| --- | --- | --- | --- | --- | --- |
+| [unique session; initial inspection or reserved round] | [surface/pane/source session] | [identity] | [paths + hash algorithm/values; report, manifest, and events paths] | [producer field/event, value, sampling point; video_t mapping, offsets, held tails, gaps, cadence, alignment] | [local-only reachable paths, verified URL, or unavailable with reason] |
 
 ## Inspection ledger
 
-Append a row per claim/sample group. Name exact inspected pixels, not only a successful viewer call. Retain readable samples and the opening tool result/trace reference.
+Append a row per claim/sample group. Name exact inspected pixels, not only a successful viewer call. Retain readable samples and the opening tool result/trace reference. The expected outcome comes from the frozen charter; extra state probes go in the conclusion cell.
 
-| Inspection ID/time | Reviewer/tool and opening result/trace | Session, surface/pane, revision | File/sample paths and hashes | Raw/rendered timestamps or interval, playback rate/frame cadence | Pixels observed | Expected outcome/source | Conclusion and gaps | Additional state/probe evidence |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| [inspection] | [actor/tool + evidence] | [identities] | [retained paths/hashes] | [exact samples or start/end and method; timing limitations] | [actual visible values/state] | [scope citation] | [passed/failed/untested claim and reason; unsampled limits] | [commands, identity, results/output paths, or not applicable] |
+| Inspection ID/time | Tool and opening result/trace | Session and surface/pane | Sample paths and hashes | Timestamps or interval, playback rate/frame cadence | Pixels observed | Conclusion and gaps |
+| --- | --- | --- | --- | --- | --- | --- |
+| [inspection] | [tool + evidence] | [identities] | [retained paths/hashes] | [exact samples or start/end and method; timing limitations] | [actual visible values/state] | [passed/failed/untested claim and reason; unsampled limits; commands, identity, and results of any state probe] |
 
 ## Findings
 
@@ -100,19 +82,19 @@ IDs are monotonic (`IE-001`, `IE-002`, ...), never reused or renumbered. Reopen 
 
 ### Observation and state history
 
-Append baseline observations, uncertainties, duplicates, state transitions, reopenings, dismissals, and previous coverage results here or in the referenced round. Retain failed evidence after a current summary becomes passed.
+Append initial observations, uncertainties, duplicates, state transitions, reopenings, dismissals, and previous coverage results here or in the referenced round. Retain failed evidence after a current summary becomes passed.
 
 | Time/boundary | Finding/flow | Prior state/result | Observation and new state/result | Revision and inspection/source evidence | Reason |
 | --- | --- | --- | --- | --- | --- |
-| [time/baseline/round] | [ID or unsupported suspicion/flow] | [prior or None.] | [observed facts and transition] | [references] | [basis] |
+| [time/initial inspection/round] | [ID or unsupported suspicion/flow] | [prior or None.] | [observed facts and transition] | [references] | [basis] |
 
 ## Round history
 
-Baseline is capture and inspection at consumed `0`, not a repair reservation. Append one record below for each reserved round and append completed steps to that record. Never replay completed edits or replace a failed round with a later success.
+The initial inspection is capture and inspection at consumed `0`, not a repair reservation. Append one record below for each reserved round and append completed steps to that record. Never replay completed edits or replace a failed round with a later success.
 
-### Baseline
+### Initial inspection
 
-- Revision and reused/new sessions: [identities and baseline decision]
+- Revision and reused/new sessions: [identities and recording-reuse decision]
 - Inspections and per-flow results: [references, actual outcomes, gaps]
 - Findings persisted before repair: [IDs and expected-behavior sources]
 - Consumed rounds: `0`
@@ -145,15 +127,6 @@ Baseline is capture and inspection at consumed `0`, not a repair reservation. Ap
 - Interruption, continuation, or operational failure: [observed time/source or timestamp unavailable; actual state, authorization/restored prerequisite and evidence, or None.]
 - Decision / next action: [precedence evaluation or reserved work to complete; label superseded pending boundaries historical and retain them]
 
-**Frame completion self-check (required before writing any coverage row for this pass):** List every required frame before writing entries in the coverage table or round inspection summary.
-
-| Required frame | Pass | Session | Opened path | Opener call reference | Confirmed |
-| --- | --- | --- | --- | --- | --- |
-| initial-zero | [this round] | [session ID] | [exact path] | [trace/tool call ref] | [yes — opened before this row] |
-| [flow name] | [this round] | [session ID] | [exact path] | [trace/tool call ref] | [yes — opened before this row] |
-
-Total opened: [N]. Required: [S initial frames, one per session, plus M required flow samples] = [N]. Unopened required samples: [None. or explicit blocked gap]. Non-UI targets instead cite read output and decisive lines.
-
 ## Guardrails
 
 | Finding | Observed gap and original execution | Changed check/rule path and hash | Why it catches the unchanged original failure | Preserved faulty-source execution | Repaired-source execution | Verification limit |
@@ -172,18 +145,18 @@ Keep this seven-column schema for passed, failed, and blocked outcomes. List eve
 
 Append each evaluation, including prior terminal outcomes and later authorized continuation. Success precedes blocker, then no-progress, then exhaustion; preserve all simultaneous failed/untested results. An interruption stays `in-progress/none` at its saved boundary.
 
-Before saving the terminal result, apply the skill's finalization boundary and the [finalization evidence rules](inspection_acceptance.md#finalize-the-receipt-against-retained-evidence). Use only observed clock/trace timestamps with their source; omit unavailable timestamp values explicitly. Keep earlier reservations, pending steps, and stop evaluations as labeled historical boundaries.
+Before saving the terminal result, apply the skill's finalization boundary and the finalization rules in inspection_acceptance.md. Use only observed clock/trace timestamps with their source; omit unavailable timestamp values explicitly. Keep earlier reservations, pending steps, and stop evaluations as labeled historical boundaries.
 
 | Time/boundary | Status / stop reason | Consumed / limit | Deciding evidence | Simultaneous known failures and untested work | Next prerequisite/action |
 | --- | --- | --- | --- | --- | --- |
-| [time/baseline/round/continuation] | [status / reason] | [count / limit] | [coverage, resolution, check, blocker, progress, or exhaustion references] | [IDs/flows, or None.] | [state or authorized continuation prerequisite] |
+| [time/initial inspection/round/continuation] | [status / reason] | [count / limit] | [coverage, resolution, check, blocker, progress, or exhaustion references] | [IDs/flows, or None.] | [state or authorized continuation prerequisite] |
 
 ## Delivery and known limits
 
 - Current result and application identity: [receipt state and Revision ledger reference]
-- Active round / consumed count / authorized limit / attempted finding IDs: [matching numbered round and frontmatter values, or baseline/terminal with reason; update at reservation before delegation/mutation]
+- Active round / consumed count / authorized limit / attempted finding IDs: [matching numbered round and frontmatter values, or initial inspection/terminal with reason; update at reservation before delegation/mutation]
 - Current step: [repair pending / checks pending / capture pending / inspection pending / completed; or terminal result; update at each step]
-- Last completed step: [reservation / baseline inspection / repair / checks / capture; the step actually persisted to disk]
+- Last completed step: [reservation / initial inspection / repair / checks / capture; the step actually persisted to disk]
 - Next incomplete step: [repair / checks / capture / inspection / reconciliation; or None. after terminal; no pending round step after completion]
 - Evidence availability: [local-only retained paths or verified posting links; unavailable material]
 - Posting confirmation, when required: [destination, reopen/playback result, or blocker; otherwise requester-only]

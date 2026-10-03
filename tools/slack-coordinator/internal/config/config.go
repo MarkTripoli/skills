@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -31,42 +30,13 @@ type Jira struct {
 	FieldID  string `yaml:"field_id"`
 }
 
-// Agent selects the coding agent the daemon runs for a thread and bounds how
-// it runs. Absent when the daemon only coordinates and never spawns an agent.
-type Agent struct {
-	Command        string        `yaml:"command"`           // pi | claude | codex
-	Bin            string        `yaml:"bin,omitempty"`     // absolute executable; overrides PATH lookup
-	Approval       string        `yaml:"approval"`          // edits | full; default edits
-	Timeout        time.Duration `yaml:"timeout"`           // default 10m
-	MaxRunsPerHour int           `yaml:"max_runs_per_hour"` // default 30
-	ExtraDirs      []string      `yaml:"extra_dirs"`        // absolute paths
-}
-
-// Retention bounds how long run records live: Days for every run and
-// ConsumedDays for runs whose output the owner already consumed.
-type Retention struct {
-	Days         int `yaml:"days"`          // default 30
-	ConsumedDays int `yaml:"consumed_days"` // default 7
-}
-
-const (
-	defaultApproval       = "edits"
-	defaultTimeout        = 10 * time.Minute
-	defaultMaxRunsPerHour = 30
-	defaultRetentionDays  = 30
-	defaultConsumedDays   = 7
-)
-
 // Config is the whole of config.yaml.
 type Config struct {
-	Slack     Slack     `yaml:"slack"`
-	Jira      *Jira     `yaml:"jira,omitempty"`
-	Agent     *Agent    `yaml:"agent,omitempty"`
-	Retention Retention `yaml:"retention"`
+	Slack Slack `yaml:"slack"`
+	Jira  *Jira `yaml:"jira,omitempty"`
 }
 
-// Load reads path, fills defaults for unset agent and retention values, and
-// validates the result. A missing file names the command that writes it.
+// Load reads and validates path. A missing file names the setup command.
 func Load(path string) (*Config, error) {
 	cfg, err := Read(path)
 	if err != nil {
@@ -75,7 +45,7 @@ func Load(path string) (*Config, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("%s does not exist; run `slack-coordinator setup` first", path)
 	}
-	cfg.ApplyDefaults()
+
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
@@ -114,36 +84,11 @@ func Save(path string, cfg *Config) error {
 	return os.Chmod(path, 0o600)
 }
 
-// ApplyDefaults fills the zero-valued retention and agent settings a file or
-// a hand-built Config may omit. Load calls it before Validate; setup calls it
-// before validating a Config it assembled. It never sets agent.command: a
-// present agent block must name one.
-func (c *Config) ApplyDefaults() {
-	if c.Retention.Days == 0 {
-		c.Retention.Days = defaultRetentionDays
-	}
-	if c.Retention.ConsumedDays == 0 {
-		c.Retention.ConsumedDays = defaultConsumedDays
-	}
-	if a := c.Agent; a != nil {
-		if a.Approval == "" {
-			a.Approval = defaultApproval
-		}
-		if a.Timeout == 0 {
-			a.Timeout = defaultTimeout
-		}
-		if a.MaxRunsPerHour == 0 {
-			a.MaxRunsPerHour = defaultMaxRunsPerHour
-		}
-	}
-}
-
 // ownerIDPattern is a Slack member ID: U or W, then letters and digits.
 // It rejects the help-text placeholder U…, which used to pass a prefix check.
 var ownerIDPattern = regexp.MustCompile(`^[UW][A-Z0-9]+$`)
 
-// Validate checks the token shapes Slack issues, the owner user ID shape,
-// the retention bounds, and the Jira and agent blocks when present.
+// Validate checks the Slack tokens, owner member ID, and optional Jira block.
 func (c *Config) Validate() error {
 	s := c.Slack
 	switch {
@@ -158,55 +103,6 @@ func (c *Config) Validate() error {
 		if err := c.Jira.Validate(); err != nil {
 			return err
 		}
-	}
-	if c.Agent != nil {
-		if err := c.Agent.Validate(); err != nil {
-			return err
-		}
-	}
-	return c.Retention.Validate()
-}
-
-// AgentEnabled reports whether the daemon may spawn a coding agent for a thread.
-func (c *Config) AgentEnabled() bool { return c.Agent != nil }
-
-// Validate requires a known command and approval mode, positive timeout and
-// run budget, and absolute extra_dirs entries.
-func (a *Agent) Validate() error {
-	switch a.Command {
-	case "pi", "claude", "codex":
-	default:
-		return fmt.Errorf("agent.command %q must be one of pi, claude, codex", a.Command)
-	}
-	if a.Bin != "" && !filepath.IsAbs(a.Bin) {
-		return fmt.Errorf("agent.bin %q must be an absolute path", a.Bin)
-	}
-	switch a.Approval {
-	case "edits", "full":
-	default:
-		return fmt.Errorf("agent.approval %q must be edits or full", a.Approval)
-	}
-	if a.Timeout <= 0 {
-		return fmt.Errorf("agent.timeout %s must be greater than 0", a.Timeout)
-	}
-	if a.MaxRunsPerHour <= 0 {
-		return fmt.Errorf("agent.max_runs_per_hour %d must be greater than 0", a.MaxRunsPerHour)
-	}
-	for i, dir := range a.ExtraDirs {
-		if !filepath.IsAbs(dir) {
-			return fmt.Errorf("agent.extra_dirs[%d] %q must be an absolute path", i, dir)
-		}
-	}
-	return nil
-}
-
-// Validate requires both retention windows to be positive day counts.
-func (r Retention) Validate() error {
-	if r.Days <= 0 {
-		return fmt.Errorf("retention.days %d must be greater than 0", r.Days)
-	}
-	if r.ConsumedDays <= 0 {
-		return fmt.Errorf("retention.consumed_days %d must be greater than 0", r.ConsumedDays)
 	}
 	return nil
 }

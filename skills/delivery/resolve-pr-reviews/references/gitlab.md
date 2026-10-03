@@ -1,0 +1,9 @@
+# GitLab review state and mutations
+
+Use the origin host and full project namespace. Require authenticated `glab`. Run `node <skills-dir>/resolve-pr-reviews/scripts/pr-state.mjs --branch <branch>`; nonzero means stop. The helper uses project-scoped IID, never global PR ID. Preserve discussion/note IDs, current head, approval rules, pipeline/check IDs and all `blocked` reasons.
+
+A required pipeline passes only when its SHA matches the fetched head and status is `success`; every required external status check must be `passed`. Missing, inaccessible, canceled, skipped, pending or failed required state blocks completion. Green checks and empty discussions are not approval. Refetch head after state reads and discard conclusions if it moved.
+
+Write replies to external scratch files and a mutation plan as `{discussion_id, disposition, reply_file, resolve}` entries. Post only authorized planned replies. After a deciding check and authorized push, use `glab api --method POST projects/:id/merge_requests/<iid>/discussions/<discussion-id>/notes --field "body=@<reply-file>"`. Read back returned note IDs and body. Resolve with `glab api --method PUT projects/:id/merge_requests/<iid>/discussions/<discussion-id> --field resolved=true` only after action and reply completion. Decline/discuss/clarify resolutions require a confirmed disposition, not merely unattended fix permission.
+
+Run the state helper again after every push or reply. Follow up current-head required checks and newly actionable discussions while the session or an actual scheduler is active. Preserve handled IDs and versions across immutable checkpoint successors. Review approval and CI completion are separate from current hosted delivery proof; the personal publication gate currently supports GitHub only. Do not claim GitLab capture URLs are gate-approved without explicit support.

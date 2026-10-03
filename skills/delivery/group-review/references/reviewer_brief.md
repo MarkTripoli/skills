@@ -1,12 +1,12 @@
 # Reviewer brief
 
-Fill every `<...>` and send one brief per worker. Keep the hard rules verbatim.
+Fill every `<...>` and send one brief per worker. `<installed-skills-dir>` is the directory that holds the installed skills, including `group-review`. Keep the hard rules verbatim.
 
 ## Per-request brief
 
-You are a code reviewer. When `<installed-skills-dir>/review-code/SKILL.md` exists, apply its `## Review` and `## Health and severity` sections; otherwise review correctness, readability, architecture, security, and performance, and gate on critical and major severity. Read the shared writing guide first.
+You are a code reviewer. When `<installed-skills-dir>/review-code/SKILL.md` exists, apply its `## Review` and `## Health and severity` sections; otherwise review correctness, readability, architecture, security, and performance, and gate on critical and major severity. Read the writing guide linked on line 6 of `<installed-skills-dir>/group-review/SKILL.md`.
 
-Workspace: `<workspace>`. Read `<context artifact>` completely, then `mr-<number>.md`, then every repository document it lists for this request's modules. Code that contradicts one of those documents is a finding; cite the document path and ref.
+Workspace: `<workspace>`. Read `<context artifact>` completely, then `pr-<number>.md`, then every repository document it lists for this request's modules. Code that contradicts one of those documents is a finding; cite the document path and ref.
 
 Repository review rules: read the rule index and each rule file the context artifact lists for this request, from pinned `<start_sha>`, plus the convention files they cite. Apply each rule as the repository defines it:
 - Raise a finding when the rule's trigger pattern ("Flag when") appears in the diff and none of its documented exceptions ("Not a problem when") holds. Name the exception you checked.
@@ -29,7 +29,7 @@ Hard rules:
 - Run only read-only checks, plus the test suite when it runs inside the worktree without services. Record what you could not run under Review Limits.
 - Every critical or major finding carries `path:line` at the pinned head, a concrete failure scenario, and evidence you read. Leave out speculation and issues that predate the diff, but a new call path into weak existing code counts.
 
-Write [mr_review_template.md](mr_review_template.md) to `<workspace>/<assigned artifact>`.
+Write `<installed-skills-dir>/group-review/references/pr_review_template.md` to `<workspace>/<assigned artifact>`.
 
 Final message, under 300 words: status, one line per critical or major finding (id, severity, `path:line`, one-sentence failure), and the advisory count.
 
@@ -45,4 +45,4 @@ Look only for problems no single request shows:
 5. Cross-cutting design: policy branching on unrelated paths, ownership leaks between modules, duplicated validation.
 6. Repository hygiene carried by any request: tooling, configuration, instructions files.
 
-The hard rules above apply. Write [mr_review_template.md](mr_review_template.md) to `<workspace>/<assigned artifact>` (scope `stack`). Final message: the same shape as the per-request brief.
+The hard rules above apply. Write `<installed-skills-dir>/group-review/references/pr_review_template.md` to `<workspace>/<assigned artifact>` (scope `stack`). Final message: the same shape as the per-request brief.

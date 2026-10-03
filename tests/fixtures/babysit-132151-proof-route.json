@@ -1,0 +1,232 @@
+{
+  "node": {
+    "identity": "gitlab.babysit.invalid/group/api!7",
+    "host": "gitlab.babysit.invalid",
+    "project": "group/api",
+    "project_id": 101,
+    "iid": 7,
+    "url": "https://gitlab.babysit.invalid/group/api/-/merge_requests/7",
+    "selected": true,
+    "source_project": null,
+    "source_project_id": null,
+    "source_branch": "tenant-validation",
+    "target_branch": "main",
+    "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "worktree": "/unavailable/group/api/worktree",
+    "task_dir": "/unavailable/group/api/.agents/tasks/tenant-validation",
+    "dependencies": [],
+    "risks": [
+      "Original context and authentic baseline unavailable; historical evidence URL is not a current receipt."
+    ],
+    "capabilities": {
+      "host_version": "19.5.0 simulated",
+      "trains": false,
+      "required_checks": {
+        "id": 101,
+        "path_with_namespace": "group/api",
+        "web_url": "https://gitlab.babysit.invalid/group/api",
+        "default_branch": "main",
+        "merge_trains_enabled": false,
+        "merge_pipelines_enabled": false,
+        "only_allow_merge_if_pipeline_succeeds": true,
+        "allow_merge_on_skipped_pipeline": false,
+        "only_allow_merge_if_all_discussions_are_resolved": true,
+        "only_allow_merge_if_all_status_checks_passed": true,
+        "merge_method": "merge",
+        "squash_option": "never",
+        "approvals_before_merge": 1
+      },
+      "branch_protection": [
+        {
+          "name": "main",
+          "allow_force_push": false,
+          "merge_access_levels": [
+            {
+              "access_level": 40
+            }
+          ]
+        }
+      ],
+      "observed_at": "2026-10-01T13:40:36.736423+00:00",
+      "merge_permission": null,
+      "source_fork_binding": null
+    },
+    "ci": {
+      "source_head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "pipelines": [
+        {
+          "id": 101,
+          "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "ref": "tenant-validation",
+          "status": "failed",
+          "source": "push",
+          "web_url": "https://gitlab.babysit.invalid/group/api/-/pipelines/101"
+        },
+        {
+          "id": 100,
+          "sha": "0000000000000000000000000000000000000000",
+          "status": "success",
+          "ref": "tenant-validation",
+          "source": "push"
+        }
+      ],
+      "head_pipeline": {
+        "id": 101,
+        "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "ref": "tenant-validation",
+        "status": "failed",
+        "source": "push",
+        "web_url": "https://gitlab.babysit.invalid/group/api/-/pipelines/101"
+      },
+      "required_status": "failed tenant-validation job 101 at current head",
+      "required_status_checks": [],
+      "synthetic_pipeline": null,
+      "association": "push pipeline, branch tenant-validation; exact current head SHA"
+    },
+    "reviews": {
+      "cursors": [],
+      "observed_versions": [
+        {
+          "id": 71,
+          "discussion_id": null,
+          "updated_at": "2026-09-30T10:00:00Z",
+          "body_hash": "2a9dda53df6dfb09d8908cc0e717c5540703484bee009471b74c56fd95fe9fa7",
+          "body": "Reject whitespace tenant IDs. This is a behavior-changing validation defect, not a wording-only comment.",
+          "disposition": "superseded observation; never handled, source repair blocked",
+          "handled_sha": null
+        },
+        {
+          "id": 71,
+          "discussion_id": null,
+          "updated_at": "2026-09-30T10:05:00Z",
+          "body_hash": "f66b43a0cc159904c1a822c46f961191fd5d6b7a9dff7cbe15b96b87c5465823",
+          "body": "Edited finding: reject blank tenant IDs as well as whitespace IDs. This changes public validation behavior; preserve the documented error response. Existing product baseline and worktree are required before a repair.",
+          "disposition": "fix requested; behavior-changing; blocked on originals and authentic baseline",
+          "handled_sha": null
+        }
+      ],
+      "actionable": [
+        71
+      ],
+      "approval_state": {
+        "approvals_left": 0,
+        "rules": [
+          {
+            "id": 1,
+            "name": "required",
+            "approvals_required": 1,
+            "approved": true,
+            "approved_by": [
+              {
+                "id": 501,
+                "username": "reviewer"
+              }
+            ]
+          }
+        ]
+      },
+      "discussions": []
+    },
+    "proof": {
+      "source_sha": null,
+      "baseline": null,
+      "verification": null,
+      "app_test": null,
+      "review": null,
+      "evidence": null,
+      "inspection": null,
+      "description": null,
+      "evidence_comment": null,
+      "status": "missing current original proof; historical evidence is not validated",
+      "required_head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "invalidated_by": "external source-head change plus edited behavior-changing note"
+    },
+    "state": "blocked",
+    "train": {
+      "entry": null,
+      "pipeline": null,
+      "composition": [],
+      "observed_at": "2026-10-01T13:40:36.736423+00:00"
+    },
+    "blockers": [
+      "Original worktree/task, authentic existing-behavior baseline/policy, source binding and current sealed proof unavailable. Restore originals and run delivery contract status successfully with current bound receipts.",
+      "Required source pipeline/job 101 tenant-validation fails at bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb; blank tenant IDs accepted, expected documented 400.",
+      "Edited standalone non-resolvable note 71 (2026-09-30T10:05:00Z) requires blank and whitespace rejection preserving documented response; not handled."
+    ],
+    "worker": null,
+    "retries": {
+      "fingerprint": "c9b285bc9934d53b3f88dc67533d3dc6d675d017293a7ecd80498aeae5e8c857",
+      "attempts": 0,
+      "no_progress": 0,
+      "last_result": "No repair dispatched: original prerequisites absent.",
+      "next_at": null,
+      "max_attempts": 3,
+      "max_no_progress": 2
+    },
+    "pending_actions": [],
+    "last_observed_at": "2026-10-01T13:40:36.736423+00:00",
+    "host_status": "ci_must_pass",
+    "description_prior": "# Existing delivery\n\nHuman-owned text for gitlab.babysit.invalid/group/api!7: preserve this exact paragraph.\n\n## Evidence\n\nExisting evidence: https://evidence.invalid/group/api/baseline.mp4\n\nOriginal worktree: /unavailable/group/api/worktree\nOriginal task: /unavailable/group/api/.agents/tasks/tenant-validation\nBaseline is not available in this isolated checkout.\n",
+    "historical_evidence": "https://evidence.invalid/group/api/baseline.mp4",
+    "source_project_status": "Unknown source-project/fork ID: host PR response omits it. Original worktree location is observed description data; authenticate source binding before any writer.",
+    "breadcrumb": {
+      "status": "published",
+      "url": "https://gitlab.babysit.invalid/group/api/-/merge_requests/7",
+      "operation": "babysit-desc-api-1",
+      "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "last_readback_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "last_readback_at": "2026-10-01T13:40:36.736423+00:00"
+    },
+    "head_history": [
+      {
+        "sweep": 1,
+        "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "sweep": 2,
+        "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ],
+    "proof_pending_gates": [
+      "Original baseline/policy and real base object restoration",
+      "verify-implementation bound to repaired/current revision",
+      "applicable test-app per original requested surfaces",
+      "fresh independent review-code",
+      "record-evidence with authentic capture/transcript, source binding, hosted bytes and sealed receipt",
+      "iterate-evidence sealed inspection bound to source/capture hashes",
+      "describe-pr preserving owned breadcrumbs plus distinct evidence comment; direct hosted capture/description/comment readbacks",
+      "Immediate premerge delivery contract status and host head, dependencies, checks, approvals, discussions, protection and permission refresh"
+    ],
+    "repair_route": {
+      "status": "blocked before dispatch",
+      "priority": "frontier required CI, then actionable review",
+      "expected_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "project": "group/api",
+      "source_branch": "tenant-validation",
+      "worktree": "/unavailable/group/api/worktree",
+      "task_dir": "/unavailable/group/api/.agents/tasks/tenant-validation",
+      "affected_source": "src/tenant-validation.mjs",
+      "deciding_check": "npm test -- --run tests/tenant-validation.test.mjs",
+      "job_id": 101,
+      "pipeline_id": 101,
+      "job_url": "https://gitlab.babysit.invalid/group/api/-/jobs/101",
+      "log": "babysit-api-job-101.log:1-5",
+      "note": {
+        "id": 71,
+        "updated_at": "2026-09-30T10:05:00Z",
+        "body_hash": "f66b43a0cc159904c1a822c46f961191fd5d6b7a9dff7cbe15b96b87c5465823"
+      },
+      "behavior_change": true,
+      "root_cause": "Log reports blank-ID acceptance; implementation cause unverified because original source unavailable.",
+      "reproduction": "not run; original worktree/test unavailable",
+      "assignment": "Once originals restored/authenticated, inspect exact source and reproduce blank/whitespace validation failure; smallest authorized root-cause fix preserving documented 400, deciding check, proof chain, push and host readback. No suppressing check, replacement branch, fabricated baseline, merge or worker report.",
+      "lock": {
+        "key": "gitlab.babysit.invalid/group/api:tenant-validation",
+        "active": false
+      },
+      "attempt_limit": 3,
+      "no_progress_limit": 2
+    }
+  },
+  "prose": "- API repair is behavior-changing. After original restoration: resolve-pr-reviews/CI root-cause repair on the original branch → verify-implementation → applicable test-app → fresh independent review-code → record-evidence under the authentic original baseline/policy with hosted bytes and sealed receipt → iterate-evidence bound to source/capture hashes → describe-pr preserving breadcrumbs and publishing a distinct evidence comment; read back capture, description and comment. Every source change restarts affected gates."
+}

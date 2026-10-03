@@ -2,16 +2,12 @@ package cli
 
 import (
 	"bytes"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
@@ -44,10 +40,7 @@ func runOnboard(t *testing.T, stdin string, args ...string) (out string, urls []
 	return buf.String(), urls, err
 }
 
-// onboardSlack is the fake Slack a full onboard, a setup run, and the daemon's
-// verification DM need. It records the manifest authorization and body, every
-// token auth.test, apps.connections.open, and users.info carried, and every
-// chat.postMessage form; conversations.open answers D0CLI for any user.
+// onboardSlack records setup token and manifest calls against an offline server.
 type onboardSlack struct {
 	url                                     string
 	manifestAuth, manifestBody              string
@@ -55,60 +48,6 @@ type onboardSlack struct {
 	manifestUpdateBody                      string
 	authTokens, probeTokens                 []string
 	infoTokens, infoUsers                   []string
-
-	mu    sync.Mutex
-	posts []url.Values
-}
-
-// replyToSetupDM plays the owner: once the setup DM is posted it sends an
-// owner reply, and keeps sending fresh ones until finished closes. The daemon
-// ignores a DM that arrives before chat.postMessage has returned to it, so a
-// single reply sent the instant the fake records the post can be lost under
-// load; any reply after that point resolves the verification. Stray replies
-// left over reach the no-agent path and only post a notice. It closes
-// replied when done.
-func replyToSetupDM(t *testing.T, fake *onboardSlack, inbound chan<- socketmode.Event, finished <-chan struct{}, wantText, text string) <-chan struct{} {
-	replied := make(chan struct{})
-	go func() {
-		defer close(replied)
-		post := fake.waitPost(t, "D0CLI")
-		if post.Get("text") != wantText || post.Get("thread_ts") != "" {
-			t.Errorf("setup DM = %v; want the fixed text at the top level", post)
-		}
-		for i := 0; ; i++ {
-			select {
-			case inbound <- ownerDM("U0CLI", "D0CLI", fmt.Sprintf("1700000000.%06d", 200+i), text):
-			case <-finished:
-				return
-			}
-			select {
-			case <-time.After(100 * time.Millisecond):
-			case <-finished:
-				return
-			}
-		}
-	}()
-	return replied
-}
-
-// waitPost returns the first chat.postMessage to channel, or fails after five
-// seconds.
-func (f *onboardSlack) waitPost(t *testing.T, channel string) url.Values {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		f.mu.Lock()
-		for _, p := range f.posts {
-			if p.Get("channel") == channel {
-				f.mu.Unlock()
-				return p
-			}
-		}
-		f.mu.Unlock()
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Errorf("no chat.postMessage to %s", channel)
-	return url.Values{}
 }
 
 func newOnboardSlack(t *testing.T) *onboardSlack {
@@ -141,21 +80,9 @@ func newOnboardSlack(t *testing.T) *onboardSlack {
 	})
 	mux.HandleFunc("/users.info", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
-		f.mu.Lock()
 		f.infoTokens = append(f.infoTokens, r.PostForm.Get("token"))
 		f.infoUsers = append(f.infoUsers, r.PostForm.Get("user"))
-		f.mu.Unlock()
 		_, _ = w.Write([]byte(`{"ok":true,"user":{"id":"U0CLI","real_name":"Ada Lovelace","tz":"Europe/London","profile":{"real_name":"Ada Lovelace","display_name":"ada"}}}`))
-	})
-	mux.HandleFunc("/conversations.open", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"ok":true,"channel":{"id":"D0CLI"}}`))
-	})
-	mux.HandleFunc("/chat.postMessage", func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseForm()
-		f.mu.Lock()
-		f.posts = append(f.posts, r.PostForm)
-		f.mu.Unlock()
-		_, _ = w.Write([]byte(`{"ok":true,"channel":"` + r.PostForm.Get("channel") + `","ts":"1700000000.000100"}`))
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
@@ -183,7 +110,7 @@ func ownerDM(user, channel, ts, text string) socketmode.Event {
 	}
 }
 
-func TestOnboardWritesTheConfigInstallsTheServiceAndVerifiesTheOwner(t *testing.T) {
+func TestOnboardWritesTheConfigAndInstallsTheService(t *testing.T) {
 	fake := newOnboardSlack(t)
 	executor := injectService(t, "darwin")
 
@@ -208,12 +135,8 @@ func TestOnboardWritesTheConfigInstallsTheServiceAndVerifiesTheOwner(t *testing.
 		SocketModeHealth: func() string { return slackapi.SocketConnected },
 		Inbound:          inbound,
 	})
-	finished := make(chan struct{})
-	replied := replyToSetupDM(t, fake, inbound, finished, "Reply to this message to finish setup", "here I am")
 
 	out, urls, err := runOnboard(t, "xoxe.xoxp-1-cfg\n\nxoxb-cli\nxapp-cli\nU0CLI\n\n")
-	close(finished)
-	<-replied
 	if code := exitCode(err); code != ExitOK {
 		t.Fatalf("exit %d (err %v), output %q", code, err, out)
 	}
@@ -223,11 +146,9 @@ func TestOnboardWritesTheConfigInstallsTheServiceAndVerifiesTheOwner(t *testing.
 	if len(urls) != 2 || urls[0] != "https://slack.com/oauth/v2/authorize?client_id=cli" || urls[1] != "https://api.slack.com/apps/A0CLI/general" {
 		t.Fatalf("opened %v", urls)
 	}
-	fake.mu.Lock()
 	infoTokens, infoUsers := strings.Join(fake.infoTokens, ","), strings.Join(fake.infoUsers, ",")
-	fake.mu.Unlock()
-	if infoTokens != "xoxb-cli,xoxb-cli,xoxb-cli" || infoUsers != "U0CLI,U0CLI,U0CLI" {
-		t.Fatalf("users.info tokens %q users %q; want setup, onboard's owner lookup, and the daemon's display-name lookup", infoTokens, infoUsers)
+	if infoTokens != "xoxb-cli,xoxb-cli" || infoUsers != "U0CLI,U0CLI" {
+		t.Fatalf("users.info tokens %q users %q; want setup and onboard owner lookups", infoTokens, infoUsers)
 	}
 	if got := strings.Join(fake.authTokens, ","); got != "xoxb-cli,xoxb-cli" {
 		t.Fatalf("auth.test tokens %v; want the bot token from setup and from onboard", fake.authTokens)
@@ -237,9 +158,6 @@ func TestOnboardWritesTheConfigInstallsTheServiceAndVerifiesTheOwner(t *testing.
 	}
 	if !strings.Contains(out, "Owner: ada (U0CLI). Correct? [Y/n]") {
 		t.Fatalf("output %q lacks the owner confirmation", out)
-	}
-	if !strings.Contains(out, "Verified: ada replied to Slack assistant.") || !strings.HasSuffix(strings.TrimSpace(out), "Invite the bot to the channels it should watch, then DM it !help.") {
-		t.Fatalf("output %q lacks the verified line or does not close with the next steps", out)
 	}
 	plist := filepath.Join(home, "slack-coordinator.plist")
 	if got := strings.Join(executor.commands, ";"); got != "launchctl load -w "+plist {
@@ -297,7 +215,7 @@ func TestOnboardManifestFailureExitsTwoAndKeepsStepOne(t *testing.T) {
 	}
 }
 
-func TestOnboardExistingUpdatesManifestAndVerifies(t *testing.T) {
+func TestOnboardExistingUpdatesManifest(t *testing.T) {
 	fake := newOnboardSlack(t)
 
 	home := newTestHome(t)
@@ -318,24 +236,13 @@ func TestOnboardExistingUpdatesManifestAndVerifies(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	finished := make(chan struct{})
-	replied := replyToSetupDM(t, fake, inbound, finished, "Reply to this message to finish setup", "done")
-
 	// stdin: config token, then Enter (keep bot token)
 	out, _, err := runOnboard(t, "xoxe.xoxp-1-cfg\nyes\n\n", "--existing", "--no-service")
-	close(finished)
-	<-replied
 	if code := exitCode(err); code != ExitOK {
 		t.Fatalf("exit %d (err %v), output %q", code, err, out)
 	}
 	if fake.manifestUpdateAuth != "Bearer xoxe.xoxp-1-cfg" || fake.manifestUpdateAppID != "A0CLI" || fake.manifestUpdateBody != manifest.JSON() {
 		t.Fatalf("apps.manifest.update auth=%q appID=%q bodyMatch=%v",
 			fake.manifestUpdateAuth, fake.manifestUpdateAppID, fake.manifestUpdateBody == manifest.JSON())
-	}
-	if !strings.Contains(out, "Manifest updated.") || !strings.Contains(out, "Verified: ada replied.") {
-		t.Fatalf("output %q lacks manifest updated or verified line", out)
-	}
-	if !strings.Contains(out, "Invite the bot to the channels it should watch, then DM it !help.") {
-		t.Fatalf("output %q lacks next-steps line", out)
 	}
 }

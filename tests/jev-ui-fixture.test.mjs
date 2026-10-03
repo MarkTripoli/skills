@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-const root = path.resolve("skills/delivery/jev-ui/fixture");
+const root = path.resolve("tests/jev-ui-acceptance/fixture");
 
 function fakeTool(dir, name, body) {
   const file = path.join(dir, name);

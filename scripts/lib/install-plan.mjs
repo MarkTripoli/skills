@@ -10,7 +10,10 @@ import { retiredSweep } from './install-retirement.mjs';
 const TARGETS = [...RUNTIMES, 'portable'];
 const TARGET_LABEL = { 'claude-code': 'Claude Code', codex: 'Codex', 'oh-my-pi': 'Oh My Pi', pi: 'Pi', portable: 'Portable' };
 const SKILL_DEPENDENCIES = {
-  deliver: ['route-model', 'record-evidence', 'iterate-evidence', 'jira-issue-refinement'],
+  'route-model': ['typed-judgment'],
+  'configure-model-routing': ['route-model'],
+  babysit: ['resolve-pr-reviews', 'verify-implementation', 'test-app', 'review-code', 'record-evidence', 'iterate-evidence', 'describe-pr', 'slack-coordinator'],
+  deliver: ['route-model', 'record-evidence', 'iterate-evidence', 'jira-issue-refinement', 'agent-slack-control-plane'],
   'jev-ui': ['typed-judgment', 'record-evidence'],
   'record-evidence': ['deliver'],
   'iterate-evidence': ['record-evidence', 'deliver'],

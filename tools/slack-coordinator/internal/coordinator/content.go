@@ -188,12 +188,9 @@ func (c *Coordinator) UploadContent(ctx context.Context, in UploadParams) (Uploa
 	c.statusMu.Lock()
 	defer c.statusMu.Unlock()
 
-	gate, err := c.CheckBeforeWrite(ctx, in.RunID)
+	run, err := c.requireWriteReady(ctx, in.RunID)
 	if err != nil {
 		return UploadResult{}, err
-	}
-	if gate.Kind != GateReady {
-		return UploadResult{}, &ContentGateError{Kind: gate.Kind, Reason: gate.Reason}
 	}
 	if in.Path == "" {
 		return UploadResult{}, errors.New("path is required")
@@ -217,13 +214,6 @@ func (c *Coordinator) UploadContent(ctx context.Context, in UploadParams) (Uploa
 	title := strings.TrimSpace(in.Title)
 	if title == "" {
 		title = name
-	}
-	run, err := c.activeRun(ctx, in.RunID)
-	if err != nil {
-		return UploadResult{}, err
-	}
-	if run.SlackMode == db.SlackDisabled {
-		return UploadResult{}, &ContentGateError{Kind: GateSlackDisabled, Reason: "Slack is disabled for this run"}
 	}
 	result, err := c.Content.UploadContent(ctx, run.ChannelID, run.ThreadTS, name, title, file, info.Size())
 	if err != nil {

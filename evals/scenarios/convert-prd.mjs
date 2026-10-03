@@ -17,8 +17,38 @@ const VERBATIM = "Account owners receive one digest per day at 09:00 in the acco
 const INVENTED_ALTERNATIVES = /weekly|monthly|in-app|banner|slack|push notification|dashboard|webhook|SMS digest|phone/i;
 // The export's open question, in any of the ways a model writes it.
 const SEVEN_DAY = /\b(seven|7)[- ]?days?\b|next week|upcoming invoices|\bdue (within|in|soon)\b|not yet overdue/i;
+// The wider pattern for the Known limits check only: it also names the open item as
+// "upcoming-invoice inclusion", which the decided and Verify-box checks do not select.
+const SEVEN_DAY_LIMIT = new RegExp(`${SEVEN_DAY.source}|upcoming[- ]invoice inclusion`, "i");
 // A hedge that marks a sentence as recording an open question rather than a decision.
 const HEDGE = /whether|open question|no decision|not decided|undecided|not stated|leaves? open|TBD|see Verify/i;
+// A whole sentence that only says the item is open: a subject drawn from a closed list of nouns,
+// determiners and prepositions (no verb, modal or negation), `remain(s)/is/are`, then `unresolved` or
+// `an open decision`. With that list no second clause or decision verb can fit in the sentence.
+const OPEN_WORD = "(?:performance|and|upcoming|invoices?|including|due|within|the|next|seven|7|days?|inclusion|window|question)";
+const OPEN_ITEM = new RegExp(`^(?:#+\\s*)?${OPEN_WORD}(?:[ -]${OPEN_WORD})*\\s+(?:remains?|is|are)\\s+(?:unresolved|an open decision)(?:,\\s*not an approved requirement)?\\.?$`, "i");
+// An OPEN_ITEM sentence is excused only when every other sentence of its paragraph is also quiet: another
+// OPEN_ITEM sentence, or a SOURCE_POINTER sentence (a `Source:` line made only of an export link or file, an
+// export section name and line numbers). An OPEN_ITEM heading is excused only when its own section also holds
+// an OPEN_ITEM sentence that names a seven-day term. HEDGE counts neither as quiet nor for a heading, because
+// a HEDGE sentence can carry a decision. The excuse looks only inside the paragraph or section: a deciding
+// paragraph that names no seven-day term is never selected, which is the base check's sentence-unit limit
+// (origin/main also accepts "Whether to include upcoming invoices is an open question." followed by a
+// paragraph "This PRD includes them."). The paragraph verdict is computed once per paragraph.
+const EXPORT_LINK = String.raw`\((?:[^)\s#]*\/)?billing-alerts-prd\.md(?:#[^)\s]*)?\)`;
+const SOURCE_DOC = String.raw`(?:\[Billing Alerts Digest\]${EXPORT_LINK}|(?:[\w./-]*\/)?billing-alerts-prd\.md|Billing Alerts Digest)`;
+const SOURCE_SECTION = "(?:Overview|Problem|Goals and success metrics|Requirements|Non-goals|Open questions)";
+const SOURCE_LINES = String.raw`(?:lines?\s*\d+(?:[-–]\d+)?(?:\s*(?:and|,)\s*\d+)*|:\d+(?:-\d+)?)`;
+const SOURCE_POINTER = new RegExp(String.raw`^\[?Source:\s*(?:${SOURCE_DOC},?\s*)?(?:${SOURCE_SECTION},?\s*)?${SOURCE_LINES}(?:\]${EXPORT_LINK})?\.?$`);
+const quiet = (sentence) => OPEN_ITEM.test(sentence.trim()) || SOURCE_POINTER.test(sentence.trim());
+const unexcused = (text) => text.split(/\n(?=#+\s)/).flatMap((section) => {
+  const paragraphs = section.split(/\n\s*\n/).map((paragraph) => sentences(paragraph, /./));
+  const bodyOpen = paragraphs.flat().some((sentence) => !sentence.startsWith("#") && SEVEN_DAY.test(sentence) && OPEN_ITEM.test(sentence.trim()));
+  return paragraphs.flatMap((all) => {
+    const allQuiet = all.every(quiet);
+    return all.filter((sentence) => SEVEN_DAY.test(sentence) && !HEDGE.test(sentence) && !(OPEN_ITEM.test(sentence.trim()) && allQuiet && (!sentence.startsWith("#") || bodyOpen)));
+  });
+});
 // A pointer into the export beside a statement: a line, item, or requirement number, the export's
 // file, title, or section.
 const POINTER = /\b(line|item|requirement)s?\s*\d+|(?<=\W):\d+\b|billing-alerts-prd\.md|Billing Alerts Digest|"Requirements"|## Requirements/gi;
@@ -85,7 +115,7 @@ export default {
         const limits = section(text, "### Known limits", { last: true }) ?? "";
         const mockups = fs.readdirSync(taskDir, { recursive: true }).filter((f) => String(f).endsWith(".html"));
         // The open question may be named in a product section only as open.
-        const sevenDayDecided = sentences(productSections, SEVEN_DAY).filter((s) => !HEDGE.test(s));
+        const sevenDayDecided = unexcused(productSections);
         return failures(
           // Every requirement mapped to an obligation, each cited to the export.
           expect.filled("prd: Problem to Solve", section(text, "### Problem to Solve")),
@@ -108,8 +138,8 @@ export default {
           expect.excludes("prd: no made-up duration target for 'fast'", detailsWithoutPointers, DURATION),
           expect.matches("prd: Verify box decides the 'fast' target", verify, /- \[ \][^\n]*fast/i),
           expect.matches("prd: Verify box decides the seven-day question", verify, new RegExp(`- \\[ \\][^\\n]*(${SEVEN_DAY.source})`, "i")),
-          expect.matches("prd: 'fast' named as a known limit", limits, /fast/i),
-          expect.matches("prd: open question named as a known limit", limits, SEVEN_DAY),
+          expect.matches("prd: 'fast' named as a known limit", limits, /fast|\bspeed requirement\b/i),
+          expect.matches("prd: open question named as a known limit", limits, SEVEN_DAY_LIMIT),
           mockups.length ? `prd: conversion wrote mockups: ${mockups.join(", ")}` : null,
         );
       },

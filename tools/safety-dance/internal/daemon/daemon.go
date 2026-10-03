@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/db"
 	"github.com/MarkTripoli/skills/tools/safety-dance/internal/paths"
@@ -41,6 +42,35 @@ func AcquireOwnership(p *paths.Paths) (*Ownership, error) {
 	}
 	return &Ownership{file: f, path: p.LockFile()}, nil
 }
+
+// WaitForOwnershipRelease blocks until no process holds the runtime home's
+// ownership lock, or timeout passes. A daemon that has stopped answering IPC
+// can still hold the lock while it unwinds, and a replacement started in that
+// window fails with "daemon already owns runtime home".
+func WaitForOwnershipRelease(p *paths.Paths, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		f, err := os.OpenFile(p.LockFile(), os.O_RDWR, 0600)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err == nil {
+			err = lockRuntimeFile(f)
+			if err == nil {
+				_ = unlockRuntimeFile(f)
+			}
+			_ = f.Close()
+			if err == nil {
+				return nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("daemon still owns runtime home after %s: %w", timeout, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func (o *Ownership) Close() error {
 	if o == nil || o.file == nil || o.closed {
 		return nil

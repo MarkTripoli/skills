@@ -1,13 +1,13 @@
 ---
 name: create-plan
-description: Run for /create-plan requests. Create a detailed implementation plan from the structure outline.
+description: Writes a phased implementation plan with concrete file edits and runnable checks from the task's TDD, PRD, structure outline, or design discussion. Use when the user runs /create-plan or asks to turn an approved design into a plan; not for splitting an epic (/create-epic-plan).
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
 
 # Create Plan
 
-Expand the structure outline into a detailed implementation plan with concrete edits, examples, and verification. The plan is the last artifact before implementation.
+Expand the source artifact (a TDD, PRD, structure outline, or design discussion) into a detailed implementation plan with concrete edits, examples, and verification. The plan is the last artifact before implementation.
 
 ## Steps
 
@@ -15,35 +15,31 @@ Expand the structure outline into a detailed implementation plan with concrete e
 
 2. **Read primary inputs fully, others by summary**:
    - Read `references/plan_template.md` and `references/plan_final_answer.md`.
-   - Read the [slicing guide](https://github.com/MarkTripoli/skills/blob/main/shared/SLICING.md), which a checkout has at `shared/SLICING.md`.
-   - Read completely: `task.md` or `ticket.md`, plus the design artifact this plan expands: the file the user named with `@...` when one is given, otherwise the current indexed TDD, PRD, structure outline, or design discussion, in that order of preference.
-   - Use summaries from other current indexed artifacts. Open only when the design leaves a gap.
+   - Read the explicit source artifact completely; otherwise select current indexed TDD, PRD, structure outline or design discussion, in that order. Only a genuinely absent index permits numbered discovery.
+   - For Jira-backed work, read current `research.jira` completely. Confirmed specifications and Planning impact constrain phases and checks; proposals and open questions remain labeled, not required checkboxes.
+   - Other artifacts in validated current index records: use the `summary` field. Open only when the design leaves a gap.
 
 3. **Read relevant source files**:
    - Open source files named in research, design, or outline.
    - Verify file paths and examples before including them.
    - Use existing test patterns when planning tests.
 
-4. **Re-size each outline phase** against `shared/SLICING.md`'s four tests; split a failing phase by the symptom's named split before writing its implementation steps. This is a per-phase re-check, not a re-derivation of the outline.
-
-5. **Write the implementation plan**:
-   - Record the next immutable `planning.plan` iteration through the conventions' Recording an artifact flow.
-   - Convert each structure-outline phase into implementation steps.
+4. **Write the implementation plan**:
+   - Allocate the next immutable `planning.plan` iteration and write its staging document.
+   - Convert the source artifact's phases, or its architecture when it has none, into implementation phases with steps.
    - Include concrete code examples where they clarify the change.
    - Include automated verification commands and real manual checks when needed.
-   - Reconcile every confirmed `jira-refinement` Planning impact item with an explicit phase or check before saving. Put unresolved proposals in Open Questions or Known limits, not in required implementation checkboxes. After saving the plan, update the refinement artifact's `Plan reconciliation` line to `applied in <plan path>` (or `not needed` with reason when no confirmed delta applies). If a confirmed required change stays unresolved, write `Plan reconciliation: needs-human: <question>` instead. Save both artifacts locally; never stage or commit task files.
+   - Before saving, confirm every `**File**` path exists or is marked new and every phase has at least one runnable command; fix and re-check.
+
+5. **If Jira-backed, reconcile the refinement.** Map each confirmed Planning impact item to a phase or check; unresolved proposals stay in Open Questions or Known limits. Record a successor `research.jira` iteration with `Plan reconciliation: applied in <canonical plan path>`, or `not needed` with evidence. A confirmed required change that remains unresolved records `needs-human: <question>` and blocks implementation. Keep both immutable artifacts local.
+
+6. **If the source artifact has open decisions, adopt them** (open Design Questions in a design discussion, or open items or `Not stated` blanks in a TDD or outline): take each one's recommendation (or the safest stated option when none is recommended; for a blank that names no option, state the assumption the plan makes), state it in the phase it shapes, and add one confirmation box per adopted decision under `## Human Review` `### Verify`, naming the question and the option. These are confirmations for the human before implementation, never phase implementation checkboxes. An unresolved `jira-refinement` proposal never shapes a phase; it goes to Known limits with its Verify box.
 
 ## Plan Guidelines
 
-- Every phase must be independently testable.
 - Use specific file edits, target functions, and short code examples over broad descriptions.
-- Automated verification must be runnable commands.
-- Deferred human evidence is a plain bullet naming the evidence and where it is recorded; it never blocks a phase.
-- A phase's `human-gated: false` line may be edited to `true` when the user asks to gate that phase.
-- Include test additions or modified test examples following patterns from research.
-- Do not add manual validation just to fill a section.
 - When the primary input is a TDD, map each `## Phase N` to work-item ids from its `### Engineering Work Breakdown` table with a `**Work items**: w1, w2` line under the phase heading, and state in `## Execution Strategy` which dependency edge any reordering or merge crossed.
 
 ## Output
 
-1. Save the plan and follow `references/plan_final_answer.md` exactly; fill `{artifact_link}` and `{artifact_file}` with the saved canonical task-root-relative path (the template carries the `@`), and fill the `Check:` and `Known limits:` lines from the artifact's `### Verify` and `### Known limits` lists. Add no prose before or after the template. A legacy task without `index.json` follows the conventions' legacy rules.
+7. Record the checked plan as the next immutable `planning.plan` iteration and use `references/plan_final_answer.md` exactly. Fill the canonical receipt link, worktree-relative `{artifact_file}`, and Check/Known limits from Human Review. A genuinely unindexed legacy task follows its existing numbered-file contract.

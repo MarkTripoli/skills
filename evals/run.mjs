@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { artifacts, failures, handoff, isolatedEnv, newest, ompArgs, ompShim, placeholders, spawnIsolated } from "./lib.mjs";
+import { artifacts, failures, handoff, isolatedEnv, newest, ompArgs, ompShim, placeholders, sessionEnv, spawnIsolated, stubCalls, writeStubs } from "./lib.mjs";
 import { recordSecurityAssessment } from "./security-assessment.mjs";
 import { gradeEvidenceScenario, isEvidenceScenario, snapshotEvidenceSources } from "./iterate-evidence.mjs";
 import { metricsForOutput } from "./metrics.mjs";
@@ -134,6 +134,12 @@ function snapshotSources(dist) {
   for (const file of guidanceFiles) fs.cpSync(path.join(repoRoot, "shared", file), path.join(shared, file));
   fs.cpSync(fixturesDir, path.join(dist, "fixtures"), { recursive: true });
   fs.cpSync(shared, path.join(dist, "fixtures", "shared"), { recursive: true });
+  // The scripts a grader or a throwaway repository runs, with the one dependency they import, so a checkout that changes mid-run
+  // (or a host with no `yaml` beside /tmp) cannot change a verdict.
+  fs.mkdirSync(path.join(dist, "scripts", "lib"), { recursive: true });
+  fs.cpSync(path.join(repoRoot, "scripts", "check-skill-practices.mjs"), path.join(dist, "scripts", "check-skill-practices.mjs"));
+  fs.cpSync(path.join(repoRoot, "scripts", "lib", "layout.mjs"), path.join(dist, "scripts", "lib", "layout.mjs"));
+  fs.cpSync(path.join(repoRoot, "node_modules", "yaml"), path.join(dist, "node_modules", "yaml"), { recursive: true });
 }
 // A throwaway fixture repository with ignored indexed task state and installed workers.
 async function prepareRepo(scenario, dist) {
@@ -202,13 +208,16 @@ function phasePrompt(skillsDir, phase, taskRel) {
   ].join("\n").replace(/\n{3,}/g, "\n\n");
 }
 
-function runOmp(prompt, cwd, { sessionDir = null, phaseModel = null, nestedDir = null } = {}) {
+// A scenario or phase may set `env: { NAME: "value" | null }` (null removes it) and `unsetEnv: /pattern/` (removes every
+// matching name) for its session only, so a check can depend on the session's environment without touching the runner's.
+// A phase setup's `env` (provider fixtures) goes in before isolation, so it cannot restore operator Slack access.
+function runOmp(prompt, cwd, { sessionDir = null, phaseModel = null, nestedDir = null, stubDir = null, envOverrides = {}, unsetEnv = null, env: phaseEnv = {} } = {}) {
   return new Promise((resolve) => {
     // Its own process group, so a kill on timeout reaches the child workers omp spawned.
     const callArgs = ompArgs({ prompt, sessionDir, maxMinutes, model: model ?? phaseModel });
-    const env = isolatedEnv(process.env);
-    const shim = nestedDir ? ompShim(nestedDir, env) : null;
-    if (shim) env.PATH = [shim, env.PATH].join(path.delimiter);
+    const base = isolatedEnv({ ...process.env, ...phaseEnv });
+    const shim = nestedDir ? ompShim(nestedDir, base) : null;
+    const env = sessionEnv(base, { shim, stubDir, unsetEnv, overrides: envOverrides });
     const child = spawnIsolated("omp", callArgs, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
@@ -227,9 +236,16 @@ function runOmp(prompt, cwd, { sessionDir = null, phaseModel = null, nestedDir =
         child.kill("SIGKILL");
       }
     }, (maxMinutes + 1) * 60 * 1000);
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      if (shim) fs.rmSync(shim, { recursive: true, force: true });
+      if (stubDir) fs.rmSync(stubDir, { recursive: true, force: true });
+      resolve({ code: 127, stdout, stderr: `${stderr}${error.message}\n` });
+    });
     child.on("close", (code) => {
       clearTimeout(timer);
       if (shim) fs.rmSync(shim, { recursive: true, force: true });
+      if (stubDir) fs.rmSync(stubDir, { recursive: true, force: true });
       resolve({ code, stdout, stderr });
     });
   });
@@ -237,7 +253,7 @@ function runOmp(prompt, cwd, { sessionDir = null, phaseModel = null, nestedDir =
 
 // What a phase may not change: every earlier artifact and `task.md`, byte for byte.
 function snapshot(taskDir) {
-  const files = artifacts(taskDir).map((a) => ({ file: a.file, text: a.text }));
+  const files = artifacts(taskDir).map((a) => ({ file: a.file, text: a.text, record: a.record, current: a.current }));
   const task = path.join(taskDir, "task.md");
   if (fs.existsSync(task)) files.push({ file: "task.md", text: fs.readFileSync(task, "utf8") });
   return files;
@@ -320,7 +336,8 @@ function report(scenario, label, seconds, problems) {
 
 function templateFor(skillsDir, phase) {
   if (!phase.template) return "";
-  const file = path.join(skillsDir, phase.skill, "references", phase.template);
+  // A bare name is the phase skill's own reference; a path names another skill's (an iterate skill revises what a create skill wrote).
+  const file = phase.template.includes("/") ? path.join(skillsDir, phase.template) : path.join(skillsDir, phase.skill, "references", phase.template);
   if (!fs.existsSync(file)) throw new Error(`${phase.skill}: template ${phase.template} not found under references/`);
   return fs.readFileSync(file, "utf8");
 }
@@ -345,18 +362,30 @@ async function runScenario(scenario, runDir, dist) {
     const label = `${index + 1}-${phase.skill}`;
     const out = path.join(resultDir, label);
     fs.mkdirSync(out, { recursive: true });
-    const prompt = phasePrompt(skillsDir, phase, taskRel);
-    fs.writeFileSync(path.join(out, "prompt.md"), prompt);
+    let prompt = phasePrompt(skillsDir, phase, taskRel);
     const before = snapshot(taskDir);
     const template = templateFor(skillsDir, phase);
     const started = Date.now();
     console.log(`[${scenario.name}] ${label}: started`);
     const sessionDir = phase.terminal ? path.join(out, "session") : null;
     const nestedDir = phase.nested ? path.join(out, "nested") : null;
-    const setup = await phase.setup?.({ repo, taskDir });
+    const setup = await phase.setup?.({ repo, taskDir, dist, skillsDir, model: model ?? phase.model ?? null });
     if (setup?.bare) scratch.push(setup.bare);
+    if (setup?.pagesDir) {
+      scratch.push(setup.pagesDir);
+      prompt += `\n\nWrite shareable pages only to this external scratch directory: ${setup.pagesDir}. Do not put pages or upload media under the task root.`;
+    }
+    fs.writeFileSync(path.join(out, "prompt.md"), prompt);
     if (setup) fs.writeFileSync(path.join(out, "setup.json"), JSON.stringify(setup));
-    const { code, stdout, stderr } = await runOmp(prompt, repo, { sessionDir, phaseModel: phase.model ?? null, nestedDir });
+    const stubDir = writeStubs({ ...scenario.stubs, ...phase.stubs }, path.join(out, "stub-calls.log"));
+    let outcome;
+    try {
+      outcome = await runOmp(prompt, repo, { sessionDir, phaseModel: phase.model ?? null, nestedDir, stubDir, envOverrides: { ...scenario.env, ...phase.env }, unsetEnv: [scenario.unsetEnv, phase.unsetEnv].filter(Boolean), env: setup?.env });
+    } finally {
+      // Disposable authentication/configuration is never copied with task recordings.
+      await setup?.cleanup?.();
+    }
+    const { code, stdout, stderr } = outcome;
     const wallMs = Date.now() - started;
     const metrics = metricsForOutput(stdout, wallMs);
     const answer = metrics.answer ?? "";
@@ -364,8 +393,32 @@ async function runScenario(scenario, runDir, dist) {
     fs.writeFileSync(path.join(out, "trace.jsonl"), stdout);
     fs.writeFileSync(path.join(out, "stderr.log"), stderr);
     if (fs.existsSync(taskDir)) fs.cpSync(taskDir, path.join(out, "task"), { recursive: true, preserveTimestamps: true });
+    if (setup?.pagesDir && fs.existsSync(setup.pagesDir)) fs.cpSync(setup.pagesDir, path.join(out, "pages"), { recursive: true });
     fs.writeFileSync(path.join(out, "timestamps-preserved"), "");
-    const ctx = { live: true, timesPreserved: true, sessionDir, nestedDir, setup, repo, codeRoot: repo, taskDir, taskRel, fixtureSha, before, template, answer, artifact: newest(taskDir, phase.artifactType), artifacts: artifacts(taskDir) };
+
+    const ctx = {
+      live: true,
+      dist,
+      skillsDir,
+      scriptsDir: path.join(dist, "scripts"),
+      timesPreserved: true,
+      repo,
+      codeRoot: repo,
+      sessionDir,
+      nestedDir,
+      setup,
+      taskDir,
+      pagesDir: setup?.pagesDir,
+      previousTaskDir: index === 0 ? null : path.join(resultDir, `${index}-${scenario.phases[index - 1].skill}`, "task"),
+      fixtureSha,
+      before,
+      template,
+      answer,
+      taskRel,
+      stubCalls: stubCalls(out),
+      artifact: newest(taskDir, phase.artifactType),
+      artifacts: artifacts(taskDir),
+    };
     const problems = grade(phase, ctx, code);
     result.wallTimeSeconds += Math.round(wallMs / 1000);
     const aggregate = result.metrics;
@@ -418,23 +471,32 @@ async function gradeScenario(scenario, runDir) {
       const out = path.join(resultDir, label);
       const taskDir = path.join(out, "task");
       if (!fs.existsSync(path.join(out, "answer.md"))) {
-        console.log(`[${scenario.name}] ${label}: not recorded`);
+        const problems = ["phase: required phase was not recorded; complete runtime evidence is absent"];
+        result.ok = false;
+        result.phases.push({ phase: label, seconds: null, ok: false, problems });
+        report(scenario.name, label, null, problems);
         break;
       }
       const previous = index === 0 ? null : path.join(resultDir, `${index}-${scenario.phases[index - 1].skill}`, "task");
       const ctx = {
         live: false,
+        dist: pinnedDist,
+        skillsDir: path.join(pinnedDist, "skills"),
+        scriptsDir: path.join(pinnedDist, "scripts"),
         timesPreserved: fs.existsSync(path.join(out, "timestamps-preserved")),
         sessionDir: phase.terminal ? path.join(out, "session") : null,
         nestedDir: phase.nested ? path.join(out, "nested") : null,
         repo: null,
         codeRoot,
         taskDir,
+        pagesDir: fs.existsSync(path.join(out, "pages")) ? path.join(out, "pages") : undefined,
         taskRel: `.agents/tasks/${scenario.slug}`,
+        previousTaskDir: previous,
         fixtureSha: null,
         before: previous && fs.existsSync(previous) ? snapshot(previous) : fs.existsSync(taskDir) ? [{ file: "task.md", text: fs.readFileSync(path.join(taskDir, "task.md"), "utf8") }] : [],
         template: fs.existsSync(pinnedDist) ? templateFor(path.join(pinnedDist, "skills"), phase) : "",
         answer: fs.readFileSync(path.join(out, "answer.md"), "utf8"),
+        stubCalls: stubCalls(out),
         artifact: newest(taskDir, phase.artifactType),
         artifacts: artifacts(taskDir),
       };
@@ -480,7 +542,15 @@ if (gradeDir !== null) {
   fs.rmSync(latest, { force: true });
   fs.symlinkSync(stamp, latest);
   console.log(`skills built at ${path.relative(repoRoot, dist)}; running ${scenarios.map((s) => s.name).join(", ")} with ${maxMinutes} minutes per phase; recordings in ${path.relative(repoRoot, runDir)}`);
-  results = await Promise.all(scenarios.map((s) => runScenario(s, runDir, dist)));
+  // One scenario that throws (a missing template, a setup error) fails alone instead of discarding every concurrent run.
+  results = await Promise.all(
+    scenarios.map((s) =>
+      runScenario(s, runDir, dist).catch((error) => {
+        console.log(`[${s.name}] FAIL: ${error.message}`);
+        return { name: s.name, repo: null, phases: [], ok: false, error: error.message };
+      }),
+    ),
+  );
   fs.writeFileSync(path.join(runDir, "summary.json"), JSON.stringify(results, null, 2));
 }
 

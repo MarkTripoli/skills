@@ -5,7 +5,7 @@ import { scanSkills } from './layout.mjs';
 import { short } from './install-plan.mjs';
 import { MARK_BEGIN, MARK_END, managedRange, configBlocks, currentRetiredItems } from './install-retirement.mjs';
 
-const noDsStore = src => path.basename(src) !== '.DS_Store';
+const noDsStore = src => { const base = path.basename(src); return base !== '.DS_Store' && base !== '__pycache__' && !base.endsWith('.pyc'); };
 const publicationFiles = ['hooks/omp-publication.mjs', 'shared/publication-command.mjs', 'shared/publication-proof.mjs', 'shared/publication-proof-policy.mjs', 'shared/task-artifacts.mjs', 'shared/task-root.mjs'];
 
 function copyDir(from, to) {

@@ -1,6 +1,6 @@
 # Metadata schema
 
-`metadata.json` is the local selected-image manifest. It is a JSON object with these stable fields:
+`metadata.json` is the local selected-image mapping. It is a JSON object with these stable fields:
 
 | Field | Meaning |
 |---|---|

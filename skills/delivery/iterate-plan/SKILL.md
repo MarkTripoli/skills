@@ -1,6 +1,6 @@
 ---
 name: iterate-plan
-description: Run for /iterate-plan requests. Revise an implementation plan from feedback.
+description: Revises an existing implementation plan from feedback, verifying paths, examples and commands before applying them. Use when the user runs /iterate-plan or replies with plan changes; not for changing code (/iterate-implementation).
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
@@ -25,7 +25,7 @@ Revise an existing implementation plan. Check feedback before applying it, prese
    - If a ticket or feedback file is provided, treat it as instruction to evaluate, not as automatically correct.
    - Map each item to the affected plan phase or success criterion.
    - Do not convert a proposed Jira addition into a required implementation criterion. Record it as an open question or explicit assumption until confirmed; update QA checks only for source-backed expected behavior.
-   - Do not accept corrections blindly. Read mentioned files or directories.
+   - Read mentioned files or directories.
    - Verify code examples, file paths, and command names.
    - If the plan depends on uncertain behavior, inspect the source directly or start a child worker for role `agent-codebase-analyzer` (see the conventions' Child workers section) to verify the narrow fact; wait for it and read its final message.
 
@@ -36,8 +36,6 @@ Revise an existing implementation plan. Check feedback before applying it, prese
    - Fix inaccurate paths, descriptions, or validation commands.
    - Preserve frontmatter and template shape.
    - Keep examples accurate and concise.
-   - Ensure automated checks are commands the implementer can run.
-    - Keep deferred human evidence as plain bullets with pointers, never checkboxes; remove filler.
    - Maintain phase sections with success criteria.
    - After applying the confirmed Jira refinement deltas, update that artifact's `Plan reconciliation` line to `applied in <plan path>` and save the revised refinement alongside the plan artifact as local task state. When a confirmed required change stays unresolved, write `Plan reconciliation: needs-human: <question>` and ask the owner; do not begin implementation in that state.
 

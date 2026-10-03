@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
-	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/ipc"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/manifest"
 	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/slackapi"
 )
@@ -62,8 +61,6 @@ type Deps struct {
 	// WaitDaemon polls daemon.health until it answers or five seconds pass,
 	// as daemon start does.
 	WaitDaemon func(ctx context.Context) error
-	// VerifyOwner is IPC assistant.verify_owner with a 130 s deadline.
-	VerifyOwner func(ctx context.Context) (ipc.VerifyOwnerResult, error)
 }
 
 // Flags are the onboard command's flags. Steps 1 to 5 ignore them; step 6 and
@@ -79,12 +76,8 @@ type Flags struct {
 // configuration token expired (12 hours) or was revoked.
 var ErrConfigTokenRejected = errors.New("configuration token rejected; create a new one at api.slack.com/apps")
 
-// ErrVerifyTimeout is the verification step's failure when the owner did not
-// answer the setup DM within the daemon's window; the hints were printed.
-var ErrVerifyTimeout = errors.New("no reply from the owner within 2 minutes")
-
 // DefaultAppName is the app name an empty answer selects.
-const DefaultAppName = "Slack assistant"
+const DefaultAppName = "Slack coordinator"
 
 // state is what one invocation holds across steps. The configuration token
 // is here and nowhere on disk.
@@ -105,9 +98,8 @@ type step struct {
 	needsToken bool
 }
 
-// steps is indexed by Checkpoint.Step: index 0 means nothing completed. The
-// verification step is never checkpointed: it either finishes the run, which
-// removes onboard.json, or fails with the checkpoint left at configStep.
+// steps is indexed by Checkpoint.Step. The final health check is not
+// checkpointed; it either finishes setup or leaves the saved config intact.
 var steps = []step{
 	{},
 	{name: "configuration token", run: promptConfigToken},
@@ -116,13 +108,13 @@ var steps = []step{
 	{name: "app-level token", run: appLevelToken},
 	{name: "owner", run: resolveOwner},
 	{name: "write config and start", run: writeConfigAndStart},
-	{name: "verify", run: verifyOwner},
+	{name: "daemon health", run: checkDaemon},
 }
 
 const (
 	tokenStep  = 1
 	configStep = 6
-	verifyStep = 7
+	healthStep = 7
 )
 
 // Run resumes the walkthrough at cp.Step+1 and saves cp to cpPath after each
@@ -137,9 +129,7 @@ const (
 // instead of creating a second app. A checkpoint between steps 1 and 5
 // resumes the walkthrough over any existing file.
 //
-// Every path ends with the verification step. On success onboard.json is
-// removed and the next steps are printed; on ErrVerifyTimeout config.yaml,
-// the service, and onboard.json stay as they are.
+// Success removes onboard.json after the local daemon answers.
 func Run(ctx context.Context, deps Deps, cp *Checkpoint, cpPath string, flags Flags) error {
 	if deps.Out == nil {
 		deps.Out = io.Discard
@@ -167,7 +157,7 @@ func Run(ctx context.Context, deps Deps, cp *Checkpoint, cpPath string, flags Fl
 			return err
 		}
 	}
-	for i := start; i < verifyStep; i++ {
+	for i := start; i < healthStep; i++ {
 		if i == tokenStep && !needsToken(i+1) {
 			continue
 		}
@@ -179,16 +169,14 @@ func Run(ctx context.Context, deps Deps, cp *Checkpoint, cpPath string, flags Fl
 			return fmt.Errorf("%s: save %s: %w", steps[i].name, cpPath, err)
 		}
 	}
-	if err := runStep(ctx, st, verifyStep); err != nil {
+	if err := runStep(ctx, st, healthStep); err != nil {
 		return err
 	}
 	return finish(st, cpPath)
 }
 
-// runExisting implements --existing: updates the installed app's manifest,
-// prompts for a reinstall, optionally replaces the bot token, and runs the
-// verify step. config.yaml must already exist; onboard.json may supply the
-// app id, or the user is prompted for it.
+// runExisting updates an installed app's manifest and optionally replaces its
+// bot token, then checks local daemon health.
 func runExisting(ctx context.Context, deps Deps, cp *Checkpoint, cpPath string, flags Flags) error {
 	cfg, err := deps.LoadConfig()
 	if err != nil {
@@ -276,24 +264,21 @@ func runExisting(ctx context.Context, deps Deps, cp *Checkpoint, cpPath string, 
 		}
 	}
 
-	// verify
 	st.cp.OwnerUserID = cfg.Slack.OwnerUserID
-	if err := runStep(ctx, st, verifyStep); err != nil {
+	if err := runStep(ctx, st, healthStep); err != nil {
 		return err
 	}
 	return finish(st, cpPath)
 }
 
-// finish ends a verified walkthrough or repair: onboard.json is removed and
-// the next steps are printed. With --no-service the closing line says the
-// daemon is unsupervised.
+// finish removes the setup checkpoint and prints how to start run coordination.
 func finish(st *state, cpPath string) error {
 	if err := os.Remove(cpPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove %s: %w", cpPath, err)
 	}
-	fmt.Fprintln(st.deps.Out, "Invite the bot to the channels it should watch, then DM it !help.")
+	fmt.Fprintln(st.deps.Out, "Invite the bot to run channels, or start a run with --dm.")
 	if st.flags.NoService {
-		fmt.Fprintln(st.deps.Out, "Verification passed; the daemon runs until you log out or reboot. Run slack-coordinator service install to keep it running.")
+		fmt.Fprintln(st.deps.Out, "The daemon runs until you log out or reboot. Run slack-coordinator service install to keep it running.")
 	}
 	return nil
 }
@@ -314,7 +299,7 @@ func runStep(ctx context.Context, st *state, i int) error {
 		return err
 	}
 	err := steps[i].run(ctx, st)
-	if err == nil || errors.Is(err, ErrConfigTokenRejected) || errors.Is(err, ErrVerifyTimeout) {
+	if err == nil || errors.Is(err, ErrConfigTokenRejected) {
 		return err
 	}
 	return fmt.Errorf("%s: %w", steps[i].name, err)
@@ -438,10 +423,8 @@ func lookupUser(ctx context.Context, st *state, answer string) (slackapi.User, e
 	return user, err
 }
 
-// writeConfigAndStart checks both tokens against Slack, writes config.yaml
-// with the collected slack keys over any existing file (its agent, retention,
-// and jira blocks survive), then installs the user service or, with
-// --no-service, starts the daemon detached.
+// writeConfigAndStart checks both tokens, preserves optional Jira settings,
+// and installs the service or starts the daemon detached.
 func writeConfigAndStart(ctx context.Context, st *state) error {
 	d := st.deps
 	if err := d.AuthTest(ctx, st.cp.BotToken); err != nil {
@@ -458,7 +441,7 @@ func writeConfigAndStart(ctx context.Context, st *state) error {
 		cfg = &config.Config{}
 	}
 	cfg.Slack.BotToken, cfg.Slack.AppToken, cfg.Slack.OwnerUserID = st.cp.BotToken, st.cp.AppToken, st.cp.OwnerUserID
-	cfg.ApplyDefaults()
+
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
@@ -475,49 +458,20 @@ func writeConfigAndStart(ctx context.Context, st *state) error {
 	return nil
 }
 
-// verifyOwner waits for the daemon to answer, then asks it to DM the owner
-// and wait for the reply. Success prints who replied and to which app. A
-// timeout prints the likely causes, most common first, and returns
-// ErrVerifyTimeout without touching config.yaml, the service, or the
-// checkpoint.
-func verifyOwner(ctx context.Context, st *state) error {
-	d := st.deps
-	if err := d.WaitDaemon(ctx); err != nil {
+// checkDaemon waits for the daemon's local health endpoint.
+func checkDaemon(ctx context.Context, st *state) error {
+	if err := st.deps.WaitDaemon(ctx); err != nil {
 		return fmt.Errorf("daemon is not answering: %w", err)
 	}
-	fmt.Fprintln(d.Out, "The bot is sending you a DM; reply to it in Slack within 2 minutes.")
-	res, err := d.VerifyOwner(ctx)
-	if err != nil {
-		return err
-	}
-	if !res.OK {
-		install, appHome := "https://api.slack.com/apps", "https://api.slack.com/apps"
-		if st.cp.AppID != "" {
-			install, appHome = installURL(st.cp.AppID), appHomeURL(st.cp.AppID)
-		}
-		fmt.Fprintln(d.Out, "No reply within 2 minutes. Likely causes, most common first:")
-		fmt.Fprintf(d.Out, "  1. The app was not reinstalled after the scope change; reinstall it at %s.\n", install)
-		fmt.Fprintf(d.Out, "  2. DMs to the bot are turned off (Slack shows \"Sending messages to this app has been turned off\"); under App Home at %s, turn on the Messages Tab and allow users to send messages from it, then reload Slack.\n", appHome)
-		fmt.Fprintln(d.Out, "  3. The message.im event subscription is missing; add it under Event Subscriptions on the app's page.")
-		fmt.Fprintf(d.Out, "  4. The owner id is wrong; config.yaml names %s.\n", st.cp.OwnerUserID)
-		fmt.Fprintln(d.Out, "config.yaml, the service, and onboard.json are kept; fix the cause, then run slack-coordinator onboard again and choose re-verify.")
-		return ErrVerifyTimeout
-	}
-	if st.cp.AppName != "" {
-		fmt.Fprintf(d.Out, "Verified: %s replied to %s.\n", res.DisplayName, st.cp.AppName)
-	} else {
-		fmt.Fprintf(d.Out, "Verified: %s replied.\n", res.DisplayName)
-	}
+	fmt.Fprintln(st.deps.Out, "Daemon is ready. Start a run to coordinate work in Slack.")
 	return nil
 }
 
 // repairMenu is the choice an existing setup gets instead of the walkthrough.
-const repairMenu = "Existing setup found. [1] re-verify [2] reinstall service [3] replace a token"
+const repairMenu = "Existing setup found. [1] check daemon [2] reinstall service [3] replace a token"
 
-// repair runs one repair path over cfg, the existing setup, then the
-// verification step. It never calls apps.manifest.create. The checkpoint
-// keeps any app details it holds; the owner id comes from config.yaml, which
-// is what the daemon runs on.
+// repair updates an existing setup without creating a second app, then checks
+// that the local daemon answers.
 func repair(ctx context.Context, st *state, cfg *config.Config) error {
 	st.cp.OwnerUserID = cfg.Slack.OwnerUserID
 	choice, err := promptChoice(st, repairMenu, 3)
@@ -534,7 +488,7 @@ func repair(ctx context.Context, st *state, cfg *config.Config) error {
 			return fmt.Errorf("replace token: %w", err)
 		}
 	}
-	return runStep(ctx, st, verifyStep)
+	return runStep(ctx, st, healthStep)
 }
 
 // reinstallService rewrites and reactivates the user service, which relaunches
@@ -590,7 +544,7 @@ func replaceToken(ctx context.Context, st *state, cfg *config.Config) error {
 		}
 		cfg.Slack.AppToken, st.cp.AppToken = token, token
 	}
-	cfg.ApplyDefaults()
+
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
@@ -622,8 +576,6 @@ func installURL(appID string) string {
 func generalURL(appID string) string { return "https://api.slack.com/apps/" + appID + "/general" }
 
 func oauthURL(appID string) string { return "https://api.slack.com/apps/" + appID + "/oauth" }
-
-func appHomeURL(appID string) string { return "https://api.slack.com/apps/" + appID + "/app-home" }
 
 // open prints url, so a headless terminal still has it, then opens it. An
 // opener failure is a warning, not a stop: the URL is already on screen and

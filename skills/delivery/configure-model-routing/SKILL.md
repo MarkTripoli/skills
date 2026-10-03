@@ -1,6 +1,6 @@
 ---
 name: configure-model-routing
-description: Configure model routing when a candidate profile is missing, when a profile needs replacement, or when a user asks to set up model candidates for delivery. Ask one setup question at a time, save a validated economy/routing/candidates profile, and verify it through route-model.
+description: Interviews the user one question at a time and saves a validated model-candidate profile (economy model, routing mode, ordered candidates), then verifies it through route-model. Use when the user runs /configure-model-routing, when route-model reports no profile, or when a profile needs replacing; not for choosing a model for a phase, which is /route-model.
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
@@ -11,22 +11,25 @@ Invoke this skill as `/configure-model-routing`; Codex users invoke `$configure-
 
 ## Interaction contract
 
-Ask exactly one question, wait for the answer, then ask the next question. Do not bundle setup choices into one prompt. Explain the current answer before asking the next question. If discovery is unavailable or fails, continue with explicit model IDs instead of blocking the harness.
+Ask exactly one question, wait for the answer, then ask the next question. Do not bundle setup choices into one prompt. Before each next question, say in one line what the previous answer set. If discovery is unavailable or fails, continue with explicit model IDs instead of blocking the harness.
+
+- [ ] location
+- [ ] harnesses
+- [ ] model IDs weakest to strongest
+- [ ] cost and description for each
+- [ ] economy model
+- [ ] routing auto or fixed
+- [ ] write and verify
 
 ## 1. Select the profile location
 
 Ask whether this profile belongs to the current project or is user-level. For a project profile, use `<project>/.agents/model-candidates.json`. For a user-level profile, ask for the path and tell the user to reference it with `SKILLS_MODEL_CANDIDATES_FILE`; do not invent a second user-level default. Create parent directories as needed.
 
-Read an existing selected file before replacing it. Preserve no credentials, API keys, access tokens, cookies, headers, or provider configuration in the profile.
+Read an existing selected file before replacing it.
 
 ## 2. Collect candidates
 
-Ask which harnesses need candidates. Discover only through these stable public commands when the named binary exists:
-
-- Pi: `pi --list-models`
-- Oh My Pi: `omp models --json`
-
-Treat missing binaries, unsupported flags, nonzero exits, malformed output, and empty catalogs as unavailable discovery. Use explicit model IDs supplied by the user instead. Claude Code and Codex always accept explicit IDs and never use private catalog scraping.
+Ask which harnesses need candidates. Discover only through stable public commands, when the binary exists: Pi `pi --list-models`; Oh My Pi `omp models --json`. Claude Code, Codex, or any failed discovery (missing binary, nonzero exit, malformed or empty output): ask for explicit IDs.
 
 Ask for the exact model IDs, weakest to strongest capability, one question at a time. Candidate array order defines capability; it does not express price. Ask for each caller-relative non-negative cost and a short capability description separately. The economy model must be one of the candidates. Keep IDs exact and do not normalize, infer, or test account access.
 
@@ -43,28 +46,11 @@ Use this profile shape:
 }
 ```
 
-`routing` may be `fixed` when the caller wants the economy model without JEV. Never put credentials or secret-bearing descriptions in this JSON.
+`routing` may be `fixed` when the caller wants the economy model without JEV.
 
-## 3. Write and validate transactionally
+## 3. Write and verify
 
-Validate before writing: the array is non-empty, IDs are unique non-empty strings, costs are finite and non-negative, descriptions are non-empty, and `economy` exactly matches one candidate. Create a uniquely named temporary profile in the target file's same directory. Write the complete profile there and clean that temporary file on every pre-rename failure.
-
-Validate the temporary profile through the existing `route-model` helper with explicit candidate-file input: pass `--candidates <temporary-file>` and use an unknown phase so this validation does not call JEV. Do not validate the temporary file through project or environment lookup. A failed validation leaves the prior target unchanged.
-
-After temporary validation succeeds, atomically rename the temporary file over the target. Before replacing an existing target, make a same-directory backup while the target remains in place. Then verify the final target through normal lookup: use project `cwd` lookup for `.agents/model-candidates.json`, or `SKILLS_MODEL_CANDIDATES_FILE` for a user-level file. Require the JSON result to report the configured economy model, every candidate in saved order, and the expected `profileSource` (`project` or `env`).
-
-Rerun the installer after changing the profile. It pins only `agent-implementer` and `agent-outline-implementer` where native worker definitions honor `model`. Project installs may use the project profile; user-scope installs read only `SKILLS_MODEL_CANDIDATES_FILE`, never a project profile shared accidentally across projects. Incompatible IDs produce a note and no pin.
-
-Temporary-validation shape (use explicit candidate-file input):
-
-```sh
-printf '%s\n' '{"skillsDir":"<skills-dir>","phase":"unknown-phase","cwd":"<project>"}' \
-  | node <skills-dir>/route-model/route-model.mjs --candidates <temporary-file>
-```
-
-If final lookup verification fails, restore the prior file with an atomic rename from the same-directory backup. When no prior file existed, remove the new target atomically. Clean the backup, temporary, and failed-new files after either outcome. If any pre-rename action fails, clean temporary files and retain the prior profile. Report a restore or cleanup failure as a failed setup rather than claiming success.
-
-Final project verification uses the same input with `--project-only` and without `--candidates`, so it ignores any `SKILLS_MODEL_CANDIDATES_FILE` value and reads the project profile. Final user-level verification uses `env SKILLS_MODEL_CANDIDATES_FILE=<file> node <skills-dir>/route-model/route-model.mjs` with the same input and keeps environment lookup. Use same-directory Node filesystem operations for the temporary file, backup, atomic renames, and cleanup.
+Run `node <skills-dir>/configure-model-routing/scripts/write-profile.mjs --target <file> --profile <json-file-or-inline-json> --scope project|env --skills-dir <skills-dir> --cwd <project>`. The script validates the profile, writes it atomically, verifies it through `route-model` (project scope with `--project-only`, env scope through `SKILLS_MODEL_CANDIDATES_FILE`), restores the prior file on any failure, and prints one JSON result. Report that result, or its exact failure; a nonzero exit means nothing was saved. Then tell the user to rerun the installer, which pins the economy model on the builder workers of runtimes that honor a worker model field.
 
 ## Completion
 

@@ -85,11 +85,11 @@ function titleCase(name) {
     .join(" ");
 }
 
-// The purpose sentence: drop the trigger prefix ("Run for /x requests." or "Child worker role.").
+// The purpose sentence: strip YAML quotes, and "Child worker role that " (capitalising the next word).
 export function shortDescription(text, max = 80) {
-  const purpose = text.replace(/^(?:Run for \/[a-z0-9-]+ requests\.|Child worker role\.)\s*/, "");
+  const purpose = text.replace(/^(["'])(.*)\1$/, "$2").replace(/^Child worker role that (\w)/, (_, c) => c.toUpperCase());
   const sentence = purpose.split(/(?<=\.)\s/)[0].trim();
-  return sentence.length <= max ? sentence : `${sentence.slice(0, max - 1).trimEnd()}.`;
+  return sentence.length <= max ? sentence : `${sentence.slice(0, max - 1).replace(/\s+\S*$/, "")}…`;
 }
 
 const quote = (value) => JSON.stringify(value);
@@ -98,7 +98,7 @@ function tomlMultiline(value) {
   return `"""\n${value.replace(/\\/g, "\\\\").replace(/"""/g, '\\"\\"\\"')}\n"""`;
 }
 
-const noDsStore = (src) => path.basename(src) !== ".DS_Store";
+const noDsStore = (src) => { const base = path.basename(src); return base !== ".DS_Store" && base !== "__pycache__" && !base.endsWith(".pyc"); };
 
 export function copyTaskArtifactHelper(skillTarget) {
   const references = path.join(skillTarget, "references");

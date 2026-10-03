@@ -1,0 +1,6 @@
+{
+  "name": "decimal-cli-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node tests/check-decimals.mjs" }
+}

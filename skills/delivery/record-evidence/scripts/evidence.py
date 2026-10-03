@@ -1467,6 +1467,9 @@ def cmd_start(args):
     if sp["session"].exists():
         die("session already exists: %s (pick another --output)" % session_dir)
     session_dir.mkdir(parents=True, exist_ok=True)
+    ignore = session_dir.parent / ".gitignore"
+    if session_dir.parent.name == "evidence" and not ignore.exists():
+        ignore.write_text("*\n")  # recordings and raw captures are uploaded, never committed
     source = pick_source(tc, args.source, args.target)
     if args.layout not in ("auto", "overlay", "panel", "dashboard"):
         die("--layout must be auto, overlay, panel, or dashboard")

@@ -9,8 +9,6 @@ const shared = async name => import(fs.existsSync(path.join(here, 'references', 
 const { readArtifactIndex, indexFileExists, observeArtifacts, validateArtifactSemantics, validateReviewOutcome, sourceRevision, semanticSeries, reserveArtifactIteration, recordArtifact } = await shared('task-artifacts.mjs');
 const { captureDestination, validateRecordedText } = await shared('publication-proof.mjs');
 
-export const REPAIR_LIMIT = 3;
-export const REVIEW_ROUND_LIMIT = 3;
 const uiKinds = new Set(['web', 'ios', 'android']);
 const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const nonempty = value => typeof value === 'string' && value.trim().length > 0;
@@ -29,9 +27,23 @@ function saveJson(file, value) {
 }
 function loadState(taskDir) {
   const state = readJson(rootFile(taskDir, '.delivery-state.json'));
-  if (!state) return effectiveRepairs(taskDir, { schema: 'delivery-state/v1', repairs: { limit: REPAIR_LIMIT, used: 0, attempts: {}, blocked: null } });
-  if (state.schema !== 'delivery-state/v1' || !Number.isInteger(state.repairs?.limit) || state.repairs.limit < 0 || !Number.isInteger(state.repairs.used) || state.repairs.used < 0 || state.repairs.used > state.repairs.limit + (state.repairs.extension || 0)) fail('Invalid durable delivery state; do not reset repair allowance');
-  return effectiveRepairs(taskDir, state);
+  if (!state) return effectiveRepairs(taskDir, { schema: 'delivery-state/v1', repairs: { limit: null, used: 0, attempts: {}, blocked: null } });
+  if (state.schema !== 'delivery-state/v1' || !(state.repairs?.limit === null || Number.isInteger(state.repairs?.limit) && state.repairs.limit >= 0) || !Number.isInteger(state.repairs.used) || state.repairs.used < 0) fail('Invalid durable delivery state; do not reset repair allowance');
+  const loaded = effectiveRepairs(taskDir, state);
+  if (loaded.repairs.used > allowance(loaded.repairs)) fail('Invalid durable delivery state; do not reset repair allowance');
+  return loaded;
+}
+// A repair cap exists only with its owner authorization; a legacy policy (`max_repairs: 3`, no authorization) reads as no cap. The first policy save also records an authorized cap in the state file, which wins over the policy so deleting or editing the policy cannot drop it; a stored limit without `authorization` is ignored.
+const repairCap = policy => policy && Number.isInteger(policy.max_repairs) && policy.max_repairs >= 0 && nonempty(policy.repair_authorization) ? policy.max_repairs : null;
+function policyCap(taskDir, stored) {
+  if (Number.isInteger(stored?.limit) && stored.limit >= 0 && nonempty(stored.authorization)) return stored.limit;
+  try { return repairCap(readJson(rootFile(taskDir, 'evidence-policy.json'))); } catch { return null; }
+}
+// The owner caps review rounds with a `review-round-limit: N` (N >= 1) or `review-round-limit: none` line in task.md `## Decisions`; the newest wins. Absent, `none`, `0` or anything else = no cap.
+export function reviewRoundLimit(taskDir) {
+  const file = rootFile(taskDir, 'task.md');
+  const text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+  return [...section(text, 'Decisions').matchAll(/review-round-limit\s*:\s*(none|[1-9]\d*)(?!\w|\.\d)/gi)].reduce((_, match) => /none/i.test(match[1]) ? null : Number(match[1]), null);
 }
 // The owner extends the repair allowance with a `repair-extension +N` line in task.md `## Decisions`; each is applied once and clears a stop.
 function repairExtension(taskDir) {
@@ -41,11 +53,17 @@ function repairExtension(taskDir) {
 }
 function effectiveRepairs(taskDir, state) {
   const granted = repairExtension(taskDir), applied = state.repairs.extension || 0;
-  const repairs = { ...state.repairs, extension: Math.max(granted, applied) };
+  // A capped state written before authorizations were stored adopts the policy's authorization when the policy records the same cap, so the next state save makes it durable.
+  if (Number.isInteger(state.repairs.limit) && !nonempty(state.repairs.authorization)) {
+    let recorded = null;
+    try { recorded = readJson(rootFile(taskDir, 'evidence-policy.json')); } catch { /* an unreadable policy adopts nothing */ }
+    if (repairCap(recorded) === state.repairs.limit) state = { ...state, repairs: { ...state.repairs, authorization: recorded.repair_authorization } };
+  }
+  const repairs = { ...state.repairs, limit: policyCap(taskDir, state.repairs), extension: Math.max(granted, applied) };
   if (granted > applied) repairs.blocked = null;
   return { ...state, repairs };
 }
-const allowance = repairs => repairs.limit + (repairs.extension || 0);
+const allowance = repairs => repairs.limit === null ? Infinity : repairs.limit + (repairs.extension || 0);
 const saveState = (taskDir, value) => saveJson(rootFile(taskDir, '.delivery-state.json'), value);
 function git(cwd, args) { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024 }).trim(); }
 export { sourceRevision };
@@ -113,10 +131,9 @@ function sourcePaths(taskDir) {
   return [':/', `:(exclude,top,literal)${taskRoot}`];
 }
 export function saveEvidencePolicy({ taskDir, policy }) {
-  const state = loadState(taskDir);
   const file = rootFile(taskDir, 'evidence-policy.json');
-  const limit = policy.max_repairs ?? REPAIR_LIMIT;
-  if (!Number.isInteger(limit) || limit < 0 || (limit !== REPAIR_LIMIT && !nonempty(policy.repair_authorization))) fail('Nondefault repair allowance requires an explicit authorization reference and nonnegative integer limit');
+  const limit = policy.max_repairs ?? null;
+  if (!fs.existsSync(file) && limit !== null && (!Number.isInteger(limit) || limit < 0 || !nonempty(policy.repair_authorization))) fail('A repair limit requires an explicit authorization reference and nonnegative integer limit');
   if (!Array.isArray(policy.surfaces) || !policy.surfaces.length) fail('Evidence policy requires affected surfaces');
   const ids = new Set();
   for (const surface of policy.surfaces) {
@@ -126,20 +143,23 @@ export function saveEvidencePolicy({ taskDir, policy }) {
   }
   if (fs.existsSync(file)) {
     const previous = readJson(file);
-    if (previous.max_repairs !== limit || previous.repair_authorization !== (policy.repair_authorization || null)) fail('Evidence policy repair allowance is immutable; do not reset it');
+    if (limit !== null && limit !== previous.max_repairs || repairCap(previous) !== repairCap(policy) || (previous.repair_authorization || null) !== (policy.repair_authorization || null)) fail('Evidence policy repair allowance is immutable; do not reset it');
     if (JSON.stringify(previous.surfaces) === JSON.stringify(policy.surfaces)) return previous;
     if (JSON.stringify(policy.surfaces.slice(0, previous.surfaces.length)) !== JSON.stringify(previous.surfaces) || !nonempty(policy.amendment_reason)) fail('Evidence policy is immutable except by appending surfaces with an amendment_reason; existing surfaces cannot change');
     const added = policy.surfaces.slice(previous.surfaces.length).map(surface => surface.id);
     return saveJson(file, { ...previous, surfaces: policy.surfaces, amendments: [...(previous.amendments || []), { reason: policy.amendment_reason, added, at: new Date().toISOString() }] });
   }
-  state.repairs.limit = limit;
-  saveJson(rootFile(taskDir, '.delivery-state.json'), state);
+  const state = loadState(taskDir), cap = repairCap({ max_repairs: limit, repair_authorization: policy.repair_authorization });
+  if (nonempty(state.repairs.authorization) && state.repairs.limit !== cap) fail('Evidence policy repair allowance is immutable; do not reset it');
+  state.repairs.limit = cap;
+  if (cap === null) delete state.repairs.authorization; else state.repairs.authorization = policy.repair_authorization;
+  saveState(taskDir, state);
   return saveJson(file, { schema: 'delivery-evidence-policy/v1', max_repairs: limit, repair_authorization: policy.repair_authorization || null, amendments: [], surfaces: policy.surfaces });
 }
 function policyFor(taskDir) {
   const file = rootFile(taskDir, 'evidence-policy.json');
   const policy = readJson(file);
-  if (!policy || policy.schema !== 'delivery-evidence-policy/v1' || policy.max_repairs !== loadState(taskDir).repairs.limit || !Array.isArray(policy.surfaces) || !policy.surfaces.length) fail('Missing or invalid pre-mutation evidence policy');
+  if (!policy || policy.schema !== 'delivery-evidence-policy/v1' || !Array.isArray(policy.surfaces) || !policy.surfaces.length) fail('Missing or invalid pre-mutation evidence policy');
   return { ...policy, hash: sha(fs.readFileSync(file)) };
 }
 function captureFile(taskDir, value) {
@@ -354,6 +374,8 @@ export function beginRepair({ taskDir, attemptId }) {
   if (!nonempty(attemptId)) fail('Repair attemptId required');
   const state = loadState(taskDir);
   if (state.repairs.attempts[attemptId]) return state.repairs.attempts[attemptId];
+  if (fs.existsSync(rootFile(taskDir, 'evidence-policy.json'))) policyFor(taskDir);
+  if (nonempty(state.repairs.authorization) && !nonempty(readJson(rootFile(taskDir, '.delivery-state.json'))?.repairs?.authorization)) saveState(taskDir, state); // persist an adopted authorization even when this call is refused
   if (state.repairs.blocked || state.repairs.used >= allowance(state.repairs)) fail(`${state.repairs.blocked || `Evidence repair allowance exhausted (${allowance(state.repairs)})`}; to continue the owner records \`repair-extension +N: <reason>\` in task.md ## Decisions`);
   const attempt = { revision: sourceRevision(taskDir), number: ++state.repairs.used, completed: false };
   state.repairs.attempts[attemptId] = attempt;
@@ -469,9 +491,13 @@ export function parseRecord(taskDir, name) {
   } else if (info.type === 'verification') {
     const rows = tableRows(section(text, 'Items'));
     const header = rows.shift()?.map(cell => cell.toLowerCase()) || [];
+    if (!header.includes('verdict') || !rows.some(row => !row.every(cell => /^:?-+:?$/.test(cell)))) fail(`${name}: a verification record needs an ## Items table with a Verdict column and one row per item, from the verification template`);
     const col = key => header.indexOf(key);
     const odd = rows.filter(row => !row.every(cell => /^:?-+:?$/.test(cell)) && !['pass', 'fail', 'untested'].includes(row[col('verdict')]?.toLowerCase()));
     if (odd.length) fail(`${name}: verification row ${odd.map(row => JSON.stringify(row[col('id')] || row[0])).join(', ')} has a verdict that is not pass, fail or untested`);
+    // A check item cannot pass on a nonzero exit; the Observed cell records the exit code.
+    const contradicted = info.status === 'passed' ? rows.filter(row => /^C\d/i.test(row[col('id')] || '') && row[col('verdict')]?.toLowerCase() === 'pass' && /\bexit(?:s|ed)?(?:\s+(?:code|status))?\s*[:=]?\s*(?:with\s+)?(?!0\b)-?\d+/i.test(row[col('observed')] || '')) : [];
+    if (contradicted.length) fail(`${name}: check item ${contradicted.map(row => row[col('id')]).join(', ')} is graded pass but its Observed cell records a nonzero exit; grade it fail`);
     findings = rows.filter(row => row[col('verdict')]?.toLowerCase() === 'fail').map(row => ({ id: row[col('id')] || row[0], severity: 'blocking', evidence: nonempty(row[col('observed')]) }));
   } else {
     findings = [...text.matchAll(/^###\s+(\S+)\s+(blocking|follow-up)\b[^\n]*\n([\s\S]*?)(?=^#{1,3}\s|(?![\s\S]))/gm)].map(([, id, severity, body]) => ({ id, severity, evidence: /^[-*\s]*evidence:[ \t]*\S/im.test(body) }));
@@ -509,7 +535,8 @@ export function checkReview({ taskDir, file }) {
   if (round !== expected) fail(`${name}: round ${round} is invalid; expected ${expected}${previous ? ` after ${previous.file}` : ` (no earlier valid ${info.type} round for checkpoint ${info.checkpoint})`}; run review-next and give its result to a fresh reviewer`);
   const progress = status === 'approve' || !previous || previous.status === 'approve' || ids.length < previous.ids.length;
   const repairRound = status === 'changes' ? blockingRounds(history.valid) + 1 : 0;
-  return { checkpoint: info.checkpoint, round, repair_round: repairRound, status, reviewer_model: info.reviewer_model, blocking: ids, previous_record: previous?.file || null, previous_blocking: previous?.ids || [], progress, limit_reached: repairRound >= REVIEW_ROUND_LIMIT };
+  const roundLimit = reviewRoundLimit(taskDir);
+  return { checkpoint: info.checkpoint, round, repair_round: repairRound, status, reviewer_model: info.reviewer_model, blocking: ids, previous_record: previous?.file || null, previous_blocking: previous?.ids || [], progress, round_limit: roundLimit, limit_reached: roundLimit !== null && repairRound >= roundLimit };
 }
 
 function reviewHistory({ taskDir, type, checkpoint, before = null }) {
@@ -548,7 +575,8 @@ export function nextReview({ taskDir, type, checkpoint }) {
   const history = reviewHistory({ taskDir, type, checkpoint });
   const previous = history.valid.at(-1);
   const repairRound = blockingRounds(history.valid);
-  return { type, checkpoint, next_round: (previous?.round || 0) + 1, repair_round: repairRound, previous_record: previous?.file || null, previous_blocking: previous?.ids || [], invalid_records: history.invalid, limit_reached: repairRound >= REVIEW_ROUND_LIMIT };
+  const roundLimit = reviewRoundLimit(taskDir);
+  return { type, checkpoint, next_round: (previous?.round || 0) + 1, repair_round: repairRound, previous_record: previous?.file || null, previous_blocking: previous?.ids || [], invalid_records: history.invalid, round_limit: roundLimit, limit_reached: roundLimit !== null && repairRound >= roundLimit };
 }
 
 function phaseSections(text) {
@@ -663,7 +691,14 @@ export function completePhase({ taskDir, checkpoint, file }) {
 
 async function main(args) {
   const command = args[0];
-  const arity = { revision: [2, 2], status: [2, 2], policy: [3, 3], seal: [4, 4], inspect: [4, 4], 'repair-begin': [3, 3], 'repair-complete': [3, 3], review: [3, 3], 'review-next': [4, 4], 'phase-complete': [4, 4] };
+const arity = { revision: [2, 2], status: [2, 2], policy: [3, 3], seal: [4, 4], inspect: [4, 4], 'repair-begin': [3, 3], 'repair-complete': [3, 3], review: [3, 3], 'review-next': [4, 4], 'phase-complete': [4, 4] };
+  if (command === undefined || command === '--help') {
+    const operands = { revision: '<task-dir>', status: '<task-dir>', policy: '<task-dir> <policy.json>', seal: '<task-dir> <artifact> <record.json>', inspect: '<task-dir> <artifact> <record.json>', 'repair-begin': '<task-dir> <attempt-id>', 'repair-complete': '<task-dir> <attempt-id>', review: '<task-dir> <record>', 'review-next': '<task-dir> <review-type> <checkpoint>', 'phase-complete': '<task-dir> <phase-N> <record>' };
+    const usage = Object.keys(arity).map(name => `contract.mjs ${name} ${operands[name]}`).join('\n');
+    if (command === undefined) { console.error(usage); process.exit(2); }
+    console.log(usage);
+    process.exit(0);
+  }
   if (!Object.hasOwn(arity, command)) fail(`Unknown delivery contract command ${command}`);
   const [min, max] = arity[command];
   if (args.length < min || args.length > max || args.some(value => !nonempty(value) || value.startsWith('-'))) fail(`Invalid arguments for ${command}`);

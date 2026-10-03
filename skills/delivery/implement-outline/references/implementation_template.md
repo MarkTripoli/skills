@@ -2,7 +2,7 @@
 type: implementation
 completed_phase: [positive integer]
 summary: "[Two to four sentences stating what the completed phase proves and what the next phase must consume.]"
-revision: "[exact contract source fingerprint]"
+revision: [the quoted string that contract.mjs revision <task-dir> prints]
 ---
 
 # Outline Implementation Receipt

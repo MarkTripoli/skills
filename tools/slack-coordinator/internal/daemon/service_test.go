@@ -58,32 +58,6 @@ func TestServiceDefinitionBindsHomeBinaryAndServeVerb(t *testing.T) {
 	}
 }
 
-func TestServiceDefinitionRecordsPath(t *testing.T) {
-	home := paths.WithRoot(t.TempDir())
-	const path = "/opt/homebrew/bin:/usr/bin"
-	for goos, fragment := range map[string]string{
-		"darwin": "<key>PATH</key>\n\t\t<string>" + path + "</string>",
-		"linux":  `Environment="PATH=` + path + `"`,
-	} {
-		definition, err := (Service{Home: home, Binary: "/opt/slack-coordinator", Path: path, GOOS: goos}).Definition()
-		if err != nil {
-			t.Fatalf("%s: %v", goos, err)
-		}
-		if !strings.Contains(definition, fragment) {
-			t.Errorf("%s definition lacks %q:\n%s", goos, fragment, definition)
-		}
-	}
-}
-
-func TestAgentPathKeepsTheShellPathAndAddsUserBins(t *testing.T) {
-	t.Setenv("HOME", "/Users/ada")
-	got := strings.Split(AgentPath("/usr/bin:/opt/homebrew/bin"), string(os.PathListSeparator))
-	want := []string{"/usr/bin", "/opt/homebrew/bin", "/usr/local/bin", "/Users/ada/.local/bin"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("AgentPath = %q, want %q", got, want)
-	}
-}
-
 func TestServiceRejectsUnsupportedPlatform(t *testing.T) {
 	service := Service{Home: paths.WithRoot(t.TempDir()), Binary: "/opt/slack-coordinator", Executor: &recordingExecutor{}, GOOS: "windows"}
 	if _, err := service.Definition(); !errors.Is(err, ErrUnsupportedPlatform) {

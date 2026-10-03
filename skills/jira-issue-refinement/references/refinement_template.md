@@ -44,7 +44,10 @@ summary: "[Issue key, QA classification, confirmed planning changes, and unresol
 ### QA guide
 
 - What you need: [setup, devices, build, roles, data, network, tools]
-- Steps: [numbered, one action and observation per step]
+- Steps: [numbered, one action and observation per step], for example:
+  1. Open Settings. Observe: the Profile row shows the saved name.
+  2. Tap Edit name and enter "Ada". Observe: Save becomes enabled.
+  3. Tap Save. Observe: the row shows "Ada" and no error banner.
 - Pass: [observable outcome]
 - Fail: [observable defect]
 - Report: [step, build, screenshots/logs/timings as relevant]

@@ -12,6 +12,7 @@ import { ADJACENT_HELPERS } from "./lib/build.mjs";
 import { validateTaskArtifacts } from "./lib/validate-task-artifacts.mjs";
 import { validateInstructionSize } from "./lib/validate-instruction-size.mjs";
 import { SUBJECT_PATTERN, MAX_SUBJECT_LENGTH } from "./check-commits.mjs";
+import { resolveTaskRoot } from "../shared/task-root.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -19,7 +20,7 @@ const rootIndex = args.indexOf("--root");
 const root = rootIndex === -1 ? repoRoot : path.resolve(args[rootIndex + 1] ?? "");
 const generated = root !== repoRoot;
 
-const EXPECTED_SKILL_COUNT = 57;
+const EXPECTED_SKILL_COUNT = 61;
 const SHARED_LINKS = {
   "shared/WRITING.md": "https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md",
   "shared/CONVENTIONS.md": "https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md",
@@ -36,10 +37,13 @@ const SOURCES_VARIANTS = { ...DELIVER_VARIANTS, oneshot: "create-research", "pro
 const POST_MUTATION_VARIANTS = { verify: "verify-implementation", app: "test-app", review: "review-code" };
 const BASELINE_VARIANTS = { oneshot: "iterate-implementation", bugfix: "reproduce-bug", plan: "implement-plan", outline: "implement-outline", reviews: "resolve-pr-reviews" };
 const INSPECTION_VARIANTS = { passed: "describe-pr", repair: "iterate-implementation", verify: "verify-implementation", app: "test-app", review: "review-code", capture: "record-evidence" };
+// review-artifact-comments hands off to the command the edited artifact's own phase offers next, keyed by artifact type.
+const COMMENT_VARIANTS = { "research-questions": "create-research", research: "create-design-discussion", "design-discussion": "create-plan", "design-prd": "create-tdd", "design-tdd": "create-plan", "structure-outline": "implement-outline", plan: "implement-plan", "epic-plan": "start-epic-delivery", reproduction: "fix-bug", implementation: "verify-implementation" };
 const TERMINAL_ANSWER = "<terminal>";
 
 // answer file -> skill named in the final fence, or TERMINAL_ANSWER when no skill follows.
 const ANSWER_INVENTORY = {
+  "babysit/references/babysit_final_answer.md": TERMINAL_ANSWER,
   "ci-commit/references/commit_final_answer.md": "review-code",
   "create-design-discussion/references/design_discussion_final_answer.md": "create-plan",
   "create-design-discussion/references/design_discussion_review_answer.md": "iterate-design-discussion",
@@ -55,6 +59,7 @@ const ANSWER_INVENTORY = {
   "create-tdd/references/tdd_system_review_answer.md": "iterate-tdd",
   "deliver/references/deliver_answer.md": TERMINAL_ANSWER,
   "describe-pr/references/pr_description_final_answer.md": "resolve-pr-reviews",
+  "explain/references/explain_answer.md": TERMINAL_ANSWER,
   "fix-code-review/references/code_review_fixes_answer.md": POST_MUTATION_VARIANTS,
   "fix-bug/references/fix_answer.md": POST_MUTATION_VARIANTS,
   "gather-sources/references/sources_final_answer.md": SOURCES_VARIANTS,
@@ -91,7 +96,7 @@ const ANSWER_INVENTORY = {
   "resolve-pr-reviews/references/pr_review_approved_answer.md": TERMINAL_ANSWER,
   "resolve-pr-reviews/references/pr_review_monitored_answer.md": TERMINAL_ANSWER,
   "resolve-pr-reviews/references/pr_review_pending_answer.md": "resolve-pr-reviews",
-  "review-artifact-comments/references/comments_final_answer.md": "iterate-implementation",
+  "review-artifact-comments/references/comments_final_answer.md": COMMENT_VARIANTS,
   "review-code/references/code_review_blocked_answer.md": TERMINAL_ANSWER,
   "review-code/references/code_review_clean_answer.md": "record-evidence",
   "review-code/references/code_review_findings_answer.md": "fix-code-review",
@@ -134,7 +139,7 @@ const FENCE_ARTIFACT = {
   "iterate-research-questions/references/research_questions_final_answer.md": true,
   "create-epic-plan/references/epic_plan_final_answer.md": true, // start-epic-delivery uses the named plan
   "review-code/references/code_review_findings_answer.md": true, // fix-code-review resolves the @file review
-  "implement-outline/references/implementation_phase_final_answer.md": true, // resumes on @{plan_file}
+  "implement-outline/references/implementation_phase_final_answer.md": true, // resumes on @{source_file}
   "implement-plan/references/implementation_phase_final_answer.md": true,
   "iterate-implementation/references/implementation_phase_final_answer.md": true,
   "test-app/references/app_test_failed_answer.md": true,
@@ -158,7 +163,7 @@ const FENCE_ARTIFACT = {
   "test-app/references/app_test_passed_answer.md": false,
   "reproduce-bug/references/reproduction_reproduced_answer.md": false, // fix-bug reads newest reproduction
   "resolve-pr-reviews/references/pr_review_pending_answer.md": false, // acts on the PR
-  // review-artifact-comments is a general feedback skill that need not own a plan; its pointer stays bare.
+  // review-artifact-comments fills {next_command} per artifact type; the skill adds @<file> where its table shows it.
   "review-artifact-comments/references/comments_final_answer.md": false,
 };
 
@@ -185,6 +190,9 @@ const HUMAN_REVIEW_TEMPLATES = [
   "verify-implementation/references/verification_template.md",
 ];
 
+// The one Mermaid form the Execution DAG templates allow; the full-with-sources eval parses exactly this form.
+const DAG_FORM = "Use only this Mermaid form: a `flowchart` line (or `graph`) with a direction TD, TB, BT, LR or RL, then one statement or chain per line, where each node is an id of letters, digits and underscores followed by a double-quoted label in square brackets, a bare id repeats a node already defined, and nodes are joined by `-->` or `-.->` arrows with an optional `|edge label|`; no other Mermaid syntax (no other shapes, `%%` comments, `:::`, `@{`, `subgraph`, `style` or `class` lines, `&`, `;`, `==>`, multi-line or unquoted labels).";
+const DAG_WORKFLOWS = { "design-discussion": ["full"], tdd: ["prd", "program"] };
 const EXECUTION_DAG_TEMPLATES = [
   "create-design-discussion/references/design_discussion_template.md",
   "iterate-design-discussion/references/design_discussion_template.md",
@@ -222,25 +230,68 @@ const BANNED_TOKENS = [
   /prd_tdd/i,
   /rpi_task_context/i,
   /artifact_directive/i,
+  new RegExp(["ady", "ton"].join(""), "i"),
 ];
 
-const STANDALONE_SKILLS = new Set(["extract-figma-visuals", "feature-conformance", "jev-ui"]);
-const SKIP_DIRS = new Set([".git", ".backups", ".omo", ".ci-go", "node_modules", "dist", "results", ".cache"]);
+const WORKFLOW_OPTIONAL_SKILLS = new Set(["extract-figma-visuals", "feature-conformance", "jev-ui", "land-pr-stack"]);
+const SKIP_DIRS = new Set([".git", ".backups", ".omo", ".worktrees", ".ci-go", "node_modules", "dist", "results", ".cache"]);
 const SKIP_FILES = new Set(["scripts/validate.mjs", ".skill-lock.json"]);
 const SKIP_BINARY_MEDIA = /\.(mp4|m4v|mov|webm|avi|mkv|wav|mp3)$/i;
+
+const BARE_IMPERATIVES = new Set("Run Create Help Operate Control Export Derive Merge Record Inspect Fix Centralize Execute Configure Choose Address Apply Revise Refine Update Draft Research Review Validate Fetch Decompose Orchestrate Implement Author Post".split(" "));
+
+// Independent installs make each create/iterate pair carry its own copy, so the copies must stay byte-identical.
+// Members are `<skill>/<path>` (resolved through skillDirs) or `shared/<file>` (read from the repository).
+const pair = (file, a = "create", b = "iterate") => { const [stem, ...rest] = file.split("|"); return [`${a}-${stem}/references/${rest[0]}`, `${b}-${stem}/references/${rest[0]}`]; };
+const DUPLICATE_SETS = [
+  pair("design-discussion|design_discussion_template.md"),
+  pair("design-discussion|execution_dag.md"),
+  pair("prd|prd_template.md"),
+  pair("tdd|tdd_template.md"),
+  pair("tdd|execution_dag.md"),
+  pair("structure-outline|structure_outline_template.md"),
+  pair("plan|plan_template.md"),
+  ["implement-plan/references/implementation_final_answer.md", "implement-outline/references/implementation_final_answer.md"],
+  ["create-epic-plan/scripts/check-children.mjs", "start-epic-delivery/scripts/check-children.mjs"],
+  ["shared/SLICING.md", "create-epic-plan/references/slicing.md"],
+];
+
+// Files under a skill's references/ that SKILL.md need not name, as `<skill>/<path under references/>`: reason.
+const UNNAMED_REFERENCES = {};
+
+// Real slash commands of host CLIs that are not skills.
+const NON_SKILL_COMMANDS = {
+  permissions: "Claude Code command named in deliver/references/tool_approval.md",
+  status: "Codex command named in deliver/references/tool_approval.md",
+  settings: "Oh My Pi command named in deliver/references/tool_approval.md",
+  blocks: "GitLab pull request dependency API path segment named in babysit/references/gitlab.md",
+  blockees: "GitLab pull request dependency API path segment named in babysit/references/gitlab.md",
+  tmp: "directory path, not a command",
+  usr: "directory path, not a command",
+  etc: "directory path, not a command",
+  var: "directory path, not a command",
+  dev: "directory path, not a command",
+  home: "directory path, not a command",
+};
 
 const failures = [];
 const fail = (file, line, message) => failures.push(`${file}:${line}: ${message}`);
 const rel = (file) => path.relative(root, file);
 const read = (file) => fs.readFileSync(file, "utf8");
+const excludedTaskRoots = new Set([path.join(root, ".agents", "tasks")]);
+try {
+  excludedTaskRoots.add(resolveTaskRoot(root).absoluteRoot);
+} catch (error) {
+  fail("AGENTS.md", 0, error.message);
+}
 
 function listFiles(dir) {
   const out = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      const relative = path.relative(root, full);
-      if (!SKIP_DIRS.has(entry.name) && relative !== path.join(".agents", "tasks") && !relative.startsWith(`${path.join(".agents", "tasks")}${path.sep}`)) out.push(...listFiles(full));
+      const defaultTasks = entry.name === "tasks" && path.basename(dir) === ".agents";
+      if (!SKIP_DIRS.has(entry.name) && !defaultTasks && !excludedTaskRoots.has(full)) out.push(...listFiles(full));
     } else if (entry.isFile()) {
       out.push(full);
     }
@@ -263,7 +314,7 @@ function fillTemplate(input) {
     .replaceAll("{artifact_link}", "[01-artifact.md](.agents/tasks/task-slug/01-artifact.md)")
     .replaceAll("{summary}", "Saved the requested artifact.")
     .replaceAll("{artifact_file}", "01-artifact.md")
-    .replaceAll("{plan_file}", "01-plan.md")
+    .replaceAll("{source_file}", "01-plan.md")
     .replaceAll("{implementation_command}", "/implement-plan")
     .replaceAll("{report_link}", "[report.md](.agents/tasks/task-slug/evidence/screen/report.md)")
     .replaceAll("{child_slug}", "child-slug")
@@ -322,6 +373,10 @@ for (const name of skillNames) {
   if (fmName !== name) fail(rel(file), 2, `name "${fmName}" must equal the directory name`);
   if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(name) || name.length > 64) fail(rel(file), 2, "name must be kebab-case, at most 64 chars");
   if (fmDescription.length < 1 || fmDescription.length > 1024) fail(rel(file), 3, "description must be 1-1024 chars");
+  const descText = fmDescription.replace(/^(["'])(.*)\1$/, "$2");
+  if (!descText.includes("Use when")) fail(rel(file), 3, 'description must contain "Use when" followed by the trigger');
+  if (/^Run for\b/.test(descText)) fail(rel(file), 3, 'description must not start with "Run for"');
+  else if (BARE_IMPERATIVES.has(descText.split(/\s/)[0])) fail(rel(file), 3, `description must be third person; it starts with the bare imperative "${descText.split(/\s/)[0]}"`);
 
   if (lines[5] !== LINE6) fail(rel(file), 6, "line 6 must be the shared writing-guide and conventions sentence");
   if (generated && !lines[7]?.startsWith("Runtime: ")) fail(rel(file), 8, "generated skills carry `Runtime: <name>.` on line 8");
@@ -344,6 +399,54 @@ for (const name of skillNames) {
     if (!fs.existsSync(referenced) && !optionalHelper) {
       const line = content.slice(0, match.index).split("\n").length;
       fail(rel(file), line, `references/${fileName} does not exist`);
+    }
+  }
+}
+
+// 4b. Duplicate templates stay identical; discover each create/iterate artifact_template.html pair.
+const memberPath = (member) => (member.startsWith("shared/") ? path.join(repoRoot, member) : skillFile(member));
+const duplicateSets = [...DUPLICATE_SETS];
+for (const name of skillNames) {
+  const stem = /^create-(.+)$/.exec(name)?.[1];
+  const html = `references/artifact_template.html`;
+  if (stem && fs.existsSync(skillFile(`${name}/${html}`)) && skillSet.has(`iterate-${stem}`) && fs.existsSync(skillFile(`iterate-${stem}/${html}`))) duplicateSets.push([`${name}/${html}`, `iterate-${stem}/${html}`]);
+}
+for (const [first, ...others] of duplicateSets) {
+  const firstPath = memberPath(first);
+  if (!fs.existsSync(firstPath)) { fail(rel(firstPath), 0, `duplicate-set member missing (must equal ${others.map((o) => rel(memberPath(o))).join(", ")})`); continue; }
+  for (const other of others) {
+    const otherPath = memberPath(other);
+    if (!fs.existsSync(otherPath)) fail(rel(otherPath), 0, `duplicate-set member missing (must equal ${rel(firstPath)})`);
+    else if (!fs.readFileSync(firstPath).equals(fs.readFileSync(otherPath))) fail(rel(otherPath), 0, `must be byte-identical to ${rel(firstPath)}`);
+  }
+}
+
+// 4c. Reference reachability, and skill names in SKILL.md and references resolve to skills.
+for (const name of skillNames) {
+  const dir = skillDirs.get(name);
+  const skillText = read(path.join(dir, "SKILL.md"));
+  const refDir = path.join(dir, "references");
+  const refFiles = fs.existsSync(refDir) ? listFiles(refDir) : [];
+  for (const file of refFiles) {
+    const inRefs = path.relative(refDir, file).split(path.sep).join("/");
+    // Runtime builders distribute these validated executable companions; they are not authored references.
+    if (generated && ADJACENT_HELPERS.includes(inRefs)) continue;
+    if (`${name}/${inRefs}` in UNNAMED_REFERENCES) continue;
+    const base = path.basename(file).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (!new RegExp(`(?<![A-Za-z0-9_.-])${base}(?![A-Za-z0-9_-])`).test(skillText)) fail(rel(file), 0, `not named in ${name}/SKILL.md; link it from the step that reads it, or add it to UNNAMED_REFERENCES with a reason`);
+  }
+  for (const file of [path.join(dir, "SKILL.md"), ...refFiles.filter((f) => /\.(md|html)$/.test(f))]) {
+    const text = read(file);
+    const unknown = (found, index, kind) => {
+      if (skillSet.has(found) || (kind === "slash" && found in NON_SKILL_COMMANDS)) return;
+      fail(rel(file), text.slice(0, index).split("\n").length, `${kind === "slash" ? "/" : ""}${found} is not a skill name${kind === "slash" ? "; for a host command or a path, add it to NON_SKILL_COMMANDS" : ""}`);
+    };
+    for (const m of text.matchAll(/installed \*{0,2}`([^`]+)`\*{0,2} skill/g)) unknown(m[1], m.index, "name");
+    for (const m of text.matchAll(/\b[Ii]nvoke(?: the)? \*{0,2}`([a-z][a-z0-9-]*)`/g)) unknown(m[1], m.index, "name");
+    for (const m of text.matchAll(/`\/([a-z][a-z0-9-]*)(?=[` ])/g)) unknown(m[1], m.index, "slash");
+    for (const block of fences(text)) for (const line of block.body.split("\n")) {
+      const first = /^\s*\/([a-z][a-z0-9-]*)(?=\s|$)/.exec(line)?.[1];
+      if (first) unknown(first, block.index, "slash");
     }
   }
 }
@@ -460,12 +563,44 @@ const sectionOf = (content, heading) => {
   const parts = content.split(`\n${heading}\n`);
   return { count: parts.length - 1, body: parts[1]?.split("\n#")[0] ?? "" };
 };
+// Generated trees carry no workflows/, so read it from the repository, as the other workflow checks do.
+const dagWorkflows = read(path.join(repoRoot, "workflows", "delivery.md"));
+const gatesLine = /^`gates` values: .*$/m.exec(dagWorkflows)?.[0] ?? "";
+const gateDefault = /`(\w+)` \(default\)/.exec(gatesLine)?.[1];
+const gateLegacy = /older `all` reads as `(\w+)`/.exec(gatesLine)?.[1];
+if (!gateDefault || !gateLegacy) fail("workflows/delivery.md", 0, "## Gates must state the default gates value and what older `all` reads as");
+// The design-discussion and TDD templates keep the instruction in references/execution_dag.md and point to it from the section.
+const dagSource = (file) => file.replace(/[^/]+_template\.md$/, "execution_dag.md");
 for (const file of EXECUTION_DAG_TEMPLATES) {
-  const full = skillFile(file);
-  if (!fs.existsSync(full)) { fail(rel(full), 0, "execution-DAG template missing"); continue; }
-  const { count, body } = sectionOf(read(full), "### Execution DAG");
-  if (count !== 1) { fail(rel(full), 0, `must contain exactly one "### Execution DAG" heading (found ${count})`); continue; }
-  if (!body.includes("```mermaid")) fail(rel(full), 0, "Execution DAG must draw the composed chain as a Mermaid flowchart");
+  const template = skillFile(file);
+  if (!fs.existsSync(template)) { fail(rel(template), 0, "execution-DAG template missing"); continue; }
+  const section = sectionOf(read(template), "### Execution DAG");
+  if (section.count !== 1) { fail(rel(template), 0, `must contain exactly one "### Execution DAG" heading (found ${section.count})`); continue; }
+  if (!section.body.includes("```mermaid")) fail(rel(template), 0, "Execution DAG must draw the workflow chain as a Mermaid flowchart");
+  const full = skillFile(dagSource(file));
+  if (!section.body.includes("references/execution_dag.md")) fail(rel(template), 0, "Execution DAG must point to references/execution_dag.md");
+  if (!fs.existsSync(full)) { fail(rel(full), 0, "Execution DAG instruction missing"); continue; }
+  const body = read(full);
+  // Installed skills cannot read workflows/delivery.md, so each template must state its chains verbatim.
+  for (const name of DAG_WORKFLOWS[file.split("/")[0].replace(/^(create|iterate)-/, "")]) {
+    const chain = dagWorkflows.match(new RegExp(`^\\| \`${name}\` \\| (.+?) \\|`, "m"))?.[1];
+    if (!chain) fail("workflows/delivery.md", 0, `no \`${name}\` row in the choices table`);
+    else if (!new RegExp(`\`${name}\`(?:: | chain is: )${chain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.(?=\\s|$)`).test(body)) fail(rel(full), 0, `Execution DAG must state the \`${name}\` chain from workflows/delivery.md verbatim, labeled \`${name}\`: or \`${name}\` chain is:, then a full stop: ${chain}`);
+  }
+  if (!body.includes(DAG_FORM)) fail(rel(full), 0, "Execution DAG must state the allowed Mermaid form verbatim: " + DAG_FORM);
+  const gateRule = body.split("Gate rule:")[1] ?? "";
+  for (const value of ["plan", "none", "all"]) if (!gateRule.includes(`\`${value}\``)) fail(rel(full), 0, `Execution DAG must state the "Gate rule:" naming the \`${value}\` gates value`);
+  if (gateDefault && gateLegacy) {
+    if (!gateRule.includes(`\`${gateDefault}\` (the default`)) fail(rel(full), 0, `Execution DAG must state the "Gate rule:" default as \`${gateDefault}\` (the default, from workflows/delivery.md)`);
+    if (!gateRule.includes(`\`all\` reads as \`${gateLegacy}\``)) fail(rel(full), 0, `Execution DAG must state the "Gate rule:" legacy reading: \`all\` reads as \`${gateLegacy}\``);
+  }
+}
+// The create and iterate copies of a template must carry the same section, so one cannot drift from the other.
+for (const file of EXECUTION_DAG_TEMPLATES.filter((f) => f.startsWith("create-"))) {
+  const pair = file.replace(/^create-/, "iterate-");
+  if (!EXECUTION_DAG_TEMPLATES.includes(pair) || !fs.existsSync(skillFile(file)) || !fs.existsSync(skillFile(pair))) continue;
+  const text = (f) => read(skillFile(dagSource(f)));
+  if (fs.existsSync(skillFile(dagSource(file))) && fs.existsSync(skillFile(dagSource(pair))) && text(file) !== text(pair)) fail(rel(skillFile(dagSource(pair))), 0, `Execution DAG must equal the one in ${dagSource(file)}`);
 }
 for (const file of WORK_BREAKDOWN_TEMPLATES) {
   const full = skillFile(file);
@@ -535,7 +670,7 @@ if (!fs.existsSync(workflowFile)) {
   const content = read(workflowFile);
   // Every skill in a group belongs to that group's workflow document; standalone skills need no mention.
   for (const skill of layout.skills) {
-    if (skill.group !== "delivery" || skill.name.startsWith("agent-") || STANDALONE_SKILLS.has(skill.name)) continue;
+    if (skill.group !== "delivery" || skill.name.startsWith("agent-") || WORKFLOW_OPTIONAL_SKILLS.has(skill.name)) continue;
     if (!content.includes(skill.name)) fail("workflows/delivery.md", 0, `does not mention skill "${skill.name}"`);
   }
   for (const skill of layout.skills) {
@@ -568,6 +703,24 @@ if (!rule) {
 } else {
   if (rule[1] !== SUBJECT_PATTERN.source) fail("shared/CONVENTIONS.md", ruleIndex + 1, `documented subject regex differs from scripts/check-commits.mjs: ${SUBJECT_PATTERN.source}`);
   if (Number(rule[2]) !== MAX_SUBJECT_LENGTH) fail("shared/CONVENTIONS.md", ruleIndex + 1, `documented subject limit ${rule[2]} differs from scripts/check-commits.mjs: ${MAX_SUBJECT_LENGTH}`);
+}
+
+// 13b. A skill that names EARS or `shall` carries all five shapes from shared/SLICING.md in its own text,
+// because an installed skill cannot read the guide. The shapes come from the guide's acceptance-criteria table.
+const slicing = read(path.join(repoRoot, "shared", "SLICING.md"));
+const earsTable = slicing.split("## Acceptance criteria")[1]?.split(/\n## /)[0] ?? "";
+const earsShapes = earsTable.split("\n").filter((row) => row.startsWith("|") && row.includes("shall")).map((row) => row.split("|")[2].replaceAll("`", "").trim());
+if (earsShapes.length < 5) {
+  fail("shared/SLICING.md", 0, `parsed ${earsShapes.length} EARS shapes from the Acceptance criteria table; expected 5`);
+} else {
+  for (const skill of layout.skills) {
+    const text = listFiles(skill.dir).filter((file) => file.endsWith(".md")).map(read).join("\n").replaceAll("`", "");
+    // A prose `shall` triggers the check on purpose: a skill that writes `shall` carries the form.
+    if (!/\bEARS\b/.test(text) && !/\bshall\b/i.test(text)) continue;
+    for (const shape of earsShapes) {
+      if (!text.includes(shape)) fail(rel(path.join(skill.dir, "SKILL.md")), 0, `names EARS or shall but lacks "${shape}" from shared/SLICING.md; installed copies cannot read the guide`);
+    }
+  }
 }
 
 validateInstructionSize({ root, generated, fail });

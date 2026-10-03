@@ -1,0 +1,14 @@
+{
+  "name": "signup-page",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A one-page newsletter sign-up served by a small Node server",
+  "scripts": {
+    "dev": "node server.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

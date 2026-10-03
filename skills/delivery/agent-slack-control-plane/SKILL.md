@@ -1,17 +1,18 @@
 ---
 name: agent-slack-control-plane
-description: "Operate Slack visibility for agent work. A /deliver task can use the slack-coordinator CLI for owner steering across stages, or the direct feature thread for status-only visibility. Jira-run mode supports video-iterative-orchestration. It does not implement product work."
+description: Protocol for operating Slack visibility on agent work in one of three modes (the slack-coordinator CLI, a direct feature thread for a /deliver task, or per-ticket threads in a Jira orchestration run). Use when /deliver, /describe-pr, /resolve-pr-reviews or a Jira orchestration run that enables Slack needs Slack status or owner steering; not for implementing product work, and not for operating the coordinator CLI alone (slack-coordinator).
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
 
 # Agent Slack Control Plane
 
-This skill has three modes. Choose one for a task and keep it across stages. Never post or edit the same thread through both the coordinator CLI and the direct Web API.
+Choose one mode for a task, in this order, and keep it across stages. Never post or edit the same thread through both the coordinator CLI and the direct Web API.
 
-- **Coordinator mode** uses the standalone [slack-coordinator skill](../../slack-coordinator/SKILL.md) when its executable and daemon are configured. It reads owner steering and gates state-changing work. See [Coordinator mode](#coordinator-mode).
-- **Feature-thread mode** runs for a `deliver` task when coordinator mode is not selected and the operator's Slack file is configured. It posts rarely and reads only owner answers to its own blockers. See [Feature-thread mode](#feature-thread-mode).
-- **Jira-run mode** runs only when a Jira-driven orchestration run explicitly enables Slack visibility and steering. Slack is a control surface and public progress log; the orchestration ledger remains the source of truth. It starts at [Jira-run configuration](#jira-run-configuration).
+1. `task.md` has `slack_run_id`, or an explicitly opted-in new task has a configured slack-coordinator executable and daemon: [coordinator mode](#coordinator-mode).
+2. `task.md` has `slack_thread_ts`, or a new `deliver` task with no `slack_run_id` and an existing Slack token file: feature-thread mode. Read [references/feature-thread.md](references/feature-thread.md#feature-thread-mode). It posts rarely and reads only owner answers to its own blockers.
+3. A Jira orchestration run that explicitly enables Slack visibility and steering: Jira-run mode. Read [references/jira-run.md](references/jira-run.md). Slack is a control surface and public progress log; the orchestration ledger remains the source of truth.
+4. Otherwise: no Slack; say so once.
 
 ## Coordinator mode
 
@@ -24,16 +25,36 @@ Use only the `slack-coordinator` CLI, never `curl` or the token file, for a task
 3. Run `slack-coordinator run check --run-id <id>` immediately before each state-changing action, including edits, commits, pushes, PR operations, and uploads. Exit `10` requires reading the owner message, applying or rejecting it, replying with `run resolve`, then checking again. Exit `11` pauses the action until coordination recovers; exit `12` permits work without further Slack calls after an operator disabled the run. Do not treat a successful earlier check as permission for a later action. See the command contract for exact exit behavior.
 4. When the delivery brief requests PR follow-up, `describe-pr` sends an event with the PR URL and current state; it does not finish the run. The orchestrator, or the skill run by hand that observes the current-head pipeline and discussions, sends the next event. Call `run finish --outcome completed` only after the requested evidence, checks, and PR follow-up are complete. Use `failed` or `cancelled` only for a terminal failed or cancelled task, with unresolved work stated. A blocker awaiting an owner answer is an active run, not a finished one.
 
-If `run start` fails before returning a run ID, do not invent `slack_run_id`: record the error in `## Decisions`, then use feature-thread mode when configured, else continue without Slack; stop only when the request made Slack a gate. Once a run ID is saved, coordinator checks and failure handling govern that task; do not fall back to a direct Web API post. The coordinator daemon and token setup are operator work, per its skill.
+If `run start` fails before returning a run ID, do not invent `slack_run_id`: record the error in `## Decisions`, then use feature-thread mode when its token file exists, else continue without Slack; stop only when the request made Slack a gate. Once a run ID is saved, coordinator checks and failure handling govern that task; do not fall back to a direct Web API post. The coordinator daemon and token setup are operator work, per its skill.
 
-## Feature-thread mode
+## Token file
 
-Read [the direct feature-thread protocol](references/direct-feature-thread.md) completely before using this mode. It requires the operator-controlled Slack configuration and no coordinator run ID. Preserve one task root thread, post only genuine human blockers, accept only the configured owner, and update the root with observed GitHub PR state. It never shares a coordinator thread or grants product/Jira mutation authority.
+Load Slack settings immediately before each Slack API call, in the same shell command, from the operator-controlled file `${SLACK_AGENT_ENV_FILE:-$HOME/.config/agent-slack/env}`:
 
-## Jira-run configuration
+```bash
+set -a; . "${SLACK_AGENT_ENV_FILE:-$HOME/.config/agent-slack/env}"; set +a
+```
 
-Read [the Jira-run protocol](references/jira-run.md) completely only for explicitly enabled Jira-run visibility. Use the orchestrator's supplied channel and durable ledger, one thread per ticket, owner-only steering and sparse status. Missing Slack configuration remains non-blocking unless the user made it a gate. Credentials and short-lived test codes never travel through Slack.
+The file lives outside every repository and is readable only by the operator (`chmod 600`). It supplies:
+
+- `SLACK_AGENT_BOT_TOKEN`: the bot OAuth token (`xoxb-…`). Required by direct feature-thread and Jira-run modes.
+- `SLACK_AGENT_CHANNEL_ID`: the channel ID that feature-thread mode posts to, for example `C012ABC34`. Jira-run mode ignores it and uses the channel the orchestrator supplies.
+- `SLACK_AGENT_OWNER_ID`: optional. The project owner's Slack member ID, for example `U012ABC34`, not a display name. It lets feature-thread mode [read blocker answers](references/feature-thread.md#wait-for-the-answer) from the thread. Jira-run mode ignores it and uses the owner ID the orchestrator supplies.
+
+Direct modes require `curl` and `node`. Run `bash <skill-dir>/scripts/slack-post.sh post <message-file> [channel]` for a parent, `reply <message-file> <channel> <thread-ts>` for a blocker, or `update <message-file> <channel> <ts>` for the existing root. Run `bash <skill-dir>/scripts/slack-read.sh <channel> <thread-ts> <oldest-ts>` only for an authorized thread. These helpers source the operator token file and reject Slack API errors. Never print, log, commit, copy, rotate or request the token; never source repository-controlled `.env`. Missing settings degrade Slack, not product delivery unless expressly gated.
+
+## API and failure rules
+
+Use the bot OAuth token (`xoxb-…`) with `Authorization: Bearer "$SLACK_AGENT_BOT_TOKEN"`. `chat.postMessage` and `chat.update` are required API operations and need the `chat:write` scope. Owner steering and feature-thread blocker answers also use `conversations.replies`, which needs `channels:history` for a public channel or `groups:history` for a private one. Validate errors from Slack's JSON response rather than treating a successful HTTP connection as a successful post/read.
+
+Classify missing scope, bot-not-in-channel, invalid token, an invalid supplied channel ID, or API failure as a Slack harness/configuration issue. Record the exact Slack error and the smallest owner action needed, then continue the product workflow with Slack disabled or degraded. Do not mark a ticket, implementation subagent, or the run goal `blocked` for this unless the prompter explicitly made Slack a delivery gate. Do not make unrequested Slack app, scope, channel-membership, credential, or workspace changes to recover.
+
+All Slack operations target the supplied channel ID. Do not perform discovery or request discovery scopes such as `groups:read`. Reply polling, when enabled, uses only the access Slack requires for that configured channel.
+
+## Handoff
+
+The orchestration ledger and final report include the configured channel, optional project-owner member ID, each ticket's thread permalink, latest status timestamp, last processed reply timestamp, accepted instructions, rejected instructions with reasons, and any non-blocking Slack-control-plane configuration issue.
 
 ## Post a blocker
 
-In coordinator mode use run event --blocker and keep the run active for owner input. Direct feature-thread mode follows [its blocker protocol](references/direct-feature-thread.md#post-a-blocker); ordinary gates and handoffs are not blockers.
+In coordinator mode use `run event --blocker` and keep the run active for owner input. Direct feature-thread mode follows [its blocker protocol](references/feature-thread.md#post-a-blocker); ordinary gates and handoffs are not blockers.

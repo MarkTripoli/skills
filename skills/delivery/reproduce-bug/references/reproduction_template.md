@@ -3,7 +3,7 @@ task: [task slug]
 type: reproduction
 summary: "[Two to four sentences: whether the bug reproduced, the cause or the missing input, and what the fix session needs from this file.]"
 status: reproduced | not-reproduced
-revision: "[exact contract source fingerprint]"
+revision: [the quoted string that contract.mjs revision <task-dir> prints]
 ---
 
 # [Bug] Reproduction

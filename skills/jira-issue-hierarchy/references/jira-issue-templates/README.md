@@ -7,7 +7,7 @@ This file + linked Markdown bodies = local authoring policy for `jira-issue-hier
 1. Read entire approved RFC/spec. Identify all required behavior + constraints in requirement sections, not just motivation.
 2. Create/update one [Epic](epic.md) per large feature piece. Create atomic, independently deliverable [Stories](story.md) under each Epic. Story summary starts `<feature name>. <ticket summary>`; Jira **Component** matches feature. Upfront breakdown creates **Epics and Stories only**.
 3. Derive Story acceptance criteria from doc's own language. Deep-link each Story to sections it covers + Figma frame when design involved. Design ready → also attach relevant Figma screens in Jira; design not ready → don't block Story. Out-of-scope items name covering ticket or say explicitly none exists. Flag missing/ambiguous requirements, don't guess.
-4. Hand off breakdown for grooming or announce to development, design, QC. Track design dependencies in design team's own Jira space; design tickets outside this hierarchy. No Sub-tasks this pass.
+4. Hand off breakdown for grooming or announce to development, design, QA. Track design dependencies in design team's own Jira space; design tickets outside this hierarchy. No Sub-tasks this pass.
 
 `jira-issue-hierarchy` owns the upstream Epic/Story breakdown and Story-start Sub-task authoring. `video-iterative-orchestration` starts from an existing Jira Epic and uses this independent skill for child creation and Story QA checks.
 

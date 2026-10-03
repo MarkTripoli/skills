@@ -126,7 +126,7 @@ test('anchor and posting CLIs reject unapproved, invalid and moved-head comments
   const commentsFile = path.join(f.root, 'comments.json');
   const anchorsFile = path.join(f.root, 'anchors.json');
   const postedFile = path.join(f.root, 'posted.json');
-  fs.writeFileSync(commentsFile, JSON.stringify([{id: 'D1', mr: '#10', path: 'app.js', pattern: 'const changed', body: 'This change drops the existing contract.'}]));
+  fs.writeFileSync(commentsFile, JSON.stringify([{id: 'D1', pr: '#10', path: 'app.js', pattern: 'const changed', body: 'This change drops the existing contract.'}]));
   const anchorArgs = ['--stack', f.stackFile, '--in', commentsFile, '--out', anchorsFile];
   let result = f.cli('anchors.mjs', anchorArgs);
   assert.equal(result.status, 0, result.stderr);
@@ -152,7 +152,7 @@ test('anchor and posting CLIs reject unapproved, invalid and moved-head comments
   result = f.cli('post.mjs', [...postArgs, '--approved']);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(fs.readFileSync(f.env.POST_LOG, 'utf8').trim().split('\n').length, 1);
-  fs.writeFileSync(commentsFile, JSON.stringify([{id: 'D2', mr: 10, path: 'app.js', line: 2, body: 'Not in diff'}]));
+  fs.writeFileSync(commentsFile, JSON.stringify([{id: 'D2', pr: 10, path: 'app.js', line: 2, body: 'Not in diff'}]));
   result = f.cli('anchors.mjs', anchorArgs);
   assert.equal(result.status, 1); assert.match(result.stdout, /outside the request diff/);
 });
@@ -160,7 +160,7 @@ test('anchor and posting CLIs reject unapproved, invalid and moved-head comments
 test('posting stops without success receipt when host returns a non-inline result', t => {
   const f = fixture(t);
   const commentsFile = path.join(f.root, 'comments.json'); const anchorsFile = path.join(f.root, 'anchors.json'); const postedFile = path.join(f.root, 'posted.json');
-  fs.writeFileSync(commentsFile, JSON.stringify([{id: 'D1', mr: 10, path: 'app.js', line: 3, body: 'Missing permission boundary.'}]));
+  fs.writeFileSync(commentsFile, JSON.stringify([{id: 'D1', pr: 10, path: 'app.js', line: 3, body: 'Missing permission boundary.'}]));
   assert.equal(f.cli('anchors.mjs', ['--stack', f.stackFile, '--in', commentsFile, '--out', anchorsFile]).status, 0);
   const result = f.cli('post.mjs', ['--stack', f.stackFile, '--comments', anchorsFile, '--posted', postedFile, '--approved'], {NON_INLINE: '1'});
   assert.equal(result.status, 4, result.stderr); assert.equal(fs.existsSync(postedFile), false);
@@ -172,7 +172,7 @@ for (const rename of [false, true]) {
     const commentsFile = path.join(f.root, 'comments.json');
     const anchorsFile = path.join(f.root, 'anchors.json');
     const postedFile = path.join(f.root, 'posted.json');
-    fs.writeFileSync(commentsFile, JSON.stringify([{id: 'R1', mr: '!10', path: f.currentPath, old_path: 'claimed.js', new_path: 'claimed.js', pattern: 'const changed', body: 'The added line violates the contract.'}]));
+    fs.writeFileSync(commentsFile, JSON.stringify([{id: 'R1', pr: '!10', path: f.currentPath, old_path: 'claimed.js', new_path: 'claimed.js', pattern: 'const changed', body: 'The added line violates the contract.'}]));
     const anchorArgs = ['--stack', f.stackFile, '--in', commentsFile, '--out', anchorsFile];
     let result = f.cli('anchors.mjs', anchorArgs);
     assert.equal(result.status, 0, result.stderr);
@@ -210,7 +210,7 @@ for (const rename of [false, true]) {
 test('GitLab posting rejects a returned discussion on a different old path', t => {
   const f = fixture(t, 'gitlab.example.test', {host: 'gitlab', rename: true});
   const commentsFile = path.join(f.root, 'comments.json'); const anchorsFile = path.join(f.root, 'anchors.json'); const postedFile = path.join(f.root, 'posted.json');
-  fs.writeFileSync(commentsFile, JSON.stringify([{id: 'R1', mr: 10, path: f.currentPath, pattern: 'const changed', body: 'Missing permission boundary.'}]));
+  fs.writeFileSync(commentsFile, JSON.stringify([{id: 'R1', pr: 10, path: f.currentPath, pattern: 'const changed', body: 'Missing permission boundary.'}]));
   assert.equal(f.cli('anchors.mjs', ['--stack', f.stackFile, '--in', commentsFile, '--out', anchorsFile]).status, 0);
   const result = f.cli('post.mjs', ['--stack', f.stackFile, '--comments', anchorsFile, '--posted', postedFile, '--approved'], {WRONG_OLD: '1'});
   assert.equal(result.status, 4, result.stderr);
@@ -220,7 +220,7 @@ test('GitLab posting rejects a returned discussion on a different old path', t =
 test('GitHub renamed-file posting keeps the head-side path and RIGHT line semantics', t => {
   const f = fixture(t, 'github.com', {rename: true});
   const commentsFile = path.join(f.root, 'comments.json'); const anchorsFile = path.join(f.root, 'anchors.json'); const postedFile = path.join(f.root, 'posted.json');
-  fs.writeFileSync(commentsFile, JSON.stringify([{id: 'R1', mr: 10, path: f.currentPath, pattern: 'const changed', body: 'Missing permission boundary.'}]));
+  fs.writeFileSync(commentsFile, JSON.stringify([{id: 'R1', pr: 10, path: f.currentPath, pattern: 'const changed', body: 'Missing permission boundary.'}]));
   assert.equal(f.cli('anchors.mjs', ['--stack', f.stackFile, '--in', commentsFile, '--out', anchorsFile]).status, 0);
   const result = f.cli('post.mjs', ['--stack', f.stackFile, '--comments', anchorsFile, '--posted', postedFile, '--approved']);
   assert.equal(result.status, 0, result.stderr);
@@ -256,4 +256,28 @@ test('indexed group records keep parallel request scopes distinct and reject tam
   fs.appendFileSync(path.join(dir, second.path), 'tampered');
   fs.writeFileSync(path.join(dir, '99-group-review-fallback.md'), '---\ntype: group-review\nstatus: findings\nsummary: \"Must not be selected\"\n---\n');
   assert.throws(() => observeArtifacts(dir), /digest|SHA|sha256|mismatch/i);
+});
+
+test('batch publication waits for a recorded single-comment test post', t => {
+  const f = fixture(t);
+  const comments = path.join(f.root, 'comments.json');
+  const anchors = path.join(f.root, 'anchors.json');
+  const posted = path.join(f.root, 'posted.json');
+  fs.writeFileSync(comments, JSON.stringify([
+    {id: 'D1', pr: 10, path: 'app.js', pattern: 'const changed', body: 'First reviewed finding.'},
+    {id: 'D2', pr: 11, path: 'app.js', pattern: 'const second', body: 'Second reviewed finding.'},
+  ]));
+  const resolved = f.cli('anchors.mjs', ['--stack', f.stackFile, '--in', comments, '--out', anchors]);
+  assert.equal(resolved.status, 0, resolved.stderr);
+  const args = ['--stack', f.stackFile, '--comments', anchors, '--posted', posted, '--approved'];
+  const refused = f.cli('post.mjs', args);
+  assert.equal(refused.status, 5, refused.stderr);
+  assert.equal(fs.existsSync(f.env.POST_LOG), false);
+  assert.equal(fs.existsSync(posted), false);
+  const trial = f.cli('post.mjs', [...args, '--only', 'D1']);
+  assert.equal(trial.status, 0, trial.stderr);
+  assert.deepEqual(JSON.parse(fs.readFileSync(posted, 'utf8')).map(item => item.id), ['D1']);
+  const batch = f.cli('post.mjs', args);
+  assert.equal(batch.status, 0, batch.stderr);
+  assert.deepEqual(JSON.parse(fs.readFileSync(posted, 'utf8')).map(item => item.id), ['D1', 'D2']);
 });

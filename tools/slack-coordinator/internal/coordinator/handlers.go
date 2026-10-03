@@ -92,6 +92,17 @@ func Register(s *ipc.Server, c *Coordinator, health func() ipc.HealthResult, shu
 		}
 		return result, nil
 	})
+	s.Handle(ipc.MethodRunReply, func(ctx context.Context, params json.RawMessage) (interface{}, error) {
+		var in ReplyParams
+		if err := decode(params, &in); err != nil {
+			return nil, err
+		}
+		result, err := c.PostReply(ctx, in)
+		if err != nil {
+			return nil, rpcError(err)
+		}
+		return result, nil
+	})
 	s.Handle(ipc.MethodRunCheck, func(ctx context.Context, params json.RawMessage) (interface{}, error) {
 		var in CheckParams
 		if err := decode(params, &in); err != nil {

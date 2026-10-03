@@ -80,7 +80,7 @@ export default {
           expect.atLeast("tdd: Error Handling reconciles with the code through a real pointer", realPointers(errors, codeRoot, /./).length, 1),
           // Local Patterns come from the code: pointers that resolve and lines that say what they are cited for.
           expect.atLeast("tdd: Local Patterns cite real lines of the existing channel modules", realPointers(local, codeRoot, /deliver|name =|randomUUID|status/).filter((p) => /src\/channels\/(email|console|index)\.mjs/.test(p.file)).length, 1),
-          expect.atLeast("tdd: Local Patterns cite a real line of the outbox log", realPointers(local, codeRoot, /appendLog|readLog|log\.json|writeFileSync/).filter((p) => /store\.mjs/.test(p.file)).length, 1),
+          expect.atLeast("tdd: Local Patterns cite a real line of the outbox log", realPointers(local, codeRoot, /appendLog|readLog|log\.json|writeFileSync|entries\.push/).filter((p) => /store\.mjs/.test(p.file)).length, 1),
           expect.matches("tdd: Local Patterns carry a fact only the code has", local, /randomUUID|queued|noreply@example\.com|Object\.hasOwn/),
           bogus.length ? `tdd: ${bogus.length} pointer(s) do not resolve to existing lines, e.g. ${bogus[0].pointer}` : null,
           // The RFC's TBDs stay open: a Verify decision each, a Known limit each, and no sentence in the

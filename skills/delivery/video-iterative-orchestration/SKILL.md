@@ -1,6 +1,6 @@
 ---
 name: video-iterative-orchestration
-description: Centralize ticket-scoped delivery decisions and delegate execution through isolated, resumable ticket branches using video-iterative-development.
+description: Turns a Jira epic, or an epic plus a findings document, into a resumable queue of isolated ticket branches, dispatches each ticket to a video-iterative-development worker, and owns scope, blockers and submission acceptance. Use when the user gives a Jira epic key or link to deliver or correct with Android video evidence; not for executing one assigned ticket, which video-iterative-development does.
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
@@ -264,13 +264,3 @@ Never merge, deploy, rotate secrets, edit CI/CD, mutate Figma or supplied docume
 ## Final report
 
 Report each selected ticket's canonical state, branch ancestry, PR target and URL, required evidence, non-blocking golden result or recorded failure, conformance result, any pipeline status already available, recovery summary, and genuine blocker when present. Report merge-conflict status as PR metadata. State which submitted branch unblocked each dependent ticket and which work remains parallelizable. When Slack coordination was enabled, include the run thread permalink and final coordination outcome.
-
-## Related skills
-
-- `video-iterative-development`
-- `extract-figma-visuals`
-- `feature-conformance`
-- `agent-implementation-reviewer`
-- `slack-coordinator`
-- `jira-issue-hierarchy`
-- Repository-documented Git worktree procedure

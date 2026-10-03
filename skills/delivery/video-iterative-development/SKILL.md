@@ -1,6 +1,6 @@
 ---
 name: video-iterative-development
-description: Execute an orchestrator-specified authenticated E2E assignment through local API-contract, generated-client, Patrol/video-review, and pull-request loops without making delivery decisions.
+description: Executes one assigned backend, frontend or cross-layer ticket with authenticated contract proof, a reviewed Android Patrol recording and a submitted PR with evidence links, and returns a decision_request instead of making delivery decisions. Use when video-iterative-orchestration dispatches a ticket assignment; not for choosing scope or ticket state, which the orchestrator owns.
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
@@ -161,13 +161,13 @@ The orchestrator validates this report and grants the next lease. Do not keep th
 
 ## Success gate
 
-`E2E-evidence-ready` means the scoped local proof above is complete. It does **not** mean that an PR is `submitted_verified`.
+`E2E-evidence-ready` means the scoped local proof above is complete. It does **not** mean that a PR is `submitted_verified`.
 
-`submitted` means the clean final commit is on its remote source branch, an PR for that branch exists against the intended target, and the PR description contains the final applicable proof links. An API-only change needs its contract evidence link or summary; a UI change needs its validated final video link(s). Do not call local commits, passing tests, or local videos delivered before they are `submitted`.
+`submitted` means the clean final commit is on its remote source branch, a PR for that branch exists against the intended target, and the PR description contains the final applicable proof links. An API-only change needs its contract evidence link or summary; a UI change needs its validated final video link(s). Do not call local commits, passing tests, or local videos delivered before they are `submitted`.
 
 ## PR pipeline status
 
-After submission, report an PR pipeline status only if it is already available. Do not wait for a terminal result, diagnose or retry a failed pipeline solely for delivery, or treat a missing, pending, or failed pipeline as a blocker. Local verification, final proof, submission, and conformance remain the delivery requirements. If an available result reveals a defect in the submitted change, send the finding to the orchestrator for a separate correction decision. Deployment status, approvals, and merge-conflict indicators remain observations for the orchestrator.
+After submission, report a PR pipeline status only if it is already available. Do not wait for a terminal result, diagnose or retry a failed pipeline solely for delivery, or treat a missing, pending, or failed pipeline as a blocker. Local verification, final proof, submission, and conformance remain the delivery requirements. If an available result reveals a defect in the submitted change, send the finding to the orchestrator for a separate correction decision. Deployment status, approvals, and merge-conflict indicators remain observations for the orchestrator.
 
 ## Local full-stack integration checks
 

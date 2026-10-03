@@ -1,6 +1,6 @@
 ---
 name: show-me
-description: Help the user understand the current topic visually with concise diagrams, code-shape sketches, and focused HTML artifacts.
+description: Explains the current topic visually with pseudocode, call or file trees, Mermaid diagrams, diffs, or one focused HTML page. Use when the user says /show-me, "show me", "diagram this", "draw how it works", or asks to see a flow, structure or change rather than read about it.
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
@@ -57,9 +57,7 @@ sequenceDiagram
     Daemon-->>UI: stream result
 ```
 
-- Use `diff` when the point is what changes and the surrounding shape already exists. Match the diff shape to the topic.
-
-For a component change:
+- Use `diff` when the point is what changes and the surrounding shape already exists:
 
 ```diff
  <SessionPage>
@@ -68,43 +66,6 @@ For a component change:
 +    <RunSkillButton />
    <SessionTimeline>
 +    <SkillResultCard />
-```
-
-For a file-layout change:
-
-```diff
- src/
- ├── commands/
-+│   └── show-me.ts       # expands the slash command
- ├── sessions/
--└── transport.ts
-+└── transport/
-+    ├── client.ts
-+    └── stream.ts
-```
-
-For a call-tree or call-stack change:
-
-```diff
- submitForm
-   createSession
-     persistPrompt
-+    expandSkillMention
-     launchAgent
--  navigateToSession
-+  navigateToSession
-+    subscribeToEvents
-```
-
-For a state or control-flow change:
-
-```diff
- on(save)
--  write content
-+  if content is unchanged
-+    return cached result
-+  write new content
-+  invalidate cache
 ```
 
 - Show the whole block when most of it is new, when omitted context would hide ownership or order, or when the user needs a copyable target shape:
@@ -116,18 +77,12 @@ function expandSkill(command: string): string {
 }
 ```
 
-- For a visual UI, layout, state comparison, or concept too dense for Mermaid, write one focused HTML file, a diagram, an infographic, or a short slide deck, whichever fits the point. Match the product's colors, type, spacing, and components; use real labels and data; support desktop and mobile. Save it as `show-me-{description}.html` in the task directory, or in the current directory when there is no task directory. Then open it for the user:
+- For a visual UI, layout, state comparison, or concept too dense for Mermaid, write one focused HTML file with an inline SVG or CSS diagram. Use a slide deck only when the user asks for one. Match the product's colors, type, spacing, and components; use real labels and data; support desktop and mobile. Save it as `show-me-{description}.html` in the task directory, or in the current directory when there is no task directory. Then open it for the user with the platform opener (`xdg-open` on Linux, `open` on macOS, `start` on Windows); if no opener works, give the file path.
 
-```
-Bash(open path/to/show-me-{description}.html)
-```
-
-### guidance
+## Placement
 
 Place each visual next to the short text it supports. Keep only the calls, files, props, states, and boundaries needed to answer the user's current question or the options to resolve the current discussion point.
 
-You may use one of these, you may use several, it is unlikely you will use all of them. Use your judgement and don't overwhelm the user.
-
-### final response
+## Final response
 
 If you saved an HTML file, reply with `references/show_me_final_answer.md`, filling `{artifact_link}` with a relative Markdown link to it. Otherwise answer with the visual and no next-step command.

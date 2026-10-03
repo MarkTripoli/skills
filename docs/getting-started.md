@@ -16,7 +16,7 @@ Repeat `--skill` for more skill. `--project` = this-repo-only install. See [all 
 
 Skills are installed copies, not live links to this checkout. Refresh the complete delivery chain after an update and start a new session; see [installation refresh](cheatsheet.md#other-install-methods). Partial installs bring their executable contract dependencies.
 
-GitLab delivery need `glab` authed for repo host (`glab auth login --hostname gitlab.com` here). Private repo install need Git credentials for host.
+GitHub delivery and PR supervisors need authenticated `gh` for the selected repositories. An explicitly selected GitLab scope uses authenticated `glab` for that host. Private installation also requires Git credentials.
 
 ## Run a phase by hand
 
@@ -29,9 +29,25 @@ New task usually get **worktree**: own checkout, own branch. Saved doc carry fac
 
 ## Use `/deliver`
 
-Start `/deliver <your request>` in the project. It picks the workflow from the request and the [size check](../shared/SLICING.md), saves the task, then runs it as one orchestrator session: builders implement, and a fresh reviewer on the strongest model checks each result. Every phase also works standalone. Codex uses `$deliver`. Resume with `/deliver <task-dir>`. `gates` is `plan` (default) or `none`; older `all` and `mr` read as `plan`.
+Start `/deliver <your request>` in the project. It picks the workflow from the request and the [size check](../shared/SLICING.md), saves the task, then runs it as one orchestrator session: builders implement, and a fresh reviewer on the strongest model checks each result. Every phase also works standalone. Codex uses `$deliver`. Resume with `/deliver <task-dir>`. `gates` is `plan` (default) or `none`; older `all` reads as `plan`.
 
 The chain checks executable delivery prerequisites, prepares authentic baseline evidence before changing existing behavior, and requires inspected, revision-bound final proof before publication. Use the [delivery status command](../workflows/delivery.md#executable-delivery-status) to see missing requirements. Herdr is optional only when expressly selected inside Herdr (`HERDR_ENV=1`); only delivery-owned panes may be cleaned up.
+
+## Babysit selected GitLab PRs
+
+Install the independent supervisor with its existing proof/review companions; installation makes helpers available without requiring their workflow:
+
+```sh
+npx github:MarkTripoli/skills oh-my-pi --skill babysit --project --yes
+```
+
+Run `/babysit <PR URLs or exact authored/epic scope>` and state whether to observe, fix, or fix and merge the selection. Codex uses `$babysit`. The skill freezes full identities and source-backed cross-project dependencies in a compact ignored local checkpoint; resume with `/babysit @<that checkpoint>` rather than selecting new PRs. Adapt the template to the run instead of filling every table. Preserve existing task artifacts and worktrees; repair only in the selected source branch's isolated worktree.
+
+Ordinary scoped CI/review repairs proceed with actual source access and deciding checks, even without old task artifacts, baselines, sealed evidence or optional helpers. Use the ordinary workflow inline when a helper is unavailable. Full delivery proof remains binding when explicitly required by the owner, repository or original task, including any before-edit baseline requirement.
+
+Merges need explicit scoped authority, current required CI/review and host-confirmed protections and dependencies. Keep source-SHA guards and native train policy; queued cars are not merged, and children wait for confirmed prerequisite merges. Cancel unsafe queued work and read back actual merged state. Native trains and full-description writes retain host race limitations.
+
+Load references only for the next operation: repair guidance when fixing, merge guidance when ready, and Slack/Jira/breadcrumb details only when requested or configured. Monitoring lasts only while a session or observed scheduler remains active; no daemon is installed. Optional Slack uses one owned coordinator thread or explicit pre-coordinator MCP mode; Jira writes need issue-specific permission. See [the workflow contract](../workflows/delivery.md#babysit-an-existing-pr-set).
 
 ## Draft KIT Jira issues
 
@@ -45,7 +61,7 @@ Install the standalone `jira-issue-hierarchy` skill to draft Epics and Stories f
 npx github:MarkTripoli/skills oh-my-pi --skill iterate-evidence --project --yes
 ```
 
-Repo installer pick companion and `record-evidence`. Plain skill-copy installer no promise dependency closure. Run `/iterate-evidence` with task, wanted behavior, allowed fix path. Default three fix round; `0` = look only. Receipt keep finding, recording, check, stop choice. No recording or no pixel look = no success.
+Repo installer pick companion and `record-evidence`. Plain skill-copy installer no promise dependency closure. Run `/iterate-evidence` with task, wanted behavior, allowed fix path. No default fix-round cap; owner can set one; `0` = look only. Receipt keep finding, recording, check, stop choice. No recording or no pixel look = no success.
 
 ## Configure model routing
 
@@ -53,7 +69,7 @@ If delivery has no usable model profile, run `/configure-model-routing`. Codex u
 
 ## Automatic model selection
 
-JEV = service that picks a model for eligible non-writing phases (profile `routing: auto`, default). It needs a TypeSafe key; keep key outside project. Setup, model default, fail rule: [model selection](model-routing.md). Skip JEV routing with `routing: fixed` in the profile.
+JEV = service that picks a model for eligible non-writing phases (profile `routing: auto`, default). It needs a TypeSafe key; keep key outside project. Setup, fail rule: [model selection](model-routing.md). Skip JEV routing with `routing: fixed` in the profile.
 
 ## Verification and application testing
 

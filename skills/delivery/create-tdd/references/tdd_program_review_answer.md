@@ -8,6 +8,8 @@ Check:
 
 Reply with the changes you want; the iteration skill below applies them. Starting iteration records requested changes, not approval.
 
+Reply `approved` to wrap up in this session.
+
 Next action:
 Open a new session in {run_location}, then run:
 

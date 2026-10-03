@@ -7,4 +7,4 @@
 - Validation runs in its own disposable worktree. Do not modify the user's working tree to repair or force a run.
 - Publication requires reviewed-head continuity, a live upstream-head check, an explicit lease for approved rewrites, post-push ref verification, gate-mirror reconciliation, and durable publication binding in that order.
 - A failed notification after Git accepts a ref is not a rollback. Inspect logs and durable status instead of retrying an accepted ref blindly.
-- Keep binary installation separate from skill installation. The skill may point to `scripts/install.mjs`, but never installs a binary implicitly.
+- `scripts/install.mjs` installs only this agent skill. Install the binary separately, and only when the user asks.

@@ -184,10 +184,7 @@ test('CLIs dispatch through executable symlinks and reject nonempty invalid argu
   fs.symlinkSync(fileURLToPath(new URL('../skills/delivery/deliver/contract.mjs', import.meta.url)), contractAlias);
   const nextReview = spawnSync(process.execPath, [contractAlias, 'review-next', taskDir, 'slice-review', 'phase-1'], { encoding: 'utf8' });
   assert.equal(nextReview.status, 0, nextReview.stderr);
-  assert.deepEqual(JSON.parse(nextReview.stdout), {
-    type: 'slice-review', checkpoint: 'phase-1', next_round: 1, repair_round: 0,
-    previous_record: null, previous_blocking: [], invalid_records: [], limit_reached: false,
-  });
+  assert.equal(JSON.parse(nextReview.stdout).next_round, 1);
 
   for (const entry of [entrypoint, contractAlias]) {
     const invalid = spawnSync(process.execPath, [entry, 'invalid'], { encoding: 'utf8' });

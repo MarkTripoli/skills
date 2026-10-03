@@ -1,7 +1,7 @@
 ---
 type: evidence
 status: passed
-revision: "[exact contract source fingerprint]"
+revision: [the quoted string that contract.mjs revision <task-dir> prints]
 summary: "[Captured targets, observed result, exact source/build identity, and next required phase. Baseline uses type evidence-baseline; final uses evidence.]"
 ---
 

@@ -26,6 +26,7 @@ export const ARTIFACT_SERIES = Object.freeze({
   'delivery-disposition': ["delivery", "disposition"],
   'submission-closure': ["delivery", "closure"],
   'jira-breakdown': ['planning', 'jira'], 'jira-story-start': ['implementation', 'jira'], 'qa-readiness': ['review', 'qa'],
+  babysit: ['supervision', 'babysit'],
 });
 
 const semanticName = /^[a-z0-9]+(?:-[a-z0-9]+)*$/; const digestPattern = /^[a-f0-9]{64}$/;

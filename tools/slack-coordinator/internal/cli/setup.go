@@ -2,15 +2,11 @@ package cli
 
 import (
 	"bufio"
-	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -72,7 +68,7 @@ them.`,
 				return err
 			}
 			keepExistingBlocks(cfg, existing)
-			cfg.ApplyDefaults()
+
 			if err := cfg.Validate(); err != nil {
 				return usageErr("%w", err)
 			}
@@ -96,14 +92,6 @@ them.`,
 			ownerUser, err := client.UserInfo(cmd.Context(), cfg.Slack.OwnerUserID)
 			if err != nil {
 				return usageErr("owner %s was not found by users.info; copy your member ID from your Slack profile menu: %w", cfg.Slack.OwnerUserID, err)
-			}
-			if _, err := resolveAgentBin(cfg); err != nil {
-				return err
-			}
-			if cfg.Agent != nil && cfg.Agent.Bin != "" {
-				if err := verifyAgent(cfg.Agent.Bin, p.Workspace()); err != nil {
-					return err
-				}
 			}
 			if err := config.Save(p.ConfigFile(), cfg); err != nil {
 				return err
@@ -144,82 +132,16 @@ them.`,
 	return c
 }
 
-// keepExistingBlocks copies agent, Jira, and retention from an existing
-// config.yaml when this setup invocation did not set them. setup rewrites
-// the file; without this, a later setup drops agent.command.
+// keepExistingBlocks preserves optional Jira settings when setup replaces tokens.
 func keepExistingBlocks(cfg, existing *config.Config) {
-	if existing == nil {
-		return
-	}
-	if cfg.Agent == nil {
-		cfg.Agent = existing.Agent
-	}
-	if cfg.Jira == nil {
+	if existing != nil && cfg.Jira == nil {
 		cfg.Jira = existing.Jira
 	}
-	if existing.Retention != (config.Retention{}) {
-		cfg.Retention = existing.Retention
-	}
 }
-
-// resolveAgentBin sets agent.bin to the absolute executable for agent.command
-// when it is empty, using this process's PATH. Launchd and systemd do not
-// inherit a login shell's PATH, so the daemon runs that absolute path.
-// changed reports that bin was filled in and the caller should save cfg.
-func resolveAgentBin(cfg *config.Config) (bool, error) {
-	if cfg == nil || cfg.Agent == nil || cfg.Agent.Command == "" {
-		return false, nil
-	}
-	if cfg.Agent.Bin != "" {
-		if !filepath.IsAbs(cfg.Agent.Bin) {
-			return false, usageErr("agent.bin %q must be an absolute path", cfg.Agent.Bin)
-		}
-		if _, err := os.Stat(cfg.Agent.Bin); err != nil {
-			return false, usageErr("agent.bin %q: %w", cfg.Agent.Bin, err)
-		}
-		return false, nil
-	}
-	bin, err := exec.LookPath(cfg.Agent.Command)
-	if err != nil {
-		return false, usageErr("agent.command %q is not on PATH in this shell (%v); set agent.bin to its absolute path, or rerun from a shell where `command -v %s` succeeds", cfg.Agent.Command, err, cfg.Agent.Command)
-	}
-	if !filepath.IsAbs(bin) {
-		if abs, absErr := filepath.Abs(bin); absErr == nil {
-			bin = abs
-		}
-	}
-	cfg.Agent.Bin = bin
-	return true, nil
-}
-
 func readTokenLine(in *bufio.Reader) (string, error) {
 	line, err := in.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return "", err
 	}
 	return strings.TrimSpace(line), nil
-}
-
-// verifyAgent runs before setup or service install reports success. The
-// binary must answer --version, and the workspace must be writable by this
-// user. verifyAgent is replaced in tests.
-var verifyAgent = func(bin, workspace string) error {
-	if err := os.MkdirAll(workspace, 0o700); err != nil {
-		return err
-	}
-	probe, err := os.CreateTemp(workspace, ".agent-write-*")
-	if err != nil {
-		return usageErr("workspace %s is not writable: %w", workspace, err)
-	}
-	name := probe.Name()
-	_ = probe.Close()
-	_ = os.Remove(name)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "--version")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return usageErr("%s --version failed: %v: %s", bin, err, strings.TrimSpace(string(out)))
-	}
-	return nil
 }

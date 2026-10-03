@@ -1,0 +1,5 @@
+#!/bin/sh
+# Opt-in refresh when the default branch moves: git config skills.autoInstall auto.
+# A missing node or failed refresh never fails the git command.
+command -v node >/dev/null 2>&1 || exit 0
+node "$(dirname "$0")/../scripts/auto-install.mjs" post-checkout "$@" || true

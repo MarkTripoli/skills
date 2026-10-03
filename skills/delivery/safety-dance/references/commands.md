@@ -11,9 +11,13 @@ safety-dance logs
 safety-dance daemon status
 ```
 
-A missing executable is a binary installation issue. Use a checksummed `safety-dance-v*` release archive or build `./tools/safety-dance/cmd/safety-dance`; `scripts/install.mjs` installs only the agent skill. Do not pipe an untrusted download into a shell.
-
 ## Initialize and run
+
+Run before any mutating command:
+
+```sh
+test -z "${SD_PARENT_RUN_ID:-}" || { echo "nested run: parent ${SD_PARENT_RUN_ID}; inspect only"; exit 1; }
+```
 
 ```sh
 safety-dance init
@@ -32,7 +36,7 @@ safety-dance abort <run-id>
 safety-dance logs <run-id>
 ```
 
-Respond only to a prompt shown by `status` or `logs`. Abort the intended run by its durable identifier, then confirm its terminal status. Never edit the state database or gate refs directly.
+Respond only to a prompt shown by `status` or `logs`. Show the user the prompt text and its allowed actions, and send only the action the user names, unless the task brief authorizes an action for this prompt. Never invent `--step-id` or `--generation`; copy them from `status`. Abort the intended run by its durable identifier, then confirm its terminal status. Never edit the state database or gate refs directly.
 
 ## Daemon lifecycle
 

@@ -267,8 +267,16 @@ test("review grading preserves receipt history and bounds only unresolved blocki
   const approvals = Array.from({ length: 5 }, (_, i) => row(i + 1, "approve"));
   assert.deepEqual(verdictProblems(approvals.toReversed()), [], "successor approvals do not consume the repair allowance");
   const lateChanges = [...approvals, row(6, "changes"), row(7, "changes"), row(8, "changes")];
-  assert.ok(verdictProblems(lateChanges).some((p) => p.includes("review repairs")), "late blockers remain bounded after many approvals");
+  assert.ok(!verdictProblems(lateChanges).some((p) => p.includes("review repairs")), "no implicit cap bounds late blockers");
+  assert.ok(verdictProblems(lateChanges, 3).some((p) => p.includes("review repairs")), "only the owner's cap bounds late blockers");
   assert.deepEqual(verdictProblems([...lateChanges, row(9, "approve")]), [], "a valid approval closes the blocking episode");
+});
+
+test("review grading refuses continuation after stalled blockers without weakening immutable rounds", () => {
+  const row = (round, status, blocking) => ({ checkpoint: "phase-1", type: "slice-review", round, status, blocking });
+  assert.deepEqual(verdictProblems([row(1, "changes", ["F1", "F2"]), row(2, "changes", ["F1"]), row(3, "approve", [])]), []);
+  assert.ok(verdictProblems([row(1, "changes", ["F1"]), row(2, "changes", ["F1"]), row(3, "approve", [])]).some(problem => problem.includes("no progress")));
+  assert.ok(verdictProblems([row(1, "changes", ["F1"]), row(1, "approve", [])]).some(problem => problem.includes("duplicate round")));
 });
 
 test("PRD grading accepts EARS actor/response forms and rejects non-obligations", async () => {

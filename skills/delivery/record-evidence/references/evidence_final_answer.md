@@ -10,6 +10,8 @@ Caveats:
 
 Posted to: {Actual PR URL if one exists; distinct evidence-comment permalink only if posted and read back. Otherwise state "PR/comment pending /describe-pr". Add a supplied issue permalink only after readback.}
 
+The captured result is sealed to its revision. Inspection and any authorized repair remain; publication is not yet permitted.
+
 All required tests passed on actual hosted captures. The next phase has not started.
 
 Next action:

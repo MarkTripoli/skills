@@ -102,7 +102,7 @@ func TestStartRunPersistsOneCompactThreadStatusCard(t *testing.T) {
 	ref, err := c.StartRun(context.Background(), StartRunInput{
 		RunID: "RUN1", ChannelID: "C1", Work: "Profile enhancements",
 		Goal: "Improve profile editing", Scope: "Profile screen",
-		Links: []string{"https://example.test/mr/1"},
+		Links: []string{"https://example.test/pr/1"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -113,7 +113,7 @@ func TestStartRunPersistsOneCompactThreadStatusCard(t *testing.T) {
 	if poster.posts[0].Text != "*Issue:* Profile enhancements\n*Goal:* Improve profile editing\n*Scope:* Profile screen" {
 		t.Fatalf("root is not compact: %q", poster.posts[0].Text)
 	}
-	if poster.statusCards[0].ThreadTS != ref.ThreadTS || poster.statusCards[0].Text != "*Now:* Starting\n*Links:* <https://example.test/mr/1|example.test>" {
+	if poster.statusCards[0].ThreadTS != ref.ThreadTS || poster.statusCards[0].Text != "*Now:* Starting\n*Links:* <https://example.test/pr/1|example.test>" {
 		t.Fatalf("initial card = %+v", poster.statusCards[0])
 	}
 	run, err := c.DB.GetRun(context.Background(), "RUN1")

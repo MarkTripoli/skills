@@ -9,7 +9,7 @@
 # timeout below if either one grows.
 #
 # Does unprompted what /herd-next does: parses the handoff fence the finishing
-# phase printed, then runs steps 3 to 7 of the skill's handoff mode itself -
+# phase printed, then runs steps 3 to 7 of the skill itself -
 # slug and phase, the caller's agent kind, a sibling split or a new tab, the
 # agent, the pane label, and the command staged without Enter. It asks nothing
 # and writes no file: every path that the skill would resolve by asking the user
@@ -130,20 +130,11 @@ else
 fi
 test -n "$pane" || exit 0
 
-# Step 6, the agent name: <slug>-<phase> reduced to [a-z][a-z0-9-]{0,31}. The
-# slug is cut to leave room for the phase, so the name still says which phase
-# this is; only a phase longer than 31 characters falls back to cutting both.
-# No -2 / -3 collision walk here: a name already in use fails the start below
-# and the hook stops. Run /herd-next by hand for that case.
-stem=$((32 - ${#phase} - 1))
-if test "$stem" -ge 1; then
-  name="${slug:0:stem}-$phase"
-else
-  name="$slug-$phase"
-fi
-name=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | tr -s '-' | cut -c1-32)
-name=${name%-}
-case "$name" in [a-z]*) ;; *) exit 0 ;; esac
+# Step 6, the agent name, built by references/agent_name.sh. No -2 / -3 collision
+# walk here: a name already in use fails the start below and the hook stops.
+# Run /herd-next by hand for that case.
+. "$(dirname -- "${BASH_SOURCE[0]}")/agent_name.sh" || exit 0
+name=$(agent_name "$slug" "$phase") || exit 0
 
 # Step 7, start, label, stage. send-text only: submitting the handoff would
 # record approval of the artifact the finished phase produced.

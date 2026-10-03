@@ -11,7 +11,7 @@ summary: "Name the request set, the requirement sources read and missed, and the
 ## Sources
 
 - connectors available:
-- request descriptions: `<workspace>/mr-<number>.md` (unindexed working data)
+- request descriptions: `<workspace>/pr-<number>.md` (unindexed working data)
 - tickets (connector):
 - epic (connector):
 - product and design documents (connector):

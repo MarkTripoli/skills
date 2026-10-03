@@ -9,6 +9,7 @@ Keep evidence kinds apart: offline repo check, live skill eval. One kind pass no
 | Surface | Entry point | Contract |
 |---|---|---|
 | Skill validation | `node scripts/validate.mjs` | Layout, frontmatter, shared links, templates, handoff fences, phase-table coverage, source conventions, and instruction word caps (`WORD_CAPS`; raising one is a visible diff) |
+| Skill authoring practices | `node scripts/check-skill-practices.mjs` | YAML descriptions and trigger boundaries, progressive one-level references, script coverage, contents lists, and declared eval coverage |
 | Plugin sync | `node scripts/sync-plugin.mjs --check` | Published plugin resources match canonical skills |
 | Unit tests | `node --test tests/` | Installer ownership, runtime adaptation, commit rules, typed helper behavior, task-index and task-root contracts, artifact helper distribution, and workflow helpers |
 
@@ -36,6 +37,13 @@ python3 skills/delivery/record-evidence/scripts/test_evidence.py EvidencePipelin
 ```
 
 The contract cases exercise indexed/legacy selection, exact plan/current-source approval, prior review rounds, base-commit baselines, complete hosted byte comparison, trailing failures, tampered captures, inspection binding and durable repair stops. The media regression uses synthetic fixtures only to prove that `--no-align` preserves both panes and their results without inserting the development gap; it is not product-behavior evidence.
+
+### Scenario command stubs
+
+Scenarios or phases may declare `stubs: {command: "<shell body>"}` for outward CLIs. The runner prepends isolated wrappers to PATH and retains `stub-calls.log`; live and saved grades receive `ctx.stubCalls`. A refusal is graded from actions that never occurred. Absolute command paths bypass wrappers, so stubs are not a sandbox.
+
+Phase-local `env: {NAME: "value" | null}` and `unsetEnv: /pattern/` change only the subject session, not concurrent scenarios or the parent runner. Never replace a real runtime observation with a stubbed result when claiming live delivery or hosted proof.
+
 
 ### Live delivery evals
 
@@ -111,7 +119,7 @@ Primary case need agent-written repair and stronger check: fail against kept bro
 
 Live command exit `1` while independent review pending. Open kept frame yourself, write `iterate-evidence/1-iterate-evidence/review.json` using its `review-schema.json`, then run saved grading. Review bind seen pixel to media/frame hash, subject trace entry, pre-edit receipt history, and final coverage; no make it from label, no make it from receipt prose.
 
-Primary grading check returned image bytes, or separately looked-at and hash-bound transformed payload, no take matching path alone. Required subject inspection must use bare image-path read or bare video timestamp read for image-payload identity; `?q=` image question be text-only and count only as interpretation when paired with bare binding read. Its pre-mutation receipt must keep `in-progress`, consumed round `1`, default limit `3`, the looked-at finding, and incomplete repair step. Settle that step from receipt current structured state, no from required phrase; done or contradictory state no can set up pending reservation. Final receipt with different default limit fail. All counter-flow predicate use same receipt-local charter resolution, including mapped ID and equal Activate/Click action. Inspection-only fail case need failed Increment and passed Reset; viewer-blocked need both untested. Unmapped ID stay failure, no fold into coverage.
+Grading binds returned image bytes, or independently inspected hash-bound transformations, not paths or labels. A primary pre-mutation receipt must keep `in-progress`, consumed round `1`, the observed finding and incomplete repair state. New uncapped runs use `limit: null`; an active authorized cap cannot be silently introduced or removed. Archived runs retain their original policies and are not reinterpreted as current-source proof. All counter predicates use receipt-local charter IDs and equal Activate/Click actions. Inspection-only failure requires failed Increment and passed Reset; viewer-blocked requires both untested. Unmapped IDs fail and are not folded into coverage.
 
 Required bare image-path read and bare video timestamp read be sequential evidence move. Fire each one as lone tool call with no other bash/write/read/browser/delegation/tool call beside it, wait for returned image payload, then write down observation and trace/hash binding before next tool call.
 
@@ -140,7 +148,7 @@ npm run evals -- iterate-evidence-no-progress iterate-evidence-zero-limit iterat
 
 Scenario definition may declare `minMinutes` to force floor on time budget no matter `--max-time` CLI flag. Runner compute `max(--max-time, scenario.minMinutes)` so short CLI override no undercut scenario proven minimum. `three-rounds` set `minMinutes: 45` because baseline plus three productive pass — each need four recorded frame opened one by one, a repair, and round reconciliation — no can reliably finish in 25 minutes.
 
-No-progress subject hand one unused-setting edit to real bounded OMP worker. Review its kept trace and unchanged broken handler, no simulated worker result. Disclosed worker command be delegation edge: it check receipt on disk before it start anything and write no reservation itself, so missing, stale, or terminal checkpoint fail closed with exact reason kept in `worker/delegation.jsonl` and worker never run. Zero-limit subject write truthful baseline evidence, no edit source, no edit check. Four-counter case leave out explicit limit and need baseline plus three productive pass: increment value `2222`, `1222`, `1122`, `1112`; every Reset stay `0`.
+No-progress delegates one unused-setting edit to a real bounded worker; inspect its retained trace and unchanged broken handler, not a simulated result. The worker checks a current active reservation before starting and records rejected dispatches in `worker/delegation.jsonl`. Zero-limit writes truthful baseline evidence without source or check edits. The four-counter case continues past three productive repairs without an implicit cap; each Reset remains `0`. Continuation resumes the consumed round without replaying edits.
 
 Continuation pause fixed capture door after source/check work and persisted reservation. Harness kill owned subject and its paused capture child, keep both trace and receipt, then start new OMP invocation naming that receipt. Freeing orphan capture no be fresh-session proof: accepted capture must start after new session and finish same consumed round with no replay of edit.
 
@@ -162,9 +170,11 @@ Saved regrade read kept repair evidence, no rebuilt original fixture, no changea
 
 ## Adding a skill to the workflow
 
-1. Add `skills/delivery/<name>/SKILL.md` and `references/` template, keep frontmatter and shared link on line 6.
-2. Add its row under exact `| Skill | Artifact type | Human gate | Runs in |` header in [workflows/delivery.md](../workflows/delivery.md#phase-table).
-3. Keep independent invocation and artifact-first reply. Human handoff use one text command fence naming next skill and needed artifact; terminal reply have no fence.
-4. Integrate an invoked phase through deliver and its executable contract; independent reviewers start fresh and only current digest-validated artifacts count.
-5. Add test only for believable seen regression. Live artifact change may need eval; workflow API change need runtime proof.
-6. Run `npm test` after related edit land. During shared work, one integration owner run big check after tree be coherent.
+1. Start `/author-skill` in a checkout of this collection; inspect sibling trigger descriptions before adding another skill. Write a behavior-based eval scenario first and retain an observed baseline.
+2. Run its `scripts/scaffold.mjs <name>`; add `--delivery` for a delivery phase or worker. Keep line-6 shared guidance and register dependencies, answer templates and workflow/quick-start entries.
+3. Use trigger-specific third-person descriptions with `Use when` and nearest-sibling exclusions. Link references directly from SKILL.md; put branch-specific detail there and deterministic procedures in executable helpers.
+4. Preserve independent invocation, artifact-first replies, immutable indexed successors and configurable task roots. A terminal answer has no next-command fence; manual human handoffs have exactly one.
+5. Run both skill validators, regenerate plugin resources, and exercise the changed helper/installed scenario. Live coverage requires an authenticated current-source model run; offline tests and imported upstream recordings do not establish it.
+6. Add a package changeset. Run `npm test` once the shared tree is coherent; preserve archived evidence, historical tasks and owner worktrees.
+
+For helper changes, smoke the installed copy in an isolated temporary project and HOME, not only the checkout module. Exercise filesystem-alias entrypoints, refusal before writes, configured task roots, and reruns that preserve existing artifact bytes. Explanation-page smoke includes checker acceptance and browser rendering at desktop and phone widths; keep wide tables inside the shared `.wide` container. These checks do not substitute for authenticated agent evals or real hosted-service proof.

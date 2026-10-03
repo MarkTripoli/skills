@@ -1,6 +1,6 @@
 ---
 name: security-check
-description: Run explicit Semgrep and Gitleaks security scans and report versioned, provenance-bound findings; incomplete coverage never counts as clean.
+description: Runs opt-in Semgrep and Gitleaks scans and reports versioned, provenance-bound findings without treating incomplete coverage as clean. Use when an operator explicitly requests /security-check; not for normal delivery, code review, or implicit source uploads.
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.

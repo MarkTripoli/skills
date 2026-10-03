@@ -1,6 +1,6 @@
 ---
 name: iterate-implementation
-description: Run for /iterate-implementation requests. Apply follow-up implementation feedback on the same branch.
+description: Applies follow-up feedback, a failed-evidence repair, or a no-plan oneshot task to the code on the current branch, verifies it, and writes an implementation receipt. Use when the user runs /iterate-implementation, reports a bug or review comment on built work, or a verify or test run failed; not for building a planned phase from scratch (/implement-plan, /implement-outline).
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
@@ -8,6 +8,13 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 # Iterate Implementation
 
 Apply task-scoped implementation or follow-up feedback on the same branch. This is also the manual oneshot implementation path: use `task.md` directly when no plan exists, without inventing a plan.
+
+After steps 1 and 2, pick the mode:
+
+1. The user asks to implement a plan or outline phase that has not started: delegate it in step 2, then step 6.
+2. Feedback on built work: steps 3 to 6.
+3. No plan or outline exists: task-only oneshot. `task.md` is the boundary; steps 3 to 6.
+4. The latest evidence inspection failed: reserve the repair (step 1), then steps 3 to 6.
 
 ## Steps
 
@@ -20,11 +27,7 @@ Apply task-scoped implementation or follow-up feedback on the same branch. This 
 - Read the plan file when it exists. If no plan exists, read the ticket or task file plus the structure outline, design discussion, PRD/TDD, and research artifacts needed to understand the implemented work.
 - Do not read unrelated artifacts just because they are present. Prefer the files named by the user, the current implementation source artifact, and the minimum companion artifacts needed to make the change correctly.
 
-When the latest evidence inspection failed, reserve the repair: use the attempt id your assignment names and do not reserve again; with no id, call `node <skills-dir>/deliver/contract.mjs repair-begin "$TASK" <attempt-id>` before editing and `repair-complete` after.
-
-For an explicit human-requested revision, record the actual feedback in the receipt. This does not weaken evidence or reset the repair allowance.
-
-When feedback comes from failed recorded evidence, keep the existing repair allowance and consumed count on continuation; do not start another loop or reserve twice. Capture-only authority is not repair authority.
+In evidence-repair mode, reserve the repair once: use the attempt id your assignment names; with no id, run `node <skills-dir>/deliver/contract.mjs repair-begin "$TASK" <attempt-id>` before editing and `repair-complete` after. A human-requested revision does not reset the repair allowance; record its feedback in the receipt. Capture-only authority is not repair authority.
 
 ### 2. Understand the current state
 
@@ -45,14 +48,7 @@ Proceed only after you have checked the facts. If evidence contradicts the feedb
 
 ### 4. Clarify the requested change
 
-Use the feedback type to choose the next action:
-
-- Bug report: inspect logs, database state, reproduction steps, and relevant code until the remaining work is clear.
-- Code change request: update the specific code or behavior after verifying the target files.
-- Ambiguous request: ask the smallest question that changes what you will do.
-- Missing evidence: add targeted logging or ask the user to reproduce with the needed output.
-
-If there are several viable fixes and no clear default, ask before editing unless the delivery brief authorizes agent decisions; in that case choose from repository patterns, record the tradeoff, and proceed.
+Work one feedback item at a time. Apply each item, or say why it was not applied. Ambiguous: ask the smallest question that changes the action. Several viable fixes with no default: ask, unless the delivery brief authorizes agent decisions; then choose from repository patterns, record the tradeoff, and proceed.
 
 ### 5. Apply the fix
 
@@ -60,23 +56,13 @@ When the fix is clear, make the smallest correct change in the shared/root-cause
 
 For a `/deliver` task with delegated execution, give a bounded repair to a child worker, then verify its diff and tests before integration. Model roles follow `deliver`'s Model roles; record the observed worker model or that selection was unavailable. Apply routine choices from nearby code and the delivery brief without asking again.
 
-### 6. Update the user
+### 6. Commit, receipt, handoff
 
-When the iteration completes a numeric phase, record the updated source iteration first, then record the next immutable `implementation.receipt` from `references/implementation_template.md`. Set `completed_phase` to the highest proven phase and populate `Human Review`. Save this receipt even when later phases remain.
+When feedback is addressed, checks have run, and no further implementation edits are known, commit the code per `/ci-commit`: stage explicit paths, exclude the configured task root, and validate the Conventional Commits subject. Record any changed plan or outline as an immutable successor; never stage task artifacts. When commits are forbidden, leave code unstaged and record that actual state.
 
-Read `references/implementation_phase_final_answer.md` when another numeric phase remains, and set `{implementation_command}` for the current source artifact. Read `references/implementation_final_answer.md` only for terminal implementation. Populate `Check` from the receipt's `Human Review`, fill `{artifact_link}` with its canonical task-root-relative path, and keep the final command fence last.
+After the commit and plan/outline recording, allocate the next immutable `implementation.receipt` iteration from `references/implementation_template.md`. For a numeric phase, set `completed_phase` to the highest proven plan or outline phase. Task-only work and evidence repairs record the actual revision, changes, check output and next incomplete action. Populate Human Review with exact targets, checks and limits. Record revision after the final source mutation; changed source returns to current verification, review, recording and inspection.
 
-For task-only work, fill `{plan_file}` with this implementation receipt and use the terminal answer. Do not claim a numbered phase exists. Fill `{next_command}` with `/verify-implementation`.
+Then choose exactly one handoff. Populate `Check` from Human Review, fill `{artifact_link}` with the canonical receipt link and `{source_file}` with the worktree-relative plan or outline path, otherwise this receipt, and keep the final command fence last.
 
-## Guidance
-
-### Feedback
-
-Read only the feedback the user supplied (message or named file). Work one feedback item at a time when feedback drives the change. Apply each item, or say why it was not applied.
-
-## When Iteration Is Complete
-
-When feedback is addressed and checks ran, commit code with explicit paths and keep task artifacts out of the code commit. Keep all task records local; never stage or commit them. Then choose exactly one handoff:
-
-1. If another numbered phase remains in the selected plan or outline, save any changed task artifact in the task directory, read `references/implementation_phase_final_answer.md`, and point its command back to the same implementation skill. Do not use the pull-request handoff at this boundary.
-2. Only when the completed phase is terminal, record all changed task artifacts, read `references/implementation_final_answer.md`, and respond with that template. The next step is `/verify-implementation`, then review, recording, and PR publication.
+1. Another numbered phase remains in the selected plan or outline: read `references/implementation_phase_final_answer.md`, set `{implementation_command}` to `/implement-plan` or `/implement-outline` for the source artifact, and do not use the pull-request handoff at this boundary.
+2. The highest numbered phase, a task-only implementation, or an evidence repair is complete: read `references/implementation_final_answer.md` and fill `{next_command}` with `/verify-implementation`. `{source_file}` is the source plan or outline when present, otherwise this receipt. Do not claim a numbered phase exists for task-only work. Current verification when configured, review, recording, and inspection precede publication; `/ci-commit` is only an explicitly requested in-loop gate.

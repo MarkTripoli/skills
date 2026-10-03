@@ -1,0 +1,291 @@
+<title>{page_name}</title>
+<style data-explain></style>
+<!-- guide: The one page every persona shares. `page.mjs start <persona> <page>` keeps the sections personas/<persona>.md lists, in its order; read that file for who the reader is, what they want to see, the tone and the words to avoid. Fill every placeholder, drop an optional section the evidence has nothing for, never pad, then delete these comments. -->
+
+<main class="wrap" data-persona="{persona}">
+
+  <section class="hero" aria-labelledby="title" data-section="top">
+    <div class="hero-text">
+      <!-- guide: The eyebrow names where the change lives: product, area and ticket, or repository, component and PR for readers who work in the code. The lede is two sentences: the first says what the persona's first "What they want to see" item asks for; on a page without the headline-number section, the second carries the headline measurement. -->
+      <span class="eyebrow">{where_the_change_lives}</span>
+      <h1 id="title">{thesis}</h1>
+      <p class="lede">{lede_in_two_sentences}</p>
+      <div class="scoreboard" aria-label="{what_the_numbers_measure}" data-section="headline-number">
+        <!-- guide: The headline measurement every page shares (SKILL.md step 3). Each label names what was measured and where. -->
+        <div class="score before"><span class="n mono">{before_value}</span><span class="l">Before: {measure} · {source}</span></div>
+        <div class="score after"><span class="n mono">{after_value}</span><span class="l">Now: {measure} · {source}</span></div>
+      </div>
+      <div class="scoreboard" aria-label="Behaviors in the coverage table by result" data-section="test-results">
+        <!-- guide: Counts come from the coverage table's Result column. Drop the failed score when it is zero. -->
+        <div class="score passed"><span class="n mono">{passed_count}</span><span class="l">Passed</span></div>
+        <div class="score untested"><span class="n mono">{untested_count}</span><span class="l">Untested</span></div>
+        <div class="score failed"><span class="n mono">{failed_count}</span><span class="l">Failed</span></div>
+      </div>
+      <dl class="facts" data-section="key-facts">
+        <!-- guide: Build identity. One Compared with entry per measurement when they used different bases. A value the evidence lacks drops its code tag. -->
+        <dt>Change</dt><dd><code>{head_commit}</code></dd>
+        <dt>Branch</dt><dd><code>{branch}</code></dd>
+        <dt>Compared with</dt><dd><code>{base_commit}</code> ({base_name})</dd>
+        <dt>Builds</dt><dd>{build_type_and_artifact_hashes}</dd>
+        <dt>Environment</dt><dd>{devices_hosts_and_load}</dd>
+      </dl>
+    </div>
+    <figure data-section="video">
+      <!-- guide: The synchronized side-by-side recording (references/media.md), or the after recording alone without the labels row. Without the figure the top runs one column. -->
+      <div class="video">
+        <div class="vlabels"><span>Before</span><span>Now</span></div>
+        <video src="media/{recording}" controls muted playsinline loop preload="metadata" aria-label="{what_the_video_shows}"></video>
+      </div>
+      <figcaption>{what_is_real_where_recorded_and_how_the_clips_are_aligned}</figcaption>
+    </figure>
+  </section>
+
+  <section aria-labelledby="change" data-section="before-and-now">
+    <!-- guide: Before and now as a person meets them. Keep a still under each side only when the persona's "What they want to see" asks for screens and its Limits leave room; otherwise drop both stills. -->
+    <span class="eyebrow">Before and now</span>
+    <h2 id="change">{finding_heading}</h2>
+    <div class="compare">
+      <div class="before">
+        <span class="eyebrow">Before</span>
+        <p>{before_in_two_sentences}</p>
+        <img src="media/{before_still}" alt="{what_is_on_screen}" loading="lazy">
+      </div>
+      <div class="after">
+        <span class="eyebrow">Now</span>
+        <p>{after_in_two_sentences}</p>
+        <img src="media/{after_still}" alt="{what_is_on_screen}" loading="lazy">
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="before" data-section="before-stills">
+    <!-- guide: Stills from the before recording, in order. Drop this section for net-new behavior that had no before. A still without a measured time reads "not timed" with the reason. -->
+    <span class="eyebrow">How it used to work</span>
+    <h2 id="before">{finding_heading}</h2>
+    <p>{what_the_person_saw_and_why_it_hurt}</p>
+    <div class="strip">
+      <div class="shot"><img src="media/{before_still}" alt="{what_is_on_screen}" loading="lazy"><span class="tc before">{time_after_action}</span><p>{one_line}</p></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="timeline" data-section="timeline">
+    <!-- guide: One beat per moment that changed, in recorded order. The gutter holds the time read from the video, relative to the action the eyebrow names; add the file time in brackets when a reader needs to find the frame. Quote on-screen copy exactly with the quote class, and drop that line when the moment has no words. Repeat this section once per recording, each with its own id, when the persona wants every recording; a recording of the old build adds class "before" to its timeline. -->
+    <span class="eyebrow">{build_label} · {time_reference}</span>
+    <h2 id="timeline">{finding_heading}</h2>
+    <div class="timeline">
+      <div class="beat">
+        <div class="when">{time_after_action}<small>{moment_label}</small></div>
+        <div class="what">
+          <h3>{what_happens}</h3>
+          <p class="quote">{exact_on_screen_text}</p>
+          <p>{what_the_frame_shows}</p>
+        </div>
+        <img src="media/{still}" alt="{what_is_on_screen}" loading="lazy">
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="copy" data-section="copy-changes">
+    <!-- guide: On-screen words that changed, old beside new, each quoted exactly. Repeat the pair per screen. -->
+    <span class="eyebrow">Copy that changed</span>
+    <h2 id="copy">{finding_heading}</h2>
+    <div class="compare">
+      <div class="before"><span class="eyebrow">Before · {screen}</span><p><q>{old_copy}</q></p></div>
+      <div class="after"><span class="eyebrow">Now · {screen}</span><p><q>{new_copy}</q></p></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="states" data-section="new-states">
+    <!-- guide: Each UI state the change introduces. A state designed but not captured keeps its card, says so in one line, and has no image. Quote the design intent from its named source (brief, ticket, design file); without one, drop that paragraph. -->
+    <span class="eyebrow">{where_the_cue_lives}</span>
+    <h2 id="states">{finding_heading}</h2>
+    <p>{design_intent_in_one_or_two_sentences}</p>
+    <div class="cols">
+      <div class="cue">
+        <span class="tag">{state_name}</span>
+        <img src="media/{state_crop}" alt="{what_is_on_screen}">
+        <p>{what_it_means_for_the_person}</p>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="mechanism" data-section="mechanism">
+    <!-- guide: Mermaid by default: a flowchart of the steps before and now, or a sequence diagram of the calls. Mark the step that moved by writing "(moved)" in its label; no style statements or colors, which ignore the theme. Lay it out top to bottom (flowchart TB) or draw before and now as two diagrams: side-by-side subgraphs shrink to unreadable text on a phone. Escape a literal less-than sign as &lt;. Use an inline SVG with class "diagram" only for something drawn to scale. -->
+    <span class="eyebrow">Mechanism</span>
+    <h2 id="mechanism">{finding_heading}</h2>
+    <p>{what_moved_and_why}</p>
+    <pre class="mermaid">
+{mermaid_diagram}
+    </pre>
+  </section>
+
+  <section aria-labelledby="numbers" data-section="numbers">
+    <!-- guide: How it was measured in one sentence, or the full procedure (samples, alternation, the agreed rule) when the persona's "What they want to see" asks for the method. A case measured more than once gets one row per run, or its range. Add a Result column when an agreed rule judges each case. A second metric gets its own table under an h3 that names it. -->
+    <span class="eyebrow">Measured on {where}</span>
+    <h2 id="numbers">{finding_heading}</h2>
+    <p>{how_it_was_measured}</p>
+    <!-- guide: Optional. A bar chart drawn to scale from the table: one row per case, a before bar (class tone-before) and a now bar (class tone-after), bars start at x = 160 and the largest spans 420 units (bar length = value / largest value × 420), leaving room for its value label, each bar labeled with its value, one shared zero, a Before and Now legend on top. Case labels fit the 150-unit column (about 20 characters). Shapes use fill="currentColor"; text inherits. Drop it when the table has one row. -->
+    <figure>
+      <div class="wide">
+        <svg class="diagram" role="img" aria-label="{what_the_chart_shows}" viewBox="0 0 640 {chart_height}">
+          <g class="tone-before"><rect x="160" y="2" width="10" height="10" fill="currentColor"></rect><text x="176" y="11">Before</text></g>
+          <g class="tone-after"><rect x="240" y="2" width="10" height="10" fill="currentColor"></rect><text x="256" y="11">Now</text></g>
+          <text x="0" y="{label_y}">{case}</text>
+          <g class="tone-before"><rect x="160" y="{before_bar_y}" width="{before_bar_width}" height="14" fill="currentColor"></rect><text x="{before_label_x}" y="{before_text_y}">{value}</text></g>
+          <g class="tone-after"><rect x="160" y="{after_bar_y}" width="{after_bar_width}" height="14" fill="currentColor"></rect><text x="{after_label_x}" y="{after_text_y}">{value}</text></g>
+        </svg>
+      </div>
+      <figcaption>{scale_and_source}</figcaption>
+    </figure>
+    <div class="wide">
+      <table>
+        <thead><tr><th>{case_label}</th><th>Before ({statistic})</th><th>Now ({statistic})</th></tr></thead>
+        <tbody>
+          <tr><td>{case}</td><td class="num before">{value}</td><td class="num after">{value}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="muted">{what_the_numbers_do_not_cover}</p>
+    <!-- guide: Optional. Profiling or method notes that do not fit the table. -->
+    <ul>
+      <li>{method_note}</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="setup" data-section="build-under-test">
+    <!-- guide: What a tester needs to reach the behavior. Test data by role and size, never credentials or invite codes. -->
+    <span class="eyebrow">Build under test</span>
+    <h2 id="setup">{finding_heading}</h2>
+    <dl class="facts">
+      <dt>Build</dt><dd>{build_type_commit_and_artifact_hash}</dd>
+      <dt>Devices</dt><dd>{devices_and_os_versions}</dd>
+      <dt>Data</dt><dd>{test_data_by_role_and_size}</dd>
+      <dt>Set up off camera</dt><dd>{prepared_state_such_as_granted_permissions}</dd>
+    </dl>
+    <ol>
+      <li>{step_to_reach_the_behavior}</li>
+    </ol>
+  </section>
+
+  <section aria-labelledby="coverage" data-section="coverage">
+    <!-- guide: One row per behavior from the acceptance criteria or the evidence receipt. Expected comes from the acceptance criteria, the ticket, the task's artifacts or notes the user named; otherwise it reads "not in the evidence" and the row cannot pass. Evidence is "+N s after {the action}", a still, captured output or a benchmark result, named as such; a failure a person accepted keeps failed and names the decision and date here, and its owner when the record names one. An untested row says why it was not captured. Result is passed or failed only when the evidence shows it; otherwise untested. -->
+    <span class="eyebrow">Coverage</span>
+    <h2 id="coverage">{finding_heading}</h2>
+    <div class="wide">
+      <table>
+        <thead><tr><th>Behavior</th><th>Expected</th><th>Evidence</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>{behavior}</td><td>{expected}</td><td>{time_after_action_still_or_output}</td><td><span class="chip passed">passed</span></td></tr>
+          <tr><td>{behavior}</td><td>{expected}</td><td>{why_not_captured}</td><td><span class="chip untested">untested</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="code" data-section="where-it-lives">
+    <!-- guide: Keep whenever `git diff` from the merge base shows the change: one row per changed path. Drop it only when no diff is available, and say so under Not shown. -->
+    <span class="eyebrow">Where it lives</span>
+    <h2 id="code">{finding_heading}</h2>
+    <div class="wide">
+      <table>
+        <thead><tr><th>Path</th><th>Role in this change</th></tr></thead>
+        <tbody>
+          <tr><td><code>{path}</code></td><td>{what_changed_there}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <!-- guide: Optional. One short excerpt from the diff when the key decision is easier to read as code. -->
+    <pre><code>{excerpt}</code></pre>
+  </section>
+
+  <section aria-labelledby="by-hand" data-section="test-next">
+    <span class="eyebrow">Test by hand next</span>
+    <h2 id="by-hand">{finding_heading}</h2>
+    <div class="lessons">
+      <div class="lesson">
+        <h3>Not covered by this evidence</h3>
+        <!-- guide: Only methods the evidence or notes give for reaching each untested case; otherwise say its trigger is unknown. -->
+        <ul><li>{how_to_reach_an_untested_case}</li></ul>
+      </div>
+      <div class="lesson">
+        <h3>Regression watch</h3>
+        <!-- guide: From the diff; without one, the screens the evidence shows changing, and the footer says no diff was available. -->
+        <ul><li>{nearby_behavior_the_change_touches}</li></ul>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="scope" data-section="scope">
+    <!-- guide: Drop a column the evidence has nothing for. -->
+    <span class="eyebrow">Scope</span>
+    <h2 id="scope">{finding_heading}</h2>
+    <div class="cols">
+      <div class="lesson"><h3>Shipped</h3><ul><li>{shipped_item}</li></ul></div>
+      <div class="lesson"><h3>Unchanged</h3><ul><li>{unchanged_item}</li></ul></div>
+      <div class="lesson"><h3>Not in this change</h3><ul><li>{excluded_item}</li></ul></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="decisions" data-section="decisions">
+    <!-- guide: Up to four decisions, each with its reason, from a decision record (SKILL.md step 3); never pad to fill the grid. Name who decided only when the record does. -->
+    <span class="eyebrow">Decisions</span>
+    <h2 id="decisions">{finding_heading}</h2>
+    <div class="lessons">
+      <div class="lesson"><h3>{decision}</h3><p>{reason_and_who_decided}</p></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="lessons" data-section="takeaways">
+    <!-- guide: Up to four takeaways, each a finding the footage or numbers support; never pad to fill the grid. -->
+    <span class="eyebrow">What we learned</span>
+    <h2 id="lessons">{finding_heading}</h2>
+    <div class="lessons">
+      <div class="lesson"><h3>{takeaway}</h3><p>{evidence_behind_it}</p></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="open" data-section="open-question">
+    <!-- guide: One open question the evidence raised, with the frame or number that raises it. Drop the image when no frame shows it. Who decides is the role a record names, else the reader this page is for. -->
+    <div class="open">
+      <div class="lesson">
+        <span class="eyebrow">Open question for {who_decides}</span>
+        <h3 id="open">{question_as_finding}</h3>
+        <p>{what_the_evidence_shows_and_what_needs_deciding}</p>
+      </div>
+      <img src="media/{open_question_still}" alt="{what_is_on_screen}" loading="lazy">
+    </div>
+  </section>
+
+  <section aria-labelledby="status" data-section="status">
+    <!-- guide: Stage, next step and owner come from the PR or the user. With no stage or next step in the sources, head this section with the open item, then drop the Open item row and every row you lack. -->
+    <span class="eyebrow">Status</span>
+    <h2 id="status">{where_it_stands}</h2>
+    <dl class="facts">
+      <dt>Stage</dt><dd>{in_review_merged_or_released_as_observed}</dd>
+      <dt>Next</dt><dd>{next_step_and_owner}</dd>
+      <dt>Decision</dt><dd>{recorded_decision_and_date}</dd>
+      <dt>Open item</dt><dd>{one_open_item_or_none}</dd>
+    </dl>
+  </section>
+
+  <section aria-labelledby="limits" data-section="limits">
+    <span class="eyebrow">Limits</span>
+    <h2 id="limits">{finding_heading}</h2>
+    <ul>
+      <li>{not_shown_or_not_proven}</li>
+    </ul>
+  </section>
+
+  <footer class="fine" id="about-evidence" data-section="about-evidence">
+    <!-- guide: Every page ends with these rows. Drop a row the evidence has nothing for, or whose facts the page already states; never drop Not shown. Real also names the moment times count from. Not shown may be a short list. Sources names each local file the user named by file name, then the PR and ticket links. -->
+    <p><strong>{footer_label}</strong></p>
+    <dl class="facts">
+      <dt>Real</dt><dd>{what_is_real_where_and_when_it_was_recorded}</dd>
+      <dt>Builds</dt><dd>{each_build_with_its_role_and_where_its_identity_comes_from}</dd>
+      <dt>Set up</dt><dd>{what_was_prepared_off_camera_or_before_measuring}</dd>
+      <dt>Not shown</dt><dd>{what_the_evidence_does_not_show_and_conflicts_between_sources}</dd>
+      <dt>Sources</dt><dd>{named_files} · <a href="{pr_url}" target="_blank" rel="noopener">{pr_label}</a> · <a href="{ticket_url}" target="_blank" rel="noopener">{ticket}</a></dd>
+    </dl>
+  </footer>
+
+</main>

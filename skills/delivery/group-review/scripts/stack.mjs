@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Resolve a set of related pull or merge requests into an ordered stack with pinned SHAs.
+// Resolve a set of related pull requests into an ordered stack with pinned SHAs.
 // Usage: node stack.mjs --out <stack.json> [--remote origin] <term>...
 import fs from 'node:fs';
 import path from 'node:path';

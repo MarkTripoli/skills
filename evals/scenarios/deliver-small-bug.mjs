@@ -7,6 +7,7 @@ export default {
   slug: "deliver-small-bug",
   title: "Fix the retry backoff cap",
   workflow: "oneshot",
+  covers: ["agent-implementer", "agent-implementation-reviewer", "route-model"],
   fixtures: ["deliver-small-bug"],
   request: `\`backoffDelay\` in \`src/retry.mjs\` ignores its cap: it should double \`baseMs\` per attempt and never exceed \`maxMs\`, and \`npm test\` fails.
 

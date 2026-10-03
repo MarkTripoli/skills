@@ -3,6 +3,7 @@
 // every miss at once.
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { indexFileExists, readArtifactIndex } from "../shared/task-artifacts.mjs";
 import { execFileSync, spawn } from "node:child_process";
@@ -112,7 +113,7 @@ export function templatePlaceholders(templateText) {
 // `[Capitalized ...]` scan: an artifact legitimately carries `[INFERENCE ...]` tags, Mermaid node labels,
 // and link text, and the template's own literals are the placeholders that matter. Not every `{word}`
 // either: a URL template such as `{page_id}` is legitimate excerpt content.
-const TEMPLATE_FIELDS = /\{(artifact_link|artifact_file|summary|plan_file|implementation_command|next_command|review_check|known_limits|needed|completed_phase|next_phase|task_dir|child_slug|child_issue|child_start_command|report_link)\}/g;
+const TEMPLATE_FIELDS = /\{(artifact_link|artifact_file|summary|source_file|implementation_command|next_command|review_check|known_limits|needed|completed_phase|next_phase|task_dir|child_slug|child_issue|child_start_command|report_link)\}/g;
 export function placeholders(text, templateText = "") {
   const literals = templatePlaceholders(templateText).filter((literal) => text.includes(literal));
   const fields = [...text.matchAll(TEMPLATE_FIELDS)].map((m) => m[0]);
@@ -218,3 +219,57 @@ export function ompArgs({ prompt, sessionDir = null, maxMinutes, model = null })
   return ["-p", "--auto-approve", "--no-skills", "--mode", "json", ...(sessionDir ? ["--session-dir", sessionDir] : ["--no-session"]), `--max-time=${maxMinutes}m`, ...(model !== null ? ["--model", model] : []), prompt];
 }
 
+// A scenario or phase may set `stubs: { <command>: "<sh body>" }`. Each becomes an executable first on PATH that appends
+// "<command> <args>" (one line per call, newlines inside an argument folded to spaces) to `stub-calls.log` in the phase's
+// result directory. The body can append diagnostic state through the quoted shell variable `stub_log` and exit with any code.
+// Checks read the log as `ctx.stubCalls`, live or re-graded, so a refusal can be graded by the calls that never happened.
+export function writeStubs(stubs, logFile) {
+  if (!stubs || !Object.keys(stubs).length) return null;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "skills-eval-stubs-"));
+  const quote = value => `'${value.replace(/'/g, "'\\''")}'`;
+  for (const [name, body] of Object.entries(stubs)) {
+    fs.writeFileSync(path.join(dir, name), `#!/bin/sh\nstub_log=${quote(logFile)}\n{ printf '%s' "${name} $*" | tr '\\n' ' '; echo; } >> "$stub_log"\n${body}\n`, { mode: 0o755 });
+  }
+  return dir;
+}
+
+export function stubCalls(out) {
+  const file = path.join(out, "stub-calls.log");
+  return fs.existsSync(file) ? fs.readFileSync(file, "utf8").split("\n").filter(Boolean) : [];
+}
+
+// True when a logged `glab`/`gh` call writes to the host: an `api` call with a method other than GET, or with a body flag
+// (`-f -F --field --raw-field --form --input`) and no explicit GET (the clients default to POST then), or a create/update/
+// note/merge/approve/close/review/comment subcommand. Every scenario that grades "nothing posted" uses this one detector.
+export function isHostWrite(call) {
+  const m = /^(glab|gh)\s+(.*)$/s.exec(call.trim());
+  if (!m) return false;
+  const rest = m[2];
+  if (/^(?:-\S+\s+)*api\b/.test(rest)) {
+    const method = /(?:--method|-X)[ =]*([A-Za-z]+)/.exec(rest)?.[1]?.toUpperCase();
+    if (method) return method !== "GET";
+    return /(?:^|\s)(?:-f|-F|--field|--raw-field|--form|--input)(?=[\s=]|$)/.test(rest);
+  }
+  return /(?:^|\s)(?:mr|pr|issue)\s+(?:create|update|edit|note|comment|merge|approve|close|review|reopen)\b/.test(rest);
+}
+
+// The environment of one phase session: the isolated base, then PATH ordered stubs, omp shim, isolated stubs; `unsetEnv` removes every
+// matching name; `overrides` ({ NAME: value | null }) wins last. Pure over `base`, so one phase's environment never reaches another's.
+export function sessionEnv(base, { shim = null, stubDir = null, unsetEnv = null, overrides = {} } = {}) {
+  const env = { ...base };
+  if (shim) env.PATH = [shim, env.PATH].join(path.delimiter);
+  if (stubDir) env.PATH = [stubDir, env.PATH].join(path.delimiter);
+  // Isolation owns SLACK_* and PATH: no pattern removes them.
+  for (const pattern of [unsetEnv].flat().filter(Boolean)) for (const name of Object.keys(env)) if (pattern.test(name) && !/^(?:SLACK_|PATH$)/i.test(name)) delete env[name];
+  for (const [name, value] of Object.entries(overrides)) {
+    if (/^PATH$/i.test(name)) throw new Error("scenario env may not set PATH; use stubs");
+    // Isolation hides the operator's Slack; a scenario override may not hand it back.
+    if (/^SLACK_/i.test(name)) throw new Error(`scenario env may not set ${name}; Slack stays isolated`);
+    value === null ? delete env[name] : (env[name] = value);
+  }
+  return env;
+}
+
+// Stub-host phases receive no operator GitHub/GitLab token or config, even when a real host client is invoked by absolute path.
+// Every ssh git transport fails instead of using the operator's key.
+export const NO_HOST = { unsetEnv: /^(?:GITLAB_|GLAB_|GITHUB_|GH_)/, env: { GLAB_CONFIG_DIR: "/nonexistent-glab-config", GH_CONFIG_DIR: "/nonexistent-gh-config", GIT_SSH_COMMAND: "false" } };

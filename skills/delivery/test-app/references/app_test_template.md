@@ -5,7 +5,7 @@ summary: "[Two to four sentences: what was tested and on which surface, the stat
 status: passed | failed | blocked
 kind: web | ios | android
 target: "[URL, bundle id, package, or path launched; empty when blocked before launch]"
-revision: "[exact contract source fingerprint]"
+revision: [the quoted string that contract.mjs revision <task-dir> prints]
 ---
 
 # App Test

@@ -118,6 +118,42 @@ test("a selected skill installs and uninstalls independently in every target", (
   }
 });
 
+for (const target of ["portable", "oh-my-pi"]) {
+  test(`selected babysit ships usable proof helpers and preserves ownership for ${target}`, () => {
+    const home = tmpdir("babysit-home-");
+    const cwd = tmpdir("babysit-consumer-");
+    const options = { targets: [target], skillNames: ["babysit"], project: true, cwd, home, env };
+    const skillDir = destinations(target, options).skills;
+    const foreign = path.join(skillDir, "foreign", "sentinel");
+    const taskDir = path.join(cwd, ".agents", "tasks", "existing");
+    const task = "---\nslug: existing\ntitle: Repair existing behavior\nworkflow: oneshot\ncreated: 2026-09-30\n---\nRepair existing behavior.\n";
+    put(foreign, "unrelated skill\n");
+    put(path.join(taskDir, "task.md"), task);
+    install({ ...options, skillNames: ["record-evidence"] });
+    const recorderPath = path.join(skillDir, "record-evidence", "scripts", "evidence.py");
+    const recorder = fs.readFileSync(recorderPath);
+    const selected = install(options);
+    const required = ["agent-slack-control-plane", "babysit", "describe-pr", "deliver", "iterate-evidence", "jira-issue-refinement", "record-evidence", "resolve-pr-reviews", "review-code", "route-model", "slack-coordinator", "test-app", "typed-judgment", "verify-implementation"];
+    assert.deepEqual(fs.readdirSync(skillDir).sort(), [...required, "foreign"].sort());
+    const linkedSkills = path.join(cwd, "installed-skills");
+    fs.symlinkSync(skillDir, linkedSkills, "dir");
+    const probe = spawnSync(process.execPath, [path.join(linkedSkills, "deliver", "contract.mjs"), "status", taskDir], { cwd, env: { PATH: "" }, encoding: "utf8" });
+    assert.equal(probe.status, 0, probe.stderr);
+    assert.ok(probe.stdout.trim(), "installed status CLI must execute through symlinked paths");
+    const status = JSON.parse(probe.stdout);
+    assert.ok(status.missing.some(item => /baseline|evidence|policy/i.test(item)), "absent proof must remain a publication gate");
+    assert.ok(fs.existsSync(path.join(skillDir, "iterate-evidence", "references", "inspection_acceptance.md")));
+    const agents = path.join(cwd, ".omp", "agents");
+    assert.deepEqual(fs.existsSync(agents) ? fs.readdirSync(agents).map((f) => f.replace(/\.md$/, "")).filter((n) => n !== "agent-slack-control-plane") : [], [], "inline installation needs no worker definitions beyond the Slack scripts' owner");
+    uninstall(selected, home);
+    assert.equal(fs.existsSync(path.join(skillDir, "babysit")), false);
+    assert.deepEqual(fs.readFileSync(recorderPath), recorder);
+    assert.equal(fs.readFileSync(foreign, "utf8"), "unrelated skill\n");
+    assert.equal(fs.readFileSync(path.join(taskDir, "task.md"), "utf8"), task);
+    for (const name of required.filter(name => name !== "babysit")) assert.ok(fs.existsSync(path.join(skillDir, name)), `${name} remains available to other consumers`);
+  });
+}
+
 test("partial Codex worker changes preserve other skills and worker configuration", () => {
   const home = tmpdir();
   const configFile = path.join(home, ".codex", "config.toml");
@@ -136,6 +172,12 @@ test("partial Codex worker changes preserve other skills and worker configuratio
   assert.ok(fs.existsSync(path.join(home, ".codex", "agents", "agent-codebase-analyzer.toml")));
   uninstall(full, home);
   assert.equal(fs.readFileSync(configFile, "utf8"), 'model = "gpt-5"\n');
+});
+
+test("deliver installs the Slack scripts its blocker page runs", () => {
+  const home = tmpdir();
+  install({ targets: ["portable"], skillNames: ["deliver"], cwd: home, home, env });
+  assert.ok(fs.existsSync(path.join(destinations("portable", { home, env }).skills, "agent-slack-control-plane", "scripts", "slack-post.sh")));
 });
 
 test("deliver installs its companions without unrelated worker removal", () => {
@@ -159,6 +201,19 @@ test("deliver installs its companions without unrelated worker removal", () => {
   }
 });
 
+test("typed-judgment installs with the four skills that use it and, through route-model, with deliver", () => {
+  for (const name of ["verify-implementation", "review-code", "test-app", "resolve-pr-reviews"]) {
+    const home = tmpdir();
+    const skillDir = destinations("portable", { home, env }).skills;
+    install({ targets: ["portable"], skillNames: [name], cwd: home, home, env });
+    assert.ok(fs.existsSync(path.join(skillDir, "typed-judgment", "SKILL.md")), `${name} installs typed-judgment`);
+  }
+  const home = tmpdir();
+  const skillDir = destinations("portable", { home, env }).skills;
+  install({ targets: ["portable"], skillNames: ["deliver"], cwd: home, home, env });
+  assert.ok(fs.existsSync(path.join(skillDir, "typed-judgment", "SKILL.md")), "deliver installs typed-judgment through route-model");
+});
+
 test("managed config edits preserve surrounding user configuration", () => {
   const original = 'model = "gpt-5"\n';
   const first = updateConfigBlock(original, '[agents.a]\nconfig_file = "./agents/a.toml"\n');
@@ -172,10 +227,12 @@ test("managed config edits preserve surrounding user configuration", () => {
 
 
 
-test("route-model installs independently and falls back economically without typed-judgment", async () => {
+test("route-model installs typed-judgment beside it and falls back economically without it", async () => {
   const home = tmpdir();
   const planned = install({ targets: ["portable"], skillNames: ["route-model"], cwd: home, home, env });
   const skillDir = path.join(home, ".agents", "skills");
+  assert.ok(fs.existsSync(path.join(skillDir, "typed-judgment", "judge.mjs")));
+  fs.rmSync(path.join(skillDir, "typed-judgment"), { recursive: true });
   const route = await import(`${pathToFileURL(path.join(skillDir, "route-model", "route-model.mjs")).href}?standalone=${Date.now()}`);
   const result = await route.routeModel(skillDir, { phase: "create-plan", economy: "cheap", candidates: [{ model: "cheap", cost: 1, description: "ordinary" }, { model: "strong", cost: 2, description: "reasoning" }] });
   assert.equal(result.model, "cheap");
@@ -184,6 +241,13 @@ test("route-model installs independently and falls back economically without typ
   uninstall(planned, home);
 });
 
+test("configure-model-routing installs route-model and typed-judgment with its script", () => {
+  const home = tmpdir();
+  const planned = install({ targets: ["portable"], skillNames: ["configure-model-routing"], cwd: home, home, env });
+  const skillDir = path.join(home, ".agents", "skills");
+  for (const file of ["configure-model-routing/scripts/write-profile.mjs", "route-model/route-model.mjs", "typed-judgment/judge.mjs"]) assert.ok(fs.existsSync(path.join(skillDir, file)), file);
+  uninstall(planned, home);
+});
 
 test("selected jev-ui installs as a portable consumer outside the repository", async () => {
   const home = tmpdir("jev-ui-install-test-");
@@ -292,4 +356,27 @@ test("optional OMP publication hook installs a self-contained guarded entry only
     assert.equal(fs.existsSync(entry), false);
     assert.equal(fs.readFileSync(foreign, "utf8"), "keep\\n");
   }
+});
+
+test("shortDescription cuts every real skill description at a word boundary", async () => {
+  const { shortDescription } = await import("../scripts/lib/build.mjs");
+  const { scanSkills } = await import("../scripts/lib/layout.mjs");
+  const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+  for (const { dir, name } of scanSkills(path.join(root, "skills")).skills) {
+    const description = /^description:\s*(.*)$/m.exec(fs.readFileSync(path.join(dir, "SKILL.md"), "utf8"))[1].trim();
+    const short = shortDescription(description);
+    assert.ok(short.length <= 80, `${name}: ${short.length} chars`);
+    if (short.endsWith("…")) {
+      const full = description.replace(/^(["'])(.*)\1$/, "$2").replace(/^Child worker role that (\w)/, (_, c) => c.toUpperCase());
+      assert.match(full.slice(short.length - 1), /^\s/, `${name}: cut mid-word: ${short}`);
+    }
+  }
+});
+
+test("shortDescription strips YAML quotes and the worker-role prefix", async () => {
+  const { shortDescription } = await import("../scripts/lib/build.mjs");
+  assert.equal(shortDescription('"Creates a plan. Use when asked."'), "Creates a plan.");
+  assert.equal(shortDescription("Child worker role that locates files. Use when delegated."), "Locates files.");
+  assert.equal(shortDescription("Run for /x requests. Do it."), "Run for /x requests.");
+  assert.equal(shortDescription("Explains how one focused area of the current codebase works, tracing entry points and callers. Use when asked."), "Explains how one focused area of the current codebase works, tracing entry…");
 });

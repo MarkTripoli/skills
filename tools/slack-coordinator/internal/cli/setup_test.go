@@ -5,23 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/MarkTripoli/skills/tools/slack-coordinator/internal/config"
 )
 
-func TestKeepExistingBlocksPreservesAgent(t *testing.T) {
-	cfg := &config.Config{Slack: config.Slack{BotToken: "xoxb-1", AppToken: "xapp-1", OwnerUserID: "U1"}}
-	existing := &config.Config{Agent: &config.Agent{Command: "pi", Approval: "full", Timeout: time.Minute, MaxRunsPerHour: 4}}
-	keepExistingBlocks(cfg, existing)
-	if cfg.Agent == nil || cfg.Agent.Command != "pi" || cfg.Agent.Approval != "full" {
-		t.Fatalf("agent = %+v, want the existing pi block", cfg.Agent)
-	}
-}
-
-// Partial Jira settings fail before setup touches Slack, so a half-typed
-// configuration never writes config.yaml. The error text is asserted because
-// a check placed after auth.test would surface as a token rejection instead.
 func TestSetupRequiresEveryJiraSettingOrNone(t *testing.T) {
 	t.Setenv("SLACK_BOT_TOKEN", "xoxb-1")
 	t.Setenv("SLACK_APP_TOKEN", "xapp-1")
