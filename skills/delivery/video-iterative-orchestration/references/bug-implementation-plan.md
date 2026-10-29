@@ -18,7 +18,7 @@ Uncertainty: <material unresolved choice or risk, only when present>
 
 Do not require file lists, test commands or an unproved root cause in this owner-facing proposal. The orchestrator checks it against the ticket contract before presenting it. A proposal that changes scope or expected behavior first becomes a recorded decision request.
 
-Save each revision with exclusive creation under the ignored orchestration `plans/<bug-key>/<revision>.md` directory; never overwrite a prior proposal. In indexed tasks register it as a current `plan` in `design.plan`, with the exact proposal digest, source/contract receipt, adopted head and dirty-diff fingerprint. Preserve earlier approvals and rejections as immutable decisions rather than editing their historical records.
+In indexed tasks allocate and register each revision as the current `plan` in canonical `planning.plan`, at `artifacts/planning/plan/NNNN.md` within the task directory. Follow the immutable artifact contract; never overwrite a recorded proposal or register a series alias. Only genuinely unindexed legacy tasks save revisions with exclusive creation under the ignored orchestration `plans/<bug-key>/<revision>.md` directory. Bind the exact proposal digest, source/contract receipt, adopted head and dirty-diff fingerprint. Preserve earlier approvals and rejections as immutable decisions rather than editing their historical records.
 
 ## Present every arrival immediately
 

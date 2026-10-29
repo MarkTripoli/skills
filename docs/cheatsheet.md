@@ -41,6 +41,8 @@ node scripts/install-updater.mjs --uninstall
 
 Runs at 23:00 local time through macOS launchd or Linux user systemd. Repeat `--skill` for more names; `--skill '*'` deliberately selects the whole collection. For project scope, run the script by absolute path from the consumer checkout with `--project`. Re-enabling replaces the single saved selection. Runtime/model environment overrides and the selection live in `config.json` under `${XDG_STATE_HOME:-~/.local/state}/marktripoli-skills`; `--state-dir` chooses another external directory. It installs no team policy or instruction loader. After abrupt termination, confirm no updater is running before removing a stale `update.lock`.
 
+Reconfiguration and removal check locks in both the installed and requested state directories. Updates fetch the advertised fully qualified release tag and verify its object and checked-out commit before running the installer; failed verification leaves the previous success marker unchanged.
+
 
 ### Configure model routing
 

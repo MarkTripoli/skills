@@ -14,7 +14,7 @@ import (
 
 // Remote is a remote host reached by running Command (which speaks the remote protocol).
 type Remote struct {
-	// Name prefixes the remote's device ids as "<name>/<id>"; it must not contain "/".
+	// Name uniquely prefixes this remote's device ids as "<name>/<id>"; it must not contain "/".
 	Name    string   `toml:"name"`
 	Command []string `toml:"command"`
 	// Label is shown as the machine badge instead of Name.
@@ -44,10 +44,15 @@ func Parse(text string) (Config, error) {
 	if c.MaxFPS <= 0 {
 		c.MaxFPS = 15
 	}
+	names := make(map[string]struct{}, len(c.Remotes))
 	for _, r := range c.Remotes {
 		if r.Name == "" || strings.Contains(r.Name, "/") {
 			return Config{}, fmt.Errorf("remote name %q must be non-empty and contain no /", r.Name)
 		}
+		if _, exists := names[r.Name]; exists {
+			return Config{}, fmt.Errorf("duplicate remote name %q", r.Name)
+		}
+		names[r.Name] = struct{}{}
 		if len(r.Command) == 0 {
 			return Config{}, fmt.Errorf("remote %q has no command", r.Name)
 		}

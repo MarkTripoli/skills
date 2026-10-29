@@ -407,6 +407,7 @@ function addTile(id) {
 }
 
 function removeTile(t) {
+  setControl(t, false);
   t.removed = true;
   wsSend({ op: "unsub", id: t.id });
   t.img.removeAttribute("src");
@@ -450,6 +451,7 @@ function wsConnect() {
   };
   ws.onclose = () => {
     wsOpen = false;
+    for (const t of tiles.values()) clearInput(t, false);
     for (const [seq, a] of acks) { clearTimeout(a.timer); a.done({ ok: false, err: "disconnected" }); acks.delete(seq); }
     for (const t of tiles.values()) tstat(t, "reconnecting", "bad");
     setTimeout(wsConnect, backoff);
@@ -490,6 +492,7 @@ function frameDone(t, ok) {
 
 function setControl(t, on) {
   t.control = on;
+  if (!on) clearInput(t, true);
   t.modeBtn.innerHTML = (on ? ICON.tap + "Control" : ICON.eye + "Watch");
   t.modeBtn.title = on ? "Your clicks and keys go to the device. Click to stop." : "Watching only. Click to take control.";
   t.modeBtn.setAttribute("aria-pressed", String(on));
@@ -504,9 +507,19 @@ function activate(t) {
   for (const x of tiles.values()) x.el.classList.toggle("active", x === t && x.control);
 }
 
+// Abandon queued actions on Watch, removal or disconnect. Only a pointer already
+// sent to the device needs an up, sent on the same socket before unsubscribe.
+function clearInput(t, release) {
+  t.queue.length = 0;
+  t.down = false;
+  const held = t.held;
+  t.held = null;
+  if (release && held && wsOpen) wsInput(t, { type: "up", ...held });
+}
+
 // Input goes in order, one request at a time per tile; queued moves collapse to the latest.
 function send(t, ev) {
-  if (!t.control) return;
+  if (!t.control || t.removed || !wsOpen) return;
   const last = t.queue[t.queue.length - 1];
   if (ev.type === "move" && last && last.type === "move") t.queue[t.queue.length - 1] = ev;
   else t.queue.push(ev);
@@ -515,6 +528,8 @@ function send(t, ev) {
 function wsInput(t, ev) {
   return new Promise((done) => {
     if (!wsOpen) return done({ ok: false, err: "not connected" });
+    if (ev.type === "down" || (ev.type === "move" && t.held)) t.held = { x: ev.x, y: ev.y };
+    else if (ev.type === "up") t.held = null;
     const seq = ++inSeq;
     // One hung device must not block the tile: give up after 10 s and carry on with the queue.
     const timer = setTimeout(() => { acks.delete(seq); done({ ok: false, err: "no answer in 10 s" }); }, 10000);
@@ -525,8 +540,9 @@ function wsInput(t, ev) {
 async function pump(t) {
   if (t.pumping) return;
   t.pumping = true;
-  while (t.queue.length) {
+  while (t.control && !t.removed && wsOpen && t.queue.length) {
     const r = await wsInput(t, t.queue.shift());
+    if (!t.control || t.removed || !wsOpen) break;
     if (!r.ok) {
       const why = String(r.err || "refused").slice(0, 80);
       tstat(t, "input failed: " + why, "bad");

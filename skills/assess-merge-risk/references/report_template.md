@@ -4,7 +4,7 @@
 
 | # | What users would see | Who | Severity | Reach | Level | Evidence | Intent |
 |---|---|---|---|---|---|---|---|
-| 1 | {outcome in user terms} | {screens, journeys or clients} | {S1-S4} | {Narrow, Feature or Wide} | {High, Medium or Low, then each adjustment key in parentheses, e.g. `Medium (down: flag)`} | {`path:line` of the change and of each affected consumer} | {Specified (<source>), Stated (<source>), Contradicts (<source>) or Unexplained} |
+| 1 | {outcome in user terms} | {screens, journeys or clients} | {S1-S4} | {Narrow, Feature or Wide} | {High, Medium or Low, then each adjustment key in parentheses, e.g. `Medium (down: flag)`} | {repository-relative `path:line` of the change and of each affected consumer; filenames need not have extensions} | {Specified (<source>), Stated (<source>), Contradicts (<source>) or Unexplained} |
 
 Intent: {one sentence on what the change means to change for users}. Read: {each source read: ticket key, artifact or doc path, page link}. Not available: {sources looked for and not found or not readable, or "None."}
 

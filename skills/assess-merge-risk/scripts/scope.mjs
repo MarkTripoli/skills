@@ -5,6 +5,7 @@
 // stays clean and a later session finds the report it is answering.
 // Usage: node scope.mjs <source> [--target <branch>] [--json]   (run inside the repository; reads only, writes nothing)
 
+import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -137,7 +138,17 @@ export function format(s) {
   return out.join("\n");
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  let entrypoint;
+  try { entrypoint = fs.realpathSync(process.argv[1]); }
+  catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return false;
+    throw error;
+  }
+  return entrypoint === fs.realpathSync(fileURLToPath(import.meta.url));
+})();
+if (isMain) {
   const args = process.argv.slice(2);
   const at = args.indexOf("--target");
   const target = at === -1 ? undefined : args[at + 1];

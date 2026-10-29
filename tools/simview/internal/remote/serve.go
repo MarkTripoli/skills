@@ -56,6 +56,10 @@ func Serve(ctx context.Context, r io.Reader, w io.Writer, local Local, opt Serve
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// EOF cancels device operations independently of the request loop. Keep the
+	// writer's context separate so replies already queued can still drain.
+	requestCtx, stopRequests := context.WithCancel(ctx)
+	defer stopRequests()
 	// Frames and control messages (responses, logs) queue separately and the writer prefers
 	// control, so a full frame queue behind a slow writer never stalls the request loop.
 	out := make(chan []byte, 8)
@@ -165,42 +169,44 @@ func Serve(ctx context.Context, r io.Reader, w io.Writer, local Local, opt Serve
 	}()
 
 	// Reading blocks, so it runs on its own goroutine and ctx can end the loop.
-	type read struct {
-		m   Message
-		err error
-	}
-	reads := make(chan read)
+	// A terminal read must not wait behind a synchronous connect or input.
+	reads := make(chan Message)
+	readEnd := make(chan error, 1)
 	go func() {
 		for {
 			m, err := ReadMessage(r)
-			select {
-			case reads <- read{m, err}:
-			case <-ctx.Done():
+			if err != nil {
+				readEnd <- err
+				stopRequests()
 				return
 			}
-			if err != nil {
+			select {
+			case reads <- m:
+			case <-ctx.Done():
 				return
 			}
 		}
 	}()
 	for {
-		var rd read
+		var m Message
 		select {
-		case rd = <-reads:
+		case m = <-reads:
+		case err := <-readEnd:
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
 		case <-ctx.Done():
 			return ctx.Err()
 		}
-		if errors.Is(rd.err, io.EOF) {
-			return nil
-		}
-		if rd.err != nil {
-			return rd.err
-		}
 		// Clients send only requests; anything else is ignored rather than fatal.
-		if rd.m.Kind != KindReq {
+		if m.Kind != KindReq {
 			continue
 		}
-		resp := handle(ctx, local, opt, &act, stopActive, send, sendOn, *rd.m.Req)
+		resp := handle(requestCtx, local, opt, &act, stopActive, send, sendOn, *m.Req)
 		send(Message{Kind: KindResp, Resp: &resp})
 	}
 }
@@ -312,29 +318,55 @@ type connectResult struct {
 	err error
 }
 
-// connectWithin bounds local.Connect: a backend that ignores its context cannot hold the
-// request loop past d; a session that arrives late is closed.
+// connectWithin bounds local.Connect. Cancellation gives a cooperative backend a
+// short cleanup window; a backend that ignores its context cannot hold the request
+// loop indefinitely, and any session it returns later is closed.
 func connectWithin(ctx context.Context, local Local, id string, d time.Duration) (device.Session, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	cctx, cancel := context.WithTimeout(ctx, d)
-	ch := make(chan connectResult, 1)
+	defer cancel()
+	ch := make(chan connectResult)
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		s, err := local.Connect(cctx, id)
-		ch <- connectResult{s, err}
+		select {
+		case ch <- connectResult{s, err}:
+		case <-cctx.Done():
+			if s != nil {
+				s.Close()
+			}
+		}
 	}()
+	connectError := func() error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("connecting %s took longer than %s", id, d)
+	}
 	select {
 	case r := <-ch:
-		cancel()
-		return r.s, r.err
-	case <-cctx.Done():
-		go func() {
-			defer cancel()
-			if r := <-ch; r.err == nil && r.s != nil {
+		// Receiving a result and cancellation can both be ready. Ownership has
+		// transferred to us, so do not leave a session open in that race.
+		if cctx.Err() != nil {
+			if r.s != nil {
 				r.s.Close()
 			}
-		}()
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, connectError()
 		}
-		return nil, fmt.Errorf("connecting %s took longer than %s", id, d)
+		return r.s, r.err
+	case <-cctx.Done():
+		// Let context-aware Connect finish releasing its pending resources before
+		// Serve returns and a stdio child exits. Non-cooperative backends remain
+		// responsible for the late result in the goroutine above.
+		timer := time.NewTimer(pipeDrainTimeout)
+		defer timer.Stop()
+		select {
+		case <-done:
+		case <-timer.C:
+		}
+		return nil, connectError()
 	}
 }

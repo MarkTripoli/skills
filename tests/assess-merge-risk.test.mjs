@@ -225,6 +225,45 @@ test("check-report CLI reads files from the merged tree or the merge base", () =
   assert.match(usage.stderr, /--tree and --base are required/);
 });
 
+test("check-report validates extensionless root and nested citations against pinned files", () => {
+  const dir = repo();
+  const sources = { Dockerfile: 10, Makefile: 5, Gemfile: 2, entrypoint: 4, "bin/launch": 3 };
+  for (const [file, length] of Object.entries(sources)) write(dir, file, "source\n".repeat(length));
+  git(dir, "add", ...Object.keys(sources));
+  git(dir, "commit", "-q", "-m", "test: extensionless sources");
+  const s = scope(dir, "feat", "main");
+  const counted = lineCounter(dir, [s.mergedTree, s.mergeBase]);
+  const problems = (evidence, intent = "Stated (MR description)") => checkReport(report("Low", row(1, "S1", "Narrow", "Low", evidence, intent)), counted);
+  for (const [file, length] of Object.entries(sources)) {
+    assert.deepEqual(problems(`${file}:${length}`), [], file);
+    assert.deepEqual(problems(`\`${file}:1-${length}\``), [], file);
+    assert.deepEqual(problems("`Dockerfile:10`", `Specified (\`${file}:1\`)`), [], file);
+    for (const citation of [`${file}:${length + 1}`, `${file}:1-${length + 1}`]) {
+      assert.deepEqual(problems(`\`${citation}\``), [`finding 1: ${file}:${length + 1} is past the end of the file (${length} lines)`]);
+    }
+  }
+  write(dir, "staged-only", "not in the pinned trees\n");
+  git(dir, "add", "staged-only");
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "merge-risk-extensionless-"));
+  temps.push(outside);
+  write(outside, "private", "not repository evidence\n");
+  fs.symlinkSync(path.join(outside, "private"), path.join(dir, "escaped"));
+  for (const file of ["missing", "bin/missing", "staged-only", "escaped", path.join(outside, "private"), path.relative(dir, path.join(outside, "private"))]) {
+    const expected = [`finding 1: ${file} is in neither the merged tree, the merge base nor the working tree`];
+    assert.deepEqual(problems(`\`${file}:1\``), expected);
+    assert.deepEqual(problems("`Dockerfile:10`", `Contradicts (\`${file}:1\`)`), expected);
+  }
+});
+
+test("check-report treats a cue timestamp in Evidence as no citation, not a phantom file", () => {
+  const onlyReal = (file) => (file === "src/app.ts" ? 25 : null);
+  const problems = (evidence) => checkReport(report("Low", row(1, "S1", "Narrow", "Low", evidence)), onlyReal);
+  // A real path plus a `1:20-1:25` cue: the digits must not resolve as a file named `1`.
+  assert.deepEqual(problems("`src/app.ts:10` (cue 1:20-1:25)"), []);
+  // Evidence with ONLY a bare timestamp still trips the missing-citation check, not a phantom file.
+  assert.deepEqual(problems("seen at 23:00"), ["finding 1: Evidence cites no path:line"]);
+});
+
 test("citations use pinned source and reject tracked-only, escaping and symlinked working files", () => {
   const dir = repo();
   const s = scope(dir, "feat", "main");
@@ -266,6 +305,41 @@ test("CLI prints a summary, JSON with --json, and exits 1 with the cause on a ba
   const bad = spawnSync(process.execPath, [script, "nope"], { cwd: dir, encoding: "utf8" });
   assert.equal(bad.status, 1);
   assert.match(bad.stderr, /"nope" does not name a commit/);
+});
+
+test("CLI gates execute through symlinked skill directories and script files", () => {
+  const dir = repo();
+  const s = scope(dir, "feat", "main");
+  const linkedSkill = path.join(dir, "linked-skill");
+  fs.symlinkSync(path.dirname(path.dirname(script)), linkedSkill, "dir");
+  const linkedScope = path.join(dir, "scope-link.mjs");
+  const linkedChecker = path.join(dir, "check-report-link.mjs");
+  fs.symlinkSync(script, linkedScope, "file");
+  fs.symlinkSync(checker, linkedChecker, "file");
+  const validReport = path.join(dir, ".git", "valid-report.md");
+  const invalidReport = path.join(dir, ".git", "invalid-report.md");
+  fs.writeFileSync(validReport, report("Low", row(1, "S1", "Narrow", "Low", "`guide.md:4`")));
+  fs.writeFileSync(invalidReport, report("Low", row(1, "S1", "Narrow", "Low", "`guide.md:99`")));
+  for (const [scopeCli, checkerCli] of [
+    [path.join(linkedSkill, "scripts", "scope.mjs"), path.join(linkedSkill, "scripts", "check-report.mjs")],
+    [linkedScope, linkedChecker],
+  ]) {
+    const scoped = spawnSync(process.execPath, [scopeCli, "feat", "--target", "main", "--json"], { cwd: dir, encoding: "utf8" });
+    assert.equal(scoped.status, 0, scoped.stderr);
+    const result = JSON.parse(scoped.stdout);
+    assert.equal(result.sourceSha, s.sourceSha);
+    assert.equal(result.mergedTree, s.mergedTree);
+    assert.deepEqual(result.conflicts, ["src/styles/global.css"]);
+    const badRef = spawnSync(process.execPath, [scopeCli, "nope", "--target", "main"], { cwd: dir, encoding: "utf8" });
+    assert.equal(badRef.status, 1);
+    assert.match(badRef.stderr, /scope: "nope" does not name a commit/);
+    const ok = spawnSync(process.execPath, [checkerCli, validReport, "--tree", s.mergedTree, "--base", s.mergeBase], { cwd: dir, encoding: "utf8" });
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.equal(ok.stdout.trim(), "ok");
+    const bad = spawnSync(process.execPath, [checkerCli, invalidReport, "--tree", s.mergedTree, "--base", s.mergeBase], { cwd: dir, encoding: "utf8" });
+    assert.equal(bad.status, 1);
+    assert.match(bad.stderr, /check-report: finding 1: guide\.md:99 is past the end of the file \(4 lines\)/);
+  }
 });
 
 test("eval grader reads the level and requires the side-effect pages", () => {

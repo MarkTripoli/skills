@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const object = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const text = (value) => typeof value === "string" && value.trim().length > 0;
@@ -66,7 +66,17 @@ export function validateAssignment(assignment, stage = "implementation") {
   return result("ready");
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  let entrypoint;
+  try { entrypoint = fs.realpathSync(process.argv[1]); }
+  catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return false;
+    throw error;
+  }
+  return entrypoint === fs.realpathSync(fileURLToPath(import.meta.url));
+})();
+if (isMain) {
   const [file, stage = "implementation"] = process.argv.slice(2);
   if (!file) {
     console.error("usage: validate-assignment.mjs <assignment.json> [implementation|runtime]");

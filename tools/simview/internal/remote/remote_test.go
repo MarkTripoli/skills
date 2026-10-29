@@ -122,9 +122,18 @@ func fakeServe(mode string) int {
 		}
 		time.Sleep(time.Minute)
 		return 0
-	case "cleanup":
+	case "cleanup", "cleanup-connect", "cleanup-input":
 		local := &fakeLocal{}
+		var backend Local = local
+		if mode != "cleanup" {
+			backend = &shutdownLocal{
+				fakeLocal: local, operation: strings.TrimPrefix(mode, "cleanup-"),
+				started: func() { os.WriteFile(os.Getenv("SIMVIEW_FAKE_READYFILE"), []byte("started"), 0o600) },
+			}
+		}
 		defer func() {
+			local.mu.Lock()
+			defer local.mu.Unlock()
 			for _, s := range local.sessions {
 				select {
 				case <-s.closed:
@@ -134,7 +143,7 @@ func fakeServe(mode string) int {
 			}
 			os.WriteFile(os.Getenv("SIMVIEW_FAKE_CLEANUPFILE"), []byte("cleaned"), 0o600)
 		}()
-		if err := Serve(context.Background(), os.Stdin, os.Stdout, local, ServeOptions{}); err != nil {
+		if err := Serve(context.Background(), os.Stdin, os.Stdout, backend, ServeOptions{}); err != nil {
 			return 5
 		}
 		// EOF on stdout must not make the reader kill us during deferred cleanup.

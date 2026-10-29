@@ -31,8 +31,14 @@ export function compareTags(a, b) {
   for (let i = 0; i < 3; i++) if (left[i] !== right[i]) return left[i] - right[i];
   return 0;
 }
+function latestRelease(output) {
+  return output.split('\n').map(line => {
+    const match = /^([0-9a-f]{40}(?:[0-9a-f]{24})?)\s+refs\/tags\/(\S+)\s*$/.exec(line);
+    return match && parseTag(match[2]) ? { tag: match[2], object: match[1] } : null;
+  }).filter(Boolean).sort((a, b) => compareTags(a.tag, b.tag)).pop() ?? null;
+}
 export function latestTag(output) {
-  return output.split('\n').map(line => line.split('refs/tags/')[1]?.trim()).filter(tag => tag && parseTag(tag)).sort(compareTags).pop() ?? null;
+  return latestRelease(output)?.tag ?? null;
 }
 
 export function parseArgs(argv, { cwd = process.cwd(), env = process.env } = {}) {
@@ -120,8 +126,9 @@ export async function update(options = {}) {
   if (project && !fs.statSync(cwd).isDirectory()) throw new Error(`project directory not found: ${cwd}`);
   const dir = checkState(options.dir ?? stateDir(env));
   const exec = options.exec ?? run;
-  const tag = latestTag(exec('git', ['ls-remote', '--tags', '--refs', '--', remote], { env }));
-  if (!tag) return 'skills: no release tag found; nothing to install';
+  const release = latestRelease(exec('git', ['ls-remote', '--tags', '--refs', '--', remote], { env }));
+  if (!release) return 'skills: no release tag found; nothing to install';
+  const { tag, object } = release;
   const fingerprint = createHash('sha256').update(JSON.stringify({ ...selection, targets })).digest('hex');
   const marker = path.join(dir, 'installed.json');
   if (options.dryRun) {
@@ -138,11 +145,21 @@ export async function update(options = {}) {
     const installed = fs.existsSync(marker) ? JSON.parse(fs.readFileSync(marker, 'utf8')) : null;
     if (installed?.fingerprint === fingerprint && parseTag(installed.tag) && compareTags(installed.tag, tag) >= 0) return `skills: already at ${installed.tag}`;
     checkout = fs.mkdtempSync(path.join(dir, 'release-'));
-    exec('git', ['clone', '--quiet', '--depth', '1', '--branch', tag, '--', remote, checkout], { env });
+    // Fetch only the advertised tag namespace; a same-named branch is not a release.
+    const ref = `refs/tags/${tag}`;
+    exec('git', ['init', '--quiet', checkout], { env });
+    exec('git', ['-C', checkout, 'fetch', '--quiet', '--depth', '1', '--no-tags', '--', remote, `${ref}:${ref}`], { env });
+    const fetchedObject = exec('git', ['-C', checkout, 'rev-parse', '--verify', ref], { env }).trim();
+    if (fetchedObject !== object) throw new Error(`release tag ${tag} changed after discovery; refusing to install`);
+    // Peel annotated tags only after their tag object matches the advertisement.
+    const commit = exec('git', ['-C', checkout, 'rev-parse', '--verify', `${object}^{commit}`], { env }).trim();
+    exec('git', ['-C', checkout, 'checkout', '--quiet', '--detach', commit], { env });
+    const checkedOut = exec('git', ['-C', checkout, 'rev-parse', '--verify', 'HEAD^{commit}'], { env }).trim();
+    if (checkedOut !== commit) throw new Error(`release checkout does not match verified commit ${commit}; refusing to install`);
     exec('npm', ['ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: checkout, env });
     exec(process.execPath, [path.join(checkout, 'scripts', 'install.mjs'), ...targets, ...skillNames.flatMap(name => ['--skill', name]), ...(project ? ['--project'] : []), '--yes'], { cwd: project ? cwd : checkout, env });
     const pending = `${checkout}.installed.json`;
-    fs.writeFileSync(pending, `${JSON.stringify({ tag, fingerprint })}\n`, { mode: 0o600, flag: 'wx' });
+    fs.writeFileSync(pending, `${JSON.stringify({ tag, object, commit, fingerprint })}\n`, { mode: 0o600, flag: 'wx' });
     fs.renameSync(pending, marker);
     return `skills: updated ${installed?.tag ?? 'nothing'} -> ${tag} for ${targets.join(', ')}; start a new agent session to load it`;
   } finally {

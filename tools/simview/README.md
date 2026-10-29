@@ -59,6 +59,9 @@ label   = "Simulator host"   # host badge in the grid (default: name)
 command = ["ssh", "-T", "-o", "BatchMode=yes", "user@device-host", "/absolute/path/to/simview", "serve", "--stdio"]
 ```
 
+Each remote name must be non-empty, unique across `[[remotes]]`, and contain no `/`.
+Duplicate names are rejected before device ids are constructed.
+
 Chromium is also found from the `--remote-debugging-port=N` of running chrome, chromium and
 electron processes, and from `SIMVIEW_CDP_PORTS=9333,9444`. Android emulators are found from
 the `pid_*.ini` files under `$XDG_RUNTIME_DIR/avd/running`, `~/.android/avd/running` and the
@@ -110,11 +113,13 @@ Backend shutdown includes children still waiting for their initial handshake. It
 each child's stdin so a direct `simview serve --stdio` child can clean up its device
 processes and sockets, allows 2 seconds for exit, then force-kills an unresponsive child.
 Output pipes get a separate 300 ms drain window, so inherited descriptors cannot prevent
-reaping. On EOF, the serve side closes owned device sessions before allowing up to
-300 ms for queued output and another 300 ms for writer completion; cancellation skips
-the initial drain window. Closable output transports are closed to interrupt blocked
-writes. An embedded, unclosable `io.Writer` cannot delay server return, but its writer
-goroutine remains until its `Write` call returns.
+reaping. On EOF, the reader cancels in-flight connect/input without waiting for the
+request handler. Pending connects get up to 300 ms to finish cancellation cleanup;
+sessions returned later are closed when they arrive. The serve side closes owned device
+sessions before allowing up to 300 ms for queued output and another 300 ms for writer
+completion; cancellation skips the initial output drain window. Closable output transports
+are closed to interrupt blocked writes. An embedded, unclosable `io.Writer` cannot delay
+server return, but its writer goroutine remains until its `Write` call returns.
 
 ## Run `simview web`
 
@@ -177,9 +182,12 @@ starting before Tailscale is up. Uncomment `SIMVIEW_INPUT_ALLOW` in the unit to 
   trusted local configuration and run as an argument vector, not through a local shell.
   Keep SSH host-key checking enabled and grant the remote account only the access it needs.
 - **Input is opt-in per page and optionally per device.** The page sends input only in its
-  Control mode. `SIMVIEW_INPUT_ALLOW` (unset = every device; comma list of exact ids or
-  prefix globs ending in `*`, e.g. `emulator-5790,cdp:9333:*`) is enforced by the server for
-  `/ws`, `/api/input` and `simview input`; a refused device is never connected for input
+  Control mode. Switching to Watch, removing a tile or losing the socket abandons queued
+  input; it is not replayed after reconnect. An input already sent cannot be recalled.
+  Watch/removal sends only an `up` needed to release a pointer already sent on that socket.
+  `SIMVIEW_INPUT_ALLOW` (unset = every device; comma list of exact ids or prefix globs
+  ending in `*`, e.g. `emulator-5790,cdp:9333:*`) is enforced by the server for `/ws`,
+  `/api/input` and `simview input`; a refused device is never connected for input
   (`simview input` exits 3).
 - **Notes are untrusted text.** Agents write them (4 KB per note, 20 fields); the page
   renders them as plain text and nothing should treat them as instructions. Notes live in

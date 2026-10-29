@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { DEFAULT_REMOTE, checkState, compareTags, latestTag, normalizeSelection, parseArgs, parseTag, stateDir, update } from '../scripts/nightly-update.mjs';
+import { DEFAULT_REMOTE, checkState, compareTags, latestTag, normalizeSelection, parseArgs, parseTag, run, stateDir, update } from '../scripts/nightly-update.mjs';
 import { installUpdater, LABEL, systemdFiles, launchdPlist, UNIT } from '../scripts/install-updater.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -20,15 +20,46 @@ function put(file, text) {
   fs.writeFileSync(file, text);
 }
 after(() => temps.forEach(dir => fs.rmSync(dir, { recursive: true, force: true })));
-const LS = ['a\trefs/tags/v4.3.1', 'b\trefs/tags/v5.0.0', 'c\trefs/tags/v5.10.0', 'd\trefs/tags/v5.9.0', 'e\trefs/tags/v6.0.0-rc1', 'f\trefs/tags/nightly'].join('\n');
+const TAG_OBJECT = 'c'.repeat(40);
+const LS = [['a', 'v4.3.1'], ['b', 'v5.0.0'], ['c', 'v5.10.0'], ['d', 'v5.9.0'], ['e', 'v6.0.0-rc1'], ['f', 'nightly']].map(([object, tag]) => `${object.repeat(40)}\trefs/tags/${tag}`).join('\n');
 const base = dir => ({ dir, setting: 'codex', skillNames: ['show-me'], env: { PATH: '' } });
-function recorder({ fail } = {}) {
+function recorder({ fail, head = TAG_OBJECT } = {}) {
   const calls = [];
   return { calls, exec(command, args, options) {
     calls.push({ command, args, options });
     if (fail?.(command, args)) throw new Error('simulated command failure');
-    return args[0] === 'ls-remote' ? LS : '';
+    if (args[0] === 'ls-remote') return LS;
+    if (args.includes('rev-parse')) return `${args.at(-1) === 'HEAD^{commit}' ? head : TAG_OBJECT}\n`;
+    return '';
   } };
+}
+
+function localRelease(annotated) {
+  const root = tmpdir();
+  const source = path.join(root, 'source');
+  const remote = path.join(root, 'remote.git');
+  const output = path.join(root, 'installed-release');
+  const tag = 'v1.0.0';
+  run('git', ['init', '--quiet', source]);
+  run('git', ['init', '--quiet', '--bare', remote]);
+  const git = args => run('git', args, { cwd: source }).trim();
+  git(['config', 'user.name', 'Updater Fixture']);
+  git(['config', 'user.email', 'updater@example.invalid']);
+  git(['config', 'commit.gpgSign', 'false']);
+  git(['config', 'tag.gpgSign', 'false']);
+  const installer = value => `import fs from 'node:fs';\nfs.writeFileSync(${JSON.stringify(output)}, ${JSON.stringify(value)});\n`;
+  put(path.join(source, 'scripts/install.mjs'), installer('release'));
+  git(['add', 'scripts/install.mjs']);
+  git(['commit', '--quiet', '-m', 'release fixture']);
+  const commit = git(['rev-parse', 'HEAD']);
+  git(annotated ? ['tag', '-a', '-m', 'release', tag] : ['tag', tag]);
+  const object = git(['rev-parse', `refs/tags/${tag}`]);
+  put(path.join(source, 'scripts/install.mjs'), installer('colliding branch'));
+  git(['add', 'scripts/install.mjs']);
+  git(['commit', '--quiet', '-m', 'branch fixture']);
+  const branchCommit = git(['rev-parse', 'HEAD']);
+  git(['push', '--quiet', remote, `HEAD:refs/heads/${tag}`, `refs/tags/${tag}:refs/tags/${tag}`]);
+  return { root, remote, output, tag, object, commit, branchCommit };
 }
 
 test('release tags compare numerically and exclude prereleases and unsafe numbers', () => {
@@ -59,9 +90,10 @@ test('a release installs once for the same selection and repeats for changed sel
   assert.match(await update(options), /nothing -> v5\.10\.0 for claude-code, codex/);
   const marker = JSON.parse(fs.readFileSync(path.join(dir, 'installed.json'), 'utf8'));
   assert.equal(marker.tag, 'v5.10.0');
+  assert.equal(marker.object, TAG_OBJECT);
+  assert.equal(marker.commit, TAG_OBJECT);
   const install = calls.find(call => call.command === process.execPath);
   assert.deepEqual(install.args.slice(1), ['claude-code', 'codex', '--skill', 'show-me', '--yes']);
-  assert.ok(calls.find(call => call.args[0] === 'clone').args.includes('v5.10.0'));
   assert.ok(calls.find(call => call.command === 'npm').args.includes('--ignore-scripts'));
   assert.deepEqual(fs.readdirSync(dir).sort(), ['installed.json', 'owner']);
   calls.length = 0;
@@ -134,6 +166,66 @@ test('failed installs retain the prior release marker and clean their private ch
   assert.equal(fs.readFileSync(path.join(dir, 'installed.json'), 'utf8'), marker);
   assert.deepEqual(fs.readdirSync(dir).sort(), ['installed.json', 'owner']);
   assert.match(await update({ ...base(dir), skillNames: ['create-plan'], exec: initial.exec }), /updated/);
+});
+
+for (const annotated of [false, true]) {
+  const kind = annotated ? 'annotated' : 'lightweight';
+  test(`a real ${kind} release tag wins over a colliding remote branch`, async () => {
+    const fixture = localRelease(annotated);
+    const dir = path.join(fixture.root, 'state');
+    const npmCommits = [];
+    const exec = (command, args, options) => {
+      if (command === 'npm') {
+        npmCommits.push(run('git', ['rev-parse', 'HEAD'], { cwd: options.cwd }).trim());
+        return '';
+      }
+      return run(command, args, options);
+    };
+    await update({ ...base(dir), remote: fixture.remote, env: { PATH: process.env.PATH }, exec });
+    assert.notEqual(fixture.commit, fixture.branchCommit);
+    assert.equal(fs.readFileSync(fixture.output, 'utf8'), 'release');
+    assert.deepEqual(npmCommits, [fixture.commit]);
+    const marker = JSON.parse(fs.readFileSync(path.join(dir, 'installed.json'), 'utf8'));
+    assert.equal(marker.tag, fixture.tag);
+    assert.equal(marker.object, fixture.object);
+    assert.equal(marker.commit, fixture.commit);
+    assert.deepEqual(fs.readdirSync(dir).sort(), ['installed.json', 'owner']);
+  });
+
+  test(`a moved real ${kind} release tag cannot execute code or replace a successful marker`, async () => {
+    const fixture = localRelease(annotated);
+    const dir = path.join(fixture.root, 'state');
+    const calls = [];
+    let moveTag = false;
+    const exec = (command, args, options) => {
+      calls.push({ command, args });
+      if (command === 'npm') return '';
+      const output = run(command, args, options);
+      if (moveTag && command === 'git' && args[0] === 'ls-remote') {
+        run('git', ['--git-dir', fixture.remote, 'update-ref', `refs/tags/${fixture.tag}`, fixture.branchCommit, fixture.object]);
+      }
+      return output;
+    };
+    const options = { ...base(dir), remote: fixture.remote, env: { PATH: process.env.PATH }, exec };
+    await update(options);
+    const marker = fs.readFileSync(path.join(dir, 'installed.json'), 'utf8');
+    fs.rmSync(fixture.output);
+    calls.length = 0;
+    moveTag = true;
+    await assert.rejects(update({ ...options, skillNames: ['create-plan'] }), /release tag v1\.0\.0 changed after discovery/);
+    assert.equal(fs.existsSync(fixture.output), false);
+    assert.equal(calls.some(call => call.command === 'npm' || call.command === process.execPath), false);
+    assert.equal(fs.readFileSync(path.join(dir, 'installed.json'), 'utf8'), marker);
+    assert.deepEqual(fs.readdirSync(dir).sort(), ['installed.json', 'owner']);
+  });
+}
+
+test('a checkout whose actual commit differs cannot install or record success', async () => {
+  const dir = path.join(tmpdir(), 'state');
+  const { calls, exec } = recorder({ head: 'f'.repeat(40) });
+  await assert.rejects(update({ ...base(dir), exec }), /checkout does not match verified commit/);
+  assert.equal(calls.some(call => call.command === 'npm' || call.command === process.execPath), false);
+  assert.deepEqual(fs.readdirSync(dir), ['owner']);
 });
 
 test('offline and dry-run paths never create state or invoke an installer', async () => {
@@ -240,13 +332,14 @@ test('selected project updates use the split installer without mutating global i
   const globalsBefore = fs.readdirSync(home).sort();
   const exec = (command, args, options) => {
     if (args[0] === 'ls-remote') return LS;
-    if (args[0] === 'clone') {
+    if (args[0] === 'init') {
       // Use the real current split installer, but keep its writes in this isolated consumer HOME/project.
       const checkout = args.at(-1);
       fs.mkdirSync(path.join(checkout, 'scripts'));
       fs.symlinkSync(path.join(REPO, 'scripts/install.mjs'), path.join(checkout, 'scripts/install.mjs'));
       return '';
     }
+    if (command === 'git') return args.includes('rev-parse') ? `${TAG_OBJECT}\n` : '';
     if (command === 'npm') return '';
     assert.equal(command, process.execPath);
     const result = spawnSync(command, args, { ...options, env: { ...options.env, HOME: home, USERPROFILE: home }, encoding: 'utf8' });
@@ -275,7 +368,7 @@ test('no release tags leave state untouched and a known newer release never down
   await update({ ...base(dir), exec });
   const marker = path.join(dir, 'installed.json');
   const before = fs.readFileSync(marker, 'utf8');
-  assert.match(await update({ ...base(dir), exec: () => 'a\trefs/tags/v1.0.0' }), /already at v5\.10\.0/);
+  assert.match(await update({ ...base(dir), exec: () => `${'a'.repeat(40)}\trefs/tags/v1.0.0` }), /already at v5\.10\.0/);
   assert.equal(fs.readFileSync(marker, 'utf8'), before);
 });
 
@@ -335,6 +428,84 @@ test('scheduler removal refuses an active updater before unloading its process',
   assert.throws(() => installUpdater(['--uninstall', '--state-dir', dir], options), /updater is running/);
   assert.deepEqual(scheduler.calls, []);
   assert.ok(fs.existsSync(path.join(home, 'Library', 'LaunchAgents', `${LABEL}.plist`)));
+});
+
+test('active installed state blocks scheduler removal or replacement through another or default state directory', () => {
+  for (const platform of ['darwin', 'linux']) {
+    for (const operation of ['remove', 'replace']) {
+      for (const requested of ['same', 'other', 'default']) {
+        const root = tmpdir();
+        const home = path.join(root, 'home');
+        const dir = path.join(root, "state A & \"'$%\\");
+        const other = path.join(root, 'state B');
+        const env = { PATH: '', XDG_STATE_HOME: path.join(root, 'default-state') };
+        const scheduler = recorder();
+        const options = { home, cwd: root, env, platform, exec: scheduler.exec };
+        installUpdater(['--targets', 'codex', '--skill', 'show-me', '--state-dir', dir], options);
+        const files = platform === 'darwin'
+          ? [path.join(home, 'Library/LaunchAgents', `${LABEL}.plist`)]
+          : ['service', 'timer'].map(ext => path.join(home, '.config/systemd/user', `${UNIT}.${ext}`));
+        const protectedFiles = [...files, path.join(dir, 'config.json'), path.join(dir, 'bin/nightly-update.mjs')];
+        const before = protectedFiles.map(file => fs.readFileSync(file, 'utf8'));
+        const lock = path.join(dir, 'update.lock');
+        put(lock, 'active update');
+        scheduler.calls.length = 0;
+        const argv = operation === 'remove' ? ['--uninstall'] : ['--targets', 'codex', '--skill', 'coasts'];
+        if (requested !== 'default') argv.push('--state-dir', requested === 'same' ? dir : other);
+        assert.throws(() => installUpdater(argv, options), /updater is running/, `${platform} ${operation} ${requested}`);
+        assert.deepEqual(scheduler.calls, []);
+        assert.deepEqual(protectedFiles.map(file => fs.readFileSync(file, 'utf8')), before);
+        assert.equal(fs.readFileSync(lock, 'utf8'), 'active update');
+        assert.equal(fs.existsSync(other), false);
+        assert.equal(fs.existsSync(stateDir(env)), false);
+      }
+    }
+  }
+});
+
+test('a requested state lock also blocks replacement of an unlocked existing scheduler', () => {
+  for (const platform of ['darwin', 'linux']) {
+    const root = tmpdir();
+    const dir = path.join(root, 'state A');
+    const requested = path.join(root, 'state B');
+    const scheduler = recorder();
+    const options = { home: path.join(root, 'home'), cwd: root, env: { PATH: '' }, platform, exec: scheduler.exec };
+    installUpdater(['--targets', 'codex', '--skill', 'show-me', '--state-dir', dir], options);
+    checkState(requested, { create: true });
+    put(path.join(requested, 'update.lock'), 'active requested update');
+    scheduler.calls.length = 0;
+    assert.throws(() => installUpdater(['--targets', 'codex', '--skill', 'coasts', '--state-dir', requested], options), /updater is running/);
+    assert.deepEqual(scheduler.calls, []);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')).skillNames, ['show-me']);
+    assert.equal(fs.readFileSync(path.join(requested, 'update.lock'), 'utf8'), 'active requested update');
+    assert.equal(fs.existsSync(path.join(requested, 'config.json')), false);
+  }
+});
+
+test('an installed scheduler cannot bypass old-state ownership or symlink protections through a new state directory', () => {
+  for (const platform of ['darwin', 'linux']) {
+    for (const altered of ['owner', 'config', 'script']) {
+      const root = tmpdir();
+      const dir = path.join(root, 'state A');
+      const requested = path.join(root, 'state B');
+      const scheduler = recorder();
+      const options = { home: path.join(root, 'home'), cwd: root, env: { PATH: '' }, platform, exec: scheduler.exec };
+      installUpdater(['--targets', 'codex', '--skill', 'show-me', '--state-dir', dir], options);
+      if (altered === 'owner') put(path.join(dir, 'owner'), 'foreign owner\n');
+      else {
+        const file = path.join(dir, altered === 'config' ? 'config.json' : 'bin/nightly-update.mjs');
+        const target = path.join(root, 'foreign-file');
+        put(target, 'foreign contents');
+        fs.rmSync(file);
+        fs.symlinkSync(target, file);
+      }
+      scheduler.calls.length = 0;
+      assert.throws(() => installUpdater(['--uninstall', '--state-dir', requested], options), /foreign updater state|symlinked updater path/);
+      assert.deepEqual(scheduler.calls, []);
+      assert.equal(fs.existsSync(requested), false);
+      if (altered !== 'owner') assert.equal(fs.readFileSync(path.join(root, 'foreign-file'), 'utf8'), 'foreign contents');
+    }
+  }
 });
 
 test('an unloaded launchd job can be re-enabled or removed without masking other errors', () => {

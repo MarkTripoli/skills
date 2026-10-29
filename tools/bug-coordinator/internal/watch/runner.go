@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"strings"
 	"time"
@@ -66,7 +67,11 @@ func (r Runner) PollOnce(ctx context.Context) (int, error) {
 
 func (r Runner) DeliverOnce(ctx context.Context) (string, error) {
 	result := "none"
-	err := r.Store.With(func(s *State) error {
+	var deliveryErr error
+	err := r.Store.withCheckpoint(func(s *State, checkpoint func() error) error {
+		if d := s.DeliveryIntent; d != nil {
+			return fmt.Errorf("delivery intent %s has unresolved %s outcome; inspect status and reconcile using attach, detach or owner ack", d.ID, d.Phase)
+		}
 		now := r.now()
 		var keys []string
 		for _, key := range s.PendingKeys() {
@@ -77,8 +82,10 @@ func (r Runner) DeliverOnce(ctx context.Context) (string, error) {
 		if len(keys) == 0 {
 			return nil
 		}
+		var turnID string
 		if s.ThreadID != "" {
-			turnID, err := r.Codex.ActiveTurn(ctx, s.ThreadID)
+			var err error
+			turnID, err = r.Codex.ActiveTurn(ctx, s.ThreadID)
 			if err != nil {
 				return err
 			}
@@ -89,27 +96,86 @@ func (r Runner) DeliverOnce(ctx context.Context) (string, error) {
 						unsent = append(unsent, key)
 					}
 				}
-				if len(unsent) == 0 {
+				keys = unsent
+				if len(keys) == 0 {
 					return nil
 				}
-				if err := r.Codex.Steer(ctx, s.ThreadID, turnID, r.activePrompt(unsent)); err != nil {
-					return err
-				}
-				r.markNotified(s, unsent, s.ThreadID, now)
-				result = "steered"
-				return nil
 			}
 		}
-		threadID, err := r.Codex.Start(ctx, r.Workspace, r.newPrompt(keys))
-		if err != nil {
+		var nonce [16]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
 			return err
 		}
-		s.ThreadID = threadID
-		r.markNotified(s, keys, threadID, now)
+		d := &DeliveryIntent{
+			ID: fmt.Sprintf("bug-coordinator-%x", nonce), Keys: keys,
+			Phase: "thread-start", CreatedAt: now,
+		}
+		previousThread := s.ThreadID
+		previous := make([]Event, len(keys))
+		for i, key := range keys {
+			previous[i] = s.Pending[key]
+		}
+		if turnID != "" {
+			d.Phase = "steer"
+			d.ThreadID = s.ThreadID
+		}
+		s.DeliveryIntent = d
+		r.markNotified(s, keys, d.ThreadID, now)
+		if err := checkpoint(); err != nil {
+			return err
+		}
+		message := fmt.Sprintf("Bug coordinator notification intent %s.\n", d.ID)
+		var err error
+		if turnID != "" {
+			err = r.Codex.Steer(ctx, d.ThreadID, turnID, message+r.activePrompt(keys))
+		} else {
+			var threadID string
+			threadID, err = r.Codex.StartThread(ctx, r.Workspace)
+			if err == nil && threadID == "" {
+				err = fmt.Errorf("Codex returned no thread ID")
+			}
+			if err == nil {
+				s.ThreadID = threadID
+				d.ThreadID = threadID
+				d.Phase = "turn-start"
+				for _, key := range keys {
+					e := s.Pending[key]
+					e.NotifiedThread = threadID
+					s.Pending[key] = e
+				}
+				// The identity, nonce, attempts and timestamp reach durable storage
+				// before an external owner can run or acknowledge these keys.
+				if err := checkpoint(); err != nil {
+					return err
+				}
+				err = r.Codex.StartTurn(ctx, threadID, d.ID, message+r.newPrompt(keys))
+			}
+		}
+		if err != nil {
+			deliveryErr = err
+			if hasNoEffect(err) {
+				for i, key := range keys {
+					s.Pending[key] = previous[i]
+				}
+				s.ThreadID = previousThread
+				s.DeliveryIntent = nil
+			} else {
+				d.LastError = err.Error()
+			}
+			// Save the outcome instead of returning an error that discards it.
+			return nil
+		}
+		s.DeliveryIntent = nil
 		result = "started"
+		if turnID != "" {
+			result = "steered"
+		}
 		return nil
 	})
-	return result, err
+	if err != nil {
+		return result, err
+	}
+	return result, deliveryErr
 }
 
 func (r Runner) activePrompt(keys []string) string {

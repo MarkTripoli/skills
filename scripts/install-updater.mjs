@@ -59,6 +59,37 @@ ${[node, script, '--config', config].map(value => `    <string>${xml(value)}</st
 `;
 }
 
+function installedState(files, platform) {
+  if (!files.some(([file]) => fs.existsSync(file))) return null;
+  const file = files[0][0];
+  const invalid = () => new Error(`cannot resolve installed updater state from ${file}; scheduler left unchanged`);
+  if (!fs.existsSync(file)) throw invalid();
+  const text = fs.readFileSync(file, 'utf8');
+  let args;
+  if (platform === 'linux') {
+    const starts = [...text.matchAll(/^ExecStart=(.+)$/gm)];
+    if (starts.length !== 1) throw invalid();
+    const serialized = starts[0][1];
+    const fields = [...serialized.matchAll(/"((?:\\[\\"]|[^"\\])*)"/g)];
+    args = fields.map(([, value]) => value.replace(/\\([\\"])/g, '$1').replaceAll('%%', '%').replaceAll('$$', '$'));
+    if (args.map(value => unitQuote(value).replaceAll('$', () => '$$')).join(' ') !== serialized) throw invalid();
+  } else {
+    const arrays = [...text.matchAll(/<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/g)];
+    if (arrays.length !== 1) throw invalid();
+    const serialized = arrays[0][1];
+    const fields = [...serialized.matchAll(/<string>([^<]*)<\/string>/g)];
+    if (serialized.replace(/<string>[^<]*<\/string>/g, '').trim()) throw invalid();
+    const entities = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+    args = fields.map(([, value]) => value.replace(/&(amp|lt|gt|quot|apos);/g, (_, name) => entities[name]));
+    if (args.some((value, index) => xml(value) !== fields[index][1])) throw invalid();
+  }
+  if (args.length !== 4 || args[2] !== '--config' || !path.isAbsolute(args[3])) throw invalid();
+  const dir = checkState(path.dirname(args[3]));
+  if (args[3] !== path.join(dir, 'config.json') || args[1] !== path.join(dir, 'bin', 'nightly-update.mjs')) throw invalid();
+  assertNoSymlinks(args[1]);
+  return dir;
+}
+
 function unloadLaunchd(exec, plist) {
   try {
     exec('launchctl', ['print', `gui/${process.getuid()}/${LABEL}`]);
@@ -86,9 +117,13 @@ export function installUpdater(argv, { home = os.homedir(), cwd = process.cwd(),
   if (args.print || args.dryRun) return args.uninstall
     ? `Would disable ${platform === 'linux' ? `${UNIT}.timer` : LABEL} and remove its scheduler files; installed skills and updater state remain unchanged.`
     : `${files.map(([file, text]) => `# ${file}\n${text}`).join('\n')}\n# ${config}\n${JSON.stringify(selection, null, 2)}\n`;
-  if (fs.existsSync(path.join(dir, 'update.lock'))) throw new Error('updater is running; retry scheduler configuration after it finishes');
   // Refuse links rather than overwrite files outside the selected updater resources.
   for (const file of [...files.map(([file]) => file), script]) assertNoSymlinks(file);
+  // The scheduler identity is shared even when --state-dir changes.
+  const previousDir = installedState(files, platform);
+  for (const state of new Set([dir, previousDir].filter(Boolean))) {
+    if (fs.existsSync(path.join(state, 'update.lock'))) throw new Error('updater is running; retry scheduler configuration after it finishes');
+  }
   if (args.uninstall) {
     if (files.some(([file]) => fs.existsSync(file))) {
       if (platform === 'linux') exec('systemctl', ['--user', 'disable', '--now', `${UNIT}.timer`]);

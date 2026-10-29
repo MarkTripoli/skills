@@ -2,7 +2,6 @@ package watch
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,10 +16,23 @@ import (
 type Codex interface {
 	ActiveTurn(context.Context, string) (string, error)
 	Steer(context.Context, string, string, string) error
-	Start(context.Context, string, string) (string, error)
+	StartThread(context.Context, string) (string, error)
+	StartTurn(context.Context, string, string, string) error
 }
 
 type AppServer struct{ Socket string }
+
+// noEffectError is reserved for failures before the operation was sent or an
+// explicit JSON-RPC pre-execution rejection. Other failures may have side effects.
+type noEffectError struct{ err error }
+
+func (e *noEffectError) Error() string { return e.err.Error() }
+func (e *noEffectError) Unwrap() error { return e.err }
+
+func hasNoEffect(err error) bool {
+	var target *noEffectError
+	return errors.As(err, &target)
+}
 
 func CodexSocket(ctx context.Context) (string, error) {
 	out, err := exec.CommandContext(ctx, "codex", "app-server", "daemon", "version").Output()
@@ -73,6 +85,9 @@ func (a AppServer) connect(ctx context.Context) (*rpcConn, error) {
 func (c *rpcConn) close() { c.ws.Close() }
 
 func (c *rpcConn) call(ctx context.Context, method string, params any, out any) error {
+	if err := ctx.Err(); err != nil {
+		return &noEffectError{err}
+	}
 	c.nextID++
 	id := c.nextID
 	deadline := time.Now().Add(15 * time.Second)
@@ -100,7 +115,13 @@ func (c *rpcConn) call(ctx context.Context, method string, params any, out any) 
 			continue
 		}
 		if reply.Error != nil {
-			return fmt.Errorf("Codex %s: %s (%d)", method, reply.Error.Message, reply.Error.Code)
+			err := fmt.Errorf("Codex %s: %s (%d)", method, reply.Error.Message, reply.Error.Code)
+			switch reply.Error.Code {
+			case -32700, -32600, -32601, -32602:
+				return &noEffectError{err}
+			default:
+				return err
+			}
 		}
 		if out != nil {
 			return json.Unmarshal(reply.Result, out)
@@ -148,7 +169,7 @@ func (a AppServer) ActiveTurn(ctx context.Context, threadID string) (string, err
 func (a AppServer) Steer(ctx context.Context, threadID, turnID, message string) error {
 	c, err := a.connect(ctx)
 	if err != nil {
-		return err
+		return &noEffectError{err}
 	}
 	defer c.close()
 	return c.call(ctx, "turn/steer", map[string]any{
@@ -157,10 +178,10 @@ func (a AppServer) Steer(ctx context.Context, threadID, turnID, message string) 
 	}, nil)
 }
 
-func (a AppServer) Start(ctx context.Context, cwd, message string) (string, error) {
+func (a AppServer) StartThread(ctx context.Context, cwd string) (string, error) {
 	c, err := a.connect(ctx)
 	if err != nil {
-		return "", err
+		return "", &noEffectError{err}
 	}
 	defer c.close()
 	var started struct {
@@ -174,18 +195,18 @@ func (a AppServer) Start(ctx context.Context, cwd, message string) (string, erro
 	if started.Thread.ID == "" {
 		return "", errors.New("Codex returned no thread ID")
 	}
-	// clientUserMessageId lets the app server identify the launch message if
-	// this process loses its reply and a caller later inspects the thread.
-	var nonce [16]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return "", err
-	}
-	if err := c.call(ctx, "turn/start", map[string]any{
-		"threadId":            started.Thread.ID,
-		"clientUserMessageId": fmt.Sprintf("bug-coordinator-%x", nonce),
-		"input":               []map[string]string{{"type": "text", "text": message}},
-	}, nil); err != nil {
-		return "", err
-	}
 	return started.Thread.ID, nil
+}
+
+func (a AppServer) StartTurn(ctx context.Context, threadID, intentID, message string) error {
+	c, err := a.connect(ctx)
+	if err != nil {
+		return &noEffectError{err}
+	}
+	defer c.close()
+	return c.call(ctx, "turn/start", map[string]any{
+		"threadId":            threadID,
+		"clientUserMessageId": intentID,
+		"input":               []map[string]string{{"type": "text", "text": message}},
+	}, nil)
 }

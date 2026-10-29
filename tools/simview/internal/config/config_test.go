@@ -42,6 +42,28 @@ func TestRemoteValidation(t *testing.T) {
 	}
 }
 
+func TestRemoteNamesAreUnique(t *testing.T) {
+	for _, name := range []string{"build-host", "simulators", "host with spaces"} {
+		t.Run(name, func(t *testing.T) {
+			text := "[[remotes]]\nname = \"" + name + "\"\ncommand = [\"first-host\"]\n" +
+				"[[remotes]]\nname = \"other-host\"\ncommand = [\"other\"]\n" +
+				"[[remotes]]\nname = \"" + name + "\"\ncommand = [\"second-host\"]\n"
+			c, err := Parse(text)
+			if err == nil || !strings.Contains(err.Error(), "duplicate remote name") || !strings.Contains(err.Error(), name) {
+				t.Fatalf("duplicate name %q: config=%+v, err=%v", name, c, err)
+			}
+			if len(c.Remotes) != 0 {
+				t.Fatalf("invalid config exposed ambiguous remotes: %+v", c.Remotes)
+			}
+		})
+	}
+	c, err := Parse("[[remotes]]\nname = \"host\"\ncommand = [\"same-command\"]\n" +
+		"[[remotes]]\nname = \"host-2\"\ncommand = [\"same-command\"]\n")
+	if err != nil || len(c.Remotes) != 2 {
+		t.Fatalf("distinct names with the same command: %+v, %v", c, err)
+	}
+}
+
 func TestLoadUsesEnvPathAndMissingIsDefault(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("SIMVIEW_CONFIG", filepath.Join(dir, "none.toml"))

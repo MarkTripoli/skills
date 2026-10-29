@@ -31,12 +31,15 @@ func (f *fakeCodex) Steer(_ context.Context, _, _, message string) error {
 	f.steered = append(f.steered, message)
 	return f.err
 }
-func (f *fakeCodex) Start(_ context.Context, _, message string) (string, error) {
+func (f *fakeCodex) StartThread(context.Context, string) (string, error) {
 	if f.err != nil {
-		return "", f.err
+		return "", &noEffectError{f.err}
 	}
-	f.started = append(f.started, message)
 	return "thread-new", nil
+}
+func (f *fakeCodex) StartTurn(_ context.Context, _, _, message string) error {
+	f.started = append(f.started, message)
+	return f.err
 }
 
 func TestRunnerSteersActiveOrStartsFresh(t *testing.T) {

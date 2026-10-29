@@ -208,7 +208,10 @@ export function checkReport(text, lineCount = () => null) {
     const kind = /^(Specified|Stated|Contradicts|Unexplained)\b/.exec(intent)?.[1];
     if (!kind) problems.push(`${at}: Intent "${intent}" must start with Specified, Stated, Contradicts or Unexplained`);
     else if (SOURCED.includes(kind) && !/\(\s*\S[^)]*\)/.test(intent)) problems.push(`${at}: Intent ${kind} must name its source in parentheses, e.g. ${kind} (PROJ-123)`);
-    const pathLine = /`?([\w./@-]+\.[\w]+):(\d+)(?:-(\d+))?`?/g;
+    // A citation token must contain a letter, `_`, `.`, `/` or `@` before the colon, so cue
+    // timestamps like `1:20-1:25` (and its `20-1:` fragment) never resolve as files named `1` or
+    // `20-1`; ordinary and extensionless paths (Makefile, bin/launch, foo-bar.ts) still match.
+    const pathLine = /`?((?=[A-Za-z0-9_./@-]*[A-Za-z_./@])[A-Za-z0-9_./@-]+):(\d+)(?:-(\d+))?`?/g;
     const cited = [...evidence.matchAll(pathLine)];
     if (!cited.length) problems.push(`${at}: Evidence cites no path:line`);
     for (const [, file, from, to] of [...cited, ...intent.matchAll(pathLine)]) {
@@ -243,7 +246,17 @@ export function lineCounter(cwd, treeishes) {
   };
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  let entrypoint;
+  try { entrypoint = fs.realpathSync(process.argv[1]); }
+  catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return false;
+    throw error;
+  }
+  return entrypoint === fs.realpathSync(fileURLToPath(import.meta.url));
+})();
+if (isMain) {
   const args = process.argv.slice(2);
   const flag = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
   const file = args.find((a, i) => !a.startsWith("--") && !["--tree", "--base"].includes(args[i - 1]));

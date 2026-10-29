@@ -39,6 +39,7 @@ func run(args []string) error {
 	stateDir := f.String("state-dir", defaults, "private durable state directory")
 	thread := f.String("thread", "", "Codex thread ID (use CODEX_THREAD_ID inside a session)")
 	issue := f.String("issue", "", "Bug key to acknowledge")
+	intent := f.String("intent", "", "unresolved delivery intent ID being explicitly reconciled by attach/detach")
 	workspace := f.String("workspace", "", "absolute project directory for new sessions")
 	skillFile := f.String("skill-file", "", "absolute video orchestration SKILL.md path")
 	jiraURL := f.String("jira-url", "", "Jira Cloud HTTPS base URL")
@@ -66,36 +67,14 @@ func run(args []string) error {
 		}
 		return json.NewEncoder(os.Stdout).Encode(s)
 	case "attach":
-		if *thread == "" {
-			return errors.New("--thread is required")
-		}
-		return st.With(func(s *watch.State) error { s.ThreadID = *thread; return nil })
+		return st.With(func(s *watch.State) error { return s.Attach(*thread, *intent) })
 	case "detach":
-		if *thread == "" {
-			return errors.New("--thread is required")
-		}
-		return st.With(func(s *watch.State) error {
-			if s.ThreadID != *thread {
-				return fmt.Errorf("thread %s is not attached", *thread)
-			}
-			s.ThreadID = ""
-			return nil
-		})
+		return st.With(func(s *watch.State) error { return s.Detach(*thread, *intent) })
 	case "ack":
 		if !watch.ValidKey(*issue) || *thread == "" {
 			return errors.New("--issue and --thread are required")
 		}
-		return st.With(func(s *watch.State) error {
-			e, ok := s.Pending[*issue]
-			if !ok {
-				return nil
-			} // repeated acknowledgements are safe
-			if e.NotifiedThread != *thread {
-				return fmt.Errorf("%s was not assigned to thread %s", *issue, *thread)
-			}
-			delete(s.Pending, *issue)
-			return nil
-		})
+		return st.With(func(s *watch.State) error { return s.Acknowledge(*issue, *thread) })
 	case "serve":
 		return serve(st, *workspace, *skillFile, *jiraURL, *jiraEmail, *tokenFile, *codexSocket, *interval, *includeExisting, strings.Split(*eligibleStatuses, ","))
 	default:

@@ -1,6 +1,19 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { validateAssignment } from "../skills/delivery/video-iterative-development/scripts/validate-assignment.mjs";
+
+const validator = fileURLToPath(new URL("../skills/delivery/video-iterative-development/scripts/validate-assignment.mjs", import.meta.url));
+
+function fixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "video-worker-authority-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  return { root, file: path.join(root, "assignment.json") };
+}
 
 const head = "a".repeat(40);
 const fingerprint = `sha256:${"b".repeat(64)}`;
@@ -100,4 +113,82 @@ test("authorized implementation can advance its head without retroactive plan re
   assert.equal(validateAssignment(value, "implementation").state, "awaiting_plan_approval");
   delete value.implementation_baseline.authorization_reference;
   assert.equal(validateAssignment(value, "runtime").valid, false);
+});
+
+test("linked skill CLI rejects invalid, rejected and stale assignments and admits current authority", (t) => {
+  const { root, file } = fixture(t);
+  const linkedSkill = path.join(root, "linked-skill");
+  fs.symlinkSync(path.dirname(path.dirname(validator)), linkedSkill, "dir");
+  const entrypoint = path.join(linkedSkill, "scripts", "validate-assignment.mjs");
+  const rejected = planned(); rejected.plan.approval = { decision: "rejected" };
+  const stale = approved(); stale.source_fingerprint = `sha256:${"d".repeat(64)}`;
+  const staleRuntime = runtime(); staleRuntime.runtime.readiness.source_commit = "e".repeat(40);
+  for (const [name, value, stage, state, valid] of [
+    ["invalid", {}, "implementation", "decision_request", false],
+    ["rejected", rejected, "implementation", "planning", false],
+    ["stale approval", stale, "implementation", "awaiting_plan_approval", false],
+    ["approved", approved(), "implementation", "ready", true],
+    ["stale runtime", staleRuntime, "runtime", "recovery_required", false],
+    ["ready runtime", runtime(), "runtime", "ready", true],
+  ]) {
+    fs.writeFileSync(file, JSON.stringify(value));
+    const result = spawnSync(process.execPath, [entrypoint, file, stage], { encoding: "utf8" });
+    assert.equal(result.status, valid ? 0 : 1, `${name}: ${result.stderr}`);
+    const observed = JSON.parse(result.stdout);
+    assert.equal(observed.valid, valid, name);
+    assert.equal(observed.state, state, name);
+    assert.equal(observed.issues.length === 0, valid, name);
+  }
+});
+
+test("linked skill CLI preserves usage and assignment read errors", (t) => {
+  const { root, file } = fixture(t);
+  const linkedSkill = path.join(root, "linked-skill");
+  fs.symlinkSync(path.dirname(path.dirname(validator)), linkedSkill, "dir");
+  const entrypoint = path.join(linkedSkill, "scripts", "validate-assignment.mjs");
+  const usage = spawnSync(process.execPath, [entrypoint], { encoding: "utf8" });
+  assert.equal(usage.status, 2, usage.stderr);
+  assert.match(usage.stderr, /usage: validate-assignment\.mjs/);
+  for (const malformed of [false, true]) {
+    if (malformed) fs.writeFileSync(file, "{");
+    const result = spawnSync(process.execPath, [entrypoint, file], { encoding: "utf8" });
+    assert.equal(result.status, 1, result.stderr);
+    const observed = JSON.parse(result.stdout);
+    assert.equal(observed.valid, false);
+    assert.equal(observed.state, "decision_request");
+    assert.match(observed.issues[0], /^cannot read assignment:/);
+  }
+});
+
+test("assignment CLI dispatches through an observed native temporary-directory alias", (t) => {
+  const { root, file } = fixture(t);
+  if (root === fs.realpathSync(root)) {
+    t.skip("temporary directory has no native filesystem alias");
+    return;
+  }
+  const entrypoint = path.join(root, "validate-assignment.mjs");
+  fs.copyFileSync(validator, entrypoint);
+  for (const valid of [false, true]) {
+    fs.writeFileSync(file, JSON.stringify(valid ? approved() : {}));
+    const result = spawnSync(process.execPath, [entrypoint, file], { encoding: "utf8" });
+    assert.equal(result.status, valid ? 0 : 1, result.stderr);
+    assert.equal(JSON.parse(result.stdout).valid, valid);
+    assert.equal(JSON.parse(result.stdout).state, valid ? "ready" : "decision_request");
+  }
+});
+
+test("assignment validator remains importable without a filesystem CLI entrypoint", (t) => {
+  const { root } = fixture(t);
+  for (const argv of [null, root, path.join(root, "missing"), path.join(validator, "not-a-directory")]) {
+    const script = `
+      const argv = ${JSON.stringify(argv)};
+      if (argv === null) process.argv.length = 1;
+      else process.argv[1] = argv;
+      const { validateAssignment } = await import(${JSON.stringify(new URL("../skills/delivery/video-iterative-development/scripts/validate-assignment.mjs", import.meta.url).href)});
+      console.log(JSON.stringify(validateAssignment(${JSON.stringify(approved())})));
+    `;
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), { valid: true, state: "ready", issues: [] });
+  }
 });
