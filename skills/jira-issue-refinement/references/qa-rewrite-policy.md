@@ -13,7 +13,7 @@ Resolve the Jira site from the supplied issue/Epic URL or the authenticated acce
 | Low | No defined outcome to test. |
 | N/A | No app behavior for QA to test: infrastructure/build setup, investigation finding, design exploration without a specification, umbrella placeholder, or a backend fix explicitly signed off without QA. |
 
-Use the supplied rating and QA notes as leads, not truth; verify against ticket and comments. Without them, self-rate and say so. `panel-success` says `QA: Required.` with observed fix status and test prerequisites when testable and ready. `panel-warning` says `QA: Required, but…` with the missing merged fix, build, data, or contradictory evidence before testing. `panel-note` says `QA: Excluded.` with the N/A reason and the condition that would make it testable. A future feature pending implementation is warning, not excluded. Do not infer a merge or deployment from an open PR or local evidence.
+Use supplied ratings and QA notes as leads, not truth; verify against the ticket and comments. Without them, self-rate and say so. `panel-success` says exactly `QA: Required.` for testable behavior, regardless of whether the fix is merged, deployed or ready. `panel-note` says `QA: Excluded.` with the N/A reason and condition that would make it testable. Never use a `Required, but…` readiness classification: Jira status owns that state. Put source-backed build, data and setup prerequisites in the QA guide, not the header. A future testable feature is required, not excluded; an open PR or local evidence never proves a merge or deployment.
 
 ## Proposed description order
 

@@ -21,7 +21,7 @@ summary: "[Issue key, QA classification, confirmed planning changes, and unresol
 
 ### QA header
 
-[Panel kind, exact header, observed fix state, and prerequisite.]
+[Panel kind and exact stateless header: QA: Required. for testable behavior, or QA: Excluded. with the N/A reason. No fix/readiness state.]
 
 ### Summary and expected result
 

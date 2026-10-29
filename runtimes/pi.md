@@ -5,6 +5,8 @@
 Invoke a skill by typing `/<name>` in the Pi prompt, for example `/create-plan @03-plan-verbose-flag-cli.md`.
 Child workers: Pi has no worker tool of its own. Ordinary phase roles run inline after reading their installed skill and report this.
 
+Owner instructions remain user-managed. Follow the existing runtime and repository instructions; the installer does not seed policy files or add global instruction loaders.
+
 ## Install
 
 `npx git+github:MarkTripoli/skills pi` performs these steps (add `--project` for one repository, `--dry-run` to look first); by hand:

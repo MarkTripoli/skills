@@ -4,6 +4,8 @@ Run this intake for every eligible selected ticket before creating any worktree.
 
 Jira status is the primary routing signal. A ticket in `In Progress` or `Code Review` is `resume_required`: assume implementation already exists and do not create a new branch from base. `Code Review` should normally resolve to an open PR source branch; `In Progress` may have only a local worktree, local branch, or remote branch. Tickets in `Backlog` or `Selected for Development` follow new-delivery setup only after discovery confirms they do not already have linked work that must be preserved.
 
+Apply the same preservation rules to Bugs. Recheck eligibility first; On-Hold tickets retain their work untouched. On resume, reconcile each requested Bug plan's immutable revision, source/adopted-head fingerprints and owner decision. Missing or stale approval restores `planning` or `awaiting_plan_approval` before new implementation, not a new branch. Design-source reconciliation applies to mapped Story sources only; Bug-linked designs remain supporting context and cannot replace expected behavior.
+
 ## Discover and adopt existing work
 
 Inspect Jira-linked open PRs and repository state together. In every candidate repository, inspect `git worktree list --porcelain`, ticket-key branches with `git for-each-ref`, the expected target and merge base, and the current remote PR source/target heads. For each existing worktree candidate, capture `git status --porcelain=v2 --branch`, HEAD, base SHA, staged/unstaged/untracked presence, and a SHA-256 fingerprint of the staged and unstaged diffs without printing or storing secret-bearing file contents.

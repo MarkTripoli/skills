@@ -23,7 +23,7 @@ test('host context supports SSH, HTTPS and explicit GitHub Enterprise without ch
   assert.throws(() => remoteContext('/tmp/local-repository'), /must identify/);
   assert.throws(() => remoteContext('file:///tmp/local-repository'), /must identify/);
   assert.deepEqual(parseTerm('#42'), {number: 42});
-  assert.deepEqual(parseTerm('KIT-123'), {search: 'KIT-123'});
+  assert.deepEqual(parseTerm('PROJ-123'), {search: 'PROJ-123'});
 });
 test('anchor ranges exclude deletion-only hunks and preserve occurrence', () => {
   assert.deepEqual([...addedLines('@@ -0,0 +1,3 @@\n@@ -10 +12 @@\n@@ -20,2 +23,0 @@')], [1, 2, 3, 12]);
@@ -94,12 +94,25 @@ const endpoint = args.find(a => /^projects\\//.test(a));
 if (!endpoint?.startsWith('projects/owner%2Frepo/merge_requests') || args[args.indexOf('--hostname')+1] !== '${hostname}') process.exit(7);
 const number = endpoint.match(/merge_requests\\/(\\d+)/)?.[1];
 if (args.includes('POST')) {
+ if (!args.includes('Content-Type: application/json')) process.exit(8);
  const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
  fs.appendFileSync(process.env.POST_LOG, JSON.stringify(payload)+'\\n');
  const position = {...payload.position, ...(process.env.WRONG_OLD ? {old_path:'wrong.js'} : {})};
- console.log(JSON.stringify({id:'thread100', notes:[{id:100, type:'DiffNote', position}]}));
+ if (process.env.WRONG_POSITION) position[process.env.WRONG_POSITION] = 'wrong';
+ console.log(JSON.stringify({id:'thread100', notes:[{id:100, type:process.env.NON_INLINE ? 'DiscussionNote' : 'DiffNote', position}]}));
 } else if (number) {
- const request = requests[number]; if (process.env.MOVED) request.diff_refs.head_sha='f'.repeat(40); console.log(JSON.stringify(request));
+ const request = requests[number];
+ if (endpoint.endsWith('/versions')) {
+   const refs = request.diff_refs;
+   console.log(JSON.stringify(process.env.NO_VERSION ? [] : [{
+     base_commit_sha: process.env.MOVED_BASE ? 'e'.repeat(40) : refs.base_sha,
+     start_commit_sha: process.env.MOVED_START ? 'd'.repeat(40) : refs.start_sha,
+     head_commit_sha: process.env.MOVED_VERSION_HEAD ? 'c'.repeat(40) : refs.head_sha,
+   }]));
+ } else {
+   if (process.env.MOVED) request.diff_refs.head_sha='f'.repeat(40);
+   console.log(JSON.stringify(request));
+ }
 } else console.log(JSON.stringify(Object.values(requests)));
 `);
     fs.chmodSync(path.join(bin, 'glab'), 0o755);
@@ -215,6 +228,32 @@ test('GitLab posting rejects a returned discussion on a different old path', t =
   const result = f.cli('post.mjs', ['--stack', f.stackFile, '--comments', anchorsFile, '--posted', postedFile, '--approved'], {WRONG_OLD: '1'});
   assert.equal(result.status, 4, result.stderr);
   assert.equal(fs.existsSync(postedFile), false);
+});
+
+test('GitLab publication rejects moved diff refs and mismatched returned positions without recording success', t => {
+  const f = fixture(t, 'gitlab.example.test', {host: 'gitlab'});
+  const comments = path.join(f.root, 'comments.json'); const anchors = path.join(f.root, 'anchors.json'); const posted = path.join(f.root, 'posted.json');
+  fs.writeFileSync(comments, JSON.stringify([{id: 'R1', pr: 10, path: f.currentPath, pattern: 'const changed', body: 'Missing permission boundary.'}]));
+  assert.equal(f.cli('anchors.mjs', ['--stack', f.stackFile, '--in', comments, '--out', anchors]).status, 0);
+  const args = ['--stack', f.stackFile, '--comments', anchors, '--posted', posted, '--approved'];
+  for (const flag of ['MOVED_BASE', 'MOVED_START', 'MOVED_VERSION_HEAD']) {
+    const result = f.cli('post.mjs', args, {[flag]: '1'});
+    assert.equal(result.status, 3, result.stderr);
+    assert.match(result.stdout, /diff refs moved/);
+    assert.equal(fs.existsSync(f.env.POST_LOG), false);
+    assert.equal(fs.existsSync(posted), false);
+  }
+  const unavailable = f.cli('post.mjs', args, {NO_VERSION: '1'});
+  assert.notEqual(unavailable.status, 0);
+  assert.equal(fs.existsSync(f.env.POST_LOG), false);
+  for (const field of ['base_sha', 'start_sha', 'head_sha', 'old_path', 'new_path', 'new_line']) {
+    const result = f.cli('post.mjs', args, {WRONG_POSITION: field});
+    assert.equal(result.status, 4, `${field}: ${result.stderr}`);
+    assert.equal(fs.existsSync(posted), false);
+  }
+  const detached = f.cli('post.mjs', args, {NON_INLINE: '1'});
+  assert.equal(detached.status, 4, detached.stderr);
+  assert.equal(fs.existsSync(posted), false);
 });
 
 test('GitHub renamed-file posting keeps the head-side path and RIGHT line semantics', t => {

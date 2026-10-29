@@ -26,7 +26,7 @@ export default {
           expect.atLeast("breakdown: at least one Epic and multiple atomic Stories", (text.match(/\b(?:Epic|Story)\b/gi) ?? []).length, 3),
           expect.matches("breakdown: Epic hierarchy proposed", text, /Epic/i),
           expect.atLeast("breakdown: multiple Stories", (text.match(/\bStories\b|\bStory\b/gi) ?? []).length, 2),
-          expect.excludes("breakdown: no premature Sub-task proposals", text, /^#{1,4}\s+(?:KIT-\d+\s+)?Sub[- ]task\b/im),
+          expect.excludes("breakdown: no premature Sub-task proposals", text, /^#{1,4}\s+(?:[A-Z][A-Z0-9]*-\d+\s+)?Sub[- ]task\b/im),
           expect.matches("breakdown: cart review scope covered", text, /cart.{0,100}(?:total|items)|(?:total|items).{0,100}cart/i),
           expect.matches("breakdown: declined payment retry covered", text, /declin.{0,180}(?:retry|duplicate)|(?:retry|duplicate).{0,180}declin/i),
           expect.matches("breakdown: payment data constraint covered", text, /(?:card|payment).{0,120}(?:not store|do not store|never store)|(?:not store|do not store|never store).{0,120}(?:card|payment)/i),

@@ -66,17 +66,31 @@ export function hostAdapter(name, context = remoteContext(configuredRemoteUrl(),
       const request = api(`${prefix}/${number}`);
       return github ? request.head.sha : request.diff_refs.head_sha;
     },
+    ...(github ? {} : {
+      diffRefs(number) {
+        const latest = api(`${prefix}/${number}/versions`)?.[0];
+        if (!latest?.base_commit_sha || !latest.start_commit_sha || !latest.head_commit_sha) throw new Error(`!${number}: no complete GitLab diff version`);
+        return {base_sha: latest.base_commit_sha, start_sha: latest.start_commit_sha, head_sha: latest.head_commit_sha};
+      },
+    }),
     post(request, comment) {
       const payload = github
         ? {body: comment.body, commit_id: request.head_sha, path: comment.path, line: comment.line, side: 'RIGHT'}
         : {body: comment.body, position: gitlabPosition(request, comment)};
-      const created = api(`${prefix}/${request.number}/${github ? 'comments' : 'discussions'}`, ['-X', 'POST', '--input', '-'], JSON.stringify(payload));
+      const created = api(`${prefix}/${request.number}/${github ? 'comments' : 'discussions'}`, ['-X', 'POST', '--input', '-', '-H', 'Content-Type: application/json'], JSON.stringify(payload));
       if (github) return {note_id: created.id, discussion_id: null, inline: created.path === comment.path && created.line === comment.line && created.commit_id === request.head_sha, url: created.html_url};
       const note = created.notes?.[0];
-      return {note_id: note?.id ?? null, discussion_id: created.id, inline: note?.type === 'DiffNote' && note?.position?.head_sha === request.head_sha && note?.position?.old_path === comment.old_path && note?.position?.new_path === comment.new_path && note?.position?.new_line === comment.line, url: note ? `${request.url}#note_${note.id}` : request.url};
+      return {note_id: note?.id ?? null, discussion_id: created.id, inline: matchingDiffNote(note, payload.position), url: note ? `${request.url}#note_${note.id}` : request.url};
     },
   };
 }
 export function gitlabPosition(request, comment) {
   return {position_type: 'text', base_sha: request.base_sha, start_sha: request.start_sha, head_sha: request.head_sha, old_path: comment.old_path, new_path: comment.new_path, new_line: comment.line};
+}
+
+export function matchingDiffNote(note, expected) {
+  if (note?.type !== 'DiffNote' || !note.position) return false;
+  return ['base_sha', 'start_sha', 'head_sha', 'old_path', 'new_path', 'new_line', 'old_line']
+    .filter(key => key in expected)
+    .every(key => note.position[key] === expected[key]);
 }

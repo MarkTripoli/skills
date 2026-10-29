@@ -20,7 +20,7 @@ const rootIndex = args.indexOf("--root");
 const root = rootIndex === -1 ? repoRoot : path.resolve(args[rootIndex + 1] ?? "");
 const generated = root !== repoRoot;
 
-const EXPECTED_SKILL_COUNT = 61;
+const EXPECTED_SKILL_COUNT = 70;
 const SHARED_LINKS = {
   "shared/WRITING.md": "https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md",
   "shared/CONVENTIONS.md": "https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md",
@@ -217,6 +217,11 @@ const HUMAN_GATE_ANSWERS = Object.keys(ANSWER_INVENTORY).filter(
     ),
 );
 
+const PORTABILITY_TOKENS = [
+  new RegExp(["ady", "ton"].join(""), "i"),
+  new RegExp(`\\b(?:${["at" + "ok", "a" + "ok", "adt_" + "mustr", "atlas_" + "infra"].join("|")})\\b`, "i"),
+  new RegExp(`\\b${"K" + "IT"}(?:-\\d+|\\b)`),
+];
 const BANNED_TOKENS = [
   /\brpi\b/i,
   /rpi[-_:]/i,
@@ -230,12 +235,14 @@ const BANNED_TOKENS = [
   /prd_tdd/i,
   /rpi_task_context/i,
   /artifact_directive/i,
-  new RegExp(["ady", "ton"].join(""), "i"),
+  ...PORTABILITY_TOKENS,
 ];
 
 const WORKFLOW_OPTIONAL_SKILLS = new Set(["extract-figma-visuals", "feature-conformance", "jev-ui", "land-pr-stack"]);
 const SKIP_DIRS = new Set([".git", ".backups", ".omo", ".worktrees", ".ci-go", "node_modules", "dist", "results", ".cache"]);
 const SKIP_FILES = new Set(["scripts/validate.mjs", ".skill-lock.json"]);
+// Generated protobuf byte strings can contain retired host tokens; portability checks still apply.
+const GENERATED_CODE = /^tools\/[^/]+\/internal\/.*\.pb\.go$/;
 const SKIP_BINARY_MEDIA = /\.(mp4|m4v|mov|webm|avi|mkv|wav|mp3)$/i;
 
 const BARE_IMPERATIVES = new Set("Run Create Help Operate Control Export Derive Merge Record Inspect Fix Centralize Execute Configure Choose Address Apply Revise Refine Update Draft Research Review Validate Fetch Decompose Orchestrate Implement Author Post".split(" "));
@@ -266,6 +273,7 @@ const NON_SKILL_COMMANDS = {
   settings: "Oh My Pi command named in deliver/references/tool_approval.md",
   blocks: "GitLab pull request dependency API path segment named in babysit/references/gitlab.md",
   blockees: "GitLab pull request dependency API path segment named in babysit/references/gitlab.md",
+  "code-review": "Claude Code native review command, distinct from the review-code skill",
   tmp: "directory path, not a command",
   usr: "directory path, not a command",
   etc: "directory path, not a command",
@@ -650,9 +658,10 @@ for (const file of listFiles(root)) {
   const relative = rel(file);
   if (SKIP_FILES.has(relative)) continue;
   if (/\.(png|jpg|jpeg|gif|ico|woff2?|zip)$/i.test(file) || SKIP_BINARY_MEDIA.test(file)) continue;
+  const tokens = GENERATED_CODE.test(relative) ? PORTABILITY_TOKENS : BANNED_TOKENS;
   const lines = read(file).split("\n");
   lines.forEach((line, index) => {
-    for (const token of BANNED_TOKENS) {
+    for (const token of tokens) {
       if (token.test(line)) {
         bannedHits += 1;
         fail(relative, index + 1, `banned token ${token}: ${line.trim().slice(0, 120)}`);

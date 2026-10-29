@@ -11,6 +11,8 @@ Use `/land-pr-stack <epic-or-ticket-list> [PR URLs]` when the request is to **me
 
 GitHub is the default: use the selected remote's repository and authenticated `gh` session. Run `git --version` and `gh auth status`, and verify access to each selected repository. For an explicitly selected GitLab repository, use its existing authenticated `glab` session and provider protocol; do not silently switch hosts or accounts. Missing authentication or access is a blocker, not a missing-PR skip. Never print tokens.
 
+When an authorized caller supplies `authorized_mr_urls` (GitLab) or `authorized_pr_urls` (GitHub), those exact URLs are the merge allowlist. Verify each URL's host, repository and number. Ticket and epic keys supply context only: never select or mutate another request merely because it shares a key. An unmerged omitted prerequisite blocks its dependents; continue independent allowlisted requests. Read-only dependency discovery remains allowed; scope expansion requires explicit authority.
+
 Copy this checklist and tick each item:
 
 ```text
@@ -23,6 +25,8 @@ Copy this checklist and tick each item:
 ```
 
 ## Establish the complete set
+
+When called by `video-iterative-orchestration`, continue its existing epic goal and report landing outcomes to that orchestrator. Do not create a competing goal, completion message, or restart instruction.
 
 1. Read every supplied epic, ticket, child ticket, dependency link, and PR. Use the available issue connector or authenticated CLI; unavailable essential ticket content blocks scope discovery. Search only the named repositories and issue keys. Record each PR's full host/repository/number identity, URL, state, source and target branches, head SHA, ticket, and dependencies. Record stale links and tickets with no accessible matching PR separately.
 2. Establish repository roles from code and tickets, not fixed repository names. Include only the selected epic or ticket set. A prerequisite outside that set requires scope authority before mutation.

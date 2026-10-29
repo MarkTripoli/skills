@@ -30,6 +30,7 @@ Contents: [Schema](#feature-contract-schema), [Construction and validation](#con
     "id": "R1",
     "owner": {
       "ticket": "ABC-123",
+      "issue_type": "Story",
       "branch": "feature/ABC-123-drafts",
       "worktree": "/absolute/adopted/worktree",
       "pr": "https://..."
@@ -81,6 +82,8 @@ Contents: [Schema](#feature-contract-schema), [Construction and validation](#con
 ## Construction and validation
 
 `authority` lists `ticket_scope` first, then only the applicable sources among `figma`, `design_document`, `ticket_detail`, and `repository`, in that order. The rules for applying them are in SKILL.md.
+
+`owner.issue_type` is optional for existing Story contracts and otherwise is `Story` or `Bug`. Bug rows use only `design_basis.sources: ["ticket"]`, with Figma and design-document status `not_applicable` or `not_supplied`; they cannot carry design authority mappings or a non-`aligned` source resolution. The ticket's reported failure and expected behavior remain authoritative in mixed Story/Bug contracts.
 
 `design_document_manifest` references the single run-level manifest and fingerprints that file. A `referenced` row maps exact document and section IDs from that manifest, repeats only the mapped section hash needed to freeze the contract version, and states the contributed behavior. The independent reviewer checks the mapping against the referenced manifest.
 

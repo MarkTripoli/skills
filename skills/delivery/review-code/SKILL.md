@@ -7,7 +7,7 @@ Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/
 
 # Code Review
 
-Review the complete code change without editing product code; run read-only checks to confirm or reject suspected issues. Output is a durable artifact containing concrete findings or recording a clean review. The delivery workflow's review loop (or the user, by hand) alternates `/review-code` and `/fix-code-review` until a review is clean.
+Review the complete change without editing product code; use read-only checks to confirm suspected issues. Save concrete findings or a clean review. Alternate `/review-code` and `/fix-code-review` until clean.
 
 ## Setup
 
@@ -47,7 +47,7 @@ Interfaces: accessibility, keyboard/pointer, responsive, manual/screenshot evide
 
 ## Health and severity
 
-Clean: improves health, satisfies task, follows conventions, no critical- or major-severity findings. Do not block on preference/perfection/non-blocking.
+Clean: satisfies requirements and conventions, improves health, and has no critical/major findings. Preferences do not block.
 
 Classify each finding by Type, Severity and Category, using the values in the template.
 
@@ -62,7 +62,7 @@ Dependencies: for each added or upgraded dependency, check that the existing sta
 
 Code the change newly orphans (unused exports, helpers, flags, files) is a major finding when the task caused it. Do not ask to delete uncertain pre-existing code.
 
-Report evidence-backed from change. Critical/major severity: id, file:line, failure, evidence, fix. Advisories: location, evidence, suggestion. No praise, enforced nits, speculation, pre-existing.
+Findings cite the change: id, file:line, failure, evidence, fix. Advisories cite location, evidence, suggestion. No praise, nits, speculation or pre-existing issues.
 
 Verify tests, build, manual checks and screenshots. Green checks alone are not sufficient.
 
@@ -77,7 +77,7 @@ the second pass turns up is a finding like any other and can change the status. 
 
 Record the staged document once as the next immutable `review.code` iteration.
 
-Keep all task records local; never stage or commit them.
+Keep task records local. Only `/review-code --comment` authorizes posting the saved review's concrete GitLab findings: load `gitlab-inline-comments`, require its reviewed head, post nested JSON positions and verify each `DiffNote`; report posting failures separately. Otherwise post nothing.
 
 ## Next
 
@@ -87,4 +87,4 @@ Read the one answer template the status selects.
 - Clean: `references/code_review_clean_answer.md`, next `/record-evidence`.
 - Blocked: `references/code_review_blocked_answer.md`, stop until the gate runs. A blocker that needs a human goes to the orchestrator; run by hand, post it to the task's Slack thread per [feature-thread mode](https://github.com/MarkTripoli/skills/blob/main/skills/delivery/agent-slack-control-plane/references/feature-thread.md#post-a-blocker).
 
-Use template only. Fill `{artifact_link}` with the saved canonical task-root-relative path. End with one fenced `text` command. A legacy task without `index.json` follows the conventions' legacy rules.
+Use template only; include verified posting links or failures in `{summary}` for `--comment`. Fill `{artifact_link}` with the canonical task-root-relative path. End with one fenced `text` command. Legacy tasks without `index.json` follow the conventions.

@@ -17,9 +17,12 @@ const SKILL_DEPENDENCIES = {
   'jev-ui': ['typed-judgment', 'record-evidence'],
   'record-evidence': ['deliver'],
   'iterate-evidence': ['record-evidence', 'deliver'],
-  'video-iterative-orchestration': ['agent-implementation-reviewer', 'extract-figma-visuals', 'feature-conformance', 'jira-issue-hierarchy', 'slack-coordinator', 'video-iterative-development'],
+  'group-review': ['gitlab-inline-comments'],
+  'video-iterative-development': ['record-evidence'],
+  'video-iterative-orchestration': ['agent-implementation-reviewer', 'extract-figma-visuals', 'feature-conformance', 'jira-issue-hierarchy', 'land-pr-stack', 'slack-coordinator', 'video-iterative-development'],
   ...Object.fromEntries(['implement-plan', 'implement-outline', 'iterate-implementation', 'fix-bug', 'reproduce-bug', 'fix-code-review', 'describe-pr'].map(name => [name, ['deliver']])),
-  ...Object.fromEntries(['verify-implementation', 'review-code', 'test-app', 'resolve-pr-reviews'].map(name => [name, ['deliver', 'typed-judgment']])),
+  ...Object.fromEntries(['verify-implementation', 'test-app', 'resolve-pr-reviews'].map(name => [name, ['deliver', 'typed-judgment']])),
+  'review-code': ['deliver', 'typed-judgment', 'gitlab-inline-comments'],
 };
 const BINARY = { 'claude-code': 'claude', codex: 'codex', 'oh-my-pi': 'omp', pi: 'pi' };
 

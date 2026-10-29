@@ -3,7 +3,9 @@
 ## Skill notes
 
 Invoke a skill by typing `/<name>` in the Claude Code prompt, for example `/create-plan @03-plan-verbose-flag-cli.md`.
-Child workers: call the `Task` tool with `subagent_type: "agent-<role>"` and the assignment text as `prompt`. The worker's final message is the tool result; read it before using any claim.
+Child workers: call the `Agent` tool with `subagent_type: "agent-<role>"` and the assignment text as `prompt`. The worker's final message is the tool result; read it before using any claim. Without worker support, read the role's installed skill and run it inline.
+
+Owner instructions remain user-managed. Follow the existing runtime and repository instructions; the installer does not seed policy files or add global instruction loaders.
 
 ## Install
 

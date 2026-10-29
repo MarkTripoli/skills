@@ -3,7 +3,9 @@
 ## Skill notes
 
 Invoke a skill by typing `/<name>` in the Oh My Pi prompt, for example `/create-plan @03-plan-verbose-flag-cli.md`.
-Child workers: call the `task` tool with one item `{ "agent": "agent-<role>", "task": "<assignment>" }`; the result auto-delivers when the worker yields. Read its final message before using any claim.
+Child workers: call the `task` tool with one item `{ "agent": "agent-<role>", "task": "<assignment>" }`; the result auto-delivers when the worker yields. Read its final message before using any claim. Without worker support, read the role's installed skill and run it inline.
+
+Owner instructions remain user-managed. Follow the existing runtime and repository instructions; the installer does not seed policy files or add global instruction loaders.
 
 ## Install
 

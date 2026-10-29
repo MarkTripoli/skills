@@ -41,6 +41,11 @@ export function postAll({stack, comments, posted, only, dryRun, approved, host, 
       log(`${comment.id}: ${request.ref} head moved ${request.head_sha.slice(0, 9)} -> ${current.slice(0, 9)}; rediscover, re-anchor and obtain approval before posting`);
       return 3;
     }
+    const freshRefs = host.diffRefs?.(request.number);
+    if (freshRefs && ['base_sha', 'start_sha', 'head_sha'].some(key => freshRefs[key] !== request[key])) {
+      log(`${comment.id}: ${request.ref} diff refs moved; rediscover, re-anchor and obtain approval before posting`);
+      return 3;
+    }
     if (dryRun) { log(`${comment.id}: would post on ${request.ref} ${comment.path}:${comment.line}`); continue; }
     const result = host.post(request, comment);
     if (!result.inline) {

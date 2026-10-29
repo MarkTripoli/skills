@@ -1,7 +1,8 @@
-# Existing Story KIT-520: Retry a declined Mobile Checkout payment
+# Existing Story PROJ-520: Retry a declined Mobile Checkout payment
 
-Work on this Story is starting now. Parent Epic: KIT-400. Component: Mobile Checkout.
+Work on this Story is starting now. Parent Epic: PROJ-400. Component: Mobile Checkout.
 No implementation children exist yet. This is a supplied read-only snapshot, not live Jira evidence.
+This fixture project's observed workflow uses the existing `no_qa` label for children covered by parent acceptance; QA reviews the Story.
 
 Approved Story acceptance criteria:
 - If payment is declined, the customer sees that the order was not placed.
