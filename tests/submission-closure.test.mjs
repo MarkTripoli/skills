@@ -24,6 +24,10 @@ const complete = () => ({
     pr_description_verified: true,
     items: [{
       kind: "android_video",
+      source_commit: commit,
+      result: "passed",
+      run_id: "scenario-run-1",
+      runner_target: "assigned-android-journey",
       location: "https://github.com/user-attachments/assets/01234567-89ab-cdef-0123-456789abcdef",
       playability_verified: true,
       content_sha256: `sha256:${"a".repeat(64)}`,
@@ -85,7 +89,7 @@ test("rejects missing PR proof, durable video, or requested Slack receipt", () =
 test("accepts API contract evidence with Slack disabled", () => {
   const receipt = complete();
   receipt.required_evidence = ["api_contract"];
-  receipt.evidence.items = [{ kind: "api_contract", summary: "Authenticated valid and invalid responses are summarized in the PR." }];
+  receipt.evidence.items = [{ kind: "api_contract", source_commit: commit, result: "passed", run_id: "contract-run-1", runner_target: "authenticated endpoint checks", summary: "Authenticated valid and invalid responses are summarized in the PR." }];
   receipt.slack = { requested: false };
   delete receipt.actions.slack;
 
@@ -112,4 +116,26 @@ test("requires every assigned evidence surface and rejects expired signed links"
   assert.ok(result.issues.includes("missing assigned evidence: chrome_video"));
   assert.ok(result.issues.some((issue) => issue.includes("durable HTTPS")));
   assert.ok(result.issues.some((issue) => issue.includes("playability_verified")));
+});
+
+test("rejects proof from another source head or an unpassed recording run", () => {
+  const receipt = complete();
+  receipt.evidence.items[0].source_commit = "f".repeat(40);
+  receipt.evidence.items[0].result = "failed";
+  delete receipt.evidence.items[0].run_id;
+  const result = validateSubmissionClosure(receipt);
+  assert.equal(result.valid, false);
+  assert.ok(result.issues.includes("evidence.items[0].source_commit must equal local_commit"));
+  assert.ok(result.issues.includes("evidence.items[0].result must be passed"));
+  assert.ok(result.issues.includes("evidence.items[0].run_id is required"));
+});
+
+test("supports explicit optional GitLab without changing the GitHub default", () => {
+  const receipt = complete();
+  receipt.pull_request.url = "https://gitlab.example.com/team/project/-/merge_requests/123";
+  assert.equal(validateSubmissionClosure(receipt).valid, false);
+  receipt.pull_request.provider = "gitlab";
+  assert.equal(validateSubmissionClosure(receipt).valid, true);
+  receipt.pull_request.url += "?token=secret";
+  assert.equal(validateSubmissionClosure(receipt).valid, false);
 });

@@ -114,11 +114,11 @@ The resolver derives `old_path` and `new_path` from rename-aware Git diffs at th
 
 ## 9. Test post
 
-Show the user the full text and location of one comment, normally the highest-ranked. Only after explicit approval, run `node <installed-skills-dir>/group-review/scripts/post.mjs --stack <workspace>/stack.json --comments <workspace>/anchors.json --posted <workspace>/posted.json --only <id> --approved`, give the user the link, and wait for format feedback. `--approved` asserts that approval happened; never infer it from discovery or review approval. Apply the feedback to every remaining draft before step 10.
+Show the user the full text and location of one comment, normally the highest-ranked. Only after explicit approval, load `gitlab-inline-comments` for GitLab posting (not for GitHub), then run `node <installed-skills-dir>/group-review/scripts/post.mjs --stack <workspace>/stack.json --comments <workspace>/anchors.json --posted <workspace>/posted.json --only <id> --approved`, give the user the verified link, and wait for format feedback. `--approved` asserts that approval happened; never infer it from discovery or review approval. Apply feedback to remaining drafts before step 10.
 
 ## 10. Batch post
 
-After the user approves the rest, run `post.mjs --approved` with the same files, without `--only`. It revalidates the pinned base/head, old/new path pair, actual new-side diff line and cited text, then checks the live head before each post. It stops on moved heads, rejected positions, or non-inline results, skips ids already in `posted.json`, and records every success. A moved head requires rediscovery, a renewed review of changed code, re-anchoring and fresh posting approval. `--dry-run` checks without posting. These scripts handle inline comments only: summary comments require separately shown content and explicit approval, then the selected host's summary-comment command. Tracker writes remain outside this skill.
+After the user approves the rest, run `post.mjs --approved` with the same files, without `--only`. It revalidates the pinned base/head, old/new path pair, actual new-side diff line and cited text, then checks the live head before each post. For GitLab it also fetches fresh base/start/head diff refs and verifies the returned `DiffNote` against every position field. It stops on moved refs, rejected positions, or non-inline results, skips ids already in `posted.json`, and records every success. Moved refs require rediscovery, renewed review, re-anchoring and fresh approval. `--dry-run` checks without posting. Summary comments require separately shown content, explicit approval and the selected host's summary-comment command. Tracker writes remain outside this skill.
 
 ## 11. Clean up
 

@@ -18,9 +18,9 @@ export default {
       check: ({ artifact }) => {
         const text = artifact?.text ?? "";
         return failures(
-          expect.matches("QA: assesses Story rather than treating child work as QA unit", text, /KIT-417/),
+          expect.matches("QA: assesses Story rather than treating child work as QA unit", text, /PROJ-417/),
           expect.matches("QA: submitted is not treated as merged", text, /(?:not|un)merged|(?:submitted|open).{0,120}(?:not|isn't|hasn't) merged|merged.{0,120}(?:missing|unconfirmed|no evidence)/i),
-          expect.matches("QA: open agent-owned child blocks readiness", text, /KIT-418|In Progress/i),
+          expect.matches("QA: open agent-owned child blocks readiness", text, /PROJ-418|In Progress/i),
           expect.matches("QA: deployed status not inferred", text, /(?:not|un)deployed|deploy.{0,120}(?:unknown|not confirmed|no evidence|missing|unconfirmed)|no evidence.{0,120}deploy/i),
           expect.matches("QA: test data unconfirmed", text, /test data.{0,120}(?:not confirmed|missing|unknown|unconfirmed)|(?:not confirmed|missing|unknown|unconfirmed).{0,120}test data/i),
           expect.matches("QA: missing Story links reported", text, /link|spec|design/i),

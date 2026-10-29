@@ -13,6 +13,19 @@ Keep evidence kinds apart: offline repo check, live skill eval. One kind pass no
 | Plugin sync | `node scripts/sync-plugin.mjs --check` | Published plugin resources match canonical skills |
 | Unit tests | `node --test tests/` | Installer ownership, runtime adaptation, commit rules, typed helper behavior, task-index and task-root contracts, artifact helper distribution, and workflow helpers |
 
+The active-source scan rejects company branding and inherited project identifiers in skills, helpers, fixtures and generated runtime content. It leaves task roots, owner recordings and archived results untouched. Generated protobuf payloads skip retired-host prose checks, not company/project portability checks.
+
+### Additional tool gates
+
+| Command | Offline proof | Not established |
+|---|---|---|
+| `npm run test:simview` | Go race tests, native and Darwin vet, temporary viewer build | Real Android/iOS capture, SSH device streaming or a hosted viewer deployment |
+| `npm run test:bug-coordinator` | Go race tests, vet and temporary coordinator build | Authenticated Jira polling, supervised agent dispatch or an installed service |
+
+Smoke the viewer in isolated config/state on loopback: confirm unauthenticated rejection, tokenized page/device access, CSP headers, actual browser rendering and clean shutdown. A device-free grid proves the server/UI boundary, not device streaming. Smoke new review helpers and selected skill installation from a temporary project/HOME; never update the real user installation to prove an installer change.
+
+New standalone skill scenarios cover merge-risk assessment, briefs, technical writing, Flutter performance, Coast selection, Figma export comparison and simulator availability. Their definitions ship with the source; imported scenarios and upstream results are not a current-source live pass. Live GitLab diff-note publication and static ticket/design/video audits retain external-prerequisite exemptions in `scripts/check-skill-practices.mjs`. The Figma local-export scenario does not prove production UI rendering.
+
 Offline check no need live provider key. Installer test use temp home and temp project, cover:
 
 - project-local portable skill;

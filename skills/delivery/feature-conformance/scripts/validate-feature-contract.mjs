@@ -116,6 +116,9 @@ export function validateContract(contract, mode) {
     else requirementIds.add(requirement.id);
 
     if (!object(requirement?.owner) || !nonBlank(requirement.owner.ticket)) issue(`${label}: owner.ticket is required`);
+    if (requirement?.owner?.issue_type !== undefined && !["Story", "Bug"].includes(requirement.owner.issue_type)) {
+      issue(`${label}: owner.issue_type must be Story or Bug`);
+    }
     if (!object(requirement?.behavior) || (!nonBlank(requirement.behavior.backend) && !nonBlank(requirement.behavior.frontend))) {
       issue(`${label}: behavior must describe backend or frontend behavior`);
     }
@@ -124,6 +127,13 @@ export function validateContract(contract, mode) {
     if (!object(designBasis) || !array(designBasis.sources) || !designBasis.sources.includes("ticket")) {
       issue(`${label}: design_basis.sources must include ticket`);
     } else {
+      if (requirement?.owner?.issue_type === "Bug") {
+        if (designBasis.sources.length !== 1 || designBasis.sources[0] !== "ticket") issue(`${label}: Bug rows must use ticket-only source mappings`);
+        if (![designBasis.figma?.status, designBasis.design_document?.status].every((status) => ["not_supplied", "not_applicable"].includes(status))) {
+          issue(`${label}: Bug rows cannot carry design authority mappings`);
+        }
+        if (requirement.source_resolution && requirement.source_resolution.status !== "aligned") issue(`${label}: Bug rows cannot override ticket authority`);
+      }
       const sources = new Set(designBasis.sources);
       for (const source of sources) {
         if (!["ticket", "figma", "design_document"].includes(source)) issue(`${label}: unknown design source ${source}`);

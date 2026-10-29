@@ -32,17 +32,19 @@ Source manifests and Figma bundles stay outside task receipts. Keep one immutabl
 
 ## Build ticket-scoped rows
 
-Create rows only for requirements explicitly present in selected tickets. Figma frames and design documents can contain broader product behavior; unmapped content creates no row, gap, deferral, or completeness claim.
+Create rows only for requirements explicitly present in selected tickets, including Stories and Bugs. A Bug row records its reported failure and expected behavior, reproduction context, environment, and acceptance criteria when supplied, even when another team reported it. Never invent acceptance criteria. Unmapped Figma or document content creates no row, gap, deferral, or completeness claim.
 
 Each row records its ticket owner, write surface, intended backend/frontend behavior, API boundary, lifecycle and `must_not` rules, required evidence, source mappings, source-change state, decision, and final PR. Use the [feature-contract schema](references/feature-contract-schema.md).
 
-Apply these authority rules within the ticket boundary:
+Apply these authority rules to Story rows within the ticket boundary:
 
 1. Mapped Figma is the default authority for visual and interaction behavior, including ambiguous or conflicting ticket details.
 2. Mapped Figma overrides a conflicting design document automatically.
 3. Without applicable Figma, a mapped design document resolves ambiguous ticket details.
 4. A direct design-document conflict with explicit acceptance criteria is `decision_needed` only when repository evidence cannot resolve it and the alternatives materially change product behavior.
 5. Repository and API conventions resolve remaining implementation details.
+
+For a Bug row, use `owner.issue_type: "Bug"` and `design_basis.sources: ["ticket"]`. The Bug's expected behavior is authoritative; linked designs are diagnostic context, not an override. Set design mappings to `not_applicable`. Resolve material conflicts through a recorded owner decision rather than applying Story Figma precedence.
 
 Record automatic source resolutions in `source_resolution` and the run decision log. A small implementation choice may be `agent_decided` when its rationale, authority basis, reversibility, and evidence are recorded. Only an explicitly authorized departure from the authoritative sources is an `approved_deviation` with an approval reference.
 

@@ -4,6 +4,8 @@ Each file here describes one reader of an `/explain` page: who they are, what th
 
 You can edit these files without touching any code.
 
+Every persona names its reader and the question the page answers. Open with that answer, explain terms for someone outside the conversation, state limits once, and keep detailed receipts linked. The optional `technical-writing` skill adds reader-focused guidance when installed; persona editing does not require it.
+
 ## Change a persona
 
 - **The line under the title** (who reads it), **What they want to see**, **Tone**, **Numbers**: plain guidance the writer follows. Edit freely; put any other guidance under Tone.

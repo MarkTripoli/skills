@@ -31,7 +31,13 @@ export function validateSubmissionClosure(receipt) {
   }
 
   if (!object(receipt.pull_request)) issue("pull_request is required");
-  if (!/^https:\/\/[^/]+\/[^/]+\/[^/]+\/pull\/[1-9]\d*$/.test(receipt.pull_request?.url ?? "")) issue("pull_request.url must be a GitHub pull request URL");
+  const provider = receipt.pull_request?.provider ?? "github";
+  if (!["github", "gitlab"].includes(provider)) issue("pull_request.provider must be github or gitlab");
+  const requestUrl = receipt.pull_request?.url ?? "";
+  const providerPath = provider === "gitlab"
+    ? /^https:\/\/[^/]+\/[^?#]+\/-\/merge_requests\/[1-9]\d*$/
+    : /^https:\/\/[^/]+\/[^/]+\/[^/]+\/pull\/[1-9]\d*$/;
+  if (!hostedUrl(requestUrl) || !providerPath.test(requestUrl)) issue(`pull_request.url must be a ${provider === "gitlab" ? "GitLab merge" : "GitHub pull"} request URL`);
   if (!nonBlank(receipt.pull_request?.source_branch)) issue("pull_request.source_branch is required");
   if (!nonBlank(receipt.pull_request?.target_branch)) issue("pull_request.target_branch is required");
   if (receipt.pull_request?.head_commit !== receipt.local_commit) issue("pull_request.head_commit must equal local_commit");
@@ -53,6 +59,10 @@ export function validateSubmissionClosure(receipt) {
         issue(`evidence.items[${index}] must be an object`);
         continue;
       }
+      if (item.source_commit !== receipt.local_commit) issue(`evidence.items[${index}].source_commit must equal local_commit`);
+      if (item.result !== "passed") issue(`evidence.items[${index}].result must be passed`);
+      if (!nonBlank(item.run_id)) issue(`evidence.items[${index}].run_id is required`);
+      if (!nonBlank(item.runner_target)) issue(`evidence.items[${index}].runner_target is required`);
       if (["android_video", "chrome_video", "ios_video"].includes(item.kind)) {
         if (!hostedUrl(item.location)) issue(`evidence.items[${index}] video must use a durable HTTPS hosted URL without credentials or signed query parameters`);
         if (item.playability_verified !== true) issue(`evidence.items[${index}].playability_verified must be true`);

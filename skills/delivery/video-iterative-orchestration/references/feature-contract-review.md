@@ -9,7 +9,7 @@ Write an ignored `implementation-review-plan.md` beside the feature contract. In
 - requirement ID, ticket, selected write surface, and observable behavior;
 - API, lifecycle, and `must_not` boundaries;
 - required evidence and its exact paths or links;
-- mapped Figma nodes or design-document sections and their recorded source resolution;
+- mapped Story Figma nodes or document sections and their source resolution; for a Bug, reported failure, expected result and reproduction context without independent design precedence;
 - current decision, disposition, source-change state, adopted baseline, and final PR.
 
 Do not add requirements from the epic, unmapped design content, or repository observations. The review plan adapts the existing contract; it does not replace or broaden it.

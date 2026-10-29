@@ -18,6 +18,8 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 export const EVAL_EXEMPT = {
   "land-pr-stack": "live forge merge chain",
   "extract-figma-visuals": "needs a Figma MCP server the harness cannot stub",
+  "gitlab-inline-comments": "requires authorized live GitLab diff-note publication and persisted-position verification",
+  "static-implementation-audit": "requires accessible Jira/design inputs and submitted PR recordings",
   "video-iterative-development": "requires authenticated application services and real Android Patrol/device recording",
   "video-iterative-orchestration": "requires a live ticket queue, isolated repository worktrees and device-backed implementation workers",
   "agent-web-search-researcher": "needs live web access",

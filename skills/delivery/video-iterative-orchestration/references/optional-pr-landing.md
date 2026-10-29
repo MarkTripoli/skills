@@ -1,0 +1,15 @@
+# Optional selected PR landing
+
+Landing requires an explicit owner choice for each PR. Record the exact GitHub PR URL or configured GitLab MR URL, repository, ticket, authorization source and current landing state. Before creation a named ticket/repository selector may be pending; bind it to one exact URL afterward or clarify ambiguous matches. No choice means `not_requested`. Epic selection, readiness, another PR's consent and submission authorization never imply merge permission. Revocation stops future landing actions.
+
+Track landing separately as `not_requested`, `waiting_for_review`, `waiting_for_dependency`, `ready_to_land`, `landing`, `merged` or `landing_incomplete`. Keep `submitted_verified` intact. Requested landing keeps recoverable work active; only provider state and a recorded target commit prove merge.
+
+Before handoff require valid current-head submission closure, ready status, completed native/effective-change review without unresolved verified findings or owner questions, and dispositions for current discussions. Corrections return through the same ticket owner, independent conformance, new proof where required, and review at the new source SHA. Preserve hosted-proof hooks and repository-required current checks; pipeline status that was non-blocking for submission can still block landing.
+
+Build the landing set from eligible opted-in URLs only. Invoke the installed `land-pr-stack` skill with the exact URL allowlist, pinned source/target heads, authority records and review receipts; if absent, report the missing capability rather than substituting an unreviewed merge command. Optional GitLab installations use their configured provider adapter. Dependency discovery may inspect an unselected parent or backend PR but cannot merge, retarget, push, rebase or change its discussions. An unmerged unselected prerequisite leaves the child `waiting_for_dependency` while independent authorized PRs continue. Never pass an entire epic as merge authority.
+
+Check the existing Slack run gate before the handoff when enabled. No second owner confirmation is needed for actions already explicitly authorized, but the landing skill's own checks remain authoritative. A rejected provider merge is not bypassed. Maintain repository dependency and generated-client release order rather than hard-coding backend/frontend project names.
+
+Content changes during landing return the affected PR for current-source conformance, proof and native review before merge. A mechanical ancestry change can retain review only with recorded effective-tree equivalence and unchanged proof validity under the installed publication contract. A moved target requires a fresh effective-change comparison; changed behavior requires a new review. Never rewrite remote history without separate authority.
+
+Record exact merge commits or skip/rejection reasons. `landing_incomplete` does not erase submission success. Report remaining dependency, provider or authorization action honestly; do not claim a queued merge completed.

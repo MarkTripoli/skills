@@ -53,7 +53,7 @@ Run each skill in a fresh session, including revisions, implementation, verifica
 
 | Runtime | New session | See context usage | Compaction | Subagents |
 |---|---|---|---|---|
-| Claude Code | `/clear` | `/context` | `/compact` is not a new phase | `Task` tool; a subagent cannot talk directly to you |
+| Claude Code | `/clear` | `/context` | `/compact` is not a new phase | `Agent` tool; a subagent cannot talk directly to you |
 | Codex | `/new` | `/status` (or `/statusline` for a live footer) | `/compact` is not a new phase | multi-agent spawn tool; agents cannot talk directly to you |
 | Oh My Pi | `/new` (or `/clear` to reset in place) | footer shows context % | `/compact` is not a new phase | `task` tool; a subagent cannot talk directly to you |
 | Pi | `/new` | footer shows context % | `/compact` is not a new phase | none built in; phases perform worker roles inline |

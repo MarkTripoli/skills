@@ -49,9 +49,9 @@ Merges need explicit scoped authority, current required CI/review and host-confi
 
 Load references only for the next operation: repair guidance when fixing, merge guidance when ready, and Slack/Jira/breadcrumb details only when requested or configured. Monitoring lasts only while a session or observed scheduler remains active; no daemon is installed. Optional Slack uses one owned coordinator thread or explicit pre-coordinator MCP mode; Jira writes need issue-specific permission. See [the workflow contract](../workflows/delivery.md#babysit-an-existing-pr-set).
 
-## Draft KIT Jira issues
+## Draft Jira issues
 
-Install the standalone `jira-issue-hierarchy` skill to draft Epics and Stories from an approved requirement, draft Sub-tasks at Story work start, or check Story QA readiness. Its [local policy and templates](../skills/jira-issue-hierarchy/references/jira-issue-templates/README.md) ship with the skill; no external policy fetch is needed. The repository installer also brings it when selecting `video-iterative-orchestration`. QA reviews Stories, not agent-owned children.
+Install `jira-issue-hierarchy` to draft Epics and Stories from approved requirements, draft implementation children at Story start, or check QA readiness. Its [portable templates](../skills/jira-issue-hierarchy/references/jira-issue-templates/README.md) ship with the skill. The selected project's observed hierarchy, fields, QA labels and transitions remain authoritative. Selecting `video-iterative-orchestration` includes this companion.
 
 ## Inspect and repair recorded behavior
 
@@ -94,6 +94,10 @@ Work from the task checkout and branch. Chat end ≠ new task. Run the next skil
 
 - [`video-iterative-development`](../skills/delivery/video-iterative-development/SKILL.md) scopes authenticated backend/API and frontend work to the smallest required layers, then proves changed contracts and real user flows with appropriate evidence.
 - [`video-iterative-orchestration`](../skills/delivery/video-iterative-orchestration/SKILL.md) coordinates prioritized, dependency-aware requirements through isolated worktrees, durable run state, recovery, and delivery gates. It uses the development skill for each implementation.
+
+Per-Bug plan gates bind approval to the exact source/contract revision; final recordings bind independently to the delivered head. Owner follow-up uses the active session and saved receipts, not a required messaging bot. An explicitly configured Codex owner can opt into the separate [Jira bug inbox](bug-coordinator.md); installing skills does not start it.
+
+For standalone briefs, writing, merge-risk assessment, static audits, Figma sync, Flutter performance, Coast runtimes or device visibility, choose from [the independent capability catalog](cheatsheet.md#additional-independent-skills). Installing a skill does not provision its service, daemon, credentials or device.
 
 ## Slack visibility
 

@@ -1,4 +1,4 @@
-# Supplied text of Jira issue KIT-731
+# Supplied text of Jira issue PROJ-731
 
 This is the text the requester pasted. Jira itself is not reachable from this task.
 

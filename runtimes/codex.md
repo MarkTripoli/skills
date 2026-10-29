@@ -5,6 +5,8 @@
 Invoke a skill by typing `$<name>` in the Codex prompt, for example `$create-plan @03-plan-verbose-flag-cli.md`. Handoff fences still show `/<name>`; type the `$` form.
 Child workers: use the multi-agent spawn tool with the custom agent `agent-<role>` and the assignment text as the message; wait for the agent and read its final message before using any claim. Without spawning, ordinary phase roles run inline and say so.
 
+Owner instructions remain user-managed. Follow the existing runtime and repository instructions; the installer does not seed policy files or add global instruction loaders.
+
 ## Install
 
 `npx git+github:MarkTripoli/skills codex` performs these steps (add `--project` for one repository, `--dry-run` to look first); by hand:

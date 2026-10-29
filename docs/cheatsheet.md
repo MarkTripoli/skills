@@ -26,6 +26,22 @@ npx github:MarkTripoli/skills portable --project --yes
 
 Uninstall no kill task doc or worktree.
 
+### Opt-in nightly updates
+
+The scheduler updates only an explicit runtime/skill selection from public release tags. Ordinary installation does not enable it.
+
+```sh
+# Preview scheduler files and selection without writes:
+node scripts/install-updater.mjs --targets codex --skill show-me --print
+# Enable the displayed selection:
+node scripts/install-updater.mjs --targets codex --skill show-me
+# Disable only the scheduler, preserving skills and updater state:
+node scripts/install-updater.mjs --uninstall
+```
+
+Runs at 23:00 local time through macOS launchd or Linux user systemd. Repeat `--skill` for more names; `--skill '*'` deliberately selects the whole collection. For project scope, run the script by absolute path from the consumer checkout with `--project`. Re-enabling replaces the single saved selection. Runtime/model environment overrides and the selection live in `config.json` under `${XDG_STATE_HOME:-~/.local/state}/marktripoli-skills`; `--state-dir` chooses another external directory. It installs no team policy or instruction loader. After abrupt termination, confirm no updater is running before removing a stale `update.lock`.
+
+
 ### Configure model routing
 
 ```text
@@ -71,7 +87,7 @@ Start a new agent session afterward. Existing sessions retain their loaded instr
 
 ## Jira issue bodies
 
-KIT new feature: use standalone [`jira-issue-hierarchy`](../skills/jira-issue-hierarchy/SKILL.md) and its [local policy and Markdown bodies](../skills/jira-issue-hierarchy/references/jira-issue-templates/README.md). Plan Epic + Story first; Sub-task at Story work start. QA review Story. `video-iterative-orchestration` installs and reads this skill when delivering Jira work.
+Use standalone [`jira-issue-hierarchy`](../skills/jira-issue-hierarchy/SKILL.md) and its [portable policy and Markdown bodies](../skills/jira-issue-hierarchy/references/jira-issue-templates/README.md) for a new Jira feature. Resolve the selected project and inspect its hierarchy, fields, QA labels and transitions before adapting templates. Plan Epics and Stories first; create implementation children when work starts. `video-iterative-orchestration` installs this companion for Jira work.
 
 For a single `/deliver` ticket, [jira-issue-refinement](../skills/jira-issue-refinement/SKILL.md) reads the live issue and context before planning, saves confirmed functional specifications, QA steps, open questions, and exact plan deltas in a task artifact, and leaves Jira unchanged. An existing plan or outline is revised before implementation. A description rewrite requires separate approval for each ticket. Use the stronger model for planning/orchestration and delegated economy-model workers for bounded execution. Apply [SLICING.md](../shared/SLICING.md) before implementation; split a near-10,000-line or otherwise unreviewable PR into a small number of independent child PRs. When configured, `slack-coordinator` starts one run and its saved `slack_run_id` carries status and owner input across stages. UI delivery calls for tablet and mobile video plus screenshots in the PR's `## UI Evidence`, then current-head pipeline and review follow-up.
 
@@ -126,6 +142,22 @@ Resume with `/deliver <task-dir>` in the task's original worktree, or run a phas
 
 `/explain <topic>` selects an audience, grounds claims in inspected evidence and optionally creates an HTML page outside task roots. `/land-pr-stack <explicit PR scope>` lands a selected stack only with recorded merge authority, using GitHub by default and repository-declared release requirements. See the [workflow table](../workflows/delivery.md#phase-table).
 
+
+## Additional independent skills
+
+Install a row with `node scripts/install.mjs <runtime> --skill <name> --yes`; Codex invokes `$<name>`, other runtimes `/<name>`.
+
+| Skill | Outcome | Prerequisites and boundary |
+|---|---|---|
+| [`product-brief`](../skills/product-brief/SKILL.md) | Source-backed product brief, reader feedback and optional sketches | Supplied request or sources; not an implementation plan |
+| [`technical-writing`](../skills/technical-writing/SKILL.md) | Reader-specific technical prose and revision | Does not override the active artifact's required shape or approvals |
+| [`assess-merge-risk`](../skills/assess-merge-risk/SKILL.md) | Source-scoped merge-risk report with checked evidence | Repository and selected change; not authorization to merge |
+| [`static-implementation-audit`](../skills/delivery/static-implementation-audit/SKILL.md) | Ticket/design/code audit with submitted-video review | Accessible source material; not fresh runtime or hosted-publication proof |
+| [`gitlab-inline-comments`](../skills/gitlab-inline-comments/SKILL.md) | Persisted GitLab diff comments verified at their actual positions | Explicit GitLab selection, authentication and posting authority |
+| [`figma-design-system-sync`](../skills/figma-design-system-sync/SKILL.md) | Compare and update a repository-owned design system from Figma | Supplied design export, discovered token/component ownership and real render proof |
+| [`flutter-ui-performance`](../skills/flutter-ui-performance/SKILL.md) | Audit rebuild/reload behavior, then implement measured slices | Flutter checkout and requested runtime proof |
+| [`coasts`](../skills/coasts/SKILL.md) | Discover and operate a repository's declared Coast runtime | Coast CLI and repository configuration; no assumed application topology |
+| [`simview`](../skills/simview/SKILL.md) | Make selected Android, iOS or browser work visible | Separately built [viewer](../tools/simview/README.md), selected device/browser and applicable companion tools |
 
 ## Where things live
 

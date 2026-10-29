@@ -1,0 +1,662 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>simview</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: oklch(0.16 0.008 255);
+    --surface: oklch(0.205 0.009 255);
+    --surface-2: oklch(0.245 0.01 255);
+    --surface-3: oklch(0.29 0.012 255);
+    --line: oklch(0.32 0.012 255 / 0.7);
+    --line-strong: oklch(0.42 0.014 255);
+    --text: oklch(0.94 0.005 255);
+    --text-dim: oklch(0.72 0.012 255);
+    --text-faint: oklch(0.6 0.012 255);
+    --accent: oklch(0.7 0.17 38);
+    --accent-ink: oklch(0.2 0.04 38);
+    --accent-soft: oklch(0.7 0.17 38 / 0.16);
+    --live: oklch(0.78 0.16 150);
+    --wait: oklch(0.8 0.14 85);
+    --bad: oklch(0.7 0.18 25);
+    --focus: oklch(0.78 0.12 240);
+    --radius: 12px;
+    --gutter: 16px;
+    --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { min-height: 100%; }
+  body {
+    margin: 0; min-height: 100vh; min-height: 100dvh; background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
+    padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); padding-bottom: env(safe-area-inset-bottom);
+    overflow-x: hidden;
+  }
+  svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+  header {
+    position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+    padding: 10px var(--gutter); padding-top: calc(10px + env(safe-area-inset-top));
+    background: oklch(0.16 0.008 255 / 0.86); backdrop-filter: saturate(1.4) blur(14px); -webkit-backdrop-filter: saturate(1.4) blur(14px);
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: baseline; gap: 8px; margin-right: 6px; white-space: nowrap; }
+  .brand b { font-size: 16px; font-weight: 650; letter-spacing: -0.01em; }
+  .brand span { color: var(--text-faint); font-size: 13px; }
+  .tools { display: flex; gap: 8px; align-items: center; flex: 1 1 auto; min-width: 0; }
+
+  select, button { font: inherit; color: var(--text); border-radius: 8px; min-height: 36px; touch-action: manipulation; transition: background-color .15s var(--ease), border-color .15s var(--ease), color .15s var(--ease); }
+  select {
+    appearance: none; -webkit-appearance: none; min-width: 0; max-width: 100%;
+    background: var(--surface-2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23a3abb8' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E") no-repeat right 10px center / 14px;
+    border: 1px solid var(--line); padding: 7px 34px 7px 12px; cursor: pointer;
+  }
+  select:hover { border-color: var(--line-strong); background-color: var(--surface-3); }
+  #add { flex: 0 1 240px; font-weight: 600;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23a3abb8' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E"), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23eef0f4' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M8 3.5v9M3.5 8h9'/%3E%3C/svg%3E");
+    background-position: right 10px center, left 11px center; background-size: 14px, 14px; padding-left: 32px; }
+  #sizeall { flex: 0 1 150px; color: var(--text-dim); }
+  button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: transparent; border: 1px solid transparent; padding: 6px 10px; font-weight: 600; cursor: pointer; flex: none; }
+  button:hover { background: var(--surface-3); }
+  button:active { background: var(--line-strong); }
+  .icon { width: 36px; padding: 0; color: var(--text-dim); }
+  .icon:hover { color: var(--text); }
+  #msg { margin-left: auto; color: var(--text-dim); font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+  #msg.err { color: var(--bad); }
+
+  #grid { display: flex; flex-wrap: wrap; gap: 16px; padding: var(--gutter); align-items: flex-start; align-content: flex-start; width: 100%; }
+  #empty { margin: 12vh auto 0; max-width: 34ch; padding: 0 var(--gutter); text-align: center; color: var(--text-dim); }
+  #empty b { display: block; color: var(--text); font-size: 16px; font-weight: 650; margin-bottom: 6px; }
+
+  .tile {
+    position: relative; flex: 0 0 auto; width: 370px; max-width: 100%; min-width: 0; display: flex; flex-direction: column;
+    background: var(--surface); border: 1px solid var(--line); border-radius: calc(var(--radius) + 4px); overflow: hidden;
+    box-shadow: 0 1px 0 oklch(1 0 0 / 0.04) inset, 0 12px 32px -18px oklch(0 0 0 / 0.7);
+    transition: border-color .2s var(--ease), box-shadow .2s var(--ease);
+  }
+  .tile.control { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 12px 32px -18px oklch(0 0 0 / 0.7); }
+  .bar { display: flex; gap: 8px; align-items: center; padding: 10px 8px 8px 14px; }
+  .head { flex: 1 1 auto; min-width: 0; display: grid; gap: 1px; }
+  .name { font-weight: 650; font-size: 14px; letter-spacing: -0.005em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meta { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 12px; color: var(--text-faint); white-space: nowrap; }
+  .meta .where { overflow: hidden; text-overflow: ellipsis; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); flex: none; }
+  .dot.live { background: var(--live); box-shadow: 0 0 0 3px oklch(0.78 0.16 150 / 0.18); }
+  .dot.wait { background: var(--wait); animation: blink 1.2s var(--ease) infinite; }
+  .dot.bad { background: var(--bad); }
+  .st { color: var(--text-dim); }
+  .st.err { color: var(--bad); }
+  @keyframes blink { 50% { opacity: .35; } }
+  .btns { display: flex; gap: 2px; align-items: center; flex: none; }
+  .mode { border-color: var(--line); background: var(--surface-2); color: var(--text-dim); padding: 6px 11px; margin-right: 4px; }
+  .mode:hover { color: var(--text); border-color: var(--line-strong); }
+  .mode.control { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .mode.control:hover { background: oklch(0.76 0.16 38); }
+  .sz.on { color: var(--text); background: var(--surface-3); }
+
+  .sizes { display: flex; gap: 4px; margin: 0 8px 8px; padding: 4px; background: var(--surface-2); border-radius: 10px; }
+  .sizes[hidden] { display: none; }
+  .sizes button { flex: 1 1 0; min-height: 32px; padding: 4px 6px; font-size: 13px; color: var(--text-dim); border-radius: 7px; }
+  .sizes button.on { background: var(--surface-3); color: var(--text); box-shadow: 0 1px 2px oklch(0 0 0 / 0.4); }
+
+  .view { position: relative; display: flex; justify-content: center; padding: 4px 14px 14px; min-height: 120px; min-width: 0; }
+  .view img {
+    display: block; width: 100%; height: auto; min-width: 0; min-height: 120px;
+    max-height: max(160px, calc(100vh - 250px)); max-height: max(160px, calc(100dvh - 250px)); object-fit: contain;
+    border-radius: var(--radius); background: oklch(0.12 0.006 255);
+    touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-user-drag: none; -webkit-tap-highlight-color: transparent;
+  }
+  .view img[src] { min-height: 0; background: transparent; }
+  .view img.control { cursor: crosshair; }
+  .tile.control .view::after {
+    content: "Input goes to this device"; position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%);
+    padding: 4px 10px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: 12px; font-weight: 650; white-space: nowrap;
+    pointer-events: none; opacity: 0; animation: hint 2.4s var(--ease);
+  }
+  @keyframes hint { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
+
+  .notes { border-top: 1px solid var(--line); padding: 0 14px 12px; font-size: 13px; user-select: text; -webkit-user-select: text; }
+  .notes summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; min-height: 40px; color: var(--text-dim); font-weight: 600; font-size: 13px; }
+  .notes summary::-webkit-details-marker { display: none; }
+  .notes summary::before { content: ""; width: 6px; height: 6px; border-right: 1.75px solid currentColor; border-bottom: 1.75px solid currentColor; transform: rotate(-45deg); transition: transform .15s var(--ease); margin: 0 2px 0 1px; }
+  .notes[open] summary::before { transform: rotate(45deg); }
+  .notes summary:hover { color: var(--text); }
+  .notes .count { margin-left: auto; font-weight: 500; color: var(--text-faint); font-size: 12px; }
+  .notes .nbody { overflow-wrap: anywhere; max-height: 40vh; max-height: 40dvh; overflow-y: auto; padding-right: 18px; }
+  .notes .by { color: var(--text-faint); font-size: 12px; margin-bottom: 6px; }
+  .notes .by b { color: var(--text-dim); font-weight: 600; }
+  .notes .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+  .notes .chip { display: inline-flex; gap: 5px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px; font-size: 12px; color: var(--text); overflow-wrap: anywhere; }
+  .notes .chip b { color: var(--text-faint); font-weight: 500; }
+  .notes .text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; max-width: 70ch; }
+  .notes .none { color: var(--text-faint); }
+  .notes .none p { margin: 0 0 6px; }
+  .cmd { display: flex; align-items: flex-start; gap: 4px; background: oklch(0.13 0.006 255); border: 1px solid var(--line); border-radius: 8px; padding: 6px 4px 6px 10px; }
+  .cmd code { flex: 1 1 auto; min-width: 0; font: 12px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--text-dim); overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; padding-top: 3px; }
+  .cmd button { width: 28px; min-height: 28px; padding: 0; color: var(--text-faint); }
+  .cmd button svg { width: 14px; height: 14px; }
+  .cmd button.done { color: var(--live); }
+
+  .rz { position: absolute; right: 0; bottom: 0; width: 24px; height: 24px; cursor: nwse-resize; touch-action: none; z-index: 1; color: var(--text-faint); opacity: 0; transition: opacity .15s var(--ease); display: grid; place-items: center; }
+  .rz svg { width: 12px; height: 12px; }
+  .tile:hover .rz, .rz.drag { opacity: 1; }
+  .rz:hover, .rz.drag { color: var(--text); }
+  .tile.resizing { user-select: none; -webkit-user-select: none; }
+  .only-wide { display: inline-flex; }
+
+  @media (pointer: coarse) {
+    select, button { min-height: 44px; }
+    .icon { width: 44px; }
+    .rz { width: 40px; height: 40px; opacity: .7; }
+  }
+  @media (max-width: 600px) {
+    .tile { width: 100% !important; }
+    .rz, .only-wide, #sizeall, .sizes { display: none !important; }
+    header { gap: 8px; }
+    .brand { flex: 1 1 auto; }
+    #msg { order: 3; flex-basis: 100%; margin-left: 0; }
+    .tools { order: 2; flex-basis: 100%; }
+    #add { flex: 1 1 100%; }
+  }
+  @media (max-height: 500px) {
+    header { padding-top: calc(6px + env(safe-area-inset-top)); padding-bottom: 6px; }
+    .view img { max-height: max(140px, calc(100vh - 170px)); max-height: max(140px, calc(100dvh - 170px)); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::after { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><b>simview</b><span id="count"></span></div>
+  <div class="tools">
+    <select id="add" aria-label="Add device"></select>
+    <select id="sizeall" aria-label="Resize all tiles"><option value="">Resize all</option><option value="S">Small</option><option value="M">Medium</option><option value="L">Large</option><option value="fit">Fit height</option></select>
+  </div>
+  <span id="msg" role="status"></span>
+</header>
+<main id="grid"></main>
+<div id="empty" hidden><b>Nothing on screen</b>Pick a device from <em>Add device</em> to start watching it.</div>
+<script>
+"use strict";
+const params = new URLSearchParams(location.search);
+const token = params.get("t") || "";
+const withToken = (path, extra) =>
+  path + (path.includes("?") ? "&" : "?") + "t=" + encodeURIComponent(token) + (extra || "");
+const addSel = document.getElementById("add");
+const grid = document.getElementById("grid");
+const empty = document.getElementById("empty");
+const msg = document.getElementById("msg");
+const STORE = "simview.tiles";
+let devices = [];            // [{id, name, disabled}]
+const tiles = new Map();     // id -> tile
+let activeTile = null;       // most recently clicked tile; keys go to it while in Control mode
+
+const ICON = {
+  eye: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8s2.4-4.75 6.5-4.75S14.5 8 14.5 8 12.1 12.75 8 12.75 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></svg>',
+  tap: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.5l8 5.6-3.6.9 2.1 4.1-1.7.8-2-4.1-2.8 2.5z"/></svg>',
+  size: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5l-4.5 4.5M2.5 13.5L7 9"/></svg>',
+  close: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
+  copy: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></svg>',
+  check: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5"/></svg>',
+  grip: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M11 4L4 11M11 8l-3 3"/></svg>',
+};
+function say(text, err) { msg.textContent = text || ""; msg.classList.toggle("err", !!err); }
+const NSTORE = "simview.notes.collapsed";
+let notes = {};              // id -> {text, fields, by, updated_at}
+function collapsedNotes() {
+  try {
+    const v = JSON.parse(localStorage.getItem(NSTORE) || "[]");
+    return new Set(Array.isArray(v) ? v : []);
+  } catch (e) { return new Set(); }
+}
+function infoOf(id) { return devices.find((x) => x.id === id); }
+// "iOS 26.5" from a runtime detail, else the device kind.
+function kindText(d) {
+  if (d.kind === "ios") {
+    const m = /iOS[- ](\d+)[-.](\d+)/i.exec(d.detail || "");
+    return m ? "iOS " + m[1] + "." + m[2] : "ios";
+  }
+  return d.kind;
+}
+function badgeText(d) { return (d.host ? d.host + " · " : "") + kindText(d); }
+function setBadge(t) {
+  const d = infoOf(t.id);
+  t.where.textContent = d ? badgeText(d) : t.id;
+  t.where.title = t.id;
+}
+function ago(iso) {
+  const ms = Date.now() - Date.parse(iso);
+  if (!isFinite(ms)) return "";
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return s + " s ago";
+  if (s < 3600) return Math.round(s / 60) + " min ago";
+  if (s < 86400) return Math.round(s / 3600) + " h ago";
+  return Math.round(s / 86400) + " d ago";
+}
+// Notes are untrusted: every value goes in through textContent, never innerHTML.
+function renderNote(t) {
+  const n = notes[t.id];
+  const box = t.nbody;
+  const sig = JSON.stringify(n || null) + (n && n.updated_at ? ago(n.updated_at) : "");
+  if (sig === t.sig) return; // keeps a text selection alive between polls
+  t.sig = sig;
+  box.replaceChildren();
+  const el = (cls, text, tag) => {
+    const e = document.createElement(tag || "div");
+    e.className = cls; e.textContent = text; return e;
+  };
+  const has = n && (n.text || Object.keys(n.fields || {}).length);
+  t.count.textContent = has && n.updated_at ? ago(n.updated_at) : "";
+  if (!has) {
+    const none = el("none", "");
+    none.appendChild(el("", "No notes yet. An agent working on this device can post one:", "p"));
+    const cmd = el("cmd", "");
+    const line = 'simview note ' + t.id + ' --by <agent> "what I am doing"';
+    cmd.appendChild(el("", line, "code"));
+    const b = document.createElement("button");
+    b.type = "button"; b.title = "Copy command"; b.setAttribute("aria-label", "Copy command"); b.innerHTML = ICON.copy;
+    b.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(line); b.innerHTML = ICON.check; b.classList.add("done"); setTimeout(() => { b.innerHTML = ICON.copy; b.classList.remove("done"); }, 1400); } catch (e) {}
+    });
+    cmd.appendChild(b);
+    none.appendChild(cmd);
+    box.appendChild(none);
+    return;
+  }
+  const by = el("by", "");
+  by.appendChild(document.createTextNode("Posted by "));
+  by.appendChild(el("", n.by || "an agent", "b"));
+  box.appendChild(by);
+  const keys = Object.keys(n.fields || {});
+  if (keys.length) {
+    const chips = el("chips", "");
+    for (const k of keys) {
+      const c = el("chip", "");
+      c.appendChild(el("", k, "b"));
+      c.appendChild(document.createTextNode(" " + n.fields[k]));
+      chips.appendChild(c);
+    }
+    box.appendChild(chips);
+  }
+  if (n.text) box.appendChild(el("text", n.text));
+}
+// Notes arrive over the socket whenever they change; re-render now and then so "x s ago" ticks.
+setInterval(() => { for (const t of tiles.values()) renderNote(t); }, 2000);
+function nameOf(id) { const d = devices.find((x) => x.id === id); return d ? d.name : id; }
+
+// Tile sizes: id -> width in px, or "fit" (tallest image that fits the viewport).
+const SSTORE = "simview.sizes";
+const PRESET = { S: 260, M: 370, L: 540 };
+let sizes = {};
+try {
+  const v = JSON.parse(localStorage.getItem(SSTORE) || "{}");
+  if (v && typeof v === "object" && !Array.isArray(v)) sizes = v;
+} catch (e) {}
+function saveSizes() { try { localStorage.setItem(SSTORE, JSON.stringify(sizes)); } catch (e) {} }
+function maxWidth() {
+  const cs = getComputedStyle(grid);
+  return Math.max(200, grid.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight));
+}
+function clampW(w) { return Math.round(Math.max(200, Math.min(w, maxWidth()))); }
+function fitWidth(t) {
+  const iw = t.img.naturalWidth, ih = t.img.naturalHeight;
+  if (!iw || !ih) return PRESET.M;
+  const hh = document.querySelector("header").offsetHeight;
+  const chrome = t.el.offsetHeight - t.img.offsetHeight;
+  const availH = window.innerHeight - hh - 2 * 10 - chrome;
+  return clampW(Math.max(320, Math.max(120, availH) * (iw / ih) + 14));
+}
+function applySize(t) {
+  const s = sizes[t.id];
+  const dflt = window.innerHeight <= 500 ? "fit" : null;
+  const eff = s === undefined && dflt ? dflt : s;
+  let w = eff === "fit" ? fitWidth(t) : typeof s === "number" ? s : PRESET.M;
+  t.el.style.width = clampW(w) + "px";
+  t.sizeBtns.forEach((b) => b.classList.toggle("on", b.dataset.sz === (eff === "fit" ? "fit" : typeof s === "number" ? "" : "M")));
+}
+function setSize(t, v) {
+  if (v === null) delete sizes[t.id];
+  else sizes[t.id] = typeof v === "string" && PRESET[v] ? PRESET[v] : v;
+  saveSizes();
+  applySize(t);
+  if (sizes[t.id] === "fit") requestAnimationFrame(() => applySize(t));
+}
+window.addEventListener("resize", () => { for (const t of tiles.values()) applySize(t); });
+window.addEventListener("orientationchange", () => setTimeout(() => { for (const t of tiles.values()) applySize(t); }, 200));
+
+function save() {
+  try { localStorage.setItem(STORE, JSON.stringify([...tiles.keys()])); } catch (e) {}
+}
+function load() {
+  try {
+    const v = JSON.parse(localStorage.getItem(STORE) || "[]");
+    return Array.isArray(v) ? v.filter((x) => typeof x === "string" && x) : [];
+  } catch (e) { return []; }
+}
+
+function refreshChooser() {
+  addSel.innerHTML = "";
+  const head = document.createElement("option");
+  head.value = ""; head.textContent = "Add device";
+  addSel.appendChild(head);
+  for (const d of devices) {
+    if (d.disabled) continue;
+    const o = document.createElement("option");
+    o.value = d.id; o.textContent = (d.host ? d.host + " · " : "") + d.name; o.title = d.id;
+    o.disabled = tiles.has(d.id);
+    addSel.appendChild(o);
+  }
+  addSel.value = "";
+  empty.hidden = tiles.size > 0;
+  const live = devices.filter((d) => !d.disabled).length;
+  document.getElementById("count").textContent = tiles.size + " of " + live + " shown";
+}
+
+function addTile(id) {
+  if (!id || tiles.has(id)) return;
+  const el = document.createElement("section");
+  el.className = "tile";
+  el.innerHTML = '<div class="bar"><div class="head"><span class="name"></span>' +
+    '<span class="meta"><span class="dot"></span><span class="where"></span><span class="st"></span></span></div>' +
+    '<div class="btns"><button type="button" class="mode" aria-pressed="false"></button>' +
+    '<button type="button" class="icon sz only-wide" aria-label="Tile size" title="Tile size" aria-expanded="false">' + ICON.size + '</button>' +
+    '<button type="button" class="icon x" aria-label="Remove tile" title="Remove">' + ICON.close + '</button></div></div>' +
+    '<div class="sizes" hidden><button type="button" data-sz="S">Small</button><button type="button" data-sz="M">Medium</button>' +
+    '<button type="button" data-sz="L">Large</button><button type="button" data-sz="fit">Fit height</button>' +
+    '<button type="button" data-sz="reset">Reset</button></div>' +
+    '<div class="view"><img alt="" draggable="false"></div>' +
+    '<details class="notes"><summary>Agent notes<span class="count"></span></summary><div class="nbody"></div></details>' +
+    '<div class="rz" title="Drag to resize" aria-hidden="true">' + ICON.grip + '</div>';
+  const t = {
+    id, el, control: false, queue: [], pumping: false, down: false,
+    img: el.querySelector("img"), st: el.querySelector(".st"),
+    modeBtn: el.querySelector(".mode"),
+    where: el.querySelector(".where"), dot: el.querySelector(".dot"),
+    count: el.querySelector(".count"), notes: el.querySelector(".notes"),
+    nbody: el.querySelector(".nbody"),
+    sizeBtns: [...el.querySelectorAll(".sizes button")],
+  };
+  t.notes.open = !collapsedNotes().has(id);
+  t.notes.addEventListener("toggle", () => {
+    const c = collapsedNotes();
+    if (t.notes.open) c.delete(id); else c.add(id);
+    try { localStorage.setItem(NSTORE, JSON.stringify([...c])); } catch (e) {}
+  });
+  setBadge(t);
+  setControl(t, false);
+  renderNote(t);
+  el.querySelector(".name").textContent = nameOf(id);
+  el.querySelector(".name").title = id;
+  t.img.alt = nameOf(id) + " screen";
+  tiles.set(id, t);
+  grid.appendChild(el);
+  applySize(t);
+  wireSize(t);
+  wire(t);
+  subscribe(t);
+  save();
+  refreshChooser();
+}
+
+function removeTile(t) {
+  t.removed = true;
+  wsSend({ op: "unsub", id: t.id });
+  t.img.removeAttribute("src");
+  if (t.shown) URL.revokeObjectURL(t.shown);
+  if (t.loading) URL.revokeObjectURL(t.loading);
+  t.el.remove();
+  tiles.delete(t.id);
+  delete sizes[t.id];
+  saveSizes();
+  if (activeTile === t) activeTile = null;
+  save();
+  refreshChooser();
+}
+
+// state: "live" | "wait" | "bad"
+function tstat(t, text, state) {
+  t.st.textContent = text ? "· " + text : "";
+  t.st.classList.toggle("err", state === "bad");
+  t.dot.className = "dot " + (state || "");
+}
+
+// One WebSocket carries every tile: frames down, input and subscriptions up. Reconnects with
+// backoff (1 s to 5 s) and resubscribes every tile.
+let ws = null, wsOpen = false, backoff = 1000, inSeq = 0;
+const acks = new Map();      // seq -> {done, timer}
+function wsSend(o) { if (wsOpen) { try { ws.send(JSON.stringify(o)); } catch (e) {} } }
+function wsConnect() {
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + withToken("/ws"));
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => {
+    wsOpen = true; backoff = 1000;
+    for (const t of tiles.values()) subscribe(t);
+  };
+  ws.onmessage = (e) => {
+    if (typeof e.data === "string") return onText(JSON.parse(e.data));
+    const dv = new DataView(e.data);
+    const n = dv.getUint16(0);
+    const id = new TextDecoder().decode(new Uint8Array(e.data, 2, n));
+    const t = tiles.get(id);
+    if (t) drawFrame(t, new Blob([new Uint8Array(e.data, 6 + n)], { type: "image/jpeg" }));
+  };
+  ws.onclose = () => {
+    wsOpen = false;
+    for (const [seq, a] of acks) { clearTimeout(a.timer); a.done({ ok: false, err: "disconnected" }); acks.delete(seq); }
+    for (const t of tiles.values()) tstat(t, "reconnecting", "bad");
+    setTimeout(wsConnect, backoff);
+    backoff = Math.min(5000, backoff * 2);
+  };
+  ws.onerror = () => {};
+}
+function onText(m) {
+  if (m.op === "ack") {
+    const a = acks.get(m.seq);
+    if (a) { clearTimeout(a.timer); acks.delete(m.seq); a.done(m); }
+  } else if (m.op === "status") {
+    const t = tiles.get(m.id);
+    if (!t) return;
+    if (m.state === "live") tstat(t, "", "live");
+    else if (m.state === "error") tstat(t, m.err || "error", "bad");
+    else tstat(t, "connecting", "wait");
+  } else if (m.op === "notes") {
+    notes = m.notes && typeof m.notes === "object" ? m.notes : {};
+    for (const t of tiles.values()) renderNote(t);
+  }
+}
+function subscribe(t) { tstat(t, "connecting", "wait"); wsSend({ op: "sub", id: t.id }); }
+
+// Latest frame wins: while one JPEG is still decoding, only the newest later one is kept.
+function drawFrame(t, blob) {
+  if (t.busy) { t.next = blob; return; }
+  t.busy = true;
+  t.loading = URL.createObjectURL(blob);
+  t.img.src = t.loading;
+}
+function frameDone(t, ok) {
+  if (ok) { if (t.shown) URL.revokeObjectURL(t.shown); t.shown = t.loading; }
+  else URL.revokeObjectURL(t.loading);
+  t.loading = null; t.busy = false;
+  if (t.next) { const b = t.next; t.next = null; if (!t.removed) drawFrame(t, b); }
+}
+
+function setControl(t, on) {
+  t.control = on;
+  t.modeBtn.innerHTML = (on ? ICON.tap + "Control" : ICON.eye + "Watch");
+  t.modeBtn.title = on ? "Your clicks and keys go to the device. Click to stop." : "Watching only. Click to take control.";
+  t.modeBtn.setAttribute("aria-pressed", String(on));
+  t.modeBtn.classList.toggle("control", on);
+  t.img.classList.toggle("control", on);
+  t.el.classList.toggle("control", on);
+  if (on) activate(t);
+  else if (activeTile === t) activate(null);
+}
+function activate(t) {
+  activeTile = t;
+  for (const x of tiles.values()) x.el.classList.toggle("active", x === t && x.control);
+}
+
+// Input goes in order, one request at a time per tile; queued moves collapse to the latest.
+function send(t, ev) {
+  if (!t.control) return;
+  const last = t.queue[t.queue.length - 1];
+  if (ev.type === "move" && last && last.type === "move") t.queue[t.queue.length - 1] = ev;
+  else t.queue.push(ev);
+  pump(t);
+}
+function wsInput(t, ev) {
+  return new Promise((done) => {
+    if (!wsOpen) return done({ ok: false, err: "not connected" });
+    const seq = ++inSeq;
+    // One hung device must not block the tile: give up after 10 s and carry on with the queue.
+    const timer = setTimeout(() => { acks.delete(seq); done({ ok: false, err: "no answer in 10 s" }); }, 10000);
+    acks.set(seq, { done, timer });
+    wsSend({ op: "input", id: t.id, seq, ev });
+  });
+}
+async function pump(t) {
+  if (t.pumping) return;
+  t.pumping = true;
+  while (t.queue.length) {
+    const r = await wsInput(t, t.queue.shift());
+    if (!r.ok) {
+      const why = String(r.err || "refused").slice(0, 80);
+      tstat(t, "input failed: " + why, "bad");
+      say(nameOf(t.id) + ": input failed: " + why, true);
+    } else if (t.st.classList.contains("err") && t.st.textContent.includes("input failed")) {
+      tstat(t, "", "live");
+    }
+  }
+  t.pumping = false;
+}
+
+function wireSize(t) {
+  const menu = t.el.querySelector(".sizes");
+  const szBtn = t.el.querySelector(".sz");
+  szBtn.addEventListener("click", () => {
+    menu.hidden = !menu.hidden;
+    szBtn.classList.toggle("on", !menu.hidden);
+    szBtn.setAttribute("aria-expanded", String(!menu.hidden));
+  });
+  for (const b of t.sizeBtns) {
+    b.addEventListener("click", () => setSize(t, b.dataset.sz === "reset" ? null : b.dataset.sz));
+  }
+  const rz = t.el.querySelector(".rz");
+  let drag = null;
+  rz.addEventListener("pointerdown", (e) => {
+    drag = { x: e.clientX, w: t.el.getBoundingClientRect().width };
+    rz.setPointerCapture(e.pointerId);
+    rz.classList.add("drag");
+    t.el.classList.add("resizing");
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  rz.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    sizes[t.id] = clampW(drag.w + e.clientX - drag.x);
+    applySize(t);
+  });
+  const done = () => {
+    if (!drag) return;
+    drag = null;
+    rz.classList.remove("drag");
+    t.el.classList.remove("resizing");
+    saveSizes();
+  };
+  rz.addEventListener("pointerup", done);
+  rz.addEventListener("pointercancel", done);
+}
+document.getElementById("sizeall").addEventListener("change", (e) => {
+  const v = e.target.value;
+  e.target.value = "";
+  if (v) for (const t of tiles.values()) setSize(t, v);
+});
+
+function wire(t) {
+  const img = t.img;
+  // The image is letterboxed inside its box (object-fit: contain); map to the drawn picture.
+  const norm = (e) => {
+    const r = img.getBoundingClientRect();
+    const c = (v) => Math.min(1, Math.max(0, v));
+    let x = r.left, y = r.top, w = r.width, h = r.height;
+    const iw = img.naturalWidth, ih = img.naturalHeight;
+    if (iw && ih && w && h) {
+      const sc = Math.min(w / iw, h / ih);
+      const dw = iw * sc, dh = ih * sc;
+      x += (w - dw) / 2; y += (h - dh) / 2; w = dw; h = dh;
+    }
+    return { x: c((e.clientX - x) / w), y: c((e.clientY - y) / h) };
+  };
+  img.addEventListener("load", () => { frameDone(t, true); if (sizes[t.id] === "fit" || (sizes[t.id] === undefined && window.innerHeight <= 500)) applySize(t); });
+  img.addEventListener("error", () => { if (t.loading) frameDone(t, false); });
+  t.modeBtn.addEventListener("click", () => setControl(t, !t.control));
+  t.el.querySelector(".x").addEventListener("click", () => removeTile(t));
+  img.addEventListener("pointerdown", (e) => {
+    if (!t.control) return;
+    activate(t);
+    t.down = true;
+    img.setPointerCapture(e.pointerId);
+    send(t, { type: "down", ...norm(e) });
+    e.preventDefault();
+  });
+  img.addEventListener("pointermove", (e) => { if (t.down) send(t, { type: "move", ...norm(e) }); });
+  const end = (e) => {
+    if (!t.down) return;
+    t.down = false;
+    send(t, { type: "up", ...norm(e) });
+  };
+  img.addEventListener("pointerup", end);
+  img.addEventListener("pointercancel", end);
+  img.addEventListener("contextmenu", (e) => e.preventDefault());
+  img.addEventListener("wheel", (e) => {
+    if (!t.control) return;
+    e.preventDefault();
+    send(t, { type: "wheel", ...norm(e), dy: e.deltaY > 0 ? 1 : -1 });
+  }, { passive: false });
+}
+
+const NAMED = {
+  Enter: "enter", Backspace: "backspace", Tab: "tab", Delete: "delete",
+  ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right",
+  Home: "home", End: "end", PageUp: "pageup", PageDown: "pagedown", Escape: "back",
+};
+document.addEventListener("keydown", (e) => {
+  const t = activeTile;
+  if (!t || !t.control || e.target === addSel || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (NAMED[e.key]) { send(t, { type: "key", name: NAMED[e.key] }); e.preventDefault(); }
+  else if (e.key.length === 1) { send(t, { type: "text", text: e.key }); e.preventDefault(); }
+});
+document.addEventListener("paste", (e) => {
+  const t = activeTile;
+  if (!t || !t.control) return;
+  const s = e.clipboardData && e.clipboardData.getData("text");
+  if (s) { send(t, { type: "text", text: s }); e.preventDefault(); }
+});
+
+addSel.addEventListener("change", () => { const id = addSel.value; addSel.value = ""; addTile(id); });
+
+async function init() {
+  const res = await fetch(withToken("/api/devices"));
+  if (!res.ok) { say("devices: HTTP " + res.status, true); return; }
+  devices = await res.json();
+  let ids = load();
+  if (!ids.length) {
+    ids = (params.get("d") || "").split(",").filter(Boolean);
+    if (!ids.length) { const first = devices.find((d) => !d.disabled); if (first) ids = [first.id]; }
+  }
+  wsConnect();
+  for (const id of ids) addTile(id);
+  refreshChooser();
+}
+init().catch((e) => say(String(e), true));
+</script>
+</body>
+</html>

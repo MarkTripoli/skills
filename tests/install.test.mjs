@@ -133,7 +133,7 @@ for (const target of ["portable", "oh-my-pi"]) {
     const recorderPath = path.join(skillDir, "record-evidence", "scripts", "evidence.py");
     const recorder = fs.readFileSync(recorderPath);
     const selected = install(options);
-    const required = ["agent-slack-control-plane", "babysit", "describe-pr", "deliver", "iterate-evidence", "jira-issue-refinement", "record-evidence", "resolve-pr-reviews", "review-code", "route-model", "slack-coordinator", "test-app", "typed-judgment", "verify-implementation"];
+    const required = ["agent-slack-control-plane", "babysit", "describe-pr", "deliver", "gitlab-inline-comments", "iterate-evidence", "jira-issue-refinement", "record-evidence", "resolve-pr-reviews", "review-code", "route-model", "slack-coordinator", "test-app", "typed-judgment", "verify-implementation"];
     assert.deepEqual(fs.readdirSync(skillDir).sort(), [...required, "foreign"].sort());
     const linkedSkills = path.join(cwd, "installed-skills");
     fs.symlinkSync(skillDir, linkedSkills, "dir");

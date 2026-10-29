@@ -1,6 +1,6 @@
 ---
 name: video-iterative-orchestration
-description: Turns a Jira epic, or an epic plus a findings document, into a resumable queue of isolated ticket branches, dispatches each ticket to a video-iterative-development worker, and owns scope, blockers and submission acceptance. Use when the user gives a Jira epic key or link to deliver or correct with Android video evidence; not for executing one assigned ticket, which video-iterative-development does.
+description: Coordinates a Jira epic, GitHub Issue queue or explicit requirement list into resumable isolated ticket work with current-source proof, per-Bug plan gates and verified PR submission. Use when the user requests /video-iterative-orchestration delivery or correction with recordings on assigned surfaces; not for executing one assigned ticket, which video-iterative-development owns.
 ---
 
 Read the [writing guide](https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md) and the [collection conventions](https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md) before drafting, revising, or replying; a checkout of the collection has both under `shared/`.
@@ -21,10 +21,15 @@ The orchestrator delegates execution, not decision authority. It exclusively own
 - `video-iterative-development` owns assigned implementation, recovery mechanics, evidence, and submission. It returns observations and structured decision requests; it does not change the execution contract or assign delivery states.
 - `agent-implementation-reviewer` owns an independent read-only plan-to-diff report. The orchestrator applies the feature-contract adapter without changing that shared reviewer.
 - [The engineering guidance review](references/engineering-guidance-review.md) examines the final diff against applicable repository conventions. It records concrete consequences and justified exceptions without turning preferences into new ticket requirements.
+- [Per-Bug plan approval](references/bug-implementation-plan.md) owns requested owner approval before new implementation or correction.
+- [Owner runtime selection](references/owner-runtime.md) adapts Claude Code, Codex and portable worker mechanics without changing authority.
+- [Completion follow-up](references/completion-follow-up.md) owns authorized automated PR-review triage in the active owner session, with no Slack bot dependency.
+- [Post-ready native review](references/post-ready-native-review.md) reviews the effective merged change independently.
+- [Optional selected landing](references/optional-pr-landing.md) owns the per-PR opt-in handoff, separate from submission.
 
 ## Decision authority
 
-A consequential decision is any choice that changes source interpretation, scope, product or design behavior, participating repositories or layers, dependency order, branch or PR topology, required evidence, an approved deviation, blocker disposition, or final ticket state. The orchestrator makes and records every consequential decision before dispatch or in response to a worker request. Automatic source resolutions authorized by this skill are orchestrator decisions too.
+A consequential decision changes source interpretation, scope, product behavior, repositories/layers, dependency order, branch or PR topology, evidence, deviations, blocker disposition or final state. The orchestrator records the owner-authorized decision boundary before dispatch. It may resolve ordinary mechanics and explicitly delegated choices, but must ask the owner for a material developer decision outside recorded authority. This skill is not blanket consent for autonomous product changes. Automatic Story source resolutions follow the authority below; Bug expected behavior is not silently overridden.
 
 Implementation agents may choose only reversible, repository-conventional mechanics that leave the execution contract unchanged, such as local code organization, command ordering, deterministic selector details, or how to diagnose and retry an in-scope failure. When instructions are incomplete, conflicting, or require a consequential choice, the worker must not guess, expand scope, contact the prompter, or assign itself a terminal state. It returns a structured `decision_request` to the orchestrator and continues all unaffected assigned work.
 
@@ -37,6 +42,10 @@ Implementation agents may choose only reversible, repository-conventional mechan
 - Optional read-only Figma root-frame links containing `node-id` for applicable UI tickets.
 - An optional request to coordinate the run through Slack, including one explicitly named channel or an explicit request for a direct-message run. Without either destination, `slack-coordinator` uses the repository default.
 - Any explicit external authority or deadline.
+- An optional requested owner/worker runtime or supported model profile; otherwise use observed repository configuration.
+- Optional implementation-plan approval for named Bugs or every selected Bug, applied separately before the next new implementation/correction cycle.
+- An explicit optional landing choice for each named PR. Omitted PRs remain submission-only.
+- Optional standing authority for in-scope automated-review corrections and discussion replies/resolution. Do not infer external permissions from delivery alone.
 
 Do not request a feature ID, contract file, approval flag, Figma revision, or layer classification. Missing optional Figma or design-document context is not a blocker.
 
@@ -48,28 +57,42 @@ Run `run check` immediately before every orchestrator state-changing action and 
 
 Use `run event` for orchestration phase changes, ticket lifecycle changes, and blocker starts or clears; the daemon owns quiet-interval status reposting. Call `run finish` once when the orchestration reaches its terminal completed, failed, or cancelled outcome. Follow the standalone skill's command, channel-selection, message, and failure contracts rather than restating or weakening them here. When Slack coordination was not requested, do not start a run and do not add Slack gates.
 
+## Admit newly discovered Bugs
+
+For an owner-configured Codex `bug-coordinator`, attach the current `CODEX_THREAD_ID` before dispatch using its executable and state directory consistently. Its durable inbox discovers eligible direct-child Jira Bugs only; it never decides scope, edits tickets or dispatches workers. At the next safe handoff, read each key through Jira MCP, confirm epic membership and current eligibility, reconcile dependencies and existing work, and record its accepted or excluded disposition before `ack --epic <key> --issue <key> --thread "$CODEX_THREAD_ID"`. A discovery notification does not change a worker's assignment or steal its runtime.
+
+Before terminal completion, inspect watcher status and detach this thread. Later Bugs may start a fresh Codex owner that reads the durable ledger, immutable receipts, Git/PR state and active Slack run rather than inheriting stale conversation. The optional watcher must be explicitly configured and healthy; absence is reported, not a delivery blocker. See [bug coordinator operations](../../../docs/bug-coordinator.md) for credentials, service and replay boundaries. Claude Code and other owners re-query eligible Bugs through their tracker interface at safe orchestration points; never run a competing Codex watcher for that epic.
+
 ## Select the run mode
 
 Use **delivery mode** without findings: read [the Jira delivery workflow](references/jira-delivery-mode.md) for Jira, or [delivery mode](references/delivery-mode.md) for GitHub and tracker-neutral queues. Use **correction mode** when the selected queue includes a findings document. Read [the correction workflow](references/correction-mode.md).
 
 In either mode, run [resume and source reconciliation](references/resume-and-reconcile.md) before creating a worktree. For Jira, status is decisive: `In Progress` and `Code Review` are `resume_required` and must adopt existing work rather than start from base.
 
+Apply the observed tracker's eligibility filter before intake. For Jira, `On Hold` and `On-Hold` are `skipped_on_hold`, never blockers or delivered claims. Refresh ticket status before dispatch and final submission. A hold during work stops future authorization at the next safe handoff, preserves source/PR/proof, releases owned runtime resources and keeps independent work moving. Resume only after eligibility and reconciliation pass again.
+
 ## Ticket scope and design authority
 
-The selected ticket's requirements and acceptance criteria define the boundary of work. The epic supplies membership, order, and dependency context; it is never assumed to contain every behavior represented in Figma or a design document. Map only Figma nodes and document sections that clarify a selected ticket. Unmapped design content is context, not missing, deferred, or out-of-scope work.
+The selected Story's requirements or Bug's reported failure, expected result, reproduction details, environment and supplied criteria define its work. Cross-team Bug reports need no invented feature spec. The epic supplies membership, order and dependencies, not extra behavior. Map only Story designs that clarify the selected scope; unmapped design content creates no requirement.
 
-Within the ticket boundary:
+For Story requirements within the ticket boundary:
 
 1. mapped Figma is the default authority for visual and interaction behavior, including ambiguous or conflicting ticket details;
 2. mapped Figma overrides a conflicting design document automatically;
 3. without applicable Figma, a mapped design document resolves ambiguous ticket details;
 4. repository and API conventions resolve remaining implementation details.
 
+For Bugs, the ticket's expected behavior is authoritative. Linked designs and documents may support diagnosis but never silently override the report. Use repository behavior/tests for ordinary missing details; ask the owner about a material conflict outside recorded decision authority. In mixed contracts Bug rows use ticket-only design mappings.
+
 Record each automatic resolution in `.agent-evidence/orchestration/<run-id>/decision-log.md`. Pause only the affected ticket for the rare unresolved choice whose alternatives materially change product scope or user behavior. An explicitly approved departure from the authoritative sources is an `approved_deviation`; ordinary implementation decisions and Figma resolutions are not deviations.
 
-Create one run-level design-document manifest at `.agent-evidence/orchestration/<run-id>/design-documents/manifest.json`. It records source identity, whole-document SHA-256, and stable IDs, titles, and SHA-256 values only for sections mapped to selected tickets. `feature-conformance` references this manifest; it does not create another one.
+Create one run-level design-document manifest for sections mapped to selected Stories at `.agent-evidence/orchestration/<run-id>/design-documents/manifest.json`, recording document identity/hash and mapped section IDs/titles/hashes. `feature-conformance` references it without duplication. Extract and validate each applicable Story Figma bundle before dispatch. Bug-linked visuals remain optional supporting context, not independent authority or a prerequisite for unrelated Bugs. An unreadable supplied ticket or mapped authority source affects only its selected ticket; never substitute stale content or guessed behavior.
 
-For every supplied UI root, invoke `extract-figma-visuals` before dispatch and pass its validated bundle to applicable workers. A supplied Jira, Figma, or design-document source that remains unreadable after access checks and materially different retries blocks only the affected ticket. Never substitute stale content, a recreated mock, or guessed requirements.
+## Define repository-native scenario readiness
+
+Derive each runtime scenario's prerequisite actors/roles, access, flags, backend settings, starting records and readiness probes from the ticket and actual repository setup. Separate prerequisites from the user action/result being proved; never seed that result to fake E2E. For actor-specific proof, record the expected account identity, reject conflicting launch inputs before E2E and verify the account actually loaded after login. A configured actor or invite code alone is not identity proof.
+
+Discover maintained setup commands, service/container manifests, task scripts and launch configurations before choosing a runtime. Coast, Patrol, Docker and remote infrastructure are optional observed capabilities, never mandatory wrappers. Record pinned source commits, complete process inventory, environment sources, supervision, port ownership, local fixtures and frontend-facing probes. Missing external infrastructure stays explicit; do not install organization defaults or fabricate readiness. Require a reusable native preflight and fail-before-launch validation when the assignment includes harness repair.
 
 ## Establish run state
 
@@ -83,7 +106,9 @@ Before dispatch:
 6. Resolve the explicit task directory or configured task root. Use immutable indexed receipts as described below. Create an ignored ledger, `decision-log.md`, and the rebuildable `resume-state.json` and `source-index.json` caches. Jira, Git, PRs, current manifests, and current source reads remain authoritative when caches are absent or stale.
 7. Build the dependency table and record owner, selected scope and unchanged layers, adopted or new write surface, PR target, source mappings, contract rows, orchestrator decisions, evidence gate, canonical-runtime lease state, recovery state, and final state. When Slack coordination is enabled, also record its `run_id`, channel, thread timestamp, permalink, and current coordination state at run level.
 
-Use canonical `snake_case` machine states: `ready`, `waiting`, `resume_required`, `resume_needs_lineage`, `resume_source_missing`, `active`, `source_update_detected`, `reconciliation_active`, `correction_active`, `needs_product_decision`, `locally_verified`, `submitted`, `submitted_verified`, and `blocked`.
+Also record scenario readiness, owner runtime/profile, actual worker model/session, each Bug's plan-gate request/current revision/decision fingerprints, per-PR native review, explicit landing choice and completion follow-up. Use [the runtime adapter](references/owner-runtime.md) before first dispatch. Request and present each gated Bug plan as soon as its worker returns it, before awaiting another completion; independent tickets keep moving.
+
+Use canonical `snake_case` machine states: `ready`, `waiting`, `skipped_on_hold`, `resume_required`, `resume_needs_lineage`, `resume_source_missing`, `planning`, `awaiting_plan_approval`, `active`, `source_update_detected`, `reconciliation_active`, `correction_active`, `needs_product_decision`, `locally_verified`, `submitted`, `submitted_verified`, and `blocked`. Planning and approval waits are per-ticket non-terminal states, never run-wide blockers.
 
 ## Preserve indexed records and proof
 
@@ -101,7 +126,9 @@ Give each active implementation agent one exclusive worktree and branch in every
 - Target a dependent PR at that prerequisite branch so the PR contains only its ticket's delta. Record the stacked ancestry.
 - Reuse an existing correction PR source branch and PR. Recreate only a checkout of that exact branch when its old worktree is unusable.
 - Never reset, clean, stash, force-push, or rewrite interrupted work merely to simplify setup.
-- Sequence overlapping write surfaces or create a dedicated integration ticket branch.
+- Sequence overlapping write surfaces. An integration branch requires a separately scoped ticket, exclusive owner, target and recorded reason; it is not another writable branch for an existing ticket.
+
+Before creating any checkout, inspect existing authoritative branches, worktrees and PRs in each participating repository. Reuse the same writable ticket surface for implementation, recovery, proof repair and correction; frontend-only work does not acquire a writable backend checkout. Compare Git objects without another checkout when possible; a necessary temporary detached comparison worktree stays read-only and is removed only when clean. Preserve unexpected dirty candidates for lineage reconciliation. List clean merged worktrees as user-managed cleanup candidates, never remove the user's worktrees during delivery.
 
 A submitted prerequisite branch is sufficient for downstream implementation, local verification, and submission. Use its source checkout to regenerate the client and a local path dependency when needed. Do not wait for its merge, pipeline, or generated-client publication before implementing, testing, recording evidence, pushing the assigned dependent branch, or creating or updating its PR.
 
@@ -166,11 +193,14 @@ Every implementation assignment must contain:
 - explicit authority to commit and push the assigned ticket branch, create or update its PR, and upload its final evidence; these normal submission actions need no separate prompter approval;
 - the managed-approval protocol: attempt each authorized external action, use the command runner's scoped approval mechanism when required, never ask the prompter for conversational confirmation, and preserve an explicit tool denial for focused recovery;
 - the commit plan: expected durable product/test groups, required adopted-history or lineage reconciliation, and named push boundaries, plus the explicit `push_policy`, `final_push_authorized`, `checkpoint_pushes`, `additional_boundary_authority`, and `missing_boundary_state` values above;
-- the canonical-runtime lease state; when granted, the exact source commits, resolved process inventory from the documented compound launch configuration, direct shell commands, working directories, dependency order, standard ports, environment source, migrations and fixtures, required host-side and Android-facing probes, and release-report fields; when not granted, an instruction to continue source-only work and request the lease without changing runtime state;
-- when the selected ticket includes launch-harness repair, the repository-owned backend and Patrol launch paths, required-setting names, safe failure-fingerprint fields, and positive and deliberately incomplete startup checks;
-- the project-local Android runner command, assigned device serial, exact project-local ADB preflight command, seven-sample/60-second stability rule, and the final-evidence capture contract: wait for the passing preflight and a known stable app UI before recording; exclude non-required emulator boot, build, install, launcher, app startup, and login footage; and use one unstacked one-second presentation hold per evidence checkpoint;
+- selected runtime mode and observed native process topology, exact source commits, direct launch/supervision commands, working directories, dependency order, owned ports, environment sources, migrations/fixtures, assigned-surface probes and release fields; only shared mode adds a lease, source-only waiting and lease requests;
+- when launch-harness repair is selected, the repository-owned backend and E2E launch paths, required settings, safe fingerprints and positive/negative fail-before-launch checks; never mandate Patrol or Coast in repositories that use another maintained runner;
+- assigned UI surfaces and native runner/preflight commands; Android Patrol additionally requires explicit serial and seven-sample/60-second ADB stability. Capture only after readiness, exclude non-required setup and use one unstacked one-second presentation hold per evidence checkpoint;
 - an instruction to follow repository guidance and invoke `video-iterative-development`;
 - the worker authority boundary and required `decision_request` fields: observed condition, conflicting or missing assignment clause, evidence, exact decision needed, affected work, and unaffected work continued.
+- the observed issue type and eligibility, `plan_review_required`, approved immutable plan revision/fingerprints when required, and recorded owner authority for material decisions and follow-up actions;
+- repository-native runtime mode, scenario prerequisites/readiness, expected actor identity when applicable, exact proof-source/run identities, required UI surfaces and one-passing-recording reuse rules;
+- selected worker runtime/profile, actual model verification method and durable session ownership; preserve configured approval controls rather than requiring unrestricted execution.
 
 Do not dispatch vague work, delegate a consequential choice, or ask the prompter to choose backend versus frontend scope. Resolve a returned `decision_request`, record the decision, and send a focused contract amendment to the same owner.
 
@@ -247,13 +277,17 @@ Also run [the engineering guidance review](references/engineering-guidance-revie
 
 Before accepting `submitted`, independently probe the remote branch, PR, required final proof references, any successful wide-screen/web-layout golden proof, and requested Slack-coordinator event, write the resulting receipt, and run [the submission-closure gate](references/submission-closure.md). Repair invalid receipts or return missing required actions to focused recovery. A failed or absent non-blocking golden is recorded rather than repaired as a submission gap. A worker statement, local path, successful local command, or pending conversational confirmation cannot replace this gate.
 
-Apply `jira-issue-hierarchy` Story QA-readiness checks separately from submission. An implementation Subtask is ownership, not the QA acceptance unit; submitted PRs and local evidence alone do not make its parent Story ready for QA.
+Apply `jira-issue-hierarchy` Story QA-readiness separately from submission. Bugs retain their own acceptance scope and observed project workflow; do not invent Story parents, implementation children or transitions. Submitted PRs and local evidence alone never claim QA readiness.
 
 The orchestrator must review final proof on every assigned UI surface before accepting it. Reject and re-record proof containing non-required emulator boot, build, install, launcher, app startup, or login footage, or stacked presentation holds beyond the one-second pacing rule; a passing Patrol result does not override this evidence gate. When the non-blocking golden succeeded, also review the wide-screen/web-layout PNG against its mapped Figma frame and verify that the PR presents it alongside the Android recording.
 
 `submitted` requires the final commit on the remote source branch, the PR against its intended base or prerequisite branch, and final proof links in the PR description. Record any PR pipeline status already available without waiting for it. A reported merge conflict is metadata only; this workflow does not merge or resolve target-branch conflicts.
 
 `submitted_verified` is terminal for a ticket. It requires `submitted` and successful delivery-mode conformance. A green, pending, missing, or failed PR pipeline does not change this state or delay goal completion. If an already available pipeline result reveals a defect in the submitted change, record the finding for a separate correction; do not reopen the delivery gate solely to make CI green.
+
+Immediately reconcile [completion follow-up](references/completion-follow-up.md) for each verified PR and run [post-ready native review](references/post-ready-native-review.md) once it is ready. Neither step grants new external or product authority. A current verified finding starts a correction with fresh closure/proof; merely running a review does not erase a valid submission state.
+
+For explicitly selected PRs only, continue through [optional landing](references/optional-pr-landing.md) after current review and discussion gates. Other PRs remain submission-only. Keep landing and requested follow-up states separate and keep the goal active while their recoverable work remains; only observed provider merge state proves landing.
 
 Never merge, deploy, rotate secrets, edit CI/CD, mutate Figma or supplied documents, or rewrite remote history unless the prompter separately authorizes that action.
 
@@ -263,4 +297,4 @@ Never merge, deploy, rotate secrets, edit CI/CD, mutate Figma or supplied docume
 
 ## Final report
 
-Report each selected ticket's canonical state, branch ancestry, PR target and URL, required evidence, non-blocking golden result or recorded failure, conformance result, any pipeline status already available, recovery summary, and genuine blocker when present. Report merge-conflict status as PR metadata. State which submitted branch unblocked each dependent ticket and which work remains parallelizable. When Slack coordination was enabled, include the run thread permalink and final coordination outcome.
+Report each selected ticket's state, issue type, plan approval revision or pending question, source/branch ancestry, PR target/URL, proof identities, conformance and recovery. Include native review, automated-thread dispositions, optional landing choice/outcome and actual target commit if merged. Report observed checks/conflicts without inventing readiness. State submitted prerequisites and remaining independent work. With pre-existing optional Slack coordination include its single run permalink/outcome; with an optional watcher include pending discovery and detach state.

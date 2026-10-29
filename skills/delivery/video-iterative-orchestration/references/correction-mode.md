@@ -2,13 +2,14 @@
 
 Use when new session gets selected queue + read-only findings Markdown doc, not original delivery conversation. Findings doc, architecture doc, Figma file stay read-only; all run state go in ignored orchestration evidence dir.
 
-Selected Jira Story requirements + acceptance criteria = correction scope. Agent-owned Subtask = implementation ownership only, not separate QA target. Epic description = queue context only; no create correction, no broaden one, no turn epic-vs-ticket mismatch into blocker.
+The selected Story's requirements or Bug's reported failure and expected behavior remain correction scope and QA target. An implementation child tracks ownership only. Epic descriptions supply queue context; they never broaden correction scope.
 
 ## Intake and classification
 
 1. Read the selected queue, affected requirements and implementation children first, then every finding. Resolve each cited repo, PR, source branch, target branch, architecture section or Figma file/page/node, supporting evidence. Check current remote PR state + source/target commit SHAs; no trust stale local checkout or prior-agent summary.
+   Skip tickets currently `On Hold` or `On-Hold`, preserving findings and adopted work as `skipped_on_hold`. A requested Bug plan gate also applies before the next new correction cycle.
 2. One ledger row per finding: Jira ticket, finding ID, source-doc location, affected PR, source/target SHAs, expected state, observed drift, cited architecture/Figma evidence if supplied, candidate repos, downstream requirements, state, owner, replacement evidence.
-3. Compare only source nodes and sections mapped to the selected Story. Mapped Figma resolves ambiguous or conflicting ticket details and overrides a conflicting architecture document; record the automatic resolution in `decision-log.md`. Only a remaining choice that materially changes scope or user behavior becomes `needs_product_decision`; keep unrelated work moving.
+3. Compare only mapped Story source nodes/sections and record their authority resolution. For Bugs, verify the report's expected behavior; linked designs aid diagnosis but do not override it. An unresolved material scope or behavior choice goes to the owner under recorded decision authority while independent work continues.
 4. Group findings only if shared root cause AND same PR branch ownership. Else make ordered correction tasks; orchestrator, not prompter, sets scope + dependency.
 
 ## Mutable unmerged-PR boundary
@@ -25,6 +26,6 @@ Give the agent the finding, orchestrator-selected scope, expected-versus-observe
 
 ## Closure and downstream effects
 
-For every correction, verify the final PR diff now matches the cited design source, the correction commit is pushed to the existing PR source branch, and the PR description links the replacement final proof. UI drift needs fresh reviewer-ready Android evidence; backend drift needs renewed applicable contract proof. Re-check the specific finding and its affected original acceptance criteria before marking it `resolved`.
+For every correction, verify the final PR diff matches the selected ticket and applicable authority, the correction commit is pushed to its existing source branch, and the description links current-head final proof. Recheck the finding and its affected acceptance behavior on every assigned surface or API boundary. Reuse one passing recording only when it meets the unchanged source/proof identity contract; otherwise replace it. A stale head, changed actor or invalid proof returns to recovery.
 
 If downstream worktrees were created from a faulty source head, assess them explicitly: recreate them from the corrected remote head, queue dependent corrections, or document why they are unaffected. Do not mark a finding resolved while its known downstream impact is unaddressed. A pending, missing, or failed PR pipeline does not delay `submitted_verified`; record its status if already available. Deployments and approvals remain non-blocking.

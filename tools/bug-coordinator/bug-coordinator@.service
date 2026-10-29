@@ -1,0 +1,13 @@
+[Unit]
+Description=Watch Jira epic %i for new Bugs
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/bug-coordinator/%i.env
+ExecStart=%h/.local/bin/bug-coordinator serve --epic %i --workspace ${WORKSPACE} --skill-file ${SKILL_FILE} --jira-url ${JIRA_URL} --jira-email ${JIRA_EMAIL} --jira-token-file ${JIRA_TOKEN_FILE} --codex-socket ${CODEX_SOCKET}
+Restart=on-failure
+RestartSec=15s
+
+[Install]
+WantedBy=default.target

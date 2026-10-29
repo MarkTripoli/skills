@@ -33,6 +33,10 @@ The receipt shape is:
     "items": [
       {
         "kind": "android_video",
+        "source_commit": "0123456789abcdef0123456789abcdef01234567",
+        "result": "passed",
+        "run_id": "scenario-run-1",
+        "runner_target": "assigned-android-journey",
         "location": "https://github.com/user-attachments/assets/01234567-89ab-cdef-0123-456789abcdef",
         "playability_verified": true,
         "content_sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -75,6 +79,10 @@ The receipt shape is:
 Use `approval: "not_required"` when the runner executed the action directly and `approval: "managed_approval_granted"` when its managed approval completed. No conversational-approval or pending state is valid. If Slack coordination was not requested, set `slack.requested` to `false` and omit `actions.slack`.
 
 An API-only ticket may use an `api_contract` evidence item with a non-empty `summary` or durable `location`; it does not invent a video upload. An assigned video item (`android_video`, `chrome_video`, or `ios_video`) requires a durable HTTPS hosted URL without credentials or signed query parameters, verified download, positive expected byte count, SHA-256 matching the downloaded capture, and verified playability. `required_evidence` comes from the assignment, not the worker; every listed kind must be present. The independently probed PR head must equal the full local and remote commit, and its target must equal `intended_target`. Every evidence item must already appear in the verified PR description.
+
+Every item, including API contract proof, binds `source_commit` to the full final `local_commit`, `result: "passed"`, its observed `run_id` and exact `runner_target`. Preserve actor/fixture and participating-source identities in the evidence manifest and indexed receipt. Reuse a single passing recording only while that identity and installed current-source publication gates remain valid; a moved head requires fresh proof or the publication contract's explicit equivalence procedure, never relabeling old capture bytes.
+
+`pull_request.provider` defaults to `github`. An explicitly configured optional `gitlab` provider uses its exact HTTPS `/-/merge_requests/<iid>` URL in the same receipt fields and authenticated provider readback; GitHub publication remains the default. Native WebM and MP4 are both accepted when the assigned platform and host support them. File extension or upload origin never replaces digest, playability and current-head checks.
 
 Exit `0` accepts the receipt. Exit `1` returns it to recovery with machine-readable issues. Exit `2` means the command was used incorrectly. Never assign `submitted` while the receipt is invalid.
 

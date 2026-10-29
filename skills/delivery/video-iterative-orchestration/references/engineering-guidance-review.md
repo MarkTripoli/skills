@@ -6,6 +6,8 @@ Run this read-only review in a fresh independent session on the strongest compat
 
 Record the ticket, participating repositories, PR target or adopted baseline, source branch and HEAD, and a fingerprint of committed and uncommitted changes. Read the applicable `AGENTS.md`, engineering guides, final diff, changed tests and documentation, and the worker's verification results. Inspect recent comparable code only where it clarifies a changed design choice.
 
+Read the worker's before-edit ownership report and final target-relative scope report. Check shared-path costs, duplicate flows, compatibility logic for unshipped PR states, reusable helpers, and justified exceptions against the repository's actual engineering guidance. A missing company-named guide is not a failure; use maintained guidance where it lives.
+
 ## Ask where the change joins existing behavior
 
 Use these questions when applicable to the selected ticket; none is an automatic pass/fail rule:

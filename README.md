@@ -14,7 +14,7 @@ The standalone `slack-coordinator` skill operates the daemon that reports run st
 
 ## Jira issue hierarchy
 
-The standalone [`jira-issue-hierarchy`](skills/jira-issue-hierarchy/SKILL.md) skill drafts KIT Epics and Stories from approved requirements, authors Sub-tasks when Story work starts, and checks Story QA readiness. Its policy and templates ship with the skill; QA reviews the Story, not agent-owned children. Install it alone or select `video-iterative-orchestration` with the repository installer to include it as a dependency. See the [quick start](docs/cheatsheet.md).
+The standalone [`jira-issue-hierarchy`](skills/jira-issue-hierarchy/SKILL.md) skill drafts Epics and Stories from approved requirements, authors Sub-tasks when Story work starts, and checks QA readiness against the selected project's observed hierarchy and workflow. Its portable templates ship with the skill; they do not prescribe a Jira project, label or transition. Install it alone or select `video-iterative-orchestration` to include it as a dependency. See the [quick start](docs/cheatsheet.md).
 
 ## Babysit pull requests
 
@@ -46,11 +46,14 @@ GitHub delivery requires gh authenticated for the repository host. Private insta
 
 Installed skills are copies. Opt into normal full-runtime refresh after default-branch merges with `git config skills.autoInstall auto`; use a runtime list such as `codex oh-my-pi` to choose targets. Leave it unset or set `off` for manual updates. The hook runs the regular installer without enabling orchestration. To refresh selected skills explicitly, run `node scripts/install.mjs <runtime> --skill <name> --yes` and start a new session.
 
+For explicitly selected release updates on a schedule, preview the [opt-in nightly updater](docs/cheatsheet.md#opt-in-nightly-updates). It is separate from clone hooks, installs no team policy, and remains disabled until requested.
+
 ### Authoring and explanation
 
 - [`/author-skill`](skills/author-skill/SKILL.md) is the upstream “create skill” workflow: sibling/trigger check, eval-first scaffold, progressive references and executable helpers, both validators, then current-source live eval.
 - [`/explain`](skills/explain/SKILL.md) produces an evidence-grounded explanation for a selected audience; optional HTML and media stay outside task roots.
 - [`/land-pr-stack`](skills/delivery/land-pr-stack/SKILL.md) lands an explicitly authorized PR stack in dependency order, using GitHub by default and existing repository release requirements.
+- Independent skills also cover product briefs, technical writing, merge-risk assessment, static implementation audits, Figma design-system synchronization, Flutter performance, Coast runtimes and visible device work. See [the capability catalog](docs/cheatsheet.md#additional-independent-skills); services and daemons require separate setup.
 
 
 ## Use skills independently
@@ -85,7 +88,7 @@ Old workflow system and metrics hookup dead; no replace telemetry service. Old c
 
 Keep task doc, published [changelog entries](CHANGELOG.md), existing worktree, include cancelled run. Install change not allow delete them.
 
-The active skills and deterministic helpers incorporate the skill-authoring refresh at revision `9af302dc`. The revamp adopts Claude Code skill-authoring practices: discriminating trigger descriptions, short procedural bodies, branch-loaded references, executable deterministic checks and behavior-first evals. `/author-skill` is canonical, not a new `/create-skill` alias. Atomic remains retired; task history and owner worktrees are preserved.
+Reusable capabilities are aligned with source revision `4d2f93020c712d58cc41cad4ac01d2fbe5f10997`: standalone skills, audit and review helpers, simulator viewing, optional update scheduling, and portable video delivery improvements. New Slack bot features are excluded. Company policies, internal infrastructure and project-specific defaults are not installed. `/author-skill` remains canonical; retired workflow systems stay retired, and task history and owner worktrees are preserved.
 
 `/describe-pr` and `/resolve-pr-reviews` retain personal PR naming, GitHub APIs, exact current-head hosted proof and optional hooks. Review and evidence repairs have no implicit three-round cap; explicit owner limits and no-progress stops remain binding. Imported recordings are historical source evidence, not proof of this checkout. The immutable indexed-artifact, configurable-root, opt-in security and run-coordination contracts below remain authoritative.
 

@@ -1,0 +1,30 @@
+# Linux systemd user unit for `simview web`; see README.md ("Run as a service").
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp tools/simview/simview-web.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now simview-web.service
+#   simview url                       # the stable link
+#   loginctl enable-linger "$USER"    # keep it running while logged out
+#
+# From tools/simview, install the binary first:
+#   mkdir -p ~/.local/bin
+#   go build -o ~/.local/bin/simview ./cmd/simview
+[Unit]
+Description=simview web: browser view of emulators and Chromium pages
+# `simview web` binds this host's Tailscale address, so wait for the network and retry
+# below when tailscaled is not up yet.
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/simview web
+# Restrict which devices accept input (comma list of ids; a trailing * is a prefix):
+#Environment=SIMVIEW_INPUT_ALLOW=emulator-5554,cdp:9333:*
+#Environment=SIMVIEW_CONFIG=%h/.config/simview/config.toml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

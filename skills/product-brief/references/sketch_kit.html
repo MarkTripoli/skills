@@ -1,0 +1,204 @@
+<!doctype html>
+<!--
+  Fat-marker sketch kit. Copy the parts you need into the brief.
+  Contents:
+    1. Fonts link (head)
+    2. Color tokens, light and dark
+    3. Sketch classes: ink strokes, hand text, red notes, viewer tag
+    4. Phone-width rules: red notes become numbered dots plus a list
+    5. SVG defs: the marker wobble filter and the two arrowheads
+    6. A phone sketch: "A Group Lead sees their own Group"
+    7. A terminal sketch: "Devon deploys during a freeze"
+  Open this file in a browser to see the result in light and dark.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sketch kit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Caveat:wght@500;700&family=JetBrains+Mono:wght@400;600&family=Permanent+Marker&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+<style>
+:root {
+  --paper: #ffffff;
+  --ink: #1a1b1f;
+  --muted: #5d6068;
+  --rule: #e3e4e8;
+  --marker: #1a1b1f;
+  --red: #cf3426;
+  --display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --serif: "Source Serif 4", Georgia, serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --hand: "Permanent Marker", "Comic Sans MS", cursive;
+  --note: "Caveat", "Comic Sans MS", cursive;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --paper: #131417; --ink: #ebecef; --muted: #a3a6ae; --rule: #2c2e34; --marker: #ebecef; --red: #ff6a5b; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --paper: #131417; --ink: #ebecef; --muted: #a3a6ae; --rule: #2c2e34; --marker: #ebecef; --red: #ff6a5b; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 48px 16px; background: var(--paper); color: var(--ink); font-family: var(--serif); font-size: 19px; line-height: 1.6; }
+.wide { max-width: 1000px; margin-inline: auto; }
+h3 { margin: 0; font-family: var(--display); font-size: 22px; line-height: 1.25; }
+
+/* Sketch frame. The SVG keeps a minimum width, so a wide sketch scrolls inside its frame, never the page. */
+.sketch { margin: 36px 0 0; }
+.sketch-head { max-width: 660px; margin-inline: auto; }
+.sketch-frame { margin-top: 14px; overflow-x: auto; }
+.sketch-frame svg { display: block; width: 100%; min-width: 560px; height: auto; }
+
+/* Marker ink. stroke = outer shapes, thin = inner shapes, solid = a filled header bar, dash = absent or empty, faint = secondary. */
+.sk { color: var(--marker); }
+.sk .stroke { fill: none; stroke: currentColor; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+.sk .thin { fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.sk .solid { fill: currentColor; stroke: currentColor; stroke-width: 5; stroke-linejoin: round; }
+.sk .dash { stroke-dasharray: 9 9; }
+.sk .faint { opacity: 0.28; }
+/* Hand text. t = UI text, inv = text on a solid bar, soft = secondary UI text. */
+.sk .t { font-family: var(--hand); fill: currentColor; }
+.sk .inv { font-family: var(--hand); fill: var(--paper); }
+.sk .soft { font-family: var(--hand); fill: var(--muted); }
+/* Red redlines: the arrow stroke and the handwritten note. */
+.sk .red { fill: none; stroke: var(--red); stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; }
+.sk .rn { font-family: var(--note); font-weight: 700; fill: var(--red); }
+
+/* Viewer tag: who sees or does what the sketch shows. It sits above the frame, never inside the phone. */
+.viewer-tag { display: inline-block; margin: 10px 0 0; font-family: var(--hand); font-size: 19px; line-height: 1.2; letter-spacing: 0.02em; padding: 5px 14px 4px; border: 3px solid var(--ink); border-radius: 10px 6px 12px 7px; transform: rotate(-1.2deg); }
+
+/* Numbered notes for phone width. Hidden on wide screens. */
+.sk .mnum { display: none; }
+.sk .mnum circle { fill: var(--red); }
+.sk .mnum text { font-family: var(--mono); font-size: 12px; font-weight: 600; fill: #ffffff; text-anchor: middle; }
+.mnotes { display: none; list-style: none; padding: 0; margin: 12px 0 0; gap: 10px; font-size: 16px; line-height: 1.5; }
+.mnotes li { display: grid; grid-template-columns: 26px 1fr; gap: 8px; margin: 0; }
+.mnotes .n { width: 22px; height: 22px; border-radius: 50%; background: var(--red); color: #ffffff; font-family: var(--mono); font-size: 12px; font-weight: 600; display: grid; place-items: center; margin-top: 2px; }
+
+@media (max-width: 640px) {
+  /* crop: show only the frame and move the notes below it. SVG width = canvas width / frame right edge:
+     phone 700 / 320 = 220%, terminal 780 / 420 = 186%. */
+  .sketch-frame.crop { overflow: hidden; }
+  .sketch-frame.crop svg { width: 220%; min-width: 0; max-width: none; }
+  .sketch-frame.crop.term svg { width: 186%; }
+  .sk .ann { display: none; }
+  .sk .mnum { display: inline; }
+  .mnotes { display: grid; }
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <!-- Wobble: displaces every ink shape a few units, so straight SVG lines read as hand-drawn marker. -->
+    <filter id="marker" x="-4%" y="-4%" width="108%" height="108%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.022" numOctaves="2" seed="11" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="5" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <!-- Open chevron heads: red for notes, ink for flow arrows in diagrams. -->
+    <marker id="redhead" viewBox="0 0 12 12" refX="9" refY="6" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M1 1 L10 6 L1 11" fill="none" stroke="var(--red)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="inkhead" viewBox="0 0 12 12" refX="9" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L10 6 L1 11" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+</svg>
+
+<section class="wide">
+  <figure class="sketch">
+    <div class="sketch-head"><h3>A Group Lead sees their own Group</h3><p class="viewer-tag">Seen by the Romeo Group Lead</p></div>
+    <div class="sketch-frame sk crop">
+      <!-- Canvas 700 wide: the phone fills x 20 to 300, the red notes start at x 344. -->
+      <svg viewBox="0 0 700 450" role="img" aria-label="Sketch: the Romeo Group Lead sees an inbox of 3: Ralph, Quinn, and Quentin, each with only a Romeo chip. Noah is not there.">
+        <!-- Everything inside this group wobbles: ink shapes and red arrows. Text stays outside it, so it stays crisp. -->
+        <g filter="url(#marker)">
+          <rect class="stroke" x="20" y="10" width="280" height="428" rx="30"/>
+          <rect class="stroke" x="42" y="96" width="236" height="230" rx="8"/>
+          <rect class="solid" x="42" y="96" width="236" height="42" rx="6"/>
+          <rect class="thin" x="56" y="187" width="54" height="22" rx="5"/>
+          <rect class="thin" x="56" y="243" width="54" height="22" rx="5"/>
+          <rect class="thin" x="56" y="299" width="54" height="22" rx="5"/>
+          <rect class="thin" x="206" y="160" width="60" height="30" rx="9"/>
+          <rect class="thin" x="206" y="216" width="60" height="30" rx="9"/>
+          <rect class="thin" x="206" y="272" width="60" height="30" rx="9"/>
+          <rect class="stroke" x="42" y="346" width="236" height="44" rx="8"/>
+          <g class="ann">
+            <!-- Each arrow starts at its note's first line (x 336) and curves to the exact element it explains. -->
+            <path class="red" d="M336 118 C 310 118, 296 117, 282 117" marker-end="url(#redhead)"/>
+            <path class="red" d="M336 238 C 200 244, 150 252, 116 254" marker-end="url(#redhead)"/>
+            <path class="red" d="M336 306 C 200 308, 150 310, 116 310" marker-end="url(#redhead)"/>
+          </g>
+        </g>
+        <text class="t" x="44" y="80" font-size="24">GROUPS</text>
+        <text class="inv" x="56" y="125" font-size="16">NEEDS ASSIGNMENT · 3</text>
+        <text class="t" x="56" y="180" font-size="18">Ralph</text>
+        <text class="t" x="63" y="203" font-size="11.5">Romeo</text>
+        <text class="t" x="56" y="236" font-size="18">Quinn</text>
+        <text class="t" x="63" y="259" font-size="11.5">Romeo</text>
+        <text class="t" x="56" y="292" font-size="18">Quentin</text>
+        <text class="t" x="63" y="315" font-size="11.5">Romeo</text>
+        <text class="t" x="214" y="180" font-size="12.5">Assign</text>
+        <text class="t" x="214" y="236" font-size="12.5">Assign</text>
+        <text class="t" x="214" y="292" font-size="12.5">Assign</text>
+        <text class="t" x="58" y="375" font-size="17">Romeo ›</text>
+        <g class="ann">
+          <!-- Notes: one short sentence pair each, about 30 characters per line, 25 units between lines. -->
+          <text class="rn" font-size="24"><tspan x="344" y="104">The Romeo Group Lead sees the</tspan><tspan x="344" y="129">3 people who wait in Romeo.</tspan><tspan x="344" y="154">Noah, in no Group, is absent.</tspan></text>
+          <text class="rn" font-size="24"><tspan x="344" y="234">Quinn is also in Cedar. This</tspan><tspan x="344" y="259">Group Lead sees her Romeo chip only.</tspan></text>
+          <text class="rn" font-size="24"><tspan x="344" y="310">Quentin is on Cedar Support,</tspan><tspan x="344" y="335">a team in another Group. This</tspan><tspan x="344" y="360">Group Lead does not see it.</tspan></text>
+        </g>
+        <!-- Phone width: a numbered dot at each arrow's tip replaces the note. -->
+        <g class="mnum">
+          <circle cx="308" cy="117" r="10"/><text x="308" y="121">1</text>
+          <circle cx="124" cy="254" r="10"/><text x="124" y="258">2</text>
+          <circle cx="124" cy="310" r="10"/><text x="124" y="314">3</text>
+        </g>
+      </svg>
+    </div>
+    <ol class="mnotes">
+      <li><span class="n">1</span><span>The Romeo Group Lead sees the 3 people who wait in Romeo. Noah is in no Group, so only Admins see him.</span></li>
+      <li><span class="n">2</span><span>Quinn is also in Cedar. This Group Lead sees her Romeo chip only.</span></li>
+      <li><span class="n">3</span><span>Quentin is on Cedar Support, a team in another Group. This Group Lead does not see that team chip.</span></li>
+    </ol>
+  </figure>
+
+  <figure class="sketch">
+    <div class="sketch-head"><h3>Devon deploys during a freeze</h3><p class="viewer-tag">Done by Devon the developer</p></div>
+    <div class="sketch-frame sk crop term">
+      <!-- Canvas 780 wide: the terminal fills x 20 to 400, the red notes start at x 440. -->
+      <svg viewBox="0 0 780 300" role="img" aria-label="Sketch: Devon runs shipctl deploy payments. The terminal says production deploys are frozen, by Iris at 14:02, for the payments outage INC-311, and that a hotfix can pass with shipctl deploy --hotfix.">
+        <g filter="url(#marker)">
+          <rect class="stroke" x="20" y="10" width="380" height="270" rx="14"/>
+          <rect class="solid" x="20" y="10" width="380" height="36" rx="10"/>
+          <g class="ann">
+            <path class="red" d="M432 106 C 380 116, 280 136, 222 140" marker-end="url(#redhead)"/>
+            <path class="red" d="M432 202 C 380 204, 330 208, 300 210" marker-end="url(#redhead)"/>
+          </g>
+        </g>
+        <text class="inv" x="36" y="34" font-size="15">TERMINAL</text>
+        <text class="t" x="40" y="80" font-size="16">$ shipctl deploy payments</text>
+        <text class="t" x="40" y="114" font-size="16">✗ Production deploys are frozen</text>
+        <text class="t" x="40" y="144" font-size="16">Frozen by Iris · 14:02</text>
+        <text class="t" x="40" y="174" font-size="16">Reason: payments outage (INC-311)</text>
+        <text class="t" x="40" y="214" font-size="16">Hotfix: shipctl deploy --hotfix</text>
+        <text class="soft" x="40" y="254" font-size="16">$ _</text>
+        <g class="ann">
+          <text class="rn" font-size="24"><tspan x="440" y="96">Devon sees who froze deploys</tspan><tspan x="440" y="121">and why, without asking in</tspan><tspan x="440" y="146">the incident channel.</tspan></text>
+          <text class="rn" font-size="24"><tspan x="440" y="200">The error names the one</tspan><tspan x="440" y="225">way through: a hotfix.</tspan></text>
+        </g>
+        <g class="mnum">
+          <circle cx="226" cy="140" r="10"/><text x="226" y="144">1</text>
+          <circle cx="304" cy="210" r="10"/><text x="304" y="214">2</text>
+        </g>
+      </svg>
+    </div>
+    <ol class="mnotes">
+      <li><span class="n">1</span><span>Devon sees who froze deploys and why, so he does not ask in the incident channel.</span></li>
+      <li><span class="n">2</span><span>The error names the one way through a freeze: a hotfix.</span></li>
+    </ol>
+  </figure>
+</section>
+
+</body>
+</html>

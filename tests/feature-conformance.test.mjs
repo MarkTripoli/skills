@@ -363,3 +363,30 @@ test("mapped Figma rows cannot refer to nodes absent from the selected bundle", 
   assert.equal(result.valid, false);
   assert.ok(result.report.issues.some((issue) => issue.includes("unknown node")));
 });
+
+test("Bug behavior remains ticket-authoritative in a mixed design-backed contract", () => {
+  const story = {
+    ...structuredClone(baseRequirement),
+    id: "story",
+    owner: { ticket: "APP-104", issue_type: "Story" },
+    design_basis: {
+      sources: ["ticket", "figma"],
+      design_document: { status: "not_supplied" },
+      figma: { status: "mapped", bundle_id: figmaBundle.id, node_ids: ["10047:10900"] },
+    },
+  };
+  const bug = { ...structuredClone(baseRequirement), owner: { ticket: "APP-105", issue_type: "Bug" } };
+  const contract = { ...baseContract, authority: ["ticket_scope", "figma", "ticket_detail", "repository"], figma_bundles: [figmaBundle], requirements: [story, bug] };
+  assert.equal(validateContract(contract, "preflight").valid, true);
+  bug.design_basis = structuredClone(story.design_basis);
+  const conflicting = validateContract(contract, "preflight");
+  assert.equal(conflicting.valid, false);
+  assert.ok(conflicting.report.issues.includes("R3: Bug rows must use ticket-only source mappings"));
+});
+
+test("Bug contracts reject disguised design precedence and unknown issue types", () => {
+  const bug = { ...structuredClone(baseRequirement), owner: { ticket: "APP-105", issue_type: "Bug" }, source_resolution: { status: "figma_resolves_ticket", summary: "Override expected behavior." } };
+  assert.equal(validateContract({ ...baseContract, requirements: [bug] }, "preflight").valid, false);
+  bug.owner.issue_type = "Epic";
+  assert.ok(validateContract({ ...baseContract, requirements: [bug] }, "preflight").report.issues.includes("R3: owner.issue_type must be Story or Bug"));
+});
