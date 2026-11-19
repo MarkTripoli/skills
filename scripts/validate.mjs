@@ -20,7 +20,7 @@ const rootIndex = args.indexOf("--root");
 const root = rootIndex === -1 ? repoRoot : path.resolve(args[rootIndex + 1] ?? "");
 const generated = root !== repoRoot;
 
-const EXPECTED_SKILL_COUNT = 70;
+const EXPECTED_SKILL_COUNT = 83;
 const SHARED_LINKS = {
   "shared/WRITING.md": "https://github.com/MarkTripoli/skills/blob/main/shared/WRITING.md",
   "shared/CONVENTIONS.md": "https://github.com/MarkTripoli/skills/blob/main/shared/CONVENTIONS.md",
@@ -274,6 +274,7 @@ const NON_SKILL_COMMANDS = {
   blocks: "GitLab pull request dependency API path segment named in babysit/references/gitlab.md",
   blockees: "GitLab pull request dependency API path segment named in babysit/references/gitlab.md",
   "code-review": "Claude Code native review command, distinct from the review-code skill",
+  doctor: "Claude Code built-in command named in skill-doctor",
   tmp: "directory path, not a command",
   usr: "directory path, not a command",
   etc: "directory path, not a command",

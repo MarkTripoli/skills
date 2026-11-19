@@ -1,0 +1,121 @@
+[
+  {
+    "tag": "migration",
+    "paths": [
+      "(^|\\/)(migrations?|migrate|alembic|db\\/schema)(\\/|\\.)|\\.sql$|(^|\\/)schema\\.(prisma|rb)$"
+    ],
+    "flags": "i",
+    "signals": "DROP or RENAME; NOT NULL without a default; type change; index built without a concurrent option; backfill in the deploy; code and schema changed in one step instead of expand then contract; missing down migration",
+    "worst": "S3 downtime from locks; S4 data loss; a revert does not undo it"
+  },
+  {
+    "tag": "api-contract",
+    "paths": [
+      "(openapi|swagger)[^/]*\\.(ya?ml|json)$|\\.(proto|graphql|gql|avsc)$|(^|\\/)(api|routes?|controllers?|handlers?|endpoints?|resolvers?)(\\/|\\.)"
+    ],
+    "flags": "i",
+    "signals": "removed or renamed endpoint, field, argument or route; new required input; narrowed type or enum; changed status code or error shape; wire field renumbered; new enum or union member that exhaustive clients reject",
+    "worst": "S3 for every client still on the old shape, including installed apps that cannot update"
+  },
+  {
+    "tag": "auth",
+    "paths": [
+      "(^|[/_.-])(auth\\w*|permissions?|roles?|acl|polic(y|ies)|sessions?|login|oauth|jwt|tokens?|csrf|cors|secrets?)([/_.-]|$)"
+    ],
+    "flags": "i",
+    "signals": "changed middleware, policy, role or ownership checks; session, token or cookie flags; CORS or CSP; tenant filters; secrets handling",
+    "worst": "S4 exposure when checks loosen; S3 lockout when they tighten"
+  },
+  {
+    "tag": "dependency",
+    "paths": [
+      "(^|/)(package(-lock)?\\.json|pnpm-lock\\.yaml|yarn\\.lock|bun\\.lockb?|deno\\.(json|lock)|go\\.(mod|sum)|Cargo\\.(toml|lock)|requirements[^/]*\\.txt|pyproject\\.toml|poetry\\.lock|uv\\.lock|Pipfile(\\.lock)?|Gemfile(\\.lock)?|pom\\.xml|build\\.gradle(\\.kts)?|build\\.sbt|mix\\.(exs|lock)|composer\\.(json|lock)|Podfile(\\.lock)?|Package\\.(swift|resolved)|pubspec\\.(yaml|lock)|Directory\\.Packages\\.props|packages\\.lock\\.json|vcpkg\\.json|conanfile\\.(txt|py)|flake\\.lock)$|\\.(csproj|fsproj|vbproj|gemspec)$"
+    ],
+    "flags": "",
+    "signals": "major version bumps; runtime (not dev) lockfile churn; framework, language runtime or base image upgrade",
+    "worst": "Wide and hard to trace; read the changelog for breaking changes"
+  },
+  {
+    "tag": "config",
+    "paths": [
+      "(^|\\/)\\.env[^/]*$|(^|\\/)(config|settings|conf)(\\/|\\.)|\\.config\\.[cm]?[jt]s$|(^|\\/)(feature[-_]?flags?|flags)(\\/|\\.)"
+    ],
+    "flags": "i",
+    "signals": "changed defaults; renamed environment variables; a flag default flipped on; timeouts, pool sizes, rate limits",
+    "worst": "Wide; config skips the tests code gets"
+  },
+  {
+    "tag": "infra",
+    "paths": [
+      "(^|\\/)(Dockerfile[^/]*|docker-compose[^/]*|\\.gitlab-ci\\.yml|Jenkinsfile|\\.circleci\\/.*|\\.github\\/workflows\\/.*|Procfile|nginx[^/]*\\.conf)$|\\.(tf|tfvars)$|(^|\\/)(helm|k8s|kubernetes|deploy|infra|charts)\\/"
+    ],
+    "flags": "i",
+    "signals": "changed build, deploy or pipeline steps; base image, resource limits, routing or scaling rules; a job removed from the required set",
+    "worst": "Wide S3 when a deploy or rollback path breaks; often invisible until the next release"
+  },
+  {
+    "tag": "shared-ui",
+    "paths": [
+      "(^|\\/)(styles?|theme|themes|tokens|design-system|ui|primitives|common|shared|layouts?)\\/.*\\.(css|scss|sass|less|[jt]sx?|vue|svelte)$|(^|\\/)(globals?|base|reset|variables|app|index|main)\\.(css|scss|sass|less)$|(^|\\/)tailwind\\.config\\.[cm]?[jt]s$"
+    ],
+    "flags": "i",
+    "signals": "edits to global, reset or element selectors, forced style overrides, design tokens, theme variables, stacking order, position or overflow on layout primitives; changed props, defaults or markup of a component with many importers",
+    "worst": "Wide S1 to S3: layout breaks or controls hidden on screens the author never opened"
+  },
+  {
+    "tag": "ui",
+    "paths": [
+      "\\.(css|scss|sass|less|[jt]sx|vue|svelte|astro|html|hbs|erb|njk|twig|razor|cshtml|xaml|swift|kt|dart|xib|storyboard)$"
+    ],
+    "flags": "i",
+    "signals": "changed conditionals around rendering, removed handlers, changed routes or links, text expansion, removed loading or error states",
+    "worst": "Narrow to Feature, S2 to S3"
+  },
+  {
+    "tag": "i18n",
+    "paths": [
+      "(^|\\/)(locales?|i18n|l10n|translations?|lang)\\/|\\.(po|pot|xliff|strings|arb)$"
+    ],
+    "flags": "i",
+    "signals": "hard-coded strings; removed or renamed translation keys; string concatenation; locale-blind date, number or currency formatting",
+    "worst": "S1 to S2 for non-default locales"
+  },
+  {
+    "tag": "test",
+    "paths": [
+      "(^|\\/)(tests?|__tests__|spec|specs|e2e|cypress|playwright|fixtures)\\/|\\.(test|spec)\\.[^/]+$|_test\\.(go|py|rb)$"
+    ],
+    "flags": "i",
+    "signals": "removed or skipped tests, loosened assertions, deleted fixtures for behavior the diff still changes",
+    "worst": "No user effect alone; lowers confidence in every other finding"
+  },
+  {
+    "tag": "docs",
+    "paths": [
+      "\\.(md|mdx|rst|adoc|txt)$|(^|\\/)docs?\\/"
+    ],
+    "flags": "i",
+    "signals": "user-facing instructions that no longer match the merged behavior",
+    "worst": "S1 unless the doc is the product (API reference, runbook)"
+  },
+  {
+    "tag": "accessibility",
+    "signals": "removed labels, alternative text or accessibility roles; a generic container replacing a button or link; removed focus outline or keyboard handlers; focus traps; lowered contrast",
+    "worst": "S3 for keyboard and screen reader users, even when few"
+  },
+  {
+    "tag": "data-writes",
+    "signals": "delete or update without a scope or tenant filter; changed idempotency, retries, rounding, precision, timezone or encoding; removed validation",
+    "worst": "S4 corrupted or wrong data, often silent"
+  },
+  {
+    "tag": "serialization-caching",
+    "signals": "changed cache keys, lifetimes or invalidation; changed shape of stored, cached, queued, cookie or local storage payloads",
+    "worst": "Old and new versions cannot read each other during rollout or after a revert"
+  },
+  {
+    "tag": "performance",
+    "signals": "query in a loop or render path; query without a limit; removed index, batching or memoization; synchronous network call on a hot path; larger bundle or binary",
+    "worst": "S2, S3 when it times out"
+  }
+]

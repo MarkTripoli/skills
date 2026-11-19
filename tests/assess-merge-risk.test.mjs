@@ -4,13 +4,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-import { scope, surfaces } from "../skills/assess-merge-risk/scripts/scope.mjs";
-import { actionProblems, checkReport, lineCounter, retractedProblems, structureProblems } from "../skills/assess-merge-risk/scripts/check-report.mjs";
+import { scope, surfaces } from "../skills/quality/assess-merge-risk/scripts/scope.mjs";
+import { actionProblems, checkReport, lineCounter, retractedProblems, structureProblems } from "../skills/quality/assess-merge-risk/scripts/check-report.mjs";
 import scenario, { replyLevel, riskProblems, seededReport } from "../evals/scenarios/assess-merge-risk.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname);
-const script = path.join(here, "..", "skills", "assess-merge-risk", "scripts", "scope.mjs");
-const checker = path.join(here, "..", "skills", "assess-merge-risk", "scripts", "check-report.mjs");
+const script = path.join(here, "..", "skills", "quality", "assess-merge-risk", "scripts", "scope.mjs");
+const checker = path.join(here, "..", "skills", "quality", "assess-merge-risk", "scripts", "check-report.mjs");
 const temps = [];
 after(() => temps.forEach((d) => fs.rmSync(d, { recursive: true, force: true })));
 
@@ -298,7 +298,7 @@ test("CLI prints a summary, JSON with --json, and exits 1 with the cause on a ba
   const text = spawnSync(process.execPath, [script, "feat", "--target", "main"], { cwd: dir, encoding: "utf8" });
   assert.equal(text.status, 0, text.stderr);
   assert.match(text.stdout, /conflicts src\/styles\/global\.css/);
-  assert.match(text.stdout, /\[migration\]\n {2}A db\/migrations\/002_drop_name\.sql \+1 -0/);
+  assert.match(text.stdout, /\[migration\] look for: [^\n]+\n {2}A db\/migrations\/002_drop_name\.sql \+1 -0/);
   assert.match(text.stdout, /next: write the report to \S+assess-merge-risk-feat\.md, then run until it prints ok:\n {2}node \S+check-report\.mjs \S+assess-merge-risk-feat\.md --tree [0-9a-f]{40} --base [0-9a-f]{40}\n?$/);
   const json = spawnSync(process.execPath, [script, "feat", "--json"], { cwd: dir, encoding: "utf8" });
   assert.equal(JSON.parse(json.stdout).target, "main");
@@ -390,4 +390,22 @@ test("eval setup builds every branch from main and leaves HEAD on main", () => {
   assert.match(git(dir, "diff", "main", first.branch), /\+\.btn-danger \{ display: none; \}/);
   assert.match(git(dir, "diff", "main", second.branch), /\+<h1>Archived items<\/h1>/);
   assert.match(git(dir, "grep", "-l", "btn-danger", "main", "--", "site/*.html"), /settings\.html[\s\S]*billing\.html|billing\.html[\s\S]*settings\.html/);
+});
+
+test("a repository adds, replaces and removes surfaces on the target branch without editing the skill", () => {
+  const dir = repo();
+  write(dir, ".agents/merge-risk.json", JSON.stringify({
+    add: [{ tag: "billing", paths: ["(^|/)migrations/"], signals: "changed proration or tax rounding", worst: "S4 wrong charges" }],
+    remove: ["docs"],
+  }));
+  git(dir, "add", ".");
+  git(dir, "commit", "-q", "-m", "chore: merge-risk surfaces");
+  const s = scope(dir, "feat", "main");
+  const byFile = Object.fromEntries(s.files.map((f) => [f.file, f.surfaces]));
+  assert.deepEqual(byFile["db/migrations/002_drop_name.sql"], ["migration", "billing"]);
+  assert.deepEqual(byFile["guide.md"], ["code"]);
+  assert.ok(s.surfaceTable.some((entry) => entry.tag === "accessibility" && entry.everyDiff));
+  write(dir, ".agents/merge-risk.json", JSON.stringify({ remove: ["no-such-surface"] }));
+  git(dir, "commit", "-q", "-am", "chore: bad override");
+  assert.throws(() => scope(dir, "feat", "main"), /names no surface called no-such-surface; tags are migration/);
 });

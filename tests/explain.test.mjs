@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const skillDir = path.join(repo, "skills", "explain");
+const skillDir = path.join(repo, "skills", "understanding", "explain");
 const { PERSONAS, SECTIONS, STYLE_SHA256, check, checkText, inline, readPersona, standalone, start } = await import(path.join(skillDir, "scripts", "page.mjs"));
 
 // Unfilled pages may only fail on what filling them fixes: placeholders, guide comments, the footer text, media not yet
@@ -404,7 +404,7 @@ test("the live eval's grader passes an honest recording and fails an overstated 
   const answer = "Pages saved:\n- engineer\n\nSummary:\nx\n\nShare text:\nx\n\nPublished: not published\n\nNot shown:\n- Windows\n";
   const grade = (pages) => {
     for (const [name, text] of Object.entries(pages)) fs.writeFileSync(path.join(pagesDir, name), text);
-    return scenario.phases[0].check({ live: false, taskDir, pagesDir, answer, skillsDir: path.join(repo, "skills") });
+    return scenario.phases[0].check({ live: false, taskDir, pagesDir, answer, skillsDir: path.join(repo, "skills", "understanding") });
   };
   assert.deepEqual(grade({ "engineer.html": engineer, "executive.html": executive, "slack.md": slack }), []);
   // Grading reports a changed style block and leaves the recording as it was.

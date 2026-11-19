@@ -18,6 +18,8 @@ const SKILL_DEPENDENCIES = {
   'record-evidence': ['deliver'],
   'iterate-evidence': ['record-evidence', 'deliver'],
   'group-review': ['gitlab-inline-comments'],
+  'rfc-six-pager': ['technical-writing'],
+  'author-skill': ['skill-doctor'],
   'video-iterative-development': ['record-evidence'],
   'video-iterative-orchestration': ['agent-implementation-reviewer', 'extract-figma-visuals', 'feature-conformance', 'jira-issue-hierarchy', 'land-pr-stack', 'slack-coordinator', 'video-iterative-development'],
   ...Object.fromEntries(['implement-plan', 'implement-outline', 'iterate-implementation', 'fix-bug', 'reproduce-bug', 'fix-code-review', 'describe-pr'].map(name => [name, ['deliver']])),

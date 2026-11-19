@@ -14,7 +14,7 @@ The standalone `slack-coordinator` skill operates the daemon that reports run st
 
 ## Jira issue hierarchy
 
-The standalone [`jira-issue-hierarchy`](skills/jira-issue-hierarchy/SKILL.md) skill drafts Epics and Stories from approved requirements, authors Sub-tasks when Story work starts, and checks QA readiness against the selected project's observed hierarchy and workflow. Its portable templates ship with the skill; they do not prescribe a Jira project, label or transition. Install it alone or select `video-iterative-orchestration` to include it as a dependency. See the [quick start](docs/cheatsheet.md).
+The standalone [`jira-issue-hierarchy`](skills/integrations/jira-issue-hierarchy/SKILL.md) skill drafts Epics and Stories from approved requirements, authors Sub-tasks when Story work starts, and checks QA readiness against the selected project's observed hierarchy and workflow. Its portable templates ship with the skill; they do not prescribe a Jira project, label or transition. Install it alone or select `video-iterative-orchestration` to include it as a dependency. See the [quick start](docs/cheatsheet.md).
 
 ## Babysit pull requests
 
@@ -48,13 +48,19 @@ Installed skills are copies. Opt into normal full-runtime refresh after default-
 
 For explicitly selected release updates on a schedule, preview the [opt-in nightly updater](docs/cheatsheet.md#opt-in-nightly-updates). It is separate from clone hooks, installs no team policy, and remains disabled until requested.
 
-### Authoring and explanation
+### What is in the collection
 
-- [`/author-skill`](skills/author-skill/SKILL.md) is the upstream “create skill” workflow: sibling/trigger check, eval-first scaffold, progressive references and executable helpers, both validators, then current-source live eval.
-- [`/explain`](skills/explain/SKILL.md) produces an evidence-grounded explanation for a selected audience; optional HTML and media stay outside task roots.
-- [`/land-pr-stack`](skills/delivery/land-pr-stack/SKILL.md) lands an explicitly authorized PR stack in dependency order, using GitHub by default and existing repository release requirements.
-- Independent skills also cover product briefs, technical writing, merge-risk assessment, static implementation audits, Figma design-system synchronization, Flutter performance, Coast runtimes and visible device work. See [the capability catalog](docs/cheatsheet.md#additional-independent-skills); services and daemons require separate setup.
+Skills live under `skills/<group>/<name>/` and install flat, so a skill is always `/<name>`. Each group has a page that says what its skills produce and which one to pick.
 
+| Group | For | Skills |
+|---|---|---|
+| [Delivery](workflows/delivery.md) | Taking one task from request to pull request | `deliver` and its research, design, plan, implement, verify, review and PR phases |
+| [Understanding](workflows/understanding.md) | Breaking a thing down until it is understood | `teach`, `show-me`, `explain`, `figure-it-out` |
+| [Writing](workflows/writing.md) | Documents and prose for a reader | `technical-writing`, `deslop`, `pr`, `product-brief`, `rfc-six-pager` |
+| [Quality](workflows/quality.md) | Validating a change and keeping the lessons | `assess-merge-risk`, `blast-radius`, `two-axis-review`, `retrospect` |
+| [Engineering](workflows/engineering.md) | Design, diagnosis and language practice | `codebase-design`, `diagnosing-bugs`, `typescript-best-practices`, `wizard` |
+| [Authoring](workflows/authoring.md) | Writing and checking skills | `author-skill`, `skill-doctor` |
+| [Integrations](workflows/integrations.md) | One external tool each | Jira, GitLab, Slack, Figma, Flutter, Coasts, simulators |
 
 ## Use skills independently
 

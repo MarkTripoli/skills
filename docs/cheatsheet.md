@@ -89,9 +89,9 @@ Start a new agent session afterward. Existing sessions retain their loaded instr
 
 ## Jira issue bodies
 
-Use standalone [`jira-issue-hierarchy`](../skills/jira-issue-hierarchy/SKILL.md) and its [portable policy and Markdown bodies](../skills/jira-issue-hierarchy/references/jira-issue-templates/README.md) for a new Jira feature. Resolve the selected project and inspect its hierarchy, fields, QA labels and transitions before adapting templates. Plan Epics and Stories first; create implementation children when work starts. `video-iterative-orchestration` installs this companion for Jira work.
+Use standalone [`jira-issue-hierarchy`](../skills/integrations/jira-issue-hierarchy/SKILL.md) and its [portable policy and Markdown bodies](../skills/integrations/jira-issue-hierarchy/references/jira-issue-templates/README.md) for a new Jira feature. Resolve the selected project and inspect its hierarchy, fields, QA labels and transitions before adapting templates. Plan Epics and Stories first; create implementation children when work starts. `video-iterative-orchestration` installs this companion for Jira work.
 
-For a single `/deliver` ticket, [jira-issue-refinement](../skills/jira-issue-refinement/SKILL.md) reads the live issue and context before planning, saves confirmed functional specifications, QA steps, open questions, and exact plan deltas in a task artifact, and leaves Jira unchanged. An existing plan or outline is revised before implementation. A description rewrite requires separate approval for each ticket. Use the stronger model for planning/orchestration and delegated economy-model workers for bounded execution. Apply [SLICING.md](../shared/SLICING.md) before implementation; split a near-10,000-line or otherwise unreviewable PR into a small number of independent child PRs. When configured, `slack-coordinator` starts one run and its saved `slack_run_id` carries status and owner input across stages. UI delivery calls for tablet and mobile video plus screenshots in the PR's `## UI Evidence`, then current-head pipeline and review follow-up.
+For a single `/deliver` ticket, [jira-issue-refinement](../skills/integrations/jira-issue-refinement/SKILL.md) reads the live issue and context before planning, saves confirmed functional specifications, QA steps, open questions, and exact plan deltas in a task artifact, and leaves Jira unchanged. An existing plan or outline is revised before implementation. A description rewrite requires separate approval for each ticket. Use the stronger model for planning/orchestration and delegated economy-model workers for bounded execution. Apply [SLICING.md](../shared/SLICING.md) before implementation; split a near-10,000-line or otherwise unreviewable PR into a small number of independent child PRs. When configured, `slack-coordinator` starts one run and its saved `slack_run_id` carries status and owner input across stages. UI delivery calls for tablet and mobile video plus screenshots in the PR's `## UI Evidence`, then current-head pipeline and review follow-up.
 
 ## Tool approval preflight
 
@@ -138,32 +138,24 @@ The first recording invocation prepares the evidence policy and captures the aut
 
 Resume with `/deliver <task-dir>` in the task's original worktree, or run a phase by hand on its saved task directory: `/implement-plan @<plan>` for implementation, `/resolve-pr-reviews` for PR feedback, `/start-epic-delivery @<epic-plan>` for ready epic children. Create child worktrees from the epic branch, then copy each child's `<task-root>/<child slug>/` directory from the epic worktree into that child worktree. Child tasks wait for prerequisite branch merges. PR text does not prove merge.
 
-## Authoring a skill
+## Skills outside the delivery workflow
 
-`/author-skill` creates or revises a skill in this collection: it starts from an eval scenario, scaffolds `skills/<name>/`, and loops over `node scripts/validate.mjs` and `node scripts/check-skill-practices.mjs` until both pass. [Skill instructions](../skills/author-skill/SKILL.md), [rules](../skills/author-skill/references/rules.md).
+Each group has one page that says what its skills produce and which to pick. Install any of them alone with `node scripts/install.mjs <runtime> --skill <name> --yes`; Codex invokes `$<name>`, other runtimes `/<name>`.
 
-`/explain <topic>` selects an audience, grounds claims in inspected evidence and optionally creates an HTML page outside task roots. `/land-pr-stack <explicit PR scope>` lands a selected stack only with recorded merge authority, using GitHub by default and repository-declared release requirements. See the [workflow table](../workflows/delivery.md#phase-table).
-
-
-## Additional independent skills
-
-Install a row with `node scripts/install.mjs <runtime> --skill <name> --yes`; Codex invokes `$<name>`, other runtimes `/<name>`.
-
-| Skill | Outcome | Prerequisites and boundary |
+| Group | Skills | Page |
 |---|---|---|
-| [`product-brief`](../skills/product-brief/SKILL.md) | Source-backed product brief, reader feedback and optional sketches | Supplied request or sources; not an implementation plan |
-| [`technical-writing`](../skills/technical-writing/SKILL.md) | Reader-specific technical prose and revision | Does not override the active artifact's required shape or approvals |
-| [`assess-merge-risk`](../skills/assess-merge-risk/SKILL.md) | Source-scoped merge-risk report with checked evidence | Repository and selected change; not authorization to merge |
-| [`static-implementation-audit`](../skills/delivery/static-implementation-audit/SKILL.md) | Ticket/design/code audit with submitted-video review | Accessible source material; not fresh runtime or hosted-publication proof |
-| [`gitlab-inline-comments`](../skills/gitlab-inline-comments/SKILL.md) | Persisted GitLab diff comments verified at their actual positions | Explicit GitLab selection, authentication and posting authority |
-| [`figma-design-system-sync`](../skills/figma-design-system-sync/SKILL.md) | Compare and update a repository-owned design system from Figma | Supplied design export, discovered token/component ownership and real render proof |
-| [`flutter-ui-performance`](../skills/flutter-ui-performance/SKILL.md) | Audit rebuild/reload behavior, then implement measured slices | Flutter checkout and requested runtime proof |
-| [`coasts`](../skills/coasts/SKILL.md) | Discover and operate a repository's declared Coast runtime | Coast CLI and repository configuration; no assumed application topology |
-| [`simview`](../skills/simview/SKILL.md) | Make selected Android, iOS or browser work visible | Separately built [viewer](../tools/simview/README.md), selected device/browser and applicable companion tools |
+| Understanding | `teach`, `show-me`, `explain`, `figure-it-out` | [understanding](../workflows/understanding.md) |
+| Writing | `technical-writing`, `deslop`, `pr`, `product-brief`, `rfc-six-pager` | [writing](../workflows/writing.md) |
+| Quality | `assess-merge-risk`, `blast-radius`, `two-axis-review`, `retrospect` | [quality](../workflows/quality.md) |
+| Engineering | `codebase-design`, `diagnosing-bugs`, `typescript-best-practices`, `wizard` | [engineering](../workflows/engineering.md) |
+| Authoring | `author-skill`, `skill-doctor` | [authoring](../workflows/authoring.md) |
+| Integrations | `jira-issue-hierarchy`, `jira-issue-refinement`, `gitlab-inline-comments`, `slack-coordinator`, `figma-design-system-sync`, `flutter-ui-performance`, `coasts`, `simview` | [integrations](../workflows/integrations.md) |
+
+[`static-implementation-audit`](../skills/delivery/static-implementation-audit/SKILL.md) audits ticket, design and code with submitted-video review; it needs accessible source material and is not runtime proof. `/land-pr-stack <explicit PR scope>` lands a selected stack only with recorded merge authority.
 
 ## Where things live
 
-- Skills: `skills/delivery/<name>/SKILL.md`, `skills/show-me/`, `skills/slack-coordinator/`. Slack daemon built + installed apart; see [Slack coordinator](slack-coordinator.md).
+- Skills: `skills/<group>/<name>/SKILL.md`; groups are `delivery`, `understanding`, `writing`, `quality`, `engineering`, `authoring` and `integrations`. Slack daemon built + installed apart; see [Slack coordinator](slack-coordinator.md).
 - Task doc: `<task-root>/<slug>/task.md`, authoritative `index.json` and immutable semantic artifacts, local to the worktree. Default root `.agents/tasks`; configured roots and explicit existing task directories follow the shared contract.
 
 Worktree belong owner. No kill old/dead-run worktree as install cleanup.

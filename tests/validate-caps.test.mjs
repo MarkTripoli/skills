@@ -43,7 +43,7 @@ test("validate fails naming the skill and shape when an EARS shape goes missing"
     const result = run();
     assert.equal(result.status, 1);
     assert.match(result.stderr, /iterate-prd\/SKILL\.md:0: names EARS or shall but lacks "WHERE <feature is enabled>, the <system> shall <response>\."/);
-    const other = path.join(copy, "skills", "show-me", "SKILL.md");
+    const other = path.join(copy, "skills", "understanding", "show-me", "SKILL.md");
     fs.appendFileSync(other, "\nUsers SHALL see this.\n");
     assert.match(run().stderr, /show-me\/SKILL\.md:0: names EARS or shall but lacks/);
   } finally {
