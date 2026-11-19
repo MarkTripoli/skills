@@ -4,7 +4,7 @@
 // Usage: node scripts/check-skill-practices.mjs [--json] [--root <dir>]
 // Exit 1 with one `path:line: <rule id>: <message> (<guidance section>)` per failure.
 // Judgment rules no script can check (conciseness, degrees of freedom, examples) live in
-// skills/author-skill/references/rules.md.
+// skills/authoring/author-skill/references/rules.md.
 
 import fs from "node:fs";
 import path from "node:path";

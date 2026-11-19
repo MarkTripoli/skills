@@ -1,0 +1,5 @@
+--- a/src/slug.mjs
++++ b/src/slug.mjs
+@@
+-export const slug = (title) => title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-");
++export const slug = (title) => title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");

@@ -4,7 +4,7 @@ Map for changing this repository. For using the installed skills, read [docs/che
 
 ## Source and ownership
 
-- `skills/delivery/<name>/SKILL.md` is the canonical independent skill; `references/` owns its artifact and reply templates. `skills/show-me/` is the standalone visualization skill. Ordinary phase skills remain usable in Claude Code, Codex, OMP, Pi, and portable mode.
+- `skills/<group>/<name>/SKILL.md` is the canonical independent skill; `references/` owns its artifact and reply templates. Groups are `delivery`, `understanding`, `writing`, `quality`, `engineering`, `authoring` and `integrations`, each with a page under `workflows/`; installs flatten, so names are unique across groups. Ordinary phase skills remain usable in Claude Code, Codex, OMP, Pi, and portable mode.
 - `skills/delivery/agent-*/` holds worker roles. `scripts/sync-plugin.mjs` generates plugin workers under `agents/`; runtime installation adapts skills and workers through `scripts/lib/build.mjs` and `runtimes/<runtime>.md`.
 - `skills/delivery/typed-judgment/judge.mjs` owns System One/JEV typed questions and key lookup. Optional skill judgments retain their documented deterministic fallback.
 - `scripts/install.mjs` installs selected skills independently by default. Project installations use local `.agents/skills/`.

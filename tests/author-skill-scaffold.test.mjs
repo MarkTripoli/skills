@@ -4,11 +4,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { scaffold } from "../skills/author-skill/scripts/scaffold.mjs";
+import { scaffold } from "../skills/authoring/author-skill/scripts/scaffold.mjs";
 import { checkSkillPractices } from "../scripts/check-skill-practices.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname);
-const script = path.join(here, "..", "skills", "author-skill", "scripts", "scaffold.mjs");
+const script = path.join(here, "..", "skills", "authoring", "author-skill", "scripts", "scaffold.mjs");
 const temps = [];
 after(() => temps.forEach((d) => fs.rmSync(d, { recursive: true, force: true })));
 const collection = () => {

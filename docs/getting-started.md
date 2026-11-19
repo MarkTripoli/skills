@@ -51,7 +51,7 @@ Load references only for the next operation: repair guidance when fixing, merge 
 
 ## Draft Jira issues
 
-Install `jira-issue-hierarchy` to draft Epics and Stories from approved requirements, draft implementation children at Story start, or check QA readiness. Its [portable templates](../skills/jira-issue-hierarchy/references/jira-issue-templates/README.md) ship with the skill. The selected project's observed hierarchy, fields, QA labels and transitions remain authoritative. Selecting `video-iterative-orchestration` includes this companion.
+Install `jira-issue-hierarchy` to draft Epics and Stories from approved requirements, draft implementation children at Story start, or check QA readiness. Its [portable templates](../skills/integrations/jira-issue-hierarchy/references/jira-issue-templates/README.md) ship with the skill. The selected project's observed hierarchy, fields, QA labels and transitions remain authoritative. Selecting `video-iterative-orchestration` includes this companion.
 
 ## Inspect and repair recorded behavior
 
@@ -97,7 +97,7 @@ Work from the task checkout and branch. Chat end ≠ new task. Run the next skil
 
 Per-Bug plan gates bind approval to the exact source/contract revision; final recordings bind independently to the delivered head. Owner follow-up uses the active session and saved receipts, not a required messaging bot. An explicitly configured Codex owner can opt into the separate [Jira bug inbox](bug-coordinator.md); installing skills does not start it.
 
-For standalone briefs, writing, merge-risk assessment, static audits, Figma sync, Flutter performance, Coast runtimes or device visibility, choose from [the independent capability catalog](cheatsheet.md#additional-independent-skills). Installing a skill does not provision its service, daemon, credentials or device.
+For teaching and explanation, writing, merge-risk and review, codebase design, skill authoring or a tool integration, choose from [the skills outside the delivery workflow](cheatsheet.md#skills-outside-the-delivery-workflow). Installing a skill does not provision its service, daemon, credentials or device.
 
 ## Slack visibility
 

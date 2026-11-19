@@ -1,6 +1,6 @@
 # Slack coordinator
 
-Slack coordinator posts one Slack thread per run of agent work and lets the run owner steer that run from the thread. It is distributed as the `slack-coordinator` binary, built from `tools/slack-coordinator/`, and installed separately from agent skills. The agent skill lives at `skills/slack-coordinator/`. Delivery skills may use it, and none of them require it. The daemon coordinates externally started runs; it does not launch coding agents or schedule work from Slack messages.
+Slack coordinator posts one Slack thread per run of agent work and lets the run owner steer that run from the thread. It is distributed as the `slack-coordinator` binary, built from `tools/slack-coordinator/`, and installed separately from agent skills. The agent skill lives at `skills/integrations/slack-coordinator/`. Delivery skills may use it, and none of them require it. The daemon coordinates externally started runs; it does not launch coding agents or schedule work from Slack messages.
 
 ## Install
 
@@ -142,6 +142,6 @@ config.yaml requires `slack.bot_token`, `slack.app_token`, and `slack.owner_user
 
 The daemon owns Slack tokens, Socket Mode, and SQLite. The CLI communicates over a local Unix socket. The daemon never spawns an LLM or coding agent. External agents, CLI, and daemon run as the same operating-system user; this is not a security boundary against other code running as that user.
 
-Run content is available through `run content --run-id <id>` for files, bookmarks, tabs, and canvas permalinks; `run upload --run-id <id> --path <local-file>` attaches a file to the run thread. `run list-items --run-id <id> --list-id <F…>` reads paged List rows and schema for Lists shared in the run channel, on paid Slack workspaces. Canvas access is a permalink, not body text, and folder enumeration is unavailable through the bot API. See [commands](../skills/slack-coordinator/references/commands.md#channel-content) for limits and the required content scopes.
+Run content is available through `run content --run-id <id>` for files, bookmarks, tabs, and canvas permalinks; `run upload --run-id <id> --path <local-file>` attaches a file to the run thread. `run list-items --run-id <id> --list-id <F…>` reads paged List rows and schema for Lists shared in the run channel, on paid Slack workspaces. Canvas access is a permalink, not body text, and folder enumeration is unavailable through the bot API. See [commands](../skills/integrations/slack-coordinator/references/commands.md#channel-content) for limits and the required content scopes.
 
-For run commands, exit codes, and Block Kit fields, use the [skill](../skills/slack-coordinator/SKILL.md) and linked references. A `run check` result is not a transaction: replies arriving after `ready` appear at the next check. [Testing](testing.md#slack-coordinator-proof-boundaries) records what offline checks do and do not prove.
+For run commands, exit codes, and Block Kit fields, use the [skill](../skills/integrations/slack-coordinator/SKILL.md) and linked references. A `run check` result is not a transaction: replies arriving after `ready` appear at the next check. [Testing](testing.md#slack-coordinator-proof-boundaries) records what offline checks do and do not prove.
